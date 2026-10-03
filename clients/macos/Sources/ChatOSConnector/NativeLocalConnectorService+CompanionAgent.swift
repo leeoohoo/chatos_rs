@@ -27,21 +27,22 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             includeArchived: false
         )
-        var teamSummaries: [LocalConnectorCompanionAgentConversationSummary] = []
-        for room in teams {
-            teamSummaries.append(try await companionAgentConversationSummary(
-                ownerUserID: ownerUserID,
-                room: room,
-                store: store
-            ))
+        let conversationSnapshot = try await store.activeConversationListSnapshot(
+            ownerUserID: ownerUserID
+        )
+        let teamSummaries = teams.map {
+            Self.companionAgentConversationSummary(
+                room: $0,
+                memberCount: conversationSnapshot.activeMemberCountByRoomID[$0.id, default: 0],
+                recentMessage: conversationSnapshot.latestMessageByRoomID[$0.id]
+            )
         }
-        var directSummaries: [LocalConnectorCompanionAgentConversationSummary] = []
-        for room in directs {
-            directSummaries.append(try await companionAgentConversationSummary(
-                ownerUserID: ownerUserID,
-                room: room,
-                store: store
-            ))
+        let directSummaries = directs.map {
+            Self.companionAgentConversationSummary(
+                room: $0,
+                memberCount: conversationSnapshot.activeMemberCountByRoomID[$0.id, default: 0],
+                recentMessage: conversationSnapshot.latestMessageByRoomID[$0.id]
+            )
         }
         return .init(
             teams: teamSummaries.sorted { $0.updatedAtUnixMs > $1.updatedAtUnixMs },
@@ -64,6 +65,18 @@ extension NativeLocalConnectorService {
             beforeMessageID: nil,
             limit: 1
         )
+        return Self.companionAgentConversationSummary(
+            room: room,
+            memberCount: members.count,
+            recentMessage: recent.messages.last
+        )
+    }
+
+    nonisolated static func companionAgentConversationSummary(
+        room: ProjectAgentRoom,
+        memberCount: Int,
+        recentMessage: ProjectAgentMessage?
+    ) -> LocalConnectorCompanionAgentConversationSummary {
         return .init(
             id: room.id,
             kind: room.conversationKind.rawValue,
@@ -71,10 +84,10 @@ extension NativeLocalConnectorService {
             goal: room.draft.goal,
             projectID: room.projectID,
             defaultAgentID: room.defaultAgentID,
-            memberCount: members.count,
+            memberCount: memberCount,
             canSend: room.conversationKind != .agentAgentDirect,
-            updatedAtUnixMs: max(room.updatedAtUnixMs, recent.messages.last?.createdAtUnixMs ?? 0),
-            lastMessage: recent.messages.last.map(Self.companionAgentMessage)
+            updatedAtUnixMs: max(room.updatedAtUnixMs, recentMessage?.createdAtUnixMs ?? 0),
+            lastMessage: recentMessage.map(Self.companionAgentMessage)
         )
     }
 
@@ -185,11 +198,71 @@ extension NativeLocalConnectorService {
         )
     }
 
-    func startCompanionAgentScheduler(ownerUserID: String) {
+    func startCompanionAgentScheduler(ownerUserID: String) async {
         guard let scheduler = agentGroupChatScheduler else { return }
-        Task {
+        await companionAgentDrainCoordinator.schedule(ownerUserID: ownerUserID) {
             _ = try? await scheduler.drainAccount(ownerUserID: ownerUserID)
         }
+    }
+}
+
+actor CompanionAgentDrainCoordinator {
+    typealias Operation = @Sendable () async -> Void
+
+    private struct Entry {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
+    private var entries: [String: Entry] = [:]
+    private var rerunOwnerUserIDs: Set<String> = []
+
+    func schedule(ownerUserID: String, operation: @escaping Operation) {
+        if entries[ownerUserID] != nil {
+            rerunOwnerUserIDs.insert(ownerUserID)
+            return
+        }
+        let entryID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.run(
+                ownerUserID: ownerUserID,
+                entryID: entryID,
+                operation: operation
+            )
+        }
+        entries[ownerUserID] = .init(id: entryID, task: task)
+    }
+
+    func cancelAll() {
+        let tasks = entries.values.map(\.task)
+        entries.removeAll(keepingCapacity: true)
+        rerunOwnerUserIDs.removeAll(keepingCapacity: true)
+        tasks.forEach { $0.cancel() }
+    }
+
+    func activeTaskCount() -> Int {
+        entries.count
+    }
+
+    private func run(
+        ownerUserID: String,
+        entryID: UUID,
+        operation: @escaping Operation
+    ) async {
+        while !Task.isCancelled {
+            guard entries[ownerUserID]?.id == entryID else { return }
+            rerunOwnerUserIDs.remove(ownerUserID)
+            await operation()
+            guard !Task.isCancelled,
+                  entries[ownerUserID]?.id == entryID,
+                  rerunOwnerUserIDs.remove(ownerUserID) != nil else {
+                break
+            }
+        }
+        guard entries[ownerUserID]?.id == entryID else { return }
+        entries.removeValue(forKey: ownerUserID)
+        rerunOwnerUserIDs.remove(ownerUserID)
     }
 }
 

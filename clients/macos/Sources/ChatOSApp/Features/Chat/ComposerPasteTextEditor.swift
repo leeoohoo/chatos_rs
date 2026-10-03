@@ -325,6 +325,8 @@ private final class ComposerNativeTextView: NSTextView {
 
 @MainActor
 private enum ComposerPasteboardReader {
+    private static let maximumAttachmentBytes = 20 * 1_024 * 1_024
+
     static func content(from pasteboard: NSPasteboard) -> ComposerPasteContent? {
         let fileURLs = fileURLs(from: pasteboard)
         if !fileURLs.isEmpty {
@@ -332,7 +334,8 @@ private enum ComposerPasteboardReader {
         }
 
         let pngType = NSPasteboard.PasteboardType("public.png")
-        if let data = pasteboard.data(forType: pngType), !data.isEmpty {
+        if let data = pasteboard.data(forType: pngType),
+           !data.isEmpty, data.count <= maximumAttachmentBytes {
             return .image(
                 data: data,
                 mimeType: "image/png",
@@ -341,7 +344,8 @@ private enum ComposerPasteboardReader {
         }
 
         let jpegType = NSPasteboard.PasteboardType("public.jpeg")
-        if let data = pasteboard.data(forType: jpegType), !data.isEmpty {
+        if let data = pasteboard.data(forType: jpegType),
+           !data.isEmpty, data.count <= maximumAttachmentBytes {
             return .image(
                 data: data,
                 mimeType: "image/jpeg",
@@ -350,16 +354,16 @@ private enum ComposerPasteboardReader {
         }
 
         if let tiff = pasteboard.data(forType: .tiff),
-           let image = NSImage(data: tiff),
-           let png = image.pngData {
+           !tiff.isEmpty, tiff.count <= maximumAttachmentBytes {
             return .image(
-                data: png,
-                mimeType: "image/png",
-                suggestedName: timestampedName("粘贴的图片", extension: "png")
+                data: tiff,
+                mimeType: "image/tiff",
+                suggestedName: timestampedName("粘贴的图片", extension: "tiff")
             )
         }
 
-        if let pdf = pasteboard.data(forType: .pdf), !pdf.isEmpty {
+        if let pdf = pasteboard.data(forType: .pdf),
+           !pdf.isEmpty, pdf.count <= maximumAttachmentBytes {
             return .document(
                 data: pdf,
                 mimeType: "application/pdf",
@@ -401,13 +405,5 @@ private enum ComposerPasteboardReader {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         return "\(prefix) \(formatter.string(from: Date())).\(fileExtension)"
-    }
-}
-
-private extension NSImage {
-    var pngData: Data? {
-        guard let tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
     }
 }

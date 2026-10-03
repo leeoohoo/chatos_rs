@@ -29,6 +29,7 @@ struct AgentManagementView: View {
     @State private var agentPageSize = 20
     @State private var runPage = 0
     @State private var runPageSize = 20
+    @State private var expandedRunIDs: Set<UUID> = []
 
     private var pagedAgents: [LocalAgentProfile] {
         viewModel.agents.agentPage(index: agentPage, size: agentPageSize)
@@ -153,6 +154,7 @@ struct AgentManagementView: View {
         }
         .onChange(of: viewModel.selectedAgentID) { _, _ in
             runPage = 0
+            expandedRunIDs = []
         }
         .confirmationDialog(
             "结束这次运行？",
@@ -169,7 +171,7 @@ struct AgentManagementView: View {
                 Task {
                     await viewModel.abandonRun(
                         deliveryID: deliveryID,
-                        projectID: item.run.context.projectID
+                        projectID: item.summary.projectID
                     )
                 }
             }
@@ -360,70 +362,35 @@ struct AgentManagementView: View {
         _ item: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            DisclosureGroup {
-                VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 18) {
-                    runFact("运行通道", laneLabel(item.run.context.lane))
-                    runFact("状态", runStatusLabel(item.run.checkpoint.status))
-                    runFact("唤醒来源", triggerLabel(item))
-                    runFact("耗时", durationLabel(item.run.checkpoint.elapsedSeconds))
-                    runFact("模型请求", "\(item.run.checkpoint.modelCalls) 次")
-                    Spacer(minLength: 0)
-                }
-                if let content = item.triggerMessage?.content,
-                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GroupBox("收到的内容") {
-                        Text(content)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .lineLimit(3)
-                            .textSelection(.enabled)
+            DisclosureGroup(isExpanded: Binding(
+                get: { expandedRunIDs.contains(item.id) },
+                set: { isExpanded in
+                    if isExpanded {
+                        expandedRunIDs.insert(item.id)
+                        Task { await viewModel.loadTriggerRunDetails(item.id) }
+                    } else {
+                        expandedRunIDs.remove(item.id)
+                        viewModel.releaseTriggerRunDetails(item.id)
                     }
                 }
-                if let reason = displayedStopReason(item) {
-                    Label(userFacingStopReason(reason), systemImage: "exclamationmark.circle")
-                        .font(.callout)
-                        .foregroundStyle(triggerColor(item.run.checkpoint.status))
-                        .textSelection(.enabled)
+            )) {
+                if let details = viewModel.triggerRunDetailsByID[item.id] {
+                    triggerRunDetails(item, details: details)
+                        .padding(.top, 8)
+                } else {
+                    ProgressView("正在读取运行详情…")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                        .task { await viewModel.loadTriggerRunDetails(item.id) }
                 }
-                if let result = item.run.checkpoint.result ?? item.run.checkpoint.completionResult,
-                   !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    GroupBox("处理结果") {
-                        Text(LocalizedStringKey(result))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .lineLimit(5)
-                            .textSelection(.enabled)
-                    }
-                }
-                if !item.run.events.isEmpty {
-                    DisclosureGroup("技术诊断 · \(item.run.events.count) 条") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(item.run.events.suffix(12)) { event in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(diagnosticEventLabel(event.kind))
-                                        .font(.caption.weight(.medium))
-                                    Text(event.detail)
-                                        .font(.caption2.monospaced())
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(3)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        .padding(.top, 6)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                }
-                .padding(.top, 8)
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: triggerIcon(item.delivery?.triggerKind))
-                        .foregroundStyle(triggerColor(item.run.checkpoint.status))
+                        .foregroundStyle(triggerColor(item.summary.status))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(laneLabel(item.run.context.lane)) · \(runStatusLabel(item.run.checkpoint.status))")
+                        Text("\(laneLabel(item.summary.lane)) · \(runStatusLabel(item.summary.status))")
                             .font(.callout.weight(.medium))
-                        Text("\(triggerLabel(item)) · \(item.room?.draft.name ?? "来源会话已移除") · \(formattedTime(item.run.updatedAtUnixMs))")
+                        Text("\(triggerLabel(item)) · \(item.room?.draft.name ?? "来源会话已移除") · \(formattedTime(item.summary.updatedAtUnixMs))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -447,18 +414,18 @@ struct AgentManagementView: View {
                        viewModel.runActionDeliveryIDs.contains(deliveryID) {
                         ProgressView().controlSize(.small)
                     } else if let deliveryID = item.delivery?.id {
-                        Button(item.run.checkpoint.status == .needsReview
+                        Button(item.summary.status == .needsReview
                                ? "重试中断步骤" : "继续运行") {
                             Task {
-                                if item.run.checkpoint.status == .needsReview {
+                                if item.summary.status == .needsReview {
                                     await viewModel.retryInterruptedRun(
                                         deliveryID: deliveryID,
-                                        projectID: item.run.context.projectID
+                                        projectID: item.summary.projectID
                                     )
                                 } else {
                                     await viewModel.resumeRun(
                                         deliveryID: deliveryID,
-                                        projectID: item.run.context.projectID
+                                        projectID: item.summary.projectID
                                     )
                                 }
                             }
@@ -476,6 +443,68 @@ struct AgentManagementView: View {
         }
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func triggerRunDetails(
+        _ item: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation,
+        details: AgentGroupChatWorkspaceViewModel.TriggerRunDetails
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 18) {
+                runFact("运行通道", laneLabel(item.summary.lane))
+                runFact("状态", runStatusLabel(item.summary.status))
+                runFact("唤醒来源", triggerLabel(item))
+                runFact("耗时", durationLabel(item.summary.elapsedSeconds))
+                runFact("模型请求", "\(item.summary.modelCalls) 次")
+                Spacer(minLength: 0)
+            }
+            if let content = details.triggerMessage?.content,
+               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                GroupBox("收到的内容") {
+                    Text(content)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                }
+            }
+            if let reason = displayedStopReason(item) {
+                Label(userFacingStopReason(reason), systemImage: "exclamationmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(triggerColor(item.summary.status))
+                    .textSelection(.enabled)
+            }
+            if let result = details.run.checkpoint.result
+                ?? details.run.checkpoint.completionResult,
+               !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                GroupBox("处理结果") {
+                    Text(LocalizedStringKey(result))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(5)
+                        .textSelection(.enabled)
+                }
+            }
+            if !details.run.events.isEmpty {
+                DisclosureGroup("技术诊断 · \(details.run.events.count) 条") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(details.run.events.suffix(12)) { event in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(diagnosticEventLabel(event.kind))
+                                    .font(.caption.weight(.medium))
+                                Text(event.detail)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(3)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func triggerLabel(
@@ -513,21 +542,21 @@ struct AgentManagementView: View {
         subtitle: String,
         systemImage: String
     ) -> some View {
-        let latest = viewModel.triggerRuns.first(where: { $0.run.context.lane == lane })
+        let latest = viewModel.triggerRuns.first(where: { $0.summary.lane == lane })
         return HStack(spacing: 10) {
             Image(systemName: systemImage)
                 .font(.title3)
-                .foregroundStyle(latest.map { triggerColor($0.run.checkpoint.status) } ?? .secondary)
+                .foregroundStyle(latest.map { triggerColor($0.summary.status) } ?? .secondary)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title).font(.callout.weight(.semibold))
-                    Text(latest.map { runStatusLabel($0.run.checkpoint.status) } ?? "暂无运行")
+                    Text(latest.map { runStatusLabel($0.summary.status) } ?? "暂无运行")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
                 Text(latest.map {
-                    "\(subtitle) · \(formattedTime($0.run.updatedAtUnixMs))"
+                    "\(subtitle) · \(formattedTime($0.summary.updatedAtUnixMs))"
                 } ?? subtitle)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -547,11 +576,10 @@ struct AgentManagementView: View {
     private func runSummary(
         _ item: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation
     ) -> String {
-        if let result = item.run.checkpoint.result ?? item.run.checkpoint.completionResult,
-           !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if item.summary.hasResult {
             return "已有处理结果"
         }
-        switch item.run.checkpoint.status {
+        switch item.summary.status {
         case .running: return "正在处理"
         case .paused, .needsReview, .limitReached: return "等待处理"
         case .completed: return "处理完成"
@@ -589,14 +617,12 @@ struct AgentManagementView: View {
     private func displayedStopReason(
         _ item: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation
     ) -> String? {
-        if let reason = item.run.checkpoint.stopReason?.trimmingCharacters(
+        if let reason = item.summary.stopReason?.trimmingCharacters(
             in: .whitespacesAndNewlines
         ), !reason.isEmpty {
             return reason
         }
-        return item.run.events.last(where: {
-            $0.kind == "needs_review" || $0.kind == "resume_failed"
-        })?.detail
+        return item.summary.diagnosticReason
     }
 
     private func diagnosticEventLabel(_ kind: String) -> String {
@@ -622,7 +648,7 @@ struct AgentManagementView: View {
         _ item: AgentGroupChatWorkspaceViewModel.TriggerRunPresentation
     ) -> Bool {
         guard item.delivery?.status == .running else { return false }
-        return switch item.run.checkpoint.status {
+        return switch item.summary.status {
         case .paused, .needsReview, .limitReached:
             true
         case .ready, .running, .completed, .failed:

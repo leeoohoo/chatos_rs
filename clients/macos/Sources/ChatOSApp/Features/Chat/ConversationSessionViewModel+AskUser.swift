@@ -21,13 +21,17 @@ extension ConversationSessionViewModel {
 
     func refreshAskUserPrompts() async {
         guard let askUserPromptService else { return }
+        askUserPromptRefreshGeneration &+= 1
+        let generation = askUserPromptRefreshGeneration
         do {
             let prompts = try await askUserPromptService.fetchPrompts(
                 sessionID: sessionID,
                 limit: 100
             )
+            guard generation == askUserPromptRefreshGeneration else { return }
             replaceAskUserPrompts(prompts)
         } catch {
+            guard generation == askUserPromptRefreshGeneration else { return }
             historyError = error.localizedDescription
         }
     }
@@ -36,6 +40,7 @@ extension ConversationSessionViewModel {
         guard let askUserPromptService,
               prompt.status.isPending,
               !submittingAskUserPromptIDs.contains(prompt.id) else { return }
+        askUserPromptRefreshGeneration &+= 1
         submittingAskUserPromptIDs.insert(prompt.id)
         askUserPromptErrors[prompt.id] = nil
         Task {
@@ -60,6 +65,7 @@ extension ConversationSessionViewModel {
               prompt.status.isPending,
               prompt.allowsCancel,
               !submittingAskUserPromptIDs.contains(prompt.id) else { return }
+        askUserPromptRefreshGeneration &+= 1
         submittingAskUserPromptIDs.insert(prompt.id)
         askUserPromptErrors[prompt.id] = nil
         Task {

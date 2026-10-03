@@ -1,15 +1,6 @@
 import ChatOSCore
 import Foundation
 
-enum ProjectRunMonitoringPolicy {
-    static func shouldRefresh(_ state: ProjectRunState?) -> Bool {
-        guard let state else { return false }
-        return state.isBusy
-            || state.isRunning
-            || state.instances.contains { $0.isBusy || $0.isRunning }
-    }
-}
-
 @MainActor
 final class ProjectRunSettingsViewModel: ObservableObject {
     enum Notice: Equatable {
@@ -71,10 +62,12 @@ final class ProjectRunSettingsViewModel: ObservableObject {
     }
 
     func monitorRuns() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
-            guard !Task.isCancelled,
-                  ProjectRunMonitoringPolicy.shouldRefresh(state) else { continue }
+        // Subscribe before the initial snapshot so a fast process exit cannot land in the
+        // gap between loading and observation and leave the UI permanently stale.
+        let changes = await service.changes(projectID: projectID)
+        await load()
+        for await _ in changes {
+            guard !Task.isCancelled else { return }
             if let refreshed = try? await service.fetchState(projectID: projectID) {
                 if state != refreshed {
                     state = refreshed
@@ -130,7 +123,6 @@ final class ProjectRunSettingsViewModel: ObservableObject {
         guard let selectedTargetID else { return }
         await mutate(successNotice: .instanceStarted) {
             try await service.start(projectID: projectID, targetID: selectedTargetID)
-            try await Task.sleep(for: .milliseconds(450))
             state = try await service.fetchState(projectID: projectID)
             selectedInstanceID = state?.instances.first?.id
         }
@@ -140,7 +132,6 @@ final class ProjectRunSettingsViewModel: ObservableObject {
         guard let instanceID = instanceID ?? selectedInstanceID else { return }
         await mutate(successNotice: .stopRequested) {
             try await service.stop(instanceID: instanceID)
-            try await Task.sleep(for: .milliseconds(300))
             state = try await service.fetchState(projectID: projectID)
         }
     }

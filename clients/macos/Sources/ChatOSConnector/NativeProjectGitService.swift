@@ -140,13 +140,18 @@ public actor NativeProjectGitService: ProjectGitServicing {
             output = try await run(
                 ["diff", "--no-index", "--no-color", "--", "/dev/null", change.absolutePath],
                 in: context.root,
-                allowedExitCodes: [0, 1]
+                allowedExitCodes: [0, 1],
+                maximumOutputBytes: 4 * 1_024 * 1_024
             )
         } else {
             var arguments = ["diff", "--no-ext-diff", "--no-color"]
             if staged { arguments.append("--cached") }
             arguments += ["--", change.path]
-            output = try await run(arguments, in: context.root)
+            output = try await run(
+                arguments,
+                in: context.root,
+                maximumOutputBytes: 4 * 1_024 * 1_024
+            )
         }
         return ProjectGitDiff(path: change.path, isStaged: staged, content: output.stdoutString)
     }
@@ -240,7 +245,11 @@ public actor NativeProjectGitService: ProjectGitServicing {
 
     public func pull(projectRoot: String) async throws {
         let repository = try await requiredRepository(projectRoot)
-        _ = try await run(["pull", "--ff-only"], in: repository.root)
+        _ = try await run(
+            ["pull", "--ff-only"],
+            in: repository.root,
+            timeout: 15 * 60
+        )
     }
 
     public func push(projectRoot: String) async throws {
@@ -248,12 +257,16 @@ public actor NativeProjectGitService: ProjectGitServicing {
         guard let repositoryPath = snapshot.repositoryRoot else { throw NativeGitError.notRepository }
         let repository = URL(fileURLWithPath: repositoryPath)
         if snapshot.upstream != nil {
-            _ = try await run(["push"], in: repository)
+            _ = try await run(["push"], in: repository, timeout: 15 * 60)
             return
         }
         guard let branch = snapshot.currentBranch else { throw NativeGitError.noCurrentBranch }
         guard let remote = snapshot.remotes.first else { throw NativeGitError.noRemote }
-        _ = try await run(["push", "--set-upstream", remote.name, branch], in: repository)
+        _ = try await run(
+            ["push", "--set-upstream", remote.name, branch],
+            in: repository,
+            timeout: 15 * 60
+        )
     }
 
     private func projectContext(_ projectRoot: String) async throws -> ProjectContext {
@@ -292,13 +305,17 @@ public actor NativeProjectGitService: ProjectGitServicing {
     private func run(
         _ arguments: [String],
         in directory: URL,
-        allowedExitCodes: Set<Int32> = [0]
+        allowedExitCodes: Set<Int32> = [0],
+        timeout: TimeInterval = 120,
+        maximumOutputBytes: Int = 16 * 1_024 * 1_024
     ) async throws -> NativeGitProcessOutput {
         try await Task.detached {
             try NativeGitProcess.run(
                 arguments: arguments,
                 directory: directory,
-                allowedExitCodes: allowedExitCodes
+                allowedExitCodes: allowedExitCodes,
+                timeout: timeout,
+                maximumOutputBytes: maximumOutputBytes
             )
         }.value
     }

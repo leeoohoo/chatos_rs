@@ -641,6 +641,8 @@
 "本地 Agent 文档" = "本地 Agent 文档";
 "显示当前账户由 Local Agent Host 保存的 Markdown 文档。" = "显示当前账户由 Local Agent Host 保存的 Markdown 文档。";
 "正在读取本地文档…" = "正在读取本地文档…";
+"正在读取运行历史…" = "正在读取运行历史…";
+"正在读取运行详情…" = "正在读取运行详情…";
 "还没有本地 Agent 文档" = "还没有本地 Agent 文档";
 "Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。" = "Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。";
 "是" = "是";

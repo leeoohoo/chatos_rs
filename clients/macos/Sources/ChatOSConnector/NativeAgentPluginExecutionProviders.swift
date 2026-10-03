@@ -516,7 +516,7 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             workspaceID: workspaceID,
             toolName: call.name
         )
-        let normalized = NativePluginModelImageNormalizer.normalizeForModel(registered)
+        let normalized = try await NativePluginModelImageNormalizer.normalizeForModel(registered)
         return .init(normalized.canonicalJSONString)
     }
 

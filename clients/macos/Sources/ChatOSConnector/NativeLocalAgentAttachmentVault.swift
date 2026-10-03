@@ -1,5 +1,6 @@
 import ChatOSCore
 import CryptoKit
+import Darwin
 import Foundation
 
 struct NativeLocalAgentResolvedAttachment: Sendable, Equatable {
@@ -32,6 +33,7 @@ struct NativeLocalAgentAttachmentVault: Sendable {
     static let maximumReadBytes = 64 * 1_024
 
     let rootURL: URL
+    private let integrityCache = NativeLocalAgentAttachmentIntegrityCache()
 
     func authorize(
         _ drafts: [ConversationAttachmentDraft],
@@ -76,6 +78,24 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         conversationID: String,
         offset: UInt64,
         limit: Int
+    ) async throws -> NativeLocalAgentResolvedAttachment {
+        try await Task.detached(priority: .utility) {
+            try resolveSync(
+                record,
+                ownerUserID: ownerUserID,
+                conversationID: conversationID,
+                offset: offset,
+                limit: limit
+            )
+        }.value
+    }
+
+    private func resolveSync(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String,
+        offset: UInt64,
+        limit: Int
     ) throws -> NativeLocalAgentResolvedAttachment {
         guard (1...Self.maximumReadBytes).contains(limit),
               offset <= record.byteSize else {
@@ -86,15 +106,38 @@ struct NativeLocalAgentAttachmentVault: Sendable {
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )
-        let data = try Data(contentsOf: file, options: [.mappedIfSafe])
-        guard data.count == Int(record.byteSize),
-              data.count <= Self.maximumAttachmentBytes,
-              Self.sha256(data) == record.sha256.lowercased() else {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        let signature = try Self.signature(
+            fileDescriptor: handle.fileDescriptor,
+            sha256: record.sha256.lowercased()
+        )
+        guard signature.byteSize == record.byteSize else {
             throw NativeLocalAgentAttachmentVaultError.integrityMismatch
         }
-        let start = Int(offset)
-        let end = min(data.count, start + limit)
-        let slice = Data(data[start..<end])
+        if !integrityCache.contains(signature) {
+            try handle.seek(toOffset: 0)
+            let data = try handle.readToEnd() ?? Data()
+            guard data.count == Int(record.byteSize),
+                  data.count <= Self.maximumAttachmentBytes,
+                  Self.sha256(data) == record.sha256.lowercased() else {
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            }
+            integrityCache.insert(signature)
+        }
+        let expectedCount = min(limit, Int(record.byteSize - offset))
+        try handle.seek(toOffset: offset)
+        let slice = expectedCount == 0
+            ? Data()
+            : try handle.read(upToCount: expectedCount) ?? Data()
+        guard slice.count == expectedCount,
+              try Self.signature(
+                fileDescriptor: handle.fileDescriptor,
+                sha256: record.sha256.lowercased()
+              ) == signature else {
+            throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+        }
+        let end = offset + UInt64(slice.count)
         let text = String(data: slice, encoding: .utf8)
         let encoding = text == nil ? "base64" : "utf-8"
         let content = text ?? slice.base64EncodedString()
@@ -104,7 +147,7 @@ struct NativeLocalAgentAttachmentVault: Sendable {
             byteSize: record.byteSize,
             sha256: record.sha256.lowercased(),
             offset: offset,
-            nextOffset: end < data.count ? UInt64(end) : nil,
+            nextOffset: end < record.byteSize ? end : nil,
             encoding: encoding,
             content: content
         )
@@ -169,10 +212,61 @@ struct NativeLocalAgentAttachmentVault: Sendable {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
+    private static func signature(
+        fileDescriptor: Int32,
+        sha256: String
+    ) throws -> NativeLocalAgentAttachmentFileSignature {
+        var metadata = stat()
+        guard fstat(fileDescriptor, &metadata) == 0,
+              metadata.st_size >= 0 else {
+            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+        }
+        return .init(
+            device: UInt64(metadata.st_dev),
+            inode: UInt64(metadata.st_ino),
+            byteSize: UInt64(metadata.st_size),
+            modifiedSeconds: Int64(metadata.st_mtimespec.tv_sec),
+            modifiedNanoseconds: Int64(metadata.st_mtimespec.tv_nsec),
+            changedSeconds: Int64(metadata.st_ctimespec.tv_sec),
+            changedNanoseconds: Int64(metadata.st_ctimespec.tv_nsec),
+            sha256: sha256
+        )
+    }
+
     private static func isContained(file: URL, in directory: URL) -> Bool {
         let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
         let expected = directory.resolvingSymlinksInPath().standardizedFileURL
         return parent == expected
+    }
+}
+
+private struct NativeLocalAgentAttachmentFileSignature: Hashable, Sendable {
+    let device: UInt64
+    let inode: UInt64
+    let byteSize: UInt64
+    let modifiedSeconds: Int64
+    let modifiedNanoseconds: Int64
+    let changedSeconds: Int64
+    let changedNanoseconds: Int64
+    let sha256: String
+}
+
+private final class NativeLocalAgentAttachmentIntegrityCache: @unchecked Sendable {
+    private static let maximumEntries = 256
+    private let lock = NSLock()
+    private var entries: Set<NativeLocalAgentAttachmentFileSignature> = []
+
+    func contains(_ signature: NativeLocalAgentAttachmentFileSignature) -> Bool {
+        lock.withLock { entries.contains(signature) }
+    }
+
+    func insert(_ signature: NativeLocalAgentAttachmentFileSignature) {
+        lock.withLock {
+            if entries.count >= Self.maximumEntries {
+                entries.removeAll(keepingCapacity: true)
+            }
+            entries.insert(signature)
+        }
     }
 }
 

@@ -203,6 +203,7 @@ public struct ProjectRunCustomToolchain: Codable, Sendable, Equatable, Hashable 
 }
 
 public protocol ProjectRunServicing: Sendable {
+    func changes(projectID: String) async -> AsyncStream<Void>
     func fetchCatalog(projectID: String) async throws -> ProjectRunCatalog
     func analyze(projectID: String) async throws -> ProjectRunCatalog
     func fetchState(projectID: String) async throws -> ProjectRunState
@@ -217,4 +218,12 @@ public protocol ProjectRunServicing: Sendable {
     func start(projectID: String, targetID: String) async throws
     func stop(instanceID: String) async throws
     func delete(instanceID: String) async throws
+}
+
+public extension ProjectRunServicing {
+    func changes(projectID _: String) async -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 }

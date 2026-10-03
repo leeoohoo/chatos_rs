@@ -132,9 +132,81 @@ impl LocalAgentRuntime {
         Ok(self.store.next_retry_at(owner_user_id).await?)
     }
 
+    pub async fn renew_run_claim(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        lease_duration_ms: u64,
+    ) -> Result<bool, LocalAgentRuntimeError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        validate_identifier("run_id", run_id).map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        validate_identifier("claim_token", claim_token)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        let (now, claim_until) = self.claim_renewal_deadline(lease_duration_ms)?;
+        Ok(self
+            .store
+            .renew_run_claim(
+                owner_user_id,
+                run_id,
+                claim_token,
+                expected_version,
+                now,
+                claim_until,
+            )
+            .await?)
+    }
+
+    pub async fn renew_tool_claim(
+        &self,
+        owner_user_id: &str,
+        invocation_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        lease_duration_ms: u64,
+    ) -> Result<bool, LocalAgentRuntimeError> {
+        validate_identifier("owner_user_id", owner_user_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        validate_identifier("invocation_id", invocation_id)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        validate_identifier("claim_token", claim_token)
+            .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+        let (now, claim_until) = self.claim_renewal_deadline(lease_duration_ms)?;
+        Ok(self
+            .store
+            .renew_tool_claim(
+                owner_user_id,
+                invocation_id,
+                claim_token,
+                expected_version,
+                now,
+                claim_until,
+            )
+            .await?)
+    }
+
     pub async fn try_handle(
         &self,
         request: HostRequestEnvelope,
+    ) -> Result<HostResult, LocalAgentRuntimeError> {
+        self.try_handle_with_receipt_policy(request, true).await
+    }
+
+    /// Executes a trusted, one-shot in-process scheduler command without storing
+    /// a replay receipt. IPC callers must continue to use `try_handle`.
+    pub async fn try_handle_ephemeral(
+        &self,
+        request: HostRequestEnvelope,
+    ) -> Result<HostResult, LocalAgentRuntimeError> {
+        self.try_handle_with_receipt_policy(request, false).await
+    }
+
+    async fn try_handle_with_receipt_policy(
+        &self,
+        request: HostRequestEnvelope,
+        persist_receipt: bool,
     ) -> Result<HostResult, LocalAgentRuntimeError> {
         request
             .validate()
@@ -143,6 +215,7 @@ impl LocalAgentRuntime {
             command_id: request.command_id,
             request_fingerprint: serde_json::to_string(&request.command)
                 .map_err(|error| LocalAgentRuntimeError::InvalidRequest(error.to_string()))?,
+            persist_receipt,
         };
         match request.command {
             HostCommand::Health => {
@@ -190,6 +263,8 @@ impl LocalAgentRuntime {
                     .list_runs(
                         &command.owner_user_id,
                         command.scope,
+                        command.status,
+                        command.updated_after_unix_ms,
                         command.before_updated_at_unix_ms,
                         command.before_run_id.as_deref(),
                         command.limit,
@@ -266,6 +341,18 @@ impl LocalAgentRuntime {
                     )
                     .await?;
                 Ok(HostResult::ToolClaim { claim })
+            }
+            HostCommand::RenewToolClaim(command) => {
+                let renewed = self
+                    .renew_tool_claim(
+                        &command.owner_user_id,
+                        &command.invocation_id,
+                        &command.claim_token,
+                        command.expected_version,
+                        command.lease_duration_ms,
+                    )
+                    .await?;
+                Ok(HostResult::ToolClaimRenewed { renewed })
             }
             HostCommand::CommitTool(command) => {
                 let result = self
@@ -349,6 +436,13 @@ impl LocalAgentRuntime {
                     .await?;
                 Ok(HostResult::Run { run })
             }
+            HostCommand::GetEventCursor(command) => {
+                let cursor = self
+                    .store
+                    .latest_event_cursor_for_owner(&command.owner_user_id)
+                    .await?;
+                Ok(HostResult::EventCursor { cursor })
+            }
             HostCommand::ListEvents(command) => {
                 let events = self
                     .store
@@ -357,6 +451,9 @@ impl LocalAgentRuntime {
                         command.after_cursor,
                         command.limit,
                         command.run_id.as_deref(),
+                        command.event_type.as_deref(),
+                        command.newest_first,
+                        command.payload_mode,
                     )
                     .await?;
                 let next_cursor = events
@@ -376,6 +473,9 @@ impl LocalAgentRuntime {
                         command.after_cursor,
                         command.limit,
                         command.run_id.as_deref(),
+                        None,
+                        false,
+                        command.payload_mode,
                     )
                     .await?;
                 let next_cursor = events
@@ -455,6 +555,25 @@ impl LocalAgentRuntime {
 
     fn now(&self) -> Result<i64, LocalAgentRuntimeError> {
         (self.clock)()
+    }
+
+    fn claim_renewal_deadline(
+        &self,
+        lease_duration_ms: u64,
+    ) -> Result<(i64, i64), LocalAgentRuntimeError> {
+        if !(1_000..=300_000).contains(&lease_duration_ms) {
+            return Err(LocalAgentRuntimeError::InvalidRequest(
+                "claim lease must be between 1000 and 300000 milliseconds".to_string(),
+            ));
+        }
+        let now = self.now()?;
+        let lease_duration = i64::try_from(lease_duration_ms).map_err(|_| {
+            LocalAgentRuntimeError::InvalidRequest("claim lease is too large".to_string())
+        })?;
+        let claim_until = now.checked_add(lease_duration).ok_or_else(|| {
+            LocalAgentRuntimeError::InvalidRequest("claim lease overflow".to_string())
+        })?;
+        Ok((now, claim_until))
     }
 }
 

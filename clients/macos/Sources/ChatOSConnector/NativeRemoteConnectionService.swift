@@ -315,6 +315,7 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
 
     private func loadConnection(id: String) async throws -> RemoteConnection? {
         let now = Date()
+        pruneExpiredCache(now: now)
         if let cached = connectionCache[id], cached.expiresAt > now {
             return cached.connection
         }
@@ -384,16 +385,31 @@ public actor NativeRemoteConnectionService: RemoteConnectionServicing,
 
     private func cache(_ connections: [RemoteConnection]) {
         let now = Date()
+        pruneExpiredCache(now: now)
         for connection in connections {
             cache(connection, now: now)
         }
     }
 
     private func cache(_ connection: RemoteConnection, now: Date = Date()) {
+        pruneExpiredCache(now: now)
+        guard connectionCacheTTL > 0 else {
+            connectionCache.removeValue(forKey: connection.id)
+            return
+        }
         connectionCache[connection.id] = CachedRemoteConnection(
             connection: connection,
             expiresAt: now.addingTimeInterval(connectionCacheTTL)
         )
+    }
+
+    private func pruneExpiredCache(now: Date) {
+        connectionCache = connectionCache.filter { $0.value.expiresAt > now }
+    }
+
+    func cachedConnectionCount() -> Int {
+        pruneExpiredCache(now: Date())
+        return connectionCache.count
     }
 }
 

@@ -7,7 +7,7 @@ use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
     CommitToolCommand, CreateRunCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
     HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolOutcome,
-    ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    RenewToolClaimCommand, ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::atomic::AtomicI64;
@@ -158,6 +158,35 @@ async fn expired_read_only_tool_is_requeued() {
         first_claim.invocation.invocation_id
     );
     assert!(second_claim.invocation.version > first_claim.invocation.version);
+}
+
+#[tokio::test]
+async fn tool_claim_can_be_renewed_through_the_ipc_command() {
+    let (runtime, clock, claim) = prepare_claimed_tool(false).await;
+    clock.store(10_500, Ordering::Release);
+
+    let response = runtime
+        .try_handle(envelope(
+            "renew-tool",
+            HostCommand::RenewToolClaim(RenewToolClaimCommand {
+                owner_user_id: "user-1".to_string(),
+                invocation_id: claim.invocation.invocation_id.clone(),
+                claim_token: claim.claim_token.clone(),
+                expected_version: claim.invocation.version,
+                lease_duration_ms: 1_000,
+            }),
+        ))
+        .await
+        .expect("renew tool claim");
+    assert!(matches!(
+        response,
+        HostResult::ToolClaimRenewed { renewed: true }
+    ));
+
+    clock.store(11_001, Ordering::Release);
+    assert_eq!(runtime.initialize("user-1").await.expect("recover"), 0);
+    clock.store(11_501, Ordering::Release);
+    assert_eq!(runtime.initialize("user-1").await.expect("recover"), 1);
 }
 
 #[tokio::test]

@@ -198,9 +198,12 @@ extension StoryStudioViewModel {
                 let previousURL = try self.store.fileURL(
                     referenceVideo.filename, projectID: project.id, owner: owner
                 )
-                let previousData = try await Task.detached(priority: .userInitiated) {
-                    try Data(contentsOf: previousURL, options: .mappedIfSafe)
-                }.value
+                let previousData = try await AppCancellableDetachedWork.run {
+                    try AppBoundedFileReader.read(
+                        previousURL,
+                        maximumBytes: 512 * 1_024 * 1_024
+                    )
+                }
                 referenceVideoInput = .init(
                     name: intent.segment.videoGuidanceMode == .previousVideo
                         ? "previous-segment.mp4" : "source-video.mp4",

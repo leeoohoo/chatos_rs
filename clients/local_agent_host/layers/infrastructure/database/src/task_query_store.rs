@@ -12,12 +12,16 @@ pub(super) async fn list_graphs(
     storage: &SqliteClientStorage,
     owner_user_id: &str,
     scope: LocalTaskGraphListScope,
+    source_entity_type: Option<&str>,
+    source_entity_id: Option<&str>,
     before_updated_at_unix_ms: Option<i64>,
     before_graph_id: Option<&str>,
     limit: u32,
 ) -> Result<LocalTaskGraphPage, ClientStorageError> {
     validate_page(
         owner_user_id,
+        source_entity_type,
+        source_entity_id,
         before_updated_at_unix_ms,
         before_graph_id,
         limit,
@@ -29,6 +33,11 @@ pub(super) async fn list_graphs(
     };
     let cursor_filter = if before_updated_at_unix_ms.is_some() {
         " AND (updated_at_unix_ms < ? OR (updated_at_unix_ms = ? AND graph_id < ?))"
+    } else {
+        ""
+    };
+    let source_filter = if source_entity_type.is_some() {
+        " AND g.source_entity_type = ? AND g.source_entity_id = ?"
     } else {
         ""
     };
@@ -49,13 +58,16 @@ pub(super) async fn list_graphs(
                ELSE 'failed' \
              END AS status \
            FROM local_task_graphs g JOIN local_tasks t ON t.graph_id = g.graph_id \
-           WHERE g.owner_user_id = ? GROUP BY g.graph_id\
+           WHERE g.owner_user_id = ?{source_filter} GROUP BY g.graph_id\
          ) SELECT graph_id, owner_user_id, source_entity_type, source_entity_id, status, \
            task_count, succeeded_task_count, created_at_unix_ms, updated_at_unix_ms \
          FROM summaries WHERE 1 = 1{scope_filter}{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, graph_id DESC LIMIT ?"
     );
     let mut query = sqlx::query(&sql).bind(owner_user_id);
+    if let (Some(entity_type), Some(entity_id)) = (source_entity_type, source_entity_id) {
+        query = query.bind(entity_type).bind(entity_id);
+    }
     if let (Some(timestamp), Some(graph_id)) = (before_updated_at_unix_ms, before_graph_id) {
         query = query.bind(timestamp).bind(timestamp).bind(graph_id);
     }
@@ -105,6 +117,8 @@ fn count(value: i64) -> Result<u32, ClientStorageError> {
 
 fn validate_page(
     owner_user_id: &str,
+    source_entity_type: Option<&str>,
+    source_entity_id: Option<&str>,
     before_updated_at_unix_ms: Option<i64>,
     before_graph_id: Option<&str>,
     limit: u32,
@@ -112,6 +126,13 @@ fn validate_page(
     let owner_valid = !owner_user_id.trim().is_empty()
         && owner_user_id.len() <= 256
         && !owner_user_id.chars().any(char::is_control);
+    let source_valid = match (source_entity_type, source_entity_id) {
+        (None, None) => true,
+        (Some(entity_type), Some(entity_id)) => [entity_type, entity_id].into_iter().all(|value| {
+            !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+        }),
+        _ => false,
+    };
     let cursor_valid = match (before_updated_at_unix_ms, before_graph_id) {
         (None, None) => true,
         (Some(timestamp), Some(graph_id)) => {
@@ -122,7 +143,7 @@ fn validate_page(
         }
         _ => false,
     };
-    if !owner_valid || !cursor_valid || !(1..=100).contains(&limit) {
+    if !owner_valid || !source_valid || !cursor_valid || !(1..=100).contains(&limit) {
         return Err(ClientStorageError::InvalidState(
             "invalid Task Graph list page request".to_string(),
         ));

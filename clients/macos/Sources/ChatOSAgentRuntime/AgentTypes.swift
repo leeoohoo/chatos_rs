@@ -206,10 +206,23 @@ public struct AgentSettingsStore: Sendable {
         return value
     }
     public func saveManaged(_ value: AgentRuntimePreferences) throws {
+        _ = try saveManagedIfChanged(value)
+    }
+    @discardableResult
+    public func saveManagedIfChanged(_ value: AgentRuntimePreferences) throws -> Bool {
         try value.validate()
         let defaults = suiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
-        defaults.set(try JSONEncoder().encode(value), forKey: managedKey)
+        let existingValue = defaults.data(forKey: managedKey).flatMap {
+            try? JSONDecoder().decode(AgentRuntimePreferences.self, from: $0)
+        }
+        let managedValueChanged = existingValue != value
+        let hasLegacyValue = defaults.object(forKey: key) != nil
+        guard managedValueChanged || hasLegacyValue else { return false }
+        if managedValueChanged {
+            defaults.set(try JSONEncoder().encode(value), forKey: managedKey)
+        }
         defaults.removeObject(forKey: key)
+        return true
     }
     public func save(_ value: AgentRuntimePreferences) throws {
         try value.validate()

@@ -99,6 +99,7 @@ extension NativeLocalConnectorService {
                 }
                 let launch = try NativePluginManifestLoader.prepare(
                     record: record,
+                    manifest: manifest,
                     componentKey: componentKey,
                     serverKey: componentKey,
                     adapterSessionID: adapterSessionID,
@@ -260,10 +261,7 @@ extension NativeLocalConnectorService {
     ) throws -> NativePluginManifest {
         let url = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .appendingPathComponent("chatos.plugin.json")
-        let manifest = try JSONDecoder().decode(
-            NativePluginManifest.self,
-            from: Data(contentsOf: url, options: .mappedIfSafe)
-        )
+        let manifest = try NativePluginManifestLoader.loadManifest(from: url)
         guard manifest.schemaVersion == 3,
               manifest.version == record.version,
               !manifest.mcpServers.isEmpty else {

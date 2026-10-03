@@ -24,6 +24,24 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
+    public func listTodoSources(
+        ownerUserID: String,
+        todoIDs: [String]
+    ) throws -> [LocalAgentTodoSourceLink] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let ids = Array(Set(todoIDs)).sorted()
+        guard ids.count <= 500 else { throw AgentGroupChatError.invalidField("todoIDs") }
+        for id in ids {
+            try AgentGroupChatValidation.identifier(id, field: "todoID")
+        }
+        return try AgentTodoRepository.listSources(
+            database,
+            ownerUserID: ownerUserID,
+            todoIDs: ids,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
     public func listAgentTodoDependencies(
         ownerUserID: String,
         agentID: String,
@@ -39,6 +57,24 @@ extension SQLiteAgentGroupChatStore {
             database,
             ownerUserID: ownerUserID,
             todoID: todoID,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func listTodoDependencies(
+        ownerUserID: String,
+        todoIDs: [String]
+    ) throws -> [LocalAgentTodoDependency] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let ids = Array(Set(todoIDs)).sorted()
+        guard ids.count <= 500 else { throw AgentGroupChatError.invalidField("todoIDs") }
+        for id in ids {
+            try AgentGroupChatValidation.identifier(id, field: "todoID")
+        }
+        return try AgentTodoRepository.listDependencies(
+            database,
+            ownerUserID: ownerUserID,
+            todoIDs: ids,
             preparedStatement: recordPreparedStatement
         )
     }
@@ -94,41 +130,51 @@ extension SQLiteAgentGroupChatStore {
             "DELETE FROM local_agent_todo_dependencies WHERE owner_user_id = ? AND todo_id = ?",
             [.text(ownerUserID), .text(todoID)]
         )
-        for dependency in dependencies {
-            guard dependency.prerequisiteTodoID != todoID,
-                  let prerequisite = try readTodo(
-                      ownerUserID: ownerUserID,
-                      agentID: dependency.prerequisiteAgentID,
-                      todoID: dependency.prerequisiteTodoID
-                  ), prerequisite.teamRoomID == todo.teamRoomID else {
-                throw AgentGroupChatError.invalidField("todoDependencies")
-            }
-            let createsCycle = try AgentTodoRepository.dependencyCreatesCycle(
-                database,
-                ownerUserID: ownerUserID,
-                prerequisiteTodoID: dependency.prerequisiteTodoID,
-                todoID: todoID,
-                preparedStatement: recordPreparedStatement
-            )
-            guard !createsCycle else {
-                throw AgentGroupChatError.invalidField("todoDependencyCycle")
-            }
-            try execute(
-                """
-                INSERT INTO local_agent_todo_dependencies (
-                    owner_user_id, todo_id, prerequisite_todo_id, created_at_unix_ms
-                ) VALUES (?, ?, ?, ?)
-                """,
-                [
-                    .text(ownerUserID), .text(todoID),
-                    .text(dependency.prerequisiteTodoID), .integer(nowUnixMs),
-                ]
-            )
+        let prerequisiteIDs = dependencies.map(\.prerequisiteTodoID)
+        guard !prerequisiteIDs.contains(todoID) else {
+            throw AgentGroupChatError.invalidField("todoDependencies")
         }
-        return try listAgentTodoDependencies(
+        let prerequisiteRecords = try AgentTodoRepository.findMany(
+            database,
             ownerUserID: ownerUserID,
-            agentID: agentID,
-            todoID: todoID
+            todoIDs: prerequisiteIDs,
+            preparedStatement: recordPreparedStatement
+        )
+        let prerequisitesByID = Dictionary(
+            uniqueKeysWithValues: prerequisiteRecords.map { ($0.id, $0) }
+        )
+        guard dependencies.allSatisfy({ dependency in
+            guard let prerequisite = prerequisitesByID[dependency.prerequisiteTodoID] else {
+                return false
+            }
+            return prerequisite.agentID == dependency.prerequisiteAgentID
+                && prerequisite.teamRoomID == todo.teamRoomID
+        }) else {
+            throw AgentGroupChatError.invalidField("todoDependencies")
+        }
+        let createsCycle = try AgentTodoRepository.dependenciesCreateCycle(
+            database,
+            ownerUserID: ownerUserID,
+            prerequisiteTodoIDs: prerequisiteIDs,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
+        )
+        guard !createsCycle else {
+            throw AgentGroupChatError.invalidField("todoDependencyCycle")
+        }
+        try AgentTodoRepository.insertDependencies(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            prerequisiteTodoIDs: prerequisiteIDs,
+            nowUnixMs: nowUnixMs,
+            preparedStatement: recordPreparedStatement
+        )
+        return try AgentTodoRepository.listDependencies(
+            database,
+            ownerUserID: ownerUserID,
+            todoID: todoID,
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -145,40 +191,39 @@ extension SQLiteAgentGroupChatStore {
         guard !sources.isEmpty, sources.count <= 64, nowUnixMs >= 0 else {
             throw AgentGroupChatError.invalidField("sourceMessageRefs")
         }
+        for source in sources {
+            try AgentGroupChatValidation.identifier(
+                source.roomID,
+                field: "sourceConversation"
+            )
+            try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
+        }
         return try transaction {
             guard try readTodo(ownerUserID: ownerUserID, agentID: agentID, todoID: todoID) != nil else {
                 throw AgentGroupChatError.notFound
             }
-            for source in sources {
-                try AgentGroupChatValidation.identifier(
-                    source.roomID,
-                    field: "sourceConversation"
-                )
-                try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
-                guard try readMessage(
-                    ownerUserID: ownerUserID,
-                    messageID: source.messageID
-                )?.roomID == source.roomID else {
-                    throw AgentGroupChatError.invalidField("sourceMessageRefs")
-                }
-                try execute(
-                    """
-                    INSERT OR IGNORE INTO local_agent_todo_sources (
-                        owner_user_id, todo_id, conversation_id, message_id, relation,
-                        created_at_unix_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        .text(ownerUserID), .text(todoID), .text(source.roomID),
-                        .text(source.messageID), .text(source.relation.rawValue),
-                        .integer(nowUnixMs),
-                    ]
-                )
-            }
-            return try listAgentTodoSources(
+            let messageRoomIDs = try AgentMessageRepository.roomIDs(
+                database,
                 ownerUserID: ownerUserID,
-                agentID: agentID,
-                todoID: todoID
+                messageIDs: sources.map(\.messageID),
+                preparedStatement: recordPreparedStatement
+            )
+            guard sources.allSatisfy({ messageRoomIDs[$0.messageID] == $0.roomID }) else {
+                throw AgentGroupChatError.invalidField("sourceMessageRefs")
+            }
+            try AgentTodoRepository.insertSources(
+                database,
+                ownerUserID: ownerUserID,
+                todoID: todoID,
+                sources: sources,
+                nowUnixMs: nowUnixMs,
+                preparedStatement: recordPreparedStatement
+            )
+            return try AgentTodoRepository.listSources(
+                database,
+                ownerUserID: ownerUserID,
+                todoID: todoID,
+                preparedStatement: recordPreparedStatement
             )
         }
     }

@@ -44,17 +44,30 @@ struct NativeApprovalAgentTools: Sendable {
 
     private func listDirectory(_ arguments: [String: Any], projectRoot: URL) throws -> String {
         let directory = try resolve(arguments["path"] as? String ?? ".", root: projectRoot)
-        let values = try FileManager.default.contentsOfDirectory(
+        guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
-            options: [.skipsHiddenFiles]
-        )
-        return values.prefix(200).map { item in
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else {
+            throw NativeApprovalToolError.unreadablePath
+        }
+        var values: [URL] = []
+        var truncated = false
+        for case let item as URL in enumerator {
+            guard values.count < 200 else {
+                truncated = true
+                break
+            }
+            values.append(item)
+        }
+        var lines = values.map { item in
             let metadata = try? item.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
             return metadata?.isDirectory == true
                 ? "dir  \(item.lastPathComponent)/"
                 : "file \(item.lastPathComponent) \(metadata?.fileSize ?? 0)B"
-        }.joined(separator: "\n")
+        }
+        if truncated { lines.append("… 目录内容已截断（最多显示 200 项）") }
+        return lines.joined(separator: "\n")
     }
 
     private func searchText(_ arguments: [String: Any], projectRoot: URL) throws -> String {
@@ -80,7 +93,10 @@ struct NativeApprovalAgentTools: Sendable {
             inspectedFiles += 1
             inspectedBytes += size
             if inspectedFiles > maximumSearchFiles || inspectedBytes > maximumSearchBytes { break }
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            guard let data = try? NativeBoundedFileReader.read(
+                file,
+                maximumBytes: maximumReadBytes
+            ), let text = String(data: data, encoding: .utf8) else { continue }
             for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
                 where line.localizedCaseInsensitiveContains(query) {
                 matches.append("\(relative(file, to: projectRoot)):\(index + 1): \(line.prefix(500))")
@@ -112,7 +128,14 @@ struct NativeApprovalAgentTools: Sendable {
               (values.fileSize ?? maximumReadBytes + 1) <= maximumReadBytes else {
             throw NativeApprovalToolError.fileTooLarge
         }
-        return try Data(contentsOf: file, options: .mappedIfSafe)
+        do {
+            return try NativeBoundedFileReader.read(
+                file,
+                maximumBytes: maximumReadBytes
+            )
+        } catch {
+            throw NativeApprovalToolError.fileTooLarge
+        }
     }
 
     private func relative(_ file: URL, to root: URL) -> String {

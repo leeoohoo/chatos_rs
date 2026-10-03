@@ -19,6 +19,18 @@ struct NativePreparedPluginLaunch: Sendable {
 }
 
 enum NativePluginManifestLoader {
+    static let maximumManifestBytes = 2 * 1_024 * 1_024
+
+    static func loadManifest(from url: URL) throws -> NativePluginManifest {
+        try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: NativeBoundedFileReader.read(
+                url,
+                maximumBytes: maximumManifestBytes
+            )
+        )
+    }
+
     static func prepare(
         record: NativeInstalledPluginRecord,
         componentKey requestedComponentKey: String,
@@ -36,10 +48,44 @@ enum NativePluginManifestLoader {
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
         let manifestURL = installationURL.appendingPathComponent("chatos.plugin.json")
-        let manifest = try JSONDecoder().decode(
-            NativePluginManifest.self,
-            from: Data(contentsOf: manifestURL, options: .mappedIfSafe)
+        let manifest = try loadManifest(from: manifestURL)
+        return try prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: requestedComponentKey,
+            serverKey: serverKey,
+            adapterSessionID: adapterSessionID,
+            ownerUserID: ownerUserID,
+            deviceID: deviceID,
+            workspaceID: workspaceID,
+            workspaceRoot: workspaceRoot,
+            projectID: projectID,
+            projectName: projectName,
+            permissionSnapshot: permissionSnapshot,
+            runtimeRootURL: runtimeRootURL
         )
+    }
+
+    /// Prepares a launch from a manifest that the caller already loaded for the same installed
+    /// record. This avoids reading and decoding the immutable installed manifest once per MCP
+    /// component while retaining all launch-time record, schema, component and permission checks.
+    static func prepare(
+        record: NativeInstalledPluginRecord,
+        manifest: NativePluginManifest,
+        componentKey requestedComponentKey: String,
+        serverKey: String?,
+        adapterSessionID: String,
+        ownerUserID: String,
+        deviceID: String,
+        workspaceID: String? = nil,
+        workspaceRoot: URL?,
+        projectID: String? = nil,
+        projectName: String? = nil,
+        permissionSnapshot: Set<String>,
+        runtimeRootURL: URL
+    ) throws -> NativePreparedPluginLaunch {
+        let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+            .standardizedFileURL
         guard manifest.schemaVersion == 3,
               manifest.version == record.version else {
             throw NativePluginRuntimeError.invalidManifest("Plugin manifest 与已安装 Release 不一致")

@@ -323,9 +323,8 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         guard !urls.isEmpty else { return }
         state.attachmentError = nil
         Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                loadAgentChatAttachmentFiles(urls)
-            }.value
+            let result = await ConversationSessionViewModel.loadAttachmentFilesOffMain(urls)
+            guard !Task.isCancelled else { return }
             append(result.attachments, errors: result.errors)
         }
     }
@@ -368,37 +367,6 @@ struct AgentChatComposerView<LeadingControl: View>: View {
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         return "\(prefix) \(formatter.string(from: Date())).\(fileExtension)"
     }
-}
-
-private func loadAgentChatAttachmentFiles(
-    _ urls: [URL]
-) -> (attachments: [ConversationAttachmentDraft], errors: [String]) {
-    var attachments: [ConversationAttachmentDraft] = []
-    var errors: [String] = []
-    for url in urls {
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .contentTypeKey])
-            guard values.isRegularFile == true else {
-                errors.append("“\(url.lastPathComponent)”不是可发送的文件")
-                continue
-            }
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-            let type = values.contentType ?? UTType(filenameExtension: url.pathExtension)
-            let mimeType = type?.preferredMIMEType ?? "application/octet-stream"
-            attachments.append(.init(
-                name: url.lastPathComponent,
-                mimeType: mimeType,
-                kind: agentChatAttachmentKind(mimeType),
-                origin: .file,
-                data: data
-            ))
-        } catch {
-            errors.append("无法读取“\(url.lastPathComponent)”：\(error.localizedDescription)")
-        }
-    }
-    return (attachments, errors)
 }
 
 private func agentChatAttachmentKind(_ mimeType: String) -> ConversationAttachmentKind {

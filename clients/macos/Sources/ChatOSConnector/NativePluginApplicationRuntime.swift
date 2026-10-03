@@ -1,5 +1,6 @@
 import ChatOSProcessRuntime
 import ChatOSCore
+import ChatOSNetworking
 import Darwin
 import Foundation
 
@@ -229,23 +230,20 @@ actor NativePluginApplicationRuntime {
         instance.exitSource.cancel()
         instance.standardOutput.fileHandleForReading.readabilityHandler = nil
         instance.standardError.fileHandleForReading.readabilityHandler = nil
+        let exitSignal = NativeProcessExitSignal.reap(processID: instance.processID)
         _ = chatos_signal_process_group(instance.processID, SIGTERM)
-        let deadline = ContinuousClock.now + .seconds(2)
-        var reaped = false
-        while ContinuousClock.now < deadline {
-            var exitCode: Int32 = 0
-            var didExit: Int32 = 0
-            _ = chatos_try_reap_process(instance.processID, &exitCode, &didExit)
-            reaped = didExit != 0
-            if reaped, kill(-instance.processID, 0) != 0 { break }
-            try? await Task.sleep(for: .milliseconds(50))
+        let exitCode = await exitSignal.waitAsync(timeout: 2)
+        if exitCode != nil,
+           kill(-instance.processID, 0) == 0 {
+            // The group leader is gone but a descendant is still cleaning up.
+            // Give it one short grace window without waking every 50ms.
+            try? await Task.sleep(for: .milliseconds(250))
         }
         if kill(-instance.processID, 0) == 0 {
             _ = chatos_signal_process_group(instance.processID, SIGKILL)
         }
-        if !reaped {
-            var exitCode: Int32 = 0
-            _ = chatos_reap_process(instance.processID, &exitCode)
+        if exitCode == nil {
+            _ = await exitSignal.waitAsync(timeout: 2)
         }
         processRegistry.unregister(pid: instance.processID)
     }
@@ -298,7 +296,10 @@ actor NativePluginApplicationRuntime {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 0.7
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await BoundedURLSessionDataLoader.load(
+                request: request,
+                maximumBytes: 64 * 1_024
+            )
             return (response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } == true
         } catch {
             return false
@@ -320,7 +321,10 @@ actor NativePluginApplicationRuntime {
             throw NativeConnectorError.pluginInstallation("Plugin 应用可执行文件名无效")
         }
         let packageJSONURL = installationURL.appendingPathComponent("package.json")
-        let data = try Data(contentsOf: packageJSONURL, options: .mappedIfSafe)
+        let data = try NativeBoundedFileReader.read(
+            packageJSONURL,
+            maximumBytes: 1 * 1_024 * 1_024
+        )
         guard let package = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let packageName = package["name"] as? String else {
             throw NativeConnectorError.pluginInstallation("Plugin package.json 无效")

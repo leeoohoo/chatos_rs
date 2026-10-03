@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 struct NotepadMarkdownEditor: NSViewRepresentable {
     @Binding var text: String
-    var onPasteImage: (NotepadImageUpload, String) -> Void
+    var onPasteImage: (NotepadPastedImageCandidate, String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -81,7 +81,7 @@ struct NotepadMarkdownEditor: NSViewRepresentable {
 }
 
 private final class NotepadMarkdownNativeTextView: NSTextView {
-    var onPasteImage: ((NotepadImageUpload, String) -> Void)?
+    var onPasteImage: ((NotepadPastedImageCandidate, String) -> Void)?
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -109,53 +109,49 @@ private final class NotepadMarkdownNativeTextView: NSTextView {
     }
 }
 
+enum NotepadPastedImageCandidate: Sendable {
+    case upload(NotepadImageUpload)
+    case localFile(URL)
+}
+
 @MainActor
 private enum NotepadImagePasteboardReader {
-    static func image(from pasteboard: NSPasteboard) -> NotepadImageUpload? {
+    private static let maximumBytes = 20 * 1_024 * 1_024
+
+    static func image(from pasteboard: NSPasteboard) -> NotepadPastedImageCandidate? {
         let pngType = NSPasteboard.PasteboardType("public.png")
         if let data = pasteboard.data(forType: pngType), !data.isEmpty {
-            return upload(data: data, mimeType: "image/png", extension: "png")
+            return upload(data: data, mimeType: "image/png", extension: "png").map(Self.candidate)
         }
 
         let jpegType = NSPasteboard.PasteboardType("public.jpeg")
         if let data = pasteboard.data(forType: jpegType), !data.isEmpty {
-            return upload(data: data, mimeType: "image/jpeg", extension: "jpg")
+            return upload(data: data, mimeType: "image/jpeg", extension: "jpg").map(Self.candidate)
         }
 
         let webPType = NSPasteboard.PasteboardType("org.webmproject.webp")
         if let data = pasteboard.data(forType: webPType), !data.isEmpty {
-            return upload(data: data, mimeType: "image/webp", extension: "webp")
+            return upload(data: data, mimeType: "image/webp", extension: "webp").map(Self.candidate)
         }
 
         if let tiff = pasteboard.data(forType: .tiff),
-           let image = NSImage(data: tiff),
-           let png = image.notepadPNGData {
-            return upload(data: png, mimeType: "image/png", extension: "png")
+           !tiff.isEmpty, tiff.count <= maximumBytes {
+            return upload(data: tiff, mimeType: "image/tiff", extension: "tiff")
+                .map(Self.candidate)
         }
 
         guard let url = fileURL(from: pasteboard),
               let type = UTType(filenameExtension: url.pathExtension),
-              type.conforms(to: .image),
-              let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
-              !data.isEmpty else { return nil }
-        if type.conforms(to: .png) {
-            return NotepadImageUpload(data: data, mimeType: "image/png", name: url.lastPathComponent)
-        }
-        if type.conforms(to: .jpeg) {
-            return NotepadImageUpload(data: data, mimeType: "image/jpeg", name: url.lastPathComponent)
-        }
-        if type.identifier == UTType.webP.identifier {
-            return NotepadImageUpload(data: data, mimeType: "image/webp", name: url.lastPathComponent)
-        }
-        guard let image = NSImage(data: data), let png = image.notepadPNGData else { return nil }
-        return upload(data: png, mimeType: "image/png", extension: "png")
+              type.conforms(to: .image) else { return nil }
+        return .localFile(url)
     }
 
     private static func upload(
         data: Data,
         mimeType: String,
         extension fileExtension: String
-    ) -> NotepadImageUpload {
+    ) -> NotepadImageUpload? {
+        guard !data.isEmpty, data.count <= maximumBytes else { return nil }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
         return NotepadImageUpload(
@@ -176,12 +172,8 @@ private enum NotepadImagePasteboardReader {
               let url = URL(string: value), url.isFileURL else { return nil }
         return url
     }
-}
 
-private extension NSImage {
-    var notepadPNGData: Data? {
-        guard let tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
+    private static func candidate(_ upload: NotepadImageUpload) -> NotepadPastedImageCandidate {
+        .upload(upload)
     }
 }

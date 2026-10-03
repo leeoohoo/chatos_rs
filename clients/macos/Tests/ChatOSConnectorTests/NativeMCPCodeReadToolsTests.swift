@@ -50,6 +50,32 @@ struct NativeMCPCodeReadToolsTests {
     }
 
     @Test
+    func searchBoundsVeryLongMatchingLines() throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let content = Data(("BOUNDARY_NEEDLE " + String(repeating: "x", count: 1_024 * 1_024)).utf8)
+        for index in 0..<8 {
+            try content.write(to: fixture.root.appendingPathComponent("large-\(index).txt"))
+        }
+        let startedAt = ContinuousClock.now
+
+        let searched = try fixture.tools().call(
+            name: "search_text",
+            arguments: [
+                "pattern": .string("BOUNDARY_NEEDLE"),
+                "max_results": .number(5),
+            ]
+        ).object()
+
+        #expect(searched.number("count") == 5)
+        #expect(searched.bool("truncated") == true)
+        #expect(try searched.array("results").allSatisfy { result in
+            try (result.object().string("text")?.count ?? 0) <= 400
+        })
+        #expect(ContinuousClock.now - startedAt < .seconds(5))
+    }
+
+    @Test
     func presentsAProjectFileInThePetWorkbench() throws {
         let fixture = try Fixture()
         defer { fixture.dispose() }

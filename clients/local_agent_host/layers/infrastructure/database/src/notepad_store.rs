@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::notepad_support::{
-    decode_note, descendant_folders, ensure_folder_exists, fetch_note, folder_exists,
-    insert_folder_ancestors, replace_folder_prefix, NOTE_SELECT,
+    decode_note, ensure_folder_exists, fetch_note, folder_exists, insert_folder_ancestors,
+    NOTE_SELECT,
 };
 use super::{
     is_unique_violation, ClientStorageError, IdempotentCommand, LocalNotepadImageWrite,
@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, UpdateNotepadNoteCommand,
 };
-use sqlx::Row;
 
 #[async_trait]
 impl LocalNotepadStore for SqliteClientStorage {
@@ -86,7 +85,28 @@ impl LocalNotepadStore for SqliteClientStorage {
                     "target notepad folder already exists: {to}"
                 )));
             }
-            let folders = descendant_folders(&mut connection, owner_user_id, from).await?;
+            insert_folder_ancestors(&mut connection, owner_user_id, to, now_unix_ms).await?;
+            sqlx::query(
+                "INSERT INTO local_notepad_folders(\
+                 owner_user_id, path, created_at_unix_ms, updated_at_unix_ms) \
+                 SELECT owner_user_id, \
+                   CASE WHEN path = ? THEN ? ELSE ? || substr(path, length(?) + 1) END, \
+                   ?, ? FROM local_notepad_folders WHERE owner_user_id = ? \
+                   AND (path = ? OR instr(path, ? || '/') = 1) \
+                 ON CONFLICT(owner_user_id, path) DO NOTHING",
+            )
+            .bind(from)
+            .bind(to)
+            .bind(to)
+            .bind(from)
+            .bind(now_unix_ms)
+            .bind(now_unix_ms)
+            .bind(owner_user_id)
+            .bind(from)
+            .bind(from)
+            .execute(&mut *connection)
+            .await
+            .db()?;
             sqlx::query(
                 "DELETE FROM local_notepad_folders WHERE owner_user_id = ? \
                  AND (path = ? OR instr(path, ? || '/') = 1)",
@@ -97,40 +117,25 @@ impl LocalNotepadStore for SqliteClientStorage {
             .execute(&mut *connection)
             .await
             .db()?;
-            insert_folder_ancestors(&mut connection, owner_user_id, to, now_unix_ms).await?;
-            for folder in folders {
-                let renamed = replace_folder_prefix(&folder, from, to);
-                insert_folder_ancestors(&mut connection, owner_user_id, &renamed, now_unix_ms)
-                    .await?;
-            }
-            let notes = sqlx::query(
-                "SELECT note_id, folder FROM local_notepad_notes WHERE owner_user_id = ? \
+            let affected = sqlx::query(
+                "UPDATE local_notepad_notes SET folder = CASE \
+                   WHEN folder = ? THEN ? ELSE ? || substr(folder, length(?) + 1) END, \
+                 version = version + 1, updated_at_unix_ms = ? \
+                 WHERE owner_user_id = ? \
                  AND (folder = ? OR instr(folder, ? || '/') = 1)",
             )
+            .bind(from)
+            .bind(to)
+            .bind(to)
+            .bind(from)
+            .bind(now_unix_ms)
             .bind(owner_user_id)
             .bind(from)
             .bind(from)
-            .fetch_all(&mut *connection)
+            .execute(&mut *connection)
             .await
-            .db()?;
-            for row in &notes {
-                let note_id: String = row.try_get("note_id").db()?;
-                let folder: String = row.try_get("folder").db()?;
-                sqlx::query(
-                    "UPDATE local_notepad_notes SET folder = ?, version = version + 1, \
-                     updated_at_unix_ms = ? WHERE owner_user_id = ? AND note_id = ?",
-                )
-                .bind(replace_folder_prefix(&folder, from, to))
-                .bind(now_unix_ms)
-                .bind(owner_user_id)
-                .bind(note_id)
-                .execute(&mut *connection)
-                .await
-                .db()?;
-            }
-            let affected = u64::try_from(notes.len()).map_err(|_| {
-                ClientStorageError::InvalidState("notepad note count exceeds u64".to_string())
-            })?;
+            .db()?
+            .rows_affected();
             Self::record_receipt(&mut connection, command, &affected, now_unix_ms).await?;
             Ok(affected)
         }

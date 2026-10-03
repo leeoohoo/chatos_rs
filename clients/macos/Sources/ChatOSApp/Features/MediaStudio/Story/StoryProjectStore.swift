@@ -3,7 +3,28 @@ import CryptoKit
 import Foundation
 
 actor StoryProjectStore {
-    struct Snapshot: Sendable { var projects: [StoryProject]; var unreadableCount: Int }
+    nonisolated static let maximumProjectBytes = 16 * 1_024 * 1_024
+    nonisolated static let maximumRunBytes = 64 * 1_024 * 1_024
+    nonisolated static let defaultProjectPageSize = 40
+    nonisolated static let defaultHistoryPageSize = 20
+
+    struct PageCursor: Sendable, Equatable {
+        var modifiedAt: Date
+        var filename: String
+    }
+    struct Snapshot: Sendable {
+        var projects: [StoryProject]
+        var unreadableCount: Int
+        var nextCursor: PageCursor? = nil
+    }
+    struct FileCandidate {
+        var url: URL
+        var cursor: PageCursor
+    }
+    struct FilePage {
+        var candidates: ArraySlice<FileCandidate>
+        var nextCursor: PageCursor?
+    }
     struct AssetImageGenerationIntent: Sendable {
         var project: StoryProject
         var resource: StoryResource
@@ -26,18 +47,50 @@ actor StoryProjectStore {
             .appendingPathComponent("ChatOSSwift/StoryStudio", isDirectory: true)).resolvingSymlinksInPath()
     }
 
-    func load(owner: String) throws -> Snapshot {
+    func load(owner: String, after cursor: PageCursor? = nil,
+              limit requestedLimit: Int = defaultProjectPageSize) throws -> Snapshot {
         let directory = accountDirectory(owner)
         guard FileManager.default.fileExists(atPath: directory.path) else { return .init(projects: [], unreadableCount: 0) }
+        let limit = min(max(requestedLimit, 1), 200)
         var projects: [StoryProject] = []
         var unreadable = 0
-        for folder in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+        guard let folders = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { throw CocoaError(.fileReadUnknown) }
+        var candidates: [FileCandidate] = []
+        candidates.reserveCapacity(limit + 1)
+        for case let folder as URL in folders {
+            try Task.checkCancellation()
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
             guard UUID(uuidString: folder.lastPathComponent) != nil else { continue }
             let manifest = folder.appendingPathComponent("project.json")
             guard FileManager.default.fileExists(atPath: manifest.path) else { continue }
+            let modifiedAt = (try? manifest.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate) ?? .distantPast
+            let candidate = FileCandidate(
+                url: manifest,
+                cursor: .init(modifiedAt: modifiedAt, filename: folder.lastPathComponent)
+            )
+            guard cursor.map({ Self.isAfter(candidate.cursor, cursor: $0) }) ?? true else { continue }
+            Self.retain(candidate, in: &candidates, capacity: limit + 1)
+        }
+        let hasMore = candidates.count > limit
+        let page = candidates.prefix(limit)
+        for candidate in page {
+            try Task.checkCancellation()
+            let manifest = candidate.url
+            let folder = manifest.deletingLastPathComponent()
             do {
-                guard (try manifest.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 16 * 1024 * 1024 else { throw StoryError.invalidProject }
-                var project = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
+                var project = try JSONDecoder().decode(
+                    StoryProject.self,
+                    from: AppBoundedFileReader.read(
+                        manifest,
+                        maximumBytes: Self.maximumProjectBytes
+                    )
+                )
                 guard project.id.uuidString == folder.lastPathComponent else { throw StoryError.invalidProject }
                 let repairedContinuity = StoryContinuityContext.reconcileInheritedFirstFrames(&project)
                 try project.validate()
@@ -58,7 +111,63 @@ actor StoryProjectStore {
                 projects.append(project)
             } catch { unreadable += 1 } // Never replace or delete an unreadable manifest.
         }
-        return .init(projects: projects.sorted { $0.updatedAt > $1.updatedAt }, unreadableCount: unreadable)
+        return .init(
+            projects: projects.sorted { $0.updatedAt > $1.updatedAt },
+            unreadableCount: unreadable,
+            nextCursor: hasMore ? page.last?.cursor : nil
+        )
+    }
+
+    /// Selects a stable newest-first page from file metadata without decoding every JSON body.
+    /// The caller can continue with `nextCursor`; no record is migrated, rewritten, or deleted.
+    func filePage(in directory: URL, after cursor: PageCursor?, limit requestedLimit: Int,
+                  accepts: (URL) -> Bool) throws -> FilePage {
+        guard FileManager.default.fileExists(atPath: directory.path) else {
+            return .init(candidates: [], nextCursor: nil)
+        }
+        let limit = min(max(requestedLimit, 1), 200)
+        guard let urls = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { throw CocoaError(.fileReadUnknown) }
+        var candidates: [FileCandidate] = []
+        candidates.reserveCapacity(limit + 1)
+        for case let url as URL in urls {
+            try Task.checkCancellation()
+            guard accepts(url),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+            else { continue }
+            let modifiedAt = (try? url.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate) ?? .distantPast
+            let candidate = FileCandidate(
+                url: url,
+                cursor: .init(modifiedAt: modifiedAt, filename: url.lastPathComponent)
+            )
+            guard cursor.map({ Self.isAfter(candidate.cursor, cursor: $0) }) ?? true else { continue }
+            Self.retain(candidate, in: &candidates, capacity: limit + 1)
+        }
+        let hasMore = candidates.count > limit
+        let page = candidates.prefix(limit)
+        return .init(candidates: page, nextCursor: hasMore ? page.last?.cursor : nil)
+    }
+
+    static func retain(_ candidate: FileCandidate, in values: inout [FileCandidate], capacity: Int) {
+        let index = values.firstIndex { isNewer(candidate.cursor, than: $0.cursor) } ?? values.endIndex
+        guard index < capacity else { return }
+        values.insert(candidate, at: index)
+        if values.count > capacity { values.removeLast() }
+    }
+
+    static func isNewer(_ lhs: PageCursor, than rhs: PageCursor) -> Bool {
+        if lhs.modifiedAt != rhs.modifiedAt { return lhs.modifiedAt > rhs.modifiedAt }
+        return lhs.filename > rhs.filename
+    }
+
+    static func isAfter(_ value: PageCursor, cursor: PageCursor) -> Bool {
+        if value.modifiedAt != cursor.modifiedAt { return value.modifiedAt < cursor.modifiedAt }
+        return value.filename < cursor.filename
     }
 
     func save(_ input: StoryProject, owner: String) throws {
@@ -67,7 +176,9 @@ actor StoryProjectStore {
         try project.validate()
         let folder = directory(owner: owner, projectID: project.id)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try JSONEncoder().encode(project).write(to: folder.appendingPathComponent("project.json"), options: .atomic)
+        let data = try JSONEncoder().encode(project)
+        guard data.count <= Self.maximumProjectBytes else { throw StoryError.invalidProject }
+        try data.write(to: folder.appendingPathComponent("project.json"), options: .atomic)
     }
 
     /// Saves an ordinary project edit while retaining provider-owned state for video jobs
@@ -315,25 +426,49 @@ actor StoryProjectStore {
         let folder = directory(owner: owner, projectID: run.projectID).appendingPathComponent("runs", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(run)
-        guard data.count <= 64 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
+        guard data.count <= Self.maximumRunBytes else { throw StoryAgentError.invalidRun }
         try data.write(to: folder.appendingPathComponent("\(run.id).json"), options: .atomic)
     }
 
-    func loadRuns(owner: String, projectID: UUID) throws -> (runs: [StoryAgentRun], unreadable: Int) {
+    func loadRuns(owner: String, projectID: UUID, after cursor: PageCursor? = nil,
+                  limit: Int = defaultHistoryPageSize)
+        throws -> (runs: [StoryAgentRun], unreadable: Int, nextCursor: PageCursor?) {
         let folder = directory(owner: owner, projectID: projectID).appendingPathComponent("runs", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: folder.path) else { return ([], 0) }
         var runs: [StoryAgentRun] = []; var unreadable = 0
-        for url in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey]) {
-            guard url.pathExtension == "json", let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { continue }
+        let page = try filePage(in: folder, after: cursor, limit: limit) {
+            $0.pathExtension == "json" && UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil
+        }
+        for candidate in page.candidates {
+            try Task.checkCancellation()
+            let url = candidate.url
+            guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { continue }
             do {
-                guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 64 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
-                let run = try JSONDecoder().decode(StoryAgentRun.self, from: Data(contentsOf: url))
+                let run = try JSONDecoder().decode(
+                    StoryAgentRun.self,
+                    from: AppBoundedFileReader.read(
+                        url,
+                        maximumBytes: Self.maximumRunBytes
+                    )
+                )
                 guard run.id == id else { throw StoryAgentError.invalidRun }
                 try run.validate(owner: owner, projectID: projectID)
                 runs.append(run)
             } catch { unreadable += 1 }
         }
-        return (runs.sorted { $0.updatedAt > $1.updatedAt }, unreadable)
+        return (runs.sorted { $0.updatedAt > $1.updatedAt }, unreadable, page.nextCursor)
+    }
+
+    func loadRun(owner: String, projectID: UUID, runID: UUID) throws -> StoryAgentRun {
+        let url = directory(owner: owner, projectID: projectID)
+            .appendingPathComponent("runs", isDirectory: true)
+            .appendingPathComponent("\(runID).json")
+        let run = try JSONDecoder().decode(
+            StoryAgentRun.self,
+            from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumRunBytes)
+        )
+        guard run.id == runID else { throw StoryAgentError.invalidRun }
+        try run.validate(owner: owner, projectID: projectID)
+        return run
     }
 
     /// Canonical project replacement is guarded by the original digest. A crash after project save
@@ -344,7 +479,10 @@ actor StoryProjectStore {
         guard run.abandonedAt == nil, run.checkpoint.status == .completed else { throw StoryAgentError.incompletePlan }
         try StoryAgentTools.validateCompletion(run)
         let url = directory(owner: owner, projectID: run.projectID).appendingPathComponent("project.json")
-        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: url))
+        let current = try JSONDecoder().decode(
+            StoryProject.self,
+            from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumProjectBytes)
+        )
         let digest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(run.draft)
         guard try StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: current)
@@ -369,7 +507,10 @@ actor StoryProjectStore {
         guard (try? StoryAgentTools.validateCompletion(input)) != nil else { return nil }
 
         let url = directory(owner: owner, projectID: input.projectID).appendingPathComponent("project.json")
-        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: url))
+        let current = try JSONDecoder().decode(
+            StoryProject.self,
+            from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumProjectBytes)
+        )
         let currentDigest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(input.draft)
         guard try StoryAgentRun.matchesPersistedDigest(input.baseDigest, project: current)
@@ -419,11 +560,13 @@ actor StoryProjectStore {
 
     private func loadProject(projectID: UUID, owner: String) throws -> StoryProject {
         let url = directory(owner: owner, projectID: projectID).appendingPathComponent("project.json")
-        guard FileManager.default.fileExists(atPath: url.path),
-              (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 16 * 1024 * 1024 else {
+        guard FileManager.default.fileExists(atPath: url.path) else {
             throw StoryError.invalidProject
         }
-        var project = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: url))
+        var project = try JSONDecoder().decode(
+            StoryProject.self,
+            from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumProjectBytes)
+        )
         guard project.id == projectID else { throw StoryError.invalidProject }
         StoryContinuityContext.reconcileInheritedFirstFrames(&project)
         try project.validate()

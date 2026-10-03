@@ -26,6 +26,7 @@ actor NativePluginStdioClient {
     private var terminationEscalationTask: Task<Void, Never>?
     private var outputReaderTask: Task<Void, Never>?
     private var errorReaderTask: Task<Void, Never>?
+    private var timeoutTasks: [Int: Task<Void, Never>] = [:]
     private var nextRequestID = 1
     private var pending: [Int: PendingRequest] = [:]
     private var readBuffer = Data()
@@ -53,14 +54,31 @@ actor NativePluginStdioClient {
 
     func start() throws {
         guard processID == nil else { return }
-        let outputStream = AsyncStream<Data> { continuation in
+        let outputStream = AsyncThrowingStream<Data, Error>(
+            bufferingPolicy: .bufferingOldest(64)
+        ) { continuation in
             NativeProcessPipeReader.install(
                 on: output,
-                onData: { continuation.yield($0) },
-                onEOF: continuation.finish
+                onData: { data in
+                    switch continuation.yield(data) {
+                    case .enqueued:
+                        break
+                    case .dropped:
+                        continuation.finish(throwing: NativePluginRuntimeError.invalidMCPResponse(
+                            "Plugin MCP 输出速度超过本机处理上限"
+                        ))
+                    case .terminated:
+                        break
+                    @unknown default:
+                        continuation.finish(throwing: NativePluginRuntimeError.invalidMCPResponse(
+                            "Plugin MCP 输出流状态无效"
+                        ))
+                    }
+                },
+                onEOF: { continuation.finish() }
             )
         }
-        let errorStream = AsyncStream<Data> { continuation in
+        let errorStream = AsyncStream<Data>(bufferingPolicy: .bufferingNewest(8)) { continuation in
             NativeProcessPipeReader.install(
                 on: errorOutput,
                 onData: { continuation.yield($0) },
@@ -68,9 +86,14 @@ actor NativePluginStdioClient {
             )
         }
         outputReaderTask = Task { [weak self] in
-            for await data in outputStream {
+            do {
+                for try await data in outputStream {
+                    guard let self else { return }
+                    await self.consume(data)
+                }
+            } catch {
                 guard let self else { return }
-                await self.consume(data)
+                await self.stop(with: error, terminateProcess: true)
             }
         }
         errorReaderTask = Task { [weak self] in
@@ -201,11 +224,13 @@ actor NativePluginStdioClient {
                 )
                 do {
                     try input.write(contentsOf: data)
-                    Task { [weak self] in
+                    timeoutTasks[requestID] = Task { [weak self] in
                         try? await Task.sleep(for: timeout)
+                        guard !Task.isCancelled else { return }
                         await self?.timeoutRequest(requestID)
                     }
                 } catch {
+                    timeoutTasks.removeValue(forKey: requestID)?.cancel()
                     pending.removeValue(forKey: requestID)
                     continuation.resume(throwing: error)
                 }
@@ -265,6 +290,7 @@ actor NativePluginStdioClient {
             }
             let id = Int(idNumber)
             guard let request = pending.removeValue(forKey: id) else { continue }
+            timeoutTasks.removeValue(forKey: id)?.cancel()
             if let error = object["error"]?.jsonObject {
                 let message = error["message"]?.jsonString ?? "Plugin MCP 调用失败"
                 request.continuation.resume(throwing: NativePluginRuntimeError.mcpError(message))
@@ -290,6 +316,7 @@ actor NativePluginStdioClient {
     }
 
     private func timeoutRequest(_ requestID: Int) {
+        timeoutTasks.removeValue(forKey: requestID)
         guard let request = pending[requestID] else { return }
         if request.timeoutBehavior == .cancelRequest {
             pending.removeValue(forKey: requestID)
@@ -308,6 +335,7 @@ actor NativePluginStdioClient {
 
     private func cancelRequest(_ requestID: Int) {
         guard let request = pending[requestID] else { return }
+        timeoutTasks.removeValue(forKey: requestID)?.cancel()
         if request.timeoutBehavior == .cancelRequest {
             pending.removeValue(forKey: requestID)
             sendCancellationNotification(requestID: requestID)
@@ -406,6 +434,9 @@ actor NativePluginStdioClient {
         }
         let requests = pending.values
         pending.removeAll()
+        let timers = timeoutTasks.values
+        timeoutTasks.removeAll()
+        for timer in timers { timer.cancel() }
         for request in requests {
             request.continuation.resume(throwing: error)
         }

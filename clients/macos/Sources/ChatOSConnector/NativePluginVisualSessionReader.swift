@@ -98,7 +98,10 @@ enum NativePluginVisualSessionReader {
         ) else { return nil }
         let shouldLoadFrameData = loadFrameData && knownFrameSequence != metadata.frameSequence
         let frame = shouldLoadFrameData
-            ? try? Data(contentsOf: frameURL, options: .mappedIfSafe)
+            ? try? NativeBoundedFileReader.read(
+                frameURL,
+                maximumBytes: maximumFrameBytes
+            )
             : nil
         if shouldLoadFrameData, frame == nil { return nil }
         return PluginVisualSession(
@@ -126,7 +129,10 @@ enum NativePluginVisualSessionReader {
               values.isRegularFile == true,
               values.isSymbolicLink != true,
               (values.fileSize ?? maximumMetadataBytes + 1) <= maximumMetadataBytes,
-              let data = try? Data(contentsOf: url, options: .mappedIfSafe) else {
+              let data = try? NativeBoundedFileReader.read(
+                url,
+                maximumBytes: maximumMetadataBytes
+              ) else {
             return nil
         }
         return try? JSONDecoder().decode(T.self, from: data)

@@ -58,6 +58,8 @@ async fn lists_only_owner_runs_with_a_stable_composite_cursor() {
             HostCommand::ListRuns(ListRunsCommand {
                 owner_user_id: "user-1".to_string(),
                 scope: LocalAgentRunListScope::Active,
+                status: None,
+                updated_after_unix_ms: None,
                 before_updated_at_unix_ms: None,
                 before_run_id: None,
                 limit: 2,
@@ -85,6 +87,8 @@ async fn lists_only_owner_runs_with_a_stable_composite_cursor() {
             HostCommand::ListRuns(ListRunsCommand {
                 owner_user_id: "user-1".to_string(),
                 scope: LocalAgentRunListScope::All,
+                status: None,
+                updated_after_unix_ms: None,
                 before_updated_at_unix_ms: first.next_before_updated_at_unix_ms,
                 before_run_id: first.next_before_run_id,
                 limit: 2,

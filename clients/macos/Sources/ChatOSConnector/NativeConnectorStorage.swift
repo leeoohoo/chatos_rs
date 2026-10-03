@@ -44,13 +44,17 @@ struct NativeInstalledPluginRecord: Codable, Sendable, Equatable {
 }
 
 struct NativeConnectorStateStore: Sendable {
+    static let maximumStateBytes = 16 * 1_024 * 1_024
     let stateURL: URL
 
     func load() throws -> NativeConnectorPersistentState {
         guard FileManager.default.fileExists(atPath: stateURL.path) else { return .empty }
         return try JSONDecoder().decode(
             NativeConnectorPersistentState.self,
-            from: Data(contentsOf: stateURL)
+            from: NativeBoundedFileReader.read(
+                stateURL,
+                maximumBytes: Self.maximumStateBytes
+            )
         )
     }
 
@@ -61,11 +65,18 @@ struct NativeConnectorStateStore: Sendable {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: stateURL, options: .atomic)
+        let data = try encoder.encode(state)
+        guard data.count <= Self.maximumStateBytes else {
+            throw NativeBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumStateBytes
+            )
+        }
+        try data.write(to: stateURL, options: .atomic)
     }
 }
 
 struct NativeConnectorSecretStore: Sendable {
+    private static let maximumSecretBytes = 64 * 1_024
     private let rootURL: URL
 
     init(rootURL: URL? = nil) {
@@ -88,10 +99,18 @@ struct NativeConnectorSecretStore: Sendable {
             try save(legacy, account: account)
         }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try Data(contentsOf: url)
+        return try NativeBoundedFileReader.read(
+            url,
+            maximumBytes: Self.maximumSecretBytes
+        )
     }
 
     func save(_ value: Data, account: String) throws {
+        guard value.count <= Self.maximumSecretBytes else {
+            throw NativeBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumSecretBytes
+            )
+        }
         try FileManager.default.createDirectory(
             at: rootURL,
             withIntermediateDirectories: true,

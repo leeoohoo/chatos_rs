@@ -13,7 +13,7 @@ enum VisualSessionPollingPolicy {
         hasSelectedConversation: Bool,
         isSelectedSessionExpanded: Bool
     ) -> Duration {
-        if !hasSessions { return .seconds(5) }
+        if !hasSessions { return .seconds(1_800) }
         if !hasSelectedConversation || !isSelectedSessionExpanded {
             return .seconds(15)
         }
@@ -34,7 +34,25 @@ extension AppModel {
         guard visualSessionMonitorTask == nil,
               NSApplication.shared.isActive else { return }
         let service = localConnectorService
+        visualSessionMonitorGeneration &+= 1
+        let generation = visualSessionMonitorGeneration
         visualSessionMonitorTask = Task { [weak self] in
+            // Register the invalidation observer before the first snapshot so a session created
+            // during startup cannot fall into the consistency-polling window.
+            let changes = await service.pluginVisualSessionChanges()
+            guard !Task.isCancelled,
+                  self?.visualSessionMonitorGeneration == generation else { return }
+            let changeTask = Task { [weak self] in
+                for await _ in changes {
+                    guard !Task.isCancelled else { return }
+                    self?.wakeVisualSessionMonitoring(generation: generation)
+                }
+            }
+            self?.setVisualSessionChangeTask(changeTask, generation: generation)
+            defer {
+                changeTask.cancel()
+                self?.clearVisualSessionChangeTask(generation: generation)
+            }
             while !Task.isCancelled {
                 let hasSelectedConversation = self?.currentConversationID != nil
                 let selectedPresentation = hasSelectedConversation
@@ -78,18 +96,68 @@ extension AppModel {
                     hasSelectedConversation: nextHasSelectedConversation,
                     isSelectedSessionExpanded: nextIsSelectedSessionExpanded
                 )
-                do {
-                    try await Task.sleep(for: interval)
-                } catch {
-                    return
+                let sleepTask = Task {
+                    do {
+                        try await Task.sleep(for: interval)
+                    } catch {}
                 }
+                self?.setVisualSessionSleepTask(sleepTask, generation: generation)
+                await withTaskCancellationHandler {
+                    await sleepTask.value
+                } onCancel: {
+                    sleepTask.cancel()
+                }
+                self?.clearVisualSessionSleepTask(generation: generation)
+                guard !Task.isCancelled else { return }
             }
         }
     }
 
     func stopVisualSessionMonitoring() {
+        visualSessionMonitorGeneration &+= 1
         visualSessionMonitorTask?.cancel()
         visualSessionMonitorTask = nil
+        visualSessionChangeTask?.cancel()
+        visualSessionChangeTask = nil
+        visualSessionSleepTask?.cancel()
+        visualSessionSleepTask = nil
+    }
+
+    private func setVisualSessionSleepTask(
+        _ task: Task<Void, Never>,
+        generation: UInt64
+    ) {
+        guard visualSessionMonitorGeneration == generation else {
+            task.cancel()
+            return
+        }
+        visualSessionSleepTask = task
+    }
+
+    private func setVisualSessionChangeTask(
+        _ task: Task<Void, Never>,
+        generation: UInt64
+    ) {
+        guard visualSessionMonitorGeneration == generation else {
+            task.cancel()
+            return
+        }
+        visualSessionChangeTask = task
+    }
+
+    private func clearVisualSessionChangeTask(generation: UInt64) {
+        guard visualSessionMonitorGeneration == generation else { return }
+        visualSessionChangeTask = nil
+    }
+
+    private func clearVisualSessionSleepTask(generation: UInt64) {
+        guard visualSessionMonitorGeneration == generation else { return }
+        visualSessionSleepTask = nil
+    }
+
+    private func wakeVisualSessionMonitoring(generation: UInt64) {
+        guard visualSessionMonitorGeneration == generation else { return }
+        visualSessionSleepTask?.cancel()
     }
 
     var interfaceDynamicTypeSize: DynamicTypeSize {

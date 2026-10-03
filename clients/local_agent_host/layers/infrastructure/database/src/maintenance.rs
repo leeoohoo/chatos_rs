@@ -55,6 +55,15 @@ pub(super) async fn verify_integrity(pool: &SqlitePool) -> Result<(), ClientStor
     verify_connection(&mut connection).await
 }
 
+pub(super) async fn verify_available(pool: &SqlitePool) -> Result<(), ClientStorageError> {
+    let mut connection = pool.acquire().await.db()?;
+    let _: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM client_schema_migrations")
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+    Ok(())
+}
+
 pub(super) async fn create_migration_backup(
     pool: &SqlitePool,
     database_path: &Path,

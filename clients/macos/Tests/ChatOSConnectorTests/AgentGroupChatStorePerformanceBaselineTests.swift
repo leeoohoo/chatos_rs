@@ -240,7 +240,7 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
                     afterUnixMs: nil,
                     limit: 500
                 )
-                async let runs = store.listRoomRuns(
+                async let runs = store.listRoomRunHistorySummaries(
                     ownerUserID: Self.ownerUserID,
                     roomID: fixture.primaryRoomID,
                     limit: 500
@@ -305,8 +305,14 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
             }
             publish500RunChangesMilliseconds.append(publishDuration)
             var iterator = changes.makeAsyncIterator()
-            let coalescedChange = await iterator.next()
-            XCTAssertEqual(coalescedChange?.runID, lastRunID)
+            var bufferedChanges: [NativeAgentGroupChatChange] = []
+            for _ in 0..<64 {
+                if let change = await iterator.next() {
+                    bufferedChanges.append(change)
+                }
+            }
+            XCTAssertEqual(bufferedChanges.count, 64)
+            XCTAssertEqual(bufferedChanges.last?.runID, lastRunID)
 
             let heartbeatStatementCountBefore = await store.preparedStatementCountForTesting()
             let heartbeatDatabaseChangesBefore = await store.totalDatabaseChangesForTesting()
@@ -349,12 +355,12 @@ final class AgentGroupChatStorePerformanceBaselineTests: XCTestCase {
 
         // These assertions intentionally freeze the current N+1 baseline. Lower counts are welcome,
         // but must be accompanied by an evidence-backed performance change and an updated snapshot.
-        XCTAssertEqual(workspaceSnapshotPreparedStatements, [1_008, 1_008, 1_008])
-        XCTAssertEqual(recentMessagesPreparedStatements, [42, 42, 42])
+        XCTAssertEqual(workspaceSnapshotPreparedStatements, [10, 10, 10])
+        XCTAssertEqual(recentMessagesPreparedStatements, [4, 4, 4])
         XCTAssertEqual(imageAttachmentReadPreparedStatements, [1, 1, 1])
         XCTAssertEqual(idleHeartbeatPollPreparedStatements, [500, 500, 500])
         XCTAssertEqual(idleHeartbeatPollDatabaseChanges, [0, 0, 0])
-        XCTAssertEqual(idleAccountDrainPreparedStatements, [103, 103, 103])
+        XCTAssertEqual(idleAccountDrainPreparedStatements, [1, 1, 1])
         XCTAssertEqual(idleAccountDrainDatabaseChanges, [0, 0, 0])
 
         let measurements = Measurements(

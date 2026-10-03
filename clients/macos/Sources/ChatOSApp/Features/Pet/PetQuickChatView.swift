@@ -539,6 +539,7 @@ struct PetQuickChatTaskInspectorView: View {
     init(
         selection: TaskReplySelection,
         service: any MessageTaskGraphServicing,
+        realtimeService: (any ConversationRealtimeStreaming)?,
         onClose: @escaping () -> Void
     ) {
         self.selection = selection
@@ -546,7 +547,8 @@ struct PetQuickChatTaskInspectorView: View {
         _viewModel = StateObject(
             wrappedValue: TaskReplyInspectorViewModel(
                 selection: selection,
-                service: service
+                service: service,
+                realtimeService: realtimeService
             )
         )
     }

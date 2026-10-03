@@ -33,6 +33,7 @@ struct PetTranslationHistoryRecord: Codable, Equatable, Identifiable, Sendable {
 
 actor PetTranslationHistoryStore {
     static let defaultLimit = 100
+    private static let maximumHistoryBytes = 16 * 1_024 * 1_024
 
     private let fileURL: URL
     private let limit: Int
@@ -54,7 +55,10 @@ actor PetTranslationHistoryStore {
         decoder.dateDecodingStrategy = .iso8601
         let records = try decoder.decode(
             [PetTranslationHistoryRecord].self,
-            from: Data(contentsOf: fileURL)
+            from: AppBoundedFileReader.read(
+                fileURL,
+                maximumBytes: Self.maximumHistoryBytes
+            )
         )
         return records.sorted { $0.createdAt > $1.createdAt }
     }
@@ -82,6 +86,12 @@ actor PetTranslationHistoryStore {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(records).write(to: fileURL, options: [.atomic])
+        let data = try encoder.encode(records)
+        guard data.count <= Self.maximumHistoryBytes else {
+            throw AppBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumHistoryBytes
+            )
+        }
+        try data.write(to: fileURL, options: [.atomic])
     }
 }

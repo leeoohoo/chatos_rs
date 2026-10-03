@@ -187,7 +187,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                     url: statusURL,
                     method: "GET",
                     headers: Self.providerHeaders(runtime: runtime),
-                    timeoutInterval: 60
+                    timeoutInterval: 60,
+                    maximumResponseBytes: 2 * 1_024 * 1_024
                 )
             )
             await progress(.init(status: job.status, percent: job.progress, jobID: job.id))
@@ -210,7 +211,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 url: contentURL,
                 method: "GET",
                 headers: ["Accept": "video/mp4"],
-                timeoutInterval: 10 * 60
+                timeoutInterval: 10 * 60,
+                maximumResponseBytes: 512 * 1_024 * 1_024
             )
         } else {
             contentRequest = HTTPRequest(
@@ -219,7 +221,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
                 ),
                 method: "GET",
                 headers: Self.providerHeaders(runtime: runtime, accept: "video/mp4"),
-                timeoutInterval: 10 * 60
+                timeoutInterval: 10 * 60,
+                maximumResponseBytes: 512 * 1_024 * 1_024
             )
         }
         await progress(.init(status: "downloading"))
@@ -306,7 +309,8 @@ public struct ChatOSMediaGenerationService: ResumableVideoGenerationServicing, S
             method: "POST",
             headers: headers,
             body: try JSONSerialization.data(withJSONObject: payload),
-            timeoutInterval: 10 * 60
+            timeoutInterval: 10 * 60,
+            maximumResponseBytes: 2 * 1_024 * 1_024
         )
     }
 

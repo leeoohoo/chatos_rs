@@ -77,13 +77,12 @@ extension LocalAgentChatToolProvider {
             ownerUserID: context.ownerUserID,
             includeArchived: false
         )
+        let activeMembers = try await store.listActiveMembers(ownerUserID: context.ownerUserID)
+        let membersByRoomID = Dictionary(grouping: activeMembers, by: \.roomID)
         var teamResponses: [WorkspaceTeamResponse] = []
         var teamNamesByAgentID: [String: [String]] = [:]
         for room in rooms {
-            let members = try await store.listMembers(
-                ownerUserID: context.ownerUserID,
-                roomID: room.id
-            ).filter { $0.status == .active }
+            let members = membersByRoomID[room.id] ?? []
             var memberResponses: [WorkspaceTeamMemberResponse] = []
             for member in members {
                 let profile = profilesByID[member.agentID]

@@ -1,8 +1,27 @@
 import ChatOSCore
+import Foundation
 import Testing
 @testable import ChatOSApp
 
 struct BrowserExtensionGuideTests {
+    @Test
+    func reusesKnownInstallationStatusForAutomaticGuideDecision() {
+        let suiteName = "BrowserExtensionGuideTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        #expect(!BrowserExtensionGuide.shouldAutomaticallyGuide(
+            pluginVersion: "test-version",
+            extensionInstalled: true,
+            defaults: defaults
+        ))
+        #expect(BrowserExtensionGuide.shouldAutomaticallyGuide(
+            pluginVersion: "test-version",
+            extensionInstalled: false,
+            defaults: defaults
+        ))
+    }
+
     @Test
     func recognizesBrowserPluginByMarketplacePackageIdentity() {
         let plugin = makePlugin(

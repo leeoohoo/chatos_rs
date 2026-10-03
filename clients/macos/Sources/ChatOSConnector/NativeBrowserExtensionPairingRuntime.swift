@@ -20,7 +20,10 @@ enum NativeBrowserExtensionPairingStatus {
               values.isRegularFile == true,
               values.isSymbolicLink != true,
               (values.fileSize ?? (16 * 1024 + 1)) <= 16 * 1024,
-              let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let data = try? NativeBoundedFileReader.read(
+                url,
+                maximumBytes: 16 * 1_024
+              ),
               let pairing = try? JSONDecoder().decode(PersistedPairing.self, from: data) else {
             return false
         }

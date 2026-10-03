@@ -392,6 +392,23 @@ mod tests {
         assert_eq!(detail.note.version, 1);
         let note_id = detail.note.note_id;
 
+        let sibling = runtime
+            .try_handle(request(
+                "note-create-sibling",
+                HostCommand::CreateNotepadNote(CreateNotepadNoteCommand {
+                    owner_user_id: "user-1".to_string(),
+                    folder: "work".to_string(),
+                    title: "Sibling".to_string(),
+                    content: "Sibling body".to_string(),
+                    tags: vec![],
+                }),
+            ))
+            .await
+            .expect("create sibling note");
+        let HostResult::NotepadNote { detail: sibling } = sibling else {
+            panic!("unexpected sibling create result")
+        };
+
         let hidden = runtime
             .handle(request(
                 "note-get-other-owner",
@@ -439,7 +456,7 @@ mod tests {
             .await;
         assert_eq!(stale.error.expect("conflict").code, "conflict");
 
-        runtime
+        let renamed = runtime
             .try_handle(request(
                 "folder-rename-1",
                 HostCommand::RenameNotepadFolder(RenameNotepadFolderCommand {
@@ -450,6 +467,13 @@ mod tests {
             ))
             .await
             .expect("rename folder");
+        assert!(matches!(
+            renamed,
+            HostResult::NotepadFolderMutation {
+                folder,
+                affected_notes: 2
+            } if folder == "archive"
+        ));
         let listed = runtime
             .try_handle(request(
                 "note-list-1",
@@ -465,6 +489,39 @@ mod tests {
             listed,
             HostResult::NotepadNotes { notes }
                 if notes.len() == 1 && notes[0].folder == "archive/ideas" && notes[0].version == 3
+        ));
+        let folders = runtime
+            .try_handle(request(
+                "folder-list-renamed",
+                HostCommand::ListNotepadFolders(ListNotepadFoldersCommand {
+                    owner_user_id: "user-1".to_string(),
+                }),
+            ))
+            .await
+            .expect("list renamed folders");
+        assert!(matches!(
+            folders,
+            HostResult::NotepadFolders { folders }
+                if folders == vec![
+                    "".to_string(),
+                    "archive".to_string(),
+                    "archive/ideas".to_string()
+                ]
+        ));
+        let sibling = runtime
+            .try_handle(request(
+                "note-get-sibling",
+                HostCommand::GetNotepadNote(GetNotepadNoteCommand {
+                    owner_user_id: "user-1".to_string(),
+                    note_id: sibling.note.note_id,
+                }),
+            ))
+            .await
+            .expect("get renamed sibling");
+        assert!(matches!(
+            sibling,
+            HostResult::NotepadNote { detail }
+                if detail.note.folder == "archive" && detail.note.version == 2
         ));
     }
 }

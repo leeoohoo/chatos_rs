@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 
 struct NativePetLocalFileService: ProjectFilesystemServicing, Sendable {
     private static let maximumTextPreviewBytes: Int64 = 2 * 1_024 * 1_024
-    private static let maximumImagePreviewBytes: Int64 = 25 * 1_024 * 1_024
+    static let maximumImagePreviewBytes: Int64 = 25 * 1_024 * 1_024
     static let maximumImagePreviewPixels: Int64 = 64 * 1_024 * 1_024
     private static let imageExtensions: Set<String> = [
         "avif", "bmp", "gif", "heic", "heif", "ico", "jpeg", "jpg",
@@ -14,7 +14,8 @@ struct NativePetLocalFileService: ProjectFilesystemServicing, Sendable {
     ]
 
     func readFile(path: String) async throws -> ProjectFileContent {
-        try await Task.detached {
+        let task = Task.detached {
+            try Task.checkCancellation()
             let url = try Self.validatedFileURL(path)
             let values = try url.resourceValues(forKeys: [
                 .isRegularFileKey,
@@ -37,7 +38,11 @@ struct NativePetLocalFileService: ProjectFilesystemServicing, Sendable {
                 throw NativePetLocalFileError.fileTooLarge(size, maximumBytes)
             }
 
-            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            let data = try AppBoundedFileReader.read(
+                url,
+                maximumBytes: Int(maximumBytes)
+            )
+            try Task.checkCancellation()
             let isBinary = (isImage && fileExtension != "svg")
                 || data.prefix(8_000).contains(0)
             if isImage, fileExtension != "svg" {
@@ -55,17 +60,29 @@ struct NativePetLocalFileService: ProjectFilesystemServicing, Sendable {
                 content: isBinary ? "" : String(decoding: data, as: UTF8.self),
                 binaryData: isBinary ? data : nil
             )
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     func writeFile(path: String, content: String) async throws {
-        try await Task.detached {
+        let task = Task.detached {
+            try Task.checkCancellation()
             let url = try Self.validatedFileURL(path)
             guard FileManager.default.isWritableFile(atPath: url.path) else {
                 throw NativePetLocalFileError.notWritable
             }
+            try Task.checkCancellation()
             try Data(content.utf8).write(to: url, options: .atomic)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     func openExternally(path: String, mode: ProjectFileExternalOpenMode) async throws {

@@ -44,6 +44,7 @@ public protocol LocalConnectorControlServicing: Sendable {
         networkAccess: String?
     ) async throws -> LocalConnectorSandboxSettings
     func fetchPlugins() async throws -> [LocalConnectorPlugin]
+    func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin]
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
     func launchPluginApplication(
         pluginID: String,
@@ -64,6 +65,9 @@ public extension LocalConnectorControlServicing {
     func resumeServerAccess() async throws -> LocalConnectorStatus { try await fetchStatus() }
 
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] { [] }
+    func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin] {
+        try await fetchPlugins()
+    }
 
     func launchPluginApplication(
         pluginID: String,

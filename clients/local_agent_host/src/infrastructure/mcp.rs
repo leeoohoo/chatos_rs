@@ -32,6 +32,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_TOOL_PAGES: usize = 100;
+const CHILD_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalMcpServerConfig {
@@ -453,6 +454,7 @@ impl LocalMcpStdioSession {
         let mut connection = self.connection.lock().await;
         connection.unusable = true;
         let _ = connection.child.start_kill();
+        let _ = tokio::time::timeout(CHILD_REAP_TIMEOUT, connection.child.wait()).await;
     }
 }
 

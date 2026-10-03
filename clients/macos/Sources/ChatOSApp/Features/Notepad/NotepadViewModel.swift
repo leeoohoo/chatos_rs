@@ -1,6 +1,17 @@
 import ChatOSCore
 import Combine
 import Foundation
+import UniformTypeIdentifiers
+
+enum NotepadExternalSyncPolicy {
+    static let eventDebounce = Duration.milliseconds(250)
+    static let consistencyCheckInterval = Duration.seconds(300)
+    private static let refreshEventTypes: Set<String> = ["tool_batch_completed"]
+
+    static func shouldRefresh(forEventTypes eventTypes: [String]) -> Bool {
+        eventTypes.contains(where: refreshEventTypes.contains)
+    }
+}
 
 enum NotepadEditorMode: String, CaseIterable, Identifiable {
     case edit = "编辑"
@@ -19,8 +30,8 @@ enum NotepadEditorMode: String, CaseIterable, Identifiable {
     }
 }
 
-struct NotepadTreeNode: Identifiable {
-    enum Kind {
+struct NotepadTreeNode: Identifiable, Equatable {
+    enum Kind: Equatable {
         case folder(String)
         case note(NotepadNote)
     }
@@ -34,8 +45,17 @@ struct NotepadTreeNode: Identifiable {
 
 @MainActor
 final class NotepadViewModel: ObservableObject {
-    @Published private(set) var folders: [String] = []
-    @Published private(set) var notes: [NotepadNote] = []
+    private(set) var folders: [String] = [] {
+        didSet {
+            if folders != oldValue { rebuildTree() }
+        }
+    }
+    private(set) var notes: [NotepadNote] = [] {
+        didSet {
+            if notes != oldValue { rebuildTree() }
+        }
+    }
+    @Published private(set) var tree: [NotepadTreeNode] = []
     @Published private(set) var selectedNoteID: String?
     @Published private(set) var selectedTreeNodeID = "folder:"
     @Published var selectedFolder = ""
@@ -49,11 +69,17 @@ final class NotepadViewModel: ObservableObject {
     @Published private(set) var isSaving = false
     @Published private(set) var pendingImageUploadCount = 0
     @Published private(set) var errorMessage: String?
-    @Published var interfaceLanguage: ChatOSLanguage = .simplifiedChinese
+    @Published var interfaceLanguage: ChatOSLanguage = .simplifiedChinese {
+        didSet {
+            if interfaceLanguage != oldValue { rebuildTree() }
+        }
+    }
 
     private let service: any NotepadServicing
     private var initialized = false
+    private var isLoadInFlight = false
     private var searchTask: Task<Void, Never>?
+    private var externalSyncTask: Task<Void, Never>?
     private var activeNoteSelectionID: UUID?
     private var savedTitle = ""
     private var savedTagsText = ""
@@ -65,6 +91,7 @@ final class NotepadViewModel: ObservableObject {
 
     deinit {
         searchTask?.cancel()
+        externalSyncTask?.cancel()
     }
 
     var selectedNote: NotepadNote? {
@@ -78,15 +105,50 @@ final class NotepadViewModel: ObservableObject {
 
     var isUploadingImage: Bool { pendingImageUploadCount > 0 }
 
-    var tree: [NotepadTreeNode] {
+    private func rebuildTree() {
         let allFolders = normalizedFolders()
-        return childNodes(parent: "", allFolders: allFolders)
+        let foldersByParent = Dictionary(grouping: allFolders, by: parentFolder)
+        let notesByFolder = Dictionary(grouping: notes) { normalizeFolder($0.folder) }
+        let formatter = makeDateFormatter()
+
+        func nodes(parent: String) -> [NotepadTreeNode] {
+            let folderNodes = (foldersByParent[parent] ?? []).map { folder in
+                let children = nodes(parent: folder)
+                return NotepadTreeNode(
+                    id: "folder:\(folder)",
+                    title: folder.split(separator: "/").last.map(String.init) ?? folder,
+                    subtitle: folder,
+                    kind: .folder(folder),
+                    children: children.isEmpty ? nil : children
+                )
+            }
+            let noteNodes = (notesByFolder[parent] ?? []).map { note in
+                NotepadTreeNode(
+                    id: "note:\(note.id)",
+                    title: note.title.isEmpty
+                        ? (interfaceLanguage == .english ? "Untitled Note" : "未命名笔记")
+                        : note.title,
+                    subtitle: note.updatedAt.map(formatter.string),
+                    kind: .note(note),
+                    children: nil
+                )
+            }
+            return folderNodes + noteNodes
+        }
+
+        tree = nodes(parent: "")
     }
 
-    func load(force: Bool = false) async {
-        isLoading = true
+    @discardableResult
+    func load(force: Bool = false, showsProgress: Bool = true) async -> Bool {
+        guard !isLoadInFlight else { return false }
+        isLoadInFlight = true
+        if showsProgress { isLoading = true }
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            isLoadInFlight = false
+            if showsProgress { isLoading = false }
+        }
         do {
             if !initialized || force {
                 try await service.initialize()
@@ -97,13 +159,17 @@ final class NotepadViewModel: ObservableObject {
                 query: searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
                 limit: 500
             )
-            folders = normalizeFolderList(try await loadedFolders)
-            notes = sortNotes(try await loadedNotes)
+            let nextFolders = normalizeFolderList(try await loadedFolders)
+            let nextNotes = sortNotes(try await loadedNotes)
+            if folders != nextFolders { folders = nextFolders }
+            if notes != nextNotes { notes = nextNotes }
             if selectedNoteID == nil, let first = notes.first {
                 await selectNote(first.id, savingCurrent: false)
             }
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -123,12 +189,38 @@ final class NotepadViewModel: ObservableObject {
         }
     }
 
-    func syncExternalChanges() async {
-        guard !isDirty, !isSaving, !isLoadingNote else { return }
-        await load()
-        if let selectedNoteID {
-            await selectNote(selectedNoteID, savingCurrent: false, force: true)
+    func changeUpdates() async -> AsyncStream<Void> {
+        await service.changes()
+    }
+
+    func scheduleExternalSync() {
+        externalSyncTask?.cancel()
+        externalSyncTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: NotepadExternalSyncPolicy.eventDebounce)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            await self.syncExternalChanges()
         }
+    }
+
+    func syncExternalChanges() async {
+        guard !isDirty, !isLoading, !isSaving, !isLoadingNote else { return }
+        let previousSelectedNoteID = selectedNoteID
+        let previousUpdatedAt = selectedNote?.updatedAt
+        guard await load(showsProgress: false),
+              let previousSelectedNoteID else { return }
+        guard let refreshed = notes.first(where: { $0.id == previousSelectedNoteID }) else {
+            resetEditor()
+            if let first = notes.first {
+                await selectNote(first.id, savingCurrent: false)
+            }
+            return
+        }
+        guard refreshed.updatedAt != previousUpdatedAt else { return }
+        await selectNote(previousSelectedNoteID, savingCurrent: false, force: true)
     }
 
     func selectFolder(_ folder: String) {
@@ -286,6 +378,13 @@ final class NotepadViewModel: ObservableObject {
     func clearError() { errorMessage = nil }
 
     func uploadPastedImage(_ image: NotepadImageUpload, placeholder: String) async {
+        await uploadPastedImage(.upload(image), placeholder: placeholder)
+    }
+
+    func uploadPastedImage(
+        _ candidate: NotepadPastedImageCandidate,
+        placeholder: String
+    ) async {
         guard let selectedNoteID else {
             removeFirstOccurrence(of: placeholder)
             errorMessage = interfaceLanguage == .english
@@ -293,18 +392,12 @@ final class NotepadViewModel: ObservableObject {
                 : "请先选择或新建笔记，再粘贴图片。"
             return
         }
-        guard image.data.count <= 20 * 1_024 * 1_024 else {
-            removeFirstOccurrence(of: placeholder)
-            errorMessage = interfaceLanguage == .english
-                ? "The pasted image exceeds the 20 MB limit."
-                : "粘贴的图片超过 20 MB 限制。"
-            return
-        }
-
         pendingImageUploadCount += 1
         errorMessage = nil
         defer { pendingImageUploadCount = max(0, pendingImageUploadCount - 1) }
         do {
+            let image = try await Self.preparePastedImage(candidate)
+            try Task.checkCancellation()
             let asset = try await service.uploadImage(image, noteID: selectedNoteID)
             let rawAlt = (image.name as NSString).deletingPathExtension
             let alt = rawAlt
@@ -316,6 +409,54 @@ final class NotepadViewModel: ObservableObject {
         } catch {
             removeFirstOccurrence(of: placeholder)
             errorMessage = error.localizedDescription
+        }
+    }
+
+    nonisolated private static func preparePastedImage(
+        _ candidate: NotepadPastedImageCandidate
+    ) async throws -> NotepadImageUpload {
+        let task = Task.detached(priority: .userInitiated) {
+            let upload: NotepadImageUpload
+            switch candidate {
+            case let .upload(value):
+                upload = value
+            case let .localFile(url):
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                let data = try AppBoundedFileReader.read(
+                    url,
+                    maximumBytes: AppPastedImageNormalizationLimits.attachment.maximumInputBytes
+                )
+                guard let type = UTType(filenameExtension: url.pathExtension),
+                      type.conforms(to: .image) else {
+                    throw AppPastedImageNormalizationError.invalidImage
+                }
+                upload = NotepadImageUpload(
+                    data: data,
+                    mimeType: type.preferredMIMEType ?? "application/octet-stream",
+                    name: url.lastPathComponent
+                )
+            }
+
+            try Task.checkCancellation()
+            guard !upload.data.isEmpty,
+                  upload.data.count <= AppPastedImageNormalizationLimits.attachment.maximumInputBytes else {
+                throw AppPastedImageNormalizationError.invalidImage
+            }
+            guard AppPastedImageNormalizer.requiresPNGNormalization(mimeType: upload.mimeType) else {
+                return upload
+            }
+            let normalized = try AppPastedImageNormalizer.normalizeToPNG(upload.data)
+            return NotepadImageUpload(
+                data: normalized,
+                mimeType: "image/png",
+                name: (upload.name as NSString).deletingPathExtension + ".png"
+            )
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -380,9 +521,9 @@ final class NotepadViewModel: ObservableObject {
     }
 
     private func upsert(_ note: NotepadNote) {
-        notes.removeAll(where: { $0.id == note.id })
-        notes.append(note)
-        notes = sortNotes(notes)
+        var updated = notes.filter { $0.id != note.id }
+        updated.append(note)
+        notes = sortNotes(updated)
     }
 
     private func resetEditor() {
@@ -406,35 +547,6 @@ final class NotepadViewModel: ObservableObject {
             }
         }
         return values.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    }
-
-    private func childNodes(parent: String, allFolders: [String]) -> [NotepadTreeNode] {
-        let folderNodes = allFolders
-            .filter { parentFolder(of: $0) == parent }
-            .map { folder -> NotepadTreeNode in
-                let children = childNodes(parent: folder, allFolders: allFolders)
-                return NotepadTreeNode(
-                    id: "folder:\(folder)",
-                    title: folder.split(separator: "/").last.map(String.init) ?? folder,
-                    subtitle: folder,
-                    kind: .folder(folder),
-                    children: children.isEmpty ? nil : children
-                )
-            }
-        let noteNodes = notes
-            .filter { normalizeFolder($0.folder) == parent }
-            .map { note in
-                NotepadTreeNode(
-                    id: "note:\(note.id)",
-                    title: note.title.isEmpty
-                        ? (interfaceLanguage == .english ? "Untitled Note" : "未命名笔记")
-                        : note.title,
-                    subtitle: note.updatedAt.map(dateFormatter.string),
-                    kind: .note(note),
-                    children: nil
-                )
-            }
-        return folderNodes + noteNodes
     }
 
     private func normalizeFolderList(_ values: [String]) -> [String] {
@@ -473,7 +585,7 @@ final class NotepadViewModel: ObservableObject {
         }
     }
 
-    private var dateFormatter: DateFormatter {
+    private func makeDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short

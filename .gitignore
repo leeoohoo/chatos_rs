@@ -2,7 +2,7 @@ node_modules/
 /node_modules/
 dist/
 build/
-/.build/
+.build/
 coverage/
 target/
 target-shared/

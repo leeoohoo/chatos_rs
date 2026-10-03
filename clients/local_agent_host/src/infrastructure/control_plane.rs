@@ -370,6 +370,7 @@ fn snapshot_command<T: serde::Serialize>(
     Ok(IdempotentCommand {
         command_id: format!("internal-control-plane-{kind}:{owner_user_id}:{reference}:{revision}"),
         request_fingerprint: serde_json::to_string(snapshot).map_err(|error| error.to_string())?,
+        persist_receipt: true,
     })
 }
 

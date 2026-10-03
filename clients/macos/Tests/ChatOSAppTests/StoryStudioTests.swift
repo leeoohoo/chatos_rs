@@ -53,6 +53,25 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.selectedProjectID, "Entering the tab should start at the list")
     }
 
+    func testProjectsLoadInBoundedPagesWithoutDroppingOlderProjects() async throws {
+        let (_, store, _) = try await fixture()
+        var ids: Set<UUID> = []
+        for title in ["one", "two", "three"] {
+            var project = makeProject()
+            project.title = title
+            ids.insert(project.id)
+            try await store.save(project, owner: "alice")
+        }
+
+        let first = try await store.load(owner: "alice", limit: 2)
+        XCTAssertEqual(first.projects.count, 2)
+        let cursor = try XCTUnwrap(first.nextCursor)
+        let second = try await store.load(owner: "alice", after: cursor, limit: 2)
+        XCTAssertEqual(second.projects.count, 1)
+        XCTAssertNil(second.nextCursor)
+        XCTAssertEqual(Set((first.projects + second.projects).map(\.id)), ids)
+    }
+
     func testSettingsPreserveSourcePlansAndChangeOnlyProjectModels() async throws {
         let (vm, _, _) = try await fixture()
         var draft = makeProject(); draft.source = "Full original story"
@@ -1257,6 +1276,33 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(recovered.jobs["videos:s1"]?.completed == true)
         XCTAssertEqual(recovered.draft.segments[0].video?.jobID, "provider-job-1")
         XCTAssertNil(recovered.error)
+    }
+
+    func testMediaBatchesLoadInBoundedPagesAndRemainDirectlyAddressable() async throws {
+        let (_, store, _) = try await fixture()
+        let project = try await readyProject(store)
+        try await store.save(project, owner: "alice")
+        var ids: Set<UUID> = []
+        for _ in 0..<3 {
+            let batch = try StoryMediaBatch(project: project, owner: "alice", kind: .videos,
+                                            targets: ["s1"], models: models)
+            ids.insert(batch.id)
+            try await store.commitMediaBatch(batch)
+        }
+
+        let first = try await store.loadMediaBatches(owner: "alice", projectID: project.id, limit: 2)
+        XCTAssertEqual(first.batches.count, 2)
+        let cursor = try XCTUnwrap(first.nextCursor)
+        let second = try await store.loadMediaBatches(
+            owner: "alice", projectID: project.id, after: cursor, limit: 2
+        )
+        XCTAssertEqual(second.batches.count, 1)
+        XCTAssertNil(second.nextCursor)
+        XCTAssertEqual(Set((first.batches + second.batches).map(\.id)), ids)
+        for id in ids {
+            let loaded = try await store.loadMediaBatch(owner: "alice", projectID: project.id, batchID: id)
+            XCTAssertEqual(loaded.id, id)
+        }
     }
 
     func testVariableDurationTransitionUsesExplicitKindAndZeroLengthSourceRange() throws {

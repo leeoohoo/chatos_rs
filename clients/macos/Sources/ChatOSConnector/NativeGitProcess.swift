@@ -1,3 +1,5 @@
+import ChatOSProcessRuntime
+import Darwin
 import Foundation
 
 struct NativeGitProcessOutput: Sendable {
@@ -13,21 +15,18 @@ enum NativeGitProcess {
     static func run(
         arguments: [String],
         directory: URL,
-        allowedExitCodes: Set<Int32> = [0]
+        allowedExitCodes: Set<Int32> = [0],
+        timeout: TimeInterval = 120,
+        maximumOutputBytes: Int = 16 * 1_024 * 1_024
     ) throws -> NativeGitProcessOutput {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["LC_ALL"] = "C"
-        process.environment = environment
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
-        let stdoutBuffer = NativeGitDataBuffer()
-        let stderrBuffer = NativeGitDataBuffer()
+        let stdoutBuffer = NativeBoundedProcessOutput(maximumBytes: maximumOutputBytes)
+        let stderrBuffer = NativeBoundedProcessOutput(maximumBytes: 1 * 1_024 * 1_024)
         NativeProcessPipeReader.install(
             on: stdoutPipe.fileHandleForReading,
             onData: stdoutBuffer.append
@@ -36,20 +35,78 @@ enum NativeGitProcess {
             on: stderrPipe.fileHandleForReading,
             onData: stderrBuffer.append
         )
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        try process.run()
-        process.waitUntilExit()
+        let nullInput = open("/dev/null", O_RDONLY)
+        guard nullInput >= 0 else {
+            throw NativeGitError.commandFailed(
+                arguments: arguments,
+                message: "无法打开 Git 标准输入"
+            )
+        }
+        defer { close(nullInput) }
+        let executable = "/usr/bin/git"
+        let processArguments = [executable] + arguments
+        var processID: pid_t = 0
+        let spawnResult = withCStringArray(processArguments) { argv in
+            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    executable,
+                    argv,
+                    envp,
+                    directory.path,
+                    nullInput,
+                    stdoutPipe.fileHandleForWriting.fileDescriptor,
+                    stderrPipe.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
+        }
+        stdoutPipe.fileHandleForWriting.closeFile()
+        stderrPipe.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            throw NativeGitError.commandFailed(
+                arguments: arguments,
+                message: "无法启动 Git：\(String(cString: strerror(spawnResult)))"
+            )
+        }
+        let exitSignal = NativeProcessExitSignal.reap(processID: processID)
+        var exitCode = exitSignal.wait(timeout: timeout)
+        let timedOut = exitCode == nil
+        if timedOut {
+            _ = chatos_signal_process_group(processID, SIGTERM)
+            exitCode = exitSignal.wait(timeout: 0.75)
+            if exitCode == nil {
+                _ = chatos_signal_process_group(processID, SIGKILL)
+                exitCode = exitSignal.wait(timeout: 2)
+            }
+        }
+        // Git may launch credential, transport, hook, or editor descendants.
+        // A completed command must not leave any of them detached from ChatOS.
+        _ = chatos_signal_process_group(processID, SIGKILL)
+        guard let exitCode else {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            try? stdoutPipe.fileHandleForReading.close()
+            try? stderrPipe.fileHandleForReading.close()
+            throw NativeGitError.commandTimedOut
+        }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
         stdoutBuffer.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
         stderrBuffer.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+        let stdout = stdoutBuffer.snapshot
+        let stderr = stderrBuffer.snapshot
+        if timedOut {
+            throw NativeGitError.commandTimedOut
+        }
+        guard !stdout.discarded, !stderr.discarded else {
+            throw NativeGitError.outputTooLarge
+        }
         let output = NativeGitProcessOutput(
-            stdout: stdoutBuffer.data,
-            stderr: stderrBuffer.data,
-            exitCode: process.terminationStatus
+            stdout: stdout.data,
+            stderr: stderr.data,
+            exitCode: exitCode
         )
         guard allowedExitCodes.contains(output.exitCode) else {
             throw NativeGitError.commandFailed(
@@ -59,22 +116,14 @@ enum NativeGitProcess {
         }
         return output
     }
-}
 
-private final class NativeGitDataBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = Data()
-
-    func append(_ data: Data) {
-        lock.lock()
-        value.append(data)
-        lock.unlock()
-    }
-
-    var data: Data {
-        lock.lock()
-        defer { lock.unlock() }
-        return value
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 }
 
@@ -86,6 +135,8 @@ enum NativeGitError: LocalizedError, Equatable {
     case noRemote
     case noCurrentBranch
     case invalidRemote
+    case commandTimedOut
+    case outputTooLarge
     case commandFailed(arguments: [String], message: String)
 
     var errorDescription: String? {
@@ -104,6 +155,10 @@ enum NativeGitError: LocalizedError, Equatable {
             "当前处于分离 HEAD 状态，不能直接发布分支。"
         case .invalidRemote:
             "远程仓库名称和地址不能为空。"
+        case .commandTimedOut:
+            "Git 命令执行超时，相关子进程已终止。"
+        case .outputTooLarge:
+            "Git 命令输出过大，请缩小操作范围后重试。"
         case let .commandFailed(_, message):
             localizedCommandMessage(message)
         }

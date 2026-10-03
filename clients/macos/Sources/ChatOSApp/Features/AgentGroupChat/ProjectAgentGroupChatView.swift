@@ -70,6 +70,10 @@ struct ProjectAgentGroupChatView: View {
             }
         }
         .task { await viewModel.activate() }
+        .onChange(of: selectedSection) { _, section in
+            guard section == .runs else { return }
+            Task { await viewModel.loadRunHistory() }
+        }
         .sheet(isPresented: $showsCreateRoom) {
             CreateAgentRoomSheet(viewModel: viewModel)
         }
@@ -193,7 +197,7 @@ struct ProjectAgentGroupChatView: View {
                 runsByTodoID: viewModel.todoRunPresentationsByTodoID,
                 focusedTodoID: focusedTodoID,
                 onInspectRun: { runID in
-                    inspectingRun = viewModel.recentRuns.first { $0.id == runID }
+                    Task { inspectingRun = await viewModel.loadRun(runID) }
                 }
             )
         case .research:
@@ -225,12 +229,14 @@ struct ProjectAgentGroupChatView: View {
             )
         case .runs:
             TeamRunsView(
-                runs: viewModel.recentRuns,
+                runs: viewModel.recentRunHistorySummaries,
                 profilesByID: viewModel.profilesByID,
-                deliveriesByRunID: viewModel.recentRunDeliveries,
+                isLoading: viewModel.isLoadingRunHistory,
                 selectedAgentID: selectedRunAgentID,
                 onSelectAgent: { selectedRunAgentID = $0 },
-                onInspect: { inspectingRun = $0 }
+                onInspect: { runID in
+                    Task { inspectingRun = await viewModel.loadRun(runID) }
+                }
             )
         }
     }

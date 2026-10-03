@@ -1,6 +1,10 @@
 import Foundation
 
 enum NativeBrowserVisualBridge {
+    static let maximumFrameBytes = 2 * 1_024 * 1_024
+    static let maximumEncodedCharacters = ((maximumFrameBytes + 2) / 3) * 4
+    private static let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
     static func browserSessionID(
         arguments: NativeJSONValue,
         result: NativeJSONValue
@@ -25,10 +29,14 @@ enum NativeBrowserVisualBridge {
               ]),
               values.isRegularFile == true,
               values.isSymbolicLink != true,
-              (values.fileSize ?? 2 * 1_024 * 1_024 + 1) <= 2 * 1_024 * 1_024 else {
+              (values.fileSize ?? maximumFrameBytes + 1) <= maximumFrameBytes else {
             return nil
         }
-        return try? Data(contentsOf: candidate, options: .mappedIfSafe)
+        guard let data = try? NativeBoundedFileReader.read(
+            candidate,
+            maximumBytes: maximumFrameBytes
+        ), isValidPNG(data) else { return nil }
+        return data
     }
 
     static func publish(
@@ -38,7 +46,7 @@ enum NativeBrowserVisualBridge {
         sequence: UInt64,
         target: String?
     ) throws {
-        guard frame.count <= 2 * 1_024 * 1_024 else { return }
+        guard isValidPNG(frame) else { return }
         try frame.write(
             to: visualSessionURL.appendingPathComponent("frame.png"),
             options: .atomic
@@ -117,7 +125,9 @@ enum NativeBrowserVisualBridge {
         case let .object(object):
             if object["type"]?.jsonString == "image",
                let encoded = object["data"]?.jsonString,
-               let data = Data(base64Encoded: encoded) {
+               encoded.utf8.count <= maximumEncodedCharacters,
+               let data = Data(base64Encoded: encoded),
+               isValidPNG(data) {
                 return data
             }
             return object.values.lazy.compactMap(findImageData).first
@@ -132,6 +142,12 @@ enum NativeBrowserVisualBridge {
         default:
             return nil
         }
+    }
+
+    private static func isValidPNG(_ data: Data) -> Bool {
+        !data.isEmpty
+            && data.count <= maximumFrameBytes
+            && data.starts(with: pngSignature)
     }
 
     private static func findArtifactPath(in value: NativeJSONValue) -> String? {

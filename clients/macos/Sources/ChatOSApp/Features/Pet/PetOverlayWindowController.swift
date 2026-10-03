@@ -718,6 +718,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             rootView: PetQuickChatTaskInspectorView(
                 selection: selection,
                 service: service,
+                realtimeService: model.conversationService,
                 onClose: { [weak self] in self?.dismissTaskInspector() }
             )
             .environmentObject(model)

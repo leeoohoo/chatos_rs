@@ -23,16 +23,16 @@ extension StoryStudioViewModel {
                   try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: project) else {
                 throw StoryAgentError.projectChanged
             }
-            let existing = try await self.store.loadMediaBatches(owner: owner, projectID: project.id)
-            guard existing.unreadable == 0, !existing.batches.contains(where: { !$0.finished }) else { throw StoryBatchError.activeBatch }
+            let existing = try await self.store.inspectMediaBatches(owner: owner, projectID: project.id)
+            guard existing.unreadable == 0, !existing.hasUnfinished else { throw StoryBatchError.activeBatch }
             try await self.executeMediaBatch(batch, token: token)
         }
     }
     func resumeMediaBatch(_ id: UUID) {
         guard let project else { return }
         run("恢复原制作批次") { owner, token in
-            let saved = try await self.store.loadMediaBatches(owner: owner, projectID: project.id)
-            guard let batch = saved.batches.first(where: { $0.id == id }), !batch.finished else { throw StoryAgentError.invalidRun }
+            let batch = try await self.store.loadMediaBatch(owner: owner, projectID: project.id, batchID: id)
+            guard !batch.finished else { throw StoryAgentError.invalidRun }
             try await self.executeMediaBatch(batch, token: token)
         }
     }
@@ -41,8 +41,8 @@ extension StoryStudioViewModel {
     func abandonMediaBatch(_ id: UUID) {
         guard let project else { return }
         run("结束已核对的制作批次") { owner, token in
-            let history = try await self.store.loadMediaBatches(owner: owner, projectID: project.id)
-            guard var batch = history.batches.first(where: { $0.id == id }), !batch.finished else { throw StoryAgentError.invalidRun }
+            var batch = try await self.store.loadMediaBatch(owner: owner, projectID: project.id, batchID: id)
+            guard !batch.finished else { throw StoryAgentError.invalidRun }
             try self.check(token)
             batch.draft = project; batch.expectedProjectDigest = try StoryAgentRun.digest(project)
             let intents = Set(batch.jobs.values.map(\.intentID))

@@ -4,6 +4,21 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
+    func testPetActivityRefreshSkipsRunProjectionNeutralEvents() {
+        XCTAssertFalse(NativeLocalAgentPetActivityService.shouldRefresh(forEventTypes: [
+            "tool_invocation_claimed",
+            "tool_invocation_completed",
+            "task_state_reconciled",
+        ]))
+        XCTAssertTrue(NativeLocalAgentPetActivityService.shouldRefresh(forEventTypes: [
+            "tool_invocation_completed",
+            "run_succeeded",
+        ]))
+        XCTAssertTrue(NativeLocalAgentPetActivityService.shouldRefresh(forEventTypes: [
+            "future_run_transition",
+        ]))
+    }
+
     func testMapsLocalRunsToPetActivities() async throws {
         let host = PetActivityHostStub()
         let service = NativeLocalAgentPetActivityService(host: host)
@@ -22,9 +37,19 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         XCTAssertEqual(task.kind, .failed)
         XCTAssertEqual(task.route.taskID, "task-1")
         XCTAssertEqual(task.detail, "build failed")
+
+        let commands = try await host.recordedCommands()
+        let terminalCommand = try XCTUnwrap(commands.first(where: {
+            $0["scope"] == .string("terminal")
+        }))
+        guard case let .number(cutoff)? = terminalCommand["updated_after_unix_ms"] else {
+            return XCTFail("Expected a terminal Run cutoff")
+        }
+        XCTAssertGreaterThan(cutoff, 0)
+        XCTAssertLessThanOrEqual(cutoff, Double(PetActivityHostStub.now))
     }
 
-    func testLocalEventStreamUsesNonBlockingHostEventPages() async throws {
+    func testLocalEventStreamUsesHostLongPolling() async throws {
         let host = PetActivityHostStub()
         let service = NativeLocalAgentPetActivityService(host: host)
         await service.configure(ownerUserID: "user-1")
@@ -35,9 +60,17 @@ final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
         let changed = try await iterator.next()
         XCTAssertEqual(initial, .reconcile)
         XCTAssertEqual(changed, .reconcile)
-        let command = try await host.lastCommand()
-        XCTAssertEqual(command["type"], .string("list_events"))
+        let commands = try await host.recordedCommands()
+        XCTAssertEqual(Array(commands.prefix(2)).map { $0["type"] }, [
+            .string("get_event_cursor"),
+            .string("wait_events"),
+        ])
+        let command = try XCTUnwrap(commands.dropFirst().first)
+        XCTAssertEqual(command["type"], .string("wait_events"))
         XCTAssertEqual(command["owner_user_id"], .string("user-1"))
+        XCTAssertEqual(command["after_cursor"], .number(41))
+        XCTAssertEqual(command["timeout_ms"], .number(60_000))
+        XCTAssertEqual(command["payload_mode"], .string("routing"))
     }
 }
 
@@ -51,7 +84,13 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         let type = object?["type"] as? String
-        if type == "list_events" {
+        if type == "get_event_cursor" {
+            return try JSONSerialization.data(withJSONObject: [
+                "type": "event_cursor",
+                "cursor": 41,
+            ])
+        }
+        if type == "wait_events" {
             return try JSONSerialization.data(withJSONObject: [
                 "type": "events",
                 "events": [[
@@ -61,7 +100,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
                     "event_type": "run_updated",
                     "created_at_unix_ms": Self.now,
                 ]],
-                "next_cursor": 1,
+                "next_cursor": 42,
             ])
         }
 
@@ -105,12 +144,15 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
         ])
     }
 
-    func lastCommand() throws -> [String: LocalAgentJSONValue] {
-        guard let data = commands.last else { throw CocoaError(.fileNoSuchFile) }
-        let value = try JSONDecoder().decode(LocalAgentJSONValue.self, from: data)
-        guard case let .object(object) = value else { throw CocoaError(.fileReadCorruptFile) }
-        return object
+    func recordedCommands() throws -> [[String: LocalAgentJSONValue]] {
+        try commands.map { data in
+            let value = try JSONDecoder().decode(LocalAgentJSONValue.self, from: data)
+            guard case let .object(object) = value else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return object
+        }
     }
 
-    private static let now = Int64(Date().timeIntervalSince1970 * 1_000)
+    fileprivate static let now = Int64(Date().timeIntervalSince1970 * 1_000)
 }

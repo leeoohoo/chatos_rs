@@ -11,10 +11,25 @@ struct NativeProjectRunAnalysis: Sendable {
 struct NativeProjectRunAnalyzer: Sendable {
     private static let maximumDirectories = 2_500
     private static let maximumDepth = 6
+    private static let defaultMaximumChildrenPerDirectory = 10_000
+    private static let maximumManifestBytes = 2 * 1_024 * 1_024
+    private static let maximumConfigurationPreviewBytes = 128 * 1_024
     private static let ignoredDirectories: Set<String> = [
         ".chatos", ".git", ".idea", ".next", ".venv", ".vscode", "build", "dist",
         "node_modules", "target", "venv", "vendor",
     ]
+    private static let detectionFileNames = [
+        "app.py", "build.gradle", "build.gradle.kts", "Cargo.toml", "go.mod",
+        "gradlew", "main.py", "mvnw", "package.json", "Package.swift",
+        "pnpm-lock.yaml", "pom.xml", "pyproject.toml", "pytest.ini",
+        "requirements.txt", "yarn.lock",
+    ]
+
+    private let maximumChildrenPerDirectory: Int
+
+    init(maximumChildrenPerDirectory: Int = Self.defaultMaximumChildrenPerDirectory) {
+        self.maximumChildrenPerDirectory = max(1, maximumChildrenPerDirectory)
+    }
 
     func analyze(root: URL) throws -> NativeProjectRunAnalysis {
         var isDirectory: ObjCBool = false
@@ -34,13 +49,16 @@ struct NativeProjectRunAnalyzer: Sendable {
             let (directory, depth) = queue[cursor]
             cursor += 1
             visited += 1
-            let children = (try? FileManager.default.contentsOfDirectory(
+            var files = knownDetectionFiles(in: directory)
+            let children = FileManager.default.enumerator(
                 at: directory,
                 includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
-                options: []
-            )) ?? []
-            var files: [String: URL] = [:]
-            for child in children {
+                options: [.skipsSubdirectoryDescendants]
+            )
+            var inspectedChildren = 0
+            while let child = children?.nextObject() as? URL {
+                guard inspectedChildren < maximumChildrenPerDirectory else { break }
+                inspectedChildren += 1
                 let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
                 guard values?.isSymbolicLink != true else { continue }
                 let lower = child.lastPathComponent.lowercased()
@@ -83,16 +101,27 @@ struct NativeProjectRunAnalyzer: Sendable {
         )
     }
 
+    private func knownDetectionFiles(in directory: URL) -> [String: URL] {
+        var files: [String: URL] = [:]
+        for name in Self.detectionFileNames {
+            let candidate = directory.appendingPathComponent(name, isDirectory: false)
+            let values = try? candidate.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+            files[name.lowercased()] = candidate
+        }
+        return files
+    }
+
     private func detectNode(
         in directory: URL,
         files: [String: URL],
         output: inout [ProjectRunTarget],
         configs: inout Set<URL>
     ) {
-        guard let manifest = files["package.json"],
-              let data = try? Data(contentsOf: manifest),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard let manifest = files["package.json"] else { return }
         configs.insert(manifest)
+        guard let data = boundedData(at: manifest, maximumBytes: Self.maximumManifestBytes),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let manager: String
         if files["pnpm-lock.yaml"] != nil { manager = "pnpm" }
         else if files["yarn.lock"] != nil { manager = "yarn" }
@@ -267,9 +296,12 @@ struct NativeProjectRunAnalyzer: Sendable {
     }
 
     private func configurationFile(_ url: URL, root: URL) -> ProjectRunConfigurationFile {
-        let data = try? Data(contentsOf: url, options: [.mappedIfSafe])
+        let data = boundedData(
+            at: url,
+            maximumBytes: Self.maximumConfigurationPreviewBytes
+        )
         let preview = data.flatMap { data -> String? in
-            guard data.count <= 128 * 1_024, !data.prefix(8_000).contains(0) else { return nil }
+            guard !data.prefix(8_000).contains(0) else { return nil }
             return String(String(decoding: data, as: UTF8.self).prefix(12_000))
         }
         let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
@@ -282,6 +314,19 @@ struct NativeProjectRunAnalyzer: Sendable {
             kind: url.lastPathComponent.lowercased(), label: url.lastPathComponent,
             path: relative, preview: preview, source: "本机项目"
         )
+    }
+
+    private func boundedData(at url: URL, maximumBytes: Int) -> Data? {
+        guard maximumBytes > 0,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize <= maximumBytes,
+              let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maximumBytes + 1),
+              data.count <= maximumBytes else { return nil }
+        return data
     }
 
     private func discoverToolchains() -> [String: [ProjectRunToolchainOption]] {

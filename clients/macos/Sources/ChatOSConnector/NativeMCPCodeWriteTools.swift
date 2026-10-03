@@ -359,7 +359,15 @@ actor NativeMCPCodeWriteStore {
         guard values.isRegularFile == true else { throw NativeMCPCodeWriteError.targetIsNotFile }
         let size = values.fileSize ?? Self.maximumWriteBytes + 1
         guard size <= Self.maximumWriteBytes else { throw NativeMCPCodeWriteError.fileTooLarge }
-        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let data: Data
+        do {
+            data = try NativeBoundedFileReader.read(
+                url,
+                maximumBytes: Self.maximumWriteBytes
+            )
+        } catch {
+            throw NativeMCPCodeWriteError.fileTooLarge
+        }
         guard !data.prefix(8_000).contains(0), let content = String(data: data, encoding: .utf8) else {
             throw NativeMCPCodeWriteError.binaryFile
         }

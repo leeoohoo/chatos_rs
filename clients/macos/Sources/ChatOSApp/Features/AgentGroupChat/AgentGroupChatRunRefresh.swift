@@ -57,15 +57,36 @@ extension AgentGroupChatViewModel {
             }
             recentRunDeliveries[run.id] = delivery
 
+            if hasLoadedRunHistory {
+                let summary = LocalAgentRunHistorySummary(
+                    run: run,
+                    triggerKind: delivery.triggerKind
+                )
+                recentRunHistorySummaries.removeAll { $0.id == summary.id }
+                recentRunHistorySummaries.append(summary)
+                recentRunHistorySummaries.sort {
+                    if $0.updatedAtUnixMs != $1.updatedAtUnixMs {
+                        return $0.updatedAtUnixMs > $1.updatedAtUnixMs
+                    }
+                    return $0.id.uuidString > $1.id.uuidString
+                }
+                if recentRunHistorySummaries.count > 500 {
+                    recentRunHistorySummaries.removeSubrange(500...)
+                }
+            }
+
             updateInterruptedRun(run, delivery: delivery)
             if let todoID = Self.todoID(for: delivery) {
                 let latestRunID = recentRuns.first { candidate in
                     recentRunDeliveries[candidate.id].flatMap { Self.todoID(for: $0) } == todoID
                 }?.id
                 if latestRunID == run.id {
-                    let presentation = await Task.detached(priority: .utility) {
+                    guard let presentation = try? await AppCancellableDetachedWork.run(
+                        priority: .utility,
+                        operation: {
                         TeamTodoRunPresentation(run: run)
-                    }.value
+                        }
+                    ) else { return }
                     guard room?.id == visibleRoomID else { return }
                     todoRunPresentationsByTodoID[todoID] = presentation
                 }

@@ -76,6 +76,9 @@ pub enum HostResult {
     ToolClaim {
         claim: Option<LocalAgentToolClaim>,
     },
+    ToolClaimRenewed {
+        renewed: bool,
+    },
     ToolCommit {
         result: Box<LocalAgentToolCommitResult>,
     },
@@ -88,6 +91,9 @@ pub enum HostResult {
     Events {
         events: Vec<LocalAgentEventRecord>,
         next_cursor: i64,
+    },
+    EventCursor {
+        cursor: i64,
     },
     TaskGraph {
         graph: LocalTaskGraph,

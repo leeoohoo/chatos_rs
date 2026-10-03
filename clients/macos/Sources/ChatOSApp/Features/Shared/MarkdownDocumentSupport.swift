@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSAPI
 import Foundation
 import ImageIO
 
@@ -34,6 +35,7 @@ enum MarkdownViewport: Equatable {
 enum MarkdownRemoteImageLoader {
     static let maximumBytes = 10 * 1_024 * 1_024
     static let maximumPixelCount = 40_000_000
+    static let maximumImagesPerDocument = 32
     static let maximumDisplaySize = NSSize(width: 520, height: 420)
 
     struct DecodedImage: @unchecked Sendable {
@@ -52,16 +54,34 @@ enum MarkdownRemoteImageLoader {
         return url
     }
 
+    static func requests(from blocks: [MarkdownBlock]) -> [(rawValue: String, url: URL)] {
+        var requests: [(rawValue: String, url: URL)] = []
+        requests.reserveCapacity(min(blocks.count, maximumImagesPerDocument))
+        var seen = Set<String>()
+        for block in blocks {
+            guard requests.count < maximumImagesPerDocument else { break }
+            guard case let .image(_, rawValue) = block,
+                  seen.insert(rawValue).inserted,
+                  let url = allowedURL(from: rawValue) else { continue }
+            requests.append((rawValue, url))
+        }
+        return requests
+    }
+
     static func load(_ url: URL) async -> Data? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 20
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              !data.isEmpty,
-              data.count <= maximumBytes,
-              let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode),
-              response.mimeType?.hasPrefix("image/") == true else { return nil }
-        return data
+        guard let response = try? await URLSessionHTTPTransport().send(.init(
+            url: url,
+            method: "GET",
+            timeoutInterval: request.timeoutInterval,
+            maximumResponseBytes: maximumBytes
+        )),
+        !response.body.isEmpty,
+        (200..<300).contains(response.statusCode),
+        response.headers["content-type"]?.lowercased().hasPrefix("image/") == true
+        else { return nil }
+        return response.body
     }
 
     nonisolated static func decode(_ data: Data) -> DecodedImage? {
@@ -102,6 +122,19 @@ enum MarkdownRemoteImageLoader {
             displaySize: displaySize,
             cost: image.bytesPerRow * image.height
         )
+    }
+
+    static func decodeOffMain(_ data: Data) async -> DecodedImage? {
+        let task = Task.detached(priority: .utility) { () -> DecodedImage? in
+            guard !Task.isCancelled else { return nil }
+            let decoded = decode(data)
+            return Task.isCancelled ? nil : decoded
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     nonisolated static func boundedDisplaySize(

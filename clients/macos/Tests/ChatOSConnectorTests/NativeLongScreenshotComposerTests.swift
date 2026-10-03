@@ -5,6 +5,21 @@ import Testing
 
 struct NativeLongScreenshotComposerTests {
     @Test
+    func defaultOutputLimitIsBounded() {
+        #expect(NativeLongScreenshotComposer.defaultMaximumPixelCount == 64_000_000)
+    }
+
+    @Test
+    func rejectsAnInitialFrameBeyondTheConfiguredLimit() async throws {
+        let image = try makePatternImage(width: 96, height: 160)
+        let composer = NativeLongScreenshotComposer(maximumPixelCount: 10_000)
+
+        await #expect(throws: NativeLongScreenshotError.self) {
+            try await composer.start(with: image)
+        }
+    }
+
+    @Test
     func appendsOnlyNewRowsFromOverlappingFrames() async throws {
         let source = try makePatternImage(width: 96, height: 320)
         let first = try #require(source.cropping(to: CGRect(x: 0, y: 0, width: 96, height: 160)))

@@ -116,6 +116,46 @@ final class NativeWorkspaceFilesystemTests: XCTestCase {
         XCTAssertThrowsError(try filesystem.read(path: "large.txt"))
     }
 
+    func testDirectoryListingStopsEnumerationAtConfiguredLimit() throws {
+        let root = try temporaryDirectory(named: "bounded-listing")
+        defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<4 {
+            try Data().write(to: root.appendingPathComponent("file-\(index).txt"))
+        }
+        let filesystem = NativeWorkspaceFilesystem(
+            workspace: workspace(root),
+            maximumDirectoryEntries: 3
+        )
+
+        let listing = try filesystem.list(path: ".", includeFiles: true)
+        guard case let .object(object) = listing,
+              case let .array(entries)? = object["entries"],
+              case let .bool(truncated)? = object["truncated"] else {
+            return XCTFail("expected bounded directory listing")
+        }
+        XCTAssertEqual(entries.count, 3)
+        XCTAssertTrue(truncated)
+    }
+
+    func testCancelledDirectoryListingStopsBeforeEnumeration() async throws {
+        let root = try temporaryDirectory(named: "cancelled-listing")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data().write(to: root.appendingPathComponent("file.txt"))
+        let filesystem = NativeWorkspaceFilesystem(workspace: workspace(root))
+
+        let task = Task.detached { () throws -> NativeJSONValue in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try filesystem.list(path: ".", includeFiles: true)
+        }
+
+        do {
+            _ = try await task.value
+            XCTFail("Cancelled listing continued enumerating the workspace")
+        } catch is CancellationError {
+            // Expected.
+        }
+    }
+
     private func workspace(_ root: URL) -> LocalConnectorWorkspace {
         .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "fingerprint")
     }

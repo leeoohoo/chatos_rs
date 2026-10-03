@@ -3,13 +3,35 @@ import ChatOSConnector
 import ChatOSCore
 import Foundation
 
+struct AgentWorkspaceRefreshPlan: Equatable {
+    private(set) var reloadWorkspace = false
+    private(set) var reloadTriggerRuns = false
+
+    mutating func record(_ kind: NativeAgentGroupChatChange.Kind) {
+        reloadTriggerRuns = true
+        if kind != .runUpdated {
+            reloadWorkspace = true
+        }
+    }
+
+    mutating func take() -> Self {
+        let plan = self
+        self = .init()
+        return plan
+    }
+}
+
 @MainActor
 final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     struct TriggerRunPresentation: Identifiable {
-        var id: UUID { run.id }
-        let run: LocalAgentGroupChatRun
+        var id: UUID { summary.id }
+        let summary: LocalAgentRunHistorySummary
         let delivery: ProjectAgentDelivery?
         let room: ProjectAgentRoom?
+    }
+
+    struct TriggerRunDetails {
+        let run: LocalAgentGroupChatRun
         let triggerMessage: ProjectAgentMessage?
     }
 
@@ -18,6 +40,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
     @Published private(set) var triggerRuns: [TriggerRunPresentation] = []
+    @Published private(set) var triggerRunDetailsByID: [UUID: TriggerRunDetails] = [:]
     @Published private(set) var selectedAgentID: String?
     @Published private(set) var isLoadingTriggerRuns = false
     @Published private(set) var runActionDeliveryIDs: Set<String> = []
@@ -35,7 +58,11 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     private var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     private var hasLoadedModels = false
     private var changeObservationTask: Task<Void, Never>?
+    private var changeRefreshCoalescer: AgentChangeRefreshCoalescer?
+    private var pendingRefreshPlan = AgentWorkspaceRefreshPlan()
     private var triggerRunsReloadRequested = false
+    private var requestedTriggerRunDetailIDs: Set<UUID> = []
+    private var loadingTriggerRunDetailIDs: Set<UUID> = []
 
     init(
         ownerUserID: String,
@@ -62,8 +89,13 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         guard changeObservationTask == nil else { return }
         let service = service
         let ownerUserID = ownerUserID
+        let refreshCoalescer = AgentChangeRefreshCoalescer { [weak self] in
+            await self?.refreshPendingChanges()
+        }
+        changeRefreshCoalescer = refreshCoalescer
         changeObservationTask = Task { [weak self] in
             let changes = await service.changes(ownerUserID: ownerUserID)
+            defer { refreshCoalescer.cancel() }
             for await change in changes {
                 guard !Task.isCancelled else { break }
                 guard change.kind == .roomUpdated
@@ -71,15 +103,23 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                         || change.kind == .runUpdated else {
                     continue
                 }
-                try? await Task.sleep(for: .milliseconds(120))
-                guard !Task.isCancelled else { break }
-                if change.kind == .runUpdated {
-                    await self?.loadTriggerRuns()
-                } else {
-                    await self?.load()
-                    await self?.loadTriggerRuns()
-                }
+                self?.pendingRefreshPlan.record(change.kind)
+                refreshCoalescer.signal()
             }
+        }
+    }
+
+    private func refreshPendingChanges() async {
+        guard !isLoading, !isLoadingTriggerRuns else {
+            changeRefreshCoalescer?.signal()
+            return
+        }
+        let plan = pendingRefreshPlan.take()
+        if plan.reloadWorkspace {
+            await load()
+        }
+        if plan.reloadTriggerRuns {
+            await loadTriggerRuns()
         }
     }
 
@@ -102,6 +142,8 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                !agents.contains(where: { $0.id == selectedAgentID }) {
                 self.selectedAgentID = nil
                 triggerRuns = []
+                triggerRunDetailsByID = [:]
+                requestedTriggerRunDetailIDs = []
             }
             if let selectedRoomID, rooms.contains(where: { $0.id == selectedRoomID }) {
                 self.selectedRoomID = selectedRoomID
@@ -247,6 +289,10 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     }
 
     func selectAgent(_ agentID: String) async {
+        if selectedAgentID != agentID {
+            triggerRunDetailsByID = [:]
+            requestedTriggerRunDetailIDs = []
+        }
         selectedAgentID = agentID
         await loadTriggerRuns()
     }
@@ -264,36 +310,72 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             guard let selectedAgentID else { return }
             do {
                 let store = try await resolveStore()
-                let runs = try await store.listAgentRuns(
+                let summaries = try await store.listAgentRunHistorySummaries(
                     ownerUserID: ownerUserID,
                     agentID: selectedAgentID,
                     limit: 100
                 )
                 let deliveriesByID = try await store.deliveries(
                     ownerUserID: ownerUserID,
-                    deliveryIDs: runs.map(\.context.deliveryID)
-                )
-                let messagesByID = try await store.messages(
-                    ownerUserID: ownerUserID,
-                    messageIDs: runs.map(\.context.triggerMessageID)
+                    deliveryIDs: summaries.map(\.deliveryID)
                 )
                 let roomsByID = Dictionary(uniqueKeysWithValues:
                     (rooms + directConversations).map { ($0.id, $0) }
                 )
-                let presentations = runs.map { run in
+                let presentations = summaries.map { summary in
                     TriggerRunPresentation(
-                        run: run,
-                        delivery: deliveriesByID[run.context.deliveryID],
-                        room: roomsByID[run.context.roomID],
-                        triggerMessage: messagesByID[run.context.triggerMessageID]
+                        summary: summary,
+                        delivery: deliveriesByID[summary.deliveryID],
+                        room: roomsByID[summary.roomID]
                     )
                 }
                 guard self.selectedAgentID == selectedAgentID else { continue }
                 triggerRuns = presentations
+                let summariesByID = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
+                triggerRunDetailsByID = triggerRunDetailsByID.filter { runID, details in
+                    summariesByID[runID]?.updatedAtUnixMs == details.run.updatedAtUnixMs
+                }
             } catch {
                 errorMessage = error.localizedDescription
             }
         } while triggerRunsReloadRequested
+    }
+
+    func loadTriggerRunDetails(_ runID: UUID) async {
+        requestedTriggerRunDetailIDs.insert(runID)
+        guard triggerRunDetailsByID[runID] == nil,
+              let summary = triggerRuns.first(where: { $0.id == runID })?.summary,
+              selectedAgentID == summary.agentID else { return }
+        guard loadingTriggerRunDetailIDs.insert(runID).inserted else { return }
+        defer { loadingTriggerRunDetailIDs.remove(runID) }
+        do {
+            let store = try await resolveStore()
+            guard let run = try await store.run(ownerUserID: ownerUserID, runID: runID),
+                  run.context.agentID == summary.agentID,
+                  run.context.roomID == summary.roomID,
+                  let current = triggerRuns.first(where: { $0.id == runID })?.summary,
+                  current.updatedAtUnixMs == run.updatedAtUnixMs,
+                  requestedTriggerRunDetailIDs.contains(runID),
+                  selectedAgentID == summary.agentID else { return }
+            let message = try await store.messages(
+                ownerUserID: ownerUserID,
+                messageIDs: [summary.triggerMessageID]
+            )[summary.triggerMessageID]
+            guard requestedTriggerRunDetailIDs.contains(runID),
+                  selectedAgentID == summary.agentID else { return }
+            triggerRunDetailsByID[runID] = TriggerRunDetails(
+                run: run,
+                triggerMessage: message
+            )
+        } catch {
+            guard selectedAgentID == summary.agentID else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func releaseTriggerRunDetails(_ runID: UUID) {
+        requestedTriggerRunDetailIDs.remove(runID)
+        triggerRunDetailsByID.removeValue(forKey: runID)
     }
 
     func resumeRun(deliveryID: String, projectID: String) async {

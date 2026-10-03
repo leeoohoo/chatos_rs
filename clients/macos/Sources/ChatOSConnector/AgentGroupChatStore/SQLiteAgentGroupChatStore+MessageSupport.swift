@@ -146,17 +146,24 @@ extension SQLiteAgentGroupChatStore {
     func validateSender(
         ownerUserID: String,
         roomID: String,
-        draft: ProjectAgentMessageDraft
+        draft: ProjectAgentMessageDraft,
+        activeMemberIDs: Set<String>?
     ) throws {
         switch draft.senderKind {
         case .human:
             guard draft.senderID == ownerUserID else { throw AgentGroupChatError.permissionDenied }
         case .agent:
-            guard try readMember(
-                ownerUserID: ownerUserID,
-                roomID: roomID,
-                agentID: draft.senderID
-            )?.status == .active else { throw AgentGroupChatError.notMember }
+            if let activeMemberIDs {
+                guard activeMemberIDs.contains(draft.senderID) else {
+                    throw AgentGroupChatError.notMember
+                }
+            } else {
+                guard try readMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: draft.senderID
+                )?.status == .active else { throw AgentGroupChatError.notMember }
+            }
         case .system:
             guard draft.senderID == "system" else { throw AgentGroupChatError.permissionDenied }
         }
@@ -218,6 +225,67 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
+    /// Maps only the columns carried by the message row. Relation-backed fields are hydrated in
+    /// bulk after the page query completes, so row mapping never performs nested SQLite queries.
+    func readMessageBase(_ statement: OpaquePointer) throws -> ProjectAgentMessage {
+        guard let senderKind = ProjectAgentMessageSenderKind(rawValue: Self.string(statement, 3)) else {
+            throw AgentGroupChatError.storage("invalid message sender kind")
+        }
+        let draft = ProjectAgentMessageDraft(
+            senderKind: senderKind,
+            senderID: Self.string(statement, 4),
+            content: Self.string(statement, 5),
+            replyToMessageID: Self.optionalString(statement, 6),
+            sourceRunID: Self.optionalString(statement, 7),
+            causationID: Self.optionalString(statement, 8),
+            rootMessageID: Self.string(statement, 9),
+            hopCount: Int(sqlite3_column_int64(statement, 10))
+        )
+        return ProjectAgentMessage(
+            id: Self.string(statement, 1),
+            ownerUserID: Self.string(statement, 0),
+            roomID: Self.string(statement, 2),
+            draft: draft,
+            rootMessageID: Self.string(statement, 9),
+            createdAtUnixMs: sqlite3_column_int64(statement, 11)
+        )
+    }
+
+    func hydrateMessageRelations(
+        _ messages: [ProjectAgentMessage],
+        ownerUserID: String
+    ) throws -> [ProjectAgentMessage] {
+        guard !messages.isEmpty else { return [] }
+        let relations = try AgentMessageRepository.relations(
+            database,
+            ownerUserID: ownerUserID,
+            messageIDs: messages.map(\.id),
+            preparedStatement: recordPreparedStatement
+        )
+        return messages.map { message in
+            let draft = ProjectAgentMessageDraft(
+                senderKind: message.senderKind,
+                senderID: message.senderID,
+                content: message.content,
+                mentionedAgentIDs: relations.mentionsByMessageID[message.id] ?? [],
+                replyToMessageID: message.replyToMessageID,
+                sourceRunID: message.sourceRunID,
+                causationID: message.causationID,
+                rootMessageID: message.rootMessageID,
+                hopCount: message.hopCount
+            )
+            return ProjectAgentMessage(
+                id: message.id,
+                ownerUserID: message.ownerUserID,
+                roomID: message.roomID,
+                draft: draft,
+                rootMessageID: message.rootMessageID,
+                attachments: relations.attachmentsByMessageID[message.id] ?? [],
+                createdAtUnixMs: message.createdAtUnixMs
+            )
+        }
+    }
+
     func persistMessageAttachments(
         ownerUserID: String,
         messageID: String,
@@ -232,6 +300,7 @@ extension SQLiteAgentGroupChatStore {
             attributes: [.posixPermissions: 0o700]
         )
         var attachments: [ProjectAgentMessageAttachment] = []
+        var records: [NewMessageAttachmentRecord] = []
         for (position, draft) in drafts.enumerated() {
             let attachmentID = UUID().uuidString.lowercased()
             let relativePath = "\(messageID)/\(attachmentID)"
@@ -258,24 +327,20 @@ extension SQLiteAgentGroupChatStore {
                 sha256: sha256,
                 syncStatus: syncStatus
             )
-            try execute(
-                """
-                INSERT INTO project_agent_message_attachments (
-                    owner_user_id, message_id, id, position, name, mime_type,
-                    size_bytes, kind, origin, relative_path, sha256, sync_status,
-                    upload_attempt, next_retry_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
-                """,
-                [
-                    .text(ownerUserID), .text(messageID), .text(attachmentID),
-                    .integer(Int64(position)), .text(draft.name), .text(draft.mimeType),
-                    .integer(Int64(draft.data.count)), .text(draft.kind.rawValue),
-                    .text(draft.origin.rawValue), .text(relativePath), .text(sha256),
-                    .text(syncStatus.rawValue),
-                ]
-            )
             attachments.append(attachment)
+            records.append(.init(
+                attachment: attachment,
+                relativePath: relativePath,
+                position: position
+            ))
         }
+        try AgentAttachmentRepository.insert(
+            database,
+            ownerUserID: ownerUserID,
+            messageID: messageID,
+            records: records,
+            preparedStatement: recordPreparedStatement
+        )
         return attachments
     }
 

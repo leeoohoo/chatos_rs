@@ -94,100 +94,108 @@ extension SQLiteAgentGroupChatStore {
                 limit: agentLimit,
                 preparedStatement: recordPreparedStatement
             )
+            var messages: [ProjectAgentMessage] = []
             var deliveries: [ProjectAgentDelivery] = []
+            var newRooms: [ProjectAgentRoom] = []
+            var newMembers: [ProjectAgentRoomMember] = []
             for agent in dueAgents {
-                let outstanding = try AgentDeliveryRepository.outstandingCount(
-                    database,
-                    ownerUserID: ownerUserID,
-                    targetAgentID: agent.id,
-                    triggerKind: .heartbeat,
-                    preparedStatement: recordPreparedStatement
-                )
-                if outstanding == 0 {
-                    let directKey = "human:\(ownerUserID)|agent:\(agent.id)"
-                    let room: ProjectAgentRoom
-                    if let existing = try readDirectRoom(
-                        ownerUserID: ownerUserID,
-                        directKey: directKey
-                    ) {
-                        room = existing
+                if !agent.hasOutstandingHeartbeat {
+                    let roomID: String
+                    if let existingRoomID = agent.directRoomID {
+                        roomID = existingRoomID
                     } else {
-                        guard let profile = try readAgent(
+                        let createdRoomID = UUID().uuidString.lowercased()
+                        let room = ProjectAgentRoom(
+                            id: createdRoomID,
                             ownerUserID: ownerUserID,
-                            agentID: agent.id
-                        ) else { throw AgentGroupChatError.notFound }
-                        let roomID = UUID().uuidString.lowercased()
-                        room = ProjectAgentRoom(
-                            id: roomID,
-                            ownerUserID: ownerUserID,
-                            projectID: "direct:\(roomID)",
-                            draft: .init(name: profile.draft.name),
-                            defaultAgentID: profile.id,
+                            projectID: "direct:\(createdRoomID)",
+                            draft: .init(name: agent.name),
+                            defaultAgentID: agent.id,
                             conversationKind: .humanAgentDirect,
-                            directKey: directKey,
+                            directKey: "human:\(ownerUserID)|agent:\(agent.id)",
                             createdAtUnixMs: nowUnixMs,
                             updatedAtUnixMs: nowUnixMs
                         )
                         try room.validate()
-                        try insertConversation(room)
-                        try insertDirectMember(
+                        let member = ProjectAgentRoomMember(
                             ownerUserID: ownerUserID,
                             roomID: room.id,
-                            agent: profile,
-                            nowUnixMs: nowUnixMs
+                            agentID: agent.id,
+                            draft: .init(
+                                role: agent.name,
+                                responsibility: agent.description
+                            ),
+                            joinedAtUnixMs: nowUnixMs
                         )
+                        try member.validate()
+                        newRooms.append(room)
+                        newMembers.append(member)
+                        roomID = room.id
                     }
                     let messageID = UUID().uuidString.lowercased()
                     let deliveryID = UUID().uuidString.lowercased()
                     let content = agent.prompt.isEmpty
                         ? "主动巡检：读取全部未读消息，整理并继续处理自己的 TodoList。"
                         : agent.prompt
-                    try execute(
-                        """
-                        INSERT INTO project_agent_messages (
-                            owner_user_id, id, room_id, sender_kind, sender_id, content,
-                            reply_to_message_id, source_run_id, causation_id, root_message_id,
-                            hop_count, created_at_unix_ms
-                        ) VALUES (?, ?, ?, 'system', 'system', ?, NULL, NULL, 'heartbeat', ?, 0, ?)
-                        """,
-                        [
-                            .text(ownerUserID), .text(messageID), .text(room.id), .text(content),
-                            .text(messageID), .integer(nowUnixMs),
-                        ]
-                    )
-                    try execute(
-                        """
-                        INSERT INTO project_agent_deliveries (
-                            owner_user_id, id, room_id, message_id, root_message_id,
-                            target_agent_id, trigger_kind, status, attempt, hop_count,
-                            deduplication_key, response_message_id, last_error,
-                            claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
-                        ) VALUES (?, ?, ?, ?, ?, ?, 'heartbeat', 'pending', 0, 0, ?, NULL, NULL, NULL, NULL, ?)
-                        """,
-                        [
-                            .text(ownerUserID), .text(deliveryID), .text(room.id), .text(messageID),
-                            .text(messageID), .text(agent.id),
-                            .text("heartbeat:\(agent.id):\(agent.scheduledAtUnixMs)"),
-                            .integer(nowUnixMs),
-                        ]
-                    )
-                    guard let delivery = try readDelivery(
+                    messages.append(.init(
+                        id: messageID,
                         ownerUserID: ownerUserID,
-                        deliveryID: deliveryID
-                    ) else { throw AgentGroupChatError.storage("heartbeat delivery insert failed") }
-                    deliveries.append(delivery)
+                        roomID: roomID,
+                        draft: .init(
+                            senderKind: .system,
+                            senderID: "system",
+                            content: content,
+                            causationID: "heartbeat",
+                            rootMessageID: messageID
+                        ),
+                        rootMessageID: messageID,
+                        createdAtUnixMs: nowUnixMs
+                    ))
+                    deliveries.append(ProjectAgentDelivery(
+                        id: deliveryID,
+                        ownerUserID: ownerUserID,
+                        roomID: roomID,
+                        messageID: messageID,
+                        rootMessageID: messageID,
+                        targetAgentID: agent.id,
+                        triggerKind: .heartbeat,
+                        status: .pending,
+                        attempt: 0,
+                        hopCount: 0,
+                        deduplicationKey: "heartbeat:\(agent.id):\(agent.scheduledAtUnixMs)",
+                        createdAtUnixMs: nowUnixMs
+                    ))
                 }
-                let next = nowUnixMs + agent.intervalSeconds * 1_000
-                try execute(
-                    """
-                    UPDATE local_agent_profiles
-                    SET last_heartbeat_at_unix_ms = ?, next_heartbeat_at_unix_ms = ?
-                    WHERE owner_user_id = ? AND id = ? AND status = 'active'
-                      AND heartbeat_enabled = 1
-                    """,
-                    [.integer(nowUnixMs), .integer(next), .text(ownerUserID), .text(agent.id)]
-                )
             }
+            try AgentConversationRepository.insertRooms(
+                database,
+                rooms: newRooms,
+                preparedStatement: recordPreparedStatement
+            )
+            try AgentConversationRepository.insertMembers(
+                database,
+                members: newMembers,
+                preparedStatement: recordPreparedStatement
+            )
+            try AgentMessageRepository.insert(
+                database,
+                messages: messages,
+                preparedStatement: recordPreparedStatement
+            )
+            try AgentDeliveryRepository.insert(
+                database,
+                deliveries: deliveries,
+                preparedStatement: recordPreparedStatement
+            )
+            try AgentProfileRepository.updateHeartbeatSchedule(
+                database,
+                ownerUserID: ownerUserID,
+                schedules: dueAgents.map {
+                    ($0.id, nowUnixMs + $0.intervalSeconds * 1_000)
+                },
+                nowUnixMs: nowUnixMs,
+                preparedStatement: recordPreparedStatement
+            )
             return deliveries
         }
     }

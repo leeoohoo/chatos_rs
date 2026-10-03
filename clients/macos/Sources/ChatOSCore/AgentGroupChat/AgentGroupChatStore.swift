@@ -181,6 +181,7 @@ public protocol AgentGroupChatStore: Sendable {
         draft: ProjectAgentRoomMemberDraft
     ) async throws -> ProjectAgentRoomMember
     func listMembers(ownerUserID: String, roomID: String) async throws -> [ProjectAgentRoomMember]
+    func listActiveMembers(ownerUserID: String) async throws -> [ProjectAgentRoomMember]
     func setDefaultAgent(ownerUserID: String, roomID: String, agentID: String) async throws -> ProjectAgentRoom
     func setProjectManager(
         ownerUserID: String,
@@ -205,6 +206,10 @@ public protocol AgentGroupChatStore: Sendable {
         afterUnixMs: Int64?,
         limit: Int
     ) async throws -> [ProjectAgentMessage]
+    func messages(
+        ownerUserID: String,
+        messageIDs: [String]
+    ) async throws -> [String: ProjectAgentMessage]
     func pageMessages(
         ownerUserID: String,
         roomID: String,
@@ -305,6 +310,15 @@ public protocol AgentGroupChatStore: Sendable {
         teamRoomID: String,
         includeTerminal: Bool
     ) async throws -> [LocalAgentTodo]
+    func listVisibleTeamTodos(
+        ownerUserID: String,
+        agentID: String,
+        includeTerminal: Bool
+    ) async throws -> [LocalAgentTodo]
+    func todos(
+        ownerUserID: String,
+        todoIDs: [String]
+    ) async throws -> [String: LocalAgentTodo]
     func createAgentTodo(
         ownerUserID: String,
         agentID: String,
@@ -347,6 +361,10 @@ public protocol AgentGroupChatStore: Sendable {
         agentID: String,
         todoID: String
     ) async throws -> [LocalAgentTodoSourceLink]
+    func listTodoSources(
+        ownerUserID: String,
+        todoIDs: [String]
+    ) async throws -> [LocalAgentTodoSourceLink]
     func linkAgentTodoSources(
         ownerUserID: String,
         agentID: String,
@@ -358,6 +376,10 @@ public protocol AgentGroupChatStore: Sendable {
         ownerUserID: String,
         agentID: String,
         todoID: String
+    ) async throws -> [LocalAgentTodoDependency]
+    func listTodoDependencies(
+        ownerUserID: String,
+        todoIDs: [String]
     ) async throws -> [LocalAgentTodoDependency]
     func setAgentTodoDependencies(
         ownerUserID: String,
@@ -385,6 +407,12 @@ public protocol AgentGroupChatStore: Sendable {
     func todoForDelivery(
         ownerUserID: String,
         deliveryID: String
+    ) async throws -> LocalAgentTodo?
+    func runningTodoForDelivery(
+        ownerUserID: String,
+        deliveryID: String,
+        agentID: String,
+        roomID: String
     ) async throws -> LocalAgentTodo?
     func agentTodoScheduleState(
         ownerUserID: String,
@@ -444,4 +472,30 @@ public protocol AgentGroupChatStore: Sendable {
         error: String,
         nowUnixMs: Int64
     ) async throws -> ProjectAgentDelivery
+}
+
+public extension AgentGroupChatStore {
+    /// Compatibility implementation for alternate stores and test doubles. SQLite overrides this
+    /// requirement with one joined query on the executor hot path.
+    func runningTodoForDelivery(
+        ownerUserID: String,
+        deliveryID: String,
+        agentID: String,
+        roomID: String
+    ) async throws -> LocalAgentTodo? {
+        guard let delivery = try await delivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), delivery.status == .running,
+        delivery.triggerKind == .todo,
+        delivery.targetAgentID == agentID,
+        delivery.roomID == roomID,
+        let todo = try await todoForDelivery(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID
+        ), todo.status == .inProgress,
+        todo.agentID == agentID,
+        todo.teamRoomID == roomID else { return nil }
+        return todo
+    }
 }

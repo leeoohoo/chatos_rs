@@ -2,6 +2,7 @@ import ChatOSCore
 import Foundation
 
 public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing {
+    static let maximumSourceBytes = 2 * 1_024 * 1_024
     private let connector: NativeLocalConnectorService
     private var searchCache: [SearchCacheKey: SearchCacheEntry] = [:]
 
@@ -72,7 +73,7 @@ public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing 
             throw NavigationError.fileOutsideProject
         }
         let readTask = Task.detached {
-            try String(contentsOf: file.absoluteURL, encoding: .utf8)
+            try Self.readSourceFile(file.absoluteURL)
         }
         let content = try await withTaskCancellationHandler {
             try await readTask.value
@@ -90,6 +91,25 @@ public actor NativeProjectCodeNavigationService: ProjectCodeNavigationServicing 
             content: content,
             language: Self.language(for: file.absoluteURL)
         )
+    }
+
+    private static func readSourceFile(_ url: URL) throws -> String {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize <= maximumSourceBytes else {
+            throw NavigationError.fileTooLarge
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumSourceBytes + 1) ?? Data()
+        guard data.count <= maximumSourceBytes else {
+            throw NavigationError.fileTooLarge
+        }
+        guard let content = String(data: data, encoding: .utf8) else {
+            throw NavigationError.unreadableSource
+        }
+        return content
     }
 
     private func search(context: Context, token: String, limit: Int) async throws -> [SearchHit] {
@@ -194,8 +214,19 @@ private extension NativeProjectCodeNavigationService {
 
     enum NavigationError: LocalizedError {
         case fileOutsideProject
+        case fileTooLarge
+        case unreadableSource
 
-        var errorDescription: String? { "当前文件不在项目目录内，无法执行代码导航。" }
+        var errorDescription: String? {
+            switch self {
+            case .fileOutsideProject:
+                "当前文件不在项目目录内，无法执行代码导航。"
+            case .fileTooLarge:
+                "当前文件超过 2 MB，无法执行代码导航。"
+            case .unreadableSource:
+                "当前文件不是可读取的 UTF-8 文本。"
+            }
+        }
     }
 
     static func token(atLine line: Int, column: Int, in content: String) -> String? {

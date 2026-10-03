@@ -150,26 +150,35 @@ extension AppModel {
 
     func refreshRemoteConnections() {
         guard let expectedOwnerUserID = authenticatedUserID else { return }
+        remoteConnectionsLoadTask?.cancel()
         remoteConnectionsLoadGeneration &+= 1
         let generation = remoteConnectionsLoadGeneration
+        let accountGeneration = workspaceAccountGeneration
         isRemoteConnectionsLoading = true
         remoteConnectionsError = nil
-        Task { [weak self] in
+        remoteConnectionsLoadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let connections = try await remoteConnectionService.listConnections()
                     .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                try Task.checkCancellation()
                 guard generation == remoteConnectionsLoadGeneration,
+                      accountGeneration == workspaceAccountGeneration,
                       expectedOwnerUserID == authenticatedUserID else { return }
                 remoteConnections = connections
+            } catch is CancellationError {
+                return
             } catch {
                 guard generation == remoteConnectionsLoadGeneration,
+                      accountGeneration == workspaceAccountGeneration,
                       expectedOwnerUserID == authenticatedUserID else { return }
                 remoteConnectionsError = error.localizedDescription
             }
             guard generation == remoteConnectionsLoadGeneration,
+                  accountGeneration == workspaceAccountGeneration,
                   expectedOwnerUserID == authenticatedUserID else { return }
             isRemoteConnectionsLoading = false
+            remoteConnectionsLoadTask = nil
         }
     }
 
@@ -267,17 +276,25 @@ extension AppModel {
         guard workspaceProject(id: projectID) != nil,
               defaultProjectContact != nil else { return }
 
+        let requestID = UUID()
+        projectConversationPreparationRequestIDs[projectID] = requestID
         preparingProjectConversationIDs.insert(projectID)
         projectConversationPreparationErrors[projectID] = nil
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 _ = try await ensureProjectConversation(projectID: projectID)
             } catch {
-                if workspaceProject(id: projectID) != nil {
+                guard projectConversationPreparationRequestIDs[projectID] == requestID else {
+                    return
+                }
+                if !(error is CancellationError), workspaceProject(id: projectID) != nil {
                     projectConversationPreparationErrors[projectID] = error.localizedDescription
                 }
             }
+            guard projectConversationPreparationRequestIDs[projectID] == requestID else { return }
             preparingProjectConversationIDs.remove(projectID)
+            projectConversationPreparationRequestIDs[projectID] = nil
         }
     }
 
@@ -305,8 +322,15 @@ extension AppModel {
                 contact: contact
             )
         }
+        let taskID = UUID()
         projectConversationPreparationTasks[projectID] = task
-        defer { projectConversationPreparationTasks.removeValue(forKey: projectID) }
+        projectConversationPreparationTaskIDs[projectID] = taskID
+        defer {
+            if projectConversationPreparationTaskIDs[projectID] == taskID {
+                projectConversationPreparationTasks.removeValue(forKey: projectID)
+                projectConversationPreparationTaskIDs[projectID] = nil
+            }
+        }
         let conversationID = try await task.value
         guard owner == authenticatedUserID,
               accountGeneration == workspaceAccountGeneration,

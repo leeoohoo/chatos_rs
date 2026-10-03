@@ -6,11 +6,11 @@ import Testing
 @Suite("Native Plugin Model Image Normalizer")
 struct NativePluginModelImageNormalizerTests {
     @Test("PNG image blocks become locally decoded JPEG blocks")
-    func pngBecomesJPEG() throws {
+    func pngBecomesJPEG() async throws {
         let png = try #require(Data(base64Encoded:
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         ))
-        let result = NativePluginModelImageNormalizer.normalizeForModel(.object([
+        let result = try await NativePluginModelImageNormalizer.normalizeForModel(.object([
             "content": .array([
                 .object(["type": .string("text"), "text": .string("state")]),
                 .object([
@@ -33,8 +33,8 @@ struct NativePluginModelImageNormalizerTests {
     }
 
     @Test("invalid PNG blocks become explicit text failures")
-    func invalidPNGDoesNotPoisonModelRequest() throws {
-        let result = NativePluginModelImageNormalizer.normalizeForModel(.object([
+    func invalidPNGDoesNotPoisonModelRequest() async throws {
+        let result = try await NativePluginModelImageNormalizer.normalizeForModel(.object([
             "content": .array([
                 .object([
                     "type": .string("image"),
@@ -50,7 +50,7 @@ struct NativePluginModelImageNormalizerTests {
     }
 
     @Test("existing JPEG image blocks pass through unchanged")
-    func jpegPassesThrough() {
+    func jpegPassesThrough() async throws {
         let original = NativeJSONValue.object([
             "content": .array([
                 .object([
@@ -61,6 +61,51 @@ struct NativePluginModelImageNormalizerTests {
             ]),
         ])
 
-        #expect(NativePluginModelImageNormalizer.normalizeForModel(original) == original)
+        #expect(try await NativePluginModelImageNormalizer.normalizeForModel(original) == original)
+    }
+
+    @Test("oversized encoded PNG is rejected before decoding")
+    func oversizedPNGIsRejected() async throws {
+        let result = try await NativePluginModelImageNormalizer.normalizeForModel(.object([
+            "content": .array([
+                .object([
+                    "type": .string("image"),
+                    "mimeType": .string("image/png"),
+                    "data": .string(String(
+                        repeating: "A",
+                        count: NativePluginModelImageNormalizer.maximumEncodedCharacters + 1
+                    )),
+                ]),
+            ]),
+        ]))
+
+        let item = try #require(result.jsonObject?["content"]?.jsonArray?.first?.jsonObject)
+        #expect(item["type"]?.jsonString == "text")
+    }
+
+    @Test("only a bounded number of image blocks are normalized")
+    func imageBlockCountIsBounded() async throws {
+        let png = try #require(Data(base64Encoded:
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        ))
+        let item = NativeJSONValue.object([
+            "type": .string("image"),
+            "mimeType": .string("image/png"),
+            "data": .string(png.base64EncodedString()),
+        ])
+        let result = try await NativePluginModelImageNormalizer.normalizeForModel(.object([
+            "content": .array(Array(
+                repeating: item,
+                count: NativePluginModelImageNormalizer.maximumImageBlocks + 2
+            )),
+        ]))
+
+        let content = try #require(result.jsonObject?["content"]?.jsonArray)
+        #expect(content.prefix(NativePluginModelImageNormalizer.maximumImageBlocks).allSatisfy {
+            $0.jsonObject?["mimeType"]?.jsonString == "image/jpeg"
+        })
+        #expect(content.suffix(2).allSatisfy {
+            $0.jsonObject?["type"]?.jsonString == "text"
+        })
     }
 }

@@ -4,6 +4,67 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
+    func testWorkerDoesNotKeepEventHubAliveBeforeWorkStarts() async throws {
+        let host = PlatformToolHostStub(mode: .eventDrivenClaim)
+        let eventHub = NativeLocalAgentEventHub(host: host)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: FailingPlatformToolExecutor(),
+            eventHub: eventHub,
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+        try await Task.sleep(for: .milliseconds(150))
+
+        let eventListRequests = await host.eventListRequestCount()
+        XCTAssertEqual(eventListRequests, 0)
+        await worker.reset()
+    }
+
+    func testWorkerWakesFromSharedToolBatchEvent() async throws {
+        let host = PlatformToolHostStub(mode: .eventDrivenClaim)
+        let eventHub = NativeLocalAgentEventHub(host: host)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: FailingPlatformToolExecutor(),
+            eventHub: eventHub,
+            workerID: "worker-1",
+            activityWindow: .milliseconds(50)
+        )
+        await worker.configure(ownerUserID: "user-1")
+        await worker.wake()
+
+        for _ in 0..<200 {
+            if await host.commitCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let commits = await host.commitCount()
+        let claimAttempts = await host.claimAttemptCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThanOrEqual(claimAttempts, 2)
+        await worker.reset()
+    }
+
+    func testPlatformToolPollingPolicyUsesOnlyActionableEvents() {
+        XCTAssertEqual(NativeLocalAgentPlatformToolPollingPolicy.activityWindow, .seconds(15))
+        XCTAssertEqual(
+            NativeLocalAgentPlatformToolPollingPolicy.eventMonitoringWindow,
+            .seconds(300)
+        )
+        XCTAssertTrue(NativeLocalAgentPlatformToolPollingPolicy.shouldWake(forEventTypes: [
+            "tool_batch_requested",
+        ]))
+        XCTAssertTrue(NativeLocalAgentPlatformToolPollingPolicy.shouldWake(forEventTypes: [
+            "tool_invocation_approved",
+        ]))
+        XCTAssertFalse(NativeLocalAgentPlatformToolPollingPolicy.shouldWake(forEventTypes: [
+            "tool_invocation_claimed",
+            "tool_invocation_completed",
+            "run_succeeded",
+        ]))
+    }
+
     func testCapabilityCatalogPartitionsRustAndNativeTools() {
         let names = NativeLocalAgentPlatformToolCatalog.capabilityTools.compactMap { value in
             guard case let .object(tool) = value,
@@ -78,7 +139,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertEqual(recorded?.toolName, "read_file_raw")
     }
 
-    func testAttachmentVaultResolvesBoundedContentAndRejectsTampering() throws {
+    func testAttachmentVaultResolvesBoundedContentAndRejectsTampering() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-attachment-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -106,7 +167,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertTrue(previewURL.isFileURL)
         XCTAssertEqual(try Data(contentsOf: previewURL), data)
 
-        let first = try vault.resolve(
+        let first = try await vault.resolve(
             record,
             ownerUserID: "owner/a",
             conversationID: "conversation/a",
@@ -117,29 +178,43 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertEqual(first.encoding, "utf-8")
         XCTAssertEqual(first.nextOffset, 5)
 
-        XCTAssertThrowsError(try vault.resolve(
+        let end = try await vault.resolve(
             record,
-            ownerUserID: "owner/b",
+            ownerUserID: "owner/a",
             conversationID: "conversation/a",
-            offset: 0,
+            offset: UInt64(data.count),
             limit: 5
-        ))
+        )
+        XCTAssertEqual(end.content, "")
+        XCTAssertNil(end.nextOffset)
+
+        do {
+            _ = try await vault.resolve(
+                record,
+                ownerUserID: "owner/b",
+                conversationID: "conversation/a",
+                offset: 0,
+                limit: 5
+            )
+            XCTFail("Cross-owner attachment read must be rejected")
+        } catch {
+        }
 
         let file = try XCTUnwrap(try FileManager.default.subpathsOfDirectory(atPath: root.path)
             .map { root.appendingPathComponent($0) }
             .first(where: { !$0.hasDirectoryPath && $0.lastPathComponent.count == 36 }))
         try Data("HELLO local attachment".utf8).write(to: file, options: .atomic)
-        XCTAssertThrowsError(try vault.resolve(
-            record,
-            ownerUserID: "owner/a",
-            conversationID: "conversation/a",
-            offset: 0,
-            limit: 5
-        )) { error in
-            XCTAssertEqual(
-                error as? NativeLocalAgentAttachmentVaultError,
-                .integrityMismatch
+        do {
+            _ = try await vault.resolve(
+                record,
+                ownerUserID: "owner/a",
+                conversationID: "conversation/a",
+                offset: 0,
+                limit: 5
             )
+            XCTFail("Tampered attachment must be rejected")
+        } catch {
+            XCTAssertEqual(error as? NativeLocalAgentAttachmentVaultError, .integrityMismatch)
         }
     }
 
@@ -165,6 +240,31 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             "create_task",
             "create_tasks_with_prerequisites",
         ]))
+    }
+
+    func testTypedClientRenewsExactClaimIdentity() async throws {
+        let host = PlatformToolHostStub(mode: .renewingClaim(renewalAccepted: true))
+        let client = NativeLocalAgentToolClient(host: host)
+        let claimed = try await client.claimNext(
+            ownerUserID: "user-1",
+            workerID: "worker-1",
+            leaseDurationMilliseconds: 1_000
+        )
+        let claim = try XCTUnwrap(claimed)
+
+        let renewed = try await client.renew(
+            ownerUserID: "user-1",
+            claim: claim,
+            leaseDurationMilliseconds: 2_000
+        )
+        XCTAssertTrue(renewed)
+        let command = try await host.lastCommand()
+        XCTAssertEqual(command["type"], .string("renew_tool_claim"))
+        XCTAssertEqual(command["owner_user_id"], .string("user-1"))
+        XCTAssertEqual(command["invocation_id"], .string("invocation-1"))
+        XCTAssertEqual(command["claim_token"], .string("claim-token-1"))
+        XCTAssertEqual(command["expected_version"], .number(2))
+        XCTAssertEqual(command["lease_duration_ms"], .number(2_000))
     }
 
     func testTypedClientListsAndDecidesDurableToolApproval() async throws {
@@ -208,6 +308,80 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         }
         XCTAssertEqual(outcomeType, .string("needs_review"))
         await worker.reset()
+    }
+
+    func testWorkerRenewsLongRunningClaimUntilCommit() async throws {
+        let host = PlatformToolHostStub(mode: .renewingClaim(renewalAccepted: true))
+        let executor = DelayedPlatformToolExecutor(delay: .milliseconds(350))
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            claimLeaseDurationMilliseconds: 1_000,
+            claimHeartbeatInterval: .milliseconds(50)
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await host.commitCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let commits = await host.commitCount()
+        let renewals = await host.renewalCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThanOrEqual(renewals, 2)
+        await worker.reset()
+    }
+
+    func testWorkerDoesNotCommitAfterClaimRenewalIsRejected() async throws {
+        let host = PlatformToolHostStub(mode: .renewingClaim(renewalAccepted: false))
+        let executor = DelayedPlatformToolExecutor(delay: .seconds(2))
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            claimLeaseDurationMilliseconds: 1_000,
+            claimHeartbeatInterval: .milliseconds(25)
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<100 {
+            if await host.renewalCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        let renewals = await host.renewalCount()
+        let commits = await host.commitCount()
+        let cancelled = await executor.wasCancelled()
+        XCTAssertEqual(renewals, 1)
+        XCTAssertEqual(commits, 0)
+        XCTAssertTrue(cancelled)
+        await worker.reset()
+    }
+
+    func testWorkerResetStopsClaimHeartbeat() async throws {
+        let host = PlatformToolHostStub(mode: .renewingClaim(renewalAccepted: true))
+        let executor = DelayedPlatformToolExecutor(delay: .seconds(2))
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            claimLeaseDurationMilliseconds: 1_000,
+            claimHeartbeatInterval: .milliseconds(25)
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<100 {
+            if await host.renewalCount() >= 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await worker.reset()
+        let countAfterReset = await host.renewalCount()
+        try await Task.sleep(for: .milliseconds(100))
+        let finalRenewalCount = await host.renewalCount()
+        let commits = await host.commitCount()
+        XCTAssertEqual(finalRenewalCount, countAfterReset)
+        XCTAssertEqual(commits, 0)
     }
 
     private func attachmentRecord(
@@ -255,12 +429,47 @@ private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecutin
     }
 }
 
+private actor DelayedPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    private let delay: Duration
+    private var cancelled = false
+
+    init(delay: Duration) {
+        self.delay = delay
+    }
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        do {
+            try await Task.sleep(for: delay)
+            return .object(["completed": .bool(true)])
+        } catch is CancellationError {
+            cancelled = true
+            throw CancellationError()
+        }
+    }
+
+    func wasCancelled() -> Bool { cancelled }
+}
+
 private actor PlatformToolHostStub: LocalAgentHostClientServicing {
-    enum Mode { case idle, oneSideEffectingClaim, onePendingApproval }
+    enum Mode {
+        case idle
+        case oneSideEffectingClaim
+        case onePendingApproval
+        case renewingClaim(renewalAccepted: Bool)
+        case eventDrivenClaim
+    }
 
     private let mode: Mode
     private var didClaim = false
     private var commands: [Data] = []
+    private var renewals = 0
+    private var commits = 0
+    private var claimAttempts = 0
+    private var eventDelivered = false
+    private var eventListRequests = 0
 
     init(mode: Mode) {
         self.mode = mode
@@ -273,8 +482,40 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
+        case "get_event_cursor":
+            guard case .eventDrivenClaim = mode else {
+                throw CocoaError(.featureUnsupported)
+            }
+            return try json(["type": "event_cursor", "cursor": 0])
+        case "wait_events":
+            guard case .eventDrivenClaim = mode else {
+                throw CocoaError(.featureUnsupported)
+            }
+            eventListRequests += 1
+            guard !eventDelivered else {
+                return try json(["type": "events", "events": [], "next_cursor": 1])
+            }
+            try await Task.sleep(for: .milliseconds(100))
+            eventDelivered = true
+            return try json([
+                "type": "events",
+                "events": [[
+                    "cursor": 1,
+                    "event_id": "event-tool-batch",
+                    "run_id": "run-1",
+                    "event_type": "tool_batch_requested",
+                    "created_at_unix_ms": 1,
+                ]],
+                "next_cursor": 1,
+            ])
         case "claim_next_tool":
-            guard case .oneSideEffectingClaim = mode, !didClaim else {
+            claimAttempts += 1
+            let hasClaim = switch mode {
+            case .oneSideEffectingClaim, .renewingClaim: true
+            case .idle, .onePendingApproval: false
+            case .eventDrivenClaim: eventDelivered
+            }
+            guard hasClaim, !didClaim else {
                 return try json(["type": "tool_claim", "claim": NSNull()])
             }
             didClaim = true
@@ -286,7 +527,18 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
                     "invocation": invocation(status: "running", version: 2),
                 ],
             ])
+        case "renew_tool_claim":
+            renewals += 1
+            let accepted = switch mode {
+            case let .renewingClaim(renewalAccepted): renewalAccepted
+            case .idle, .oneSideEffectingClaim, .onePendingApproval, .eventDrivenClaim: true
+            }
+            return try json([
+                "type": "tool_claim_renewed",
+                "renewed": accepted,
+            ])
         case "commit_tool":
+            commits += 1
             return try json([
                 "type": "tool_commit",
                 "result": [
@@ -332,6 +584,14 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         }
         return nil
     }
+
+    func renewalCount() -> Int { renewals }
+
+    func commitCount() -> Int { commits }
+
+    func claimAttemptCount() -> Int { claimAttempts }
+
+    func eventListRequestCount() -> Int { eventListRequests }
 
     private func invocation(status: String, version: Int) -> [String: Any] {
         [

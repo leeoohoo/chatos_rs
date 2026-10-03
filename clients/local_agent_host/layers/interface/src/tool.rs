@@ -174,6 +174,30 @@ impl ClaimNextToolCommand {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RenewToolClaimCommand {
+    pub owner_user_id: String,
+    pub invocation_id: String,
+    pub claim_token: String,
+    pub expected_version: u64,
+    pub lease_duration_ms: u64,
+}
+
+impl RenewToolClaimCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("invocation_id", &self.invocation_id)?;
+        validate_identifier("claim_token", &self.claim_token)?;
+        if self.expected_version == 0 {
+            return Err("expected_version must be greater than zero".to_string());
+        }
+        if !(1_000..=300_000).contains(&self.lease_duration_ms) {
+            return Err("lease_duration_ms must be between 1000 and 300000".to_string());
+        }
+        Ok(())
+    }
+}
+
 fn validate_tool_names<'a>(
     field: &str,
     names: Option<&'a [String]>,
@@ -345,5 +369,26 @@ mod tests {
             exclude_tool_names: vec!["read_file".to_string(), "read_file".to_string()],
         };
         assert!(duplicates.validate().is_err());
+    }
+
+    #[test]
+    fn tool_claim_renewal_validates_version_and_lease_bounds() {
+        let valid = RenewToolClaimCommand {
+            owner_user_id: "user-1".to_string(),
+            invocation_id: "invocation-1".to_string(),
+            claim_token: "claim-1".to_string(),
+            expected_version: 2,
+            lease_duration_ms: 30_000,
+        };
+        assert!(valid.validate().is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.expected_version = 0;
+        assert!(invalid.validate().is_err());
+        invalid.expected_version = 2;
+        invalid.lease_duration_ms = 999;
+        assert!(invalid.validate().is_err());
+        invalid.lease_duration_ms = 300_001;
+        assert!(invalid.validate().is_err());
     }
 }

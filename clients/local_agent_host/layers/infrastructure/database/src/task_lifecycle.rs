@@ -220,6 +220,7 @@ mod tests {
         IdempotentCommand {
             command_id: id.to_string(),
             request_fingerprint: id.to_string(),
+            persist_receipt: true,
         }
     }
 

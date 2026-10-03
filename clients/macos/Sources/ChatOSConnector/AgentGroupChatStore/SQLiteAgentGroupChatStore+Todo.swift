@@ -41,6 +41,44 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
+    /// Loads every Todo in an active project team visible to one active member. This preserves
+    /// the account/team membership boundary while avoiding a member check and Todo query for
+    /// every room in model-facing `todo_list` calls.
+    public func listVisibleTeamTodos(
+        ownerUserID: String,
+        agentID: String,
+        includeTerminal: Bool = false
+    ) throws -> [LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        return try AgentTodoRepository.listVisibleTeams(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            includeTerminal: includeTerminal,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func todos(
+        ownerUserID: String,
+        todoIDs: [String]
+    ) throws -> [String: LocalAgentTodo] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let ids = Array(Set(todoIDs)).sorted()
+        guard ids.count <= 500 else { throw AgentGroupChatError.invalidField("todoIDs") }
+        for id in ids {
+            try AgentGroupChatValidation.identifier(id, field: "todoID")
+        }
+        let todos = try AgentTodoRepository.findMany(
+            database,
+            ownerUserID: ownerUserID,
+            todoIDs: ids,
+            preparedStatement: recordPreparedStatement
+        )
+        return Dictionary(uniqueKeysWithValues: todos.map { ($0.id, $0) })
+    }
+
     public func createAgentTodo(
         ownerUserID: String,
         agentID: String,
@@ -61,6 +99,7 @@ extension SQLiteAgentGroupChatStore {
         try executionContract.validate()
         guard (0...100).contains(draft.priority), nowUnixMs >= 0,
               draft.dependencies.count <= 64,
+              draft.additionalSources.count <= 64,
               Set(draft.dependencies.map(\.prerequisiteTodoID)).count == draft.dependencies.count else {
             throw AgentGroupChatError.invalidField("todoPriority")
         }
@@ -73,6 +112,10 @@ extension SQLiteAgentGroupChatStore {
                 dependency.prerequisiteAgentID,
                 field: "todoDependencyAgent"
             )
+        }
+        for source in draft.additionalSources {
+            try AgentGroupChatValidation.identifier(source.roomID, field: "sourceConversation")
+            try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
         }
         return try transaction {
             if let existing = try AgentTodoRepository.find(
@@ -90,34 +133,46 @@ extension SQLiteAgentGroupChatStore {
                 ownerUserID: ownerUserID,
                 agentID: creatorAgentID
             )?.status == .active else { throw AgentGroupChatError.notFound }
-            if let roomID = draft.sourceRoomID {
-                guard try readMember(
-                    ownerUserID: ownerUserID,
-                    roomID: roomID,
-                    agentID: creatorAgentID
-                )?.status == .active else { throw AgentGroupChatError.notMember }
-                if let messageID = draft.sourceMessageID {
-                    guard try readMessage(ownerUserID: ownerUserID, messageID: messageID)?.roomID == roomID else {
-                        throw AgentGroupChatError.notFound
-                    }
-                }
-            } else if draft.sourceMessageID != nil {
+            if draft.sourceRoomID == nil, draft.sourceMessageID != nil {
                 throw AgentGroupChatError.invalidField("sourceMessageID")
             }
-            for source in draft.additionalSources {
-                try AgentGroupChatValidation.identifier(source.roomID, field: "sourceConversation")
-                try AgentGroupChatValidation.identifier(source.messageID, field: "sourceMessage")
-                guard try readMember(
-                    ownerUserID: ownerUserID,
-                    roomID: source.roomID,
-                    agentID: creatorAgentID
-                )?.status == .active,
-                try readMessage(
-                    ownerUserID: ownerUserID,
-                    messageID: source.messageID
-                )?.roomID == source.roomID else {
-                    throw AgentGroupChatError.invalidField("sourceMessageRefs")
-                }
+            var sourceRoomIDs = draft.additionalSources.map(\.roomID)
+            if let primaryRoomID = draft.sourceRoomID {
+                sourceRoomIDs.append(primaryRoomID)
+            }
+            let activeSourceRoomIDs = try AgentConversationRepository.activeMemberRoomIDs(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: creatorAgentID,
+                roomIDs: sourceRoomIDs,
+                preparedStatement: recordPreparedStatement
+            )
+            if let primaryRoomID = draft.sourceRoomID,
+               !activeSourceRoomIDs.contains(primaryRoomID) {
+                throw AgentGroupChatError.notMember
+            }
+            guard draft.additionalSources.allSatisfy({ activeSourceRoomIDs.contains($0.roomID) }) else {
+                throw AgentGroupChatError.invalidField("sourceMessageRefs")
+            }
+            var sourceMessageIDs = draft.additionalSources.map(\.messageID)
+            if let primaryMessageID = draft.sourceMessageID {
+                sourceMessageIDs.append(primaryMessageID)
+            }
+            let messageRoomIDs = try AgentMessageRepository.roomIDs(
+                database,
+                ownerUserID: ownerUserID,
+                messageIDs: sourceMessageIDs,
+                preparedStatement: recordPreparedStatement
+            )
+            if let primaryRoomID = draft.sourceRoomID,
+               let primaryMessageID = draft.sourceMessageID,
+               messageRoomIDs[primaryMessageID] != primaryRoomID {
+                throw AgentGroupChatError.notFound
+            }
+            guard draft.additionalSources.allSatisfy({
+                messageRoomIDs[$0.messageID] == $0.roomID
+            }) else {
+                throw AgentGroupChatError.invalidField("sourceMessageRefs")
             }
             let resolvedTeamRoomID: String
             if let requested = draft.teamRoomID {
@@ -195,23 +250,18 @@ extension SQLiteAgentGroupChatStore {
                 sources.insert(.init(roomID: roomID, messageID: messageID), at: 0)
             }
             var inserted = Set<String>()
-            for source in sources {
+            let uniqueSources = sources.filter { source in
                 let key = "\(source.roomID)\u{0}\(source.messageID)\u{0}\(source.relation.rawValue)"
-                guard inserted.insert(key).inserted else { continue }
-                try execute(
-                    """
-                    INSERT INTO local_agent_todo_sources (
-                        owner_user_id, todo_id, conversation_id, message_id, relation,
-                        created_at_unix_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        .text(ownerUserID), .text(todo.id), .text(source.roomID),
-                        .text(source.messageID), .text(source.relation.rawValue),
-                        .integer(nowUnixMs),
-                    ]
-                )
+                return inserted.insert(key).inserted
             }
+            try AgentTodoRepository.insertSources(
+                database,
+                ownerUserID: ownerUserID,
+                todoID: todo.id,
+                sources: uniqueSources,
+                nowUnixMs: nowUnixMs,
+                preparedStatement: recordPreparedStatement
+            )
             _ = try replaceAgentTodoDependencies(
                 ownerUserID: ownerUserID,
                 agentID: agentID,
@@ -433,20 +483,14 @@ extension SQLiteAgentGroupChatStore {
             }
             let requested = Set(todoIDs)
             let ordered = todoIDs + active.map(\.id).filter { !requested.contains($0) }
-            for (offset, id) in ordered.enumerated() {
-                let reorderedPriority = max(0, 100 - offset)
-                try execute(
-                    """
-                    UPDATE local_agent_todos
-                    SET priority = ?, sort_order = ?, updated_at_unix_ms = ?
-                    WHERE owner_user_id = ? AND agent_id = ? AND id = ?
-                    """,
-                    [
-                        .integer(Int64(reorderedPriority)), .integer(Int64(offset)),
-                        .integer(nowUnixMs), .text(ownerUserID), .text(agentID), .text(id),
-                    ]
-                )
-            }
+            try AgentTodoRepository.reorderForAgent(
+                database,
+                ownerUserID: ownerUserID,
+                agentID: agentID,
+                orderedTodoIDs: ordered,
+                nowUnixMs: nowUnixMs,
+                preparedStatement: recordPreparedStatement
+            )
             return try listAgentTodos(
                 ownerUserID: ownerUserID,
                 agentID: agentID,
@@ -477,20 +521,14 @@ extension SQLiteAgentGroupChatStore {
             }
             let requested = Set(todoIDs)
             let ordered = todoIDs + active.map(\.id).filter { !requested.contains($0) }
-            for (offset, id) in ordered.enumerated() {
-                let reorderedPriority = max(0, 100 - offset)
-                try execute(
-                    """
-                    UPDATE local_agent_todos
-                    SET priority = ?, sort_order = ?, updated_at_unix_ms = ?
-                    WHERE owner_user_id = ? AND team_room_id = ? AND id = ?
-                    """,
-                    [
-                        .integer(Int64(reorderedPriority)), .integer(Int64(offset)),
-                        .integer(nowUnixMs), .text(ownerUserID), .text(teamRoomID), .text(id),
-                    ]
-                )
-            }
+            try AgentTodoRepository.reorderForTeam(
+                database,
+                ownerUserID: ownerUserID,
+                teamRoomID: teamRoomID,
+                orderedTodoIDs: ordered,
+                nowUnixMs: nowUnixMs,
+                preparedStatement: recordPreparedStatement
+            )
             return try listTeamTodos(
                 ownerUserID: ownerUserID,
                 teamRoomID: teamRoomID,

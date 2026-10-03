@@ -1,6 +1,12 @@
 import ChatOSCore
 import Foundation
 
+enum TaskReplyInspectorPollingPolicy {
+    static func interval(hasActiveRealtimeStream: Bool) -> Duration {
+        hasActiveRealtimeStream ? .seconds(60) : .seconds(2)
+    }
+}
+
 enum TaskReplyInspectorSection: String, CaseIterable {
     case process = "执行过程"
     case detail = "任务详情"
@@ -50,30 +56,46 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     @Published private(set) var modelOutputError: String?
 
     private let service: any MessageTaskGraphServicing
+    private let realtimeService: (any ConversationRealtimeStreaming)?
     private var loadTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
+    private var realtimeTask: Task<Void, Never>?
+    private var realtimeSessionID: String?
+    private var hasActiveRealtimeStream = false
     private var loadGeneration = 0
     private var loadedModelOutputRunID: String?
 
-    init(selection: TaskReplySelection, service: any MessageTaskGraphServicing) {
+    init(
+        selection: TaskReplySelection,
+        service: any MessageTaskGraphServicing,
+        realtimeService: (any ConversationRealtimeStreaming)? = nil
+    ) {
         self.selection = selection
         self.section = selection.initialSection
         self.service = service
+        self.realtimeService = realtimeService
     }
 
     deinit {
         loadTask?.cancel()
         pollingTask?.cancel()
+        realtimeTask?.cancel()
     }
 
     func load() {
+        startRealtimeIfNeeded()
         guard task == nil else { return }
         refresh()
     }
 
     func update(selection: TaskReplySelection) {
         let needsRefresh = self.selection.refreshIdentity != selection.refreshIdentity
+        let sessionChanged = self.selection.turn.sessionID != selection.turn.sessionID
         self.selection = selection
+        if sessionChanged {
+            stopRealtime()
+            startRealtimeIfNeeded()
+        }
         guard needsRefresh else { return }
         loadedModelOutputRunID = nil
         refresh()
@@ -240,15 +262,64 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         pollingTask?.cancel()
         pollingTask = nil
         guard task?.isActive == true else { return }
+        let interval = TaskReplyInspectorPollingPolicy.interval(
+            hasActiveRealtimeStream: hasActiveRealtimeStream
+        )
         pollingTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(2))
+                try await Task.sleep(for: interval)
             } catch {
                 return
             }
             guard let self, !Task.isCancelled else { return }
             self.refresh(showsLoadingState: false)
         }
+    }
+
+    private func startRealtimeIfNeeded() {
+        guard let realtimeService else { return }
+        let sessionID = selection.turn.sessionID
+        guard realtimeTask == nil, realtimeSessionID != sessionID else { return }
+        realtimeSessionID = sessionID
+        realtimeTask = Task { [weak self, realtimeService, sessionID] in
+            let stream = await realtimeService.events(sessionID: sessionID)
+            guard !Task.isCancelled else { return }
+            self?.realtimeDidStart(sessionID: sessionID)
+            do {
+                for try await signal in stream {
+                    guard let self else { return }
+                    guard !Task.isCancelled,
+                          signal.sessionID == sessionID,
+                          self.realtimeSessionID == sessionID else { return }
+                    self.refresh(showsLoadingState: false)
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+            }
+            guard !Task.isCancelled else { return }
+            self?.realtimeDidEnd(sessionID: sessionID)
+        }
+    }
+
+    private func realtimeDidStart(sessionID: String) {
+        guard realtimeSessionID == sessionID else { return }
+        hasActiveRealtimeStream = true
+        scheduleActiveRefreshIfNeeded()
+    }
+
+    private func realtimeDidEnd(sessionID: String) {
+        guard realtimeSessionID == sessionID else { return }
+        hasActiveRealtimeStream = false
+        realtimeTask = nil
+        realtimeSessionID = nil
+        scheduleActiveRefreshIfNeeded()
+    }
+
+    private func stopRealtime() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        realtimeSessionID = nil
+        hasActiveRealtimeStream = false
     }
 
     private func lookup(

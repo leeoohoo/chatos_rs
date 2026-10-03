@@ -414,7 +414,11 @@ actor LocalAgentRunReferenceVault {
                   authority.reservedByCallID == nil || authority.reservedByCallID == callID else {
                 return .invalid(index: index)
             }
-            guard let data = try? Data(contentsOf: authority.localFileURL, options: [.mappedIfSafe]),
+            guard authority.size > 0,
+                  let data = try? NativeBoundedFileReader.read(
+                      authority.localFileURL,
+                      maximumBytes: authority.size
+                  ),
                   data.count == authority.size,
                   Self.sha256(data) == authority.sha256 else {
                 return .integrityChanged(index: index)

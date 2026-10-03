@@ -1,8 +1,25 @@
-import ChatOSCore
 import Foundation
 import XCTest
+@testable import ChatOSCore
 
 final class LocalAgentSkillLibraryTests: XCTestCase {
+    func testOversizedPayloadFallsBackWithoutReadingContents() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-agent-skill-library-large-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let fileURL = folder.appendingPathComponent("overrides.json")
+        XCTAssertTrue(FileManager.default.createFile(atPath: fileURL.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: fileURL)
+        try handle.truncate(atOffset: UInt64(LocalAgentSkillLibrary.maximumPayloadBytes + 1))
+        try handle.close()
+
+        let library = LocalAgentSkillLibrary(fileURL: fileURL)
+
+        XCTAssertEqual(library.professions(ownerUserID: "alice").count, 33)
+        XCTAssertEqual(library.projectTypes(ownerUserID: "alice").count, 27)
+    }
+
     func testOverridesAreAccountScopedPersistedAndResettable() throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-skill-library-\(UUID().uuidString)")

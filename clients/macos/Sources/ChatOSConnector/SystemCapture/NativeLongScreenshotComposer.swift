@@ -28,6 +28,8 @@ public enum NativeLongScreenshotError: LocalizedError {
 }
 
 public actor NativeLongScreenshotComposer {
+    public static let defaultMaximumPixelCount = 64_000_000
+
     private struct PixelFrame {
         let width: Int
         let height: Int
@@ -58,13 +60,13 @@ public actor NativeLongScreenshotComposer {
     private var stitchedPixels: [UInt8] = []
     private var lastFrame: PixelFrame?
 
-    public init(maximumPixelCount: Int = 150_000_000) {
+    public init(maximumPixelCount: Int = NativeLongScreenshotComposer.defaultMaximumPixelCount) {
         self.maximumPixelCount = maximumPixelCount
     }
 
     public func start(with image: CGImage) throws {
         let frame = try Self.decode(image)
-        guard frame.width * frame.height <= maximumPixelCount else {
+        guard Self.pixelCount(width: frame.width, height: frame.height) <= maximumPixelCount else {
             throw NativeLongScreenshotError.outputTooLarge
         }
         width = frame.width
@@ -99,7 +101,9 @@ public actor NativeLongScreenshotComposer {
         guard let shift = Self.bestVerticalShift(previous: previous, current: current) else {
             return .overlapNotFound(totalHeight: stitchedHeight)
         }
-        guard width * (stitchedHeight + shift) <= maximumPixelCount else {
+        let (nextHeight, nextHeightOverflow) = stitchedHeight.addingReportingOverflow(shift)
+        guard !nextHeightOverflow,
+              Self.pixelCount(width: width, height: nextHeight) <= maximumPixelCount else {
             throw NativeLongScreenshotError.outputTooLarge
         }
 
@@ -145,10 +149,13 @@ public actor NativeLongScreenshotComposer {
     private static func decode(_ image: CGImage) throws -> PixelFrame {
         let width = image.width
         let height = image.height
-        guard width > 0, height > 0 else {
+        let (pixelCount, pixelCountOverflow) = width.multipliedReportingOverflow(by: height)
+        let (byteCount, byteCountOverflow) = pixelCount.multipliedReportingOverflow(by: 4)
+        guard width > 0, height > 0,
+              !pixelCountOverflow, !byteCountOverflow else {
             throw NativeLongScreenshotError.invalidImage
         }
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var pixels = [UInt8](repeating: 0, count: byteCount)
         let created = pixels.withUnsafeMutableBytes { bytes -> Bool in
             guard let baseAddress = bytes.baseAddress,
                   let context = CGContext(
@@ -173,6 +180,12 @@ public actor NativeLongScreenshotComposer {
             featureColumns: features.columns,
             structuralFeatures: features.values
         )
+    }
+
+    private static func pixelCount(width: Int, height: Int) -> Int {
+        guard width > 0, height > 0 else { return .max }
+        let (count, overflow) = width.multipliedReportingOverflow(by: height)
+        return overflow ? .max : count
     }
 
     private static func bestVerticalShift(

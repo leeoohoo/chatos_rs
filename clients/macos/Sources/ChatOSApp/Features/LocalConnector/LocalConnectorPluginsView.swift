@@ -7,6 +7,7 @@ struct LocalConnectorPluginsView: View {
     @ObservedObject var viewModel: LocalConnectorControlCenterViewModel
     @State private var searchText = ""
     @State private var browserExtensionInstalled = false
+    @State private var browserExtensionStatusTask: Task<Void, Never>?
 
     var body: some View {
         SettingsGroupedPage {
@@ -30,7 +31,7 @@ struct LocalConnectorPluginsView: View {
                         .appFont(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                     Button(model.localized("检查更新", english: "Check for Updates"), systemImage: "arrow.clockwise") {
-                        viewModel.loadPlugins()
+                        viewModel.loadPlugins(forceRefresh: true)
                     }
                     .disabled(viewModel.isLoading)
                 }
@@ -83,20 +84,22 @@ struct LocalConnectorPluginsView: View {
             }
         }
         .onAppear {
-            refreshBrowserExtensionStatus()
+            refreshBrowserExtensionStatus(automaticallyGuideAfterRefresh: true)
             refreshBrowserExtensionPairingStatuses()
-            automaticallyGuideBrowserExtensionIfNeeded()
         }
         .onChange(of: viewModel.plugins) { _, _ in
-            refreshBrowserExtensionStatus()
+            refreshBrowserExtensionStatus(automaticallyGuideAfterRefresh: true)
             refreshBrowserExtensionPairingStatuses()
-            automaticallyGuideBrowserExtensionIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 refreshBrowserExtensionStatus()
                 refreshBrowserExtensionPairingStatuses()
             }
+        }
+        .onDisappear {
+            browserExtensionStatusTask?.cancel()
+            browserExtensionStatusTask = nil
         }
     }
 
@@ -290,9 +293,12 @@ struct LocalConnectorPluginsView: View {
 
     private func installPlugin(_ plugin: LocalConnectorPlugin) {
         viewModel.installPlugin(id: plugin.id) {
-            refreshBrowserExtensionStatus()
             if BrowserExtensionGuide.isBrowserPlugin(plugin) {
-                startBrowserExtensionGuide(plugin, onlyIfStorePromptNeeded: true)
+                refreshBrowserExtensionStatus { _ in
+                    startBrowserExtensionGuide(plugin, onlyIfStorePromptNeeded: true)
+                }
+            } else {
+                refreshBrowserExtensionStatus()
             }
         }
     }
@@ -302,26 +308,50 @@ struct LocalConnectorPluginsView: View {
         onlyIfStorePromptNeeded: Bool = false
     ) {
         if onlyIfStorePromptNeeded,
-           !BrowserExtensionGuide.shouldAutomaticallyGuide(pluginVersion: plugin.latestVersion) {
+           !BrowserExtensionGuide.shouldAutomaticallyGuide(
+                pluginVersion: plugin.latestVersion,
+                extensionInstalled: browserExtensionInstalled
+           ) {
             return
         }
         viewModel.startBrowserExtensionGuide(pluginID: plugin.id) {
-            refreshBrowserExtensionStatus()
             viewModel.refreshBrowserExtensionPairingStatus(pluginID: plugin.id)
-            if browserExtensionInstalled {
-                BrowserExtensionGuide.openOnboarding()
-            } else if onlyIfStorePromptNeeded {
-                BrowserExtensionGuide.openWebStoreAfterInstallIfNeeded(
-                    pluginVersion: plugin.latestVersion
-                )
-            } else {
-                BrowserExtensionGuide.openWebStore()
+            refreshBrowserExtensionStatus { installed in
+                if installed {
+                    BrowserExtensionGuide.openOnboarding()
+                } else if onlyIfStorePromptNeeded {
+                    BrowserExtensionGuide.openWebStoreAfterInstallIfNeeded(
+                        pluginVersion: plugin.latestVersion,
+                        extensionInstalled: false
+                    )
+                } else {
+                    BrowserExtensionGuide.openWebStore()
+                }
             }
         }
     }
 
-    private func refreshBrowserExtensionStatus() {
-        browserExtensionInstalled = BrowserExtensionGuide.isExtensionInstalled()
+    private func refreshBrowserExtensionStatus(
+        automaticallyGuideAfterRefresh: Bool = false,
+        completion: ((Bool) -> Void)? = nil
+    ) {
+        browserExtensionStatusTask?.cancel()
+        browserExtensionStatusTask = Task {
+            let detectionTask = Task.detached(priority: .utility) {
+                BrowserExtensionGuide.isExtensionInstalled()
+            }
+            let installed = await withTaskCancellationHandler {
+                await detectionTask.value
+            } onCancel: {
+                detectionTask.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            browserExtensionInstalled = installed
+            if automaticallyGuideAfterRefresh {
+                automaticallyGuideBrowserExtensionIfNeeded(extensionInstalled: installed)
+            }
+            completion?(installed)
+        }
     }
 
     private func refreshBrowserExtensionPairingStatuses() {
@@ -331,11 +361,12 @@ struct LocalConnectorPluginsView: View {
         }
     }
 
-    private func automaticallyGuideBrowserExtensionIfNeeded() {
+    private func automaticallyGuideBrowserExtensionIfNeeded(extensionInstalled: Bool) {
         guard let plugin = viewModel.plugins.first(where: {
             $0.installed && BrowserExtensionGuide.isBrowserPlugin($0)
         }), BrowserExtensionGuide.shouldAutomaticallyGuide(
-            pluginVersion: plugin.latestVersion
+            pluginVersion: plugin.latestVersion,
+            extensionInstalled: extensionInstalled
         ), !viewModel.pluginOperationIDs.contains(plugin.id) else {
             return
         }

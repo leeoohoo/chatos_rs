@@ -39,6 +39,11 @@ extension LocalAgentGroupChatScheduler {
               room.status == .active else {
             throw AgentGroupChatError.notFound
         }
+        guard try await store.hasPendingDeliveries(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            lane: .manager
+        ) else { return [] }
         return try await drain(
             store: store,
             ownerUserID: ownerUserID,
@@ -79,6 +84,10 @@ extension LocalAgentGroupChatScheduler {
     ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
         let store = try await service.store()
+        guard try await store.hasPendingDeliveries(
+            ownerUserID: ownerUserID,
+            lane: .manager
+        ) else { return [] }
         return try await drainAccountQueue(
             store: store,
             ownerUserID: ownerUserID,
@@ -116,6 +125,9 @@ extension LocalAgentGroupChatScheduler {
         maximumRuns: Int
     ) async throws -> [DeliveryAttemptReceipt] {
         let store = try await service.store()
+        guard try await store.hasOutstandingDeliveries(ownerUserID: ownerUserID) else {
+            return []
+        }
         var results = try await recoverInterruptedRuns(
             store: store,
             ownerUserID: ownerUserID,
@@ -140,6 +152,10 @@ extension LocalAgentGroupChatScheduler {
     ) async throws -> [DeliveryAttemptReceipt] {
         var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns, !Task.isCancelled {
+            guard try await store.hasPendingDeliveries(
+                ownerUserID: ownerUserID,
+                lane: lane
+            ) else { break }
             let teams = try await store.listRooms(ownerUserID: ownerUserID, includeArchived: false)
             let directs = try await store.listDirectConversations(
                 ownerUserID: ownerUserID,
@@ -151,18 +167,14 @@ extension LocalAgentGroupChatScheduler {
             var memberByRoomAndAgent: [String: ProjectAgentRoomMember] = [:]
             var agentIDs: [String] = []
             var seenAgentIDs = Set<String>()
-            for room in rooms {
-                for member in try await store.listMembers(
-                    ownerUserID: ownerUserID,
-                    roomID: room.id
-                ) where member.status == .active {
-                    memberByRoomAndAgent[Self.memberKey(
-                        roomID: room.id,
-                        agentID: member.agentID
-                    )] = member
-                    if seenAgentIDs.insert(member.agentID).inserted {
-                        agentIDs.append(member.agentID)
-                    }
+            for member in try await store.listActiveMembers(ownerUserID: ownerUserID) {
+                guard roomByID[member.roomID] != nil else { continue }
+                memberByRoomAndAgent[Self.memberKey(
+                    roomID: member.roomID,
+                    agentID: member.agentID
+                )] = member
+                if seenAgentIDs.insert(member.agentID).inserted {
+                    agentIDs.append(member.agentID)
                 }
             }
             var claimedWork: [ClaimedWork] = []
@@ -243,88 +255,78 @@ extension LocalAgentGroupChatScheduler {
         ownerUserID: String,
         maximumRuns: Int
     ) async throws -> [DeliveryAttemptReceipt] {
-        let agents = try await store.listAgents(ownerUserID: ownerUserID, includeArchived: false)
+        let runs = try await store.listInterruptedRuns(ownerUserID: ownerUserID, limit: 500)
         var results: [DeliveryAttemptReceipt] = []
-        for agent in agents where results.count < maximumRuns {
-            let runs = try await store.listAgentRuns(
-                ownerUserID: ownerUserID,
-                agentID: agent.id,
-                limit: 20
-            )
-            for run in runs where results.count < maximumRuns {
-                guard let delivery = try await store.delivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: run.context.deliveryID
-                      ), delivery.status == .running else { continue }
-                guard await activeDeliveryRegistry.acquire(deliveryID: delivery.id) else { continue }
-                do {
-                    // Re-read after acquiring ownership. A Human retry may have changed both the
-                    // checkpoint and Todo between the list query above and this recovery attempt.
-                    guard let currentDelivery = try await store.delivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: delivery.id
-                    ), currentDelivery.status == .running,
-                       let currentRun = try await store.run(
-                        ownerUserID: ownerUserID,
-                        deliveryID: delivery.id
-                       ) else {
-                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
-                        continue
-                    }
-                    if currentRun.checkpoint.status == .needsReview {
-                        try await suspendTodoForReview(
-                            store: store,
-                            ownerUserID: ownerUserID,
-                            delivery: currentDelivery,
-                            runID: currentRun.context.runID,
-                            detail: currentRun.checkpoint.stopReason
-                                ?? "执行中断，需要检查副作用后再决定是否重试。"
-                        )
-                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
-                        continue
-                    }
-                    var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
-                        currentRun.checkpoint
-                    )
-                    // Older builds could leave a Todo blocked while its durable delivery stayed
-                    // running and its Run later paused on repeated identity rejections. Once the
-                    // Human explicitly resolves that blocker, the Todo becomes pending but cannot
-                    // be claimed again because the original delivery is still running. Repair that
-                    // split state in place and resume the same durable Run.
-                    if !isRecoveryEligible,
-                       currentDelivery.triggerKind == .todo,
-                       currentRun.checkpoint.status == .paused,
-                       currentRun.checkpoint.pendingCalls.isEmpty,
-                       currentRun.checkpoint.inFlightCallID == nil,
-                       let todo = try await store.todoForDelivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: currentDelivery.id
-                       ), todo.status == .pending {
-                        _ = try await store.updateAgentTodo(
-                            ownerUserID: ownerUserID,
-                            agentID: todo.agentID,
-                            todoID: todo.id,
-                            update: .init(status: .inProgress, blockedReason: ""),
-                            nowUnixMs: now()
-                        )
-                        isRecoveryEligible = true
-                    }
-                    guard isRecoveryEligible else {
-                        await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
-                        continue
-                    }
-                    let result = try await resumeRegisteredDelivery(
-                        ownerUserID: ownerUserID,
-                        projectID: currentRun.context.projectID,
-                        deliveryID: delivery.id
-                    )
-                    await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
-                    results.append(result)
-                    if result.outcome != .completed { break }
-                } catch {
-                    await activeDeliveryRegistry.unregister(deliveryID: delivery.id)
-                    throw error
+        for run in runs where results.count < maximumRuns {
+            let deliveryID = run.context.deliveryID
+            guard await activeDeliveryRegistry.acquire(deliveryID: deliveryID) else { continue }
+            do {
+                // Re-read after acquiring ownership. A Human retry may have changed both the
+                // checkpoint and Todo between the account snapshot and this recovery attempt.
+                guard let currentDelivery = try await store.delivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                ), currentDelivery.status == .running,
+                   let currentRun = try await store.run(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                   ) else {
+                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                    continue
                 }
+                if currentRun.checkpoint.status == .needsReview {
+                    try await suspendTodoForReview(
+                        store: store,
+                        ownerUserID: ownerUserID,
+                        delivery: currentDelivery,
+                        runID: currentRun.context.runID,
+                        detail: currentRun.checkpoint.stopReason
+                            ?? "执行中断，需要检查副作用后再决定是否重试。"
+                    )
+                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                    continue
+                }
+                var isRecoveryEligible = Self.isAutomaticTriggerRecoveryEligible(
+                    currentRun.checkpoint
+                )
+                // Older builds could leave a Todo blocked while its durable delivery stayed
+                // running and its Run later paused on repeated identity rejections. Once the
+                // Human explicitly resolves that blocker, the Todo becomes pending but cannot
+                // be claimed again because the original delivery is still running. Repair that
+                // split state in place and resume the same durable Run.
+                if !isRecoveryEligible,
+                   currentDelivery.triggerKind == .todo,
+                   currentRun.checkpoint.status == .paused,
+                   currentRun.checkpoint.pendingCalls.isEmpty,
+                   currentRun.checkpoint.inFlightCallID == nil,
+                   let todo = try await store.todoForDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: currentDelivery.id
+                   ), todo.status == .pending {
+                    _ = try await store.updateAgentTodo(
+                        ownerUserID: ownerUserID,
+                        agentID: todo.agentID,
+                        todoID: todo.id,
+                        update: .init(status: .inProgress, blockedReason: ""),
+                        nowUnixMs: now()
+                    )
+                    isRecoveryEligible = true
+                }
+                guard isRecoveryEligible else {
+                    await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                    continue
+                }
+                let result = try await resumeRegisteredDelivery(
+                    ownerUserID: ownerUserID,
+                    projectID: currentRun.context.projectID,
+                    deliveryID: deliveryID
+                )
+                await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                results.append(result)
+                if result.outcome != .completed { break }
+            } catch {
+                await activeDeliveryRegistry.unregister(deliveryID: deliveryID)
+                throw error
             }
         }
         return results
@@ -354,6 +356,11 @@ extension LocalAgentGroupChatScheduler {
         var results: [DeliveryAttemptReceipt] = []
         while results.count < maximumRuns {
             if Task.isCancelled { break }
+            guard try await store.hasPendingDeliveries(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                lane: lane
+            ) else { break }
             let members = try await store.listMembers(ownerUserID: ownerUserID, roomID: room.id)
             let remainingCapacity = maximumRuns - results.count
             var claimedWork: [ClaimedWork] = []
@@ -411,13 +418,27 @@ extension LocalAgentGroupChatScheduler {
             }
             return $0.order < $1.order
         }
+        let executorTodoIDsByDeliveryID = Dictionary(uniqueKeysWithValues: launchOrder.compactMap {
+            work -> (String, String)? in
+            guard work.delivery.lane == .executor,
+                  work.delivery.triggerKind == .todo,
+                  work.delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
+            return (
+                work.delivery.id,
+                String(work.delivery.deduplicationKey.dropFirst("todo:".count))
+            )
+        })
+        let executorTodos = try await store.todos(
+            ownerUserID: ownerUserID,
+            todoIDs: Array(executorTodoIDsByDeliveryID.values)
+        )
         for work in launchOrder {
-            let todoID = work.delivery.lane == .executor
-                ? try await store.todoForDelivery(
-                    ownerUserID: ownerUserID,
-                    deliveryID: work.delivery.id
-                )?.id
-                : nil
+            let todoID: String? = executorTodoIDsByDeliveryID[work.delivery.id].flatMap { todoID in
+                guard executorTodos[todoID]?.agentID == work.delivery.targetAgentID else {
+                    return nil
+                }
+                return todoID
+            }
             let handle = todoID == nil ? nil : LocalAgentExecutorCancellationHandle()
             guard await activeDeliveryRegistry.acquire(deliveryID: work.delivery.id) else {
                 continue

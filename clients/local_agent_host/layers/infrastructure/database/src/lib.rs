@@ -65,7 +65,7 @@ pub use chatos_local_agent_ports::{
     LocalNotepadImageWrite, LocalNotepadStore, LocalPluginInstallationStore,
     LocalRemoteConnectionStore, LocalRequirementSurveyStore, RunTransition,
 };
-use run_record::decode_run;
+use run_record::{decode_run, decode_run_summary};
 use schema::RUN_SELECT;
 
 const FILE_DATABASE_MAX_CONNECTIONS: u32 = 4;
@@ -171,7 +171,8 @@ impl SqliteClientStorage {
                 migration::SCHEMA_VERSION
             )));
         }
-        if version < migration::SCHEMA_VERSION {
+        let requires_migration = version < migration::SCHEMA_VERSION;
+        if requires_migration {
             if let Some((path, true)) = file_context {
                 maintenance::create_migration_backup(
                     &storage.pool,
@@ -183,7 +184,9 @@ impl SqliteClientStorage {
             }
         }
         storage.migrate().await.db()?;
-        maintenance::verify_integrity(&storage.pool).await?;
+        if requires_migration {
+            maintenance::verify_integrity(&storage.pool).await?;
+        }
         Ok(storage)
     }
 
@@ -217,6 +220,9 @@ impl SqliteClientStorage {
         connection: &mut SqliteConnection,
         command: &IdempotentCommand,
     ) -> Result<Option<T>, ClientStorageError> {
+        if !command.persist_receipt {
+            return Ok(None);
+        }
         let row = sqlx::query(
             "SELECT request_fingerprint, response_json FROM local_agent_command_receipts \
              WHERE command_id = ?",
@@ -242,6 +248,9 @@ impl SqliteClientStorage {
         response: &T,
         now_unix_ms: i64,
     ) -> Result<(), ClientStorageError> {
+        if !command.persist_receipt {
+            return Ok(());
+        }
         sqlx::query(
             "INSERT INTO local_agent_command_receipts(\
              command_id, request_fingerprint, response_json, created_at_unix_ms) \
@@ -393,6 +402,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
         &self,
         owner_user_id: &str,
         scope: LocalAgentRunListScope,
+        status: Option<LocalAgentRunStatus>,
+        updated_after_unix_ms: Option<i64>,
         before_updated_at_unix_ms: Option<i64>,
         before_run_id: Option<&str>,
         limit: u32,
@@ -401,6 +412,8 @@ impl LocalAgentRunStore for SqliteClientStorage {
             self,
             owner_user_id,
             scope,
+            status,
+            updated_after_unix_ms,
             before_updated_at_unix_ms,
             before_run_id,
             limit,
@@ -419,6 +432,27 @@ impl LocalAgentRunStore for SqliteClientStorage {
             run_recovery_store::recover_expired_claims(&mut connection, owner_user_id, now_unix_ms)
                 .await;
         Self::finish_write(&mut connection, result).await
+    }
+
+    async fn renew_run_claim(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+        claim_until_unix_ms: i64,
+    ) -> Result<bool, ClientStorageError> {
+        run_owner_store::renew_claim(
+            self,
+            owner_user_id,
+            run_id,
+            claim_token,
+            expected_version,
+            now_unix_ms,
+            claim_until_unix_ms,
+        )
+        .await
     }
 
     async fn claim_next_run(
@@ -453,11 +487,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             .await
             .db()?;
             let Some(candidate) = candidate else {
-                let response: Option<LocalAgentRunClaim> = None;
-                Self::record_receipt(&mut connection, command, &response, now_unix_ms)
-                    .await
-                    .db()?;
-                return Ok(response);
+                return Ok(None);
             };
             let run_id: String = candidate.try_get("run_id").db()?;
             let updated = sqlx::query(
@@ -522,9 +552,23 @@ impl LocalAgentRunStore for SqliteClientStorage {
     async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Ok(sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MIN(next_attempt_at_unix_ms) FROM local_agent_runs \
-             WHERE owner_user_id = ? AND status = 'retry_scheduled'",
+            "SELECT MIN(deadline) FROM (\
+               SELECT MIN(next_attempt_at_unix_ms) AS deadline FROM local_agent_runs \
+                 WHERE owner_user_id = ? AND status = 'retry_scheduled' \
+               UNION ALL \
+               SELECT MIN(claim_until_unix_ms) AS deadline FROM local_agent_runs \
+                 WHERE owner_user_id = ? AND status = 'model_running' \
+                   AND claim_until_unix_ms IS NOT NULL \
+               UNION ALL \
+               SELECT MIN(i.claim_until_unix_ms) AS deadline \
+                 FROM local_agent_tool_invocations i \
+                 INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+                 WHERE r.owner_user_id = ? AND i.status = 'running' \
+                   AND i.claim_until_unix_ms IS NOT NULL\
+             )",
         )
+        .bind(owner_user_id)
+        .bind(owner_user_id)
         .bind(owner_user_id)
         .fetch_one(&mut *connection)
         .await
@@ -787,12 +831,32 @@ impl LocalAgentRunStore for SqliteClientStorage {
         after_cursor: i64,
         limit: u32,
         run_id: Option<&str>,
+        event_type: Option<&str>,
+        newest_first: bool,
+        payload_mode: chatos_local_agent_protocol::LocalAgentEventPayloadMode,
     ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError> {
-        run_owner_store::list_events(self, owner_user_id, after_cursor, limit, run_id).await
+        run_owner_store::list_events(
+            self,
+            owner_user_id,
+            after_cursor,
+            limit,
+            run_id,
+            event_type,
+            newest_first,
+            payload_mode,
+        )
+        .await
+    }
+
+    async fn latest_event_cursor_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<i64, ClientStorageError> {
+        run_owner_store::latest_event_cursor(self, owner_user_id).await
     }
 
     async fn health_check(&self) -> Result<(), ClientStorageError> {
-        maintenance::verify_integrity(&self.pool).await
+        maintenance::verify_available(&self.pool).await
     }
 }
 

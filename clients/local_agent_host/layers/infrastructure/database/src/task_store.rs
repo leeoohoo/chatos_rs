@@ -58,6 +58,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         &self,
         owner_user_id: &str,
         scope: LocalTaskGraphListScope,
+        source_entity_type: Option<&str>,
+        source_entity_id: Option<&str>,
         before_updated_at_unix_ms: Option<i64>,
         before_graph_id: Option<&str>,
         limit: u32,
@@ -66,6 +68,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             self,
             owner_user_id,
             scope,
+            source_entity_type,
+            source_entity_id,
             before_updated_at_unix_ms,
             before_graph_id,
             limit,
@@ -440,6 +444,7 @@ mod tests {
         IdempotentCommand {
             command_id: command_id.to_string(),
             request_fingerprint: fingerprint.to_string(),
+            persist_receipt: true,
         }
     }
 

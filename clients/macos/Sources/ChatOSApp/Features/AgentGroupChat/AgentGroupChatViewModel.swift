@@ -94,7 +94,9 @@ final class AgentGroupChatViewModel: ObservableObject {
     @Published var loadingTeamAssetRevisionIDs: Set<String> = []
     @Published var recentRuns: [LocalAgentGroupChatRun] = []
     @Published var recentRunDeliveries: [UUID: ProjectAgentDelivery] = [:]
+    @Published var recentRunHistorySummaries: [LocalAgentRunHistorySummary] = []
     @Published var todoRunPresentationsByTodoID: [String: TeamTodoRunPresentation] = [:]
+    @Published private(set) var isLoadingRunHistory = false
     let composerState = AgentChatComposerState()
     @Published var attachmentDataByID: [String: Data] = [:]
     @Published var isLoading = false
@@ -129,6 +131,7 @@ final class AgentGroupChatViewModel: ObservableObject {
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
     var hasLoadedModels = false
     private var isLoadInFlight = false
+    var hasLoadedRunHistory = false
     let messagePageSize = 50
 
     var draftMessage: String {
@@ -255,6 +258,10 @@ final class AgentGroupChatViewModel: ObservableObject {
             }
             publishIfChanged(agents, at: \.agents)
             let isSameRoom = self.room?.id == room?.id
+            if !isSameRoom {
+                hasLoadedRunHistory = false
+                publishIfChanged([], at: \.recentRunHistorySummaries)
+            }
             publishIfChanged(room, at: \.room)
             publishIfChanged(members, at: \.members)
             try await reconcilePersistedSchedulerIssue(store: store, roomID: room?.id)
@@ -327,15 +334,26 @@ final class AgentGroupChatViewModel: ObservableObject {
             publishIfChanged(nil, at: \.projectDashboard)
             publishIfChanged([], at: \.recentRuns)
             publishIfChanged([:], at: \.recentRunDeliveries)
+            publishIfChanged([], at: \.recentRunHistorySummaries)
             publishIfChanged([:], at: \.todoRunPresentationsByTodoID)
             return
         }
 
+        let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
+        let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
+            mergeAttachments ? attachmentDataByID : [:],
+            for: attachmentPlan
+        )
+        let missingAttachmentRequests = AgentAttachmentDataCachePolicy.missingRequests(
+            in: attachmentPlan,
+            cachedDataByID: retainedAttachmentData
+        )
+
         supplementaryLoadTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let loadedAttachmentData = try await loadAttachmentData(
-                    messages: messages,
+                async let loadedAttachmentData = loadAttachmentData(
+                    requests: missingAttachmentRequests,
                     roomID: room.id,
                     store: store
                 )
@@ -393,32 +411,26 @@ final class AgentGroupChatViewModel: ObservableObject {
                         agentName: profileNames[run.context.agentID] ?? run.context.agentID
                     ))
                 }
-                let recentRuns = try await store.listRoomRuns(
+                let todoRunSummaries = try await store.listLatestTodoRunSummaries(
                     ownerUserID: ownerUserID,
                     roomID: room.id,
                     limit: 500
                 )
-                let deliveriesByID = try await store.deliveries(
-                    ownerUserID: ownerUserID,
-                    deliveryIDs: recentRuns.map(\.context.deliveryID)
-                )
-                let recentRunDeliveries: [UUID: ProjectAgentDelivery] = Dictionary(
-                    uniqueKeysWithValues: recentRuns.compactMap { run -> (UUID, ProjectAgentDelivery)? in
-                        guard let delivery = deliveriesByID[run.context.deliveryID] else { return nil }
-                        return (run.id, delivery)
+                let todoRunPresentationsByTodoID =
+                    TeamTodoRunPresentation.presentationsByTodoID(summaries: todoRunSummaries)
+                let visibleUnfinishedRuns = unfinishedRuns.filter { $0.context.roomID == room.id }
+                let visibleUnfinishedDeliveries: [UUID: ProjectAgentDelivery] = Dictionary(
+                    uniqueKeysWithValues: visibleUnfinishedRuns.compactMap {
+                        guard let delivery = unfinishedDeliveries[$0.context.deliveryID] else {
+                            return nil
+                        }
+                        return ($0.id, delivery)
                     }
                 )
-                let todoRunPresentationsByTodoID = await Task.detached(priority: .utility) {
-                    TeamTodoRunPresentation.presentationsByTodoID(
-                        runs: recentRuns,
-                        deliveriesByRunID: recentRunDeliveries
-                    )
-                }.value
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
-                var nextAttachmentData = mergeAttachments ? attachmentDataByID : [:]
-                if mergeAttachments {
-                    nextAttachmentData.merge(loadedAttachmentData) { _, new in new }
-                }
+                var nextAttachmentData = retainedAttachmentData
+                nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
+                guard !Task.isCancelled, self.room?.id == room.id else { return }
                 publishIfChanged(nextAttachmentData, at: \.attachmentDataByID)
                 publishIfChanged(interruptedRuns, at: \.interruptedRuns)
                 publishIfChanged(pendingProposals, at: \.pendingProposals)
@@ -437,8 +449,18 @@ final class AgentGroupChatViewModel: ObservableObject {
                     loadingTeamAssetRevisionIDs.intersection(activeAssetIDs),
                     at: \.loadingTeamAssetRevisionIDs
                 )
-                publishIfChanged(recentRuns, at: \.recentRuns)
-                publishIfChanged(recentRunDeliveries, at: \.recentRunDeliveries)
+                if hasLoadedRunHistory {
+                    publishIfChanged(
+                        Self.mergingRuns(recentRuns, with: visibleUnfinishedRuns),
+                        at: \.recentRuns
+                    )
+                    var deliveries = recentRunDeliveries
+                    deliveries.merge(visibleUnfinishedDeliveries) { _, new in new }
+                    publishIfChanged(deliveries, at: \.recentRunDeliveries)
+                } else {
+                    publishIfChanged(visibleUnfinishedRuns, at: \.recentRuns)
+                    publishIfChanged(visibleUnfinishedDeliveries, at: \.recentRunDeliveries)
+                }
                 publishIfChanged(todoRunPresentationsByTodoID, at: \.todoRunPresentationsByTodoID)
             } catch {
                 guard !Task.isCancelled, self.room?.id == room.id else { return }
@@ -453,6 +475,64 @@ final class AgentGroupChatViewModel: ObservableObject {
     ) {
         guard self[keyPath: keyPath] != value else { return }
         self[keyPath: keyPath] = value
+    }
+
+    func loadRunHistory() async {
+        guard !hasLoadedRunHistory, !isLoadingRunHistory, let room else { return }
+        isLoadingRunHistory = true
+        defer { isLoadingRunHistory = false }
+        do {
+            let store = try await resolveStore()
+            let summaries = try await store.listRoomRunHistorySummaries(
+                ownerUserID: ownerUserID,
+                roomID: room.id,
+                limit: 500
+            )
+            guard self.room?.id == room.id else { return }
+            publishIfChanged(summaries, at: \.recentRunHistorySummaries)
+            hasLoadedRunHistory = true
+        } catch {
+            guard self.room?.id == room.id else { return }
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadRun(_ runID: UUID) async -> LocalAgentGroupChatRun? {
+        if let cached = recentRuns.first(where: { $0.id == runID }) { return cached }
+        guard let room else { return nil }
+        do {
+            let store = try await resolveStore()
+            guard let run = try await store.run(ownerUserID: ownerUserID, runID: runID),
+                  run.context.roomID == room.id,
+                  let delivery = try await store.delivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: run.context.deliveryID
+                  ), delivery.roomID == room.id,
+                  self.room?.id == room.id else { return nil }
+            if run.checkpoint.status != .completed, run.checkpoint.status != .failed {
+                recentRuns = Self.mergingRuns(recentRuns, with: [run])
+            }
+            recentRunDeliveries[run.id] = delivery
+            return run
+        } catch {
+            guard self.room?.id == room.id else { return nil }
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    private static func mergingRuns(
+        _ current: [LocalAgentGroupChatRun],
+        with incoming: [LocalAgentGroupChatRun]
+    ) -> [LocalAgentGroupChatRun] {
+        var byID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+        for run in incoming { byID[run.id] = run }
+        return byID.values.sorted {
+            if $0.updatedAtUnixMs != $1.updatedAtUnixMs {
+                return $0.updatedAtUnixMs > $1.updatedAtUnixMs
+            }
+            return $0.id.uuidString > $1.id.uuidString
+        }
     }
 
 }

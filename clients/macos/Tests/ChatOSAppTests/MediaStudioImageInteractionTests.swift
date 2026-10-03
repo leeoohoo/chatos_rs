@@ -113,6 +113,69 @@ final class MediaStudioImageInteractionTests: XCTestCase {
         }
     }
 
+    func testPreviewLoaderRejectsOversizedBase64BeforeDecode() async {
+        let asset = GeneratedMediaAsset(
+            id: "oversized-inline",
+            mimeType: "image/png",
+            base64Data: String(
+                repeating: "A",
+                count: MediaStudioImageLoader.maximumEncodedCharacters + 1
+            )
+        )
+
+        do {
+            _ = try await MediaStudioImageLoader.data(for: asset)
+            XCTFail("Oversized inline image was accepted")
+        } catch is MediaStudioImageLoader.ImageError {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testNormalizedPNGConversionRunsThroughBoundedImageDecoder() async throws {
+        let (vm, _, _) = try await fixture()
+        let source = try await MediaStudioImageLoader.data(for: vm.history[0].images[0])
+        let png = try await MediaStudioImageLoader.normalizedPNGData(from: source)
+        let representation = try XCTUnwrap(NSBitmapImageRep(data: png))
+
+        XCTAssertEqual(representation.pixelsWide, 256)
+        XCTAssertEqual(representation.pixelsHigh, 256)
+        XCTAssertFalse(png.isEmpty)
+    }
+
+    func testNormalizedPNGConversionRejectsInvalidImageData() async {
+        do {
+            _ = try await MediaStudioImageLoader.normalizedPNGData(from: Data("not-an-image".utf8))
+            XCTFail("Invalid image data was accepted")
+        } catch is MediaStudioImageLoader.ImageError {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testSharedGeneratedAssetCacheDownsamplesStoryThumbnail() async throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 128, pixelsHigh: 64,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let image = await GeneratedMediaAssetImageCache.image(
+            for: .init(
+                id: "story-thumbnail-test",
+                mimeType: "image/png",
+                base64Data: png.base64EncodedString()
+            ),
+            maximumDisplayPixelSize: 24
+        )
+
+        let representation = try XCTUnwrap(image?.representations.first)
+        XCTAssertLessThanOrEqual(representation.pixelsWide, 24)
+        XCTAssertLessThanOrEqual(representation.pixelsHigh, 24)
+    }
+
     private func fixture() async throws -> (MediaStudioViewModel, ImageReferenceCaptureService, URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MediaStudioInteractionTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

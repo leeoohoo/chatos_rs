@@ -30,11 +30,13 @@ final class ScreenRecordingCoordinator {
             self?.beginRecording(target: target, capturesSystemAudio: capturesAudio)
         }
         pickerViewModel.onCancel = { [weak self] in
+            self?.pickerViewModel.cancelLoading()
             self?.pickerPanel.closeAndRestorePreviousApplication()
             self?.state = .idle
         }
         pickerPanel.onPanelDismiss = { [weak self] in
             guard self?.state == .selecting else { return }
+            self?.pickerViewModel.cancelLoading()
             self?.state = .idle
         }
         controlPanel.onStop = { [weak self] in
@@ -47,6 +49,7 @@ final class ScreenRecordingCoordinator {
         case .idle:
             presentTargetPicker()
         case .selecting:
+            pickerViewModel.cancelLoading()
             pickerPanel.closeAndRestorePreviousApplication()
             state = .idle
         case .recording:
@@ -59,6 +62,7 @@ final class ScreenRecordingCoordinator {
     @discardableResult
     func dismissPickerIfPresented() -> Bool {
         guard state == .selecting else { return false }
+        pickerViewModel.cancelLoading()
         pickerPanel.closeAndRestorePreviousApplication()
         state = .idle
         return true
@@ -80,6 +84,7 @@ final class ScreenRecordingCoordinator {
         capturesSystemAudio: Bool
     ) {
         guard state == .selecting else { return }
+        pickerViewModel.cancelLoading()
         state = .preparing
         let isEnglish = model?.interfaceLanguage == .english
         controlPanel.prepare(isEnglish: isEnglish)

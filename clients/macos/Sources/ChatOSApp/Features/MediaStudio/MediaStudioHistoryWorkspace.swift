@@ -27,7 +27,8 @@ extension MediaStudioView {
                     ProgressView(appModel.localized("正在加载记录", english: "Loading history"))
                         .frame(maxWidth: .infinity, minHeight: 200)
                 } else if viewModel.history.isEmpty && viewModel.videoHistory.isEmpty
-                            && stories.creationHistoryGroups.isEmpty {
+                            && stories.creationHistoryGroups.isEmpty
+                            && !viewModel.hasMoreHistory && !stories.hasMoreProjects {
                     ContentUnavailableView(
                         appModel.localized("还没有创作记录", english: "No Creation History"),
                         systemImage: "clock.arrow.circlepath"
@@ -37,6 +38,25 @@ extension MediaStudioView {
                     storyHistorySection
                     videoHistorySection
                     imageHistorySection
+                    if viewModel.hasMoreHistory {
+                        HStack {
+                            Spacer()
+                            Button {
+                                viewModel.loadMoreHistory()
+                            } label: {
+                                if viewModel.isLoadingMoreHistory {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label(appModel.localized("加载更早记录", english: "Load Earlier History"),
+                                          systemImage: "clock.arrow.circlepath")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isLoadingMoreHistory)
+                            Spacer()
+                        }
+                        .padding(.top, 4)
+                    }
                 }
             }
             .padding(24)
@@ -45,7 +65,7 @@ extension MediaStudioView {
 
     @ViewBuilder
     var storyHistorySection: some View {
-        if !stories.creationHistoryGroups.isEmpty {
+        if !stories.creationHistoryGroups.isEmpty || stories.hasMoreProjects {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(appModel.localized("剧情作品", english: "Story Projects"))
@@ -63,6 +83,20 @@ extension MediaStudioView {
             VStack(spacing: 16) {
                 ForEach(stories.creationHistoryGroups) { group in
                     storyHistoryCard(group)
+                }
+                if stories.hasMoreProjects {
+                    Button {
+                        stories.loadMoreProjects()
+                    } label: {
+                        if stories.isLoadingMoreProjects {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(appModel.localized("加载更早剧情", english: "Load Earlier Stories"),
+                                  systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(stories.isLoadingMoreProjects)
                 }
             }
         }

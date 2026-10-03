@@ -1,3 +1,4 @@
+import ChatOSNetworking
 import Foundation
 
 public struct AgentHTTPStreamResponse: Sendable {
@@ -29,7 +30,10 @@ public struct AgentChatModelClient: AgentModelClient {
         baseURL: URL, model: String, apiKey: String, thinking: String? = nil,
         maximumOutputTokens: Int? = nil, temperature: Double? = nil,
         transport: @escaping Transport = { request in
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await BoundedURLSessionDataLoader.load(
+                request: request,
+                maximumBytes: 2 * 1_024 * 1_024
+            )
             guard let response = response as? HTTPURLResponse else { throw AgentRuntimeError.invalidResponse }
             return (data, response.statusCode)
         },
@@ -149,12 +153,7 @@ public struct AgentChatModelClient: AgentModelClient {
     }
 
     private static func validatedAttachmentData(_ attachment: AgentMessageAttachment) throws -> Data {
-        guard attachment.localFileURL.isFileURL else { throw AgentRuntimeError.invalidAttachment }
-        let data = try Data(contentsOf: attachment.localFileURL, options: [.mappedIfSafe])
-        guard !data.isEmpty, data.count <= 20 * 1_024 * 1_024 else {
-            throw AgentRuntimeError.invalidAttachment
-        }
-        return data
+        try AgentAttachmentDataLoader.load(attachment.localFileURL)
     }
 
     private static func boundedText(_ data: Data) -> String? {
@@ -238,17 +237,35 @@ public struct AgentChatModelClient: AgentModelClient {
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             result[String(describing: entry.key).lowercased()] = String(describing: entry.value)
         }
-        let body = AsyncThrowingStream<Data, Error> { continuation in
+        let body = AsyncThrowingStream<Data, Error>(
+            bufferingPolicy: .bufferingOldest(64)
+        ) { continuation in
             let task = Task {
                 do {
                     var chunk = Data(); chunk.reserveCapacity(4_096)
                     for try await byte in bytes {
                         chunk.append(byte)
                         if byte == 10 || chunk.count >= 4_096 {
-                            continuation.yield(chunk); chunk.removeAll(keepingCapacity: true)
+                            switch continuation.yield(chunk) {
+                            case .enqueued:
+                                chunk.removeAll(keepingCapacity: true)
+                            case .dropped:
+                                continuation.finish(throwing: AgentRuntimeError.invalidResponse)
+                                return
+                            case .terminated:
+                                return
+                            @unknown default:
+                                continuation.finish(throwing: AgentRuntimeError.invalidResponse)
+                                return
+                            }
                         }
                     }
-                    if !chunk.isEmpty { continuation.yield(chunk) }
+                    if !chunk.isEmpty {
+                        guard case .enqueued = continuation.yield(chunk) else {
+                            continuation.finish(throwing: AgentRuntimeError.invalidResponse)
+                            return
+                        }
+                    }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }

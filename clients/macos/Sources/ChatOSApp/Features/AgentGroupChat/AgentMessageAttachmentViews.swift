@@ -12,7 +12,7 @@ struct AgentMessageAttachmentChips: View {
     let attachments: [ProjectAgentMessageAttachment]
     let dataByID: [String: Data]
     let service: NativeAgentGroupChatService
-    @State private var previewedImage: ProjectAgentMessageAttachment?
+    @State private var previewedImage: AgentImagePreviewItem?
     @State private var previewedDocument: AgentMarkdownPreviewItem?
     @State private var loadingAttachmentIDs: Set<String> = []
     @State private var retryingAttachmentIDs: Set<String> = []
@@ -22,22 +22,58 @@ struct AgentMessageAttachmentChips: View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(attachments, id: \.id) { attachment in
                 if attachment.kind == .image,
-                   let data = dataByID[attachment.id],
-                   let image = NSImage(data: data) {
+                   let data = dataByID[attachment.id] {
                     Button {
-                        previewedImage = attachment
+                        previewedImage = .init(attachment: attachment, data: data)
                     } label: {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 360, maxHeight: 220)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(AppPalette.border, lineWidth: 1)
-                            }
+                        AppAsyncDataImage(
+                            data: data,
+                            identity: "agent-attachment|\(attachment.id)",
+                            maximumDisplayPixelSize: 1_024
+                        ) { image in
+                            image.resizable().scaledToFit()
+                        } placeholder: {
+                            ProgressView().controlSize(.small)
+                        }
+                        .frame(maxWidth: 360, maxHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(AppPalette.border, lineWidth: 1)
+                        }
                     }
                     .buttonStyle(.plain)
+                } else if attachment.kind == .image {
+                    Button {
+                        loadImagePreview(attachment)
+                    } label: {
+                        HStack(spacing: 9) {
+                            Image(systemName: "photo")
+                                .foregroundStyle(AppPalette.ai)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.name)
+                                    .lineLimit(1)
+                                    .appFont(.caption.weight(.medium))
+                                Text("\(formattedSize(attachment.size)) · 点按加载预览")
+                                    .lineLimit(1)
+                                    .appFont(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 6)
+                            if loadingAttachmentIDs.contains(attachment.id) {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(AppPalette.inputSurface, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(AppPalette.border, lineWidth: 1)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(loadingAttachmentIDs.contains(attachment.id))
                 } else {
                     HStack(spacing: 9) {
                         Button {
@@ -97,10 +133,12 @@ struct AgentMessageAttachmentChips: View {
                 }
             }
         }
-        .sheet(item: $previewedImage) { attachment in
-            if let data = dataByID[attachment.id], let image = NSImage(data: data) {
-                AgentLocalImagePreview(name: attachment.name, image: image)
-            }
+        .sheet(item: $previewedImage) { item in
+            AgentLocalImagePreview(
+                name: item.attachment.name,
+                attachmentID: item.attachment.id,
+                data: item.data
+            )
         }
         .sheet(item: $previewedDocument) { item in
             AgentMarkdownAttachmentPreview(item: item)
@@ -112,6 +150,22 @@ struct AgentMessageAttachmentChips: View {
             Button("好", role: .cancel) { operationError = nil }
         } message: {
             Text(operationError ?? "")
+        }
+    }
+
+    private func loadImagePreview(_ attachment: ProjectAgentMessageAttachment) {
+        guard loadingAttachmentIDs.insert(attachment.id).inserted else { return }
+        Task {
+            defer { loadingAttachmentIDs.remove(attachment.id) }
+            do {
+                let data = try await attachmentData(attachment)
+                guard !Task.isCancelled else { return }
+                previewedImage = .init(attachment: attachment, data: data)
+            } catch is CancellationError {
+                // The row disappeared while its on-demand preview was loading.
+            } catch {
+                operationError = error.localizedDescription
+            }
         }
     }
 
@@ -200,10 +254,7 @@ struct AgentMessageAttachmentChips: View {
             messageID: messageID,
             attachmentID: attachment.id
         ) else { throw AgentAttachmentPresentationError.notFound }
-        let fileURL = payload.localFileURL
-        return try await Task.detached(priority: .userInitiated) {
-            try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        }.value
+        return try await AgentMessageAttachmentDataLoader.load(payload)
     }
 
     private func isMarkdown(_ attachment: ProjectAgentMessageAttachment) -> Bool {
@@ -253,13 +304,44 @@ struct AgentMessageAttachmentChips: View {
     }
 }
 
-private enum AgentAttachmentPresentationError: LocalizedError {
+private struct AgentImagePreviewItem: Identifiable {
+    let attachment: ProjectAgentMessageAttachment
+    let data: Data
+
+    var id: String { attachment.id }
+}
+
+enum AgentMessageAttachmentDataLoader {
+    static let maximumBytes = 20 * 1_024 * 1_024
+
+    static func load(_ payload: ProjectAgentMessageAttachmentPayload) async throws -> Data {
+        let expectedBytes = payload.attachment.size
+        guard expectedBytes > 0, expectedBytes <= maximumBytes else {
+            throw AgentAttachmentPresentationError.invalidSize
+        }
+        let fileURL = payload.localFileURL
+        return try await AppCancellableDetachedWork.run {
+            let data = try AppBoundedFileReader.read(
+                fileURL,
+                maximumBytes: expectedBytes
+            )
+            guard data.count == expectedBytes else {
+                throw AgentAttachmentPresentationError.invalidSize
+            }
+            return data
+        }
+    }
+}
+
+enum AgentAttachmentPresentationError: LocalizedError {
     case invalidUTF8
+    case invalidSize
     case notFound
 
     var errorDescription: String? {
         switch self {
         case .invalidUTF8: "Markdown 附件不是有效的 UTF-8 文本。"
+        case .invalidSize: "附件文件大小与记录不一致。"
         case .notFound: "附件不存在或当前消息无权访问。"
         }
     }
@@ -310,10 +392,9 @@ struct AgentMarkdownAttachmentPreview: View {
         .task(id: query) {
             let source = item.markdown
             let needle = query
-            matchCount = await Task.detached(priority: .utility) {
-                guard !needle.isEmpty else { return 0 }
-                return source.lowercased().components(separatedBy: needle.lowercased()).count - 1
-            }.value
+            matchCount = (try? await AppCancellableDetachedWork.run(priority: .utility) {
+                MarkdownOccurrenceCounter.count(in: source, query: needle)
+            }) ?? 0
         }
     }
 
@@ -338,9 +419,32 @@ struct AgentMarkdownAttachmentPreview: View {
     }
 }
 
+enum MarkdownOccurrenceCounter {
+    static func count(in source: String, query: String) -> Int {
+        guard !query.isEmpty, !source.isEmpty, !Task.isCancelled else { return 0 }
+        var count = 0
+        var searchStart = source.startIndex
+        while searchStart < source.endIndex {
+            guard !Task.isCancelled,
+                  let match = source.range(
+                    of: query,
+                    options: [.caseInsensitive],
+                    range: searchStart..<source.endIndex
+                  ) else {
+                break
+            }
+            count += 1
+            guard match.upperBound > searchStart else { break }
+            searchStart = match.upperBound
+        }
+        return count
+    }
+}
+
 private struct AgentLocalImagePreview: View {
     let name: String
-    let image: NSImage
+    let attachmentID: String
+    let data: Data
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -354,10 +458,15 @@ private struct AgentLocalImagePreview: View {
             .padding(16)
             Divider()
             ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(20)
+                AppAsyncDataImage(
+                    data: data,
+                    identity: "agent-attachment-preview|\(attachmentID)",
+                    maximumDisplayPixelSize: 2_048
+                ) { image in
+                    image.resizable().scaledToFit().padding(20)
+                } placeholder: {
+                    ProgressView().padding(20)
+                }
             }
         }
         .frame(minWidth: 760, idealWidth: 920, minHeight: 560, idealHeight: 720)

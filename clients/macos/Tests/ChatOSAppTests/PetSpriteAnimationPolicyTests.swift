@@ -4,6 +4,14 @@ import Testing
 
 @Suite("Pet sprite animation policy")
 struct PetSpriteAnimationPolicyTests {
+    @Test("sprite atlas accepts only the bounded production dimensions")
+    func validatesAtlasDimensions() {
+        #expect(PetSpriteAtlasPolicy.hasExpectedDimensions(width: 1_536, height: 2_288))
+        #expect(!PetSpriteAtlasPolicy.hasExpectedDimensions(width: 3_072, height: 4_576))
+        #expect(PetSpriteAtlasPolicy.sourcePixelCount == 1_536 * 2_288)
+        #expect(PetSpriteAtlasPolicy.maximumBytes == 20 * 1_024 * 1_024)
+    }
+
     @Test("idle animation is capped at one frame per second")
     func idleAnimationIsLowFrequency() {
         let configuration = PetSpriteAnimationPolicy.configuration(

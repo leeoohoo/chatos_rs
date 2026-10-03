@@ -1,3 +1,4 @@
+import ChatOSNetworking
 import ChatOSCore
 import Foundation
 
@@ -301,7 +302,7 @@ struct NativeConnectorGateway: Sendable {
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.boundedResponse(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
@@ -336,7 +337,7 @@ struct NativeConnectorGateway: Sendable {
         if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.boundedResponse(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NativeConnectorError.invalidResponse("缺少 HTTP 状态")
         }
@@ -354,6 +355,21 @@ struct NativeConnectorGateway: Sendable {
             return try decoder.decode(Response.self, from: data)
         } catch {
             throw NativeConnectorError.invalidResponse(error.localizedDescription)
+        }
+    }
+
+    private static func boundedResponse(
+        for request: URLRequest
+    ) async throws -> (Data, URLResponse) {
+        do {
+            return try await BoundedURLSessionDataLoader.load(
+                request: request,
+                maximumBytes: 8 * 1_024 * 1_024
+            )
+        } catch BoundedURLSessionDataLoaderError.responseTooLarge {
+            throw NativeConnectorError.invalidResponse("服务端响应超过 8 MB")
+        } catch BoundedURLSessionDataLoaderError.invalidResponse {
+            throw NativeConnectorError.invalidResponse("缺少有效 HTTP 响应")
         }
     }
 

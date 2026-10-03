@@ -55,8 +55,27 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isAwaitingInitialGraph)
     }
 
+    func testSwitchingTasksCancelsStaleInspectorAndIgnoresItsLateError() async throws {
+        let service = SwitchingMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        let first = MessageTask(id: "task-a", title: "任务 A", status: "running")
+        let second = MessageTask(id: "task-b", title: "任务 B", status: "completed")
+
+        viewModel.select(first)
+        await Task.yield()
+        viewModel.select(second)
+        try await Task.sleep(for: .milliseconds(150))
+
+        let cancelledFirstRequest = await service.cancelledFirstRequest
+        XCTAssertTrue(cancelledFirstRequest)
+        XCTAssertEqual(viewModel.selectedTask?.id, second.id)
+        XCTAssertEqual(viewModel.taskDetail?.id, second.id)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isLoadingInspector)
+    }
+
     private func makeViewModel(
-        service: MessageTaskGraphServiceStub
+        service: any MessageTaskGraphServicing
     ) -> MessageTaskWorkspaceViewModel {
         let turn = ConversationTurn(
             id: "turn-1",
@@ -82,6 +101,62 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor SwitchingMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private(set) var cancelledFirstRequest = false
+
+    func fetchGraph(
+        messageID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        if taskID == "task-a" {
+            try? await Task.sleep(for: .milliseconds(75))
+            cancelledFirstRequest = Task.isCancelled
+            throw SwitchingStubError.staleFailure
+        }
+        return MessageTask(id: taskID, title: "任务 B", status: "completed")
+    }
+
+    func fetchRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        includeEvents: Bool,
+        eventLimit: Int,
+        eventOffset: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-b", title: "任务 B", status: "completed")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        instruction: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-b")
+    }
+
+    func cancelTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String?
+    ) async throws {}
+}
+
+private enum SwitchingStubError: Error {
+    case staleFailure
 }
 
 private actor MessageTaskGraphServiceStub: MessageTaskGraphServicing {

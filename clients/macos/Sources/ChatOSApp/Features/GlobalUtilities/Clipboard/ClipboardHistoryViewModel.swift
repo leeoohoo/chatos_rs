@@ -1,7 +1,6 @@
 import AppKit
 import ChatOSCore
 import Foundation
-import ImageIO
 import SwiftUI
 
 private enum ClipboardHistoryPasteError: LocalizedError {
@@ -10,6 +9,12 @@ private enum ClipboardHistoryPasteError: LocalizedError {
     var errorDescription: String? {
         "无法把所选内容写入系统剪贴板。"
     }
+}
+
+enum ClipboardThumbnailPolicy {
+    static let maximumSourcePixelCount = 64_000_000
+    static let maximumDisplayPixelSize = 180
+    static let maximumCachedCount = 64
 }
 
 @MainActor
@@ -25,11 +30,24 @@ final class ClipboardHistoryViewModel: ObservableObject {
     var onRestoreSucceeded: (() -> Void)?
     var onCancel: (() -> Void)?
 
+    private struct ThumbnailLoad {
+        let id: UUID
+        let task: Task<Void, Never>
+    }
+
     private let store: ClipboardHistoryStore
-    private var thumbnailTasks: [UUID: Task<Void, Never>] = [:]
+    private var refreshTask: Task<Void, Never>?
+    private var refreshGeneration: UUID?
+    private var thumbnailTasks: [UUID: ThumbnailLoad] = [:]
+    private var thumbnailRecency: [UUID] = []
 
     init(store: ClipboardHistoryStore) {
         self.store = store
+    }
+
+    deinit {
+        refreshTask?.cancel()
+        thumbnailTasks.values.forEach { $0.task.cancel() }
     }
 
     var filteredEntries: [ClipboardHistoryEntry] {
@@ -51,18 +69,32 @@ final class ClipboardHistoryViewModel: ObservableObject {
     }
 
     func refresh() {
+        refreshTask?.cancel()
+        let generation = UUID()
+        refreshGeneration = generation
         isLoading = true
-        Task { [weak self, store] in
+        refreshTask = Task { [weak self, store] in
+            defer {
+                if self?.refreshGeneration == generation {
+                    self?.refreshTask = nil
+                    self?.refreshGeneration = nil
+                    self?.isLoading = false
+                }
+            }
             do {
                 let values = try await store.entries()
+                try Task.checkCancellation()
+                guard self?.refreshGeneration == generation else { return }
                 self?.entries = values
                 self?.pruneThumbnailCache(validEntries: values)
                 self?.selectedIndex = min(self?.selectedIndex ?? 0, max(0, values.count - 1))
                 self?.errorMessage = nil
+            } catch is CancellationError {
+                return
             } catch {
+                guard self?.refreshGeneration == generation else { return }
                 self?.errorMessage = error.localizedDescription
             }
-            self?.isLoading = false
         }
     }
 
@@ -82,18 +114,31 @@ final class ClipboardHistoryViewModel: ObservableObject {
               thumbnailTasks[entry.id] == nil else {
             return
         }
-        thumbnailTasks[entry.id] = Task { [weak self, store] in
-            defer { self?.thumbnailTasks[entry.id] = nil }
+        let loadID = UUID()
+        let task = Task { [weak self, store] in
+            defer {
+                if self?.thumbnailTasks[entry.id]?.id == loadID {
+                    self?.thumbnailTasks[entry.id] = nil
+                }
+            }
             guard let payload = try? await store.payload(for: entry),
                   case let .image(data, _) = payload else {
                 return
             }
-            let image = await Task.detached(priority: .utility) {
-                Self.makeThumbnail(data: data, maximumPixelSize: 180)
-            }.value
-            guard !Task.isCancelled, let image else { return }
-            self?.imageThumbnails[entry.id] = image
+            let decoded = try? await AppCancellableDetachedWork.run(priority: .utility) {
+                AppImageThumbnailLoader.decode(
+                    data,
+                    maximumSourcePixelCount: ClipboardThumbnailPolicy.maximumSourcePixelCount,
+                    maximumDisplayPixelSize: ClipboardThumbnailPolicy.maximumDisplayPixelSize
+                )
+            }
+            guard !Task.isCancelled, let decoded else { return }
+            self?.cacheThumbnail(
+                NSImage(cgImage: decoded.image, size: .zero),
+                for: entry.id
+            )
         }
+        thumbnailTasks[entry.id] = ThumbnailLoad(id: loadID, task: task)
     }
 
     func updateQuery(_ value: String) {
@@ -161,7 +206,8 @@ final class ClipboardHistoryViewModel: ObservableObject {
                 try await store.delete(id: entry.id)
                 self?.entries.removeAll { $0.id == entry.id }
                 self?.imageThumbnails[entry.id] = nil
-                self?.thumbnailTasks.removeValue(forKey: entry.id)?.cancel()
+                self?.thumbnailRecency.removeAll { $0 == entry.id }
+                self?.thumbnailTasks.removeValue(forKey: entry.id)?.task.cancel()
                 self?.selectedIndex = min(self?.selectedIndex ?? 0, max(0, (self?.filteredEntries.count ?? 1) - 1))
             } catch {
                 self?.errorMessage = error.localizedDescription
@@ -174,9 +220,10 @@ final class ClipboardHistoryViewModel: ObservableObject {
             do {
                 try await store.clear()
                 self?.entries = []
-                self?.thumbnailTasks.values.forEach { $0.cancel() }
+                self?.thumbnailTasks.values.forEach { $0.task.cancel() }
                 self?.thumbnailTasks.removeAll()
                 self?.imageThumbnails.removeAll()
+                self?.thumbnailRecency.removeAll()
                 self?.selectedIndex = 0
             } catch {
                 self?.errorMessage = error.localizedDescription
@@ -229,29 +276,21 @@ final class ClipboardHistoryViewModel: ObservableObject {
     private func pruneThumbnailCache(validEntries: [ClipboardHistoryEntry]) {
         let validIDs = Set(validEntries.lazy.filter { $0.kind == .image }.map(\.id))
         imageThumbnails = imageThumbnails.filter { validIDs.contains($0.key) }
+        thumbnailRecency.removeAll { !validIDs.contains($0) }
         let invalidTaskIDs = thumbnailTasks.keys.filter { !validIDs.contains($0) }
         for id in invalidTaskIDs {
-            thumbnailTasks.removeValue(forKey: id)?.cancel()
+            thumbnailTasks.removeValue(forKey: id)?.task.cancel()
         }
     }
 
-    nonisolated private static func makeThumbnail(
-        data: Data,
-        maximumPixelSize: Int
-    ) -> NSImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(
-                source,
-                0,
-                [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
-                    kCGImageSourceShouldCacheImmediately: true,
-                ] as CFDictionary
-              ) else {
-            return nil
+    private func cacheThumbnail(_ image: NSImage, for entryID: UUID) {
+        imageThumbnails[entryID] = image
+        thumbnailRecency.removeAll { $0 == entryID }
+        thumbnailRecency.append(entryID)
+        while thumbnailRecency.count > ClipboardThumbnailPolicy.maximumCachedCount {
+            let evictedID = thumbnailRecency.removeFirst()
+            imageThumbnails[evictedID] = nil
+            thumbnailTasks.removeValue(forKey: evictedID)?.task.cancel()
         }
-        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 }

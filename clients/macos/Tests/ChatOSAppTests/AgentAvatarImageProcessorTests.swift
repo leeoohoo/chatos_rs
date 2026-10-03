@@ -3,6 +3,14 @@ import AppKit
 import XCTest
 
 final class AgentAvatarImageProcessorTests: XCTestCase {
+    func testNormalizePoliciesAreBounded() {
+        XCTAssertEqual(AgentAvatarImageProcessor.maximumInputBytes, 20 * 1_024 * 1_024)
+        XCTAssertEqual(AgentAvatarImageProcessor.maximumSourcePixelCount, 64_000_000)
+        XCTAssertEqual(AgentAvatarImageProcessor.maximumDecodePixelSize, 2_048)
+        XCTAssertEqual(AgentAvatarImageProcessor.outputPixelSize, 256)
+        XCTAssertEqual(AgentAvatarImageProcessor.maximumOutputBytes, 512 * 1_024)
+    }
+
     func testNormalizeCropsAndProducesBoundedSquareJPEG() throws {
         let source = NSImage(size: NSSize(width: 640, height: 320))
         source.lockFocus()

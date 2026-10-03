@@ -71,6 +71,22 @@ extension SQLiteAgentGroupChatStore {
         return try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID)
     }
 
+    public func listInterruptedRuns(
+        ownerUserID: String,
+        limit: Int
+    ) throws -> [LocalAgentGroupChatRun] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try AgentRunRepository.listInterrupted(
+            database,
+            ownerUserID: ownerUserID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
     public func listUnfinishedRuns(
         ownerUserID: String,
         projectID: String,
@@ -123,6 +139,63 @@ extension SQLiteAgentGroupChatStore {
             throw AgentGroupChatError.invalidField("limit")
         }
         return try AgentRunRepository.listForRoom(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func listRoomRunHistorySummaries(
+        ownerUserID: String,
+        roomID: String,
+        limit: Int
+    ) throws -> [LocalAgentRunHistorySummary] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try AgentRunRepository.listHistorySummariesForRoom(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func listAgentRunHistorySummaries(
+        ownerUserID: String,
+        agentID: String,
+        limit: Int
+    ) throws -> [LocalAgentRunHistorySummary] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(agentID, field: "agentID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try AgentRunRepository.listHistorySummariesForAgent(
+            database,
+            ownerUserID: ownerUserID,
+            agentID: agentID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    public func listLatestTodoRunSummaries(
+        ownerUserID: String,
+        roomID: String,
+        limit: Int
+    ) throws -> [LocalAgentTodoRunSummary] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try AgentRunRepository.listLatestTodoSummariesForRoom(
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,

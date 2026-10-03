@@ -1,6 +1,24 @@
 import ChatOSConnector
 import SwiftUI
 
+enum RequirementSurveyMonitoringPolicy {
+    static let eventDebounce = Duration.milliseconds(250)
+    static let consistencyCheckInterval = Duration.seconds(300)
+    private static let refreshEventTypes: Set<String> = [
+        "user_input_requested",
+        "requirement_survey_resolved",
+        "run_cancelled",
+    ]
+
+    static func shouldRefresh(for events: [LocalAgentEventRecord]) -> Bool {
+        shouldRefresh(forEventTypes: events.map(\.eventType))
+    }
+
+    static func shouldRefresh(forEventTypes eventTypes: [String]) -> Bool {
+        eventTypes.contains(where: refreshEventTypes.contains)
+    }
+}
+
 @MainActor
 private final class RequirementSurveyCenterViewModel: ObservableObject {
     @Published var surveys: [LocalAgentHostRequirementSurvey] = []
@@ -10,43 +28,108 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
 
     private let ownerUserID: String
     private let client: NativeLocalAgentRequirementSurveyClient
-    private var refreshTask: Task<Void, Never>?
+    private let eventHub: NativeLocalAgentEventHub
+    private var eventTask: Task<Void, Never>?
+    private var consistencyTask: Task<Void, Never>?
+    private var debouncedRefreshTask: Task<Void, Never>?
+    private var isRefreshInFlight = false
+    private var needsRefresh = false
 
-    init(ownerUserID: String, client: NativeLocalAgentRequirementSurveyClient) {
+    init(
+        ownerUserID: String,
+        client: NativeLocalAgentRequirementSurveyClient,
+        eventHub: NativeLocalAgentEventHub
+    ) {
         self.ownerUserID = ownerUserID
         self.client = client
+        self.eventHub = eventHub
     }
 
-    deinit { refreshTask?.cancel() }
+    deinit {
+        eventTask?.cancel()
+        consistencyTask?.cancel()
+        debouncedRefreshTask?.cancel()
+    }
 
     func surveys(projectID: String) -> [LocalAgentHostRequirementSurvey] {
         surveys.filter { $0.projectResourceID == projectID }
     }
 
     func activate() async {
-        await load()
-        guard refreshTask == nil else { return }
-        refreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled, let self else { break }
-                await self.load(showsProgress: false)
+        if eventTask == nil {
+            // Subscribe before the first list request so a survey created during activation
+            // cannot be missed until the low-frequency consistency pass.
+            let updates = await eventHub.updates()
+            guard !Task.isCancelled else { return }
+            eventTask = Task { [weak self, ownerUserID] in
+                for await update in updates {
+                    guard !Task.isCancelled, let self else { return }
+                    guard update.ownerUserID == ownerUserID else { continue }
+                    switch update.kind {
+                    case .reconcile:
+                        await self.load(showsProgress: false)
+                    case let .events(events):
+                        guard RequirementSurveyMonitoringPolicy.shouldRefresh(for: events) else {
+                            continue
+                        }
+                        self.scheduleEventRefresh()
+                    }
+                }
             }
+        }
+        if consistencyTask == nil {
+            consistencyTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(
+                            for: RequirementSurveyMonitoringPolicy.consistencyCheckInterval
+                        )
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled, let self else { return }
+                    await self.load(showsProgress: false)
+                }
+            }
+        }
+        await load()
+    }
+
+    private func scheduleEventRefresh() {
+        debouncedRefreshTask?.cancel()
+        debouncedRefreshTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: RequirementSurveyMonitoringPolicy.eventDebounce)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let self else { return }
+            await self.load(showsProgress: false)
         }
     }
 
     func load(showsProgress: Bool = true) async {
-        guard !isLoading else { return }
-        if showsProgress { isLoading = true }
-        defer { if showsProgress { isLoading = false } }
-        do {
-            surveys = try await client.list(ownerUserID: ownerUserID).sorted {
-                ($0.createdAtUnixMs, $0.id) > ($1.createdAtUnixMs, $1.id)
-            }
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        guard !isRefreshInFlight else {
+            needsRefresh = true
+            return
         }
+        isRefreshInFlight = true
+        if showsProgress { isLoading = true }
+        defer {
+            isRefreshInFlight = false
+            if showsProgress { isLoading = false }
+        }
+        repeat {
+            needsRefresh = false
+            do {
+                surveys = try await client.list(ownerUserID: ownerUserID).sorted {
+                    ($0.createdAtUnixMs, $0.id) > ($1.createdAtUnixMs, $1.id)
+                }
+                errorMessage = nil
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        } while needsRefresh && !Task.isCancelled
     }
 
     func submit(
@@ -84,12 +167,14 @@ struct RequirementSurveyCenterView: View {
     init(
         ownerUserID: String,
         projects: [ResourceItem],
-        client: NativeLocalAgentRequirementSurveyClient
+        client: NativeLocalAgentRequirementSurveyClient,
+        eventHub: NativeLocalAgentEventHub
     ) {
         self.projects = projects
         _viewModel = StateObject(wrappedValue: RequirementSurveyCenterViewModel(
             ownerUserID: ownerUserID,
-            client: client
+            client: client,
+            eventHub: eventHub
         ))
     }
 

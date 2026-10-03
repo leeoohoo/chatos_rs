@@ -2,6 +2,10 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    public func pluginVisualSessionChanges() async -> AsyncStream<Void> {
+        await pluginRuntimeStore.visualSessionChanges()
+    }
+
     public func fetchPluginVisualSessions(
         loadFrameDataForAdapterSessionIDs: Set<String>? = nil,
         knownFrameSequencesByAdapterSessionID: [String: UInt64] = [:]

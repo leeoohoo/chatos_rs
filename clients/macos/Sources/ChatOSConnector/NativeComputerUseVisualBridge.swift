@@ -7,7 +7,8 @@ enum NativeComputerUseVisualBridge {
         var fileName: String
     }
 
-    private static let maximumFrameBytes = 2 * 1_024 * 1_024
+    static let maximumFrameBytes = 2 * 1_024 * 1_024
+    static let maximumEncodedCharacters = ((maximumFrameBytes + 2) / 3) * 4
     private static let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     private static let jpegSignature = Data([0xFF, 0xD8, 0xFF])
 
@@ -68,6 +69,7 @@ enum NativeComputerUseVisualBridge {
             if object["type"]?.jsonString == "image",
                let mimeType = object["mimeType"]?.jsonString?.lowercased(),
                let encoded = object["data"]?.jsonString,
+               encoded.utf8.count <= maximumEncodedCharacters,
                let data = Data(base64Encoded: encoded),
                data.count <= maximumFrameBytes {
                 let frame: Frame?

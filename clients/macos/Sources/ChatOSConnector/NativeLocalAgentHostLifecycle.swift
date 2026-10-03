@@ -9,7 +9,7 @@ public extension Notification.Name {
 }
 
 private enum NativeLocalAgentHostProtocol {
-    static let version = 32
+    static let version = 39
 }
 
 public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
@@ -144,7 +144,9 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         let request = try JSONSerialization.data(withJSONObject: envelope)
         let responseData: Data
         do {
-            responseData = try managedProcess.roundTrip(request)
+            responseData = try await managedProcess.roundTripAsync(request)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             invalidateAfterTransportFailure(managedProcess)
             throw error
@@ -278,19 +280,39 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     private let input: FileHandle
     private let output: FileHandle
     private let errors: FileHandle
+    private let startupTimeoutMilliseconds: Int
     private let requestTimeoutMilliseconds: Int
+    private let writeQueue = DispatchQueue(
+        label: "com.chatos.swift.local-agent-host-writer",
+        qos: .userInitiated
+    )
+    private let readQueue = DispatchQueue(
+        label: "com.chatos.swift.local-agent-host-reader",
+        qos: .userInitiated
+    )
+    private let transportLock = NSLock()
+    private var pendingResponses: [String: PendingResponse] = [:]
+    private var transportClosed = false
+    private var resourcesClosed = false
+
+    private struct PendingResponse {
+        let continuation: CheckedContinuation<Data, Error>
+        let timeoutWorkItem: DispatchWorkItem
+    }
 
     private init(
         process: Process,
         input: FileHandle,
         output: FileHandle,
         errors: FileHandle,
+        startupTimeoutMilliseconds: Int,
         requestTimeoutMilliseconds: Int
     ) {
         self.process = process
         self.input = input
         self.output = output
         self.errors = errors
+        self.startupTimeoutMilliseconds = startupTimeoutMilliseconds
         self.requestTimeoutMilliseconds = requestTimeoutMilliseconds
     }
 
@@ -357,6 +379,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             input: inputPipe.fileHandleForWriting,
             output: outputPipe.fileHandleForReading,
             errors: errorPipe.fileHandleForReading,
+            startupTimeoutMilliseconds: Self.timeoutMilliseconds(
+                configuration.startupTimeout
+            ),
             requestTimeoutMilliseconds: configuration.requestTimeoutMilliseconds
         )
         do {
@@ -373,6 +398,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         defer { watchdog.cancel() }
         do {
             try managed.verifyHealth()
+            managed.startResponseReader()
             return managed
         } catch {
             managed.terminate()
@@ -404,6 +430,14 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     }
 
     private func closeResources() {
+        failTransport(with: NativeLocalAgentHostError.notRunning)
+        transportLock.lock()
+        guard !resourcesClosed else {
+            transportLock.unlock()
+            return
+        }
+        resourcesClosed = true
+        transportLock.unlock()
         errors.readabilityHandler = nil
         try? input.close()
         try? output.close()
@@ -437,7 +471,10 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             commandId: commandID,
             command: .init(type: "health")
         )
-        let payload = try roundTrip(try JSONEncoder.localAgent.encode(request))
+        let payload = try roundTrip(
+            try JSONEncoder.localAgent.encode(request),
+            timeoutMilliseconds: startupTimeoutMilliseconds
+        )
         let response = try JSONDecoder.localAgent.decode(
             HealthResponse.self,
             from: payload
@@ -459,12 +496,181 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
     }
 
-    func roundTrip(_ payload: Data) throws -> Data {
+    func roundTrip(
+        _ payload: Data,
+        timeoutMilliseconds: Int? = nil
+    ) throws -> Data {
         let deadline = LocalAgentHostFrameCodec.deadline(
-            timeoutMilliseconds: requestTimeoutMilliseconds
+            timeoutMilliseconds: timeoutMilliseconds ?? requestTimeoutMilliseconds
         )
         try LocalAgentHostFrameCodec.write(payload, to: input, deadline: deadline)
         return try LocalAgentHostFrameCodec.read(from: output, deadline: deadline)
+    }
+
+    func roundTripAsync(
+        _ payload: Data,
+        timeoutMilliseconds: Int? = nil
+    ) async throws -> Data {
+        let commandID = try Self.commandID(in: payload)
+        let timeout = timeoutMilliseconds ?? requestTimeoutMilliseconds
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                register(
+                    continuation: continuation,
+                    commandID: commandID,
+                    payload: payload,
+                    timeoutMilliseconds: timeout
+                )
+                if Task.isCancelled {
+                    cancelPendingResponse(commandID: commandID)
+                }
+            }
+        } onCancel: { [self] in
+            cancelPendingResponse(commandID: commandID)
+        }
+    }
+
+    private static func commandID(in payload: Data) throws -> String {
+        guard let envelope = try JSONSerialization.jsonObject(with: payload)
+                as? [String: Any],
+              let commandID = envelope["command_id"] as? String,
+              !commandID.isEmpty else {
+            throw NativeLocalAgentHostError.invalidCommand
+        }
+        return commandID
+    }
+
+    private func register(
+        continuation: CheckedContinuation<Data, Error>,
+        commandID: String,
+        payload: Data,
+        timeoutMilliseconds: Int
+    ) {
+        let timeoutWorkItem = DispatchWorkItem { [weak self] in
+            self?.failPendingResponse(
+                commandID: commandID,
+                error: NativeLocalAgentHostError.requestTimedOut
+            )
+        }
+        transportLock.lock()
+        if transportClosed {
+            transportLock.unlock()
+            continuation.resume(throwing: NativeLocalAgentHostError.notRunning)
+            return
+        }
+        guard pendingResponses[commandID] == nil else {
+            transportLock.unlock()
+            continuation.resume(throwing: NativeLocalAgentHostError.invalidCommand)
+            return
+        }
+        pendingResponses[commandID] = PendingResponse(
+            continuation: continuation,
+            timeoutWorkItem: timeoutWorkItem
+        )
+        transportLock.unlock()
+
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + .milliseconds(timeoutMilliseconds),
+            execute: timeoutWorkItem
+        )
+        writeQueue.async { [weak self] in
+            guard let self, self.isPending(commandID: commandID) else { return }
+            do {
+                try LocalAgentHostFrameCodec.write(
+                    payload,
+                    to: self.input,
+                    deadline: LocalAgentHostFrameCodec.deadline(
+                        timeoutMilliseconds: timeoutMilliseconds
+                    )
+                )
+            } catch {
+                self.failTransport(with: error)
+            }
+        }
+    }
+
+    private func startResponseReader() {
+        readQueue.async { [weak self] in
+            self?.readResponses()
+        }
+    }
+
+    private func readResponses() {
+        while !isTransportClosed {
+            do {
+                let response = try LocalAgentHostFrameCodec.read(
+                    from: output,
+                    deadline: UInt64.max
+                )
+                let commandID = try Self.commandID(in: response)
+                completePendingResponse(commandID: commandID, response: response)
+            } catch {
+                failTransport(with: error)
+                return
+            }
+        }
+    }
+
+    private var isTransportClosed: Bool {
+        transportLock.lock()
+        defer { transportLock.unlock() }
+        return transportClosed
+    }
+
+    private func isPending(commandID: String) -> Bool {
+        transportLock.lock()
+        defer { transportLock.unlock() }
+        return pendingResponses[commandID] != nil && !transportClosed
+    }
+
+    private func completePendingResponse(commandID: String, response: Data) {
+        transportLock.lock()
+        let pending = pendingResponses.removeValue(forKey: commandID)
+        transportLock.unlock()
+        pending?.timeoutWorkItem.cancel()
+        pending?.continuation.resume(returning: response)
+    }
+
+    private func cancelPendingResponse(commandID: String) {
+        failPendingResponse(commandID: commandID, error: CancellationError())
+    }
+
+    private func failPendingResponse(commandID: String, error: Error) {
+        transportLock.lock()
+        let pending = pendingResponses.removeValue(forKey: commandID)
+        transportLock.unlock()
+        pending?.timeoutWorkItem.cancel()
+        pending?.continuation.resume(throwing: error)
+    }
+
+    private func failTransport(with error: Error) {
+        transportLock.lock()
+        guard !transportClosed else {
+            transportLock.unlock()
+            return
+        }
+        transportClosed = true
+        let pending = Array(pendingResponses.values)
+        pendingResponses.removeAll(keepingCapacity: false)
+        transportLock.unlock()
+        for response in pending {
+            response.timeoutWorkItem.cancel()
+            response.continuation.resume(throwing: error)
+        }
+    }
+
+    private static func timeoutMilliseconds(_ duration: Duration) -> Int {
+        let components = duration.components
+        guard components.seconds >= 0, components.attoseconds >= 0 else { return 1 }
+        let maximumSeconds = Int64(Int.max / 1_000)
+        guard components.seconds <= maximumSeconds else { return Int.max }
+        let wholeMilliseconds = Int(components.seconds) * 1_000
+        let attosecondsPerMillisecond: Int64 = 1_000_000_000_000_000
+        let fractionalMilliseconds = Int(
+            components.attoseconds / attosecondsPerMillisecond
+        ) + (components.attoseconds % attosecondsPerMillisecond == 0 ? 0 : 1)
+        return max(1, wholeMilliseconds + fractionalMilliseconds)
     }
 
     static func arguments(

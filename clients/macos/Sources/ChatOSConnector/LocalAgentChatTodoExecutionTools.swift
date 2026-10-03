@@ -5,10 +5,11 @@ import Foundation
 extension LocalAgentChatToolProvider {
     func todoGetContext(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         _ = try Self.arguments(call)
-        guard let todo = try await store.todoForDelivery(
+        guard let delivery = try await store.delivery(
             ownerUserID: context.ownerUserID,
             deliveryID: context.deliveryID
-        ), todo.agentID == context.agentID, todo.teamRoomID == context.roomID else {
+        ), let todo = try await todoBoundToDelivery(delivery),
+        todo.agentID == context.agentID, todo.teamRoomID == context.roomID else {
             return Self.structuredFailure(
                 code: "todo_execution_context_mismatch",
                 field: "delivery",
@@ -16,18 +17,18 @@ extension LocalAgentChatToolProvider {
                 retryable: false
             )
         }
-        let sources = try await store.listAgentTodoSources(
+        let sources = try await store.listTodoSources(
             ownerUserID: context.ownerUserID,
-            agentID: context.agentID,
-            todoID: todo.id
+            todoIDs: [todo.id]
+        )
+        let sourceMessagesByID = try await store.messages(
+            ownerUserID: context.ownerUserID,
+            messageIDs: sources.map(\.messageID)
         )
         var sourceMessages: [TodoSourceMessageResponse] = []
         for source in sources {
-            guard let message = try await store.message(
-                ownerUserID: context.ownerUserID,
-                roomID: source.conversationID,
-                messageID: source.messageID
-            ) else { continue }
+            guard let message = sourceMessagesByID[source.messageID],
+                  message.roomID == source.conversationID else { continue }
             sourceMessages.append(.init(
                 relation: source.relation.rawValue,
                 content: message.content,
@@ -40,17 +41,18 @@ extension LocalAgentChatToolProvider {
             includeArchived: true
         )
         let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
-        var prerequisites: [TodoDependencyResponse] = []
-        for dependency in try await store.listAgentTodoDependencies(
+        let dependencies = try await store.listTodoDependencies(
             ownerUserID: context.ownerUserID,
-            agentID: todo.agentID,
-            todoID: todo.id
-        ) {
-            guard let prerequisite = try await store.agentTodo(
-                ownerUserID: context.ownerUserID,
-                agentID: dependency.prerequisiteAgentID,
-                todoID: dependency.prerequisiteTodoID
-            ) else { continue }
+            todoIDs: [todo.id]
+        )
+        let prerequisitesByID = try await store.todos(
+            ownerUserID: context.ownerUserID,
+            todoIDs: dependencies.map(\.prerequisiteTodoID)
+        )
+        var prerequisites: [TodoDependencyResponse] = []
+        for dependency in dependencies {
+            guard let prerequisite = prerequisitesByID[dependency.prerequisiteTodoID],
+                  prerequisite.agentID == dependency.prerequisiteAgentID else { continue }
             prerequisites.append(.init(
                 todoReference: await references.todoReference(
                     todoID: prerequisite.id,
@@ -319,62 +321,117 @@ extension LocalAgentChatToolProvider {
     }
 
     func currentExecutionTodo() async throws -> LocalAgentTodo? {
-        guard let delivery = try await store.delivery(
+        try await store.runningTodoForDelivery(
             ownerUserID: context.ownerUserID,
-            deliveryID: context.deliveryID
-        ), delivery.status == .running, delivery.lane == .executor,
-        let todo = try await store.todoForDelivery(
+            deliveryID: context.deliveryID,
+            agentID: context.agentID,
+            roomID: context.roomID
+        )
+    }
+
+    func todoBoundToDelivery(_ delivery: ProjectAgentDelivery) async throws -> LocalAgentTodo? {
+        guard delivery.triggerKind == .todo,
+              delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
+        let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+        guard let todo = try await store.todos(
             ownerUserID: context.ownerUserID,
-            deliveryID: context.deliveryID
-        ), todo.agentID == context.agentID, todo.status == .inProgress,
-        todo.teamRoomID == context.roomID else { return nil }
+            todoIDs: [todoID]
+        )[todoID], todo.agentID == delivery.targetAgentID else { return nil }
         return todo
     }
 
     func todoResponses(includeTerminal: Bool) async throws -> [TodoResponse] {
-        let rooms = try await store.listRooms(
+        let todos = try await store.listVisibleTeamTodos(
             ownerUserID: context.ownerUserID,
-            includeArchived: false
+            agentID: context.agentID,
+            includeTerminal: includeTerminal
         )
-        var response: [TodoResponse] = []
-        for room in rooms where room.conversationKind == .projectTeam {
-            guard try await isTeamMember(teamRoomID: room.id) else { continue }
-            for todo in try await store.listTeamTodos(
-                ownerUserID: context.ownerUserID,
-                teamRoomID: room.id,
-                includeTerminal: includeTerminal
-            ) {
-                response.append(try await todoResponse(todo))
-            }
-        }
-        response.sort {
-            if $0.priority != $1.priority { return $0.priority > $1.priority }
-            return $0.updatedAtUnixMs > $1.updatedAtUnixMs
-        }
-        return response
+        return try await todoResponses(todos)
     }
 
-    func todoResponse(_ todo: LocalAgentTodo) async throws -> TodoResponse {
-        let todoReference = await references.todoReference(
-            todoID: todo.id,
-            agentID: todo.agentID,
-            teamRoomID: todo.teamRoomID
-        )
-        let team = try await store.room(
+    func todoResponses(
+        _ todos: [LocalAgentTodo],
+        sortResponses: Bool = true
+    ) async throws -> [TodoResponse] {
+        guard !todos.isEmpty else { return [] }
+        let rooms = try await store.listRooms(
             ownerUserID: context.ownerUserID,
-            roomID: todo.teamRoomID
+            includeArchived: true
         )
+        let teamNames = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0.draft.name) })
         let profiles = try await store.listAgents(
             ownerUserID: context.ownerUserID,
             includeArchived: true
         )
         let names = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0.draft.name) })
-        var sourceReferences: [TodoSourceReferenceResponse] = []
-        for source in try await store.listAgentTodoSources(
-            ownerUserID: context.ownerUserID,
+        let todoIDs = Array(Set(todos.map(\.id))).sorted()
+        var sources: [LocalAgentTodoSourceLink] = []
+        var dependencies: [LocalAgentTodoDependency] = []
+        for start in stride(from: 0, to: todoIDs.count, by: 500) {
+            let batch = Array(todoIDs[start..<min(start + 500, todoIDs.count)])
+            sources.append(contentsOf: try await store.listTodoSources(
+                ownerUserID: context.ownerUserID,
+                todoIDs: batch
+            ))
+            dependencies.append(contentsOf: try await store.listTodoDependencies(
+                ownerUserID: context.ownerUserID,
+                todoIDs: batch
+            ))
+        }
+        let sourcesByTodoID = Dictionary(grouping: sources, by: \.todoID)
+        let dependenciesByTodoID = Dictionary(grouping: dependencies, by: \.todoID)
+        let prerequisiteIDs = Array(Set(dependencies.map(\.prerequisiteTodoID))).sorted()
+        var prerequisitesByID: [String: LocalAgentTodo] = [:]
+        for start in stride(from: 0, to: prerequisiteIDs.count, by: 500) {
+            let batch = Array(prerequisiteIDs[start..<min(start + 500, prerequisiteIDs.count)])
+            prerequisitesByID.merge(try await store.todos(
+                ownerUserID: context.ownerUserID,
+                todoIDs: batch
+            )) { current, _ in current }
+        }
+        var response: [TodoResponse] = []
+        response.reserveCapacity(todos.count)
+        for todo in todos {
+            response.append(await todoResponse(
+                todo,
+                teamName: teamNames[todo.teamRoomID] ?? "Team",
+                names: names,
+                sources: sourcesByTodoID[todo.id] ?? [],
+                dependencies: dependenciesByTodoID[todo.id] ?? [],
+                prerequisitesByID: prerequisitesByID
+            ))
+        }
+        if sortResponses {
+            response.sort {
+                if $0.priority != $1.priority { return $0.priority > $1.priority }
+                return $0.updatedAtUnixMs > $1.updatedAtUnixMs
+            }
+        }
+        return response
+    }
+
+    func todoResponse(_ todo: LocalAgentTodo) async throws -> TodoResponse {
+        guard let response = try await todoResponses([todo]).first else {
+            throw AgentGroupChatError.notFound
+        }
+        return response
+    }
+
+    func todoResponse(
+        _ todo: LocalAgentTodo,
+        teamName: String,
+        names: [String: String],
+        sources: [LocalAgentTodoSourceLink],
+        dependencies: [LocalAgentTodoDependency],
+        prerequisitesByID: [String: LocalAgentTodo]
+    ) async -> TodoResponse {
+        let todoReference = await references.todoReference(
+            todoID: todo.id,
             agentID: todo.agentID,
-            todoID: todo.id
-        ) {
+            teamRoomID: todo.teamRoomID
+        )
+        var sourceReferences: [TodoSourceReferenceResponse] = []
+        for source in sources {
             sourceReferences.append(.init(
                 messageReference: await references.messageReference(
                     roomID: source.conversationID,
@@ -383,18 +440,11 @@ extension LocalAgentChatToolProvider {
                 relation: source.relation.rawValue
             ))
         }
-        var dependencies: [TodoDependencyResponse] = []
-        for dependency in try await store.listAgentTodoDependencies(
-            ownerUserID: context.ownerUserID,
-            agentID: todo.agentID,
-            todoID: todo.id
-        ) {
-            guard let prerequisite = try await store.agentTodo(
-                ownerUserID: context.ownerUserID,
-                agentID: dependency.prerequisiteAgentID,
-                todoID: dependency.prerequisiteTodoID
-            ) else { continue }
-            dependencies.append(.init(
+        var dependencyResponses: [TodoDependencyResponse] = []
+        for dependency in dependencies {
+            guard let prerequisite = prerequisitesByID[dependency.prerequisiteTodoID],
+                  prerequisite.agentID == dependency.prerequisiteAgentID else { continue }
+            dependencyResponses.append(.init(
                 todoReference: await references.todoReference(
                     todoID: prerequisite.id,
                     agentID: prerequisite.agentID,
@@ -409,7 +459,7 @@ extension LocalAgentChatToolProvider {
         }
         return .init(
             todoReference: todoReference,
-            team: team?.draft.name ?? "Team",
+            team: teamName,
             assignee: names[todo.agentID] ?? "Agent",
             assignedToCurrentAgent: todo.agentID == context.agentID,
             title: todo.title,
@@ -426,7 +476,7 @@ extension LocalAgentChatToolProvider {
             builtinCapabilities: todo.executionPlan.builtinCapabilities.map(\.rawValue),
             plugins: todo.executionPlan.plugins.map(\.displayName),
             sources: sourceReferences,
-            dependencies: dependencies,
+            dependencies: dependencyResponses,
             updatedAtUnixMs: todo.updatedAtUnixMs
         )
     }

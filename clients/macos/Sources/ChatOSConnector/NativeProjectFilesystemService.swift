@@ -11,10 +11,10 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func listEntries(path: String, forceRefresh: Bool) async throws -> ProjectDirectoryListing {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Task.detached {
+        let value = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .list(path: resolved.relativePath, includeFiles: true)
-        }.value
+        }
         let object = try value.objectValue()
         let entries = try object.array("entries").map { item -> ProjectFileEntry in
             let entry = try item.objectValue()
@@ -36,16 +36,16 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
             parentPath: parentRelative.map(resolved.logicalPath),
             isWritable: true,
             entries: entries,
-            isTruncated: false
+            isTruncated: try object.bool("truncated")
         )
     }
 
     public func searchEntries(path: String, query: String, limit: Int) async throws -> [ProjectFileEntry] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Task.detached {
+        let value = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .searchEntries(path: resolved.relativePath, query: query, limit: limit)
-        }.value
+        }
         return try value.objectValue().array("matches").map { item in
             let entry = try item.objectValue()
             let relative = try entry.string("path")
@@ -63,10 +63,10 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func searchContent(path: String, query: String, limit: Int) async throws -> [ProjectFileContentMatch] {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Task.detached {
+        let value = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .searchContent(path: resolved.relativePath, query: query, limit: limit)
-        }.value
+        }
         return try value.objectValue().array("matches").map { item in
             let match = try item.objectValue()
             let relative = try match.string("path")
@@ -82,9 +82,9 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func readFile(path: String) async throws -> ProjectFileContent {
         let resolved = try await connector.resolveProjectPath(path)
-        let value = try await Task.detached {
+        let value = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace).read(path: resolved.relativePath)
-        }.value
+        }
         let object = try value.objectValue()
         return .init(
             path: path,
@@ -101,35 +101,35 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     public func writeFile(path: String, content: String) async throws {
         let resolved = try await connector.resolveProjectPath(path)
-        _ = try await Task.detached {
+        _ = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .write(path: resolved.relativePath, content: content, createOnly: false)
-        }.value
+        }
     }
 
     public func createFile(parentPath: String, name: String) async throws {
         let resolved = try await connector.resolveProjectPath(parentPath)
         let target = childPath(parent: resolved.relativePath, name: name)
-        _ = try await Task.detached {
+        _ = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .write(path: target, content: "", createOnly: true)
-        }.value
+        }
     }
 
     public func createDirectory(parentPath: String, name: String) async throws {
         let resolved = try await connector.resolveProjectPath(parentPath)
         let target = childPath(parent: resolved.relativePath, name: name)
-        _ = try await Task.detached {
+        _ = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace).createDirectory(path: target)
-        }.value
+        }
     }
 
     public func deleteEntry(path: String, recursive: Bool) async throws {
         let resolved = try await connector.resolveProjectPath(path)
-        _ = try await Task.detached {
+        _ = try await Self.runDetached {
             try NativeWorkspaceFilesystem(workspace: resolved.workspace)
                 .delete(path: resolved.relativePath, recursive: recursive)
-        }.value
+        }
     }
 
     public func openExternally(path: String, mode: ProjectFileExternalOpenMode) async throws {
@@ -155,6 +155,20 @@ public struct NativeProjectFilesystemService: ProjectFilesystemServicing, Sendab
 
     private func childPath(parent: String, name: String) -> String {
         parent == "." ? name : parent + "/" + name
+    }
+
+    private static func runDetached<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try operation()
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 }
 

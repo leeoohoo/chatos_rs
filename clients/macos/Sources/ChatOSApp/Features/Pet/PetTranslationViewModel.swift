@@ -266,9 +266,8 @@ final class PetTranslationViewModel: ObservableObject {
         guard !urls.isEmpty else { return }
         attachmentError = nil
         Task {
-            let loaded = await Task.detached(priority: .userInitiated) {
-                ConversationSessionViewModel.loadAttachmentFiles(urls)
-            }.value
+            let loaded = await ConversationSessionViewModel.loadAttachmentFilesOffMain(urls)
+            guard !Task.isCancelled else { return }
             appendAttachments(loaded.attachments, errors: loaded.errors)
         }
     }

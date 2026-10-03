@@ -53,9 +53,7 @@ extension StoryStudioViewModel {
                   let generated = result.images.first else { throw StoryError.invalidPlan }
             let data = try await MediaStudioImageLoader.data(for: generated)
             try check(token)
-            guard let nsImage = NSImage(data: data), let tiff = nsImage.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
-                  let png = bitmap.representation(using: .png, properties: [:]) else { throw StoryError.unsafeFile }
+            let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
             let completed = try await store.completeAssetImageGeneration(
                 png, mimeType: "image/png", projectID: key.projectID, resourceID: key.resourceID,
                 attemptID: attemptID, providerResultID: result.id, providerAssetID: generated.id, owner: owner
@@ -96,12 +94,15 @@ extension StoryStudioViewModel {
     func uploadImage(_ url: URL, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
         guard let project else { return }
         run("导入本机图片") { owner, token in
-            let data = try await Task.detached {
+            let data = try await AppCancellableDetachedWork.run {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 20 * 1024 * 1024 else { throw StoryError.unsafeFile }
-                return try Data(contentsOf: url)
-            }.value
+                return try AppBoundedFileReader.read(
+                    url,
+                    maximumBytes: 20 * 1_024 * 1_024
+                )
+            }
             let image = GeneratedMediaAsset(id: UUID().uuidString, mimeType: "image/png", base64Data: data.base64EncodedString())
             try await self.attach(image, assetID: assetID, segmentID: segmentID, frameRole: frameRole,
                                   projectID: project.id, owner: owner, token: token)
@@ -114,8 +115,7 @@ extension StoryStudioViewModel {
                         confirmsImportedImage: Bool = false) async throws {
         let data = try await MediaStudioImageLoader.data(for: image)
         try check(token)
-        guard let nsImage = NSImage(data: data), let tiff = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { throw StoryError.unsafeFile }
+        let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
         let stored = try await store.saveImage(png, mimeType: "image/png", projectID: projectID, owner: owner)
         try check(token)
         guard var next = projects.first(where: { $0.id == projectID }) else { throw StoryError.invalidProject }

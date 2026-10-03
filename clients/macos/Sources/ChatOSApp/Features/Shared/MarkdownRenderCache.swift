@@ -51,6 +51,7 @@ final class MarkdownRenderCache: @unchecked Sendable {
         }
 
         let parsed = MarkdownBlockParser.parse(source)
+        guard !Task.isCancelled else { return parsed }
         blockCache.setObject(
             BlockEntry(parsed),
             forKey: key,
@@ -89,15 +90,26 @@ final class MarkdownRenderCache: @unchecked Sendable {
 
     func prepareInlineAttributes(for blocks: [MarkdownBlock]) {
         for block in blocks {
+            guard !Task.isCancelled else { return }
             switch block {
             case let .heading(_, text), let .paragraph(text), let .quote(text):
                 _ = attributedInline(for: text)
             case let .list(items):
-                for item in items { _ = attributedInline(for: item.text) }
+                for item in items {
+                    guard !Task.isCancelled else { return }
+                    _ = attributedInline(for: item.text)
+                }
             case let .table(headers, rows):
-                for cell in headers { _ = attributedInline(for: cell) }
+                for cell in headers {
+                    guard !Task.isCancelled else { return }
+                    _ = attributedInline(for: cell)
+                }
                 for row in rows {
-                    for cell in row { _ = attributedInline(for: cell) }
+                    guard !Task.isCancelled else { return }
+                    for cell in row {
+                        guard !Task.isCancelled else { return }
+                        _ = attributedInline(for: cell)
+                    }
                 }
             case .image, .code, .divider:
                 break

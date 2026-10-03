@@ -25,7 +25,11 @@ let package = Package(
             name: "ChatOSProcessRuntime",
             publicHeadersPath: "include"
         ),
-        .target(name: "ChatOSAgentRuntime"),
+        .target(name: "ChatOSNetworking"),
+        .target(
+            name: "ChatOSAgentRuntime",
+            dependencies: ["ChatOSNetworking"]
+        ),
         .target(
             name: "ChatOSCore",
             resources: [
@@ -37,13 +41,14 @@ let package = Package(
         ),
         .target(
             name: "ChatOSAPI",
-            dependencies: ["ChatOSCore", "ChatOSAgentRuntime"]
+            dependencies: ["ChatOSCore", "ChatOSAgentRuntime", "ChatOSNetworking"]
         ),
         .target(
             name: "ChatOSConnector",
             dependencies: [
                 "ChatOSCore",
                 "ChatOSAgentRuntime",
+                "ChatOSNetworking",
                 "ChatOSProcessRuntime",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],

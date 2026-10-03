@@ -1,6 +1,5 @@
 import AppKit
 import ChatOSCore
-import ImageIO
 import SwiftUI
 
 struct PetFileWorkbenchView: View {
@@ -520,12 +519,7 @@ private struct PetFileImagePreviewLoader: View {
 
 @MainActor
 private enum PetFileImagePreviewCache {
-    private static let cache: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
-        cache.countLimit = 8
-        cache.totalCostLimit = 64 * 1_024 * 1_024
-        return cache
-    }()
+    private static let maximumDisplayPixelSize = 2_048
 
     static func key(for file: ProjectFileContent) -> String {
         let modified = file.modifiedAt?.timeIntervalSince1970 ?? 0
@@ -533,34 +527,21 @@ private enum PetFileImagePreviewCache {
     }
 
     static func image(for file: ProjectFileContent) async -> NSImage? {
-        let cacheKey = key(for: file) as NSString
-        if let cached = cache.object(forKey: cacheKey) {
-            return cached
-        }
         let data = file.binaryData ?? Data(file.content.utf8)
         guard !data.isEmpty else { return nil }
-        let cgImage = await Task.detached(priority: .userInitiated) {
-            thumbnail(from: data)
-        }.value
-        guard !Task.isCancelled, let cgImage else { return nil }
-        let image = NSImage(cgImage: cgImage, size: .zero)
-        let cost = cgImage.width * cgImage.height * 4
-        cache.setObject(image, forKey: cacheKey, cost: cost)
-        return image
-    }
-
-    nonisolated private static func thumbnail(from data: Data) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [
-            kCGImageSourceShouldCache: false,
-        ] as CFDictionary) else {
-            return nil
-        }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 2_048,
-            kCGImageSourceShouldCacheImmediately: true,
-        ] as CFDictionary)
+        let identity = AppImageDataThumbnailCache.dataIdentity(
+            data,
+            identity: key(for: file),
+            maximumSourcePixelCount: Int(NativePetLocalFileService.maximumImagePreviewPixels),
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
+        return await AppImageDataThumbnailCache.image(
+            for: data,
+            cacheKey: identity,
+            maximumBytes: Int(NativePetLocalFileService.maximumImagePreviewBytes),
+            maximumSourcePixelCount: Int(NativePetLocalFileService.maximumImagePreviewPixels),
+            maximumDisplayPixelSize: maximumDisplayPixelSize
+        )
     }
 }
 

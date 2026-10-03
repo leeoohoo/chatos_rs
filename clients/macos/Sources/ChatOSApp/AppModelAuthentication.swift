@@ -21,6 +21,7 @@ extension AppModel {
         switch phase {
         case let .authenticated(session):
             workspaceAccountGeneration += 1
+            cancelAccountScopedBackgroundTasks()
             if authenticatedUserID != session.user.id {
                 workspaceConversations = []
                 workspaceContacts = []
@@ -46,6 +47,7 @@ extension AppModel {
             refreshPluginApplications()
         case .signedOut:
             workspaceAccountGeneration += 1
+            cancelAccountScopedBackgroundTasks()
             agentHeartbeatTask?.cancel()
             agentHeartbeatTask = nil
             agentCommunicationTask?.cancel()
@@ -58,6 +60,11 @@ extension AppModel {
             localAgentBootstrapTask = nil
             stopLocalAgentHost()
             languagePreferencesSaveTask?.cancel()
+            languagePreferencesSaveTask = nil
+            languagePreferencesSaveGeneration &+= 1
+            languagePreferencesLoadTask?.cancel()
+            languagePreferencesLoadTask = nil
+            languagePreferencesLoadGeneration &+= 1
             isLanguagePreferencesLoading = false
             isLanguagePreferencesSaving = false
             languagePreferencesError = nil
@@ -90,6 +97,11 @@ extension AppModel {
     }
 
     func prepareForApplicationTermination() {
+        cancelAccountScopedBackgroundTasks()
+        languagePreferencesLoadTask?.cancel()
+        languagePreferencesLoadTask = nil
+        languagePreferencesSaveTask?.cancel()
+        languagePreferencesSaveTask = nil
         agentArtifactStorageTask?.cancel()
         agentArtifactStorageOwnerUserID = nil
         localConnectorRecoveryTask?.cancel()
@@ -119,6 +131,8 @@ extension AppModel {
         localAgentControlPlaneBootstrapOwnerUserID = nil
         localAgentHostError = nil
         guard let localAgentHost else { return }
+        let localAgentEventHub = localAgentEventHub
+        let pendingShutdown = localAgentHostShutdownTask
         localAgentHostLifecycleTask = Task { [weak self] in
             defer {
                 if self?.localAgentHostLifecycleGeneration == generation {
@@ -126,9 +140,18 @@ extension AppModel {
                 }
             }
             do {
+                await pendingShutdown?.value
+                try Task.checkCancellation()
+                guard self?.authenticatedUserID == ownerUserID,
+                      self?.localAgentHostLifecycleGeneration == generation else { return }
+                await localAgentEventHub?.reset()
                 try await localAgentHost.start(ownerUserID: ownerUserID)
-                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
-                    await localAgentHost.stop()
+                guard !Task.isCancelled,
+                      self?.authenticatedUserID == ownerUserID,
+                      self?.localAgentHostLifecycleGeneration == generation else {
+                    if self?.localAgentHostLifecycleGeneration == generation {
+                        await localAgentHost.stop()
+                    }
                     return
                 }
                 await self?.workspaceService?.configure(ownerUserID: ownerUserID)
@@ -141,9 +164,11 @@ extension AppModel {
                     self?.refreshLocalAgentControlPlane(ownerUserID: ownerUserID)
                 }
             } catch is CancellationError {
+                guard self?.localAgentHostLifecycleGeneration == generation else { return }
                 await localAgentHost.stop()
             } catch {
-                guard self?.authenticatedUserID == ownerUserID else { return }
+                guard self?.authenticatedUserID == ownerUserID,
+                      self?.localAgentHostLifecycleGeneration == generation else { return }
                 self?.localAgentHostError = error.localizedDescription
                 if refreshControlPlaneAfterStart {
                     self?.recoverLocalAgentHostAfterUnexpectedExit()
@@ -164,19 +189,59 @@ extension AppModel {
     }
 
     func recoverLocalAgentHostIfNeeded() {
-        guard localAgentHostLifecycleTask == nil,
+        guard localAgentHostHealthCheckTask == nil,
+              localAgentHostLifecycleTask == nil,
               let ownerUserID = authenticatedUserID,
               let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
-        Task { [weak self] in
-            guard await !host.isRunning,
+        localAgentHostHealthCheckGeneration &+= 1
+        let generation = localAgentHostHealthCheckGeneration
+        let accountGeneration = workspaceAccountGeneration
+        localAgentHostHealthCheckTask = Task { [weak self] in
+            defer {
+                if self?.localAgentHostHealthCheckGeneration == generation {
+                    self?.localAgentHostHealthCheckTask = nil
+                }
+            }
+            let isRunning = await host.isRunning
+            guard !Task.isCancelled,
                   let self,
                   authenticatedUserID == ownerUserID,
+                  workspaceAccountGeneration == accountGeneration,
+                  localAgentHostHealthCheckGeneration == generation,
                   localAgentHostLifecycleTask == nil else { return }
-            startLocalAgentHost(
-                ownerUserID: ownerUserID,
-                refreshControlPlaneAfterStart: true
-            )
+            if !isRunning {
+                startLocalAgentHost(
+                    ownerUserID: ownerUserID,
+                    refreshControlPlaneAfterStart: true
+                )
+            }
         }
+    }
+
+    private func cancelAccountScopedBackgroundTasks() {
+        workspaceLoadGeneration += 1
+        workspaceLoadTask?.cancel()
+        workspaceLoadTask = nil
+        isWorkspaceLoading = false
+        remoteConnectionsLoadGeneration &+= 1
+        remoteConnectionsLoadTask?.cancel()
+        remoteConnectionsLoadTask = nil
+        isRemoteConnectionsLoading = false
+        pluginApplicationsLoadGeneration += 1
+        pluginApplicationsLoadTask?.cancel()
+        pluginApplicationsLoadTask = nil
+        isPluginApplicationsLoading = false
+        localConnectorSleepPreparationGeneration &+= 1
+        localConnectorSleepPreparationTask?.cancel()
+        localConnectorSleepPreparationTask = nil
+        projectConversationPreparationTasks.values.forEach { $0.cancel() }
+        projectConversationPreparationTasks = [:]
+        projectConversationPreparationTaskIDs = [:]
+        projectConversationPreparationRequestIDs = [:]
+        preparingProjectConversationIDs = []
+        localAgentHostHealthCheckGeneration &+= 1
+        localAgentHostHealthCheckTask?.cancel()
+        localAgentHostHealthCheckTask = nil
     }
 
     func recoverLocalAgentHostAfterUnexpectedExit() {
@@ -233,7 +298,12 @@ extension AppModel {
         let workspaceService = workspaceService
         let projectConversationService = projectConversationService
         let notepadService = notepadService
-        Task {
+        let remoteConnectionMetadataService = remoteConnectionMetadataService
+        let previousShutdown = localAgentHostShutdownTask
+        localAgentHostShutdownGeneration &+= 1
+        let shutdownGeneration = localAgentHostShutdownGeneration
+        localAgentHostShutdownTask = Task { [weak self] in
+            await previousShutdown?.value
             await commandService?.reset()
             await petActivityService?.reset()
             await messageTaskGraphService?.reset()
@@ -246,6 +316,9 @@ extension AppModel {
             await notepadService.reset()
             await remoteConnectionMetadataService.reset()
             await localAgentHost.stop()
+            guard let self,
+                  localAgentHostShutdownGeneration == shutdownGeneration else { return }
+            localAgentHostShutdownTask = nil
         }
     }
 
@@ -283,11 +356,11 @@ extension AppModel {
                         ownerUserID: ownerUserID,
                         bootstrap: bootstrap
                     )
+                    await petActivityService?.configure(ownerUserID: ownerUserID)
                     try await commandService?.configure(
                         ownerUserID: ownerUserID,
                         bootstrap: bootstrap
                     )
-                    await petActivityService?.configure(ownerUserID: ownerUserID)
                     await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
                     await askUserPromptService?.configure(ownerUserID: ownerUserID)
                     await turnProcessService?.configure(ownerUserID: ownerUserID)
@@ -322,18 +395,37 @@ extension AppModel {
 
     func loadLanguagePreferences() {
         guard let expectedUserID = authenticatedUserID else { return }
+        languagePreferencesLoadTask?.cancel()
+        languagePreferencesLoadGeneration &+= 1
+        let generation = languagePreferencesLoadGeneration
+        let accountGeneration = workspaceAccountGeneration
         isLanguagePreferencesLoading = true
         languagePreferencesError = nil
         let service = userLanguagePreferencesService
-        Task { [weak self] in
+        languagePreferencesLoadTask = Task { [weak self] in
             do {
                 let preferences = try await service.fetch(userID: expectedUserID)
-                guard let self, authenticatedUserID == expectedUserID else { return }
+                try Task.checkCancellation()
+                guard let self,
+                      authenticatedUserID == expectedUserID,
+                      workspaceAccountGeneration == accountGeneration,
+                      languagePreferencesLoadGeneration == generation else { return }
                 applyLanguagePreferences(preferences)
+            } catch is CancellationError {
+                return
             } catch {
-                self?.languagePreferencesError = error.localizedDescription
+                guard let self,
+                      authenticatedUserID == expectedUserID,
+                      workspaceAccountGeneration == accountGeneration,
+                      languagePreferencesLoadGeneration == generation else { return }
+                languagePreferencesError = error.localizedDescription
             }
-            self?.isLanguagePreferencesLoading = false
+            guard let self,
+                  authenticatedUserID == expectedUserID,
+                  workspaceAccountGeneration == accountGeneration,
+                  languagePreferencesLoadGeneration == generation else { return }
+            isLanguagePreferencesLoading = false
+            languagePreferencesLoadTask = nil
         }
     }
 
@@ -343,6 +435,9 @@ extension AppModel {
               let authenticatedUserID else { return }
 
         languagePreferencesSaveTask?.cancel()
+        languagePreferencesSaveGeneration &+= 1
+        let generation = languagePreferencesSaveGeneration
+        let accountGeneration = workspaceAccountGeneration
         let preferences = UserLanguagePreferences(
             interfaceLanguage: interfaceLanguage,
             internalContextLanguage: contextLanguage
@@ -351,26 +446,37 @@ extension AppModel {
         languagePreferencesSaveTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
-                self?.isLanguagePreferencesSaving = true
-                self?.languagePreferencesError = nil
+                guard !Task.isCancelled,
+                      let self,
+                      self.authenticatedUserID == authenticatedUserID,
+                      workspaceAccountGeneration == accountGeneration,
+                      languagePreferencesSaveGeneration == generation else { return }
+                isLanguagePreferencesSaving = true
+                languagePreferencesError = nil
                 let saved = try await service.update(
                     userID: authenticatedUserID,
                     preferences: preferences
                 )
-                guard !Task.isCancelled else {
-                    self?.isLanguagePreferencesSaving = false
-                    return
-                }
-                guard let self else { return }
+                try Task.checkCancellation()
+                guard self.authenticatedUserID == authenticatedUserID,
+                      workspaceAccountGeneration == accountGeneration,
+                      languagePreferencesSaveGeneration == generation else { return }
                 applyLanguagePreferences(saved)
             } catch is CancellationError {
-                self?.isLanguagePreferencesSaving = false
                 return
             } catch {
-                self?.languagePreferencesError = error.localizedDescription
+                guard let self,
+                      self.authenticatedUserID == authenticatedUserID,
+                      workspaceAccountGeneration == accountGeneration,
+                      languagePreferencesSaveGeneration == generation else { return }
+                languagePreferencesError = error.localizedDescription
             }
-            self?.isLanguagePreferencesSaving = false
+            guard let self,
+                  self.authenticatedUserID == authenticatedUserID,
+                  workspaceAccountGeneration == accountGeneration,
+                  languagePreferencesSaveGeneration == generation else { return }
+            isLanguagePreferencesSaving = false
+            languagePreferencesSaveTask = nil
         }
     }
 

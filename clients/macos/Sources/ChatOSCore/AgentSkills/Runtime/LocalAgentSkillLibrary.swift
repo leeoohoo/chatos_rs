@@ -18,6 +18,7 @@ public enum LocalAgentSkillLibraryError: Error, LocalizedError, Equatable {
 /// Stable keys and categories remain program-owned; users can edit display metadata and the
 /// complete runtime instructions without changing Agent or project identity bindings.
 public final class LocalAgentSkillLibrary: @unchecked Sendable {
+    static let maximumPayloadBytes = 256 * 1_024 * 1_024
     private struct ProfessionOverride: Codable {
         let label: String
         let description: String
@@ -52,7 +53,7 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        if let data = try? Data(contentsOf: fileURL),
+        if let data = try? Self.boundedData(at: fileURL),
            var decoded = try? JSONDecoder().decode(Payload.self, from: data),
            (1...2).contains(decoded.schemaVersion) {
             decoded.schemaVersion = 2
@@ -298,7 +299,11 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            try encoder.encode(next).write(to: fileURL, options: .atomic)
+            let data = try encoder.encode(next)
+            guard data.count <= Self.maximumPayloadBytes else {
+                throw LocalAgentSkillLibraryError.storage("Skill 配置超过本地存储上限")
+            }
+            try data.write(to: fileURL, options: .atomic)
             payload = next
         } catch {
             throw LocalAgentSkillLibraryError.storage(error.localizedDescription)
@@ -309,5 +314,21 @@ public final class LocalAgentSkillLibrary: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return body()
+    }
+
+    private static func boundedData(at url: URL) throws -> Data {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true,
+              let size = values.fileSize,
+              size <= maximumPayloadBytes else {
+            throw LocalAgentSkillLibraryError.storage("Skill 配置不是普通文件或超过本地存储上限")
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumPayloadBytes + 1) ?? Data()
+        guard data.count <= maximumPayloadBytes else {
+            throw LocalAgentSkillLibraryError.storage("Skill 配置超过本地存储上限")
+        }
+        return data
     }
 }

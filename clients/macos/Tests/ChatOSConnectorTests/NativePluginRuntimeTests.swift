@@ -856,6 +856,52 @@ struct NativePluginRuntimeTests {
         #expect(launch.environment["CHATOS_WORKSPACE"] == nil)
     }
 
+    @Test("preloaded manifest launch preparation does not decode the installed file again")
+    func preloadedManifestLaunchPreparationAvoidsRepeatedRead() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let launcher = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("fixture")
+        let manifestURL = installation.appendingPathComponent("chatos.plugin.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: launcher.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("#!/bin/sh\n".utf8).write(to: launcher)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
+        try Data("""
+        {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture"}},"permissions":[{"permission":"process.spawn","required":true,"components":["fixture"]}]}
+        """.utf8).write(to: manifestURL)
+
+        let manifest = try NativePluginManifestLoader.loadManifest(from: manifestURL)
+        try FileManager.default.removeItem(at: manifestURL)
+        let launch = try NativePluginManifestLoader.prepare(
+            record: .init(
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "1.0.0",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: installation.path,
+                installedAt: "2026-10-03T00:00:00Z"
+            ),
+            manifest: manifest,
+            componentKey: "fixture",
+            serverKey: nil,
+            adapterSessionID: "adapter-preloaded",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+
+        #expect(launch.manifest.name == "fixture")
+        #expect(launch.executableURL == launcher.standardizedFileURL)
+    }
+
     @Test("stdio client initializes, lists tools and calls a tool")
     func stdioRoundTrip() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -1711,6 +1757,57 @@ struct NativePluginRuntimeTests {
         #expect(metadata.jsonObject?["frame_file"]?.jsonString == "frame.jpg")
     }
 
+    @Test("visual bridges reject oversized base64 before frame decoding")
+    func visualBridgeBase64IsBounded() {
+        let browserResult = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("image"),
+                    "data": .string(String(
+                        repeating: "A",
+                        count: NativeBrowserVisualBridge.maximumEncodedCharacters + 1
+                    )),
+                ]),
+            ]),
+        ])
+        let computerResult = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("image"),
+                    "mimeType": .string("image/png"),
+                    "data": .string(String(
+                        repeating: "A",
+                        count: NativeComputerUseVisualBridge.maximumEncodedCharacters + 1
+                    )),
+                ]),
+            ]),
+        ])
+
+        #expect(NativeBrowserVisualBridge.captureFrame(
+            from: browserResult,
+            artifactRootURL: FileManager.default.temporaryDirectory
+        ) == nil)
+        #expect(NativeComputerUseVisualBridge.captureFrame(from: computerResult) == nil)
+    }
+
+    @Test("browser visual bridge rejects non-PNG image payloads")
+    func browserVisualBridgeRequiresPNGSignature() {
+        let invalid = Data("not-a-png".utf8)
+        let result = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("image"),
+                    "data": .string(invalid.base64EncodedString()),
+                ]),
+            ]),
+        ])
+
+        #expect(NativeBrowserVisualBridge.captureFrame(
+            from: result,
+            artifactRootURL: FileManager.default.temporaryDirectory
+        ) == nil)
+    }
+
     @Test("visual frame remains visible for the lifetime of its active plugin session")
     func visualFrameLifetimeFollowsSessionInsteadOfFifteenSecondCache() throws {
         let root = FileManager.default.temporaryDirectory
@@ -1897,6 +1994,57 @@ struct NativePluginRuntimeTests {
         #expect(await store.cancel(adapterSessionID: "adapter-second", invocationID: nil) == "cancelled")
     }
 
+    @Test("visual session lifecycle changes wake subscribers")
+    func visualSessionLifecycleChangesWakeSubscribers() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fixture = try await makeComputerUseLeaseClient(root: root, label: "visual-events")
+        let store = NativePluginRuntimeStore()
+        let changes = await store.visualSessionChanges()
+        var iterator = changes.makeAsyncIterator()
+        await store.insert(
+            identity: .init(
+                runID: "run-visual-events",
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "1.0.0",
+                artifactSHA256: String(repeating: "a", count: 64),
+                componentKey: "desktop-control",
+                adapterSessionID: "adapter-visual-events"
+            ),
+            client: fixture.0,
+            tools: fixture.1,
+            permissionSnapshot: [],
+            displayName: "Visual events",
+            visualSessionURL: fixture.2,
+            artifactURL: fixture.3,
+            projectRootURL: root,
+            workspaceID: "workspace-1"
+        )
+        #expect(await iterator.next() != nil)
+
+        await store.bindOwner(
+            .init(
+                conversationID: "conversation-1",
+                sourceUserMessageID: "message-1",
+                taskID: "task-1",
+                taskRunID: "run-visual-events",
+                taskTitle: "Visual events"
+            ),
+            adapterSessionID: "adapter-visual-events"
+        )
+        #expect(await iterator.next() != nil)
+
+        #expect(await store.cancel(
+            adapterSessionID: "adapter-visual-events",
+            invocationID: nil
+        ) == "cancelled")
+        #expect(await iterator.next() != nil)
+    }
+
     @Test("a hard computer use call failure releases the desktop lease for the next adapter")
     func computerUseFailureReleasesLeaseForNextTaskRun() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -2069,6 +2217,196 @@ struct NativePluginRuntimeTests {
         #expect(permissions[3].status == "action_required")
         #expect(permissions[3].canRequest)
         #expect(permissions[3].requestLabel == "去开启")
+    }
+
+    @Test("plugin permission snapshots merge concurrent diagnostics and allow forced refresh")
+    func pluginPermissionSnapshotMergesConcurrentDiagnostics() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = bin.appendingPathComponent("open-computer-use")
+        try Data("""
+        #!/bin/sh
+        # check-permissions
+        printf 'x\\n' >> "$PWD/invocations.log"
+        sleep 0.2
+        printf '%s\\n' '{"permissions":[{"kind":"accessibility","title":"辅助功能","granted":true,"purpose":"发送输入","systemSettingsTitle":"隐私与安全性 > 辅助功能"},{"kind":"screenRecording","title":"屏幕与系统音频录制","granted":false,"purpose":"读取画面","systemSettingsTitle":"隐私与安全性 > 屏幕与系统音频录制"}]}'
+        """.utf8).write(to: launcher)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: launcher.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion": 3,
+              "name": "open-computer-use",
+              "version": "0.8.1",
+              "permissions": []
+            }
+            """.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-permission-cache",
+            releaseID: "release-1",
+            version: "0.8.1",
+            artifactSHA256: String(repeating: "c", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-08-27T00:00:00Z"
+        )
+        let cache = NativePluginPermissionSnapshotCache()
+
+        async let first = cache.permissions(record: record, manifest: manifest)
+        async let second = cache.permissions(record: record, manifest: manifest)
+        let (firstPermissions, secondPermissions) = try await (first, second)
+
+        #expect(firstPermissions == secondPermissions)
+        #expect(try permissionInvocationCount(at: root) == 1)
+
+        let cached = try await cache.permissions(record: record, manifest: manifest)
+        #expect(cached == firstPermissions)
+        #expect(try permissionInvocationCount(at: root) == 1)
+
+        let refreshed = try await cache.permissions(
+            record: record,
+            manifest: manifest,
+            forceRefresh: true
+        )
+        #expect(refreshed == firstPermissions)
+        #expect(try permissionInvocationCount(at: root) == 2)
+    }
+
+    private func permissionInvocationCount(at root: URL) throws -> Int {
+        let contents = try String(
+            contentsOf: root.appendingPathComponent("invocations.log"),
+            encoding: .utf8
+        )
+        return contents.split(whereSeparator: \.isNewline).count
+    }
+
+    @Test("plugin permission diagnostics drain oversized output without deadlocking")
+    func pluginPermissionDiagnosticsBoundOversizedOutput() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = bin.appendingPathComponent("open-computer-use")
+        try Data("""
+        #!/bin/sh
+        # check-permissions
+        dd if=/dev/zero bs=1200000 count=1 2>/dev/null | tr '\\000' x
+        """.utf8).write(to: launcher)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: launcher.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion": 3,
+              "name": "open-computer-use",
+              "version": "0.8.1",
+              "permissions": []
+            }
+            """.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-large-output",
+            releaseID: "release-1",
+            version: "0.8.1",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-08-27T00:00:00Z"
+        )
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let permissions = await NativePluginPermissionInspector.permissions(
+            record: record,
+            manifest: manifest
+        )
+
+        #expect(clock.now - startedAt < .seconds(5))
+        #expect(permissions.map(\.permissionID) == [
+            "computer.accessibility",
+            "computer.screen-recording",
+        ])
+        #expect(permissions.allSatisfy { $0.status == "unknown" })
+    }
+
+    @Test("timed out permission diagnostics terminate and reap their process group")
+    func pluginPermissionDiagnosticsTimeoutCleansProcessGroup() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = bin.appendingPathComponent("open-computer-use")
+        try Data("""
+        #!/bin/sh
+        # check-permissions
+        trap '' TERM
+        printf '%s' "$$" > "$PWD/launcher.pid"
+        sleep 60 &
+        printf '%s' "$!" > "$PWD/child.pid"
+        wait
+        """.utf8).write(to: launcher)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: launcher.path
+        )
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let launcherPIDURL = root.appendingPathComponent("launcher.pid")
+        let childPIDURL = root.appendingPathComponent("child.pid")
+        do {
+            _ = try await Task.detached {
+                try NativePluginPermissionInspector.runLauncherBlocking(
+                    installationPath: root.path,
+                    command: "check-permissions",
+                    timeout: 2,
+                    spawnObserver: { _ in
+                        // The timeout intentionally tests a running process group. Under the
+                        // full parallel suite, wait for the tiny launcher to create its child
+                        // before starting the diagnostic deadline.
+                        for _ in 0..<500
+                            where !FileManager.default.fileExists(atPath: launcherPIDURL.path)
+                                || !FileManager.default.fileExists(atPath: childPIDURL.path) {
+                            Thread.sleep(forTimeInterval: 0.01)
+                        }
+                    }
+                )
+            }.value
+            Issue.record("expected permission diagnostics to time out")
+        } catch {
+            #expect(error.localizedDescription.contains("Plugin 权限检测超时"))
+        }
+        #expect(clock.now - startedAt < .seconds(12))
+
+        let launcherPIDText = try String(
+            contentsOf: launcherPIDURL,
+            encoding: .utf8
+        )
+        let childPIDText = try String(
+            contentsOf: childPIDURL,
+            encoding: .utf8
+        )
+        guard let launcherPID = pid_t(launcherPIDText),
+              let childPID = pid_t(childPIDText) else {
+            Issue.record("permission diagnostic process IDs were not valid")
+            return
+        }
+        for _ in 0..<50 where processExists(launcherPID) || processExists(childPID) {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!processExists(launcherPID))
+        #expect(!processExists(childPID))
     }
 
     @Test("plugin processes restore tool paths missing from GUI app launches")

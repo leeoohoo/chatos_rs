@@ -63,7 +63,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
 
             let relative_path = format!("{}.artifact", write.artifact.artifact_id);
             let final_path = safe_artifact_path(&self.artifact_root, &relative_path)?;
-            write_private_file(&self.artifact_root, &final_path, &write.data)?;
+            write_private_file(&self.artifact_root, &final_path, &write.data).await?;
             created_path = Some(final_path);
             sqlx::query(
                 "INSERT INTO local_agent_artifacts(\
@@ -97,7 +97,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         let result = Self::finish_write(&mut database, result).await;
         if result.is_err() {
             if let Some(path) = created_path {
-                let _ = std::fs::remove_file(path);
+                let _ = tokio::fs::remove_file(path).await;
             }
         }
         result
@@ -172,7 +172,8 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         let relative_path: String = row.try_get("relative_path").db()?;
         let expected_size: i64 = row.try_get("size").db()?;
         let expected_sha256: String = row.try_get("sha256").db()?;
-        let data = std::fs::read(safe_artifact_path(&self.artifact_root, &relative_path)?)
+        let data = tokio::fs::read(safe_artifact_path(&self.artifact_root, &relative_path)?)
+            .await
             .map_err(ClientStorageError::database)?;
         let digest = format!("{:x}", Sha256::digest(&data));
         if i64::try_from(data.len()).ok() != Some(expected_size) || digest != expected_sha256 {
@@ -223,7 +224,7 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
             return Ok(());
         };
         let path = safe_artifact_path(&self.artifact_root, &relative_path)?;
-        match std::fs::remove_file(path) {
+        match tokio::fs::remove_file(path).await {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(ClientStorageError::database(error)),
@@ -263,37 +264,42 @@ fn safe_artifact_path(root: &Path, relative_path: &str) -> Result<PathBuf, Clien
     Ok(root.join(relative_path))
 }
 
-fn write_private_file(
+async fn write_private_file(
     root: &Path,
     final_path: &Path,
     data: &[u8],
 ) -> Result<(), ClientStorageError> {
     let temporary_path = root.join(format!(".{}.tmp", Uuid::new_v4()));
-    std::fs::write(&temporary_path, data).map_err(ClientStorageError::database)?;
-    if let Err(error) = restrict_file_permissions(&temporary_path) {
-        let _ = std::fs::remove_file(&temporary_path);
+    tokio::fs::write(&temporary_path, data)
+        .await
+        .map_err(ClientStorageError::database)?;
+    if let Err(error) = restrict_file_permissions(&temporary_path).await {
+        let _ = tokio::fs::remove_file(&temporary_path).await;
         return Err(error);
     }
-    if let Err(error) = std::fs::rename(&temporary_path, final_path) {
-        let _ = std::fs::remove_file(&temporary_path);
+    if let Err(error) = tokio::fs::rename(&temporary_path, final_path).await {
+        let _ = tokio::fs::remove_file(&temporary_path).await;
         return Err(ClientStorageError::database(error));
     }
     Ok(())
 }
 
 #[cfg(unix)]
-fn restrict_file_permissions(path: &Path) -> Result<(), ClientStorageError> {
+async fn restrict_file_permissions(path: &Path) -> Result<(), ClientStorageError> {
     use std::os::unix::fs::PermissionsExt;
 
-    let mut permissions = std::fs::metadata(path)
+    let mut permissions = tokio::fs::metadata(path)
+        .await
         .map_err(ClientStorageError::database)?
         .permissions();
     permissions.set_mode(0o600);
-    std::fs::set_permissions(path, permissions).map_err(ClientStorageError::database)
+    tokio::fs::set_permissions(path, permissions)
+        .await
+        .map_err(ClientStorageError::database)
 }
 
 #[cfg(not(unix))]
-fn restrict_file_permissions(_path: &Path) -> Result<(), ClientStorageError> {
+async fn restrict_file_permissions(_path: &Path) -> Result<(), ClientStorageError> {
     Ok(())
 }
 

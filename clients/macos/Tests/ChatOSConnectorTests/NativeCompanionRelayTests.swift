@@ -3,6 +3,37 @@ import ChatOSCore
 import XCTest
 
 final class NativeCompanionRelayTests: XCTestCase {
+    func testCompanionRelayConcurrencyIsBounded() {
+        XCTAssertEqual(
+            NativeLocalConnectorService.maximumConcurrentCompanionRelayRequests,
+            32
+        )
+    }
+
+    func testCompanionAgentDrainTriggersCoalesceToOneRerun() async {
+        let coordinator = CompanionAgentDrainCoordinator()
+        let probe = CompanionAgentDrainProbe()
+
+        await coordinator.schedule(ownerUserID: "owner") {
+            await probe.run()
+        }
+        await probe.waitForCalls(1)
+        await coordinator.schedule(ownerUserID: "owner") {
+            await probe.run()
+        }
+        await coordinator.schedule(ownerUserID: "owner") {
+            await probe.run()
+        }
+
+        let activeTaskCount = await coordinator.activeTaskCount()
+        XCTAssertEqual(activeTaskCount, 1)
+        await probe.resumeFirstCall()
+        await probe.waitForCalls(2)
+        await waitUntilCompanionDrainIdle(coordinator)
+        let callCount = await probe.callCount()
+        XCTAssertEqual(callCount, 2)
+    }
+
     func testCompanionAgentSummaryUsesSanitizedSnakeCaseContract() throws {
         let summary = LocalConnectorCompanionAgentSummary(
             id: "agent-1",
@@ -120,5 +151,40 @@ final class NativeCompanionRelayTests: XCTestCase {
         )) { error in
             XCTAssertEqual((error as? NativeCompanionRelayError)?.status, 400)
         }
+    }
+}
+
+private actor CompanionAgentDrainProbe {
+    private var calls = 0
+    private var firstCallContinuation: CheckedContinuation<Void, Never>?
+
+    func run() async {
+        calls += 1
+        guard calls == 1 else { return }
+        await withCheckedContinuation { continuation in
+            firstCallContinuation = continuation
+        }
+    }
+
+    func waitForCalls(_ expected: Int) async {
+        while calls < expected {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    func resumeFirstCall() {
+        firstCallContinuation?.resume()
+        firstCallContinuation = nil
+    }
+
+    func callCount() -> Int { calls }
+}
+
+private func waitUntilCompanionDrainIdle(
+    _ coordinator: CompanionAgentDrainCoordinator
+) async {
+    for _ in 0..<100 {
+        if await coordinator.activeTaskCount() == 0 { return }
+        try? await Task.sleep(for: .milliseconds(5))
     }
 }

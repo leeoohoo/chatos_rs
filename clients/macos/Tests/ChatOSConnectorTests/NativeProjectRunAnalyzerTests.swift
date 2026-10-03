@@ -28,4 +28,38 @@ final class NativeProjectRunAnalyzerTests: XCTestCase {
         XCTAssertTrue(result.configurationFiles.contains(where: { $0.path == "Native/Package.swift" }))
         XCTAssertFalse(result.configurationFiles.contains(where: { $0.path.contains(".chatos") }))
     }
+
+    func testLargePackageManifestIsNotLoadedForDetectionOrPreview() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-run-analyzer-large-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(repeating: UInt8(ascii: "x"), count: 2 * 1_024 * 1_024 + 1)
+            .write(to: root.appendingPathComponent("package.json"))
+
+        let result = try NativeProjectRunAnalyzer().analyze(root: root)
+
+        XCTAssertFalse(result.targets.contains(where: { $0.kind == "node" }))
+        XCTAssertEqual(
+            result.configurationFiles.first(where: { $0.path == "package.json" })?.preview,
+            nil
+        )
+    }
+
+    func testManifestDetectionDoesNotDependOnDirectoryEnumerationBudget() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-run-analyzer-bounded-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for index in 0..<4 {
+            try Data().write(to: root.appendingPathComponent("unrelated-\(index).txt"))
+        }
+        try Data(#"{"scripts":{"dev":"vite"}}"#.utf8)
+            .write(to: root.appendingPathComponent("package.json"))
+
+        let result = try NativeProjectRunAnalyzer(maximumChildrenPerDirectory: 1)
+            .analyze(root: root)
+
+        XCTAssertTrue(result.targets.contains(where: { $0.command == "npm run dev" }))
+    }
 }

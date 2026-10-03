@@ -95,7 +95,9 @@ public enum ProgressiveSkillFileLoader {
         guard values.fileSize ?? maximumBytes + 1 <= maximumBytes else {
             throw LoaderError.fileTooLarge
         }
-        let data = try Data(contentsOf: file, options: .mappedIfSafe)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: maximumBytes + 1) ?? Data()
         guard data.count <= maximumBytes else { throw LoaderError.fileTooLarge }
         return data
     }

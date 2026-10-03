@@ -62,6 +62,12 @@ public struct LocalAgentEventPage: Sendable, Equatable {
     public let nextCursor: Int64
 }
 
+public enum LocalAgentEventPayloadMode: String, Encodable, Sendable {
+    case full
+    case routing
+    case none
+}
+
 public struct NativeLocalAgentRuntimeClient: Sendable {
     private let host: any LocalAgentHostClientServicing
 
@@ -82,12 +88,16 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
     public func listRuns(
         ownerUserID: String,
         scope: String,
+        status: String? = nil,
+        updatedAfterUnixMs: Int64? = nil,
         limit: UInt32 = 100
     ) async throws -> LocalAgentRunPage {
         let result: RunsResult = try await host.request(ListRunsCommand(
             type: "list_runs",
             ownerUserID: ownerUserID,
             scope: scope,
+            status: status,
+            updatedAfterUnixMs: updatedAfterUnixMs,
             limit: limit
         ))
         guard result.type == "runs" else { throw NativeLocalAgentHostError.invalidResponse }
@@ -98,14 +108,16 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
         ownerUserID: String,
         afterCursor: Int64,
         limit: UInt32 = 100,
-        timeoutMilliseconds: UInt64 = 20_000
+        timeoutMilliseconds: UInt64 = 20_000,
+        payloadMode: LocalAgentEventPayloadMode = .full
     ) async throws -> LocalAgentEventPage {
         let result: EventsResult = try await host.request(WaitEventsCommand(
             type: "wait_events",
             ownerUserID: ownerUserID,
             afterCursor: afterCursor,
             limit: limit,
-            timeoutMilliseconds: timeoutMilliseconds
+            timeoutMilliseconds: timeoutMilliseconds,
+            payloadMode: payloadMode
         ))
         guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
         return .init(events: result.events, nextCursor: result.nextCursor)
@@ -114,17 +126,30 @@ public struct NativeLocalAgentRuntimeClient: Sendable {
     public func listEvents(
         ownerUserID: String,
         afterCursor: Int64,
-        limit: UInt32 = 100
+        limit: UInt32 = 100,
+        payloadMode: LocalAgentEventPayloadMode = .full
     ) async throws -> LocalAgentEventPage {
         let result: EventsResult = try await host.request(ListEventsCommand(
             type: "list_events",
             ownerUserID: ownerUserID,
             afterCursor: afterCursor,
             limit: limit,
-            runID: nil
+            runID: nil,
+            payloadMode: payloadMode
         ))
         guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
         return .init(events: result.events, nextCursor: result.nextCursor)
+    }
+
+    public func latestEventCursor(ownerUserID: String) async throws -> Int64 {
+        let result: EventCursorResult = try await host.request(GetEventCursorCommand(
+            type: "get_event_cursor",
+            ownerUserID: ownerUserID
+        ))
+        guard result.type == "event_cursor", result.cursor >= 0 else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return result.cursor
     }
 
     public func resumeWaitingRun(
@@ -164,11 +189,14 @@ private struct ListRunsCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
     let scope: String
+    let status: String?
+    let updatedAfterUnixMs: Int64?
     let limit: UInt32
 
     private enum CodingKeys: String, CodingKey {
-        case type, scope, limit
+        case type, scope, status, limit
         case ownerUserID = "owner_user_id"
+        case updatedAfterUnixMs = "updated_after_unix_ms"
     }
 }
 
@@ -178,12 +206,14 @@ private struct WaitEventsCommand: Encodable, Sendable {
     let afterCursor: Int64
     let limit: UInt32
     let timeoutMilliseconds: UInt64
+    let payloadMode: LocalAgentEventPayloadMode
 
     private enum CodingKeys: String, CodingKey {
         case type, limit
         case ownerUserID = "owner_user_id"
         case afterCursor = "after_cursor"
         case timeoutMilliseconds = "timeout_ms"
+        case payloadMode = "payload_mode"
     }
 }
 
@@ -193,12 +223,24 @@ private struct ListEventsCommand: Encodable, Sendable {
     let afterCursor: Int64
     let limit: UInt32
     let runID: String?
+    let payloadMode: LocalAgentEventPayloadMode
 
     private enum CodingKeys: String, CodingKey {
         case type, limit
         case ownerUserID = "owner_user_id"
         case afterCursor = "after_cursor"
         case runID = "run_id"
+        case payloadMode = "payload_mode"
+    }
+}
+
+private struct GetEventCursorCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
     }
 }
 
@@ -239,4 +281,9 @@ private struct EventsResult: Decodable, Sendable {
         case type, events
         case nextCursor = "next_cursor"
     }
+}
+
+private struct EventCursorResult: Decodable, Sendable {
+    let type: String
+    let cursor: Int64
 }

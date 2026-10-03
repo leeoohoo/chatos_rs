@@ -4,6 +4,41 @@ import Foundation
 import XCTest
 
 final class NativeProjectGitServiceTests: XCTestCase {
+    func testGitProcessRejectsOversizedOutputWithoutUnboundedAccumulation() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-git-output-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("large.txt")
+        try Data(repeating: 0x78, count: 512 * 1_024).write(to: file)
+
+        XCTAssertThrowsError(try NativeGitProcess.run(
+            arguments: ["diff", "--no-index", "--no-color", "--", "/dev/null", file.path],
+            directory: root,
+            allowedExitCodes: [0, 1],
+            maximumOutputBytes: 64 * 1_024
+        )) { error in
+            XCTAssertEqual(error as? NativeGitError, .outputTooLarge)
+        }
+    }
+
+    func testGitProcessTimeoutTerminatesItsProcessGroup() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-git-timeout-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let startedAt = ContinuousClock.now
+
+        XCTAssertThrowsError(try NativeGitProcess.run(
+            arguments: ["-c", "alias.chatos-wait=!sleep 60", "chatos-wait"],
+            directory: root,
+            timeout: 0.05
+        )) { error in
+            XCTAssertEqual(error as? NativeGitError, .commandTimedOut)
+        }
+        XCTAssertLessThan(ContinuousClock.now - startedAt, .seconds(3))
+    }
+
     func testLoadsChangesStagesCommitsAndBuildsDiff() async throws {
         let context = try makeContext()
         defer { try? FileManager.default.removeItem(at: context.root) }

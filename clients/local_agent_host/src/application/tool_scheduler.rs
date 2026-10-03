@@ -9,7 +9,7 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use serde_json::json;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -157,7 +157,7 @@ impl LocalToolScheduler {
     pub async fn run_once(&self) -> Result<ToolSchedulerTick, LocalToolSchedulerError> {
         let claimed = self
             .runtime
-            .try_handle(envelope(
+            .try_handle_ephemeral(envelope(
                 "tool-scheduler-claim",
                 HostCommand::ClaimNextTool(ClaimNextToolCommand {
                     owner_user_id: self.owner_user_id.clone(),
@@ -174,15 +174,16 @@ impl LocalToolScheduler {
             _ => return Err(LocalToolSchedulerError::UnexpectedResult("claim")),
         };
         let outcome = match self.tools.executor_for(&claim.invocation.tool_name) {
-            Some(executor) => match executor.execute_tool(&claim.invocation).await {
-                Ok(outcome) => outcome,
-                Err(error) if claim.invocation.side_effecting => {
+            Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {
+                None => return Ok(ToolSchedulerTick::Idle),
+                Some(Ok(outcome)) => outcome,
+                Some(Err(error)) if claim.invocation.side_effecting => {
                     LocalAgentToolOutcome::NeedsReview {
                         reason: "side-effecting tool returned an unknown result".to_string(),
                         detail: json!({"error": error}),
                     }
                 }
-                Err(error) => LocalAgentToolOutcome::Failed {
+                Some(Err(error)) => LocalAgentToolOutcome::Failed {
                     error,
                     detail: json!({"phase": "local_tool_execution"}),
                 },
@@ -194,7 +195,7 @@ impl LocalToolScheduler {
         };
         let committed = self
             .runtime
-            .try_handle(envelope(
+            .try_handle_ephemeral(envelope(
                 "tool-scheduler-commit",
                 HostCommand::CommitTool(CommitToolCommand {
                     owner_user_id: self.owner_user_id.clone(),
@@ -210,6 +211,37 @@ impl LocalToolScheduler {
             _ => Err(LocalToolSchedulerError::UnexpectedResult("commit")),
         }
     }
+
+    async fn execute_with_heartbeat(
+        &self,
+        executor: Arc<dyn LocalToolExecutor>,
+        claim: &chatos_local_agent_protocol::LocalAgentToolClaim,
+    ) -> Result<Option<Result<LocalAgentToolOutcome, String>>, LocalAgentRuntimeError> {
+        let execution = executor.execute_tool(&claim.invocation);
+        tokio::pin!(execution);
+        let heartbeat_interval = claim_heartbeat_interval(self.lease_duration_ms);
+        loop {
+            tokio::select! {
+                outcome = &mut execution => return Ok(Some(outcome)),
+                _ = tokio::time::sleep(heartbeat_interval) => {
+                    let renewed = self.runtime.renew_tool_claim(
+                        &self.owner_user_id,
+                        &claim.invocation.invocation_id,
+                        &claim.claim_token,
+                        claim.invocation.version,
+                        self.lease_duration_ms,
+                    ).await?;
+                    if !renewed {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn claim_heartbeat_interval(lease_duration_ms: u64) -> Duration {
+    Duration::from_millis((lease_duration_ms / 3).max(250))
 }
 
 fn envelope(prefix: &str, command: HostCommand) -> HostRequestEnvelope {
@@ -226,7 +258,7 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, LocalAgentRunStatus,
-        LocalAgentStepOutcome, LocalAgentToolCall,
+        LocalAgentStepOutcome, LocalAgentToolCall, LocalAgentToolStatus,
     };
 
     struct ReadFileTool;
@@ -237,6 +269,21 @@ mod tests {
             &self,
             invocation: &LocalAgentToolInvocationRecord,
         ) -> Result<LocalAgentToolOutcome, String> {
+            Ok(LocalAgentToolOutcome::Succeeded {
+                output: json!({"path": invocation.arguments["path"], "content": "hello"}),
+            })
+        }
+    }
+
+    struct DelayedReadFileTool;
+
+    #[async_trait]
+    impl LocalToolExecutor for DelayedReadFileTool {
+        async fn execute_tool(
+            &self,
+            invocation: &LocalAgentToolInvocationRecord,
+        ) -> Result<LocalAgentToolOutcome, String> {
+            tokio::time::sleep(Duration::from_millis(1_300)).await;
             Ok(LocalAgentToolOutcome::Succeeded {
                 output: json!({"path": invocation.arguments["path"], "content": "hello"}),
             })
@@ -329,5 +376,87 @@ mod tests {
             scheduler.run_once().await.expect("idle"),
             ToolSchedulerTick::Idle
         );
+    }
+
+    #[tokio::test]
+    async fn tool_scheduler_renews_claim_during_long_execution() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(envelope(
+                "create-heartbeat",
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-tool-heartbeat".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: "conversation-1".to_string(),
+                    profile_key: "main_chat".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": "hello"}),
+                    max_iterations: 4,
+                }),
+            ))
+            .await
+            .expect("create");
+        let claim = runtime
+            .try_handle(envelope(
+                "claim-heartbeat-run",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 10_000,
+                }),
+            ))
+            .await
+            .expect("claim run");
+        let claim = match claim {
+            HostResult::Claim { claim: Some(claim) } => claim,
+            result => panic!("unexpected result: {result:?}"),
+        };
+        runtime
+            .try_handle(envelope(
+                "commit-heartbeat-run",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForTool {
+                        batch_id: "batch-heartbeat".to_string(),
+                        tool_calls: vec![LocalAgentToolCall {
+                            call_id: "call-heartbeat".to_string(),
+                            tool_name: "read_file".to_string(),
+                            arguments: json!({"path": "README.md"}),
+                            side_effecting: false,
+                            requires_approval: false,
+                        }],
+                        checkpoint: json!({"response_id": "response-heartbeat"}),
+                    },
+                }),
+            ))
+            .await
+            .expect("wait for tool");
+        let mut tools = LocalToolRegistry::new();
+        tools
+            .register("read_file", DelayedReadFileTool)
+            .expect("tool");
+        let scheduler = LocalToolScheduler::new(runtime, tools, "user-1", "tool-worker")
+            .expect("scheduler")
+            .with_lease_duration_ms(1_000)
+            .expect("short lease");
+
+        let ToolSchedulerTick::Committed(result) = scheduler.run_once().await.expect("long tool")
+        else {
+            panic!("expected committed tool")
+        };
+        assert_eq!(result.invocation.status, LocalAgentToolStatus::Succeeded);
+        assert_eq!(result.run.status, LocalAgentRunStatus::ContinuationReady);
     }
 }

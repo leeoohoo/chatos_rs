@@ -168,3 +168,39 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text
         .expect("call");
     assert!(matches!(outcome, LocalAgentToolOutcome::Succeeded { .. }));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timed_out_stdio_session_kills_and_reaps_its_child() {
+    let mut child = Command::new("/bin/sleep")
+        .arg("30")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("sleep process");
+    let stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let session = LocalMcpStdioSession {
+        server_id: "timeout-fixture".to_string(),
+        call_timeout: Duration::from_millis(25),
+        connection: Mutex::new(StdioConnection {
+            child,
+            stdin,
+            stdout: BufReader::new(stdout),
+            next_request_id: 1,
+            unusable: false,
+        }),
+    };
+
+    let error = session
+        .call_tool("hang", json!({}))
+        .await
+        .expect_err("tool call must time out");
+    assert!(!error.outcome_known);
+
+    let mut connection = session.connection.lock().await;
+    assert!(connection.unusable);
+    assert!(connection.child.try_wait().expect("child status").is_some());
+}

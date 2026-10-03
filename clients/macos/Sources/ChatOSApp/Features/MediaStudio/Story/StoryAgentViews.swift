@@ -281,6 +281,21 @@ struct StoryAgentRunPanel: View {
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
                         }
                     }
+                    if viewModel.hasMoreAgentRuns {
+                        Button {
+                            viewModel.loadMoreAgentRuns()
+                        } label: {
+                            if viewModel.isLoadingMoreAgentRuns {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Label(appModel.localized("加载更早运行记录", english: "Load Earlier Runs"),
+                                      systemImage: "clock.arrow.circlepath")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(viewModel.isLoadingMoreAgentRuns)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }.padding(24).frame(width: 760, height: 650)

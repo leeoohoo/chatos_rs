@@ -5,9 +5,20 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
     private let client: NativeLocalAgentNotepadClient?
     private var ownerUserID: String?
     private var noteVersions: [String: UInt64] = [:]
+    private var changeSubscribers: [UUID: AsyncStream<Void>.Continuation] = [:]
 
     public init(host: (any LocalAgentHostClientServicing)?) {
         client = host.map(NativeLocalAgentNotepadClient.init(host:))
+    }
+
+    public func changes() async -> AsyncStream<Void> {
+        let subscriberID = UUID()
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        changeSubscribers[subscriberID] = pair.continuation
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeChangeSubscriber(subscriberID) }
+        }
+        return pair.stream
     }
 
     public func configure(ownerUserID: String) {
@@ -33,12 +44,14 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
     public func createFolder(_ folder: String) async throws {
         let context = try requireContext()
         try await context.client.createFolder(ownerUserID: context.ownerUserID, folder: folder)
+        publishChange()
     }
 
     public func renameFolder(from: String, to: String) async throws {
         let context = try requireContext()
         try await context.client.renameFolder(ownerUserID: context.ownerUserID, from: from, to: to)
         noteVersions.removeAll()
+        publishChange()
     }
 
     public func deleteFolder(_ folder: String, recursive: Bool) async throws {
@@ -49,6 +62,7 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
             recursive: recursive
         )
         noteVersions.removeAll()
+        publishChange()
     }
 
     public func listNotes(query: String?, limit: Int) async throws -> [NotepadNote] {
@@ -65,7 +79,9 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
     public func createNote(_ draft: NotepadNoteDraft) async throws -> NotepadNoteDetail {
         let context = try requireContext()
         let detail = try await context.client.createNote(ownerUserID: context.ownerUserID, draft: draft)
-        return cache(detail)
+        let cached = cache(detail)
+        publishChange()
+        return cached
     }
 
     public func fetchNote(id: String) async throws -> NotepadNoteDetail {
@@ -83,7 +99,9 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
             expectedVersion: version,
             update: update
         )
-        return cache(detail)
+        let cached = cache(detail)
+        publishChange()
+        return cached
     }
 
     public func uploadImage(
@@ -116,6 +134,17 @@ public actor NativeLocalAgentNotepadService: NotepadServicing {
             expectedVersion: version
         )
         noteVersions[id] = nil
+        publishChange()
+    }
+
+    private func removeChangeSubscriber(_ subscriberID: UUID) {
+        changeSubscribers.removeValue(forKey: subscriberID)
+    }
+
+    private func publishChange() {
+        for continuation in changeSubscribers.values {
+            continuation.yield(())
+        }
     }
 
     private func version(for noteID: String, context: Context) async throws -> UInt64 {

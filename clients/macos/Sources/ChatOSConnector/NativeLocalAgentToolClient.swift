@@ -146,6 +146,25 @@ public struct NativeLocalAgentToolClient: Sendable {
         return result.result
     }
 
+    public func renew(
+        ownerUserID: String,
+        claim: LocalAgentToolClaim,
+        leaseDurationMilliseconds: UInt64 = 30_000
+    ) async throws -> Bool {
+        let result: RenewResult = try await host.request(RenewCommand(
+            type: "renew_tool_claim",
+            ownerUserID: ownerUserID,
+            invocationID: claim.invocation.invocationID,
+            claimToken: claim.claimToken,
+            expectedVersion: claim.invocation.version,
+            leaseDurationMilliseconds: leaseDurationMilliseconds
+        ))
+        guard result.type == "tool_claim_renewed" else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return result.renewed
+    }
+
     public func pendingApprovals(
         ownerUserID: String,
         limit: UInt32 = 20
@@ -221,6 +240,24 @@ private struct CommitCommand: Encodable, Sendable {
     }
 }
 
+private struct RenewCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let invocationID: String
+    let claimToken: String
+    let expectedVersion: UInt64
+    let leaseDurationMilliseconds: UInt64
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case invocationID = "invocation_id"
+        case claimToken = "claim_token"
+        case expectedVersion = "expected_version"
+        case leaseDurationMilliseconds = "lease_duration_ms"
+    }
+}
+
 private struct ListPendingApprovalsCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
@@ -258,6 +295,11 @@ private struct ClaimResult: Decodable, Sendable {
 private struct CommitResult: Decodable, Sendable {
     let type: String
     let result: LocalAgentToolCommitResult
+}
+
+private struct RenewResult: Decodable, Sendable {
+    let type: String
+    let renewed: Bool
 }
 
 private struct PendingApprovalsResult: Decodable, Sendable {

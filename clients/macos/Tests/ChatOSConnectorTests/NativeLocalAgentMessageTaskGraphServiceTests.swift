@@ -20,6 +20,11 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(graph.nodes.map(\.depth), [0, 1])
         XCTAssertEqual(graph.edges.first?.sourceID, "task-1")
         XCTAssertEqual(graph.edges.first?.targetID, "task-2")
+        let recordedCommands = try await host.recordedCommands()
+        let listCommand = try XCTUnwrap(recordedCommands.first)
+        XCTAssertEqual(listCommand["type"], .string("list_task_graphs"))
+        XCTAssertEqual(listCommand["source_entity_type"], .string("conversation_turn"))
+        XCTAssertEqual(listCommand["source_entity_id"], .string("turn-1"))
 
         let task = try await service.fetchTask(
             messageID: "message-1",
@@ -138,6 +143,16 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         let value = try JSONDecoder().decode(LocalAgentJSONValue.self, from: data)
         guard case let .object(object) = value else { throw CocoaError(.fileReadCorruptFile) }
         return object
+    }
+
+    func recordedCommands() throws -> [[String: LocalAgentJSONValue]] {
+        try commands.map { data in
+            let value = try JSONDecoder().decode(LocalAgentJSONValue.self, from: data)
+            guard case let .object(object) = value else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            return object
+        }
     }
 
     private func graph() -> [String: Any] {

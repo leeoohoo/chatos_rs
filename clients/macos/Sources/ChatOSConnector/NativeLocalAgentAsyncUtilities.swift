@@ -1,11 +1,19 @@
 import Foundation
 
-enum NativeLocalAgentEventPollingPolicy {
-    static let activeDelay = Duration.milliseconds(250)
-    static let maximumIdleDelay = Duration.seconds(2)
+enum NativeLocalAgentEventWaitPolicy {
+    /// Host protocol maximum. The app's production request timeout is 75s,
+    /// leaving 15s for framing and scheduling around an empty long poll.
+    static let timeoutMilliseconds: UInt64 = 60_000
+}
 
-    static func nextIdleDelay(after delay: Duration) -> Duration {
-        min(delay * 2, maximumIdleDelay)
+enum NativeRequiredOptionalParallelLoader {
+    static func load<Required: Sendable, OptionalValue: Sendable>(
+        required: @escaping @Sendable () async throws -> Required,
+        optional: @escaping @Sendable () async throws -> OptionalValue
+    ) async throws -> (required: Required, optional: OptionalValue?) {
+        async let requiredValue = required()
+        async let optionalValue = try? await optional()
+        return try await (requiredValue, optionalValue)
     }
 }
 

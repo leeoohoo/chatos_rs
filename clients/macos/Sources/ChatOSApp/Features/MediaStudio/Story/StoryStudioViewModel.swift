@@ -74,6 +74,8 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var selectedSegmentID: String?
     @Published var selectedSegments: Set<String> = []
     @Published var isLoading = false
+    @Published var isLoadingMoreProjects = false
+    @Published var hasMoreProjects = false
     @Published var isBusy = false
     @Published var operation = ""
     @Published var errorMessage: String?
@@ -84,7 +86,11 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var pauseRequested = false
     @Published var agentRuns: [StoryAgentRun] = []
     @Published var isLoadingAgentRuns = false
+    @Published var isLoadingMoreAgentRuns = false
+    @Published var hasMoreAgentRuns = false
     @Published var mediaBatches: [StoryMediaBatch] = []
+    @Published var isLoadingMoreMediaBatches = false
+    @Published var hasMoreMediaBatches = false
     @Published var optimizationSuggestion: StoryPlanningTools.OptimizationSuggestion?
     @Published var optimizationTarget: StoryPlanningTools.OptimizationTarget?
     @Published var streamingModelText = ""
@@ -106,6 +112,11 @@ final class StoryStudioViewModel: ObservableObject {
     var task: Task<Void, Never>?
     var loadTask: Task<Void, Never>?
     var historyTask: Task<Void, Never>?
+    var agentRunPageTask: Task<Void, Never>?
+    var mediaBatchPageTask: Task<Void, Never>?
+    var projectCursor: StoryProjectStore.PageCursor?
+    var agentRunCursor: StoryProjectStore.PageCursor?
+    var mediaBatchCursor: StoryProjectStore.PageCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
     var frameGenerationTasks: [FrameGenerationKey: Task<Void, Never>] = [:]
     var videoGenerationTasks: [VideoGenerationKey: Task<Void, Never>] = [:]
@@ -311,12 +322,40 @@ final class StoryStudioViewModel: ObservableObject {
                 let snapshot = try await store.load(owner: userID)
                 guard session == token else { return }
                 projects = snapshot.projects
+                projectCursor = snapshot.nextCursor
+                hasMoreProjects = snapshot.nextCursor != nil
                 if snapshot.unreadableCount > 0 { errorMessage = "有 \(snapshot.unreadableCount) 个剧情无法读取，原文件已保留。" }
             } catch {
                 guard session == token else { return }
                 errorMessage = error.localizedDescription
             }
             isLoading = false
+        }
+    }
+
+    func loadMoreProjects() {
+        guard let owner, let cursor = projectCursor,
+              !isLoading, !isLoadingMoreProjects else { return }
+        let token = session
+        isLoadingMoreProjects = true
+        loadTask = Task {
+            defer { if session == token { isLoadingMoreProjects = false } }
+            do {
+                let snapshot = try await store.load(owner: owner, after: cursor)
+                guard session == token, !Task.isCancelled else { return }
+                let existing = Set(projects.map(\.id))
+                projects.append(contentsOf: snapshot.projects.filter { !existing.contains($0.id) })
+                projects.sort { $0.updatedAt > $1.updatedAt }
+                projectCursor = snapshot.nextCursor
+                hasMoreProjects = snapshot.nextCursor != nil
+                if snapshot.unreadableCount > 0 {
+                    errorMessage = "有 \(snapshot.unreadableCount) 个更早剧情无法读取，原文件已保留。"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if session == token { errorMessage = error.localizedDescription }
+            }
         }
     }
 
@@ -332,7 +371,13 @@ final class StoryStudioViewModel: ObservableObject {
         videoGenerationTasks = [:]; activeVideoGenerations = []; videoGenerationProgress = [:]
         for extractionTask in videoFrameExtractionTasks.values { extractionTask.cancel() }
         videoFrameExtractionTasks = [:]; activeVideoFrameExtractions = []
-        historyTask?.cancel(); historyTask = nil; agentRuns = []; mediaBatches = []; isLoadingAgentRuns = false
+        historyTask?.cancel(); historyTask = nil
+        agentRunPageTask?.cancel(); agentRunPageTask = nil
+        mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
+        agentRuns = []; mediaBatches = []; isLoadingAgentRuns = false
+        isLoadingMoreAgentRuns = false; hasMoreAgentRuns = false; agentRunCursor = nil
+        isLoadingMoreMediaBatches = false; hasMoreMediaBatches = false; mediaBatchCursor = nil
+        isLoadingMoreProjects = false; hasMoreProjects = false; projectCursor = nil
         projects = []; selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
         sourceDrafts = [:]; optimizationSuggestion = nil; optimizationTarget = nil
         isBusy = false; isLoading = false; operation = ""; errorMessage = nil; progress = nil; activeSegmentID = nil; activeProjectID = nil; activeAgentRunID = nil; pauseRequested = false
@@ -341,11 +386,26 @@ final class StoryStudioViewModel: ObservableObject {
 
     func open(_ id: UUID) {
         guard !isBusy || activeProjectID == id else { return }
+        agentRunPageTask?.cancel(); agentRunPageTask = nil
+        mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
+        isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
         selectedProjectID = id; selectedSegmentID = activeSegmentID ?? project?.segments.first?.id; selectedSegments = []
         errorMessage = nil
+        agentRuns = []; mediaBatches = []
+        agentRunCursor = nil; mediaBatchCursor = nil
+        hasMoreAgentRuns = false; hasMoreMediaBatches = false
         loadAgentHistory(id)
     }
-    func backToList() { selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = [] }
+    func backToList() {
+        historyTask?.cancel(); historyTask = nil
+        agentRunPageTask?.cancel(); agentRunPageTask = nil
+        mediaBatchPageTask?.cancel(); mediaBatchPageTask = nil
+        isLoadingAgentRuns = false; isLoadingMoreAgentRuns = false; isLoadingMoreMediaBatches = false
+        selectedProjectID = nil; selectedSegmentID = nil; selectedSegments = []
+        agentRunCursor = nil; mediaBatchCursor = nil
+        hasMoreAgentRuns = false; hasMoreMediaBatches = false
+        if !isBusy { agentRuns = []; mediaBatches = [] }
+    }
     func dismissError() { errorMessage = nil }
     func requestPause() { pauseRequested = true }
 

@@ -37,7 +37,8 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
         let send: AgentResponsesModelClient.Transport = { request in
             guard let url = request.url else { throw ChatOSAPIError.invalidEndpoint }
             let response = try await transport.send(.init(url: url, method: "POST", headers: request.allHTTPHeaderFields ?? [:],
-                body: request.httpBody, timeoutInterval: request.timeoutInterval))
+                body: request.httpBody, timeoutInterval: request.timeoutInterval,
+                maximumResponseBytes: 2 * 1_024 * 1_024))
             return (response.body, response.statusCode)
         }
         let stream: AgentResponsesModelClient.StreamTransport = { request in
@@ -69,7 +70,8 @@ public struct ChatOSStoryPlanningService: StoryPlanningServicing, AgentServicePr
             guard let requestURL = urlRequest.url else { throw ChatOSAPIError.invalidEndpoint }
             let response = try await transport.send(.init(
                 url: requestURL, method: "POST", headers: urlRequest.allHTTPHeaderFields ?? [:],
-                body: urlRequest.httpBody, timeoutInterval: urlRequest.timeoutInterval
+                body: urlRequest.httpBody, timeoutInterval: urlRequest.timeoutInterval,
+                maximumResponseBytes: 2 * 1_024 * 1_024
             ))
             return (response.body, response.statusCode)
         }

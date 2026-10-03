@@ -49,4 +49,188 @@ struct NativeConnectorReconnectPolicyTests {
             now: now
         ))
     }
+
+    @Test
+    func gatewayBootstrapRejectsCancelledReplacedAndDisconnectedWork() {
+        #expect(NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: true,
+            gatewayConnected: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: 3,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: true,
+            gatewayConnected: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: true,
+            socketMatches: true,
+            gatewayConnected: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: false,
+            gatewayConnected: true
+        ))
+        #expect(!NativeLocalConnectorService.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false,
+            socketMatches: true,
+            gatewayConnected: false
+        ))
+    }
+
+    @Test
+    func managedRuntimeRefreshRejectsCancellationAndInvalidatedGeneration() {
+        #expect(NativeLocalConnectorService.managedRuntimeConfigRefreshIsCurrent(
+            expectedGeneration: 7,
+            currentGeneration: 7,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.managedRuntimeConfigRefreshIsCurrent(
+            expectedGeneration: 6,
+            currentGeneration: 7,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.managedRuntimeConfigRefreshIsCurrent(
+            expectedGeneration: 7,
+            currentGeneration: 7,
+            isCancelled: true
+        ))
+    }
+
+    @Test
+    func pluginSourceCacheRequiresMatchingGenerationAndUnexpiredSnapshot() {
+        let now = Date(timeIntervalSince1970: 20_000)
+        #expect(NativeLocalConnectorService.pluginSourceCacheIsUsable(
+            cacheGeneration: 9,
+            currentGeneration: 9,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativeLocalConnectorService.pluginSourceCacheIsUsable(
+            cacheGeneration: 8,
+            currentGeneration: 9,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativeLocalConnectorService.pluginSourceCacheIsUsable(
+            cacheGeneration: 9,
+            currentGeneration: 9,
+            expiresAt: now,
+            now: now
+        ))
+    }
+
+    @Test
+    func pluginSourceRefreshRejectsCancellationAndInvalidatedGeneration() {
+        #expect(NativeLocalConnectorService.pluginSourceRefreshIsCurrent(
+            expectedGeneration: 5,
+            currentGeneration: 5,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.pluginSourceRefreshIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 5,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.pluginSourceRefreshIsCurrent(
+            expectedGeneration: 5,
+            currentGeneration: 5,
+            isCancelled: true
+        ))
+    }
+
+    @Test
+    func modelCatalogCacheRequiresMatchingGenerationAndUnexpiredSnapshot() {
+        let now = Date(timeIntervalSince1970: 30_000)
+        #expect(NativeLocalConnectorService.modelCatalogCacheIsUsable(
+            cacheGeneration: 12,
+            currentGeneration: 12,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativeLocalConnectorService.modelCatalogCacheIsUsable(
+            cacheGeneration: 11,
+            currentGeneration: 12,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativeLocalConnectorService.modelCatalogCacheIsUsable(
+            cacheGeneration: 12,
+            currentGeneration: 12,
+            expiresAt: now,
+            now: now
+        ))
+    }
+
+    @Test
+    func modelCatalogRefreshRejectsCancellationAndInvalidatedGeneration() {
+        #expect(NativeLocalConnectorService.modelCatalogRefreshIsCurrent(
+            expectedGeneration: 8,
+            currentGeneration: 8,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.modelCatalogRefreshIsCurrent(
+            expectedGeneration: 7,
+            currentGeneration: 8,
+            isCancelled: false
+        ))
+        #expect(!NativeLocalConnectorService.modelCatalogRefreshIsCurrent(
+            expectedGeneration: 8,
+            currentGeneration: 8,
+            isCancelled: true
+        ))
+    }
+
+    @Test
+    func pluginPermissionSnapshotRequiresMatchingGenerationAndUnexpiredValue() {
+        let now = Date(timeIntervalSince1970: 40_000)
+        #expect(NativePluginPermissionSnapshotCache.snapshotIsUsable(
+            snapshotGeneration: 3,
+            currentGeneration: 3,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativePluginPermissionSnapshotCache.snapshotIsUsable(
+            snapshotGeneration: 2,
+            currentGeneration: 3,
+            expiresAt: now.addingTimeInterval(1),
+            now: now
+        ))
+        #expect(!NativePluginPermissionSnapshotCache.snapshotIsUsable(
+            snapshotGeneration: 3,
+            currentGeneration: 3,
+            expiresAt: now,
+            now: now
+        ))
+    }
+
+    @Test
+    func pluginPermissionRefreshRejectsCancellationAndInvalidatedGeneration() {
+        #expect(NativePluginPermissionSnapshotCache.refreshIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: false
+        ))
+        #expect(!NativePluginPermissionSnapshotCache.refreshIsCurrent(
+            expectedGeneration: 3,
+            currentGeneration: 4,
+            isCancelled: false
+        ))
+        #expect(!NativePluginPermissionSnapshotCache.refreshIsCurrent(
+            expectedGeneration: 4,
+            currentGeneration: 4,
+            isCancelled: true
+        ))
+    }
 }

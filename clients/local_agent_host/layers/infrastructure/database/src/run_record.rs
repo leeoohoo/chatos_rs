@@ -3,7 +3,7 @@
 
 use super::{ClientStorageError, SqliteResultExt};
 use chatos_local_agent_protocol::{
-    LocalAgentEventRecord, LocalAgentRunRecord, LocalAgentRunStatus,
+    LocalAgentEventRecord, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentRunSummary,
 };
 use sqlx::{sqlite::SqliteRow, Row};
 use std::str::FromStr;
@@ -40,6 +40,29 @@ pub(super) fn decode_run(row: SqliteRow) -> Result<LocalAgentRunRecord, ClientSt
         continuation_input: continuation_input
             .map(|value| serde_json::from_str(&value))
             .transpose()?,
+        terminal_outcome: terminal_outcome
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
+    })
+}
+
+pub(super) fn decode_run_summary(
+    row: SqliteRow,
+) -> Result<LocalAgentRunSummary, ClientStorageError> {
+    let status: String = row.try_get("status").db()?;
+    let input: String = row.try_get("input_json").db()?;
+    let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json").db()?;
+    Ok(LocalAgentRunSummary {
+        run_id: row.try_get("run_id").db()?,
+        owner_user_id: row.try_get("owner_user_id").db()?,
+        owner_entity_type: row.try_get("owner_entity_type").db()?,
+        owner_entity_id: row.try_get("owner_entity_id").db()?,
+        profile_key: row.try_get("profile_key").db()?,
+        input: serde_json::from_str(&input)?,
+        status: LocalAgentRunStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
+        version: integer_to_u64(row.try_get("version").db()?, "version")?,
         terminal_outcome: terminal_outcome
             .map(|value| serde_json::from_str(&value))
             .transpose()?,

@@ -7,7 +7,7 @@ enum MessageTaskPollingPolicy {
         hasActiveRealtimeStream: Bool
     ) -> Duration {
         if isEmptyGraphRetry { return .milliseconds(600) }
-        return hasActiveRealtimeStream ? .seconds(15) : .seconds(2)
+        return hasActiveRealtimeStream ? .seconds(60) : .seconds(2)
     }
 }
 
@@ -54,6 +54,10 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     let initialRunID: String?
     var pollingTask: Task<Void, Never>?
     var realtimeTask: Task<Void, Never>?
+    var inspectorLoadTask: Task<Void, Never>?
+    var modelOutputLoadTask: Task<Void, Never>?
+    var runLoadTask: Task<Void, Never>?
+    var moreRunEventsTask: Task<Void, Never>?
     var hasActiveRealtimeStream = false
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
@@ -79,6 +83,10 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     deinit {
         pollingTask?.cancel()
         realtimeTask?.cancel()
+        inspectorLoadTask?.cancel()
+        modelOutputLoadTask?.cancel()
+        runLoadTask?.cancel()
+        moreRunEventsTask?.cancel()
     }
 
     var displayGraph: MessageTaskGraphSnapshot? {
@@ -109,10 +117,26 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     func select(_ task: MessageTask, section: InspectorSection? = nil) {
+        cancelInspectorRequests()
         selectedTask = task
         if let section { inspectorSection = section }
         loadInspector(for: task)
         ensureInspectorSectionLoaded()
+    }
+
+    private func cancelInspectorRequests() {
+        inspectorLoadTask?.cancel()
+        inspectorLoadTask = nil
+        modelOutputLoadTask?.cancel()
+        modelOutputLoadTask = nil
+        runLoadTask?.cancel()
+        runLoadTask = nil
+        moreRunEventsTask?.cancel()
+        moreRunEventsTask = nil
+        isLoadingInspector = false
+        isLoadingModelOutput = false
+        isLoadingRun = false
+        isLoadingMoreRunEvents = false
     }
 
     func ensureInspectorSectionLoaded() {

@@ -501,9 +501,15 @@ extension MediaStudioView {
         VStack(alignment: .leading, spacing: 5) {
             ZStack(alignment: .topTrailing) {
                 Group {
-                    if let data = Data(base64Encoded: input.base64Data), let image = NSImage(data: data) {
-                        Image(nsImage: image).resizable().scaledToFill()
-                    } else { Color.primary.opacity(0.04) }
+                    AppAsyncBase64Image(
+                        base64: input.base64Data,
+                        identity: "image-input|\(index)|\(input.name)",
+                        maximumDisplayPixelSize: 256
+                    ) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.primary.opacity(0.04)
+                    }
                 }
                 .frame(height: 68).clipped().clipShape(RoundedRectangle(cornerRadius: 7))
                 Button { viewModel.removeInputImage(at: index) } label: {

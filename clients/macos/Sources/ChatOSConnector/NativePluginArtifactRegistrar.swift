@@ -61,7 +61,10 @@ enum NativePluginArtifactRegistrar {
                 createdDirectories.append(parent)
                 let destination = parent.appendingPathComponent(candidate.displayName, isDirectory: false)
                 try candidate.data.write(to: destination, options: .withoutOverwriting)
-                let copied = try Data(contentsOf: destination, options: .mappedIfSafe)
+                let copied = try NativeBoundedFileReader.read(
+                    destination,
+                    maximumBytes: max(candidate.sizeBytes, 1)
+                )
                 guard copied.count == candidate.sizeBytes,
                       NativePluginHash.sha256(copied) == candidate.sha256 else {
                     throw NativePluginRuntimeError.invalidMCPResponse("Plugin Artifact 持久化校验失败")
@@ -163,7 +166,10 @@ enum NativePluginArtifactRegistrar {
         guard values.isRegularFile == true, values.fileSize == sizeBytes else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 不是有效文件或大小不匹配")
         }
-        let data = try Data(contentsOf: canonicalSource, options: .mappedIfSafe)
+        let data = try NativeBoundedFileReader.read(
+            canonicalSource,
+            maximumBytes: max(sizeBytes, 1)
+        )
         guard data.count == sizeBytes, NativePluginHash.sha256(data) == sha256 else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact SHA-256 不匹配")
         }

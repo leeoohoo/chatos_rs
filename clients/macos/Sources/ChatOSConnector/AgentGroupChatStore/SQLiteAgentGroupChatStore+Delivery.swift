@@ -5,6 +5,33 @@ import Foundation
 import SQLite3
 
 extension SQLiteAgentGroupChatStore {
+    func hasOutstandingDeliveries(ownerUserID: String) throws -> Bool {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try AgentDeliveryRepository.hasOutstandingDeliveries(
+            database,
+            ownerUserID: ownerUserID,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    func hasPendingDeliveries(
+        ownerUserID: String,
+        roomID: String? = nil,
+        lane: LocalAgentRunLane? = nil
+    ) throws -> Bool {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        if let roomID {
+            try AgentGroupChatValidation.identifier(roomID, field: "roomID")
+        }
+        return try AgentDeliveryRepository.hasPendingDeliveries(
+            database,
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            lane: lane,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
     public func message(
         ownerUserID: String,
         roomID: String,
@@ -32,13 +59,13 @@ extension SQLiteAgentGroupChatStore {
         for id in ids {
             try AgentGroupChatValidation.identifier(id, field: "messageID")
         }
-        let messages = try AgentMessageRepository.findMany(
+        let messages = try hydrateMessageRelations(AgentMessageRepository.findMany(
             database,
             ownerUserID: ownerUserID,
             messageIDs: ids,
             preparedStatement: recordPreparedStatement,
-            row: readMessage
-        )
+            row: readMessageBase
+        ), ownerUserID: ownerUserID)
         return Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
     }
 
@@ -325,10 +352,14 @@ extension SQLiteAgentGroupChatStore {
 
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            for deliveryID in deliveryIDs {
-                guard var run = try readRun(ownerUserID: ownerUserID, deliveryID: deliveryID) else {
-                    continue
-                }
+            let runs = try AgentRunRepository.listForOutstandingDeliveries(
+                database,
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                preparedStatement: recordPreparedStatement
+            )
+            var failedRunUpdates: [AgentRunRepository.FailedRunUpdate] = []
+            for var run in runs {
                 run.checkpoint.status = .failed
                 run.checkpoint.stopReason = reason
                 run.events.append(.init(
@@ -339,20 +370,20 @@ extension SQLiteAgentGroupChatStore {
                 run.updatedAtUnixMs = max(nowUnixMs, run.updatedAtUnixMs)
                 try run.validate()
                 let json = String(decoding: try encoder.encode(run), as: UTF8.self)
-                try execute(
-                    """
-                    UPDATE local_agent_group_chat_runs
-                    SET status = 'failed', run_json = ?, updated_at_unix_ms = ?
-                    WHERE owner_user_id = ? AND id = ?
-                    """,
-                    [
-                        .text(json), .integer(run.updatedAtUnixMs), .text(ownerUserID),
-                        .text(run.id.uuidString.lowercased()),
-                    ]
-                )
-                guard sqlite3_changes(database) == 1 else {
-                    throw AgentGroupChatError.conflict
-                }
+                failedRunUpdates.append(.init(
+                    id: run.id,
+                    json: json,
+                    updatedAtUnixMs: run.updatedAtUnixMs
+                ))
+            }
+            let updatedRunCount = try AgentRunRepository.markFailed(
+                database,
+                ownerUserID: ownerUserID,
+                updates: failedRunUpdates,
+                preparedStatement: recordPreparedStatement
+            )
+            guard updatedRunCount == failedRunUpdates.count else {
+                throw AgentGroupChatError.conflict
             }
             try execute(
                 """

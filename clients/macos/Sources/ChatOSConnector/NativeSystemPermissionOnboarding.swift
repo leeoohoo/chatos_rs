@@ -1,6 +1,14 @@
 @preconcurrency import AppKit
 import Foundation
 
+enum NativeSystemPermissionRefreshPolicy {
+    static let interval: TimeInterval = 1
+
+    static func shouldContinue(granted: Bool) -> Bool {
+        !granted
+    }
+}
+
 @MainActor
 enum NativeSystemPermissionOnboarding {
     private static var controller: NativeSystemPermissionOnboardingWindowController?
@@ -52,8 +60,13 @@ private final class NativeSystemPermissionOnboardingWindowController:
 
     func present(permissionID: String) {
         self.permissionID = permissionID
-        refreshUI()
-        startRefreshTimer()
+        targetView.update(targetURL: Self.authorizationTargetURL)
+        let granted = refreshUI()
+        if NativeSystemPermissionRefreshPolicy.shouldContinue(granted: granted) {
+            startRefreshTimer()
+        } else {
+            stopRefreshTimer()
+        }
         showWindow(nil)
         window?.center()
         window?.makeKeyAndOrderFront(nil)
@@ -61,8 +74,7 @@ private final class NativeSystemPermissionOnboardingWindowController:
     }
 
     func windowWillClose(_ notification: Notification) {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
+        stopRefreshTimer()
     }
 
     private func configureContent(in window: NSWindow) {
@@ -157,24 +169,37 @@ private final class NativeSystemPermissionOnboardingWindowController:
     }
 
     private func startRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        stopRefreshTimer()
+        refreshTimer = Timer.scheduledTimer(
+            withTimeInterval: NativeSystemPermissionRefreshPolicy.interval,
+            repeats: true
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.refreshUI()
+                guard let self else { return }
+                let granted = self.refreshUI()
+                if !NativeSystemPermissionRefreshPolicy.shouldContinue(granted: granted) {
+                    self.stopRefreshTimer()
+                }
             }
         }
     }
 
-    private func refreshUI() {
+    private func stopRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+
+    @discardableResult
+    private func refreshUI() -> Bool {
         let granted = NativeSystemPermissions.isGranted(permissionID)
         titleLabel.stringValue = "允许 ChatOS 使用\(permissionName(permissionID))"
         purposeLabel.stringValue = NativeSystemPermissions.permissionPurpose(permissionID)
         settingsLabel.stringValue = NativeSystemPermissions.settingsTitle(permissionID)
-        targetView.update(targetURL: Self.authorizationTargetURL)
         statusLabel.stringValue = granted
             ? "✓ 已检测到权限，可以返回 ChatOS 继续使用。"
             : "把下方 ChatOS App 拖入系统设置应用列表并开启；完成后这里会自动更新。"
         statusLabel.textColor = granted ? .systemGreen : .systemOrange
+        return granted
     }
 
     @objc

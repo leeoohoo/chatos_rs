@@ -641,6 +641,8 @@
 "本地 Agent 文档" = "Local Agent Documents";
 "显示当前账户由 Local Agent Host 保存的 Markdown 文档。" = "Shows Markdown documents saved by Local Agent Host for the current account.";
 "正在读取本地文档…" = "Loading Local Documents…";
+"正在读取运行历史…" = "Loading Run History…";
+"正在读取运行详情…" = "Loading Run Details…";
 "还没有本地 Agent 文档" = "No Local Agent Documents Yet";
 "Agent 创建并由 Local Agent Host 保存的 Markdown 会出现在这里。" = "Markdown created by Agents and saved by Local Agent Host appears here.";
 "是" = "Yes";

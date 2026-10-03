@@ -1,6 +1,7 @@
 import AppKit
 import ChatOSCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ProjectFileEditorView: View {
     @EnvironmentObject private var model: AppModel
@@ -244,8 +245,8 @@ struct ProjectFileEditorView: View {
         pasteboard.clearContents()
         if file.supportsImagePreview,
            let data = file.imagePreviewData,
-           let image = NSImage(data: data) {
-            pasteboard.writeObjects([image])
+           let type = file.imagePasteboardType {
+            pasteboard.setData(data, forType: type)
         } else {
             pasteboard.setString(file.content, forType: .string)
         }
@@ -255,38 +256,76 @@ struct ProjectFileEditorView: View {
 private struct ProjectImagePreview: View {
     @EnvironmentObject private var model: AppModel
     let file: ProjectFileContent
-
-    private var image: NSImage? {
-        file.imagePreviewData.flatMap(NSImage.init(data:))
-    }
+    @State private var image: NSImage?
+    @State private var loadFailed = false
 
     var body: some View {
-        if let image {
-            GeometryReader { geometry in
-                ZStack {
-                    CheckerboardBackground()
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(
-                            maxWidth: max(geometry.size.width - 48, 1),
-                            maxHeight: max(geometry.size.height - 48, 1)
-                        )
-                        .padding(24)
+        Group {
+            if let image {
+                GeometryReader { geometry in
+                    ZStack {
+                        CheckerboardBackground()
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(
+                                maxWidth: max(geometry.size.width - 48, 1),
+                                maxHeight: max(geometry.size.height - 48, 1)
+                            )
+                            .padding(24)
+                    }
                 }
+                .workspaceFill()
+            } else if loadFailed {
+                ContentUnavailableView(
+                    model.localized("无法预览图片", english: "Unable to preview image"),
+                    systemImage: "photo.badge.exclamationmark",
+                    description: Text(model.localized(
+                        "图片数据无效，或系统暂不支持此图片格式。",
+                        english: "The image data is invalid or this format is not currently supported."
+                    ))
+                )
+                    .workspaceFill()
+            } else {
+                ProgressView().workspaceFill()
             }
-            .workspaceFill()
-        } else {
-            ContentUnavailableView(
-                model.localized("无法预览图片", english: "Unable to preview image"),
-                systemImage: "photo.badge.exclamationmark",
-                description: Text(model.localized(
-                    "图片数据无效，或系统暂不支持此图片格式。",
-                    english: "The image data is invalid or this format is not currently supported."
-                ))
-            )
-            .workspaceFill()
+        }
+        .task(id: "\(file.path)|\(file.size)|\(file.modifiedAt?.timeIntervalSince1970 ?? 0)") {
+            image = nil
+            loadFailed = false
+            let content = file.content
+            let isBinary = file.isBinary
+            let decoded: AppDecodedThumbnail?
+            do {
+                decoded = try await AppCancellableDetachedWork.run {
+                let data: Data
+                if isBinary {
+                    guard content.count <= 28 * 1_024 * 1_024,
+                          let value = Data(
+                            base64Encoded: content,
+                            options: .ignoreUnknownCharacters
+                          ) else { return nil }
+                    data = value
+                } else {
+                    guard content.utf8.count <= 20 * 1_024 * 1_024 else { return nil }
+                    data = Data(content.utf8)
+                }
+                return AppImageThumbnailLoader.decode(
+                    data,
+                    maximumSourcePixelCount: 64_000_000,
+                    maximumDisplayPixelSize: 4_096
+                )
+                }
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            guard let decoded else {
+                loadFailed = true
+                return
+            }
+            image = NSImage(cgImage: decoded.image, size: .zero)
         }
     }
 }
@@ -328,8 +367,7 @@ private extension ProjectFileContent {
         ) {
             return true
         }
-        guard isBinary, let data = imagePreviewData else { return false }
-        return NSImage(data: data) != nil
+        return false
     }
 
     var imagePreviewData: Data? {
@@ -337,5 +375,12 @@ private extension ProjectFileContent {
             return Data(base64Encoded: content, options: .ignoreUnknownCharacters)
         }
         return Data(content.utf8)
+    }
+
+    var imagePasteboardType: NSPasteboard.PasteboardType? {
+        let type = contentType.flatMap { UTType(mimeType: $0) }
+            ?? UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)
+        guard let type, type.conforms(to: .image) else { return nil }
+        return NSPasteboard.PasteboardType(type.identifier)
     }
 }

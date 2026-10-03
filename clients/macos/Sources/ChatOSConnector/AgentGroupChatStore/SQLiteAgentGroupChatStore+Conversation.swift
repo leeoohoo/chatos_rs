@@ -5,6 +5,108 @@ import Foundation
 import SQLite3
 
 extension SQLiteAgentGroupChatStore {
+    func ensureHumanAgentDirectRooms(
+        ownerUserID: String,
+        agentIDs: [String],
+        nowUnixMs: Int64
+    ) throws -> [String: ProjectAgentRoom] {
+        let ids = Array(Set(agentIDs)).sorted()
+        guard !ids.isEmpty else { return [:] }
+        let directKeysByAgentID = Dictionary(uniqueKeysWithValues: ids.map {
+            ($0, "human:\(ownerUserID)|agent:\($0)")
+        })
+        let agentIDsByDirectKey = Dictionary(
+            uniqueKeysWithValues: directKeysByAgentID.map { ($0.value, $0.key) }
+        )
+        func roomsByAgentID(_ rooms: [ProjectAgentRoom]) -> [String: ProjectAgentRoom] {
+            Dictionary(uniqueKeysWithValues: rooms.compactMap { room in
+                guard let directKey = room.directKey,
+                      let agentID = agentIDsByDirectKey[directKey] else {
+                    return nil
+                }
+                return (agentID, room)
+            })
+        }
+
+        let existing = try AgentConversationRepository.directRooms(
+            database,
+            ownerUserID: ownerUserID,
+            directKeys: Array(directKeysByAgentID.values),
+            preparedStatement: recordPreparedStatement
+        )
+        let existingByAgentID = roomsByAgentID(existing)
+        guard existingByAgentID.count != ids.count else { return existingByAgentID }
+
+        return try transaction {
+            // Recheck under the write transaction in case another connection created one of the
+            // unique direct rooms after the read-only fast path.
+            let current = try AgentConversationRepository.directRooms(
+                database,
+                ownerUserID: ownerUserID,
+                directKeys: Array(directKeysByAgentID.values),
+                preparedStatement: recordPreparedStatement
+            )
+            var result = roomsByAgentID(current)
+            let missingIDs = ids.filter { result[$0] == nil }
+            let profiles = try AgentProfileRepository.findMany(
+                database,
+                ownerUserID: ownerUserID,
+                agentIDs: missingIDs,
+                preparedStatement: recordPreparedStatement
+            )
+            let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+            guard missingIDs.allSatisfy({ profilesByID[$0]?.status == .active }) else {
+                throw AgentGroupChatError.notFound
+            }
+
+            var rooms: [ProjectAgentRoom] = []
+            var members: [ProjectAgentRoomMember] = []
+            for agentID in missingIDs {
+                guard let profile = profilesByID[agentID] else {
+                    throw AgentGroupChatError.notFound
+                }
+                let roomID = UUID().uuidString.lowercased()
+                let room = ProjectAgentRoom(
+                    id: roomID,
+                    ownerUserID: ownerUserID,
+                    projectID: "direct:\(roomID)",
+                    draft: .init(name: profile.draft.name),
+                    defaultAgentID: agentID,
+                    conversationKind: .humanAgentDirect,
+                    directKey: directKeysByAgentID[agentID],
+                    createdAtUnixMs: nowUnixMs,
+                    updatedAtUnixMs: nowUnixMs
+                )
+                let member = ProjectAgentRoomMember(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID,
+                    draft: .init(
+                        role: profile.draft.name,
+                        responsibility: profile.draft.description
+                    ),
+                    joinedAtUnixMs: nowUnixMs
+                )
+                try room.validate()
+                try member.validate()
+                rooms.append(room)
+                members.append(member)
+                result[agentID] = room
+            }
+            try AgentConversationRepository.insertRooms(
+                database,
+                rooms: rooms,
+                preparedStatement: recordPreparedStatement
+            )
+            try AgentConversationRepository.insertMembers(
+                database,
+                members: members,
+                preparedStatement: recordPreparedStatement
+            )
+            return result
+        }
+    }
+
     public func createRoom(
         ownerUserID: String,
         projectID: String,
@@ -104,7 +206,12 @@ extension SQLiteAgentGroupChatStore {
         try AgentGroupChatValidation.identifier(agentID, field: "agentID")
         let directKey = "human:\(ownerUserID)|agent:\(agentID)"
         try AgentGroupChatValidation.identifier(directKey, field: "directKey")
+        if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
+            return existing
+        }
         return try transaction {
+            // Retain the transactional recheck for another SQLite connection that may have
+            // created the same unique direct room after the read-only fast path.
             if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
                 return existing
             }
@@ -151,7 +258,11 @@ extension SQLiteAgentGroupChatStore {
         let pair = [initiatingAgentID, targetAgentID].sorted()
         let directKey = "agent:\(pair[0])|agent:\(pair[1])"
         try AgentGroupChatValidation.identifier(directKey, field: "directKey")
+        if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
+            return existing
+        }
         return try transaction {
+            // See `openHumanAgentDirect`: creation is still protected by a transactional recheck.
             if let existing = try readDirectRoom(ownerUserID: ownerUserID, directKey: directKey) {
                 return existing
             }
@@ -308,6 +419,20 @@ extension SQLiteAgentGroupChatStore {
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
+    /// Loads every active membership for an account in one statement. Callers that already own
+    /// an active room snapshot can group this result locally instead of issuing two statements
+    /// (`room` validation plus members) for every room.
+    public func listActiveMembers(
+        ownerUserID: String
+    ) throws -> [ProjectAgentRoomMember] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        return try AgentConversationRepository.listActiveMembers(
+            database,
+            ownerUserID: ownerUserID,
             preparedStatement: recordPreparedStatement
         )
     }

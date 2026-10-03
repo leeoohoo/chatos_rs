@@ -5,18 +5,18 @@ import Foundation
 import SwiftUI
 
 struct TeamRunsView: View {
-    let runs: [LocalAgentGroupChatRun]
+    let runs: [LocalAgentRunHistorySummary]
     let profilesByID: [String: LocalAgentProfile]
-    let deliveriesByRunID: [UUID: ProjectAgentDelivery]
+    let isLoading: Bool
     let selectedAgentID: String?
     let onSelectAgent: (String?) -> Void
-    let onInspect: (LocalAgentGroupChatRun) -> Void
+    let onInspect: (UUID) -> Void
     @State private var page = 0
     @State private var pageSize = 20
 
-    private var visibleRuns: [LocalAgentGroupChatRun] {
+    private var visibleRuns: [LocalAgentRunHistorySummary] {
         guard let selectedAgentID else { return runs }
-        return runs.filter { $0.context.agentID == selectedAgentID }
+        return runs.filter { $0.agentID == selectedAgentID }
     }
 
     private var selectedAgentName: String? {
@@ -24,7 +24,7 @@ struct TeamRunsView: View {
         return profilesByID[selectedAgentID]?.draft.name ?? "Agent"
     }
 
-    private var pagedRuns: [LocalAgentGroupChatRun] {
+    private var pagedRuns: [LocalAgentRunHistorySummary] {
         visibleRuns.agentPage(index: page, size: pageSize)
     }
 
@@ -63,7 +63,11 @@ struct TeamRunsView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if visibleRuns.isEmpty {
+                    if isLoading, visibleRuns.isEmpty {
+                        ProgressView("正在读取运行历史…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 70)
+                    } else if visibleRuns.isEmpty {
                         ContentUnavailableView(
                             selectedAgentID == nil ? "还没有运行记录" : "这个 Agent 还没有运行记录",
                             systemImage: "waveform.path.ecg",
@@ -74,27 +78,25 @@ struct TeamRunsView: View {
                     ForEach(pagedRuns, id: \.id) { run in
                         VStack(alignment: .leading, spacing: 7) {
                             HStack {
-                                Text(profilesByID[run.context.agentID]?.draft.name ?? "Agent")
+                                Text(profilesByID[run.agentID]?.draft.name ?? "Agent")
                                     .appFont(.headline)
-                                laneBadge(run.context.lane)
+                                laneBadge(run.lane)
                                 Spacer()
-                                Text(run.checkpoint.status.displayName)
+                                Text(run.status.displayName)
                                     .appFont(.caption.monospacedDigit())
-                                    .foregroundStyle(statusColor(run.checkpoint.status))
+                                    .foregroundStyle(statusColor(run.status))
                                 Image(systemName: "chevron.right")
                                     .appFont(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
-                            if let delivery = deliveriesByRunID[run.id] {
-                                Text("\(delivery.triggerKind.displayName) · \(run.events.count) 条事件 · \(run.checkpoint.modelCalls) 次模型调用")
-                                    .appFont(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("\(run.triggerKind.displayName) · \(run.eventCount) 条事件 · \(run.modelCalls) 次模型调用")
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
                             HStack(spacing: 12) {
                                 Text(Self.timestamp(run.updatedAtUnixMs))
                                     .appFont(.caption2.monospacedDigit())
                                     .foregroundStyle(.secondary)
-                                if let threadID = run.checkpoint.memory?.scope.threadID {
+                                if let threadID = run.memoryThreadID {
                                     Text("Memory \(threadID)")
                                         .appFont(.caption2.monospaced())
                                         .foregroundStyle(.secondary)
@@ -102,14 +104,14 @@ struct TeamRunsView: View {
                                         .truncationMode(.middle)
                                 }
                             }
-                            if let reason = run.checkpoint.stopReason, !reason.isEmpty {
+                            if let reason = run.stopReason, !reason.isEmpty {
                                 Text(reason).appFont(.caption).foregroundStyle(.secondary)
                             }
                         }
                         .padding(14)
                         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
                         .contentShape(Rectangle())
-                        .onTapGesture { onInspect(run) }
+                        .onTapGesture { onInspect(run.id) }
                     }
                     if !visibleRuns.isEmpty {
                         AgentListPaginationBar(
@@ -126,18 +128,18 @@ struct TeamRunsView: View {
     }
 
     private func laneSummary(_ lane: LocalAgentRunLane) -> some View {
-        let run = visibleRuns.first { $0.context.lane == lane }
+        let run = visibleRuns.first { $0.lane == lane }
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 laneBadge(lane)
                 Spacer()
                 if let run {
                     Circle()
-                        .fill(statusColor(run.checkpoint.status))
+                        .fill(statusColor(run.status))
                         .frame(width: 7, height: 7)
-                    Text(run.checkpoint.status.displayName)
+                    Text(run.status.displayName)
                         .appFont(.caption.weight(.medium))
-                        .foregroundStyle(statusColor(run.checkpoint.status))
+                        .foregroundStyle(statusColor(run.status))
                 } else {
                     Text("暂无记录")
                         .appFont(.caption)
@@ -145,7 +147,7 @@ struct TeamRunsView: View {
                 }
             }
             if let run {
-                Text(deliveriesByRunID[run.id]?.triggerKind.displayName ?? "未知触发")
+                Text(run.triggerKind.displayName)
                     .appFont(.caption)
                 Text("更新于 \(Self.timestamp(run.updatedAtUnixMs))")
                     .appFont(.caption2.monospacedDigit())
@@ -161,7 +163,7 @@ struct TeamRunsView: View {
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
         .onTapGesture {
-            if let run { onInspect(run) }
+            if let run { onInspect(run.id) }
         }
     }
 

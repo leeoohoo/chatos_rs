@@ -1,5 +1,6 @@
 import ChatOSCore
 import CryptoKit
+import Darwin
 import Foundation
 
 struct NativeMCPCodeReadTools: Sendable {
@@ -214,8 +215,12 @@ struct NativeMCPCodeReadTools: Sendable {
     private func listDirectory(_ arguments: [String: NativeJSONValue]) throws -> NativeJSONValue {
         let path = try normalizedToolPath(arguments.string("path") ?? ".")
         let maximum = min(max(Int(arguments.number("max_entries") ?? 200), 1), 1_000)
-        let listed = try filesystem.list(path: path, includeFiles: true).objectValue()
-        let entries = try listed.arrayValue("entries").prefix(maximum).map { value -> NativeJSONValue in
+        let listed = try filesystem.list(
+            path: path,
+            includeFiles: true,
+            maximumEntries: maximum
+        ).objectValue()
+        let entries = try listed.arrayValue("entries").map { value -> NativeJSONValue in
             let entry = try value.objectValue()
             let isDirectory = entry.boolValue("is_dir") ?? false
             return .object([
@@ -226,7 +231,10 @@ struct NativeMCPCodeReadTools: Sendable {
                 "mtime_ms": entry["modified_at"] ?? .number(0),
             ])
         }
-        return .object(["entries": .array(entries)])
+        return .object([
+            "entries": .array(entries),
+            "truncated": .bool(listed.boolValue("truncated") ?? false),
+        ])
     }
 
     private func searchText(_ arguments: [String: NativeJSONValue]) throws -> NativeJSONValue {
@@ -236,8 +244,9 @@ struct NativeMCPCodeReadTools: Sendable {
         let start = try filesystem.resolveExistingURL(path)
 
         let results: [NativeJSONValue]
+        let truncated: Bool
         if let ripgrep = NativeBundledToolLocator.executable(named: "rg") {
-            results = try NativeRipgrepSearch.search(
+            let search = try NativeRipgrepSearch.search(
                 executable: ripgrep,
                 pattern: pattern,
                 start: start,
@@ -246,13 +255,17 @@ struct NativeMCPCodeReadTools: Sendable {
                 ignoredGlobs: Self.ignoredGlobs,
                 maximumFileBytes: Self.maximumReadBytes
             )
+            results = search.results
+            truncated = search.truncated
         } else {
             let fallback = try filesystem.searchContent(path: path, query: pattern, limit: maximum)
             results = try fallback.objectValue().arrayValue("matches")
+            truncated = results.count >= maximum
         }
         return .object([
             "count": .number(Double(results.count)),
             "results": .array(results),
+            "truncated": .bool(truncated),
         ])
     }
 
@@ -327,7 +340,15 @@ struct NativeMCPCodeReadTools: Sendable {
         guard values.isRegularFile == true else { throw NativeMCPCodeReadError.notFile }
         let size = values.fileSize ?? Self.maximumReadBytes + 1
         guard size <= Self.maximumReadBytes else { throw NativeMCPCodeReadError.fileTooLarge(size) }
-        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let data: Data
+        do {
+            data = try NativeBoundedFileReader.read(
+                url,
+                maximumBytes: Self.maximumReadBytes
+            )
+        } catch {
+            throw NativeMCPCodeReadError.fileTooLarge(max(size, Self.maximumReadBytes + 1))
+        }
         guard !data.prefix(8_000).contains(0), let content = String(data: data, encoding: .utf8) else {
             throw NativeMCPCodeReadError.binaryFile
         }
@@ -395,7 +416,7 @@ private enum NativeRipgrepSearch {
         maximumResults: Int,
         ignoredGlobs: [String],
         maximumFileBytes: Int
-    ) throws -> [NativeJSONValue] {
+    ) throws -> (results: [NativeJSONValue], truncated: Bool) {
         let relativePath = relative(start, to: projectRoot)
         let rg = Process()
         rg.executableURL = executable
@@ -403,6 +424,7 @@ private enum NativeRipgrepSearch {
         rg.arguments = [
             "--json", "--fixed-strings", "--hidden", "--no-messages",
             "--max-filesize", String(maximumFileBytes),
+            "--max-columns", "1000", "--max-columns-preview",
         ] + ignoredGlobs.flatMap { ["--glob", $0] } + ["--", pattern, relativePath]
 
         let limiter = Process()
@@ -418,12 +440,58 @@ private enum NativeRipgrepSearch {
         limiter.standardOutput = output
         limiter.standardError = FileHandle.nullDevice
 
-        try limiter.run()
-        try rg.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        limiter.waitUntilExit()
-        if rg.isRunning { rg.terminate() }
-        rg.waitUntilExit()
+        let capture = NativeBoundedProcessOutput(maximumBytes: 8 * 1_024 * 1_024)
+        NativeProcessPipeReader.install(
+            on: output.fileHandleForReading,
+            onData: capture.append
+        )
+        let limiterExit = NativeProcessExitSignal.install(on: limiter)
+        let rgExit = NativeProcessExitSignal.install(on: rg)
+        do {
+            try limiter.run()
+            try rg.run()
+        } catch {
+            if limiter.isRunning {
+                _ = Darwin.kill(limiter.processIdentifier, SIGKILL)
+                _ = limiterExit.wait(timeout: 2)
+            }
+            output.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
+        var limiterExitCode = limiterExit.wait(timeout: 60)
+        let timedOut = limiterExitCode == nil
+        if timedOut {
+            _ = Darwin.kill(rg.processIdentifier, SIGTERM)
+            _ = Darwin.kill(limiter.processIdentifier, SIGTERM)
+            limiterExitCode = limiterExit.wait(timeout: 0.75)
+        }
+        var rgExitCode = rgExit.wait(timeout: timedOut ? 0.75 : 0.25)
+        if limiterExitCode == nil || rgExitCode == nil {
+            if limiterExitCode == nil {
+                _ = Darwin.kill(limiter.processIdentifier, SIGKILL)
+            }
+            if rgExitCode == nil {
+                _ = Darwin.kill(rg.processIdentifier, SIGKILL)
+            }
+            if limiterExitCode == nil {
+                limiterExitCode = limiterExit.wait(timeout: 2)
+            }
+            if rgExitCode == nil {
+                rgExitCode = rgExit.wait(timeout: 2)
+            }
+        }
+        guard limiterExitCode != nil, rgExitCode != nil else {
+            output.fileHandleForReading.readabilityHandler = nil
+            try? output.fileHandleForReading.close()
+            throw NativeMCPCodeReadError.searchFailed("搜索进程无法终止")
+        }
+        output.fileHandleForReading.readabilityHandler = nil
+        capture.append(output.fileHandleForReading.readDataToEndOfFile())
+        let snapshot = capture.snapshot
+        if timedOut {
+            throw NativeMCPCodeReadError.searchTimedOut
+        }
+        let data = snapshot.data
 
         var matches: [NativeJSONValue] = []
         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
@@ -445,7 +513,7 @@ private enum NativeRipgrepSearch {
                 "text": .string(String(text.prefix(400))),
             ]))
         }
-        return matches
+        return (matches, snapshot.discarded || matches.count >= maximumResults)
     }
 
     private static func relative(_ url: URL, to root: URL) -> String {
@@ -463,6 +531,8 @@ private enum NativeMCPCodeReadError: LocalizedError {
     case notFile
     case fileTooLarge(Int)
     case binaryFile
+    case searchTimedOut
+    case searchFailed(String)
     case unsupportedTool(String)
 
     var errorDescription: String? {
@@ -472,6 +542,8 @@ private enum NativeMCPCodeReadError: LocalizedError {
         case .notFile: "目标不是普通文件"
         case let .fileTooLarge(size): "文件超过读取限制：\(size) bytes"
         case .binaryFile: "二进制文件不支持按文本读取"
+        case .searchTimedOut: "项目文本搜索超时，相关进程已终止"
+        case let .searchFailed(message): message
         case let .unsupportedTool(name): "暂不支持 MCP 工具：\(name)"
         }
     }

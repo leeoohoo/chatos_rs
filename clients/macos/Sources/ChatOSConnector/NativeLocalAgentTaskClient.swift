@@ -97,6 +97,8 @@ public struct NativeLocalAgentTaskClient: Sendable {
 
     public func listGraphs(
         ownerUserID: String,
+        sourceEntityType: String? = nil,
+        sourceEntityID: String? = nil,
         beforeUpdatedAtUnixMs: Int64? = nil,
         beforeGraphID: String? = nil,
         limit: UInt32 = 100
@@ -105,6 +107,8 @@ public struct NativeLocalAgentTaskClient: Sendable {
             type: "list_task_graphs",
             ownerUserID: ownerUserID,
             scope: "all",
+            sourceEntityType: sourceEntityType,
+            sourceEntityID: sourceEntityID,
             beforeUpdatedAtUnixMs: beforeUpdatedAtUnixMs,
             beforeGraphID: beforeGraphID,
             limit: limit
@@ -154,14 +158,18 @@ public struct NativeLocalAgentTaskClient: Sendable {
         ownerUserID: String,
         runID: String,
         afterCursor: Int64 = 0,
-        limit: UInt32 = 100
+        limit: UInt32 = 100,
+        eventType: String? = nil,
+        newestFirst: Bool = false
     ) async throws -> LocalAgentEventPage {
         let result: EventsResult = try await host.request(ListEventsCommand(
             type: "list_events",
             ownerUserID: ownerUserID,
             afterCursor: afterCursor,
             limit: limit,
-            runID: runID
+            runID: runID,
+            eventType: eventType,
+            newestFirst: newestFirst
         ))
         guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
         return .init(events: result.events, nextCursor: result.nextCursor)
@@ -225,6 +233,8 @@ private struct ListGraphsCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
     let scope: String
+    let sourceEntityType: String?
+    let sourceEntityID: String?
     let beforeUpdatedAtUnixMs: Int64?
     let beforeGraphID: String?
     let limit: UInt32
@@ -232,6 +242,8 @@ private struct ListGraphsCommand: Encodable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case type, scope, limit
         case ownerUserID = "owner_user_id"
+        case sourceEntityType = "source_entity_type"
+        case sourceEntityID = "source_entity_id"
         case beforeUpdatedAtUnixMs = "before_updated_at_unix_ms"
         case beforeGraphID = "before_graph_id"
     }
@@ -277,11 +289,15 @@ private struct ListEventsCommand: Encodable, Sendable {
     let afterCursor: Int64
     let limit: UInt32
     let runID: String
+    let eventType: String?
+    let newestFirst: Bool
     private enum CodingKeys: String, CodingKey {
         case type, limit
         case ownerUserID = "owner_user_id"
         case afterCursor = "after_cursor"
         case runID = "run_id"
+        case eventType = "event_type"
+        case newestFirst = "newest_first"
     }
 }
 

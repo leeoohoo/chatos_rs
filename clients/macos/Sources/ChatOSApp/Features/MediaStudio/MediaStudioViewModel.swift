@@ -3,7 +3,13 @@ import ChatOSAPI
 import ChatOSCore
 import Combine
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
+
+enum MediaStudioInputImagePolicy {
+    static let maximumBytes = 20 * 1_024 * 1_024
+    static let maximumSourcePixelCount = 64_000_000
+}
 
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
@@ -72,6 +78,8 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var historyErrorMessage: String?
     @Published private(set) var isLoadingHistory = false
+    @Published private(set) var isLoadingMoreHistory = false
+    @Published private(set) var hasMoreHistory = false
     @Published private(set) var isLoadingVideoInputImage = false
     @Published private(set) var isLoadingVideoReferenceAudio = false
     @Published private(set) var isLoadingInputImages = false
@@ -82,6 +90,10 @@ final class MediaStudioViewModel: ObservableObject {
     private var videoGenerationTask: Task<Void, Never>?
     private var imageGenerationTask: Task<Void, Never>?
     private var historyLoadTask: Task<Void, Never>?
+    private var historyCursor: MediaStudioHistoryStore.Cursor?
+    private var unreadableHistoryCount = 0
+    private var modelsLoadTask: Task<Void, Never>?
+    private var modelsLoadGeneration: UInt64 = 0
     private let historyStore: MediaStudioHistoryStore
     private var ownerID: String?
     private var sessionID = UUID()
@@ -101,6 +113,16 @@ final class MediaStudioViewModel: ObservableObject {
         self.imageTransport = imageTransport
     }
 
+    deinit {
+        modelsLoadTask?.cancel()
+        historyLoadTask?.cancel()
+        imageGenerationTask?.cancel()
+        videoGenerationTask?.cancel()
+        inputImagesTask?.cancel()
+        videoInputTask?.cancel()
+        videoAudioTask?.cancel()
+    }
+
     func activate(userID: String) {
         guard ownerID != userID else { return }
         resetForSignedOut()
@@ -114,15 +136,51 @@ final class MediaStudioViewModel: ObservableObject {
                 guard sessionID == session else { return }
                 history = snapshot.images
                 videoHistory = snapshot.videos
-                if snapshot.unreadableCount > 0 {
-                    historyErrorMessage = "有 \(snapshot.unreadableCount) 条记录无法读取，原文件已保留。"
-                }
+                historyCursor = snapshot.nextCursor
+                hasMoreHistory = snapshot.nextCursor != nil
+                unreadableHistoryCount = snapshot.unreadableCount
+                updateHistoryReadError()
             } catch {
                 guard sessionID == session else { return }
                 historyErrorMessage = "读取创作记录失败：\(error.localizedDescription)"
             }
             isLoadingHistory = false
         }
+    }
+
+    func loadMoreHistory() {
+        guard let ownerID, let cursor = historyCursor,
+              !isLoadingHistory, !isLoadingMoreHistory else { return }
+        let session = sessionID
+        isLoadingMoreHistory = true
+        historyLoadTask = Task {
+            defer { if sessionID == session { isLoadingMoreHistory = false } }
+            do {
+                let snapshot = try await historyStore.load(owner: ownerID, after: cursor)
+                guard sessionID == session, !Task.isCancelled else { return }
+                let imageIDs = Set(history.map(\.id))
+                let videoIDs = Set(videoHistory.map(\.id))
+                history.append(contentsOf: snapshot.images.filter { !imageIDs.contains($0.id) })
+                videoHistory.append(contentsOf: snapshot.videos.filter { !videoIDs.contains($0.id) })
+                history.sort { $0.createdAt > $1.createdAt }
+                videoHistory.sort { $0.createdAt > $1.createdAt }
+                historyCursor = snapshot.nextCursor
+                hasMoreHistory = snapshot.nextCursor != nil
+                unreadableHistoryCount += snapshot.unreadableCount
+                updateHistoryReadError()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard sessionID == session else { return }
+                historyErrorMessage = "读取更多创作记录失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func updateHistoryReadError() {
+        historyErrorMessage = unreadableHistoryCount > 0
+            ? "有 \(unreadableHistoryCount) 条记录无法读取，原文件已保留。"
+            : nil
     }
 
     var selectedModel: MediaGenerationModel? {
@@ -291,9 +349,9 @@ final class MediaStudioViewModel: ObservableObject {
         isLoadingInputImages = true
         inputImagesTask = Task {
             do {
-                let images = try await Task.detached(priority: .userInitiated) {
+                let images = try await AppCancellableDetachedWork.run {
                     try urls.map { try Self.loadInputImage(from: $0) }
-                }.value
+                }
                 guard sessionID == session, inputImagesSelectionID == selection else { return }
                 var merged = inputImages
                 for image in images where !merged.contains(image) { merged.append(image) }
@@ -329,13 +387,13 @@ final class MediaStudioViewModel: ObservableObject {
                 for asset in assets {
                     try Task.checkCancellation()
                     let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
-                    let input = try await Task.detached(priority: .userInitiated) {
+                    let input = try await AppCancellableDetachedWork.run {
                         try Self.makeInputImage(
                             data: data,
                             name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
                             mimeType: asset.mimeType
                         )
-                    }.value
+                    }
                     loaded.append(input)
                 }
                 guard sessionID == session, inputImagesSelectionID == selection else { return }
@@ -364,9 +422,9 @@ final class MediaStudioViewModel: ObservableObject {
 
     func selectVideoInputImage(from url: URL) {
         loadVideoInputImage {
-            try await Task.detached(priority: .userInitiated) {
+            try await AppCancellableDetachedWork.run {
                 try Self.loadInputImage(from: url)
-            }.value
+            }
         }
     }
 
@@ -377,13 +435,13 @@ final class MediaStudioViewModel: ObservableObject {
         let transport = imageTransport
         loadVideoInputImage {
             let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
-            return try await Task.detached(priority: .userInitiated) {
+            return try await AppCancellableDetachedWork.run {
                 try Self.makeInputImage(
                     data: data,
                     name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
                     mimeType: asset.mimeType
                 )
-            }.value
+            }
         }
     }
 
@@ -425,9 +483,9 @@ final class MediaStudioViewModel: ObservableObject {
         isLoadingVideoReferenceAudio = true
         videoAudioTask = Task {
             do {
-                let audio = try await Task.detached(priority: .userInitiated) {
+                let audio = try await AppCancellableDetachedWork.run {
                     try Self.loadReferenceAudio(from: url)
-                }.value
+                }
                 guard sessionID == session, videoAudioSelectionID == selection else { return }
                 videoReferenceAudio = audio
             } catch {
@@ -465,7 +523,14 @@ final class MediaStudioViewModel: ObservableObject {
         historyLoadTask?.cancel()
         historyLoadTask = nil
         isLoadingHistory = false
+        isLoadingMoreHistory = false
+        hasMoreHistory = false
+        historyCursor = nil
+        unreadableHistoryCount = 0
         historyErrorMessage = nil
+        modelsLoadGeneration &+= 1
+        modelsLoadTask?.cancel()
+        modelsLoadTask = nil
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
         hasLoaded = false
@@ -488,13 +553,20 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     private func loadModels() {
+        modelsLoadGeneration &+= 1
+        let generation = modelsLoadGeneration
+        modelsLoadTask?.cancel()
         let session = sessionID
+        let service = service
         isLoadingModels = true
         errorMessage = nil
-        Task {
+        modelsLoadTask = Task { [weak self] in
             do {
                 let next = try await service.fetchModels()
-                guard sessionID == session else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      sessionID == session,
+                      modelsLoadGeneration == generation else { return }
                 models = next
                 videoModels = next.filter {
                     $0.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -508,14 +580,22 @@ final class MediaStudioViewModel: ObservableObject {
                 }
                 normalizeVideoOptions()
             } catch {
-                guard sessionID == session else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      sessionID == session,
+                      modelsLoadGeneration == generation else { return }
                 errorMessage = error.localizedDescription
             }
+            guard let self,
+                  sessionID == session,
+                  modelsLoadGeneration == generation else { return }
             isLoadingModels = false
+            modelsLoadTask = nil
         }
     }
 
     nonisolated private static func loadInputImage(from url: URL) throws -> ImageGenerationInputImage {
+        try Task.checkCancellation()
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
@@ -528,7 +608,11 @@ final class MediaStudioViewModel: ObservableObject {
             throw MediaStudioInputImageError.tooLarge
         }
 
-        let sourceData = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let sourceData = try AppBoundedFileReader.read(
+            url,
+            maximumBytes: 20 * 1_024 * 1_024
+        )
+        try Task.checkCancellation()
         return try makeInputImage(
             data: sourceData,
             name: url.lastPathComponent,
@@ -537,6 +621,7 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     nonisolated private static func loadReferenceAudio(from url: URL) throws -> VideoGenerationInputAudio {
+        try Task.checkCancellation()
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
@@ -553,13 +638,19 @@ final class MediaStudioViewModel: ObservableObject {
         if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
             throw MediaStudioReferenceAudioError.tooLarge
         }
-        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let data = try AppBoundedFileReader.read(
+            url,
+            maximumBytes: 20 * 1_024 * 1_024
+        )
         guard !data.isEmpty, data.count <= 20 * 1024 * 1024 else {
             throw MediaStudioReferenceAudioError.tooLarge
         }
+        try Task.checkCancellation()
+        let base64Data = data.base64EncodedString()
+        try Task.checkCancellation()
         return .init(
             name: url.lastPathComponent, mimeType: mimeType,
-            base64Data: data.base64EncodedString()
+            base64Data: base64Data
         )
     }
 
@@ -568,16 +659,37 @@ final class MediaStudioViewModel: ObservableObject {
         name: String,
         mimeType: String? = nil
     ) throws -> ImageGenerationInputImage {
-        guard let image = NSImage(data: data), image.isValid else {
-            throw MediaStudioInputImageError.cannotDecode
-        }
-        guard data.count <= 20 * 1024 * 1024 else {
+        try Task.checkCancellation()
+        guard !data.isEmpty,
+              data.count <= MediaStudioInputImagePolicy.maximumBytes else {
             throw MediaStudioInputImageError.tooLarge
         }
+        guard let source = CGImageSourceCreateWithData(data as CFData, [
+                kCGImageSourceShouldCache: false,
+              ] as CFDictionary),
+              CGImageSourceGetCount(source) > 0,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
+            throw MediaStudioInputImageError.cannotDecode
+        }
+        let width = widthValue.doubleValue
+        let height = heightValue.doubleValue
+        guard width.isFinite, height.isFinite,
+              width > 0, height > 0,
+              width * height <= Double(MediaStudioInputImagePolicy.maximumSourcePixelCount) else {
+            throw MediaStudioInputImageError.cannotDecode
+        }
+        try Task.checkCancellation()
+        let base64Data = data.base64EncodedString()
+        try Task.checkCancellation()
         return ImageGenerationInputImage(
             name: name,
             mimeType: normalizedImageMIMEType(mimeType),
-            base64Data: data.base64EncodedString()
+            base64Data: base64Data
         )
     }
 

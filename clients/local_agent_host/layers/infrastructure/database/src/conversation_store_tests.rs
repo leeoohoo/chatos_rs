@@ -13,6 +13,7 @@ fn idempotency(command_id: &str) -> IdempotentCommand {
     IdempotentCommand {
         command_id: command_id.to_string(),
         request_fingerprint: command_id.to_string(),
+        persist_receipt: true,
     }
 }
 

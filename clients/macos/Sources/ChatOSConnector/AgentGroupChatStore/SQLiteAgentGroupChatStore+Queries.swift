@@ -56,22 +56,10 @@ extension SQLiteAgentGroupChatStore {
     }
 
     func insertConversation(_ room: ProjectAgentRoom) throws {
-        try execute(
-            """
-            INSERT INTO project_agent_rooms (
-                owner_user_id, id, project_id, name, goal, default_agent_id, status,
-                created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key,
-                project_manager_agent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                .text(room.ownerUserID), .text(room.id), .text(room.projectID),
-                .text(room.draft.name), .text(room.draft.goal),
-                .optionalText(room.defaultAgentID), .text(room.status.rawValue),
-                .integer(room.createdAtUnixMs), .integer(room.updatedAtUnixMs),
-                .text(room.conversationKind.rawValue), .optionalText(room.directKey),
-                .optionalText(room.projectManagerAgentID),
-            ]
+        try AgentConversationRepository.insertRooms(
+            database,
+            rooms: [room],
+            preparedStatement: recordPreparedStatement
         )
     }
 
@@ -81,17 +69,34 @@ extension SQLiteAgentGroupChatStore {
         agent: LocalAgentProfile,
         nowUnixMs: Int64
     ) throws {
-        try execute(
-            """
-            INSERT INTO project_agent_room_members (
-                owner_user_id, room_id, agent_id, role, responsibility,
-                plugin_allowlist_json, status, joined_at_unix_ms
-            ) VALUES (?, ?, ?, ?, ?, '[]', 'active', ?)
-            """,
-            [
-                .text(ownerUserID), .text(roomID), .text(agent.id), .text(agent.draft.name),
-                .text(agent.draft.description), .integer(nowUnixMs),
-            ]
+        try insertDirectMember(
+            ownerUserID: ownerUserID,
+            roomID: roomID,
+            agentID: agent.id,
+            name: agent.draft.name,
+            description: agent.draft.description,
+            nowUnixMs: nowUnixMs
+        )
+    }
+
+    func insertDirectMember(
+        ownerUserID: String,
+        roomID: String,
+        agentID: String,
+        name: String,
+        description: String,
+        nowUnixMs: Int64
+    ) throws {
+        try AgentConversationRepository.insertMembers(
+            database,
+            members: [.init(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                agentID: agentID,
+                draft: .init(role: name, responsibility: description),
+                joinedAtUnixMs: nowUnixMs
+            )],
+            preparedStatement: recordPreparedStatement
         )
     }
 

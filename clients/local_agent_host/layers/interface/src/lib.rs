@@ -75,7 +75,9 @@ pub use requirement_survey::{
     LOCAL_REQUIREMENT_SURVEY_MAX_LIST_LIMIT, LOCAL_REQUIREMENT_SURVEY_MAX_QUESTIONS,
 };
 pub use response::{HostError, HostResponseEnvelope, HostResult};
-pub use run_query::{ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage};
+pub use run_query::{
+    ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunSummary,
+};
 
 pub use task::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
@@ -88,10 +90,10 @@ pub use tool::{
     ListPendingToolApprovalsCommand, LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult,
     LocalAgentToolApprovalStatus, LocalAgentToolBatch, LocalAgentToolCall, LocalAgentToolClaim,
     LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LocalAgentToolStatus,
+    LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 32;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 39;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -131,11 +133,13 @@ pub enum HostCommand {
     ClaimNextRun(ClaimNextRunCommand),
     CommitStep(CommitStepCommand),
     ClaimNextTool(ClaimNextToolCommand),
+    RenewToolClaim(RenewToolClaimCommand),
     CommitTool(CommitToolCommand),
     ListPendingToolApprovals(ListPendingToolApprovalsCommand),
     DecideToolApproval(DecideToolApprovalCommand),
     ResumeRun(ResumeRunCommand),
     CancelRun(CancelRunCommand),
+    GetEventCursor(GetEventCursorCommand),
     ListEvents(ListEventsCommand),
     WaitEvents(WaitEventsCommand),
     CreateTaskGraph(CreateTaskGraphCommand),
@@ -200,11 +204,13 @@ impl HostCommand {
             Self::ClaimNextRun(command) => command.validate(),
             Self::CommitStep(command) => command.validate(),
             Self::ClaimNextTool(command) => command.validate(),
+            Self::RenewToolClaim(command) => command.validate(),
             Self::CommitTool(command) => command.validate(),
             Self::ListPendingToolApprovals(command) => command.validate(),
             Self::DecideToolApproval(command) => command.validate(),
             Self::ResumeRun(command) => command.validate(),
             Self::CancelRun(command) => command.validate(),
+            Self::GetEventCursor(command) => command.validate(),
             Self::ListEvents(command) => command.validate(),
             Self::WaitEvents(command) => command.validate(),
             Self::CreateTaskGraph(command) => command.validate(),
@@ -413,11 +419,28 @@ impl CancelRunCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetEventCursorCommand {
+    pub owner_user_id: String,
+}
+
+impl GetEventCursorCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ListEventsCommand {
     pub owner_user_id: String,
     pub after_cursor: i64,
     pub limit: u32,
     pub run_id: Option<String>,
+    #[serde(default)]
+    pub event_type: Option<String>,
+    #[serde(default)]
+    pub newest_first: bool,
+    #[serde(default)]
+    pub payload_mode: LocalAgentEventPayloadMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -427,6 +450,17 @@ pub struct WaitEventsCommand {
     pub limit: u32,
     pub run_id: Option<String>,
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub payload_mode: LocalAgentEventPayloadMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentEventPayloadMode {
+    #[default]
+    Full,
+    Routing,
+    None,
 }
 
 impl WaitEventsCommand {
@@ -436,6 +470,9 @@ impl WaitEventsCommand {
             after_cursor: self.after_cursor,
             limit: self.limit,
             run_id: self.run_id.clone(),
+            event_type: None,
+            newest_first: false,
+            payload_mode: self.payload_mode,
         }
         .validate()?;
         if self.timeout_ms == 0 || self.timeout_ms > 60_000 {
@@ -458,6 +495,16 @@ impl ListEventsCommand {
         }
         if let Some(run_id) = self.run_id.as_deref() {
             validate_identifier("run_id", run_id)?;
+        }
+        if let Some(event_type) = self.event_type.as_deref() {
+            validate_identifier("event_type", event_type)?;
+            if self.run_id.is_none() {
+                return Err("event_type requires run_id".to_string());
+            }
+        }
+        if self.newest_first && (self.run_id.is_none() || self.after_cursor != 0 || self.limit != 1)
+        {
+            return Err("newest_first requires run_id, after_cursor 0, and limit 1".to_string());
         }
         Ok(())
     }
@@ -720,6 +767,9 @@ mod tests {
             after_cursor: 0,
             limit: LOCAL_AGENT_MAX_EVENT_PAGE_SIZE + 1,
             run_id: None,
+            event_type: None,
+            newest_first: false,
+            payload_mode: LocalAgentEventPayloadMode::Full,
         }
         .validate()
         .is_err());
@@ -729,8 +779,59 @@ mod tests {
             limit: 10,
             run_id: None,
             timeout_ms: 60_001,
+            payload_mode: LocalAgentEventPayloadMode::Full,
         }
         .validate()
         .is_err());
+        let latest = ListEventsCommand {
+            owner_user_id: "user-1".to_string(),
+            after_cursor: 0,
+            limit: 1,
+            run_id: Some("run-1".to_string()),
+            event_type: Some("user_input_requested".to_string()),
+            newest_first: true,
+            payload_mode: LocalAgentEventPayloadMode::Full,
+        };
+        assert!(latest.validate().is_ok());
+        assert!(ListEventsCommand {
+            limit: 2,
+            ..latest.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListEventsCommand {
+            run_id: None,
+            newest_first: false,
+            ..latest
+        }
+        .validate()
+        .is_err());
+    }
+
+    #[test]
+    fn event_payload_mode_defaults_to_full_and_uses_stable_wire_values() {
+        let command: HostCommand = serde_json::from_value(serde_json::json!({
+            "type": "list_events",
+            "owner_user_id": "user-1",
+            "after_cursor": 0,
+            "limit": 100,
+            "run_id": null
+        }))
+        .expect("legacy list events command");
+        assert!(matches!(
+            command,
+            HostCommand::ListEvents(ListEventsCommand {
+                payload_mode: LocalAgentEventPayloadMode::Full,
+                ..
+            })
+        ));
+        assert_eq!(
+            serde_json::to_value(LocalAgentEventPayloadMode::Routing).expect("routing mode"),
+            serde_json::json!("routing")
+        );
+        assert_eq!(
+            serde_json::to_value(LocalAgentEventPayloadMode::None).expect("none mode"),
+            serde_json::json!("none")
+        );
     }
 }

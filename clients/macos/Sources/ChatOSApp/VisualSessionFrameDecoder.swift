@@ -1,6 +1,5 @@
 import ChatOSCore
 import Foundation
-import ImageIO
 
 struct VisualSessionFrameIdentity: Hashable, Sendable {
     let adapterSessionID: String
@@ -13,14 +12,19 @@ struct PreparedVisualSession: Sendable {
 }
 
 enum VisualSessionFrameDecoder {
-    private static let maximumDisplayPixelSize = 800
+    static let maximumFrameBytes = 2 * 1_024 * 1_024
+    static let maximumSourcePixelCount = 64_000_000
+    static let maximumDisplayPixelSize = 800
 
     static func prepare(
         _ sessions: [PluginVisualSession],
         reusing existingFrames: [VisualSessionFrameIdentity: VisualSessionFrameImage]
     ) async -> [PreparedVisualSession] {
-        await Task.detached(priority: .userInitiated) {
-            sessions.map { incoming in
+        let task = Task.detached(priority: .userInitiated) {
+            var prepared: [PreparedVisualSession] = []
+            prepared.reserveCapacity(sessions.count)
+            for incoming in sessions {
+                guard !Task.isCancelled else { break }
                 var session = incoming
                 let identity = VisualSessionFrameIdentity(
                     adapterSessionID: session.adapterSessionID,
@@ -29,24 +33,29 @@ enum VisualSessionFrameDecoder {
                 let frameImage = existingFrames[identity]
                     ?? session.frameData.flatMap(decode)
                 session.frameData = nil
-                return PreparedVisualSession(session: session, frameImage: frameImage)
+                prepared.append(PreparedVisualSession(session: session, frameImage: frameImage))
             }
-        }.value
+            return prepared
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private static func decode(_ data: Data) -> VisualSessionFrameImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [
-            kCGImageSourceShouldCache: false,
-        ] as CFDictionary),
-              CGImageSourceGetCount(source) > 0,
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maximumDisplayPixelSize,
-                kCGImageSourceShouldCacheImmediately: true,
-              ] as CFDictionary) else {
+        guard !Task.isCancelled,
+              !data.isEmpty,
+              data.count <= maximumFrameBytes,
+              let decoded = AppImageThumbnailLoader.decode(
+                data,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+              ),
+              !Task.isCancelled else {
             return nil
         }
-        return VisualSessionFrameImage(image: image)
+        return VisualSessionFrameImage(image: decoded.image)
     }
 }

@@ -69,6 +69,50 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(command["expected_run_version"], .number(7))
         XCTAssertEqual(command["reason"], .string("user requested stop"))
     }
+
+    func testConversationEventFilterIgnoresOtherRunsAndFindsNewTurns() {
+        let unrelated = LocalAgentEventRecord(
+            cursor: 1,
+            eventID: "event-unrelated",
+            runID: "run-other",
+            eventType: "run_succeeded",
+            payload: .object(["conversation_id": .string("conversation-other")]),
+            createdAtUnixMs: 1
+        )
+        XCTAssertFalse(NativeLocalAgentConversationService.eventsAffectConversation(
+            [unrelated],
+            conversationID: "conversation-1",
+            knownRunIDs: ["run-1"]
+        ))
+
+        let knownRun = LocalAgentEventRecord(
+            cursor: 2,
+            eventID: "event-known",
+            runID: "run-1",
+            eventType: "run_succeeded",
+            payload: nil,
+            createdAtUnixMs: 2
+        )
+        XCTAssertTrue(NativeLocalAgentConversationService.eventsAffectConversation(
+            [knownRun],
+            conversationID: "conversation-1",
+            knownRunIDs: ["run-1"]
+        ))
+
+        let newTurn = LocalAgentEventRecord(
+            cursor: 3,
+            eventID: "event-new-turn",
+            runID: "run-2",
+            eventType: "conversation_turn_started",
+            payload: .object(["conversation_id": .string("conversation-1")]),
+            createdAtUnixMs: 3
+        )
+        XCTAssertTrue(NativeLocalAgentConversationService.eventsAffectConversation(
+            [newTurn],
+            conversationID: "conversation-1",
+            knownRunIDs: ["run-1"]
+        ))
+    }
 }
 
 private actor ConversationCommandHostStub: LocalAgentHostClientServicing {

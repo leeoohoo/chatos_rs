@@ -12,7 +12,7 @@ use chatos_local_agent_protocol::{
     LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalAgentToolStatus,
 };
 use serde_json::{json, Value};
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
+use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -94,6 +94,35 @@ impl LocalAgentToolStore for SqliteClientStorage {
         Self::finish_write(&mut connection, result).await
     }
 
+    async fn renew_tool_claim(
+        &self,
+        owner_user_id: &str,
+        invocation_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+        claim_until_unix_ms: i64,
+    ) -> Result<bool, ClientStorageError> {
+        let updated = sqlx::query(
+            "UPDATE local_agent_tool_invocations SET \
+             claim_until_unix_ms = MAX(claim_until_unix_ms, ?) \
+             WHERE invocation_id = ? AND status = 'running' AND version = ? \
+             AND claim_token = ? AND claim_until_unix_ms > ? AND run_id IN (\
+               SELECT run_id FROM local_agent_runs WHERE owner_user_id = ?\
+             )",
+        )
+        .bind(claim_until_unix_ms)
+        .bind(invocation_id)
+        .bind(expected_version as i64)
+        .bind(claim_token)
+        .bind(now_unix_ms)
+        .bind(owner_user_id)
+        .execute(&self.pool)
+        .await
+        .db()?;
+        Ok(updated.rows_affected() == 1)
+    }
+
     async fn claim_next_tool(
         &self,
         command: &IdempotentCommand,
@@ -115,35 +144,41 @@ impl LocalAgentToolStore for SqliteClientStorage {
             recover_expired_on(&mut connection, owner_user_id, now_unix_ms)
                 .await
                 .db()?;
-            let candidates = sqlx::query(
-                "SELECT invocation_id, tool_name FROM local_agent_tool_invocations \
+            let mut candidate_query = QueryBuilder::<Sqlite>::new(
+                "SELECT invocation_id FROM local_agent_tool_invocations \
                  WHERE status = 'pending' \
                  AND approval_status IN ('not_required','approved') AND run_id IN (\
                    SELECT run_id FROM local_agent_runs \
-                   WHERE owner_user_id = ? AND status = 'waiting_tool_result'\
-                 ) ORDER BY created_at_unix_ms, invocation_id",
-            )
-            .bind(owner_user_id)
-            .fetch_all(&mut *connection)
-            .await
-            .db()?;
-            let mut candidate = None;
-            for row in candidates {
-                let tool_name: String = row.try_get("tool_name").db()?;
-                let included = include_tool_names
-                    .is_none_or(|names| names.iter().any(|name| name == &tool_name));
-                let excluded = exclude_tool_names.iter().any(|name| name == &tool_name);
-                if included && !excluded {
-                    candidate = Some(row);
-                    break;
+                   WHERE owner_user_id = ",
+            );
+            candidate_query.push_bind(owner_user_id).push(
+                " AND status = 'waiting_tool_result'\
+                 )",
+            );
+            if let Some(tool_names) = include_tool_names {
+                candidate_query.push(" AND tool_name IN (");
+                let mut separated = candidate_query.separated(", ");
+                for tool_name in tool_names {
+                    separated.push_bind(tool_name);
                 }
+                separated.push_unseparated(")");
             }
+            if !exclude_tool_names.is_empty() {
+                candidate_query.push(" AND tool_name NOT IN (");
+                let mut separated = candidate_query.separated(", ");
+                for tool_name in exclude_tool_names {
+                    separated.push_bind(tool_name);
+                }
+                separated.push_unseparated(")");
+            }
+            candidate_query.push(" ORDER BY created_at_unix_ms, invocation_id LIMIT 1");
+            let candidate = candidate_query
+                .build()
+                .fetch_optional(&mut *connection)
+                .await
+                .db()?;
             let Some(candidate) = candidate else {
-                let response: Option<LocalAgentToolClaim> = None;
-                Self::record_receipt(&mut connection, command, &response, now_unix_ms)
-                    .await
-                    .db()?;
-                return Ok(response);
+                return Ok(None);
             };
             let invocation_id: String = candidate.try_get("invocation_id").db()?;
             let updated = sqlx::query(

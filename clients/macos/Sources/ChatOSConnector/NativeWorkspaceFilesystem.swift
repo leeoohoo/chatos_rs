@@ -2,6 +2,7 @@ import ChatOSCore
 import Foundation
 
 struct NativeWorkspaceFilesystem: Sendable {
+    private static let defaultMaximumDirectoryEntries = 5_000
     private static let maximumTextPreviewBytes: Int64 = 2 * 1_024 * 1_024
     private static let maximumImagePreviewBytes: Int64 = 25 * 1_024 * 1_024
     private static let maximumSearchFileBytes: Int64 = 2 * 1_024 * 1_024
@@ -9,6 +10,7 @@ struct NativeWorkspaceFilesystem: Sendable {
     private static let searchDuration: TimeInterval = 3
 
     private let workspace: LocalConnectorWorkspace
+    private let maximumDirectoryEntries: Int
     private var fileManager: FileManager { .default }
 
     private static let previewableImageExtensions: Set<String> = [
@@ -16,8 +18,12 @@ struct NativeWorkspaceFilesystem: Sendable {
         "png", "svg", "tif", "tiff", "webp",
     ]
 
-    init(workspace: LocalConnectorWorkspace) {
+    init(
+        workspace: LocalConnectorWorkspace,
+        maximumDirectoryEntries: Int = Self.defaultMaximumDirectoryEntries
+    ) {
         self.workspace = workspace
+        self.maximumDirectoryEntries = max(1, maximumDirectoryEntries)
     }
 
     func resolveExistingURL(_ path: String) throws -> URL {
@@ -25,7 +31,11 @@ struct NativeWorkspaceFilesystem: Sendable {
         return try existingURL(path, root: root)
     }
 
-    func list(path: String, includeFiles: Bool) throws -> NativeJSONValue {
+    func list(
+        path: String,
+        includeFiles: Bool,
+        maximumEntries: Int? = nil
+    ) throws -> NativeJSONValue {
         let root = try workspaceRoot()
         let directory = try existingURL(path, root: root)
         guard try resourceValues(directory).isDirectory == true else {
@@ -35,12 +45,15 @@ struct NativeWorkspaceFilesystem: Sendable {
             .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
             .fileSizeKey, .contentModificationDateKey,
         ]
-        let urls = try fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: Array(keys),
-            options: []
+        let maximum = min(max(1, maximumEntries ?? maximumDirectoryEntries), maximumDirectoryEntries)
+        let enumerated = try directChildren(
+            of: directory,
+            keys: keys,
+            maximumEntries: maximum
         )
+        let urls = enumerated.urls
         let entries = try urls.compactMap { url -> NativeWorkspaceEntry? in
+            try Task.checkCancellation()
             let values = try url.resourceValues(forKeys: keys)
             guard values.isSymbolicLink != true else { return nil }
             let isDirectory = values.isDirectory == true
@@ -68,6 +81,7 @@ struct NativeWorkspaceFilesystem: Sendable {
             "path": .string(relative),
             "parent": parent,
             "entries": .array(entries.map(\.jsonValue)),
+            "truncated": .bool(enumerated.truncated),
         ])
     }
 
@@ -84,7 +98,17 @@ struct NativeWorkspaceFilesystem: Sendable {
         guard size <= maximumPreviewBytes else {
             throw NativeWorkspaceFilesystemError.fileTooLarge(size)
         }
-        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let data: Data
+        do {
+            data = try NativeBoundedFileReader.read(
+                url,
+                maximumBytes: Int(maximumPreviewBytes)
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw NativeWorkspaceFilesystemError.fileTooLarge(size)
+        }
         let isBinary = data.prefix(8_000).contains(0)
         return .object([
             "path": .string(relativePath(url, root: root)),
@@ -108,6 +132,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         var stack = [start]
         var matches: [NativeWorkspaceEntry] = []
         var visitedDirectories = 0
+        var visitedEntries = 0
         var truncated = false
 
         while let directory = stack.popLast() {
@@ -118,11 +143,19 @@ struct NativeWorkspaceFilesystem: Sendable {
                 break
             }
             visitedDirectories += 1
-            let urls = (try? fileManager.contentsOfDirectory(
-                at: directory,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey],
-                options: []
-            )) ?? []
+            let remainingVisits = Self.maximumSearchVisits - visitedEntries
+            guard remainingVisits > 0 else {
+                truncated = true
+                break
+            }
+            let enumerated = try? directChildren(
+                of: directory,
+                keys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey],
+                maximumEntries: remainingVisits
+            )
+            let urls = enumerated?.urls ?? []
+            visitedEntries += urls.count
+            truncated = truncated || enumerated?.truncated == true
             for url in urls {
                 guard !currentTaskIsCancelled, Date() < deadline, matches.count < maximum else {
                     truncated = true
@@ -151,6 +184,7 @@ struct NativeWorkspaceFilesystem: Sendable {
         return .object([
             "matches": .array(matches.map(\.jsonValue)),
             "visited_dirs": .number(Double(visitedDirectories)),
+            "visited_entries": .number(Double(visitedEntries)),
             "truncated": .bool(truncated),
         ])
     }
@@ -180,16 +214,26 @@ struct NativeWorkspaceFilesystem: Sendable {
             guard values?.isSymbolicLink != true else { continue }
             if values?.isDirectory == true {
                 guard url == start || !shouldSkipSearchDirectory(url) else { continue }
-                stack.append(contentsOf: (try? fileManager.contentsOfDirectory(
-                    at: url,
-                    includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
-                    options: []
-                )) ?? [])
+                let remainingVisits = Self.maximumSearchVisits - visits - stack.count
+                guard remainingVisits > 0 else {
+                    truncated = true
+                    continue
+                }
+                let enumerated = try? directChildren(
+                    of: url,
+                    keys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
+                    maximumEntries: remainingVisits
+                )
+                stack.append(contentsOf: enumerated?.urls ?? [])
+                truncated = truncated || enumerated?.truncated == true
                 continue
             }
             let size = Int64(values?.fileSize ?? 0)
             guard values?.isRegularFile == true, size <= Self.maximumSearchFileBytes,
-                  let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
+                  let data = try? NativeBoundedFileReader.read(
+                    url,
+                    maximumBytes: Int(Self.maximumSearchFileBytes)
+                  ),
                   !data.prefix(8_000).contains(0) else { continue }
             scannedFiles += 1
             let content = String(decoding: data, as: UTF8.self)
@@ -210,7 +254,7 @@ struct NativeWorkspaceFilesystem: Sendable {
                     break
                 }
             }
-            if truncated { break }
+            if matches.count >= maximum { break }
         }
         return .object([
             "matches": .array(matches),
@@ -223,6 +267,30 @@ struct NativeWorkspaceFilesystem: Sendable {
         Self.ignoredSearchDirectoryNames.contains(url.lastPathComponent)
     }
 
+    private func directChildren(
+        of directory: URL,
+        keys: Set<URLResourceKey>,
+        maximumEntries: Int
+    ) throws -> (urls: [URL], truncated: Bool) {
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsSubdirectoryDescendants]
+        ) else {
+            throw NativeWorkspaceFilesystemError.notDirectory
+        }
+        var urls: [URL] = []
+        urls.reserveCapacity(min(maximumEntries, 1_024))
+        for case let url as URL in enumerator {
+            try Task.checkCancellation()
+            if urls.count >= maximumEntries {
+                return (urls, true)
+            }
+            urls.append(url)
+        }
+        return (urls, false)
+    }
+
     private var currentTaskIsCancelled: Bool {
         withUnsafeCurrentTask { $0?.isCancelled == true }
     }
@@ -233,10 +301,12 @@ struct NativeWorkspaceFilesystem: Sendable {
     ]
 
     func createDirectory(path: String) throws -> NativeJSONValue {
+        try Task.checkCancellation()
         let root = try workspaceRoot()
         let components = try normalizedComponents(path, permitsRoot: false)
         var current = root
         for component in components {
+            try Task.checkCancellation()
             current.appendPathComponent(component, isDirectory: true)
             do {
                 let values = try current.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -250,6 +320,7 @@ struct NativeWorkspaceFilesystem: Sendable {
     }
 
     func write(path: String, content: String, createOnly: Bool) throws -> NativeJSONValue {
+        try Task.checkCancellation()
         let root = try workspaceRoot()
         let target = try writableURL(path, root: root)
         let existed = fileManager.fileExists(atPath: target.path)
@@ -261,6 +332,7 @@ struct NativeWorkspaceFilesystem: Sendable {
             guard !createOnly else { throw NativeWorkspaceFilesystemError.alreadyExists }
         }
         let data = Data(content.utf8)
+        try Task.checkCancellation()
         if createOnly {
             do {
                 try data.write(to: target, options: [.withoutOverwriting])
@@ -280,6 +352,7 @@ struct NativeWorkspaceFilesystem: Sendable {
     }
 
     func delete(path: String, recursive: Bool) throws -> NativeJSONValue {
+        try Task.checkCancellation()
         let root = try workspaceRoot()
         let target = try entryURLWithoutFollowingLeaf(path, root: root)
         let values = try target.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
@@ -303,6 +376,7 @@ struct NativeWorkspaceFilesystem: Sendable {
     }
 
     func move(sourcePath: String, targetPath: String, replaceExisting: Bool) throws -> NativeJSONValue {
+        try Task.checkCancellation()
         let root = try workspaceRoot()
         let source = try entryURLWithoutFollowingLeaf(sourcePath, root: root)
         let target = try writableURL(targetPath, root: root)

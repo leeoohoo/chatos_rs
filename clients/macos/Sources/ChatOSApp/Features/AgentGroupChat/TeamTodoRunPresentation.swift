@@ -27,6 +27,21 @@ struct TeamTodoRunPresentation: Equatable, Sendable {
         return result
     }
 
+    static func presentationsByTodoID(
+        summaries: [LocalAgentTodoRunSummary]
+    ) -> [String: TeamTodoRunPresentation] {
+        Dictionary(uniqueKeysWithValues: summaries.map { summary in
+            (summary.todoID, TeamTodoRunPresentation(summary: summary))
+        })
+    }
+
+    init(summary: LocalAgentTodoRunSummary) {
+        runID = summary.runID
+        status = summary.status
+        receiptCount = summary.receiptCount
+        committedPaths = summary.committedPaths
+    }
+
     init(run: LocalAgentGroupChatRun) {
         runID = run.id
         status = run.checkpoint.status
@@ -34,6 +49,7 @@ struct TeamTodoRunPresentation: Equatable, Sendable {
 
         var paths: Set<String> = []
         for receipt in run.checkpoint.receipts.values where !receipt.isError {
+            guard !Task.isCancelled else { break }
             guard let data = receipt.content.data(using: .utf8),
                   let value = try? JSONSerialization.jsonObject(with: data) else { continue }
             Self.collectCommittedPaths(from: value, into: &paths)
@@ -42,15 +58,18 @@ struct TeamTodoRunPresentation: Equatable, Sendable {
     }
 
     private static func collectCommittedPaths(from value: Any, into paths: inout Set<String>) {
+        guard !Task.isCancelled else { return }
         if let object = value as? [String: Any] {
             if let committed = object["committed_paths"] as? [String] {
                 paths.formUnion(committed)
             }
             for nested in object.values {
+                guard !Task.isCancelled else { return }
                 collectCommittedPaths(from: nested, into: &paths)
             }
         } else if let array = value as? [Any] {
             for nested in array {
+                guard !Task.isCancelled else { return }
                 collectCommittedPaths(from: nested, into: &paths)
             }
         }

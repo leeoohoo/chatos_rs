@@ -1,4 +1,6 @@
 import ChatOSCore
+import ChatOSProcessRuntime
+import Darwin
 import Foundation
 
 enum NativePluginPermissionInspector {
@@ -126,10 +128,11 @@ enum NativePluginPermissionInspector {
         }.value
     }
 
-    private static func runLauncherBlocking(
+    static func runLauncherBlocking(
         installationPath: String,
         command: String,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        spawnObserver: ((pid_t) -> Void)? = nil
     ) throws -> Data {
         let launcher = URL(fileURLWithPath: installationPath, isDirectory: true)
             .appendingPathComponent("bin/open-computer-use")
@@ -141,38 +144,102 @@ enum NativePluginPermissionInspector {
               values.isExecutable == true else {
             throw NativeConnectorError.pluginInstallation("Plugin 权限检测入口不可用")
         }
-        let process = Process()
-        process.executableURL = launcher
-        process.arguments = [command]
-        process.currentDirectoryURL = URL(fileURLWithPath: installationPath, isDirectory: true)
-        process.environment = NativePluginProcessEnvironment.make()
         let output = Pipe()
         let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.05)
+        let outputCapture = NativeBoundedProcessOutput(maximumBytes: 1_024 * 1_024)
+        let errorCapture = NativeBoundedProcessOutput(maximumBytes: 64 * 1_024)
+        NativeProcessPipeReader.install(
+            on: output.fileHandleForReading,
+            onData: outputCapture.append
+        )
+        NativeProcessPipeReader.install(
+            on: errors.fileHandleForReading,
+            onData: errorCapture.append
+        )
+        let nullInput = open("/dev/null", O_RDONLY)
+        guard nullInput >= 0 else {
+            throw NativeConnectorError.pluginInstallation("Plugin 权限检测无法打开标准输入")
         }
-        if process.isRunning {
-            process.terminate()
+        defer { close(nullInput) }
+        let arguments = [launcher.path, command]
+        let environment = NativePluginProcessEnvironment.make()
+        var processID: pid_t = 0
+        let spawnResult = withCStringArray(arguments) { argv in
+            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    launcher.path,
+                    argv,
+                    envp,
+                    installationPath,
+                    nullInput,
+                    output.fileHandleForWriting.fileDescriptor,
+                    errors.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
+        }
+        output.fileHandleForWriting.closeFile()
+        errors.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            throw NativeConnectorError.pluginInstallation(
+                "Plugin 权限检测启动失败：\(String(cString: strerror(spawnResult)))"
+            )
+        }
+        spawnObserver?(processID)
+        let exitSignal = NativeProcessExitSignal.reap(processID: processID)
+        var exitCode = exitSignal.wait(timeout: timeout)
+        let timedOut = exitCode == nil
+        if timedOut {
+            _ = chatos_signal_process_group(processID, SIGTERM)
+            exitCode = exitSignal.wait(timeout: 0.75)
+            if exitCode == nil {
+                _ = chatos_signal_process_group(processID, SIGKILL)
+                exitCode = exitSignal.wait(timeout: 2)
+            }
+        }
+        // A diagnostic command must never leave background descendants behind.
+        // This is harmless when its process group no longer exists.
+        _ = chatos_signal_process_group(processID, SIGKILL)
+        guard let exitCode else {
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+            try? output.fileHandleForReading.close()
+            try? errors.fileHandleForReading.close()
+            throw NativeConnectorError.pluginInstallation("Plugin 权限检测进程无法终止")
+        }
+        output.fileHandleForReading.readabilityHandler = nil
+        errors.fileHandleForReading.readabilityHandler = nil
+        outputCapture.append(output.fileHandleForReading.readDataToEndOfFile())
+        errorCapture.append(errors.fileHandleForReading.readDataToEndOfFile())
+        let outputSnapshot = outputCapture.snapshot
+        let errorSnapshot = errorCapture.snapshot
+        if timedOut {
             throw NativeConnectorError.pluginInstallation("Plugin 权限检测超时")
         }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        guard data.count <= 1_024 * 1_024 else {
+        guard !outputSnapshot.discarded else {
             throw NativeConnectorError.pluginInstallation("Plugin 权限检测响应过大")
         }
-        guard process.terminationStatus == 0 else {
+        guard exitCode == 0 else {
             let detail = String(
-                decoding: errors.fileHandleForReading.readDataToEndOfFile(),
+                decoding: errorSnapshot.data,
                 as: UTF8.self
             ).trimmingCharacters(in: .whitespacesAndNewlines)
             throw NativeConnectorError.pluginInstallation(
                 detail.isEmpty ? "Plugin 权限检测失败" : detail
             )
         }
-        return data
+        return outputSnapshot.data
+    }
+
+    private static func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 
     private static func isSystemPermission(_ permissionID: String) -> Bool {

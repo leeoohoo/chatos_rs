@@ -49,6 +49,8 @@ fn list(
     HostCommand::ListTaskGraphs(ListTaskGraphsCommand {
         owner_user_id: owner_user_id.to_string(),
         scope,
+        source_entity_type: None,
+        source_entity_id: None,
         before_updated_at_unix_ms,
         before_graph_id: before_graph_id.map(str::to_string),
         limit,
@@ -183,4 +185,49 @@ async fn lists_owner_task_graphs_with_scope_and_stable_cursor() {
         ))
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn filters_task_graphs_by_source_before_pagination() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+    for (command_id, graph_id, turn_id) in [
+        ("create-turn-a", "graph-turn-a", "turn-a"),
+        ("create-turn-b", "graph-turn-b", "turn-b"),
+    ] {
+        let mut spec = graph(graph_id, &format!("task-{turn_id}"), "user-1");
+        spec.source_entity_type = "conversation_turn".to_string();
+        spec.source_entity_id = turn_id.to_string();
+        runtime
+            .try_handle(request(command_id, HostCommand::CreateTaskGraph(spec)))
+            .await
+            .expect("create source graph");
+    }
+
+    let filtered = runtime
+        .try_handle(request(
+            "list-turn-a",
+            HostCommand::ListTaskGraphs(ListTaskGraphsCommand {
+                owner_user_id: "user-1".to_string(),
+                scope: LocalTaskGraphListScope::All,
+                source_entity_type: Some("conversation_turn".to_string()),
+                source_entity_id: Some("turn-a".to_string()),
+                before_updated_at_unix_ms: None,
+                before_graph_id: None,
+                limit: 1,
+            }),
+        ))
+        .await
+        .expect("filtered graphs");
+    assert!(matches!(
+        filtered,
+        HostResult::TaskGraphs { page }
+            if page.graphs.len() == 1
+                && page.graphs[0].graph_id == "graph-turn-a"
+                && page.next_before_graph_id.is_none()
+    ));
 }

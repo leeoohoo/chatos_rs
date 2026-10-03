@@ -301,13 +301,17 @@ extension MediaStudioView {
                     .font(.caption)
                     .controlSize(.small)
             }
-            if let input = viewModel.videoInputImage,
-               let data = Data(base64Encoded: input.base64Data),
-               let image = NSImage(data: data) {
+            if let input = viewModel.videoInputImage {
                 HStack(spacing: 10) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
+                    AppAsyncBase64Image(
+                        base64: input.base64Data,
+                        identity: "video-input|\(input.name)",
+                        maximumDisplayPixelSize: 256
+                    ) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.primary.opacity(0.04)
+                    }
                         .frame(width: 72, height: 56)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                     Text(input.name)

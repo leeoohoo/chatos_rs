@@ -31,6 +31,43 @@ struct NativeMCPTerminalStoreTests {
     }
 
     @Test
+    func oneExitEventResumesAllConcurrentWaiters() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeMCPTerminalStore()
+        let started = try await store.execute(
+            command: "sleep 0.2",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: true
+        )
+        let id = try started.string("terminal_id")
+        let root = fixture.root
+
+        let results = try await withThrowingTaskGroup(of: Bool.self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    let waited = try await store.call(
+                        name: "process_wait",
+                        arguments: [
+                            "terminal_id": .string(id),
+                            "timeout_ms": .number(5_000),
+                        ],
+                        projectRoot: root
+                    )
+                    return try waited.bool("exited")
+                }
+            }
+            var values: [Bool] = []
+            for try await value in group { values.append(value) }
+            return values
+        }
+
+        #expect(results.count == 12)
+        #expect(results.allSatisfy { $0 })
+    }
+
+    @Test
     func stdinCanBeWrittenToRunningProcess() async throws {
         let fixture = try TerminalFixture()
         defer { fixture.dispose() }
@@ -171,6 +208,100 @@ struct NativeMCPTerminalStoreTests {
         )
         _ = await store.cancel(ownerRunID: "run-a")
     }
+
+    @Test
+    func processListingIsScopedToOwningLocalAgentRunWithoutAProcessHandle() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeLocalAgentTerminalStore()
+        let first = try await store.execute(
+            command: "sleep 5",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: true,
+            ownerRunID: "run-a"
+        )
+        _ = try await store.execute(
+            command: "sleep 5",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: true,
+            ownerRunID: "run-b"
+        )
+
+        let listed = try await store.call(
+            name: "process_list",
+            arguments: [:],
+            projectRoot: fixture.root,
+            ownerRunID: "run-a"
+        )
+        let processes = try listed.array("processes")
+
+        #expect(processes.count == 1)
+        #expect(try processes[0].string("terminal_id") == first.string("terminal_id"))
+        await store.cancelAll()
+    }
+
+    @Test
+    func largeOutputIsByteBoundedAndReportsDroppedOffsets() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeMCPTerminalStore()
+        let completed = try await store.execute(
+            command: "/usr/bin/python3 -c 'import sys; sys.stdout.write(\"x\" * 3000000)'",
+            cwd: fixture.root,
+            projectRoot: fixture.root,
+            background: false
+        )
+        let id = try completed.string("terminal_id")
+        let polled = try await store.call(
+            name: "process_poll",
+            arguments: [
+                "terminal_id": .string(id),
+                "offset": .number(0),
+                "limit": .number(200),
+            ],
+            projectRoot: fixture.root
+        )
+
+        #expect(try completed.bool("truncated"))
+        #expect(try completed.string("output").count <= 512 * 1_024)
+        #expect(try polled.bool("truncated"))
+    }
+
+    @Test
+    func exitedProcessHistoryIsBounded() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeMCPTerminalStore(maximumRetainedExitedProcesses: 2)
+
+        for index in 0..<3 {
+            let started = try await store.execute(
+                command: "printf '\(index)'",
+                cwd: fixture.root,
+                projectRoot: fixture.root,
+                background: true
+            )
+            _ = try await store.call(
+                name: "process_wait",
+                arguments: [
+                    "terminal_id": .string(try started.string("terminal_id")),
+                    "timeout_ms": .number(5_000),
+                ],
+                projectRoot: fixture.root
+            )
+        }
+
+        let listed = try await store.call(
+            name: "process_list",
+            arguments: [
+                "include_exited": .bool(true),
+                "limit": .number(100),
+            ],
+            projectRoot: fixture.root
+        )
+        #expect(try listed.number("process_count") == 2)
+    }
 }
 
 private struct TerminalFixture {
@@ -195,6 +326,20 @@ private extension NativeJSONValue {
 
     func bool(_ key: String) throws -> Bool {
         guard case let .object(values) = self, case let .bool(value)? = values[key] else {
+            throw TerminalTestError.invalidShape
+        }
+        return value
+    }
+
+    func number(_ key: String) throws -> Int {
+        guard case let .object(values) = self, case let .number(value)? = values[key] else {
+            throw TerminalTestError.invalidShape
+        }
+        return Int(value)
+    }
+
+    func array(_ key: String) throws -> [NativeJSONValue] {
+        guard case let .object(values) = self, case let .array(value)? = values[key] else {
             throw TerminalTestError.invalidShape
         }
         return value

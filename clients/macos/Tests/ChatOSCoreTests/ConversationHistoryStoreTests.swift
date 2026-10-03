@@ -248,6 +248,26 @@ final class ConversationHistoryStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.unreadNewerCount, 1)
     }
 
+    func testRealtimeEventDeduplicationWindowStaysBounded() async {
+        let store = ConversationHistoryStore()
+        let stableTurn = turn(id: "1", sequence: 1, revision: 3)
+
+        for index in 0..<5_000 {
+            await store.applyRealtime(
+                RealtimeTurnEvent(
+                    eventID: "event-\(index)",
+                    eventSequence: Int64(index + 1),
+                    turn: stableTurn
+                ),
+                userIsReadingOlderContent: false
+            )
+        }
+
+        let retained = await store.retainedRealtimeEventIDCount(sessionID: "session-a")
+        XCTAssertLessThanOrEqual(retained, 4_096)
+        XCTAssertGreaterThanOrEqual(retained, 3_072)
+    }
+
     func testLatestPageReconciliationDoesNotCreateUnreadWhenViewportIsNotPinned() async {
         let store = ConversationHistoryStore()
         await store.mergeCachedTurns(

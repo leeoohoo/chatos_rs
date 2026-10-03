@@ -2,6 +2,8 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    private static var pluginSourceCacheTTL: TimeInterval { 5 }
+
     public func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] {
         let records = state.installedPluginRecords ?? [:]
         return try records.values
@@ -76,19 +78,24 @@ extension NativeLocalConnectorService {
     }
 
     public func fetchPlugins() async throws -> [LocalConnectorPlugin] {
+        try await fetchPlugins(refresh: false)
+    }
+
+    public func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin] {
         do {
-            return try await fetchPluginsWithCurrentPairing()
+            return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
         } catch NativeConnectorError.notPaired {
             // Switching between local and deployed gateways can leave only the connector token
             // stale. Re-pair it once through the still-valid primary ChatOS session.
             _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
-            return try await fetchPluginsWithCurrentPairing()
+            return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
         }
     }
 
-    private func fetchPluginsWithCurrentPairing() async throws -> [LocalConnectorPlugin] {
-        let token = try requireAccessToken()
-        let sources = try await gateway.pluginSources(token: token)
+    private func fetchPluginsWithCurrentPairing(
+        forceRefresh: Bool
+    ) async throws -> [LocalConnectorPlugin] {
+        let sources = try await pluginSources(forceRefresh: forceRefresh)
         if reconcileInstalledPluginIdentities(with: sources.items) {
             try stateStore.save(state)
             try? await sendPluginInstallationStatus()
@@ -104,9 +111,10 @@ extension NativeLocalConnectorService {
             if let installedRecord,
                let manifest = try? installedPluginManifest(record: installedRecord) {
                 installedManifest = manifest
-                permissions = await NativePluginPermissionInspector.permissions(
+                permissions = try await pluginPermissionSnapshots.permissions(
                     record: installedRecord,
-                    manifest: manifest
+                    manifest: manifest,
+                    forceRefresh: forceRefresh
                 )
             } else {
                 installedManifest = nil
@@ -162,12 +170,13 @@ extension NativeLocalConnectorService {
     }
 
     public func installPlugin(id: String) async throws {
-        let token = try requireAccessToken()
-        let sources = try await gateway.pluginSources(token: token)
+        let sources = try await pluginSources(forceRefresh: true)
         guard let source = sources.items.first(where: { $0.catalog.id == id }) else {
             throw NativeConnectorError.pluginInstallation("Marketplace 中没有找到这个 Plugin")
         }
+        let token = try requireAccessToken()
         let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)
+        await pluginPermissionSnapshots.invalidateAll()
         var records = state.installedPluginRecords ?? [:]
         records[id] = record
         state.installedPluginRecords = records
@@ -175,6 +184,130 @@ extension NativeLocalConnectorService {
         _ = reconcileInstalledPluginIdentities(with: sources.items)
         try stateStore.save(state)
         try? await publishPluginInstallationStatus()
+    }
+
+    func pluginSources(
+        forceRefresh: Bool = false
+    ) async throws -> GatewayPluginSourceListDTO {
+        try Task.checkCancellation()
+        let now = Date()
+        if !forceRefresh,
+           let cache = pluginSourceCache,
+           Self.pluginSourceCacheIsUsable(
+               cacheGeneration: cache.generation,
+               currentGeneration: pluginSourceGeneration,
+               expiresAt: cache.expiresAt,
+               now: now
+           ) {
+            return cache.value
+        }
+
+        if let refresh = pluginSourceRefresh,
+           refresh.generation == pluginSourceGeneration {
+            do {
+                let response = try await refresh.task.value
+                return try finalizePluginSourceRefresh(
+                    response,
+                    generation: refresh.generation
+                )
+            } catch {
+                if pluginSourceRefresh?.generation == refresh.generation {
+                    pluginSourceRefresh = nil
+                }
+                guard Self.pluginSourceRefreshIsCurrent(
+                    expectedGeneration: refresh.generation,
+                    currentGeneration: pluginSourceGeneration,
+                    isCancelled: Task.isCancelled
+                ) else {
+                    throw CancellationError()
+                }
+                throw error
+            }
+        }
+
+        if forceRefresh {
+            pluginSourceGeneration &+= 1
+        }
+        let generation = pluginSourceGeneration
+        let token = try requireAccessToken()
+        let gateway = gateway
+        let task = Task { try await gateway.pluginSources(token: token) }
+        pluginSourceRefresh = .init(generation: generation, task: task)
+        do {
+            let response = try await task.value
+            return try finalizePluginSourceRefresh(response, generation: generation)
+        } catch {
+            if pluginSourceRefresh?.generation == generation {
+                pluginSourceRefresh = nil
+            }
+            guard Self.pluginSourceRefreshIsCurrent(
+                expectedGeneration: generation,
+                currentGeneration: pluginSourceGeneration,
+                isCancelled: Task.isCancelled
+            ) else {
+                throw CancellationError()
+            }
+            throw error
+        }
+    }
+
+    func invalidatePluginSources() {
+        pluginSourceGeneration &+= 1
+        pluginSourceRefresh?.task.cancel()
+        pluginSourceRefresh = nil
+        pluginSourceCache = nil
+    }
+
+    private func finalizePluginSourceRefresh(
+        _ response: GatewayPluginSourceListDTO,
+        generation: Int
+    ) throws -> GatewayPluginSourceListDTO {
+        guard Self.pluginSourceRefreshIsCurrent(
+            expectedGeneration: generation,
+            currentGeneration: pluginSourceGeneration,
+            isCancelled: Task.isCancelled
+        ) else {
+            throw CancellationError()
+        }
+        let now = Date()
+        if let cache = pluginSourceCache,
+           Self.pluginSourceCacheIsUsable(
+               cacheGeneration: cache.generation,
+               currentGeneration: generation,
+               expiresAt: cache.expiresAt,
+               now: now
+           ) {
+            if pluginSourceRefresh?.generation == generation {
+                pluginSourceRefresh = nil
+            }
+            return cache.value
+        }
+        pluginSourceCache = .init(
+            generation: generation,
+            value: response,
+            expiresAt: now.addingTimeInterval(Self.pluginSourceCacheTTL)
+        )
+        if pluginSourceRefresh?.generation == generation {
+            pluginSourceRefresh = nil
+        }
+        return response
+    }
+
+    static func pluginSourceCacheIsUsable(
+        cacheGeneration: Int,
+        currentGeneration: Int,
+        expiresAt: Date,
+        now: Date
+    ) -> Bool {
+        cacheGeneration == currentGeneration && expiresAt > now
+    }
+
+    static func pluginSourceRefreshIsCurrent(
+        expectedGeneration: Int,
+        currentGeneration: Int,
+        isCancelled: Bool
+    ) -> Bool {
+        !isCancelled && expectedGeneration == currentGeneration
     }
 
     public func startBrowserExtensionPairing(pluginID: String) async throws {
@@ -191,6 +324,7 @@ extension NativeLocalConnectorService {
         }
         let launch = try NativePluginManifestLoader.prepare(
             record: record,
+            manifest: manifest,
             componentKey: NativeBrowserPluginIdentity.componentKey,
             serverKey: NativeBrowserPluginIdentity.componentKey,
             adapterSessionID: "browser-extension-pairing-\(UUID().uuidString.lowercased())",
@@ -239,6 +373,7 @@ extension NativeLocalConnectorService {
         await browserExtensionPairingRuntime.stop()
         await pluginApplicationRuntime.stop(pluginID: id)
         try pluginInstaller.uninstall(pluginID: id)
+        await pluginPermissionSnapshots.invalidateAll()
         state.installedPluginIDs.remove(id)
         state.installedPluginRecords?[id] = nil
         try stateStore.save(state)
@@ -273,6 +408,7 @@ extension NativeLocalConnectorService {
             manifest: manifest,
             permissionID: permissionID
         ) {
+            await pluginPermissionSnapshots.invalidate(record: record)
             return
         }
         let nativePermissionID: String
@@ -283,6 +419,7 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("这个权限不需要系统设置")
         }
         await MainActor.run { NativeSystemPermissions.request(nativePermissionID) }
+        await pluginPermissionSnapshots.invalidate(record: record)
     }
 
     private func installedPluginManifest(
@@ -290,10 +427,7 @@ extension NativeLocalConnectorService {
     ) throws -> NativePluginManifest {
         let url = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .appendingPathComponent("chatos.plugin.json")
-        let manifest = try JSONDecoder().decode(
-            NativePluginManifest.self,
-            from: Data(contentsOf: url, options: .mappedIfSafe)
-        )
+        let manifest = try NativePluginManifestLoader.loadManifest(from: url)
         guard manifest.name.isEmpty == false,
               manifest.version == record.version else {
             throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
@@ -441,11 +575,21 @@ extension NativeLocalConnectorService {
     ) -> String? {
         let manifestURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .appendingPathComponent("chatos.plugin.json")
-        guard let data = try? Data(contentsOf: manifestURL, options: .mappedIfSafe),
-              let manifest = try? JSONDecoder().decode(NativePluginManifest.self, from: data) else {
+        guard let manifest = try? NativePluginManifestLoader.loadManifest(from: manifestURL) else {
             return nil
         }
         let name = manifest.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
+}
+
+struct NativePluginSourceCache: Sendable {
+    let generation: Int
+    let value: GatewayPluginSourceListDTO
+    let expiresAt: Date
+}
+
+struct NativePluginSourceRefresh: Sendable {
+    let generation: Int
+    let task: Task<GatewayPluginSourceListDTO, Error>
 }

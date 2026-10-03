@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 
@@ -9,6 +10,7 @@ struct PetQuickNotepadView: View {
     @State private var creationPrompt: PetQuickNotepadCreationPrompt?
     @State private var creationName = ""
     @State private var deleteTarget: PetQuickNotepadDeleteTarget?
+    @State private var visibleTreeNodes: [PetQuickNotepadVisibleNode] = []
     let onBack: () -> Void
     let onClose: () -> Void
 
@@ -28,8 +30,33 @@ struct PetQuickNotepadView: View {
             viewModel.interfaceLanguage = model.interfaceLanguage
             await viewModel.refresh()
         }
+        .task {
+            let updates = await viewModel.changeUpdates()
+            for await _ in updates {
+                guard !Task.isCancelled else { return }
+                viewModel.scheduleExternalSync()
+            }
+        }
+        .task {
+            guard let eventHub = model.localAgentEventHub,
+                  let ownerUserID = model.localProjectOwnerUserID else { return }
+            await eventHub.configure(ownerUserID: ownerUserID)
+            let updates = await eventHub.updates()
+            for await update in updates {
+                guard !Task.isCancelled else { return }
+                guard update.ownerUserID == ownerUserID else { continue }
+                guard case let .events(events) = update.kind,
+                      NotepadExternalSyncPolicy.shouldRefresh(
+                        forEventTypes: events.map(\.eventType)
+                      ) else { continue }
+                viewModel.scheduleExternalSync()
+            }
+        }
         .onChange(of: model.interfaceLanguage) { _, language in
             viewModel.interfaceLanguage = language
+        }
+        .onChange(of: viewModel.tree, initial: true) { _, tree in
+            rebuildVisibleTree(from: tree)
         }
         .onDisappear {
             Task {
@@ -306,10 +333,6 @@ struct PetQuickNotepadView: View {
         }
     }
 
-    private var visibleTreeNodes: [PetQuickNotepadVisibleNode] {
-        flatten(viewModel.tree, depth: 0)
-    }
-
     private func flatten(
         _ nodes: [NotepadTreeNode],
         depth: Int
@@ -331,6 +354,11 @@ struct PetQuickNotepadView: View {
         } else {
             collapsedFolderIDs.insert(id)
         }
+        rebuildVisibleTree(from: viewModel.tree)
+    }
+
+    private func rebuildVisibleTree(from tree: [NotepadTreeNode]) {
+        visibleTreeNodes = flatten(tree, depth: 0)
     }
 
     @ViewBuilder

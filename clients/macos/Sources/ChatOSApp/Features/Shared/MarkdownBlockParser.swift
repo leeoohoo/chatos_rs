@@ -19,10 +19,12 @@ struct MarkdownListItem: Equatable, Sendable {
 
 enum MarkdownBlockParser {
     static func parse(_ source: String) -> [MarkdownBlock] {
+        guard !Task.isCancelled else { return [] }
         let normalized = source
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         let lines = expandedMarkdownLines(normalized)
+        guard !Task.isCancelled else { return [] }
         var blocks: [MarkdownBlock] = []
         var paragraph: [String] = []
         var listItems: [MarkdownListItem] = []
@@ -49,6 +51,7 @@ enum MarkdownBlockParser {
         }
 
         while index < lines.count {
+            guard !Task.isCancelled else { return [] }
             let line = lines[index]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
@@ -64,6 +67,7 @@ enum MarkdownBlockParser {
                 var codeLines: [String] = []
                 index += 1
                 while index < lines.count, !isCodeFence(lines[index]) {
+                    guard !Task.isCancelled else { return [] }
                     codeLines.append(lines[index])
                     index += 1
                 }
@@ -106,6 +110,7 @@ enum MarkdownBlockParser {
                       !lines[index].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                       let row = tableRow(lines[index]),
                       row.count == headers.count {
+                    guard !Task.isCancelled else { return [] }
                     rows.append(row)
                     index += 1
                 }
@@ -117,6 +122,7 @@ enum MarkdownBlockParser {
                 flushTextBlocks()
                 var quoteLines: [String] = []
                 while index < lines.count {
+                    guard !Task.isCancelled else { return [] }
                     let quoteLine = lines[index].trimmingCharacters(in: .whitespaces)
                     guard quoteLine.hasPrefix(">") else { break }
                     quoteLines.append(

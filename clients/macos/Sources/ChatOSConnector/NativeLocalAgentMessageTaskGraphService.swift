@@ -139,14 +139,12 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         repeat {
             let page = try await client.listGraphs(
                 ownerUserID: owner,
+                sourceEntityType: lookup?.turnID == nil ? nil : "conversation_turn",
+                sourceEntityID: lookup?.turnID,
                 beforeUpdatedAtUnixMs: beforeTimestamp,
                 beforeGraphID: beforeID
             )
-            summaries.append(contentsOf: page.graphs.filter { summary in
-                guard let turnID = lookup?.turnID else { return true }
-                return summary.sourceEntityType == "conversation_turn"
-                    && summary.sourceEntityID == turnID
-            })
+            summaries.append(contentsOf: page.graphs)
             beforeTimestamp = page.nextBeforeUpdatedAtUnixMs
             beforeID = page.nextBeforeGraphID
         } while beforeTimestamp != nil && summaries.count < 500

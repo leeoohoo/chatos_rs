@@ -2,16 +2,26 @@ import ChatOSCore
 import Foundation
 
 public actor NativeProjectRunService: ProjectRunServicing {
+    private static let maximumPreferencesBytes = 4 * 1_024 * 1_024
     private let connector: NativeLocalConnectorService
     private let preferencesURL: URL
+    private let maximumRetainedExitedInstances: Int
     private var rootsByProjectID: [String: String] = [:]
     private var analyses: [String: NativeProjectRunAnalysis] = [:]
     private var preferences: NativeProjectRunPreferences
     private var processes: [String: NativeProjectProcess] = [:]
+    private var stateChangeContinuations: [
+        String: [UUID: AsyncStream<Void>.Continuation]
+    ] = [:]
 
-    public init(connector: NativeLocalConnectorService, preferencesURL: URL) {
+    public init(
+        connector: NativeLocalConnectorService,
+        preferencesURL: URL,
+        maximumRetainedExitedInstances: Int = 100
+    ) {
         self.connector = connector
         self.preferencesURL = preferencesURL
+        self.maximumRetainedExitedInstances = max(1, maximumRetainedExitedInstances)
         self.preferences = (try? Self.loadPreferences(from: preferencesURL)) ?? .init()
     }
 
@@ -30,6 +40,23 @@ public actor NativeProjectRunService: ProjectRunServicing {
 
     public func analyze(projectID: String) async throws -> ProjectRunCatalog {
         try await catalog(projectID: projectID, force: true)
+    }
+
+    public func changes(projectID: String) async -> AsyncStream<Void> {
+        let subscriberID = UUID()
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        var projectContinuations = stateChangeContinuations[projectID] ?? [:]
+        projectContinuations[subscriberID] = pair.continuation
+        stateChangeContinuations[projectID] = projectContinuations
+        pair.continuation.onTermination = { [weak self] _ in
+            Task {
+                await self?.removeStateChangeSubscriber(
+                    subscriberID,
+                    projectID: projectID
+                )
+            }
+        }
+        return pair.stream
     }
 
     public func fetchState(projectID: String) async throws -> ProjectRunState {
@@ -149,6 +176,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
             instance.status = "running"
             instance.isRunning = true
             processes[instanceID] = instance
+            notifyStateChanged(projectID: projectID)
         } catch {
             throw NativeProjectRunError.processLaunchFailed(error.localizedDescription)
         }
@@ -163,6 +191,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
             instance.isRunning = false
             instance.status = "exited"
         }
+        notifyStateChanged(projectID: instance.projectID)
     }
 
     public func delete(instanceID: String) async throws {
@@ -170,6 +199,7 @@ public actor NativeProjectRunService: ProjectRunServicing {
             throw NativeProjectRunError.instanceNotFound
         }
         if instance.process.isRunning { instance.process.terminate() }
+        notifyStateChanged(projectID: instance.projectID)
     }
 
     private func catalog(projectID: String, force: Bool) async throws -> ProjectRunCatalog {
@@ -220,14 +250,47 @@ public actor NativeProjectRunService: ProjectRunServicing {
     private func processTerminated(id: String, exitCode: Int32) {
         guard let instance = processes[id] else { return }
         instance.outputPipe.fileHandleForReading.readabilityHandler = nil
+        let remainingOutput = instance.outputPipe.fileHandleForReading.readDataToEndOfFile()
+        if !remainingOutput.isEmpty { instance.logBuffer.append(remainingOutput) }
+        try? instance.outputPipe.fileHandleForReading.close()
         instance.logBuffer.append("\n[进程已退出，代码 \(exitCode)]\n")
         instance.exitCode = exitCode
         instance.isRunning = false
         instance.status = exitCode == 0 ? "exited" : "failed"
+        notifyStateChanged(projectID: instance.projectID)
+        pruneExitedInstances(projectID: instance.projectID)
+    }
+
+    private func removeStateChangeSubscriber(_ subscriberID: UUID, projectID: String) {
+        stateChangeContinuations[projectID]?.removeValue(forKey: subscriberID)
+        if stateChangeContinuations[projectID]?.isEmpty == true {
+            stateChangeContinuations.removeValue(forKey: projectID)
+        }
+    }
+
+    private func notifyStateChanged(projectID: String) {
+        guard let continuations = stateChangeContinuations[projectID] else { return }
+        for continuation in continuations.values {
+            continuation.yield(())
+        }
+    }
+
+    private func pruneExitedInstances(projectID: String) {
+        let exited = processes.values
+            .filter { $0.projectID == projectID && !$0.isRunning }
+            .sorted { $0.startedAt > $1.startedAt }
+        for instance in exited.dropFirst(maximumRetainedExitedInstances) {
+            processes.removeValue(forKey: instance.id)
+        }
     }
 
     private func persistPreferences() throws {
         let data = try JSONEncoder().encode(preferences)
+        guard data.count <= Self.maximumPreferencesBytes else {
+            throw NativeBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumPreferencesBytes
+            )
+        }
         try FileManager.default.createDirectory(
             at: preferencesURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -236,7 +299,13 @@ public actor NativeProjectRunService: ProjectRunServicing {
     }
 
     private static func loadPreferences(from url: URL) throws -> NativeProjectRunPreferences {
-        try JSONDecoder().decode(NativeProjectRunPreferences.self, from: Data(contentsOf: url))
+        try JSONDecoder().decode(
+            NativeProjectRunPreferences.self,
+            from: NativeBoundedFileReader.read(
+                url,
+                maximumBytes: maximumPreferencesBytes
+            )
+        )
     }
 }
 

@@ -3,24 +3,33 @@ import Foundation
 
 public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     private let client: NativeLocalAgentRuntimeClient
+    private let eventHub: NativeLocalAgentEventHub
     private var ownerUserID: String?
 
-    public init(host: any LocalAgentHostClientServicing) {
+    public init(
+        host: any LocalAgentHostClientServicing,
+        eventHub: NativeLocalAgentEventHub? = nil
+    ) {
         self.client = NativeLocalAgentRuntimeClient(host: host)
+        self.eventHub = eventHub ?? NativeLocalAgentEventHub(host: host)
     }
 
-    public func configure(ownerUserID: String) {
+    public func configure(ownerUserID: String) async {
         self.ownerUserID = ownerUserID
+        await eventHub.configure(ownerUserID: ownerUserID)
     }
 
-    public func reset() {
+    public func reset() async {
         ownerUserID = nil
+        await eventHub.reset()
     }
 
     public func fetchOpenActivities(limit: Int = 100) async throws -> [PetActivity] {
         guard let ownerUserID else {
             throw NativeLocalAgentPetActivityServiceError.notConfigured
         }
+        let recentCutoff = Date().addingTimeInterval(-15 * 60)
+        let recentCutoffUnixMs = Int64(recentCutoff.timeIntervalSince1970 * 1_000)
         async let active = client.listRuns(
             ownerUserID: ownerUserID,
             scope: "active",
@@ -29,10 +38,10 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         async let terminal = client.listRuns(
             ownerUserID: ownerUserID,
             scope: "terminal",
+            updatedAfterUnixMs: recentCutoffUnixMs,
             limit: UInt32(max(1, min(100, limit)))
         )
         let pages = try await (active, terminal)
-        let recentCutoff = Date().addingTimeInterval(-15 * 60)
         return (pages.0.runs + pages.1.runs)
             .filter { run in
                 !Self.isTerminal(run.status)
@@ -51,48 +60,38 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     }
 
     public func petActivityEvents() async -> AsyncThrowingStream<PetActivityEvent, Error> {
-        AsyncThrowingStream { continuation in
+        let updates = await eventHub.updates()
+        return AsyncThrowingStream<PetActivityEvent, Error>(
+            bufferingPolicy: .bufferingNewest(1)
+        ) { continuation in
             let task = Task { [weak self] in
-                var currentOwner: String?
-                var cursor: Int64 = 0
-                var idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    guard let owner = await self.configuredOwner() else {
-                        try? await Task.sleep(for: .milliseconds(400))
-                        continue
-                    }
-                    if owner != currentOwner {
-                        currentOwner = owner
-                        cursor = 0
-                        idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
-                        continuation.yield(.reconcile)
-                    }
-                    do {
-                        let page = try await self.client.listEvents(
-                            ownerUserID: owner,
-                            afterCursor: cursor
-                        )
-                        guard await self.configuredOwner() == owner else { continue }
-                        cursor = page.nextCursor
-                        if !page.events.isEmpty {
-                            idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
-                            continuation.yield(.reconcile)
-                        } else {
-                            try await Task.sleep(for: idleDelay)
-                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
-                                after: idleDelay
-                            )
-                        }
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        try? await Task.sleep(for: .seconds(1))
+                for await update in updates {
+                    guard let self, !Task.isCancelled else { return }
+                    guard await self.configuredOwner() == update.ownerUserID else { continue }
+                    switch update.kind {
+                    case .reconcile:
+                        continuation.yield(PetActivityEvent.reconcile)
+                    case let .events(events):
+                        guard Self.shouldRefresh(
+                            forEventTypes: events.map(\.eventType)
+                        ) else { continue }
+                        continuation.yield(PetActivityEvent.reconcile)
                     }
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    static func shouldRefresh(forEventTypes eventTypes: [String]) -> Bool {
+        let runProjectionNeutralEvents: Set<String> = [
+            "task_graph_written_back",
+            "task_state_reconciled",
+            "tool_invocation_approved",
+            "tool_invocation_claimed",
+            "tool_invocation_completed",
+        ]
+        return eventTypes.contains { !runProjectionNeutralEvents.contains($0) }
     }
 
     private func configuredOwner() -> String? {

@@ -47,6 +47,23 @@ final class MediaStudioHistoryStoreTests: XCTestCase {
         XCTAssertNil(requests[0].headers["Authorization"])
     }
 
+    func testHistoryLoadsInBoundedPagesWithoutDroppingOlderRecords() async throws {
+        let store = MediaStudioHistoryStore(root: try directory())
+        var savedIDs: Set<String> = []
+        for prompt in ["one", "two", "three"] {
+            let item = try await store.saveImage(Self.image(), prompt: prompt, owner: "alice")
+            savedIDs.insert(item.id)
+        }
+
+        let first = try await store.load(owner: "alice", limit: 2)
+        XCTAssertEqual(first.images.count, 2)
+        let cursor = try XCTUnwrap(first.nextCursor)
+        let second = try await store.load(owner: "alice", after: cursor, limit: 2)
+        XCTAssertEqual(second.images.count, 1)
+        XCTAssertNil(second.nextCursor)
+        XCTAssertEqual(Set((first.images + second.images).map(\.id)), savedIDs)
+    }
+
     func testCorruptRecordDoesNotHideOtherCreationsOrGetOverwritten() async throws {
         let root = try directory()
         let store = MediaStudioHistoryStore(root: root)

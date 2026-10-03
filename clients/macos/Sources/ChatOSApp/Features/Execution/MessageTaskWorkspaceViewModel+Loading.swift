@@ -30,6 +30,10 @@ extension MessageTaskWorkspaceViewModel {
     }
 
     func loadInspector(for task: MessageTask) {
+        inspectorLoadTask?.cancel()
+        modelOutputLoadTask?.cancel()
+        runLoadTask?.cancel()
+        moreRunEventsTask?.cancel()
         isLoadingInspector = true
         isLoadingRun = false
         taskDetail = nil
@@ -39,7 +43,7 @@ extension MessageTaskWorkspaceViewModel {
         isLoadingMoreRunEvents = false
         let target = target(for: task)
         let requestedTaskID = task.id
-        Task {
+        inspectorLoadTask = Task {
             defer {
                 if selectedTask?.id == requestedTaskID {
                     isLoadingInspector = false
@@ -58,7 +62,10 @@ extension MessageTaskWorkspaceViewModel {
                 } else if inspectorSection == .run {
                     loadRun(for: detail)
                 }
+            } catch is CancellationError {
+                return
             } catch {
+                guard selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -68,10 +75,11 @@ extension MessageTaskWorkspaceViewModel {
         guard let runID = task.lastRunID,
               loadedModelOutputRunID != runID,
               !isLoadingModelOutput else { return }
+        modelOutputLoadTask?.cancel()
         isLoadingModelOutput = true
         let target = target(for: task)
         let requestedTaskID = task.id
-        Task {
+        modelOutputLoadTask = Task {
             defer {
                 if selectedTask?.id == requestedTaskID {
                     isLoadingModelOutput = false
@@ -89,6 +97,8 @@ extension MessageTaskWorkspaceViewModel {
                 guard selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID
                 taskDetail = (taskDetail ?? task).merging(run: detail.run)
+            } catch is CancellationError {
+                return
             } catch {
                 guard selectedTask?.id == requestedTaskID else { return }
                 errorMessage = "模型输出加载失败：\(error.localizedDescription)"
@@ -99,10 +109,11 @@ extension MessageTaskWorkspaceViewModel {
     func loadRun(for task: MessageTask) {
         let preferredRunID = task.id == initialTaskID ? initialRunID : nil
         guard let runID = preferredRunID ?? task.lastRunID, !isLoadingRun else { return }
+        runLoadTask?.cancel()
         isLoadingRun = true
         let target = target(for: task)
         let requestedTaskID = task.id
-        Task {
+        runLoadTask = Task {
             defer {
                 if selectedTask?.id == requestedTaskID {
                     isLoadingRun = false
@@ -121,7 +132,10 @@ extension MessageTaskWorkspaceViewModel {
                 runDetail = detail
                 loadedModelOutputRunID = runID
                 taskDetail = detail.task.merging(run: detail.run)
+            } catch is CancellationError {
+                return
             } catch {
+                guard selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -132,9 +146,10 @@ extension MessageTaskWorkspaceViewModel {
               let current = runDetail,
               current.eventsHasMore,
               !isLoadingMoreRunEvents else { return }
+        moreRunEventsTask?.cancel()
         let target = target(for: task)
         isLoadingMoreRunEvents = true
-        Task {
+        moreRunEventsTask = Task {
             defer { isLoadingMoreRunEvents = false }
             do {
                 let page = try await graphService.fetchRun(
@@ -154,7 +169,10 @@ extension MessageTaskWorkspaceViewModel {
                 merged.task = page.task
                 merged.run = page.run
                 runDetail = merged
+            } catch is CancellationError {
+                return
             } catch {
+                guard runDetail?.run.id == current.run.id else { return }
                 errorMessage = error.localizedDescription
             }
         }

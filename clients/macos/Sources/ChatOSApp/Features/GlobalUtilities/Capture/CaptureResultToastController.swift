@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ScreenshotOutput {
-    let image: CGImage
+    let pngData: Data?
     let fileURL: URL?
     let copiedToPasteboard: Bool
     let errorMessage: String?
@@ -51,7 +51,9 @@ final class CaptureResultToastController: NSWindowController {
                 self?.dismiss()
             },
             onCopy: { [weak self] in
-                ScreenshotCoordinator.copyToPasteboard(output.image)
+                if let pngData = output.pngData {
+                    ScreenshotCoordinator.copyPNGToPasteboard(pngData)
+                }
                 self?.dismiss()
             },
             onDismiss: { [weak self] in self?.dismiss() }
@@ -104,7 +106,9 @@ private struct CaptureResultToastView: View {
                         Button(isEnglish ? "Open" : "打开", action: onOpen)
                         Button(isEnglish ? "Show in Finder" : "在访达中显示", action: onReveal)
                     }
-                    Button(isEnglish ? "Copy" : "复制", action: onCopy)
+                    if output.pngData != nil {
+                        Button(isEnglish ? "Copy" : "复制", action: onCopy)
+                    }
                 }
                 .controlSize(.small)
             }

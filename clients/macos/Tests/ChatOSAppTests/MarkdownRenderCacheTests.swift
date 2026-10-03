@@ -92,6 +92,22 @@ struct MarkdownRenderCacheTests {
     }
 
     @Test
+    func remoteMarkdownImageRequestsAreDeduplicatedAndCapped() {
+        let values = (0..<40).map { index in
+            "https://example.test/api/attachments/object?token=signed-\(index)"
+        }
+        let blocks = values.map { MarkdownBlock.image(altText: "image", url: $0) }
+            + [.image(altText: "duplicate", url: values[0])]
+
+        let requests = MarkdownRemoteImageLoader.requests(from: blocks)
+
+        #expect(requests.count == MarkdownRemoteImageLoader.maximumImagesPerDocument)
+        #expect(Set(requests.map(\.rawValue)).count == requests.count)
+        #expect(requests.first?.rawValue == values[0])
+        #expect(requests.last?.rawValue == values[31])
+    }
+
+    @Test
     func repeatedDocumentParsingUsesBoundedCache() {
         let cache = MarkdownRenderCache(totalCostLimit: 1_024 * 1_024, countLimit: 16)
         let source = """
@@ -144,6 +160,16 @@ struct MarkdownRenderCacheTests {
         #expect(first == second)
         #expect(cache.metrics().blockMisses == 1)
         #expect(cache.metrics().blockHits == 1)
+    }
+
+    @Test
+    func markdownOccurrenceCountingIsCaseInsensitiveAndNonAllocatingByMatch() {
+        #expect(MarkdownOccurrenceCounter.count(
+            in: "Agent result agent RESULT Agent",
+            query: "agent"
+        ) == 3)
+        #expect(MarkdownOccurrenceCounter.count(in: "aaaa", query: "aa") == 2)
+        #expect(MarkdownOccurrenceCounter.count(in: "content", query: "") == 0)
     }
 
     @Test

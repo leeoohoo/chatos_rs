@@ -17,6 +17,8 @@ enum ClipboardHistoryStoreError: LocalizedError {
 }
 
 actor ClipboardHistoryStore {
+    private static let maximumPayloadBytes = 25 * 1_024 * 1_024
+    private static let maximumTypeBytes = 16 * 1_024
     private let rootURL: URL
     private let payloadDirectoryURL: URL
     nonisolated(unsafe) private var database: OpaquePointer?
@@ -174,7 +176,13 @@ actor ClipboardHistoryStore {
 
     func payload(for entry: ClipboardHistoryEntry) throws -> ClipboardHistoryPayload {
         let url = rootURL.appendingPathComponent(entry.payloadReference)
-        guard let data = try? Data(contentsOf: url) else {
+        guard entry.byteCount > 0,
+              entry.byteCount <= Int64(Self.maximumPayloadBytes),
+              let data = try? AppBoundedFileReader.read(
+                  url,
+                  maximumBytes: Int(entry.byteCount)
+              ),
+              data.count == entry.byteCount else {
             throw ClipboardHistoryStoreError.payloadMissing
         }
         switch entry.kind {
@@ -189,7 +197,10 @@ actor ClipboardHistoryStore {
             return .files(try JSONDecoder().decode([URL].self, from: data))
         case .image:
             let typeURL = url.deletingPathExtension().appendingPathExtension("type")
-            let type = (try? String(contentsOf: typeURL, encoding: .utf8)) ?? "public.png"
+            let type = (try? AppBoundedFileReader.read(
+                typeURL,
+                maximumBytes: Self.maximumTypeBytes
+            )).map { String(decoding: $0, as: UTF8.self) } ?? "public.png"
             return .image(data: data, pasteboardType: type)
         }
     }

@@ -109,11 +109,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let coordinator = assembly.coordinator();
     match options.mode {
         IpcMode::Stdio => {
-            let mut input = tokio::io::stdin();
-            let mut output = tokio::io::stdout();
             serve_with_coordinator(
                 coordinator,
-                serve_reader_writer(&mut input, &mut output, assembly.coordinator()),
+                serve_stdio_until_parent_exit(assembly.coordinator()),
             )
             .await?;
         }
@@ -135,6 +133,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+async fn serve_stdio_until_parent_exit(
+    handler: Arc<LocalAgentHostCoordinator>,
+) -> Result<(), chatos_local_agent_host::HostTransportError> {
+    let parent_pid = unsafe { libc::getppid() };
+    tokio::select! {
+        result = serve_reader_writer(tokio::io::stdin(), tokio::io::stdout(), handler) => result,
+        _ = wait_for_parent_exit(parent_pid) => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn serve_stdio_until_parent_exit(
+    handler: Arc<LocalAgentHostCoordinator>,
+) -> Result<(), chatos_local_agent_host::HostTransportError> {
+    serve_reader_writer(tokio::io::stdin(), tokio::io::stdout(), handler).await
+}
+
+#[cfg(unix)]
+async fn wait_for_parent_exit(parent_pid: libc::pid_t) {
+    loop {
+        let current_parent_pid = unsafe { libc::getppid() };
+        if parent_process_changed(parent_pid, current_parent_pid) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+#[cfg(unix)]
+fn parent_process_changed(expected: libc::pid_t, current: libc::pid_t) -> bool {
+    expected <= 1 || current != expected
 }
 
 fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
@@ -324,6 +356,14 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         Arc,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn stdio_parent_watchdog_detects_reparenting() {
+        assert!(!parent_process_changed(42, 42));
+        assert!(parent_process_changed(42, 1));
+        assert!(parent_process_changed(1, 1));
+    }
 
     #[tokio::test]
     async fn coordinator_shutdown_aborts_work_that_exceeds_the_grace_period() {

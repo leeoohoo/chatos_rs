@@ -10,7 +10,7 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::{
     LocalAgentProfileRegistry, LocalAgentRuntime, LocalAgentRuntimeError,
 };
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -86,7 +86,7 @@ impl LocalAgentScheduler {
             .await?;
         let claim_result = self
             .runtime
-            .try_handle(envelope(
+            .try_handle_ephemeral(envelope(
                 HostCommand::ClaimNextRun(ClaimNextRunCommand {
                     owner_user_id: self.owner_user_id.clone(),
                     worker_id: self.worker_id.clone(),
@@ -101,9 +101,22 @@ impl LocalAgentScheduler {
             _ => return Err(LocalAgentSchedulerError::UnexpectedResult("claim")),
         };
         let outcome = match self.profiles.profile_for(&claim.run.profile_key) {
-            Some(profile) => match profile.execute_step(&claim).await {
-                Ok(outcome) => outcome,
-                Err(error) => LocalAgentStepOutcome::NeedsReview {
+            Some(profile) => match self.execute_with_heartbeat(profile, &claim).await? {
+                None => {
+                    let current = self
+                        .runtime
+                        .get_run_for_host_worker(&claim.run.run_id)
+                        .await?
+                        .ok_or_else(|| {
+                            LocalAgentRuntimeError::InvalidRunState(format!(
+                                "Run disappeared after its claim was lost: {}",
+                                claim.run.run_id
+                            ))
+                        })?;
+                    return Ok(SchedulerTick::Committed(Box::new(current)));
+                }
+                Some(Ok(outcome)) => outcome,
+                Some(Err(error)) => LocalAgentStepOutcome::NeedsReview {
                     reason: "Local Agent profile step failed".to_string(),
                     detail: serde_json::json!({"error": error}),
                 },
@@ -119,7 +132,7 @@ impl LocalAgentScheduler {
         let expected_version = claim.run.version;
         let committed = self
             .runtime
-            .try_handle(envelope(
+            .try_handle_ephemeral(envelope(
                 HostCommand::CommitStep(CommitStepCommand {
                     owner_user_id: owner_user_id.clone(),
                     run_id: run_id.clone(),
@@ -135,7 +148,7 @@ impl LocalAgentScheduler {
             Err(error) => {
                 let current = self
                     .runtime
-                    .try_handle(envelope(
+                    .try_handle_ephemeral(envelope(
                         HostCommand::GetRun(GetRunCommand {
                             owner_user_id,
                             run_id: run_id.clone(),
@@ -159,6 +172,37 @@ impl LocalAgentScheduler {
             _ => Err(LocalAgentSchedulerError::UnexpectedResult("commit")),
         }
     }
+
+    async fn execute_with_heartbeat(
+        &self,
+        profile: Arc<dyn chatos_local_agent_runtime::LocalAgentProfile>,
+        claim: &chatos_local_agent_protocol::LocalAgentRunClaim,
+    ) -> Result<Option<Result<LocalAgentStepOutcome, String>>, LocalAgentRuntimeError> {
+        let execution = profile.execute_step(claim);
+        tokio::pin!(execution);
+        let heartbeat_interval = claim_heartbeat_interval(self.lease_duration_ms);
+        loop {
+            tokio::select! {
+                outcome = &mut execution => return Ok(Some(outcome)),
+                _ = tokio::time::sleep(heartbeat_interval) => {
+                    let renewed = self.runtime.renew_run_claim(
+                        &self.owner_user_id,
+                        &claim.run.run_id,
+                        &claim.claim_token,
+                        claim.run.version,
+                        self.lease_duration_ms,
+                    ).await?;
+                    if !renewed {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn claim_heartbeat_interval(lease_duration_ms: u64) -> Duration {
+    Duration::from_millis((lease_duration_ms / 3).max(250))
 }
 
 fn envelope(command: HostCommand, prefix: &str) -> HostRequestEnvelope {
@@ -189,6 +233,21 @@ mod tests {
             &self,
             claim: &LocalAgentRunClaim,
         ) -> Result<LocalAgentStepOutcome, String> {
+            Ok(LocalAgentStepOutcome::Succeed {
+                output: serde_json::json!({"run_id": claim.run.run_id}),
+            })
+        }
+    }
+
+    struct DelayedSuccessProfile;
+
+    #[async_trait]
+    impl LocalAgentProfile for DelayedSuccessProfile {
+        async fn execute_step(
+            &self,
+            claim: &LocalAgentRunClaim,
+        ) -> Result<LocalAgentStepOutcome, String> {
+            tokio::time::sleep(Duration::from_millis(1_300)).await;
             Ok(LocalAgentStepOutcome::Succeed {
                 output: serde_json::json!({"run_id": claim.run.run_id}),
             })
@@ -277,6 +336,48 @@ mod tests {
             scheduler.run_once().await.expect("idle"),
             SchedulerTick::Idle
         );
+    }
+
+    #[tokio::test]
+    async fn scheduler_renews_claim_during_long_model_step() {
+        let storage = Arc::new(
+            SqliteClientStorage::connect_memory()
+                .await
+                .expect("storage"),
+        );
+        let runtime = Arc::new(LocalAgentRuntime::new(storage));
+        runtime.initialize("user-1").await.expect("initialize");
+        runtime
+            .try_handle(envelope(
+                HostCommand::CreateRun(CreateRunCommand {
+                    run_id: "run-scheduler-heartbeat".to_string(),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: "conversation-1".to_string(),
+                    profile_key: "delayed_success".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: serde_json::json!({"message": "hello"}),
+                    max_iterations: 4,
+                }),
+                "create-heartbeat",
+            ))
+            .await
+            .expect("create run");
+        let mut profiles = LocalAgentProfileRegistry::new();
+        profiles
+            .register("delayed_success", DelayedSuccessProfile)
+            .expect("profile");
+        let scheduler = LocalAgentScheduler::new(runtime, profiles, "user-1", "worker-1")
+            .expect("scheduler")
+            .with_lease_duration_ms(1_000)
+            .expect("short lease");
+
+        let SchedulerTick::Committed(run) = scheduler.run_once().await.expect("long step") else {
+            panic!("expected committed run")
+        };
+        assert_eq!(run.status, LocalAgentRunStatus::Succeeded);
     }
 
     #[tokio::test]

@@ -18,15 +18,19 @@ extension LocalAgentChatToolProvider {
             ownerUserID: context.ownerUserID,
             agentID: context.agentID
         )
+        var stateTodos: [LocalAgentTodo] = []
+        if let runningTodo = state.runningTodo { stateTodos.append(runningTodo) }
+        if let readyTodo = state.readyTodo { stateTodos.append(readyTodo) }
+        var responses = try await todoResponses(stateTodos, sortResponses: false).makeIterator()
         let runningResponse: TodoResponse?
-        if let runningTodo = state.runningTodo {
-            runningResponse = try await todoResponse(runningTodo)
+        if state.runningTodo != nil {
+            runningResponse = responses.next()
         } else {
             runningResponse = nil
         }
         let readyResponse: TodoResponse?
-        if let readyTodo = state.readyTodo {
-            readyResponse = try await todoResponse(readyTodo)
+        if state.readyTodo != nil {
+            readyResponse = responses.next()
         } else {
             readyResponse = nil
         }
@@ -44,11 +48,7 @@ extension LocalAgentChatToolProvider {
             agentID: context.agentID,
             nowUnixMs: now()
         )
-        if let delivery,
-           let todo = try await store.todoForDelivery(
-            ownerUserID: context.ownerUserID,
-            deliveryID: delivery.id
-           ) {
+        if let delivery, let todo = try await todoBoundToDelivery(delivery) {
             return try Self.outcome(TodoStartNextResponse(
                 status: "started",
                 todo: try await todoResponse(todo)
@@ -81,13 +81,18 @@ extension LocalAgentChatToolProvider {
             includeArchived: false
         )
         let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
+        let managedRooms = rooms.filter {
+            $0.conversationKind == .projectTeam && $0.projectManagerAgentID == context.agentID
+        }
+        let activeMembers = if managedRooms.isEmpty {
+            [ProjectAgentRoomMember]()
+        } else {
+            try await store.listActiveMembers(ownerUserID: context.ownerUserID)
+        }
+        let membersByRoomID = Dictionary(grouping: activeMembers, by: \.roomID)
         var teams: [TodoTeamOptionResponse] = []
-        for room in rooms where room.conversationKind == .projectTeam {
-            guard room.projectManagerAgentID == context.agentID else { continue }
-            let members = try await store.listMembers(
-                ownerUserID: context.ownerUserID,
-                roomID: room.id
-            )
+        for room in managedRooms {
+            let members = membersByRoomID[room.id] ?? []
             var assignees: [TodoAssigneeOptionResponse] = []
             for member in members where member.status == .active {
                 guard let profile = profilesByID[member.agentID] else { continue }
@@ -142,12 +147,13 @@ extension LocalAgentChatToolProvider {
             teamRoomID: teamID,
             includeTerminal: true
         ).filter { $0.status != .cancelled }
+        let profiles = try await store.listAgents(
+            ownerUserID: context.ownerUserID,
+            includeArchived: true
+        )
+        let profilesByID = Dictionary(uniqueKeysWithValues: profiles.map { ($0.id, $0) })
         var response: [TodoDependencyOptionResponse] = []
         for todo in todos {
-            let profile = try await store.listAgents(
-                ownerUserID: context.ownerUserID,
-                includeArchived: true
-            ).first(where: { $0.id == todo.agentID })
             response.append(.init(
                 todoReference: await references.todoReference(
                     todoID: todo.id,
@@ -155,7 +161,7 @@ extension LocalAgentChatToolProvider {
                     teamRoomID: todo.teamRoomID
                 ),
                 title: todo.title,
-                assignee: profile?.draft.name ?? "Agent",
+                assignee: profilesByID[todo.agentID]?.draft.name ?? "Agent",
                 status: todo.status.rawValue,
                 blockedReason: todo.blockedReason,
                 result: todo.result

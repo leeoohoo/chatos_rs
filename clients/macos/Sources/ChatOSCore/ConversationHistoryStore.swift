@@ -1,6 +1,9 @@
 import Foundation
 
 public actor ConversationHistoryStore {
+    private static let maximumRetainedRealtimeEventIDsPerSession = 4_096
+    private static let realtimeEventIDTrimBatch = 1_024
+
     private struct SessionState: Sendable {
         var turnsByID: [String: ConversationTurn] = [:]
         var olderCursor: String?
@@ -12,6 +15,7 @@ public actor ConversationHistoryStore {
         var hasLoadedOlderPage = false
         var lastAppliedEventSequence: Int64 = 0
         var appliedEventIDs: Set<String> = []
+        var appliedEventIDOrder: [String] = []
         var viewportAnchor: ViewportAnchor?
         var unreadNewerCount = 0
     }
@@ -85,6 +89,16 @@ public actor ConversationHistoryStore {
         }
 
         state.appliedEventIDs.insert(event.eventID)
+        state.appliedEventIDOrder.append(event.eventID)
+        if state.appliedEventIDOrder.count > Self.maximumRetainedRealtimeEventIDsPerSession {
+            let removeCount = min(
+                Self.realtimeEventIDTrimBatch,
+                state.appliedEventIDOrder.count
+            )
+            let removed = state.appliedEventIDOrder.prefix(removeCount)
+            state.appliedEventIDs.subtract(removed)
+            state.appliedEventIDOrder.removeFirst(removeCount)
+        }
         state.lastAppliedEventSequence = max(state.lastAppliedEventSequence, event.eventSequence)
         let mergeResult = merge(
             [event.turn],
@@ -133,6 +147,10 @@ public actor ConversationHistoryStore {
             viewportAnchor: state.viewportAnchor,
             unreadNewerCount: state.unreadNewerCount
         )
+    }
+
+    func retainedRealtimeEventIDCount(sessionID: String) -> Int {
+        sessions[sessionID]?.appliedEventIDs.count ?? 0
     }
 
     private struct MergeResult {

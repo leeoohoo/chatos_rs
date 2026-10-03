@@ -37,11 +37,37 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var approvalMonitorTask: Task<Void, Never>?
     private var approvalStreamTask: Task<Void, Never>?
     private var approvalEventStreamTask: Task<Void, Never>?
+    private var browserExtensionPairingTasks: [String: Task<Void, Never>] = [:]
+    private var browserExtensionPairingRequestIDs: [String: UUID] = [:]
+    private var selectedTabLoadTask: Task<Void, Never>?
+    private var selectedTabLoadGeneration: Int64 = 0
+    private var statusRefreshTask: Task<Void, Never>?
+    private var pluginRefreshTask: Task<Void, Never>?
+    private var actionTask: Task<Void, Never>?
+    private var actionGeneration: Int64 = 0
+    private var pluginActionTasks: [String: Task<Void, Never>] = [:]
+    private var pluginActionRequestIDs: [String: UUID] = [:]
+    private var lifecycleGeneration: UInt64 = 0
+    private var signedOutSuspensionTask: Task<Void, Never>?
+    private var signedOutSuspensionGeneration: UInt64 = 0
+    private var servicePreparationTask: Task<Void, Never>?
 
     init(
         service: any LocalConnectorControlServicing
     ) {
         self.service = service
+    }
+
+    deinit {
+        approvalStreamTask?.cancel()
+        approvalEventStreamTask?.cancel()
+        approvalMonitorTask?.cancel()
+        browserExtensionPairingTasks.values.forEach { $0.cancel() }
+        selectedTabLoadTask?.cancel()
+        statusRefreshTask?.cancel()
+        pluginRefreshTask?.cancel()
+        actionTask?.cancel()
+        pluginActionTasks.values.forEach { $0.cancel() }
     }
 
     func activate(
@@ -58,17 +84,29 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         )
     }
 
+    func setServicePreparationTask(_ task: Task<Void, Never>) {
+        servicePreparationTask = task
+    }
+
     func refreshStatus(
         pairIfNeeded: Bool = false,
         expectedOwnerUserID: String? = nil,
         onReady: (@MainActor (LocalConnectorStatus) -> Void)? = nil
     ) {
+        statusRefreshTask?.cancel()
         refreshGeneration += 1
         let generation = refreshGeneration
         isLoading = true
         errorMessage = nil
-        Task {
+        let service = service
+        let pendingServicePreparation = servicePreparationTask
+        let pendingSignedOutSuspension = signedOutSuspensionTask
+        statusRefreshTask = Task { [weak self] in
             do {
+                await pendingServicePreparation?.value
+                try Task.checkCancellation()
+                await pendingSignedOutSuspension?.value
+                try Task.checkCancellation()
                 // A restored ChatOS login does not guarantee that the independent Connector
                 // credential is still accepted by the gateway. Refresh it on every authenticated
                 // activation; the native service reuses the existing device/workspace when the
@@ -78,9 +116,11 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                         deviceName: Host.current().localizedName
                     )
                 } else {
-                    try await fetchStatusWithStartupRetry()
+                    try await Self.fetchStatusWithStartupRetry(service: service)
                 }
-                guard generation == refreshGeneration else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      generation == refreshGeneration else { return }
                 let ownerMismatch = expectedOwnerUserID.map {
                     nextStatus.user?.id != $0
                 } ?? false
@@ -89,13 +129,18 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                 }
                 status = nextStatus
                 onReady?(nextStatus)
+            } catch is CancellationError {
+                // A newer refresh or account transition owns the visible state.
             } catch {
-                guard generation == refreshGeneration else { return }
+                guard let self,
+                      generation == refreshGeneration else { return }
                 errorMessage = error.localizedDescription
             }
-            guard generation == refreshGeneration else { return }
+            guard let self,
+                  generation == refreshGeneration else { return }
             isStarting = false
             isLoading = false
+            statusRefreshTask = nil
         }
     }
 
@@ -120,14 +165,35 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     func disconnect() {
         performAction(successNotice: "已阻断服务端到本机的调用，本机数据和配置均已保留。") {
-            self.status = try await self.service.disconnect()
+            let nextStatus = try await self.service.disconnect()
+            try Task.checkCancellation()
+            self.status = nextStatus
         }
     }
 
     func resetForSignedOut() {
+        lifecycleGeneration &+= 1
         stopApprovalMonitoring()
+        let pendingStatusRefresh = statusRefreshTask
+        statusRefreshTask?.cancel()
+        statusRefreshTask = nil
+        pluginRefreshTask?.cancel()
+        pluginRefreshTask = nil
+        actionGeneration += 1
+        let pendingAction = actionTask
+        actionTask?.cancel()
+        actionTask = nil
+        pluginActionTasks.values.forEach { $0.cancel() }
+        pluginActionTasks = [:]
+        pluginActionRequestIDs = [:]
         refreshGeneration += 1
         pluginRefreshGeneration += 1
+        browserExtensionPairingTasks.values.forEach { $0.cancel() }
+        browserExtensionPairingTasks = [:]
+        browserExtensionPairingRequestIDs = [:]
+        selectedTabLoadGeneration += 1
+        selectedTabLoadTask?.cancel()
+        selectedTabLoadTask = nil
         isStarting = false
         isLoading = false
         isPerformingAction = false
@@ -141,46 +207,71 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         latestApprovalEvent = nil
         plugins = []
         browserExtensionPairedPluginIDs = []
-        Task {
+        startSignedOutSuspension(after: [pendingStatusRefresh, pendingAction].compactMap { $0 })
+    }
+
+    private func startSignedOutSuspension(after pendingTasks: [Task<Void, Never>]) {
+        signedOutSuspensionGeneration &+= 1
+        let generation = signedOutSuspensionGeneration
+        let previousSuspension = signedOutSuspensionTask
+        let service = service
+        signedOutSuspensionTask = Task { [weak self] in
+            await previousSuspension?.value
+            for task in pendingTasks {
+                await task.value
+            }
             // A missing/expired login session is not an explicit request to erase this
             // Mac's persisted project and workspace access state.
             await service.suspendForSignedOut()
+            guard let self,
+                  signedOutSuspensionGeneration == generation else { return }
+            signedOutSuspensionTask = nil
         }
     }
 
     func reconnect() {
         performAction(successNotice: "服务端到本机的调用通道已恢复。") {
+            let nextStatus: LocalConnectorStatus
             if self.status?.configured == true {
-                self.status = try await self.service.resumeServerAccess()
+                nextStatus = try await self.service.resumeServerAccess()
             } else {
-                self.status = try await self.service.pairWithCurrentChatOSSession(
+                nextStatus = try await self.service.pairWithCurrentChatOSSession(
                     deviceName: Host.current().localizedName
                 )
             }
+            try Task.checkCancellation()
+            self.status = nextStatus
         }
     }
 
     func runTerminal(commandLine: String, workspaceID: String, cwd: String?) {
         guard !commandLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         performAction(successNotice: nil) {
-            self.terminalResult = try await self.service.executeTerminal(
+            let nextResult = try await self.service.executeTerminal(
                 workspaceID: workspaceID,
                 commandLine: commandLine,
                 cwd: cwd
             )
-            self.commandHistory = try await self.service.fetchCommandHistory(limit: 50)
+            try Task.checkCancellation()
+            let nextHistory = try await self.service.fetchCommandHistory(limit: 50)
+            try Task.checkCancellation()
+            self.terminalResult = nextResult
+            self.commandHistory = nextHistory
         }
     }
 
     func loadCommandHistory() {
         load {
-            self.commandHistory = try await self.service.fetchCommandHistory(limit: 50)
+            let history = try await self.service.fetchCommandHistory(limit: 50)
+            try Task.checkCancellation()
+            self.commandHistory = history
         }
     }
 
     func clearCommandHistory() {
         performAction(successNotice: "终端历史已清空。") {
             try await self.service.clearCommandHistory()
+            try Task.checkCancellation()
             self.commandHistory = []
         }
     }
@@ -191,6 +282,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             async let pending = self.service.fetchPendingApprovals()
             let nextSettings = try await settings
             let nextPendingApprovals = try await pending
+            try Task.checkCancellation()
             if self.approvalSettings != nextSettings {
                 self.approvalSettings = nextSettings
             }
@@ -199,6 +291,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func startApprovalMonitoring() {
+        let lifecycle = lifecycleGeneration
         let streamingService = service as? any LocalConnectorApprovalStreaming
         let hasStreamingService = streamingService != nil
         if approvalStreamTask == nil, let streamingService {
@@ -227,7 +320,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         )
         approvalMonitorTask = Task { [weak self] in
             if !hasStreamingService {
-                await self?.refreshPendingApprovalsSilently()
+                await self?.refreshPendingApprovalsSilently(lifecycle: lifecycle)
             }
             while !Task.isCancelled {
                 do {
@@ -236,7 +329,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                await self?.refreshPendingApprovalsSilently()
+                await self?.refreshPendingApprovalsSilently(lifecycle: lifecycle)
             }
         }
     }
@@ -255,18 +348,24 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         riskAcknowledged: Bool
     ) {
         performAction(successNotice: "默认审批策略已更新。") {
-            self.approvalSettings = try await self.service.updateDefaultApprovalMode(
+            let nextSettings = try await self.service.updateDefaultApprovalMode(
                 mode,
                 riskAcknowledged: riskAcknowledged
             )
+            try Task.checkCancellation()
+            self.approvalSettings = nextSettings
         }
     }
 
     func resolveApproval(id: String, decision: String) {
         performAction(successNotice: "审批已处理。") {
             try await self.service.resolveApproval(id: id, decision: decision)
-            let nextPendingApprovals = try await self.service.fetchPendingApprovals()
-            let nextSettings = try await self.service.fetchApprovalSettings()
+            try Task.checkCancellation()
+            async let pending = self.service.fetchPendingApprovals()
+            async let settings = self.service.fetchApprovalSettings()
+            let nextPendingApprovals = try await pending
+            let nextSettings = try await settings
+            try Task.checkCancellation()
             self.applyPendingApprovalsIfChanged(nextPendingApprovals)
             if self.approvalSettings != nextSettings {
                 self.approvalSettings = nextSettings
@@ -276,19 +375,25 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     func loadSystemPermissions() {
         load {
-            self.systemPermissions = try await self.service.fetchSystemPermissions()
+            let permissions = try await self.service.fetchSystemPermissions()
+            try Task.checkCancellation()
+            self.systemPermissions = permissions
         }
     }
 
     func requestPermission(id: String) {
         performAction(successNotice: "系统授权引导已打开；完成后可重新检测状态。") {
-            self.systemPermissions = try await self.service.requestSystemPermission(id: id)
+            let permissions = try await self.service.requestSystemPermission(id: id)
+            try Task.checkCancellation()
+            self.systemPermissions = permissions
         }
     }
 
     func refreshPermissions() {
         performAction(successNotice: "系统权限状态已重新检测。") {
-            self.systemPermissions = try await self.service.fetchSystemPermissions()
+            let permissions = try await self.service.fetchSystemPermissions()
+            try Task.checkCancellation()
+            self.systemPermissions = permissions
         }
     }
 
@@ -296,8 +401,11 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         load {
             async let catalog = self.service.fetchModelCatalog(refresh: refresh)
             async let providers = self.service.fetchModelProviders()
-            self.modelCatalog = try await catalog
-            self.modelProviders = try await providers
+            let nextCatalog = try await catalog
+            let nextProviders = try await providers
+            try Task.checkCancellation()
+            self.modelCatalog = nextCatalog
+            self.modelProviders = nextProviders
         }
     }
 
@@ -307,7 +415,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                 $0.enabled && $0.taskEnabled && $0.hasAPIKey
             }
         }
+        let lifecycle = lifecycleGeneration
         let catalog = try await service.fetchModelCatalog(refresh: false)
+        try Task.checkCancellation()
+        guard lifecycle == lifecycleGeneration else { throw CancellationError() }
         modelCatalog = catalog
         return catalog.items.filter {
             $0.enabled && $0.taskEnabled && $0.hasAPIKey
@@ -321,41 +432,69 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         performAction(successNotice: "AI 模型配置已保存。") {
             for (id, update) in updates {
                 try await self.service.updateModelConfig(id: id, update: update)
+                try Task.checkCancellation()
             }
             try await self.service.updateModelSettings(settings)
-            self.modelCatalog = try await self.service.fetchModelCatalog(refresh: false)
+            try Task.checkCancellation()
+            let catalog = try await self.service.fetchModelCatalog(refresh: false)
+            try Task.checkCancellation()
+            self.modelCatalog = catalog
         }
     }
 
     func createModelProvider(_ draft: LocalConnectorModelProviderDraft) {
         performAction(successNotice: "供应商已添加，正在同步模型目录。") {
             try await self.service.createModelProvider(draft)
-            self.modelProviders = try await self.service.fetchModelProviders()
-            self.modelCatalog = try await self.service.fetchModelCatalog(refresh: true)
+            try Task.checkCancellation()
+            async let providers = self.service.fetchModelProviders()
+            async let catalog = self.service.fetchModelCatalog(refresh: true)
+            let nextProviders = try await providers
+            let nextCatalog = try await catalog
+            try Task.checkCancellation()
+            self.modelProviders = nextProviders
+            self.modelCatalog = nextCatalog
         }
     }
 
     func updateModelProvider(id: String, draft: LocalConnectorModelProviderDraft) {
         performAction(successNotice: "供应商配置已更新。") {
             try await self.service.updateModelProvider(id: id, draft: draft)
-            self.modelProviders = try await self.service.fetchModelProviders()
-            self.modelCatalog = try await self.service.fetchModelCatalog(refresh: true)
+            try Task.checkCancellation()
+            async let providers = self.service.fetchModelProviders()
+            async let catalog = self.service.fetchModelCatalog(refresh: true)
+            let nextProviders = try await providers
+            let nextCatalog = try await catalog
+            try Task.checkCancellation()
+            self.modelProviders = nextProviders
+            self.modelCatalog = nextCatalog
         }
     }
 
     func refreshModelProvider(id: String) {
         performAction(successNotice: "供应商模型目录已刷新。") {
             try await self.service.refreshModelProvider(id: id)
-            self.modelProviders = try await self.service.fetchModelProviders()
-            self.modelCatalog = try await self.service.fetchModelCatalog(refresh: true)
+            try Task.checkCancellation()
+            async let providers = self.service.fetchModelProviders()
+            async let catalog = self.service.fetchModelCatalog(refresh: true)
+            let nextProviders = try await providers
+            let nextCatalog = try await catalog
+            try Task.checkCancellation()
+            self.modelProviders = nextProviders
+            self.modelCatalog = nextCatalog
         }
     }
 
     func deleteModelProvider(id: String) {
         performAction(successNotice: "供应商及其导入模型已删除。") {
             try await self.service.deleteModelProvider(id: id)
-            self.modelProviders = try await self.service.fetchModelProviders()
-            self.modelCatalog = try await self.service.fetchModelCatalog(refresh: false)
+            try Task.checkCancellation()
+            async let providers = self.service.fetchModelProviders()
+            async let catalog = self.service.fetchModelCatalog(refresh: false)
+            let nextProviders = try await providers
+            let nextCatalog = try await catalog
+            try Task.checkCancellation()
+            self.modelProviders = nextProviders
+            self.modelCatalog = nextCatalog
         }
     }
 
@@ -363,8 +502,11 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         load {
             async let backends = self.service.fetchSandboxBackends()
             async let settings = self.service.fetchSandboxSettings()
-            self.sandboxBackends = try await backends
-            self.sandboxSettings = try await settings
+            let nextBackends = try await backends
+            let nextSettings = try await settings
+            try Task.checkCancellation()
+            self.sandboxBackends = nextBackends
+            self.sandboxSettings = nextSettings
         }
     }
 
@@ -376,37 +518,51 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         networkAccess: String? = nil
     ) {
         performAction(successNotice: "权限策略已更新。") {
-            self.sandboxSettings = try await self.service.updateSandboxSettings(
+            let settings = try await self.service.updateSandboxSettings(
                 enabled: enabled,
                 permissionProfileID: permissionProfileID,
                 approvalPolicy: approvalPolicy,
                 approvalReviewer: approvalReviewer,
                 networkAccess: networkAccess
             )
+            try Task.checkCancellation()
+            self.sandboxSettings = settings
         }
     }
 
-    func loadPlugins() {
+    func loadPlugins(forceRefresh: Bool = false) {
+        selectedTabLoadGeneration += 1
+        selectedTabLoadTask?.cancel()
+        selectedTabLoadTask = nil
+        pluginRefreshTask?.cancel()
         pluginRefreshGeneration += 1
         let generation = pluginRefreshGeneration
         let requestedTab = selectedTab
         isLoading = true
         errorMessage = nil
-        Task {
+        let service = service
+        pluginRefreshTask = Task { [weak self] in
             do {
-                let nextPlugins = try await service.fetchPlugins()
-                guard generation == pluginRefreshGeneration else { return }
+                let nextPlugins = try await service.fetchPlugins(refresh: forceRefresh)
+                guard !Task.isCancelled,
+                      let self,
+                      generation == pluginRefreshGeneration else { return }
                 plugins = nextPlugins
+            } catch is CancellationError {
+                return
             } catch {
-                guard generation == pluginRefreshGeneration else { return }
+                guard let self,
+                      generation == pluginRefreshGeneration else { return }
                 if selectedTab == requestedTab {
                     errorMessage = error.localizedDescription
                 }
             }
-            guard generation == pluginRefreshGeneration else { return }
+            guard let self,
+                  generation == pluginRefreshGeneration else { return }
             if selectedTab == requestedTab {
                 isLoading = false
             }
+            pluginRefreshTask = nil
         }
     }
 
@@ -432,7 +588,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     func setPluginEnabled(id: String, enabled: Bool) {
         performAction(successNotice: enabled ? "Plugin 已启用。" : "Plugin 已停用。") {
             try await self.service.updatePluginEnabled(id: id, enabled: enabled)
-            self.plugins = try await self.service.fetchPlugins()
+            try Task.checkCancellation()
+            let nextPlugins = try await self.service.fetchPlugins()
+            try Task.checkCancellation()
+            self.plugins = nextPlugins
         }
     }
 
@@ -449,7 +608,11 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func refreshPluginPermissions(id: String) {
-        performPluginAction(id: id, successNotice: "Plugin 权限状态已重新检测。") {}
+        performPluginAction(
+            id: id,
+            successNotice: "Plugin 权限状态已重新检测。",
+            forceRefreshPluginsAfterOperation: true
+        ) {}
     }
 
     func startBrowserExtensionGuide(
@@ -466,13 +629,30 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func refreshBrowserExtensionPairingStatus(pluginID: String) {
-        Task {
-            let isPaired = (try? await service.isBrowserExtensionPaired(pluginID: pluginID)) ?? false
-            if isPaired {
-                browserExtensionPairedPluginIDs.insert(pluginID)
-            } else {
-                browserExtensionPairedPluginIDs.remove(pluginID)
+        browserExtensionPairingTasks[pluginID]?.cancel()
+        let requestID = UUID()
+        browserExtensionPairingRequestIDs[pluginID] = requestID
+        let service = service
+        browserExtensionPairingTasks[pluginID] = Task { [weak self] in
+            do {
+                let isPaired = try await service.isBrowserExtensionPaired(pluginID: pluginID)
+                guard !Task.isCancelled,
+                      let self,
+                      browserExtensionPairingRequestIDs[pluginID] == requestID else { return }
+                if isPaired {
+                    browserExtensionPairedPluginIDs.insert(pluginID)
+                } else {
+                    browserExtensionPairedPluginIDs.remove(pluginID)
+                }
+            } catch {
+                // A connector restart or transient IPC failure is not evidence that pairing
+                // disappeared. Preserve the last trusted state and let the next refresh retry.
+                guard !Task.isCancelled else { return }
             }
+            guard let self,
+                  browserExtensionPairingRequestIDs[pluginID] == requestID else { return }
+            browserExtensionPairingTasks[pluginID] = nil
+            browserExtensionPairingRequestIDs[pluginID] = nil
         }
     }
 
@@ -481,12 +661,15 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         notice = nil
     }
 
-    private func fetchStatusWithStartupRetry() async throws -> LocalConnectorStatus {
+    nonisolated private static func fetchStatusWithStartupRetry(
+        service: any LocalConnectorControlServicing
+    ) async throws -> LocalConnectorStatus {
         var lastError: Error?
         for attempt in 0..<20 {
             do {
                 return try await service.fetchStatus()
             } catch {
+                try Task.checkCancellation()
                 lastError = error
                 if attempt < 19 {
                     try await Task.sleep(for: .milliseconds(150))
@@ -497,26 +680,41 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     private func load(_ operation: @escaping @MainActor () async throws -> Void) {
+        pluginRefreshGeneration += 1
+        pluginRefreshTask?.cancel()
+        pluginRefreshTask = nil
+        selectedTabLoadGeneration += 1
+        let generation = selectedTabLoadGeneration
+        selectedTabLoadTask?.cancel()
         let requestedTab = selectedTab
         isLoading = true
         errorMessage = nil
-        Task {
+        selectedTabLoadTask = Task { [weak self] in
             do {
                 try await operation()
+            } catch is CancellationError {
+                return
             } catch {
+                guard let self,
+                      generation == selectedTabLoadGeneration else { return }
                 if selectedTab == requestedTab {
                     errorMessage = error.localizedDescription
                 }
             }
+            guard let self,
+                  generation == selectedTabLoadGeneration else { return }
             if selectedTab == requestedTab {
                 isLoading = false
             }
+            selectedTabLoadTask = nil
         }
     }
 
-    private func refreshPendingApprovalsSilently() async {
+    private func refreshPendingApprovalsSilently(lifecycle: UInt64) async {
         do {
             let nextPendingApprovals = try await service.fetchPendingApprovals()
+            try Task.checkCancellation()
+            guard lifecycle == lifecycleGeneration else { return }
             applyPendingApprovalsIfChanged(nextPendingApprovals)
         } catch {
             // The native connector may briefly restart while the app stays open.
@@ -535,17 +733,40 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         successNotice: String?,
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
+        actionGeneration += 1
+        let generation = actionGeneration
+        let lifecycle = lifecycleGeneration
+        actionTask?.cancel()
         isPerformingAction = true
         errorMessage = nil
         notice = nil
-        Task {
+        let pendingServicePreparation = servicePreparationTask
+        let pendingSignedOutSuspension = signedOutSuspensionTask
+        actionTask = Task { [weak self] in
             do {
+                await pendingServicePreparation?.value
+                try Task.checkCancellation()
+                await pendingSignedOutSuspension?.value
+                try Task.checkCancellation()
                 try await operation()
+                try Task.checkCancellation()
+                guard let self,
+                      generation == actionGeneration,
+                      lifecycle == lifecycleGeneration else { return }
                 notice = successNotice
+            } catch is CancellationError {
+                return
             } catch {
+                guard let self,
+                      generation == actionGeneration,
+                      lifecycle == lifecycleGeneration else { return }
                 errorMessage = error.localizedDescription
             }
+            guard let self,
+                  generation == actionGeneration,
+                  lifecycle == lifecycleGeneration else { return }
             isPerformingAction = false
+            actionTask = nil
         }
     }
 
@@ -553,23 +774,48 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         id: String,
         successNotice: String,
         onSuccess: (@MainActor () -> Void)? = nil,
+        forceRefreshPluginsAfterOperation: Bool = false,
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
+        pluginActionTasks[id]?.cancel()
+        let requestID = UUID()
+        let lifecycle = lifecycleGeneration
+        pluginActionRequestIDs[id] = requestID
         pluginOperationIDs.insert(id)
         pluginErrorMessages[id] = nil
         errorMessage = nil
         notice = nil
-        Task {
+        let service = service
+        pluginActionTasks[id] = Task { [weak self] in
             do {
                 try await operation()
-                plugins = try await service.fetchPlugins()
+                try Task.checkCancellation()
+                let nextPlugins = try await service.fetchPlugins(
+                    refresh: forceRefreshPluginsAfterOperation
+                )
+                try Task.checkCancellation()
+                guard let self,
+                      lifecycle == lifecycleGeneration,
+                      pluginActionRequestIDs[id] == requestID else { return }
+                plugins = nextPlugins
                 notice = successNotice
                 onSuccess?()
+            } catch is CancellationError {
+                return
             } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      lifecycle == lifecycleGeneration,
+                      pluginActionRequestIDs[id] == requestID else { return }
                 errorMessage = error.localizedDescription
                 pluginErrorMessages[id] = error.localizedDescription
             }
+            guard let self,
+                  lifecycle == lifecycleGeneration,
+                  pluginActionRequestIDs[id] == requestID else { return }
             pluginOperationIDs.remove(id)
+            pluginActionTasks[id] = nil
+            pluginActionRequestIDs[id] = nil
         }
     }
 }

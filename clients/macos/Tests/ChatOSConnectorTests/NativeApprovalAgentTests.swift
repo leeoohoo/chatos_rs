@@ -95,6 +95,25 @@ final class NativeApprovalAgentTests: XCTestCase {
         }
     }
 
+    func testDirectoryToolStopsAtTwoHundredEntries() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("approval-bounded-list-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for index in 0..<201 {
+            try Data().write(to: root.appendingPathComponent("file-\(index).txt"))
+        }
+
+        let result = NativeApprovalAgentTools().execute(
+            name: "list_dir",
+            arguments: ["path": "."],
+            projectRoot: root
+        )
+
+        XCTAssertEqual(result.split(separator: "\n").count, 201)
+        XCTAssertTrue(result.contains("目录内容已截断"))
+    }
+
     func testManagedPromptSelectsModelVendorAndValidatesChecksum() throws {
         let content = "managed approval prompt"
         let bundle = promptBundle(content: content, vendor: "gpt")

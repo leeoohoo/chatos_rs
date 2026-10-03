@@ -6,6 +6,12 @@ struct StoredMessageAttachment {
     let relativePath: String
 }
 
+struct NewMessageAttachmentRecord {
+    let attachment: ProjectAgentMessageAttachment
+    let relativePath: String
+    let position: Int
+}
+
 struct AgentArtifactWriteCandidate {
     let id: String
     let roomID: String
@@ -18,6 +24,49 @@ struct AgentArtifactWriteCandidate {
 }
 
 enum AgentAttachmentRepository {
+    static func insert(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        messageID: String,
+        records: [NewMessageAttachmentRecord],
+        preparedStatement: () -> Void
+    ) throws {
+        guard !records.isEmpty else { return }
+        let placeholders = Array(
+            repeating: "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)",
+            count: records.count
+        ).joined(separator: ",")
+        let values = records.flatMap { record in
+            let attachment = record.attachment
+            return [
+                AgentGroupChatDatabase.Value.text(ownerUserID),
+                .text(messageID),
+                .text(attachment.id),
+                .integer(Int64(record.position)),
+                .text(attachment.name),
+                .text(attachment.mimeType),
+                .integer(Int64(attachment.size)),
+                .text(attachment.kind.rawValue),
+                .text(attachment.origin.rawValue),
+                .text(record.relativePath),
+                .optionalText(attachment.sha256),
+                .text(attachment.syncStatus.rawValue),
+            ]
+        }
+        preparedStatement()
+        try AgentGroupChatDatabase.execute(
+            handle,
+            """
+            INSERT INTO project_agent_message_attachments (
+                owner_user_id, message_id, id, position, name, mime_type,
+                size_bytes, kind, origin, relative_path, sha256, sync_status,
+                upload_attempt, next_retry_at_unix_ms
+            ) VALUES \(placeholders)
+            """,
+            values
+        )
+    }
+
     static func messageAttachment(
         _ handle: OpaquePointer?,
         ownerUserID: String,

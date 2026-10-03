@@ -1,3 +1,4 @@
+import AppKit
 import ChatOSCore
 import Foundation
 import Testing
@@ -69,6 +70,93 @@ struct NotepadViewModelTests {
         #expect(!viewModel.isUploadingImage)
         #expect(viewModel.errorMessage == nil)
     }
+
+    @Test("TIFF paste is normalized off the editor path before upload")
+    func tiffPasteIsNormalizedBeforeUpload() async throws {
+        let service = NotepadSelectionTestService()
+        let viewModel = NotepadViewModel(service: service)
+        await viewModel.load()
+        let source = NSImage(size: NSSize(width: 32, height: 16))
+        source.lockFocus()
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 32, height: 16).fill()
+        source.unlockFocus()
+        let tiff = try #require(source.tiffRepresentation)
+        let placeholder = "![正在上传图片…](chatos-uploading://tiff-placeholder)"
+        viewModel.content = placeholder
+
+        await viewModel.uploadPastedImage(
+            .init(data: tiff, mimeType: "image/tiff", name: "clipboard.tiff"),
+            placeholder: placeholder
+        )
+
+        let uploaded = try #require(await service.lastUploadedImage())
+        #expect(uploaded.mimeType == "image/png")
+        #expect(uploaded.name == "clipboard.png")
+        #expect(NSImage(data: uploaded.data) != nil)
+        #expect(viewModel.content == "![clipboard](<https://example.test/image.png>)")
+    }
+
+    @Test("external sync reads note content only when its metadata changed")
+    func externalSyncSkipsUnchangedContent() async {
+        let service = NotepadExternalSyncTestService()
+        let viewModel = NotepadViewModel(service: service)
+        await viewModel.load()
+        #expect(await service.fetchCount() == 1)
+
+        await viewModel.syncExternalChanges()
+        #expect(await service.fetchCount() == 1)
+
+        await service.advance()
+        await viewModel.syncExternalChanges()
+        #expect(await service.fetchCount() == 2)
+        #expect(viewModel.content == "content-2")
+    }
+}
+
+private actor NotepadExternalSyncTestService: NotepadServicing {
+    private var revision = 1
+    private var fetches = 0
+
+    func fetchCount() -> Int { fetches }
+    func advance() { revision += 1 }
+    func initialize() async throws {}
+    func listFolders() async throws -> [String] { [] }
+    func createFolder(_ folder: String) async throws {}
+    func renameFolder(from: String, to: String) async throws {}
+    func deleteFolder(_ folder: String, recursive: Bool) async throws {}
+    func listNotes(query: String?, limit: Int) async throws -> [NotepadNote] { [note()] }
+    func createNote(_ draft: NotepadNoteDraft) async throws -> NotepadNoteDetail { detail() }
+    func fetchNote(id: String) async throws -> NotepadNoteDetail {
+        fetches += 1
+        return detail()
+    }
+    func updateNote(id: String, update: NotepadNoteUpdate) async throws -> NotepadNoteDetail {
+        detail()
+    }
+    func uploadImage(
+        _ image: NotepadImageUpload,
+        noteID: String
+    ) async throws -> NotepadImageAsset {
+        .init(url: URL(string: "https://example.test/image.png")!, mimeType: image.mimeType, name: image.name, size: image.data.count)
+    }
+    func deleteNote(id: String) async throws {}
+
+    private func note() -> NotepadNote {
+        .init(
+            id: "note-1",
+            title: "Note",
+            folder: "",
+            tags: [],
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: TimeInterval(revision)),
+            file: "note-1.md"
+        )
+    }
+
+    private func detail() -> NotepadNoteDetail {
+        .init(note: note(), content: "content-\(revision)")
+    }
 }
 
 private actor NotepadSelectionTestService: NotepadServicing {
@@ -101,6 +189,9 @@ private actor NotepadSelectionTestService: NotepadServicing {
             file: "c.md"
         ),
     ]
+    private var uploadedImage: NotepadImageUpload?
+
+    func lastUploadedImage() -> NotepadImageUpload? { uploadedImage }
 
     func initialize() async throws {}
     func listFolders() async throws -> [String] { [] }
@@ -129,7 +220,8 @@ private actor NotepadSelectionTestService: NotepadServicing {
         _ image: NotepadImageUpload,
         noteID: String
     ) async throws -> NotepadImageAsset {
-        .init(
+        uploadedImage = image
+        return .init(
             url: URL(string: "https://example.test/image.png")!,
             mimeType: image.mimeType,
             name: image.name,

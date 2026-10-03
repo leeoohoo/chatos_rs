@@ -6,6 +6,62 @@ import XCTest
 
 @MainActor
 final class ConversationSessionViewModelTests: XCTestCase {
+    func testAttachmentLoaderRejectsOversizedFileBeforeReadingContents() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("conversation-oversized-\(UUID().uuidString).bin")
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(20 * 1_024 * 1_024 + 1))
+        try handle.close()
+
+        let result = ConversationSessionViewModel.loadAttachmentFiles([url])
+
+        XCTAssertTrue(result.attachments.isEmpty)
+        XCTAssertEqual(result.errors.count, 1)
+    }
+
+    func testAttachmentLoaderBoundsAggregateBytesBeforeRetainingAllFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("conversation-aggregate-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appendingPathComponent("first.bin")
+        let second = directory.appendingPathComponent("second.bin")
+        for url in [first, second] {
+            XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: nil))
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(12 * 1_024 * 1_024))
+            try handle.close()
+        }
+
+        let result = ConversationSessionViewModel.loadAttachmentFiles([first, second])
+
+        XCTAssertEqual(result.attachments.count, 1)
+        XCTAssertLessThanOrEqual(
+            result.attachments.reduce(0) { $0 + $1.size },
+            ConversationSessionViewModel.maximumAttachmentBytes
+        )
+        XCTAssertEqual(result.errors, ["附件总大小不能超过 20 MB"])
+    }
+
+    func testAttachmentLoaderInspectsAtMostMaximumAttachmentCount() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("conversation-count-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let urls = try (0..<25).map { index in
+            let url = directory.appendingPathComponent("\(index).txt")
+            try Data("x".utf8).write(to: url)
+            return url
+        }
+
+        let result = ConversationSessionViewModel.loadAttachmentFiles(urls)
+
+        XCTAssertEqual(result.attachments.count, ConversationSessionViewModel.maximumAttachmentCount)
+        XCTAssertEqual(result.errors, ["单次最多添加 20 个附件"])
+    }
+
     func testTimelineObservationIgnoresUnrelatedConversationUpdates() async throws {
         let viewModel = ConversationSessionViewModel(
             sessionID: "session-1",
@@ -205,6 +261,28 @@ final class ConversationSessionViewModelTests: XCTestCase {
         withExtendedLifetime(cancellable) {}
     }
 
+    func testTaskGraphAvailabilityCachesAreRemovedWithDiscardedTurns() async throws {
+        let historyStore = ConversationHistoryStore()
+        let optimistic = ConversationRemoteServiceStub.turn(revision: 0)
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [optimistic],
+            historyStore: historyStore
+        )
+
+        try await waitUntil {
+            viewModel.taskGraphAvailabilityCacheEntryCount == 1
+        }
+        await historyStore.discardOptimisticTurn(
+            sessionID: "session-1",
+            turnID: optimistic.id
+        )
+        await viewModel.refreshSnapshot()
+
+        XCTAssertTrue(viewModel.turns.isEmpty)
+        XCTAssertEqual(viewModel.taskGraphAvailabilityCacheEntryCount, 0)
+    }
+
     func testDeactivateStopsRealtimeSubscription() async throws {
         let realtimeService = ConversationRealtimeServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -249,6 +327,34 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testStalePromptRefreshCannotOverwriteSubmittedPrompt() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+        let prompt = try XCTUnwrap(viewModel.askUserPrompts.first)
+        let refreshTask = Task { await viewModel.refreshAskUserPrompts() }
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+
+        viewModel.submitAskUserPrompt(prompt, submission: .init())
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .ok
+        }
+        await promptService.resumeDelayedFetch()
+        await refreshTask.value
+
+        XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,
@@ -270,6 +376,54 @@ final class ConversationSessionViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
+    }
+}
+
+private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
+    private let pendingPrompt = AskUserPrompt(
+        id: "prompt-1",
+        sessionID: "session-1",
+        turnID: "turn-1",
+        kind: "choice",
+        status: .pending,
+        title: "Choose",
+        message: "Pick one",
+        allowsCancel: true
+    )
+    private var fetchCount = 0
+    private var delayedFetchContinuation: CheckedContinuation<Void, Never>?
+
+    func fetchPrompts(sessionID: String, limit: Int) async throws -> [AskUserPrompt] {
+        fetchCount += 1
+        if fetchCount > 1 {
+            await withCheckedContinuation { continuation in
+                delayedFetchContinuation = continuation
+            }
+        }
+        return [pendingPrompt]
+    }
+
+    func submit(
+        promptID: String,
+        sessionID: String,
+        submission: AskUserSubmission
+    ) async throws -> AskUserPrompt {
+        var submitted = pendingPrompt
+        submitted.status = .ok
+        return submitted
+    }
+
+    func cancel(promptID: String, sessionID: String) async throws -> AskUserPrompt {
+        var canceled = pendingPrompt
+        canceled.status = .canceled
+        return canceled
+    }
+
+    func hasDelayedFetch() -> Bool { delayedFetchContinuation != nil }
+
+    func resumeDelayedFetch() {
+        delayedFetchContinuation?.resume()
+        delayedFetchContinuation = nil
     }
 }
 

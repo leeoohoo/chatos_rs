@@ -2,6 +2,14 @@ import ChatOSCore
 import Combine
 import Foundation
 
+enum PetStatusRefreshPolicy {
+    static let activeInterval = Duration.seconds(20)
+
+    static func shouldRun(isMonitoring: Bool, activeWorkCount: Int) -> Bool {
+        isMonitoring && activeWorkCount > 0
+    }
+}
+
 @MainActor
 final class PetOverlayCoordinator {
     private weak var model: AppModel?
@@ -13,6 +21,7 @@ final class PetOverlayCoordinator {
     private var refreshTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private var isAuthenticated = false
+    private var isMonitoring = false
 
     init(model: AppModel, store: PetOverlayStore, preferences: PetPreferencesStore) {
         self.model = model
@@ -129,6 +138,13 @@ final class PetOverlayCoordinator {
             .filter { !$0 }
             .receive(on: RunLoop.main)
             .sink { [weak store] _ in store?.removeCompletionActivities() }
+        .store(in: &cancellables)
+
+        store.$presentation
+            .map(\.activeWorkCount)
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateStatusRefresh() }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: .chatOSPetOpenFileRequested)
@@ -155,12 +171,14 @@ final class PetOverlayCoordinator {
             authenticated = false
         }
 
-        if authenticated != isAuthenticated {
-            isAuthenticated = authenticated
-            if authenticated {
+        isAuthenticated = authenticated
+        let shouldMonitor = authenticated && enabled
+        if shouldMonitor != isMonitoring {
+            isMonitoring = shouldMonitor
+            if shouldMonitor {
                 startRealtime()
                 recoverCloudState()
-                startStatusRefresh()
+                updateStatusRefresh()
             } else {
                 realtimeTask?.cancel()
                 realtimeTask = nil
@@ -168,6 +186,10 @@ final class PetOverlayCoordinator {
                 recoveryTask = nil
                 refreshTask?.cancel()
                 refreshTask = nil
+            }
+        }
+        if !authenticated {
+            if !store.activities.isEmpty {
                 store.clear()
             }
         }
@@ -206,16 +228,39 @@ final class PetOverlayCoordinator {
     }
 
     private func startStatusRefresh() {
-        guard refreshTask == nil else { return }
+        guard refreshTask == nil,
+              PetStatusRefreshPolicy.shouldRun(
+                  isMonitoring: isMonitoring,
+                  activeWorkCount: store.presentation.activeWorkCount
+              ) else { return }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(20))
-                guard let self, !Task.isCancelled else { return }
-                if self.store.presentation.activeWorkCount > 0 {
-                    self.recoverCloudState()
+                do {
+                    try await Task.sleep(for: PetStatusRefreshPolicy.activeInterval)
+                } catch {
+                    return
                 }
+                guard let self,
+                      !Task.isCancelled,
+                      PetStatusRefreshPolicy.shouldRun(
+                          isMonitoring: self.isMonitoring,
+                          activeWorkCount: self.store.presentation.activeWorkCount
+                      ) else { return }
+                self.recoverCloudState()
             }
         }
+    }
+
+    private func updateStatusRefresh() {
+        guard PetStatusRefreshPolicy.shouldRun(
+            isMonitoring: isMonitoring,
+            activeWorkCount: store.presentation.activeWorkCount
+        ) else {
+            refreshTask?.cancel()
+            refreshTask = nil
+            return
+        }
+        startStatusRefresh()
     }
 
     private func recoverCloudState() {

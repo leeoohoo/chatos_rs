@@ -30,10 +30,22 @@ final class AuthenticationViewModel: ObservableObject {
     private let service: any AuthenticationServicing
     private var didStart = false
     private var shouldRetrySessionRestore = false
+    private var authenticationTask: Task<Void, Never>?
+    private var authenticationGeneration: UInt64 = 0
+    private var registrationCodeTask: Task<Void, Never>?
+    private var registrationCodeGeneration: UInt64 = 0
     private var registrationCountdownTask: Task<Void, Never>?
+    private var logoutTask: Task<Void, Never>?
+    private var logoutGeneration: UInt64 = 0
 
     init(service: any AuthenticationServicing) {
         self.service = service
+    }
+
+    deinit {
+        authenticationTask?.cancel()
+        registrationCodeTask?.cancel()
+        registrationCountdownTask?.cancel()
     }
 
     var canLogin: Bool {
@@ -71,23 +83,41 @@ final class AuthenticationViewModel: ObservableObject {
     }
 
     private func restoreSession() {
+        cancelAuthenticationOperation()
         phase = .restoring
         errorMessage = nil
+        authenticationGeneration &+= 1
+        let generation = authenticationGeneration
+        let service = service
+        let pendingLogout = logoutTask
 
-        Task {
+        authenticationTask = Task { [weak self] in
             do {
+                await pendingLogout?.value
+                try Task.checkCancellation()
                 if let session = try await service.restoreSession() {
+                    guard !Task.isCancelled,
+                          let self,
+                          authenticationGeneration == generation else { return }
                     shouldRetrySessionRestore = false
                     phase = .authenticated(session)
                 } else {
+                    guard !Task.isCancelled,
+                          let self,
+                          authenticationGeneration == generation else { return }
                     shouldRetrySessionRestore = false
                     phase = .signedOut
                 }
             } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
                 shouldRetrySessionRestore = true
                 errorMessage = error.localizedDescription
                 phase = .signedOut
             }
+            guard let self, authenticationGeneration == generation else { return }
+            authenticationTask = nil
         }
     }
 
@@ -98,19 +128,34 @@ final class AuthenticationViewModel: ObservableObject {
         errorMessage = nil
         let submittedUsername = username
         let submittedPassword = password
+        cancelAuthenticationOperation()
+        authenticationGeneration &+= 1
+        let generation = authenticationGeneration
+        let service = service
+        let pendingLogout = logoutTask
 
-        Task {
+        authenticationTask = Task { [weak self] in
             do {
+                await pendingLogout?.value
+                try Task.checkCancellation()
                 let session = try await service.login(
                     username: submittedUsername,
                     password: submittedPassword
                 )
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
                 password = ""
                 phase = .authenticated(session)
             } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
                 errorMessage = error.localizedDescription
                 phase = .signedOut
             }
+            guard let self, authenticationGeneration == generation else { return }
+            authenticationTask = nil
         }
     }
 
@@ -123,6 +168,7 @@ final class AuthenticationViewModel: ObservableObject {
     }
 
     func showLogin() {
+        cancelRegistrationCodeRequest()
         mode = .signIn
         password = ""
         confirmPassword = ""
@@ -139,24 +185,36 @@ final class AuthenticationViewModel: ObservableObject {
             errorMessage = registrationValidationMessage(forCodeOnly: true)
             return
         }
+        cancelRegistrationCodeRequest()
         isSendingRegistrationCode = true
         errorMessage = nil
         registrationMessage = nil
         let email = username
         let submittedInviteCode = inviteCode
+        registrationCodeGeneration &+= 1
+        let generation = registrationCodeGeneration
+        let service = service
 
-        Task {
+        registrationCodeTask = Task { [weak self] in
             do {
                 let delivery = try await service.sendRegistrationCode(
                     email: email,
                     inviteCode: submittedInviteCode
                 )
+                guard !Task.isCancelled,
+                      let self,
+                      registrationCodeGeneration == generation else { return }
                 registrationMessage = "验证码已发送，请查看邮箱。"
                 startRegistrationCountdown(delivery.resendAfterSeconds)
             } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      registrationCodeGeneration == generation else { return }
                 errorMessage = friendlyRegistrationError(error)
             }
+            guard let self, registrationCodeGeneration == generation else { return }
             isSendingRegistrationCode = false
+            registrationCodeTask = nil
         }
     }
 
@@ -182,28 +240,45 @@ final class AuthenticationViewModel: ObservableObject {
         let submittedPassword = password
         let submittedInviteCode = inviteCode
         let submittedVerificationCode = verificationCode
+        cancelAuthenticationOperation()
+        authenticationGeneration &+= 1
+        let generation = authenticationGeneration
+        let service = service
+        let pendingLogout = logoutTask
 
-        Task {
+        authenticationTask = Task { [weak self] in
             do {
+                await pendingLogout?.value
+                try Task.checkCancellation()
                 let session = try await service.register(
                     email: submittedEmail,
                     password: submittedPassword,
                     inviteCode: submittedInviteCode,
                     verificationCode: submittedVerificationCode
                 )
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
                 registrationCountdownTask?.cancel()
                 password = ""
                 confirmPassword = ""
                 verificationCode = ""
                 phase = .authenticated(session)
             } catch {
+                guard !Task.isCancelled,
+                      let self,
+                      authenticationGeneration == generation else { return }
                 errorMessage = friendlyRegistrationError(error)
                 phase = .signedOut
             }
+            guard let self, authenticationGeneration == generation else { return }
+            authenticationTask = nil
         }
     }
 
     func logout() {
+        let pendingAuthentication = cancelAuthenticationOperation()
+        cancelRegistrationCodeRequest()
         shouldRetrySessionRestore = false
         mode = .signIn
         password = ""
@@ -211,16 +286,48 @@ final class AuthenticationViewModel: ObservableObject {
         verificationCode = ""
         errorMessage = nil
         phase = .signedOut
-        Task { await service.logout() }
+        startLogout(after: pendingAuthentication)
     }
 
     func expireSession() {
         guard case .authenticated = phase else { return }
+        let pendingAuthentication = cancelAuthenticationOperation()
+        cancelRegistrationCodeRequest()
         shouldRetrySessionRestore = false
         password = ""
         errorMessage = "登录状态已失效，请重新登录。"
         phase = .signedOut
-        Task { await service.logout() }
+        startLogout(after: pendingAuthentication)
+    }
+
+    private func startLogout(after pendingAuthentication: Task<Void, Never>?) {
+        logoutGeneration &+= 1
+        let generation = logoutGeneration
+        let previousLogout = logoutTask
+        let service = service
+        logoutTask = Task { [weak self] in
+            await previousLogout?.value
+            await pendingAuthentication?.value
+            await service.logout()
+            guard let self, logoutGeneration == generation else { return }
+            logoutTask = nil
+        }
+    }
+
+    @discardableResult
+    private func cancelAuthenticationOperation() -> Task<Void, Never>? {
+        authenticationGeneration &+= 1
+        let task = authenticationTask
+        task?.cancel()
+        authenticationTask = nil
+        return task
+    }
+
+    private func cancelRegistrationCodeRequest() {
+        registrationCodeGeneration &+= 1
+        registrationCodeTask?.cancel()
+        registrationCodeTask = nil
+        isSendingRegistrationCode = false
     }
 
     private func startRegistrationCountdown(_ seconds: Int) {

@@ -116,9 +116,7 @@ extension StoryStudioViewModel {
             }
             guard let image = result.images.first else { throw StoryError.unsafeFile }
             let data = try await MediaStudioImageLoader.data(for: image)
-            guard let nsImage = NSImage(data: data), let tiff = nsImage.tiffRepresentation,
-                  let bitmap = NSBitmapImageRep(data: tiff),
-                  let png = bitmap.representation(using: .png, properties: [:]) else { throw StoryError.unsafeFile }
+            let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
             let completed = try await store.completeFrameImageGeneration(
                 png, mimeType: "image/png", projectID: project.id, segmentID: key.segmentID, role: role,
                 attemptID: attemptID, providerResultID: result.id, providerAssetID: image.id, owner: owner

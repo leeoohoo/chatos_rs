@@ -205,7 +205,7 @@ actor StoryMediaBatchSession {
                   result.resourceID == nil || result.resourceID == request.resourceID else { throw StoryError.invalidPlan }
             guard let image = result.images.first else { throw StoryError.unsafeFile }
             let bytes = try await MediaStudioImageLoader.data(for: image)
-            guard let bitmap = NSBitmapImageRep(data: bytes), let png = bitmap.representation(using: .png, properties: [:]) else { throw StoryError.unsafeFile }
+            let png = try await MediaStudioImageLoader.normalizedPNGData(from: bytes)
             let stored = try await store.saveImage(png, mimeType: "image/png", projectID: project.id, owner: state.owner,
                                                    sourceResourceID: id, generationAttemptID: job.intentID,
                                                    providerResultID: result.id, providerAssetID: image.id)
@@ -238,7 +238,10 @@ actor StoryMediaBatchSession {
     }
     private func input(_ video: StoryVideo, name: String) async throws -> VideoGenerationInputVideo {
         let url = try store.fileURL(video.filename, projectID: state.draft.id, owner: state.owner)
-        let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
+        let bytes = try AppBoundedFileReader.read(
+            url,
+            maximumBytes: 512 * 1_024 * 1_024
+        )
         return .init(name: name, mimeType: "video/mp4", base64Data: bytes.base64EncodedString())
     }
     private func progress(_ value: VideoGenerationProgress, step: StoryMediaBatch.Step) async {

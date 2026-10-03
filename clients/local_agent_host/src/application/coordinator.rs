@@ -348,13 +348,121 @@ impl HostRequestHandler for LocalAgentHostCoordinator {
                 .wait_for_events(request.clone(), command.timeout_ms)
                 .await;
         }
+        let wakes_scheduler = command_wakes_scheduler(&request.command);
+        let activity_policy = command_activity_signal_policy(&request.command);
         self.route_external_tool_claim(&mut request);
         let response = self.runtime.handle(request).await;
         if response.ok {
-            self.wake();
-            self.signal_activity();
+            if wakes_scheduler {
+                self.wake();
+            }
+            if response_signals_activity(activity_policy, &response) {
+                self.signal_activity();
+            }
         }
         response
+    }
+}
+
+fn command_wakes_scheduler(command: &HostCommand) -> bool {
+    match command {
+        HostCommand::CreateRun(_)
+        | HostCommand::CommitTool(_)
+        | HostCommand::DecideToolApproval(_)
+        | HostCommand::ResumeRun(_)
+        | HostCommand::CancelRun(_)
+        | HostCommand::CreateTaskGraph(_)
+        | HostCommand::CancelTask(_)
+        | HostCommand::RetryTask(_)
+        | HostCommand::RestartTask(_)
+        | HostCommand::StartConversationTurn(_)
+        | HostCommand::GuideConversationTurn(_)
+        | HostCommand::ResumeConversationTurn(_)
+        | HostCommand::CancelConversationTurn(_)
+        | HostCommand::ResolveRequirementSurvey(_) => true,
+        HostCommand::Health
+        | HostCommand::GetMemorySyncStatus(_)
+        | HostCommand::PutModelConfigSnapshot(_)
+        | HostCommand::GetModelConfigSnapshot(_)
+        | HostCommand::PutCapabilityPolicySnapshot(_)
+        | HostCommand::GetCapabilityPolicySnapshot(_)
+        | HostCommand::GetRun(_)
+        | HostCommand::ListRuns(_)
+        | HostCommand::ClaimNextRun(_)
+        | HostCommand::CommitStep(_)
+        | HostCommand::ClaimNextTool(_)
+        | HostCommand::RenewToolClaim(_)
+        | HostCommand::ListPendingToolApprovals(_)
+        | HostCommand::GetEventCursor(_)
+        | HostCommand::ListEvents(_)
+        | HostCommand::WaitEvents(_)
+        | HostCommand::ListTaskGraphs(_)
+        | HostCommand::GetTaskGraph(_)
+        | HostCommand::GetTaskRuns(_)
+        | HostCommand::PutPluginInstallation(_)
+        | HostCommand::GetPluginInstallation(_)
+        | HostCommand::ListPluginInstallations(_)
+        | HostCommand::RemovePluginInstallation(_)
+        | HostCommand::CreateConversation(_)
+        | HostCommand::GetConversation(_)
+        | HostCommand::GetConversationHistory(_)
+        | HostCommand::ListConversations(_)
+        | HostCommand::GetConversationRuntimeSettings(_)
+        | HostCommand::PutConversationRuntimeSettings(_)
+        | HostCommand::InitializeNotepad(_)
+        | HostCommand::ListNotepadFolders(_)
+        | HostCommand::CreateNotepadFolder(_)
+        | HostCommand::RenameNotepadFolder(_)
+        | HostCommand::DeleteNotepadFolder(_)
+        | HostCommand::ListNotepadNotes(_)
+        | HostCommand::CreateNotepadNote(_)
+        | HostCommand::GetNotepadNote(_)
+        | HostCommand::UpdateNotepadNote(_)
+        | HostCommand::DeleteNotepadNote(_)
+        | HostCommand::PutNotepadImage(_)
+        | HostCommand::ListRemoteConnections(_)
+        | HostCommand::GetRemoteConnection(_)
+        | HostCommand::CreateRemoteConnection(_)
+        | HostCommand::UpdateRemoteConnection(_)
+        | HostCommand::DeleteRemoteConnection(_)
+        | HostCommand::CreateArtifact(_)
+        | HostCommand::ListArtifacts(_)
+        | HostCommand::GetArtifactData(_)
+        | HostCommand::DeleteArtifact(_)
+        | HostCommand::CreateRequirementSurvey(_)
+        | HostCommand::ListRequirementSurveys(_)
+        | HostCommand::GetRequirementSurvey(_) => false,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivitySignalPolicy {
+    Never,
+    Always,
+    ToolClaimed,
+}
+
+fn command_activity_signal_policy(command: &HostCommand) -> ActivitySignalPolicy {
+    if command_wakes_scheduler(command) {
+        ActivitySignalPolicy::Always
+    } else if matches!(command, HostCommand::ClaimNextTool(_)) {
+        ActivitySignalPolicy::ToolClaimed
+    } else {
+        ActivitySignalPolicy::Never
+    }
+}
+
+fn response_signals_activity(
+    policy: ActivitySignalPolicy,
+    response: &HostResponseEnvelope,
+) -> bool {
+    match policy {
+        ActivitySignalPolicy::Never => false,
+        ActivitySignalPolicy::Always => true,
+        ActivitySignalPolicy::ToolClaimed => matches!(
+            response.result.as_ref(),
+            Some(HostResult::ToolClaim { claim: Some(_) })
+        ),
     }
 }
 
@@ -383,16 +491,76 @@ mod tests {
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
         ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
-        CreateRequirementSurveyCommand, CreateRunCommand, GetRunCommand, HostCommand, HostResult,
-        LocalAgentRunClaim, LocalAgentStepOutcome, LocalAgentToolCall,
-        LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalRequirementSurveyQuestion,
-        LocalRequirementSurveyResponseKind, WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+        CreateRequirementSurveyCommand, CreateRunCommand, GetEventCursorCommand, GetRunCommand,
+        HostCommand, HostResult, ListEventsCommand, LocalAgentRunClaim, LocalAgentStepOutcome,
+        LocalAgentToolCall, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+        LocalRequirementSurveyQuestion, LocalRequirementSurveyResponseKind, RenewToolClaimCommand,
+        WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
     use serde_json::json;
     use uuid::Uuid;
 
     struct ModelProfile;
+
+    #[test]
+    fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
+        let commands = [
+            HostCommand::Health,
+            HostCommand::GetEventCursor(GetEventCursorCommand {
+                owner_user_id: "user-1".to_string(),
+            }),
+            HostCommand::ListEvents(ListEventsCommand {
+                owner_user_id: "user-1".to_string(),
+                after_cursor: 0,
+                limit: 100,
+                run_id: None,
+                event_type: None,
+                newest_first: false,
+                payload_mode: chatos_local_agent_protocol::LocalAgentEventPayloadMode::Full,
+            }),
+        ];
+        for command in commands {
+            assert!(!command_wakes_scheduler(&command));
+            assert_eq!(
+                command_activity_signal_policy(&command),
+                ActivitySignalPolicy::Never
+            );
+        }
+
+        let tool_claim = HostCommand::ClaimNextTool(ClaimNextToolCommand {
+            owner_user_id: "user-1".to_string(),
+            worker_id: "native-worker".to_string(),
+            lease_duration_ms: 10_000,
+            include_tool_names: None,
+            exclude_tool_names: Vec::new(),
+        });
+        assert!(!command_wakes_scheduler(&tool_claim));
+        assert_eq!(
+            command_activity_signal_policy(&tool_claim),
+            ActivitySignalPolicy::ToolClaimed
+        );
+        assert!(!response_signals_activity(
+            ActivitySignalPolicy::ToolClaimed,
+            &HostResponseEnvelope::success(
+                "empty-tool-claim".to_string(),
+                HostResult::ToolClaim { claim: None },
+            )
+        ));
+
+        let tool_renewal = HostCommand::RenewToolClaim(RenewToolClaimCommand {
+            owner_user_id: "user-1".to_string(),
+            invocation_id: "invocation-1".to_string(),
+            claim_token: "claim-1".to_string(),
+            expected_version: 2,
+            lease_duration_ms: 10_000,
+        });
+        assert!(!command_wakes_scheduler(&tool_renewal));
+        assert_eq!(
+            command_activity_signal_policy(&tool_renewal),
+            ActivitySignalPolicy::Never
+        );
+    }
 
     #[async_trait]
     impl LocalAgentProfile for ModelProfile {
@@ -738,6 +906,8 @@ mod tests {
                             limit: 50,
                             run_id: Some("run-coordinator".to_string()),
                             timeout_ms: 2_000,
+                            payload_mode:
+                                chatos_local_agent_protocol::LocalAgentEventPayloadMode::Full,
                         }),
                     })
                     .await

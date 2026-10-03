@@ -9,8 +9,14 @@ struct QuickSearchApplicationRecord: Sendable, Hashable {
     let url: URL
 }
 
+struct QuickSearchUsageRecord: Codable, Sendable, Equatable {
+    var lastUsedAt: TimeInterval
+    var count: Int
+}
+
 @MainActor
 final class QuickSearchViewModel: ObservableObject {
+    nonisolated static let maximumUsageRecordCount = 512
     @Published var query = ""
     @Published private(set) var results: [QuickSearchResult] = []
     @Published private(set) var isSearchingFiles = false
@@ -26,17 +32,22 @@ final class QuickSearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var applicationLoadTask: Task<Void, Never>?
     private var generation = UUID()
-    private var usage: [String: UsageRecord]
+    private var usage: [String: QuickSearchUsageRecord]
     private let usageDefaultsKey = "ChatOS.quickSearch.usage"
 
     init(model: AppModel) {
         self.model = model
         self.usage = Self.loadUsage(key: usageDefaultsKey)
         applicationLoadTask = Task { [weak self] in
-            let records = await Task.detached(priority: .utility) {
+            let scanTask = Task.detached(priority: .utility) {
                 Self.scanApplications()
-            }.value
-            guard let self else { return }
+            }
+            let records = await withTaskCancellationHandler {
+                await scanTask.value
+            } onCancel: {
+                scanTask.cancel()
+            }
+            guard !Task.isCancelled, let self else { return }
             applications = records
             rebuildMemoryResults()
         }
@@ -259,10 +270,11 @@ final class QuickSearchViewModel: ObservableObject {
     }
 
     private func recordUsage(_ id: String) {
-        var record = usage[id] ?? UsageRecord(lastUsedAt: 0, count: 0)
+        var record = usage[id] ?? QuickSearchUsageRecord(lastUsedAt: 0, count: 0)
         record.lastUsedAt = Date().timeIntervalSince1970
         record.count += 1
         usage[id] = record
+        usage = Self.prunedUsage(usage)
         if let data = try? JSONEncoder().encode(usage) {
             UserDefaults.standard.set(data, forKey: usageDefaultsKey)
         }
@@ -272,9 +284,29 @@ final class QuickSearchViewModel: ObservableObject {
         model?.interfaceLanguage == .english ? english : chinese
     }
 
-    private static func loadUsage(key: String) -> [String: UsageRecord] {
+    private static func loadUsage(key: String) -> [String: QuickSearchUsageRecord] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [:] }
-        return (try? JSONDecoder().decode([String: UsageRecord].self, from: data)) ?? [:]
+        let decoded = (try? JSONDecoder().decode(
+            [String: QuickSearchUsageRecord].self,
+            from: data
+        )) ?? [:]
+        return prunedUsage(decoded)
+    }
+
+    nonisolated static func prunedUsage(
+        _ values: [String: QuickSearchUsageRecord]
+    ) -> [String: QuickSearchUsageRecord] {
+        guard values.count > maximumUsageRecordCount else { return values }
+        return Dictionary(
+            uniqueKeysWithValues: values.sorted {
+                if $0.value.lastUsedAt != $1.value.lastUsedAt {
+                    return $0.value.lastUsedAt > $1.value.lastUsedAt
+                }
+                return $0.key < $1.key
+            }
+            .prefix(maximumUsageRecordCount)
+            .map { ($0.key, $0.value) }
+        )
     }
 
     nonisolated private static func scanApplications() -> [QuickSearchApplicationRecord] {
@@ -287,12 +319,14 @@ final class QuickSearchViewModel: ObservableObject {
         var seen = Set<String>()
         var records: [QuickSearchApplicationRecord] = []
         for root in roots where FileManager.default.fileExists(atPath: root.path) {
+            guard !Task.isCancelled else { return records }
             guard let enumerator = FileManager.default.enumerator(
                 at: root,
                 includingPropertiesForKeys: keys,
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }
             for case let url as URL in enumerator {
+                guard !Task.isCancelled else { return records }
                 guard url.pathExtension.lowercased() == "app" else { continue }
                 enumerator.skipDescendants()
                 let bundle = Bundle(url: url)
@@ -328,8 +362,4 @@ final class QuickSearchViewModel: ObservableObject {
         case all, actions, chatOS, applications, files
     }
 
-    private struct UsageRecord: Codable {
-        var lastUsedAt: TimeInterval
-        var count: Int
-    }
 }

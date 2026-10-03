@@ -1,10 +1,25 @@
 import ChatOSAgentRuntime
-import ChatOSConnector
+@testable import ChatOSConnector
 import ChatOSCore
 import Foundation
 import XCTest
 
 final class LocalAgentChatToolProviderTests: XCTestCase {
+    func testAttachmentTextSliceDoesNotRequireMaterializingAllCharacters() {
+        let text = String(repeating: "🙂", count: 50_000)
+
+        let slice = LocalAgentChatToolProvider.attachmentTextSlice(
+            text,
+            offset: 49_990,
+            limit: 5
+        )
+
+        XCTAssertEqual(slice.content, String(repeating: "🙂", count: 5))
+        XCTAssertEqual(slice.offset, 49_990)
+        XCTAssertEqual(slice.nextOffset, 49_995)
+        XCTAssertTrue(slice.hasMore)
+    }
+
     private func databaseURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("local-chat-tools-\(UUID().uuidString)")

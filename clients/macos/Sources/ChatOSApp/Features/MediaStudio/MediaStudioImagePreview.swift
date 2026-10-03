@@ -90,13 +90,17 @@ struct MediaStudioImagePreview: View {
             do {
                 let data = try await MediaStudioImageLoader.data(for: request.images[index])
                 try Task.checkCancellation()
-                guard let decoded = NSImage(data: data), decoded.isValid else {
+                guard let prepared = try await AppCancellableDetachedWork.run(operation: {
+                    AppImageThumbnailLoader.decode(
+                        data,
+                        maximumSourcePixelCount: 64_000_000,
+                        maximumDisplayPixelSize: 8_192
+                    )
+                }) else {
                     throw MediaStudioImageLoader.ImageError.invalidImage
                 }
-                if let rep = decoded.representations.first, rep.pixelsWide > 0, rep.pixelsHigh > 0 {
-                    decoded.size = NSSize(width: rep.pixelsWide, height: rep.pixelsHigh)
-                }
-                image = decoded
+                try Task.checkCancellation()
+                image = NSImage(cgImage: prepared.image, size: .zero)
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription

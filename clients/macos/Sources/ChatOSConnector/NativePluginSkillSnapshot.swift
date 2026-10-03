@@ -163,12 +163,8 @@ enum NativePluginSkillSnapshotLoader {
         }
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
-        let manifest = try JSONDecoder().decode(
-            NativePluginManifest.self,
-            from: Data(
-                contentsOf: installationURL.appendingPathComponent("chatos.plugin.json"),
-                options: .mappedIfSafe
-            )
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: installationURL.appendingPathComponent("chatos.plugin.json")
         )
         guard manifest.schemaVersion == 3, manifest.version == record.version else {
             throw NativePluginRuntimeError.invalidManifest("Plugin manifest 与已安装 Release 不一致")

@@ -43,23 +43,34 @@ struct ComposerAttachmentChip: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if attachment.kind == .image,
-           let image = NSImage(data: attachment.data) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+        if attachment.kind == .image {
+            AppAsyncDataImage(
+                data: attachment.data,
+                identity: "composer-chip|\(attachment.id)",
+                maximumDisplayPixelSize: 96
+            ) { image in
+                image
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 32, height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } placeholder: {
+                attachmentPlaceholder
+            }
         } else {
-            Image(systemName: attachmentIcon(
-                kind: attachment.kind,
-                mimeType: attachment.mimeType,
-                origin: attachment.origin
-            ))
-            .foregroundStyle(AppPalette.ai)
-            .frame(width: 32, height: 32)
-            .background(AppPalette.ai.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
+            attachmentPlaceholder
         }
+    }
+
+    private var attachmentPlaceholder: some View {
+        Image(systemName: attachmentIcon(
+            kind: attachment.kind,
+            mimeType: attachment.mimeType,
+            origin: attachment.origin
+        ))
+        .foregroundStyle(AppPalette.ai)
+        .frame(width: 32, height: 32)
+        .background(AppPalette.ai.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private var detailText: String {
@@ -101,7 +112,11 @@ private struct MessageInlineImage: View {
 
     var body: some View {
         Button(action: onPreview) {
-            LocalAttachmentImage(url: attachment.localURL, sha256: attachment.sha256)
+            LocalAttachmentImage(
+                url: attachment.localURL,
+                sha256: attachment.sha256,
+                expectedBytes: attachment.size
+            )
                 .frame(width: 360, height: 220)
                 .background(AppPalette.inputSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -161,7 +176,11 @@ private struct MessageLocalImagePreview: View {
             .padding(16)
             Divider()
             ScrollView([.horizontal, .vertical]) {
-                LocalAttachmentImage(url: attachment.localURL, sha256: attachment.sha256)
+                LocalAttachmentImage(
+                    url: attachment.localURL,
+                    sha256: attachment.sha256,
+                    expectedBytes: attachment.size
+                )
                     .padding(20)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -174,6 +193,7 @@ private struct MessageLocalImagePreview: View {
 private struct LocalAttachmentImage: View {
     let url: URL?
     let sha256: String?
+    let expectedBytes: Int
     @State private var image: NSImage?
     @State private var loadFailed = false
 
@@ -206,21 +226,32 @@ private struct LocalAttachmentImage: View {
                 return
             }
             do {
-                let data = try await Task.detached(priority: .userInitiated) {
-                    let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-                    guard let sha256,
+                let decoded = try await AppCancellableDetachedWork.run {
+                    guard expectedBytes > 0, expectedBytes <= 20 * 1_024 * 1_024 else {
+                        throw CocoaError(.fileReadTooLarge)
+                    }
+                    let data = try AppBoundedFileReader.read(
+                        url,
+                        maximumBytes: expectedBytes
+                    )
+                    guard data.count == expectedBytes,
+                          let sha256,
                           SHA256.hash(data: data).map({
                               String(format: "%02x", $0)
                           }).joined() == sha256.lowercased() else {
                         throw CocoaError(.fileReadCorruptFile)
                     }
-                    return data
-                }.value
-                guard !Task.isCancelled, let decoded = NSImage(data: data) else {
-                    loadFailed = !Task.isCancelled
-                    return
+                    guard let decoded = AppImageThumbnailLoader.decode(
+                        data,
+                        maximumSourcePixelCount: 64_000_000,
+                        maximumDisplayPixelSize: 2_048
+                    ) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    return decoded
                 }
-                image = decoded
+                guard !Task.isCancelled else { return }
+                image = NSImage(cgImage: decoded.image, size: .zero)
             } catch {
                 if !Task.isCancelled { loadFailed = true }
             }
@@ -256,13 +287,17 @@ struct ComposerAttachmentPreview: View {
 
     @ViewBuilder
     private var preview: some View {
-        if attachment.kind == .image,
-           let image = NSImage(data: attachment.data) {
+        if attachment.kind == .image {
             ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(20)
+                AppAsyncDataImage(
+                    data: attachment.data,
+                    identity: "composer-preview|\(attachment.id)",
+                    maximumDisplayPixelSize: 2_048
+                ) { image in
+                    image.resizable().scaledToFit().padding(20)
+                } placeholder: {
+                    ProgressView().padding(20)
+                }
             }
         } else if isTextLike(attachment.mimeType),
                   let text = String(data: attachment.data, encoding: .utf8) {

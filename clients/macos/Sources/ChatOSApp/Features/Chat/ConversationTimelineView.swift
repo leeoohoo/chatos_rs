@@ -253,7 +253,8 @@ private struct ConversationTimelineContentView: View {
                         TaskReplyInlineInspectorView(
                             selection: selection,
                             requestedSection: selection.initialSection,
-                            service: taskGraphService
+                            service: taskGraphService,
+                            realtimeService: conversation.realtimeService
                         )
                         .padding(.leading, 30)
                         .transition(.opacity.combined(with: .move(edge: .top)))

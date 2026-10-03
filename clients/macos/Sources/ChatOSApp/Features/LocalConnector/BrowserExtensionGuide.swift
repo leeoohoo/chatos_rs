@@ -39,26 +39,29 @@ enum BrowserExtensionGuide {
         ]
 
         return userDataRoots.contains { root in
-            guard let profiles = try? fileManager.contentsOfDirectory(
+            guard !Task.isCancelled else { return false }
+            guard let profiles = fileManager.enumerator(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
             ) else {
                 return false
             }
-            return profiles.contains { profile in
+            for case let profile as URL in profiles {
+                guard !Task.isCancelled else { return false }
                 let extensionRoot = profile
                     .appendingPathComponent("Extensions", isDirectory: true)
                     .appendingPathComponent(extensionID, isDirectory: true)
-                guard let versions = try? fileManager.contentsOfDirectory(
+                guard let versions = fileManager.enumerator(
                     at: extensionRoot,
                     includingPropertiesForKeys: [.isDirectoryKey],
-                    options: [.skipsHiddenFiles]
+                    options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
                 ) else {
-                    return false
+                    continue
                 }
-                return !versions.isEmpty
+                if versions.nextObject() != nil { return true }
             }
+            return false
         }
     }
 
@@ -90,9 +93,10 @@ enum BrowserExtensionGuide {
     @MainActor
     static func openWebStoreAfterInstallIfNeeded(
         pluginVersion: String,
+        extensionInstalled: Bool? = nil,
         defaults: UserDefaults = .standard
     ) {
-        guard !isExtensionInstalled() else { return }
+        guard !(extensionInstalled ?? isExtensionInstalled()) else { return }
         defaults.set(true, forKey: promptKey(pluginVersion: pluginVersion))
         openWebStore()
     }
@@ -100,9 +104,10 @@ enum BrowserExtensionGuide {
     @MainActor
     static func automaticallyGuideIfNeeded(
         pluginVersion: String,
+        extensionInstalled: Bool? = nil,
         defaults: UserDefaults = .standard
     ) {
-        guard !isExtensionInstalled() else { return }
+        guard !(extensionInstalled ?? isExtensionInstalled()) else { return }
         let promptKey = promptKey(pluginVersion: pluginVersion)
         guard !defaults.bool(forKey: promptKey) else { return }
         defaults.set(true, forKey: promptKey)
@@ -111,9 +116,10 @@ enum BrowserExtensionGuide {
 
     static func shouldAutomaticallyGuide(
         pluginVersion: String,
+        extensionInstalled: Bool? = nil,
         defaults: UserDefaults = .standard
     ) -> Bool {
-        !isExtensionInstalled()
+        !(extensionInstalled ?? isExtensionInstalled())
             && !defaults.bool(forKey: promptKey(pluginVersion: pluginVersion))
     }
 

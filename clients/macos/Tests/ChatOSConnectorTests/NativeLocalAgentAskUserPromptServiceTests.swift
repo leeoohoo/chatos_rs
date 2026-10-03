@@ -14,6 +14,13 @@ final class NativeLocalAgentAskUserPromptServiceTests: XCTestCase {
         XCTAssertEqual(prompt.id, "local-ask:run-chat")
         XCTAssertEqual(prompt.message, "请选择发布环境")
         XCTAssertEqual(prompt.choice?.options.map(\.value), ["staging", "production"])
+        let listCommand = try await host.firstCommand()
+        XCTAssertEqual(listCommand["status"], .string("waiting_user"))
+        XCTAssertEqual(listCommand["limit"], .number(10))
+        let eventCommand = try await host.firstCommand(type: "list_events")
+        XCTAssertEqual(eventCommand["event_type"], .string("user_input_requested"))
+        XCTAssertEqual(eventCommand["newest_first"], .bool(true))
+        XCTAssertEqual(eventCommand["limit"], .number(1))
 
         let updated = try await service.submit(
             promptID: prompt.id,
@@ -141,6 +148,19 @@ private actor AskUserHostStub: LocalAgentHostClientServicing {
     func lastCommand() throws -> [String: LocalAgentJSONValue] {
         guard let command = commands.last else { throw CocoaError(.fileNoSuchFile) }
         return try Self.commandObject(command)
+    }
+
+    func firstCommand() throws -> [String: LocalAgentJSONValue] {
+        guard let command = commands.first else { throw CocoaError(.fileNoSuchFile) }
+        return try Self.commandObject(command)
+    }
+
+    func firstCommand(type: String) throws -> [String: LocalAgentJSONValue] {
+        for command in commands {
+            let object = try Self.commandObject(command)
+            if object["type"]?.stringValue == type { return object }
+        }
+        throw CocoaError(.fileNoSuchFile)
     }
 
     func commandTypes() throws -> [String] {

@@ -38,11 +38,13 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let gateway: NativeConnectorGateway
     let stateStore: NativeConnectorStateStore
     let pluginInstaller: NativePluginInstaller
+    let pluginPermissionSnapshots = NativePluginPermissionSnapshotCache()
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
     let pluginApplicationRuntime: NativePluginApplicationRuntime
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
+    let companionAgentDrainCoordinator = CompanionAgentDrainCoordinator()
     let pluginRuntimeRootURL: URL
     let approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory?
     weak var companionRuntime: (any LocalConnectorCompanionRuntimeProviding)?
@@ -60,13 +62,23 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var managedRuntimeConfigCache: NativeManagedRuntimeConfigCache?
     var managedRuntimeConfigRefresh: NativeManagedRuntimeConfigRefresh?
     var managedRuntimeConfigGeneration = 0
+    var pluginSourceCache: NativePluginSourceCache?
+    var pluginSourceRefresh: NativePluginSourceRefresh?
+    var pluginSourceGeneration = 0
+    var modelCatalogCache: NativeModelCatalogCache?
+    var modelCatalogRefresh: NativeModelCatalogRefresh?
+    var modelCatalogGeneration = 0
     var gatewayConnected = false
     var webSocket: URLSessionWebSocketTask?
     var receiveTask: Task<Void, Never>?
     var heartbeatTask: Task<Void, Never>?
     var reconnectTask: Task<Void, Never>?
+    var gatewayConnectedBootstrapTask: Task<Void, Never>?
+    var gatewayConnectedBootstrapGeneration: UInt64 = 0
+    var companionRelayTasks: [UUID: Task<Void, Never>] = [:]
     var shouldMaintainGatewayConnection = false
     var isSystemSleeping = false
+    var powerTransitionGeneration: UInt64 = 0
     var lastGatewayPongAt: Date?
     var gatewayReconnectFailureCount = 0
     var gatewayConnectionCleanupCount = 0
@@ -157,6 +169,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
         invalidateManagedRuntimeConfig()
+        invalidatePluginSources()
+        invalidateModelCatalog()
+        await pluginPermissionSnapshots.invalidateAll()
         let resolvedName = deviceName?.trimmedNonEmpty ?? Host.current().localizedName ?? "Mac"
         let ticket = try await ticketProvider.issueLocalConnectorPairingTicket()
         let login = try await gateway.exchange(ticket: ticket, deviceName: resolvedName)
@@ -260,22 +275,34 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     private func stopServerAccess() async {
         invalidateManagedRuntimeConfig()
+        invalidatePluginSources()
+        invalidateModelCatalog()
+        await pluginPermissionSnapshots.invalidateAll()
         shouldMaintainGatewayConnection = false
         gatewayReconnectFailureCount = 0
         await stopGatewayConnection()
     }
 
     public func prepareForSystemSleep() async {
+        powerTransitionGeneration &+= 1
+        let generation = powerTransitionGeneration
         guard state.deviceID != nil else { return }
         isSystemSleeping = true
         reconnectTask?.cancel()
         reconnectTask = nil
         await closeGatewayConnection(terminatePluginSessions: true)
+        guard !Task.isCancelled,
+              powerTransitionGeneration == generation,
+              isSystemSleeping else { return }
         await pluginApplicationRuntime.stopAll()
+        guard !Task.isCancelled,
+              powerTransitionGeneration == generation,
+              isSystemSleeping else { return }
         await browserExtensionPairingRuntime.stop()
     }
 
     public func recoverGatewayConnection(forceReconnect: Bool = false) async {
+        powerTransitionGeneration &+= 1
         guard state.deviceID != nil, state.gatewayConnectionEnabled != false else { return }
         isSystemSleeping = false
         shouldMaintainGatewayConnection = true
@@ -316,7 +343,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         guard let workspace = state.workspaces.first(where: { $0.id == workspaceID }) else {
             throw NativeConnectorError.workspaceUnavailable
         }
-        let result = try NativeTerminalExecutor.execute(
+        let result = try await NativeTerminalExecutor.execute(
             command: "/bin/zsh",
             args: ["-lc", commandLine],
             cwd: cwd ?? workspace.absoluteRoot,
@@ -384,7 +411,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func approvalSnapshots() async -> AsyncStream<[LocalConnectorPendingApproval]> {
-        AsyncStream { continuation in
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let id = UUID()
             approvalSnapshotContinuations[id] = continuation
             continuation.yield(pendingApprovals)
@@ -395,7 +422,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func approvalEvents() async -> AsyncStream<LocalConnectorApprovalEvent> {
-        AsyncStream { continuation in
+        AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
             let id = UUID()
             approvalEventContinuations[id] = continuation
             continuation.onTermination = { [weak self] _ in

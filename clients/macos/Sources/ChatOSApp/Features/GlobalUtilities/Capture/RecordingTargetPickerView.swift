@@ -13,9 +13,15 @@ final class RecordingTargetPickerViewModel: ObservableObject {
     var onCancel: (() -> Void)?
 
     private let service: NativeScreenRecordingService
+    private var loadTask: Task<Void, Never>?
+    private var loadGeneration: UUID?
 
     init(service: NativeScreenRecordingService) {
         self.service = service
+    }
+
+    deinit {
+        loadTask?.cancel()
     }
 
     var selectedTarget: NativeScreenRecordingTarget? {
@@ -23,18 +29,39 @@ final class RecordingTargetPickerViewModel: ObservableObject {
     }
 
     func load() {
+        loadTask?.cancel()
+        let generation = UUID()
+        loadGeneration = generation
         isLoading = true
         errorMessage = nil
-        Task { [weak self, service] in
+        loadTask = Task { [weak self, service] in
+            defer {
+                if self?.loadGeneration == generation {
+                    self?.loadTask = nil
+                    self?.loadGeneration = nil
+                    self?.isLoading = false
+                }
+            }
             do {
                 let values = try await service.availableTargets()
+                try Task.checkCancellation()
+                guard self?.loadGeneration == generation else { return }
                 self?.targets = values
                 self?.selectedID = values.first?.id
+            } catch is CancellationError {
+                return
             } catch {
+                guard self?.loadGeneration == generation else { return }
                 self?.errorMessage = error.localizedDescription
             }
-            self?.isLoading = false
         }
+    }
+
+    func cancelLoading() {
+        loadTask?.cancel()
+        loadTask = nil
+        loadGeneration = nil
+        isLoading = false
     }
 
     func start() {

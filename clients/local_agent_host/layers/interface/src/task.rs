@@ -182,6 +182,10 @@ pub struct ListTaskGraphsCommand {
     pub owner_user_id: String,
     #[serde(default)]
     pub scope: LocalTaskGraphListScope,
+    #[serde(default)]
+    pub source_entity_type: Option<String>,
+    #[serde(default)]
+    pub source_entity_id: Option<String>,
     pub before_updated_at_unix_ms: Option<i64>,
     pub before_graph_id: Option<String>,
     pub limit: u32,
@@ -190,6 +194,21 @@ pub struct ListTaskGraphsCommand {
 impl ListTaskGraphsCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
+        match (
+            self.source_entity_type.as_deref(),
+            self.source_entity_id.as_deref(),
+        ) {
+            (None, None) => {}
+            (Some(entity_type), Some(entity_id)) => {
+                validate_identifier("source_entity_type", entity_type)?;
+                validate_identifier("source_entity_id", entity_id)?;
+            }
+            _ => {
+                return Err(
+                    "source_entity_type and source_entity_id must be supplied together".to_string(),
+                );
+            }
+        }
         if !(1..=100).contains(&self.limit) {
             return Err("limit must be between 1 and 100".to_string());
         }
@@ -589,6 +608,8 @@ mod tests {
         let valid = ListTaskGraphsCommand {
             owner_user_id: "user-1".to_string(),
             scope: LocalTaskGraphListScope::Active,
+            source_entity_type: Some("conversation_turn".to_string()),
+            source_entity_id: Some("turn-1".to_string()),
             before_updated_at_unix_ms: Some(1_000),
             before_graph_id: Some("graph-1".to_string()),
             limit: 25,
@@ -602,6 +623,12 @@ mod tests {
         .is_err());
         assert!(ListTaskGraphsCommand {
             owner_user_id: String::new(),
+            ..valid.clone()
+        }
+        .validate()
+        .is_err());
+        assert!(ListTaskGraphsCommand {
+            source_entity_id: None,
             ..valid.clone()
         }
         .validate()

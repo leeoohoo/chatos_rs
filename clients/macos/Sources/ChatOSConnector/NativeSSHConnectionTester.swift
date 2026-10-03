@@ -1,4 +1,5 @@
 import ChatOSCore
+import Darwin
 import Foundation
 
 protocol NativeRemoteConnectionTesting: Sendable {
@@ -10,6 +11,9 @@ protocol NativeRemoteConnectionTesting: Sendable {
 
 struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
     private static let interactiveVerificationTimeoutSeconds = 5 * 60
+    static let stdoutByteLimit = 64 * 1_024
+    static let diagnosticLogByteLimit = 1 * 1_024 * 1_024
+    static let promptLogByteLimit = 64 * 1_024
     private let coordinator: Coordinator
 
     init(timeout: TimeInterval = 15) {
@@ -29,11 +33,14 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             var draft: RemoteConnectionDraft
             var process: Process
             var stdout: Pipe
+            var stdoutCapture: NativeBoundedProcessOutput
             var stderrHandle: FileHandle
             var stderrURL: URL
             var temporaryDirectory: URL
             var promptLogURL: URL
             var verificationResponseURL: URL
+            var activity: NativeSSHSessionActivity
+            var exitSignal: NativeProcessExitSignal
         }
 
         private let timeout: TimeInterval
@@ -71,7 +78,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 )
             }
 
-            discardSessions(matching: draft)
+            await discardSessions(matching: draft)
             let session = try startSession(draft: draft, verificationCode: code)
             sessions[session.id] = session
             return try await waitForCompletion(
@@ -126,14 +133,29 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
 
             let process = Process()
             let stdout = Pipe()
+            let stdoutCapture = NativeBoundedProcessOutput(
+                maximumBytes: NativeSSHConnectionTester.stdoutByteLimit
+            )
+            NativeProcessPipeReader.install(
+                on: stdout.fileHandleForReading,
+                onData: stdoutCapture.append
+            )
             guard FileManager.default.createFile(
                 atPath: stderrURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ), FileManager.default.createFile(
+                atPath: promptLogURL.path,
                 contents: nil,
                 attributes: [.posixPermissions: 0o600]
             ) else {
                 throw NativeRemoteConnectionError("无法创建 SSH 诊断日志。")
             }
             let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+            let activity = try NativeSSHSessionActivity(
+                fileURLs: [stderrURL, promptLogURL]
+            )
+            let exitSignal = NativeProcessExitSignal()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
             process.arguments = [
                 "-v",
@@ -156,10 +178,15 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             environment["CHATOS_SSH_VERIFICATION_CODE"] = verificationCode ?? ""
             environment["CHATOS_SSH_VERIFICATION_FILE"] = verificationResponseURL.path
             process.environment = environment
+            process.terminationHandler = { terminated in
+                exitSignal.complete(exitCode: terminated.terminationStatus)
+                activity.signal()
+            }
 
             do {
                 try process.run()
             } catch {
+                activity.finish()
                 try? stderrHandle.close()
                 throw NativeRemoteConnectionError(
                     "无法启动本机 SSH：\(error.localizedDescription)"
@@ -172,11 +199,14 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 draft: draft,
                 process: process,
                 stdout: stdout,
+                stdoutCapture: stdoutCapture,
                 stderrHandle: stderrHandle,
                 stderrURL: stderrURL,
                 temporaryDirectory: temporaryDirectory,
                 promptLogURL: promptLogURL,
-                verificationResponseURL: verificationResponseURL
+                verificationResponseURL: verificationResponseURL,
+                activity: activity,
+                exitSignal: exitSignal
             )
         }
 
@@ -185,7 +215,35 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             verificationCodeWasSubmitted: Bool,
             submittedPromptCount: Int?
         ) async throws -> RemoteConnectionTestResult {
+            do {
+                return try await waitForCompletionUnchecked(
+                    sessionID: sessionID,
+                    verificationCodeWasSubmitted: verificationCodeWasSubmitted,
+                    submittedPromptCount: submittedPromptCount
+                )
+            } catch is CancellationError {
+                await discard(sessionID: sessionID)
+                throw CancellationError()
+            }
+        }
+
+        private func waitForCompletionUnchecked(
+            sessionID: UUID,
+            verificationCodeWasSubmitted: Bool,
+            submittedPromptCount: Int?
+        ) async throws -> RemoteConnectionTestResult {
             let deadline = Date().addingTimeInterval(timeout)
+            guard let initialSession = sessions[sessionID] else {
+                throw NativeRemoteConnectionError("SSH 验证会话已失效，请重新测试连接。")
+            }
+            let changes = initialSession.activity.changes()
+            var iterator = changes.makeAsyncIterator()
+            let activity = initialSession.activity
+            let timeoutWakeup = Task {
+                try? await Task.sleep(for: .seconds(timeout))
+                activity.signal()
+            }
+            defer { timeoutWakeup.cancel() }
             while let session = sessions[sessionID],
                   session.process.isRunning,
                   Date() < deadline {
@@ -195,7 +253,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                     diagnosticLog,
                     draft: session.draft
                 ) {
-                    discard(sessionID: sessionID)
+                    await discard(sessionID: sessionID)
                     return RemoteConnectionTestResult(success: true, message: "连接成功")
                 }
                 if !verificationCodeWasSubmitted,
@@ -212,12 +270,11 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                         throw RemoteVerificationChallenge(prompt: prompt)
                     }
                 }
-                do {
-                    try await Task.sleep(for: .milliseconds(50))
-                } catch {
-                    discard(sessionID: sessionID)
-                    throw error
+                guard await iterator.next() != nil else {
+                    try Task.checkCancellation()
+                    break
                 }
+                try Task.checkCancellation()
             }
 
             guard let session = sessions[sessionID] else {
@@ -225,7 +282,7 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
             }
             if session.process.isRunning {
                 let prompts = Self.readPrompts(from: session.promptLogURL)
-                discard(sessionID: sessionID)
+                await discard(sessionID: sessionID)
                 if prompts.trimmedNonEmpty != nil {
                     throw NativeRemoteConnectionError(
                         "已连接到 SSH 服务器，但认证等待超时。请确认使用最新短信验证码后重试。"
@@ -234,10 +291,16 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 throw NativeRemoteConnectionError("SSH 连接超时，请检查主机地址、端口和网络。")
             }
 
-            let output = String(
-                decoding: session.stdout.fileHandleForReading.readDataToEndOfFile(),
-                as: UTF8.self
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            // stdout is continuously drained while SSH is running so a noisy or
+            // misconfigured remote shell cannot fill the pipe and turn a valid
+            // connection into an apparent timeout. Once the process has exited,
+            // at most one pipe-sized tail can remain.
+            session.stdout.fileHandleForReading.readabilityHandler = nil
+            session.stdoutCapture.append(
+                session.stdout.fileHandleForReading.readDataToEndOfFile()
+            )
+            let output = String(decoding: session.stdoutCapture.snapshot.data, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let errorOutput = Self.readText(from: session.stderrURL)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let prompts = Self.readPrompts(from: session.promptLogURL)
@@ -246,10 +309,10 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
                 errorOutput,
                 draft: session.draft
             ) {
-                discard(sessionID: sessionID, terminateIfRunning: false)
+                await discard(sessionID: sessionID, terminateIfRunning: false)
                 return RemoteConnectionTestResult(success: true, message: "连接成功")
             }
-            discard(sessionID: sessionID, terminateIfRunning: false)
+            await discard(sessionID: sessionID, terminateIfRunning: false)
 
             guard terminationStatus == 0, output.contains("__CHATOS_REMOTE_OK__") else {
                 if !verificationCodeWasSubmitted,
@@ -268,28 +331,41 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         }
 
         private static func readPrompts(from url: URL) -> String {
-            readText(from: url)
+            NativeSSHConnectionTester.readBoundedText(
+                from: url,
+                maxBytes: NativeSSHConnectionTester.promptLogByteLimit
+            )
         }
 
         private static func readText(from url: URL) -> String {
-            (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            NativeSSHConnectionTester.readBoundedText(
+                from: url,
+                maxBytes: NativeSSHConnectionTester.diagnosticLogByteLimit
+            )
         }
 
-        private func discardSessions(matching draft: RemoteConnectionDraft) {
+        private func discardSessions(matching draft: RemoteConnectionDraft) async {
             let matchingIDs = sessions.values
                 .filter { $0.draft == draft }
                 .map(\.id)
             for id in matchingIDs {
-                discard(sessionID: id)
+                await discard(sessionID: id)
             }
         }
 
-        private func discard(sessionID: UUID, terminateIfRunning: Bool = true) {
+        private func discard(sessionID: UUID, terminateIfRunning: Bool = true) async {
             guard let session = sessions.removeValue(forKey: sessionID) else { return }
+            session.activity.finish()
             if terminateIfRunning, session.process.isRunning {
-                session.process.terminate()
+                _ = Darwin.kill(session.process.processIdentifier, SIGTERM)
+                if await session.exitSignal.waitAsync(timeout: 0.75) == nil {
+                    _ = Darwin.kill(session.process.processIdentifier, SIGKILL)
+                    _ = await session.exitSignal.waitAsync(timeout: 2)
+                }
             }
+            session.process.terminationHandler = nil
             try? session.stderrHandle.close()
+            try? session.stdout.fileHandleForReading.close()
             try? FileManager.default.removeItem(at: session.temporaryDirectory)
         }
 
@@ -332,6 +408,21 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         if let certificatePath = draft.certificatePath?.trimmedNonEmpty,
            !FileManager.default.isReadableFile(atPath: certificatePath) {
             throw NativeRemoteConnectionError("无法读取 SSH 证书文件：\(certificatePath)")
+        }
+    }
+
+    static func readBoundedText(from url: URL, maxBytes: Int) -> String {
+        guard maxBytes > 0,
+              let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        do {
+            let size = try handle.seekToEnd()
+            let retainedBytes = UInt64(maxBytes)
+            try handle.seek(toOffset: size > retainedBytes ? size - retainedBytes : 0)
+            let data = try handle.read(upToCount: maxBytes) ?? Data()
+            return String(decoding: data, as: UTF8.self)
+        } catch {
+            return ""
         }
     }
 
@@ -553,6 +644,80 @@ struct NativeSSHConnectionTester: NativeRemoteConnectionTesting {
         ;;
     esac
     """
+}
+
+private final class NativeSSHSessionActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    private var sources: [DispatchSourceFileSystemObject] = []
+    private var finished = false
+
+    init(fileURLs: [URL]) throws {
+        for url in fileURLs {
+            let handle = try FileHandle(forReadingFrom: url)
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: handle.fileDescriptor,
+                eventMask: [.write, .extend, .delete, .rename],
+                queue: .global(qos: .utility)
+            )
+            source.setEventHandler { [weak self] in
+                self?.signal()
+            }
+            source.setCancelHandler {
+                try? handle.close()
+            }
+            sources.append(source)
+            source.resume()
+        }
+    }
+
+    func changes() -> AsyncStream<Void> {
+        let id = UUID()
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            lock.lock()
+            if finished {
+                lock.unlock()
+                continuation.finish()
+                return
+            }
+            continuations[id] = continuation
+            lock.unlock()
+            continuation.onTermination = { [weak self] _ in
+                self?.remove(id: id)
+            }
+        }
+    }
+
+    func signal() {
+        lock.lock()
+        let current = Array(continuations.values)
+        lock.unlock()
+        for continuation in current {
+            continuation.yield()
+        }
+    }
+
+    func finish() {
+        lock.lock()
+        guard !finished else {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let currentContinuations = Array(continuations.values)
+        let currentSources = sources
+        continuations.removeAll()
+        sources.removeAll()
+        lock.unlock()
+        currentContinuations.forEach { $0.finish() }
+        currentSources.forEach { $0.cancel() }
+    }
+
+    private func remove(id: UUID) {
+        lock.lock()
+        continuations.removeValue(forKey: id)
+        lock.unlock()
+    }
 }
 
 private struct NativeRemoteConnectionError: LocalizedError {

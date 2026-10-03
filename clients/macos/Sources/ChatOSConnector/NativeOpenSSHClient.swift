@@ -560,8 +560,8 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
         let process = Process()
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
-        let stdout = BoundedDataBuffer(maximumBytes: maximumCapturedBytes)
-        let stderr = BoundedDataBuffer(maximumBytes: maximumCapturedBytes)
+        let stdout = NativeBoundedProcessOutput(maximumBytes: maximumCapturedBytes)
+        let stderr = NativeBoundedProcessOutput(maximumBytes: maximumCapturedBytes)
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.environment = environment
@@ -584,32 +584,47 @@ struct NativeOpenSSHClient: NativeRemoteSSHExecuting {
             on: stderrPipe.fileHandleForReading,
             onData: stderr.append
         )
+        let exitSignal = NativeProcessExitSignal.install(on: process)
         do {
             try process.run()
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             throw NativeOpenSSHError.launchFailed(error.localizedDescription)
         }
         if let input, let inputPipe {
             inputPipe.fileHandleForWriting.write(input)
             try? inputPipe.fileHandleForWriting.close()
         }
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline { Thread.sleep(forTimeInterval: 0.025) }
-        let timedOut = process.isRunning
+        var exitCode = exitSignal.wait(timeout: timeout)
+        let timedOut = exitCode == nil
         if timedOut {
-            process.terminate()
-            process.waitUntilExit()
+            _ = Darwin.kill(process.processIdentifier, SIGTERM)
+            exitCode = exitSignal.wait(timeout: 0.75)
+            if exitCode == nil {
+                _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                exitCode = exitSignal.wait(timeout: 2)
+            }
+        }
+        guard let exitCode else {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            try? stdoutPipe.fileHandleForReading.close()
+            try? stderrPipe.fileHandleForReading.close()
+            throw NativeOpenSSHError.launchFailed("SSH 子进程无法在超时后终止")
         }
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
         stdout.append(stdoutPipe.fileHandleForReading.readDataToEndOfFile())
         stderr.append(stderrPipe.fileHandleForReading.readDataToEndOfFile())
+        let stdoutSnapshot = stdout.snapshot
+        let stderrSnapshot = stderr.snapshot
         return .init(
-            exitCode: Int(process.terminationStatus),
-            stdout: stdout.data,
-            stderr: stderr.data,
+            exitCode: Int(exitCode),
+            stdout: stdoutSnapshot.data,
+            stderr: stderrSnapshot.data,
             timedOut: timedOut,
-            outputDiscarded: stdout.discarded || stderr.discarded
+            outputDiscarded: stdoutSnapshot.discarded || stderrSnapshot.discarded
         )
     }
 
@@ -653,31 +668,6 @@ private struct CapturedProcessResult {
     let stderr: Data
     let timedOut: Bool
     let outputDiscarded: Bool
-}
-
-private final class BoundedDataBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private let maximumBytes: Int
-    private var storage = Data()
-    private(set) var discarded = false
-
-    init(maximumBytes: Int) { self.maximumBytes = max(1, maximumBytes) }
-
-    func append(_ data: Data) {
-        guard !data.isEmpty else { return }
-        lock.lock()
-        let remaining = max(0, maximumBytes - storage.count)
-        storage.append(data.prefix(remaining))
-        if data.count > remaining { discarded = true }
-        lock.unlock()
-    }
-
-    var data: Data {
-        lock.lock()
-        let value = storage
-        lock.unlock()
-        return value
-    }
 }
 
 private enum NativeOpenSSHError: LocalizedError {

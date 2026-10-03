@@ -97,6 +97,40 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
             if !result.contains(capability) { result.append(capability) }
         }
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case requiresExecution, builtinCapabilities, plugins, selectionRevision, selectedAtUnixMs
+    }
+
+    private static let retiredCapabilityRawValues: Set<String> = [
+        "requirement_survey_read",
+        "requirement_survey_write",
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requiresExecution = try container.decode(Bool.self, forKey: .requiresExecution)
+        let persistedCapabilities = try container.decode(
+            [String].self,
+            forKey: .builtinCapabilities
+        )
+        builtinCapabilities = try persistedCapabilities.compactMap { rawValue in
+            if let capability = LocalAgentTodoBuiltinCapability(rawValue: rawValue) {
+                return capability
+            }
+            if Self.retiredCapabilityRawValues.contains(rawValue) {
+                return nil
+            }
+            throw DecodingError.dataCorruptedError(
+                forKey: .builtinCapabilities,
+                in: container,
+                debugDescription: "Unknown Agent Todo builtin capability: \(rawValue)"
+            )
+        }
+        plugins = try container.decode([LocalAgentTodoPluginSelection].self, forKey: .plugins)
+        selectionRevision = try container.decode(String.self, forKey: .selectionRevision)
+        selectedAtUnixMs = try container.decode(Int64.self, forKey: .selectedAtUnixMs)
+    }
 }
 
 public enum LocalAgentTodoSourceRelation: String, Codable, Sendable, CaseIterable {

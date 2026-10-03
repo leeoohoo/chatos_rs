@@ -89,6 +89,10 @@ enum AgentGroupChatRowMapper {
                 LocalAgentTodoExecutionPlan.self,
                 from: Data(string(statement, 16).utf8)
             )
+        } catch {
+            throw AgentGroupChatError.storage("invalid Agent Todo execution plan")
+        }
+        do {
             executionContract = try JSONDecoder().decode(
                 LocalAgentTodoExecutionContract.self,
                 from: Data(string(statement, 17).utf8)

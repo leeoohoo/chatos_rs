@@ -2,6 +2,26 @@ import AppKit
 import ChatOSConnector
 import CoreGraphics
 import Foundation
+import ImageIO
+
+enum ScreenshotPersistencePolicy {
+    static let maximumPasteboardBytes = 128 * 1_024 * 1_024
+    static let maximumTranslationBytes = 20 * 1_024 * 1_024
+}
+
+private struct PreparedScreenshotPersistence: Sendable {
+    let fileURL: URL?
+    let pngData: Data?
+    let errorDescription: String?
+}
+
+private enum ScreenshotPersistenceError: LocalizedError {
+    case encodingFailed
+
+    var errorDescription: String? {
+        "The screenshot could not be encoded as PNG."
+    }
+}
 
 @MainActor
 final class ScreenshotCoordinator {
@@ -15,12 +35,22 @@ final class ScreenshotCoordinator {
     private var annotationController: ScreenshotInlineAnnotationController?
     private var longCaptureController: LongScreenshotCaptureController?
     private var captureTask: Task<Void, Never>?
+    private var finalizationTask: Task<Void, Never>?
+    private var finalizationGeneration: UUID?
+    private var translationTask: Task<Void, Never>?
+    private var translationGeneration: UUID?
     private var previousApplication: NSRunningApplication?
     private var selectedScreen: NSScreen?
     private(set) var isRunning = false
 
     init(model: AppModel) {
         self.model = model
+    }
+
+    deinit {
+        captureTask?.cancel()
+        finalizationTask?.cancel()
+        translationTask?.cancel()
     }
 
     func start() {
@@ -114,6 +144,13 @@ final class ScreenshotCoordinator {
             longCaptureController.cancel()
             return
         }
+        if finalizationTask != nil {
+            finalizationTask?.cancel()
+            finalizationTask = nil
+            finalizationGeneration = nil
+            finishWorkflow()
+            return
+        }
         captureTask?.cancel()
         captureTask = nil
         finishWorkflow()
@@ -132,13 +169,7 @@ final class ScreenshotCoordinator {
         controller.onComplete = { [weak self] renderedImage in
             guard let self else { return }
             self.annotationController = nil
-            let output = self.persist(renderedImage)
-            self.toastController.show(
-                output: output,
-                on: selection.screen,
-                isEnglish: self.model?.interfaceLanguage == .english
-            )
-            self.finishWorkflow()
+            self.finalizeScreenshot(renderedImage, on: selection.screen)
         }
         controller.onSendToTranslation = { [weak self] renderedImage in
             guard let self else { return }
@@ -168,13 +199,7 @@ final class ScreenshotCoordinator {
         controller.onComplete = { [weak self] image in
             guard let self else { return }
             self.longCaptureController = nil
-            let output = self.persist(image)
-            self.toastController.show(
-                output: output,
-                on: selection.screen,
-                isEnglish: self.model?.interfaceLanguage == .english
-            )
-            self.finishWorkflow()
+            self.finalizeScreenshot(image, on: selection.screen)
         }
         controller.onCancel = { [weak self] in
             self?.longCaptureController = nil
@@ -184,92 +209,167 @@ final class ScreenshotCoordinator {
         controller.present()
     }
 
-    private func persist(_ image: CGImage) -> ScreenshotOutput {
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        let pngData = bitmap.representation(using: .png, properties: [:])
-        let copied = Self.copyToPasteboard(image, pngData: pngData)
-
-        guard let pngData else {
-            return ScreenshotOutput(
-                image: image,
-                fileURL: nil,
-                copiedToPasteboard: copied,
-                errorMessage: localized(
-                    "图片编码失败，但仍尝试复制到了剪贴板。",
-                    "Image encoding failed, but it was still copied when possible."
-                )
+    private func finalizeScreenshot(_ image: CGImage, on screen: NSScreen) {
+        let generation = UUID()
+        finalizationGeneration = generation
+        finalizationTask = Task { [weak self] in
+            guard let self else { return }
+            let output = await persist(image)
+            guard !Task.isCancelled, finalizationGeneration == generation else { return }
+            finalizationTask = nil
+            finalizationGeneration = nil
+            toastController.show(
+                output: output,
+                on: screen,
+                isEnglish: model?.interfaceLanguage == .english
             )
-        }
-
-        do {
-            let directory = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Pictures/ChatOS/Screenshots", isDirectory: true)
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            let fileURL = directory.appendingPathComponent(Self.screenshotFilename())
-            try pngData.write(to: fileURL, options: .atomic)
-            return ScreenshotOutput(
-                image: image,
-                fileURL: fileURL,
-                copiedToPasteboard: copied,
-                errorMessage: copied ? nil : localized(
-                    "图片已保存，但未能写入剪贴板。",
-                    "The image was saved but could not be copied to the pasteboard."
-                )
-            )
-        } catch {
-            return ScreenshotOutput(
-                image: image,
-                fileURL: nil,
-                copiedToPasteboard: copied,
-                errorMessage: localized(
-                    "保存失败：\(error.localizedDescription)",
-                    "Save failed: \(error.localizedDescription)"
-                )
-            )
+            finishWorkflow()
         }
     }
 
-    private func sendToPetTranslation(_ image: CGImage) {
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
-            presentError(localized(
-                "无法把截图发送到快速翻译：图片编码失败。",
-                "Unable to send the screenshot to Quick Translate: image encoding failed."
-            ))
-            return
+    private func persist(_ image: CGImage) async -> ScreenshotOutput {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Pictures/ChatOS/Screenshots", isDirectory: true)
+        let fileURL = directory.appendingPathComponent(Self.screenshotFilename())
+        let prepared = (try? await AppCancellableDetachedWork.run {
+            Self.persistImage(image, to: fileURL)
+        }) ?? PreparedScreenshotPersistence(
+            fileURL: nil,
+            pngData: nil,
+            errorDescription: CancellationError().localizedDescription
+        )
+        guard let savedURL = prepared.fileURL else {
+            return ScreenshotOutput(
+                pngData: nil,
+                fileURL: nil,
+                copiedToPasteboard: false,
+                errorMessage: localized(
+                    "保存失败：\(prepared.errorDescription ?? "图片编码失败")",
+                    "Save failed: \(prepared.errorDescription ?? "image encoding failed")"
+                )
+            )
         }
-        model?.openPetTranslationImage(
-            data: pngData,
-            suggestedName: Self.screenshotFilename()
+
+        let copied = prepared.pngData.map(Self.copyPNGToPasteboard) ?? false
+        return ScreenshotOutput(
+            pngData: prepared.pngData,
+            fileURL: savedURL,
+            copiedToPasteboard: copied,
+            errorMessage: copied ? nil : localized(
+                "图片已保存，但文件过大或未能写入剪贴板。",
+                "The image was saved, but it was too large or could not be copied to the pasteboard."
+            )
         )
     }
 
-    @discardableResult
-    static func copyToPasteboard(_ image: CGImage, pngData: Data? = nil) -> Bool {
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let png = pngData ?? bitmap.representation(using: .png, properties: [:]) else {
+    private func sendToPetTranslation(_ image: CGImage) {
+        translationTask?.cancel()
+        let generation = UUID()
+        let suggestedName = Self.screenshotFilename()
+        translationGeneration = generation
+        translationTask = Task { [weak self] in
+            guard let self else { return }
+            let pngData = try? await AppCancellableDetachedWork.run {
+                Self.encodePNGData(
+                    image,
+                    maximumBytes: ScreenshotPersistencePolicy.maximumTranslationBytes
+                )
+            }
+            guard !Task.isCancelled, translationGeneration == generation else { return }
+            translationTask = nil
+            translationGeneration = nil
+            guard let pngData else {
+                presentError(localized(
+                    "无法把截图发送到快速翻译：PNG 编码失败或文件超过 20 MB。",
+                    "Unable to send the screenshot to Quick Translate: PNG encoding failed or exceeded 20 MB."
+                ))
+                return
+            }
+            model?.openPetTranslationImage(data: pngData, suggestedName: suggestedName)
+        }
+    }
+
+    @MainActor @discardableResult
+    static func copyPNGToPasteboard(_ pngData: Data) -> Bool {
+        guard !pngData.isEmpty,
+              pngData.count <= ScreenshotPersistencePolicy.maximumPasteboardBytes else {
             return false
         }
-
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        var types: [NSPasteboard.PasteboardType] = [.png]
-        let tiff = bitmap.representation(using: .tiff, properties: [:])
-        if tiff != nil {
-            types.append(.tiff)
-        }
-        pasteboard.declareTypes(types, owner: nil)
-
-        let wrotePNG = pasteboard.setData(png, forType: .png)
-        if let tiff {
-            pasteboard.setData(tiff, forType: .tiff)
-        }
+        pasteboard.declareTypes([.png], owner: nil)
+        let wrotePNG = pasteboard.setData(pngData, forType: .png)
         guard wrotePNG else { return false }
-        return pasteboard.availableType(from: [.png, .tiff]) != nil
+        return pasteboard.availableType(from: [.png]) != nil
             && pasteboard.data(forType: .png) != nil
+    }
+
+    nonisolated private static func persistImage(
+        _ image: CGImage,
+        to fileURL: URL
+    ) -> PreparedScreenshotPersistence {
+        do {
+            try Task.checkCancellation()
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            guard let destination = CGImageDestinationCreateWithURL(
+                fileURL as CFURL,
+                "public.png" as CFString,
+                1,
+                nil
+            ) else {
+                throw ScreenshotPersistenceError.encodingFailed
+            }
+            CGImageDestinationAddImage(destination, image, nil)
+            try Task.checkCancellation()
+            guard CGImageDestinationFinalize(destination) else {
+                throw ScreenshotPersistenceError.encodingFailed
+            }
+            try Task.checkCancellation()
+            let pngData = try? AppBoundedFileReader.read(
+                fileURL,
+                maximumBytes: ScreenshotPersistencePolicy.maximumPasteboardBytes
+            )
+            return PreparedScreenshotPersistence(
+                fileURL: fileURL,
+                pngData: pngData,
+                errorDescription: nil
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            return PreparedScreenshotPersistence(
+                fileURL: nil,
+                pngData: nil,
+                errorDescription: error.localizedDescription
+            )
+        }
+    }
+
+    nonisolated private static func encodePNGData(
+        _ image: CGImage,
+        maximumBytes: Int
+    ) -> Data? {
+        guard maximumBytes > 0, !Task.isCancelled else { return nil }
+        let output = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            "public.png" as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard !Task.isCancelled,
+              CGImageDestinationFinalize(destination),
+              !Task.isCancelled,
+              output.length > 0,
+              output.length <= maximumBytes else {
+            return nil
+        }
+        return Data(referencing: output)
     }
 
     private func ensureScreenCapturePermission() -> Bool {

@@ -106,11 +106,17 @@ struct MarkdownDocumentView: View {
                     return
                 }
             }
-            let parsed = await Task.detached(priority: .userInitiated) {
-                let blocks = MarkdownRenderCache.shared.blocks(for: source)
-                MarkdownRenderCache.shared.prepareInlineAttributes(for: blocks)
-                return blocks
-            }.value
+            let parsed: [MarkdownBlock]
+            do {
+                parsed = try await AppCancellableDetachedWork.run {
+                    let blocks = MarkdownRenderCache.shared.blocks(for: source)
+                    guard !Task.isCancelled else { return [] }
+                    MarkdownRenderCache.shared.prepareInlineAttributes(for: blocks)
+                    return blocks
+                }
+            } catch {
+                return
+            }
             guard !Task.isCancelled, source == markdown else { return }
             loadedDocument = LoadedDocument(source: source, blocks: parsed)
         }
@@ -417,13 +423,7 @@ private final class MarkdownLayoutTextView: NSTextView {
         textStorage?.setAttributedString(MarkdownAttributedRenderer.render(blocks))
         invalidateMeasurements()
 
-        var seenImageURLs: Set<String> = []
-        let imageBlocks = blocks.compactMap { block -> (String, URL)? in
-            guard case let .image(_, rawURL) = block,
-                  seenImageURLs.insert(rawURL).inserted,
-                  let url = MarkdownRemoteImageLoader.allowedURL(from: rawURL) else { return nil }
-            return (rawURL, url)
-        }
+        let imageBlocks = MarkdownRemoteImageLoader.requests(from: blocks)
         guard !imageBlocks.isEmpty else { return }
         imageLoadTask = Task { [weak self] in
             guard let self else { return }
@@ -435,9 +435,7 @@ private final class MarkdownLayoutTextView: NSTextView {
                 }
                 guard let data = await MarkdownRemoteImageLoader.load(url),
                       !Task.isCancelled else { continue }
-                let decoded = await Task.detached(priority: .utility) {
-                    MarkdownRemoteImageLoader.decode(data)
-                }.value
+                let decoded = await MarkdownRemoteImageLoader.decodeOffMain(data)
                 guard !Task.isCancelled,
                       let decoded,
                       source == nextSource else { continue }

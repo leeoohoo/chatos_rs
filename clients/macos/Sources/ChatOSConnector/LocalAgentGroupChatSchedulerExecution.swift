@@ -25,6 +25,22 @@ extension LocalAgentGroupChatScheduler {
         guard let profile = profiles.first(where: { $0.id == delivery.targetAgentID }) else {
             throw AgentGroupChatError.notFound
         }
+        // Bind the executor Delivery to its Todo once before constructing or resuming a Run.
+        // Fresh executor Runs previously loaded the same Todo once for capability selection and
+        // again immediately after saving the Run for identity validation.
+        let executionTodo: LocalAgentTodo?
+        if delivery.lane == .executor {
+            executionTodo = try await store.todoForDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: delivery.id
+            )
+            guard executionTodo?.agentID == profile.id,
+                  executionTodo?.teamRoomID == room.id else {
+                throw AgentGroupChatError.conflict
+            }
+        } else {
+            executionTodo = nil
+        }
 
         let run: LocalAgentGroupChatRun
         if let savedRun {
@@ -88,11 +104,7 @@ extension LocalAgentGroupChatScheduler {
                 audience: delivery.lane == .manager ? .manager : .executor
             )
             let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
-            if delivery.lane == .executor,
-               let todo = try await store.todoForDelivery(
-                ownerUserID: ownerUserID,
-                deliveryID: delivery.id
-               ) {
+            if let todo = executionTodo {
                 builtinCapabilities = Set(todo.executionPlan.builtinCapabilities)
             } else {
                 builtinCapabilities = []
@@ -165,20 +177,6 @@ extension LocalAgentGroupChatScheduler {
                 ))
             }
         )
-
-        let executionTodo: LocalAgentTodo?
-        if context.lane == .executor {
-            executionTodo = try await store.todoForDelivery(
-                ownerUserID: ownerUserID,
-                deliveryID: delivery.id
-            )
-            guard executionTodo?.agentID == profile.id,
-                  executionTodo?.teamRoomID == room.id else {
-                throw AgentGroupChatError.conflict
-            }
-        } else {
-            executionTodo = nil
-        }
 
         if let todo = executionTodo, savedRun == nil {
             _ = try await store.appendAgentTodoProgress(
@@ -305,16 +303,12 @@ extension LocalAgentGroupChatScheduler {
             tools: toolRegistry.definitions,
             execute: { call in
                 if context.lane == .executor {
-                    guard let currentDelivery = try await store.delivery(
+                    guard try await store.runningTodoForDelivery(
                         ownerUserID: ownerUserID,
-                        deliveryID: delivery.id
-                    ), currentDelivery.status == .running,
-                    let currentTodo = try await store.todoForDelivery(
-                        ownerUserID: ownerUserID,
-                        deliveryID: delivery.id
-                    ), currentTodo.status == .inProgress,
-                    currentTodo.agentID == context.agentID,
-                    currentTodo.teamRoomID == context.roomID else {
+                        deliveryID: delivery.id,
+                        agentID: context.agentID,
+                        roomID: context.roomID
+                    ) != nil else {
                         return .failure(
                             "Todo 已被停止或执行身份已经失效；客户端已拒绝本次工具调用。"
                         )

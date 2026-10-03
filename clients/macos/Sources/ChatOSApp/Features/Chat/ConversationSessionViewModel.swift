@@ -97,8 +97,18 @@ final class ConversationSessionViewModel: ObservableObject {
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
+    var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
+    var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
     private var runtimeSettingsLoadGeneration: UInt64 = 0
+    var askUserPromptRefreshGeneration: UInt64 = 0
     private var isActive = false
+
+    var taskGraphAvailabilityCacheEntryCount: Int {
+        Set(taskGraphAvailability.keys)
+            .union(taskGraphAvailabilityTasks.keys)
+            .union(taskGraphAvailabilityRevisions.keys)
+            .count
+    }
 
     init(
         sessionID: String,
@@ -138,6 +148,8 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
+        attachmentFileLoadTasks.values.forEach { $0.cancel() }
+        pastedImageNormalizationTasks.values.forEach { $0.cancel() }
     }
 
     func refreshLatest() {
@@ -685,9 +697,10 @@ final class ConversationSessionViewModel: ObservableObject {
 
     private func preloadTaskGraphAvailability(for turns: [ConversationTurn]) {
         let currentTurnIDs = Set(turns.map(\.id))
-        let staleTurnIDs = taskGraphAvailabilityTasks.keys.filter {
-            !currentTurnIDs.contains($0)
-        }
+        let cachedTurnIDs = Set(taskGraphAvailability.keys)
+            .union(taskGraphAvailabilityTasks.keys)
+            .union(taskGraphAvailabilityRevisions.keys)
+        let staleTurnIDs = cachedTurnIDs.subtracting(currentTurnIDs)
         for turnID in staleTurnIDs {
             let hadVisibleGraph = taskGraphAvailability[turnID] != nil
             taskGraphAvailabilityTasks[turnID]?.cancel()

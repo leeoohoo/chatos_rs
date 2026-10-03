@@ -89,7 +89,8 @@ public actor ChatOSAPIClient {
                 method: method,
                 headers: headers,
                 body: body,
-                timeoutInterval: timeoutInterval
+                timeoutInterval: timeoutInterval,
+                maximumResponseBytes: 8 * 1_024 * 1_024
             )
         )
         if let expectedAuthenticationSessionID, expectedAuthenticationSessionID != authenticationSessionID {

@@ -41,7 +41,9 @@ extension AppModel {
                 let fallbackTask = Task {
                     while !Task.isCancelled {
                         do {
-                            try await Task.sleep(for: .seconds(300))
+                            try await Task.sleep(
+                                for: AgentRuntimePollingPolicy.communicationRecoveryInterval
+                            )
                         } catch {
                             break
                         }
@@ -93,12 +95,11 @@ extension AppModel {
                     let nextDue = try await store.nextAgentHeartbeatDue(
                         ownerUserID: ownerUserID
                     )
-                    let delayMilliseconds: Int64
-                    if let nextDue {
-                        delayMilliseconds = min(60_000, max(1_000, nextDue - now))
-                    } else {
-                        delayMilliseconds = 60_000
-                    }
+                    let delayReferenceTime = Int64(Date().timeIntervalSince1970 * 1_000)
+                    let delayMilliseconds = AgentRuntimePollingPolicy.heartbeatDelayMilliseconds(
+                        nextDueUnixMs: nextDue,
+                        nowUnixMs: delayReferenceTime
+                    )
                     try await Task.sleep(for: .milliseconds(delayMilliseconds))
                 } catch is CancellationError {
                     return
@@ -137,7 +138,29 @@ extension AppModel {
         agentArtifactStorageOwnerUserID = ownerUserID
         let service = agentGroupChatService
         agentArtifactStorageTask = Task { [weak self] in
-            while !Task.isCancelled {
+            let changes = await service.changes(ownerUserID: ownerUserID)
+            let wakeups = AsyncStream<Void>.makeStream(
+                bufferingPolicy: .bufferingNewest(1)
+            )
+            let changeTask = Task {
+                for await change in changes {
+                    guard !Task.isCancelled else { return }
+                    if AgentRuntimePollingPolicy.shouldWakeArtifactStorage(for: change.kind) {
+                        wakeups.continuation.yield()
+                    }
+                }
+            }
+            var timerTask: Task<Void, Never>?
+            defer {
+                changeTask.cancel()
+                timerTask?.cancel()
+                wakeups.continuation.finish()
+            }
+            wakeups.continuation.yield()
+            for await _ in wakeups.stream {
+                guard !Task.isCancelled else { return }
+                timerTask?.cancel()
+                timerTask = nil
                 do {
                     _ = try await service.persistPendingAgentArtifacts(ownerUserID: ownerUserID)
                     guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
@@ -146,15 +169,32 @@ extension AppModel {
                     let store = try await service.store()
                     let nextDue = try await store.nextAgentArtifactStorageDue(ownerUserID: ownerUserID)
                     let now = Int64(Date().timeIntervalSince1970 * 1_000)
-                    let delayMilliseconds = nextDue.map {
-                        min(Int64(60_000), max(Int64(1_000), $0 - now))
-                    } ?? 60_000
-                    try await Task.sleep(for: .milliseconds(delayMilliseconds))
+                    let delayMilliseconds = AgentRuntimePollingPolicy.artifactStorageDelayMilliseconds(
+                        nextDueUnixMs: nextDue,
+                        nowUnixMs: now
+                    )
+                    timerTask = Task {
+                        do {
+                            try await Task.sleep(for: .milliseconds(delayMilliseconds))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled else { return }
+                        wakeups.continuation.yield()
+                    }
                 } catch is CancellationError {
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
-                    try? await Task.sleep(for: .seconds(10))
+                    timerTask = Task {
+                        do {
+                            try await Task.sleep(for: .seconds(10))
+                        } catch {
+                            return
+                        }
+                        guard !Task.isCancelled else { return }
+                        wakeups.continuation.yield()
+                    }
                 }
             }
         }
@@ -172,5 +212,49 @@ enum AgentArtifactStorageCoordinatorPolicy {
         forceRestart
             || !hasLiveTask
             || existingOwnerUserID != requestedOwnerUserID
+    }
+}
+
+enum AgentRuntimePollingPolicy {
+    static let minimumHeartbeatDelayMilliseconds: Int64 = 1_000
+    static let maximumHeartbeatDelayMilliseconds: Int64 = 300_000
+    static let idleHeartbeatDelayMilliseconds: Int64 = 1_800_000
+    static let communicationRecoveryInterval: Duration = .seconds(1_800)
+    static let minimumArtifactStorageDelayMilliseconds: Int64 = 1_000
+    static let maximumArtifactStorageDelayMilliseconds: Int64 = 300_000
+    static let idleArtifactStorageDelayMilliseconds: Int64 = 1_800_000
+
+    static func heartbeatDelayMilliseconds(
+        nextDueUnixMs: Int64?,
+        nowUnixMs: Int64
+    ) -> Int64 {
+        // Profile saves, authentication changes and system wake all restart the coordinator.
+        // With no scheduled heartbeat, this timer is only a crash-recovery safety net.
+        guard let nextDueUnixMs else { return idleHeartbeatDelayMilliseconds }
+        return min(
+            maximumHeartbeatDelayMilliseconds,
+            max(minimumHeartbeatDelayMilliseconds, nextDueUnixMs - nowUnixMs)
+        )
+    }
+
+    static func artifactStorageDelayMilliseconds(
+        nextDueUnixMs: Int64?,
+        nowUnixMs: Int64
+    ) -> Int64 {
+        // Room/run changes wake storage immediately; nil means this is only a recovery sweep.
+        guard let nextDueUnixMs else { return idleArtifactStorageDelayMilliseconds }
+        return min(
+            maximumArtifactStorageDelayMilliseconds,
+            max(minimumArtifactStorageDelayMilliseconds, nextDueUnixMs - nowUnixMs)
+        )
+    }
+
+    static func shouldWakeArtifactStorage(
+        for changeKind: NativeAgentGroupChatChange.Kind
+    ) -> Bool {
+        switch changeKind {
+        case .runUpdated, .roomUpdated: true
+        case .deliveryClaimed: false
+        }
     }
 }

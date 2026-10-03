@@ -1,4 +1,5 @@
 import AppKit
+import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -9,10 +10,19 @@ struct NotepadSheet: View {
     @State private var prompt: NotepadPrompt?
     @State private var promptText = ""
     @State private var deleteTarget: NotepadDeleteTarget?
+    private let eventHub: NativeLocalAgentEventHub?
+    private let ownerUserID: String?
     let onClose: () -> Void
 
-    init(service: any NotepadServicing, onClose: @escaping () -> Void) {
+    init(
+        service: any NotepadServicing,
+        eventHub: NativeLocalAgentEventHub?,
+        ownerUserID: String?,
+        onClose: @escaping () -> Void
+    ) {
         _viewModel = StateObject(wrappedValue: NotepadViewModel(service: service))
+        self.eventHub = eventHub
+        self.ownerUserID = ownerUserID
         self.onClose = onClose
     }
 
@@ -34,9 +44,36 @@ struct NotepadSheet: View {
             viewModel.interfaceLanguage = model.interfaceLanguage
             await viewModel.load()
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(8))
-                guard !Task.isCancelled else { break }
+                do {
+                    try await Task.sleep(
+                        for: NotepadExternalSyncPolicy.consistencyCheckInterval
+                    )
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
                 await viewModel.syncExternalChanges()
+            }
+        }
+        .task {
+            let updates = await viewModel.changeUpdates()
+            for await _ in updates {
+                guard !Task.isCancelled else { return }
+                viewModel.scheduleExternalSync()
+            }
+        }
+        .task {
+            guard let eventHub, let ownerUserID else { return }
+            await eventHub.configure(ownerUserID: ownerUserID)
+            let updates = await eventHub.updates()
+            for await update in updates {
+                guard !Task.isCancelled else { return }
+                guard update.ownerUserID == ownerUserID else { continue }
+                guard case let .events(events) = update.kind,
+                      NotepadExternalSyncPolicy.shouldRefresh(
+                        forEventTypes: events.map(\.eventType)
+                      ) else { continue }
+                viewModel.scheduleExternalSync()
             }
         }
         .onChange(of: model.interfaceLanguage) { _, language in

@@ -46,6 +46,9 @@ actor NativePluginRuntimeStore {
     }
 
     private var sessions: [String: Session] = [:]
+    private var visualSessionChangeContinuations: [
+        UUID: AsyncStream<Void>.Continuation
+    ] = [:]
     private var computerUseLeaseOwner: String?
     private var computerUseLeaseWaiters: [ComputerUseLeaseWaiter] = []
     private let browserVisualRefreshTimeout: Duration
@@ -95,6 +98,7 @@ actor NativePluginRuntimeStore {
             projectRootURL: projectRootURL,
             workspaceID: workspaceID
         )
+        notifyVisualSessionChanged()
     }
 
     func validate(
@@ -142,6 +146,7 @@ actor NativePluginRuntimeStore {
         session.owner = owner
         session.ownerBoundAt = Date()
         sessions[adapterSessionID] = session
+        notifyVisualSessionChanged()
     }
 
     func toolDefinition(name: String, adapterSessionID: String) -> NativeJSONValue? {
@@ -254,12 +259,14 @@ actor NativePluginRuntimeStore {
             }
             sessions.removeValue(forKey: adapterSessionID)
             releaseComputerUseLease(adapterSessionID: adapterSessionID)
+            notifyVisualSessionChanged()
             await session.client.terminate()
             try? FileManager.default.removeItem(at: session.visualSessionURL)
             return "cancelled"
         }
         sessions.removeValue(forKey: adapterSessionID)
         releaseComputerUseLease(adapterSessionID: adapterSessionID)
+        notifyVisualSessionChanged()
         await session.client.terminate()
         try? FileManager.default.removeItem(at: session.visualSessionURL)
         return "cancelled"
@@ -278,9 +285,22 @@ actor NativePluginRuntimeStore {
         }
     }
 
+    func visualSessionChanges() -> AsyncStream<Void> {
+        let subscriberID = UUID()
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        visualSessionChangeContinuations[subscriberID] = pair.continuation
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeVisualSessionChangeSubscriber(subscriberID) }
+        }
+        return pair.stream
+    }
+
     func terminateAll() async {
         let active = sessions.values
         sessions.removeAll()
+        if !active.isEmpty {
+            notifyVisualSessionChanged()
+        }
         computerUseLeaseOwner = nil
         let waiters = computerUseLeaseWaiters
         computerUseLeaseWaiters.removeAll()
@@ -326,16 +346,19 @@ actor NativePluginRuntimeStore {
         currentSession.visualFrameSequence += 1
         let sequence = currentSession.visualFrameSequence
         sessions[adapterSessionID] = currentSession
-        try? NativeBrowserVisualBridge.publish(
-            frame: frame,
-            adapterSessionID: currentSession.identity.adapterSessionID,
-            visualSessionURL: currentSession.visualSessionURL,
-            sequence: sequence,
-            target: NativeBrowserVisualBridge.targetDescription(
-                arguments: arguments,
-                result: result
+        do {
+            try NativeBrowserVisualBridge.publish(
+                frame: frame,
+                adapterSessionID: currentSession.identity.adapterSessionID,
+                visualSessionURL: currentSession.visualSessionURL,
+                sequence: sequence,
+                target: NativeBrowserVisualBridge.targetDescription(
+                    arguments: arguments,
+                    result: result
+                )
             )
-        )
+            notifyVisualSessionChanged()
+        } catch {}
     }
 
     private func refreshComputerUseVisual(
@@ -348,13 +371,28 @@ actor NativePluginRuntimeStore {
         session.visualFrameSequence += 1
         let sequence = session.visualFrameSequence
         sessions[adapterSessionID] = session
-        try? NativeComputerUseVisualBridge.publish(
-            frame: frame,
-            adapterSessionID: session.identity.adapterSessionID,
-            visualSessionURL: session.visualSessionURL,
-            sequence: sequence,
-            targetApplication: NativeComputerUseVisualBridge.targetApplication(arguments: arguments)
-        )
+        do {
+            try NativeComputerUseVisualBridge.publish(
+                frame: frame,
+                adapterSessionID: session.identity.adapterSessionID,
+                visualSessionURL: session.visualSessionURL,
+                sequence: sequence,
+                targetApplication: NativeComputerUseVisualBridge.targetApplication(
+                    arguments: arguments
+                )
+            )
+            notifyVisualSessionChanged()
+        } catch {}
+    }
+
+    private func removeVisualSessionChangeSubscriber(_ subscriberID: UUID) {
+        visualSessionChangeContinuations.removeValue(forKey: subscriberID)
+    }
+
+    private func notifyVisualSessionChanged() {
+        for continuation in visualSessionChangeContinuations.values {
+            continuation.yield(())
+        }
     }
 
     private func acquireComputerUseLease(adapterSessionID: String) async -> Bool {

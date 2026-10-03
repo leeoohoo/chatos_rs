@@ -27,16 +27,17 @@ extension NativeLocalConnectorService {
         guard state.user?.id == ownerUserID else {
             throw NativeConnectorError.notPaired
         }
-        let token = try requireAccessToken()
-        let configs = try await gateway.modelConfigs(token: token).filter {
+        let catalog = try await modelCatalogPayload(forceRefresh: false)
+        let configs = catalog.required.filter {
             $0.enabled != false && $0.taskEnabled != false && $0.hasAPIKey != false
         }
-        let settings = try? await gateway.modelSettings(token: token)
+        let settings = catalog.optional
+        let token = try requireAccessToken()
+        let gateway = gateway
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
         var snapshots: [LocalAgentModelConfigSnapshot] = []
         var modelOptions: [ConversationModelOption] = []
-        let gateway = gateway
         let resolvedConfigs = try await NativeLocalAgentBoundedLoader.load(
             configs,
             maximumConcurrentTasks: 4

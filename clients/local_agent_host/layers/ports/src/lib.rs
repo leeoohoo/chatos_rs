@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
     GuideConversationTurnCommand, LocalAgentArtifact, LocalAgentArtifactPage,
-    LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope, LocalAgentRunPage,
-    LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
+    LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope,
+    LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
     LocalAgentToolApprovalResult, LocalAgentToolBatch, LocalAgentToolClaim,
     LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
     LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
@@ -78,6 +78,9 @@ impl ClientStorageError {
 pub struct IdempotentCommand {
     pub command_id: String,
     pub request_fingerprint: String,
+    /// Durable IPC commands keep a replay receipt. Trusted in-process schedulers
+    /// generate one-shot command IDs and can skip that permanent storage cost.
+    pub persist_receipt: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +134,8 @@ pub trait LocalAgentRunStore: Send + Sync {
         &self,
         owner_user_id: &str,
         scope: LocalAgentRunListScope,
+        status: Option<LocalAgentRunStatus>,
+        updated_after_unix_ms: Option<i64>,
         before_updated_at_unix_ms: Option<i64>,
         before_run_id: Option<&str>,
         limit: u32,
@@ -141,6 +146,17 @@ pub trait LocalAgentRunStore: Send + Sync {
         owner_user_id: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn renew_run_claim(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+        claim_until_unix_ms: i64,
+    ) -> Result<bool, ClientStorageError>;
 
     async fn claim_next_run(
         &self,
@@ -153,6 +169,8 @@ pub trait LocalAgentRunStore: Send + Sync {
         event_id: &str,
     ) -> Result<Option<LocalAgentRunClaim>, ClientStorageError>;
 
+    /// Returns the earliest retry or active claim-expiry deadline that must
+    /// wake the owner-scoped coordinator.
     async fn next_retry_at(&self, owner_user_id: &str) -> Result<Option<i64>, ClientStorageError>;
 
     async fn apply_transition(
@@ -221,7 +239,15 @@ pub trait LocalAgentRunStore: Send + Sync {
         after_cursor: i64,
         limit: u32,
         run_id: Option<&str>,
+        event_type: Option<&str>,
+        newest_first: bool,
+        payload_mode: LocalAgentEventPayloadMode,
     ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError>;
+
+    async fn latest_event_cursor_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<i64, ClientStorageError>;
 
     async fn health_check(&self) -> Result<(), ClientStorageError>;
 }
@@ -245,6 +271,8 @@ pub trait LocalAgentTaskStore: Send + Sync {
         &self,
         owner_user_id: &str,
         scope: LocalTaskGraphListScope,
+        source_entity_type: Option<&str>,
+        source_entity_id: Option<&str>,
         before_updated_at_unix_ms: Option<i64>,
         before_graph_id: Option<&str>,
         limit: u32,
@@ -312,6 +340,17 @@ pub trait LocalAgentToolStore: Send + Sync {
         owner_user_id: &str,
         now_unix_ms: i64,
     ) -> Result<u64, ClientStorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    async fn renew_tool_claim(
+        &self,
+        owner_user_id: &str,
+        invocation_id: &str,
+        claim_token: &str,
+        expected_version: u64,
+        now_unix_ms: i64,
+        claim_until_unix_ms: i64,
+    ) -> Result<bool, ClientStorageError>;
 
     #[allow(clippy::too_many_arguments)]
     async fn claim_next_tool(

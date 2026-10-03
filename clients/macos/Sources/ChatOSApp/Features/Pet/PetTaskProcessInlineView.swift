@@ -1,6 +1,12 @@
 import ChatOSCore
 import SwiftUI
 
+enum PetTaskProcessRefreshPolicy {
+    static func fallbackInterval(hasRealtimeIdentity: Bool) -> Duration {
+        hasRealtimeIdentity ? .seconds(60) : .seconds(5)
+    }
+}
+
 struct PetTaskProcessInlineView: View {
     @EnvironmentObject private var model: AppModel
     let activity: PetActivity
@@ -72,13 +78,28 @@ struct PetTaskProcessInlineView: View {
             }
         }
         .padding(13)
-        .task(id: activity.id) {
+        .task(id: activityRefreshIdentity) {
             repeat {
                 await refresh()
                 guard !Task.isCancelled, shouldContinueRefreshing else { return }
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(for: PetTaskProcessRefreshPolicy.fallbackInterval(
+                    hasRealtimeIdentity: activity.activityVersion != nil
+                        || activity.eventSequence != nil
+                ))
             } while !Task.isCancelled
         }
+    }
+
+    private var activityRefreshIdentity: String {
+        [
+            activity.id,
+            activity.activityVersion,
+            activity.eventID,
+            activity.eventSequence.map(String.init),
+            String(activity.updatedAt.timeIntervalSince1970),
+        ]
+        .compactMap { $0 }
+        .joined(separator: "|")
     }
 
     private var shouldContinueRefreshing: Bool {

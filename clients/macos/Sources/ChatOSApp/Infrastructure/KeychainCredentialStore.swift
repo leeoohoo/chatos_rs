@@ -4,6 +4,7 @@ import LocalAuthentication
 import Security
 
 actor KeychainCredentialStore: CredentialStoring {
+    private static let maximumCredentialBytes = 64 * 1_024
     private let credentialURL: URL
     private var cachedAccessToken: String?
     private var hasLoadedAccessToken = false
@@ -32,7 +33,10 @@ actor KeychainCredentialStore: CredentialStoring {
             hasLoadedAccessToken = true
             return nil
         }
-        let data = try Data(contentsOf: credentialURL)
+        let data = try AppBoundedFileReader.read(
+            credentialURL,
+            maximumBytes: Self.maximumCredentialBytes
+        )
 
         let token = String(decoding: data, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +59,11 @@ actor KeychainCredentialStore: CredentialStoring {
     }
 
     private func persist(_ data: Data) throws {
+        guard data.count <= Self.maximumCredentialBytes else {
+            throw AppBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumCredentialBytes
+            )
+        }
         try FileManager.default.createDirectory(
             at: credentialURL.deletingLastPathComponent(),
             withIntermediateDirectories: true,

@@ -12,7 +12,7 @@ public actor NativeLocalAgentConversationService:
     }
 
     private let client: NativeLocalAgentConversationClient
-    private let runtime: NativeLocalAgentRuntimeClient
+    private let eventHub: NativeLocalAgentEventHub
     private let attachmentVault: NativeLocalAgentAttachmentVault
     private let runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
     private let platformToolWorker: NativeLocalAgentPlatformToolWorker?
@@ -22,10 +22,11 @@ public actor NativeLocalAgentConversationService:
         host: any LocalAgentHostClientServicing,
         attachmentRootURL: URL,
         runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService,
-        platformToolWorker: NativeLocalAgentPlatformToolWorker? = nil
+        platformToolWorker: NativeLocalAgentPlatformToolWorker? = nil,
+        eventHub: NativeLocalAgentEventHub? = nil
     ) {
         self.client = NativeLocalAgentConversationClient(host: host)
-        self.runtime = NativeLocalAgentRuntimeClient(host: host)
+        self.eventHub = eventHub ?? NativeLocalAgentEventHub(host: host)
         self.attachmentVault = NativeLocalAgentAttachmentVault(rootURL: attachmentRootURL)
         self.runtimeSettings = runtimeSettings
         self.platformToolWorker = platformToolWorker
@@ -34,7 +35,7 @@ public actor NativeLocalAgentConversationService:
     public func configure(
         ownerUserID: String,
         bootstrap: NativeLocalAgentBootstrapResult
-    ) throws {
+    ) async throws {
         guard !bootstrap.modelSnapshots.isEmpty,
               bootstrap.capabilitySnapshot.ownerUserID == ownerUserID else {
             throw NativeLocalAgentConversationServiceError.notConfigured
@@ -43,10 +44,12 @@ public actor NativeLocalAgentConversationService:
             ownerUserID: ownerUserID,
             capability: bootstrap.capabilitySnapshot
         )
+        await eventHub.configure(ownerUserID: ownerUserID)
     }
 
-    public func reset() {
+    public func reset() async {
         context = nil
+        await eventHub.reset()
     }
 
     public func sendNewTurn(
@@ -207,77 +210,62 @@ public actor NativeLocalAgentConversationService:
             }
         }
         let client = client
-        let runtime = runtime
-        return AsyncThrowingStream { continuation in
+        let updates = await eventHub.updates()
+        return AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let pollingTask = Task {
                 var observedVersion: UInt64?
-                var cursor: Int64 = 0
-                var idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
-                while !Task.isCancelled {
-                    do {
-                        if observedVersion == nil {
-                            let detail = try await client.get(
-                                ownerUserID: context.ownerUserID,
-                                conversationID: sessionID
-                            )
-                            let version = detail.conversation.version
-                            observedVersion = version
-                            continuation.yield(.init(
-                                eventID: "local-\(sessionID)-\(version)",
-                                eventSequence: Int64(clamping: version),
-                                sessionID: sessionID,
-                                turnID: nil,
-                                kind: .reconcile,
-                                eventName: "local_conversation_changed",
-                                timestamp: Self.timestamp(
-                                    unixMilliseconds: detail.conversation.updatedAtUnixMs
-                                )
-                            ))
-                        }
+                var observedRunIDs = Set<String>()
+                do {
+                    let detail = try await client.get(
+                        ownerUserID: context.ownerUserID,
+                        conversationID: sessionID
+                    )
+                    let version = detail.conversation.version
+                    observedVersion = version
+                    observedRunIDs = Set(detail.turns.map(\.runID))
+                    continuation.yield(Self.reconcileSignal(
+                        detail: detail,
+                        sessionID: sessionID
+                    ))
+                } catch let error as NativeLocalAgentHostError {
+                    guard Self.isNotFound(error) else {
+                        continuation.finish(throwing: error)
+                        return
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    continuation.finish(throwing: error)
+                    return
+                }
 
-                        let page = try await runtime.listEvents(
-                            ownerUserID: context.ownerUserID,
-                            afterCursor: cursor
-                        )
-                        cursor = page.nextCursor
-                        if page.events.isEmpty {
-                            try await Task.sleep(for: idleDelay)
-                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
-                                after: idleDelay
-                            )
-                            continue
+                for await update in updates {
+                    guard !Task.isCancelled,
+                          update.ownerUserID == context.ownerUserID else { continue }
+                    do {
+                        if case let .events(events) = update.kind {
+                            guard Self.eventsAffectConversation(
+                                events,
+                                conversationID: sessionID,
+                                knownRunIDs: observedRunIDs
+                            ) else { continue }
                         }
-                        idleDelay = NativeLocalAgentEventPollingPolicy.activeDelay
 
                         let detail = try await client.get(
                             ownerUserID: context.ownerUserID,
                             conversationID: sessionID
                         )
                         let version = detail.conversation.version
+                        observedRunIDs = Set(detail.turns.map(\.runID))
                         guard observedVersion != version else { continue }
                         observedVersion = version
-                        continuation.yield(.init(
-                            eventID: "local-\(sessionID)-\(version)",
-                            eventSequence: Int64(clamping: version),
-                            sessionID: sessionID,
-                            turnID: nil,
-                            kind: .reconcile,
-                            eventName: "local_conversation_changed",
-                            timestamp: Self.timestamp(
-                                unixMilliseconds: detail.conversation.updatedAtUnixMs
-                            )
+                        continuation.yield(Self.reconcileSignal(
+                            detail: detail,
+                            sessionID: sessionID
                         ))
                     } catch let error as NativeLocalAgentHostError {
                         guard Self.isNotFound(error) else {
                             continuation.finish(throwing: error)
-                            return
-                        }
-                        do {
-                            try await Task.sleep(for: idleDelay)
-                            idleDelay = NativeLocalAgentEventPollingPolicy.nextIdleDelay(
-                                after: idleDelay
-                            )
-                        } catch {
                             return
                         }
                     } catch is CancellationError {
@@ -290,6 +278,24 @@ public actor NativeLocalAgentConversationService:
             }
             continuation.onTermination = { _ in pollingTask.cancel() }
         }
+    }
+
+    private static func reconcileSignal(
+        detail: LocalAgentConversationDetail,
+        sessionID: String
+    ) -> ConversationRealtimeSignal {
+        let version = detail.conversation.version
+        return .init(
+            eventID: "local-\(sessionID)-\(version)",
+            eventSequence: Int64(clamping: version),
+            sessionID: sessionID,
+            turnID: nil,
+            kind: .reconcile,
+            eventName: "local_conversation_changed",
+            timestamp: timestamp(
+                unixMilliseconds: detail.conversation.updatedAtUnixMs
+            )
+        )
     }
 
     private func ensureConversation(
@@ -325,6 +331,23 @@ public actor NativeLocalAgentConversationService:
             return code == "not_found"
         }
         return false
+    }
+
+    static func eventsAffectConversation(
+        _ events: [LocalAgentEventRecord],
+        conversationID: String,
+        knownRunIDs: Set<String>
+    ) -> Bool {
+        events.contains { event in
+            if knownRunIDs.contains(event.runID) {
+                return true
+            }
+            guard case let .object(payload)? = event.payload,
+                  case let .string(eventConversationID)? = payload["conversation_id"] else {
+                return false
+            }
+            return eventConversationID == conversationID
+        }
     }
 
     private static func timestamp(unixMilliseconds: Int64) -> String {

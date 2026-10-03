@@ -6,10 +6,24 @@ import Foundation
 /// Each completed creation has its own atomic manifest and local media files.
 /// Relative filenames keep records valid across app reinstalls and directory moves.
 actor MediaStudioHistoryStore {
+    private static let maximumManifestBytes = 2 * 1_024 * 1_024
+    nonisolated static let defaultPageSize = 60
+
+    struct Cursor: Sendable, Equatable {
+        fileprivate var modifiedAt: Date
+        fileprivate var recordID: String
+    }
+
     struct Snapshot: Sendable {
         var images: [MediaStudioViewModel.HistoryItem] = []
         var videos: [MediaStudioViewModel.VideoHistoryItem] = []
         var unreadableCount = 0
+        var nextCursor: Cursor?
+    }
+
+    private struct Candidate {
+        var folder: URL
+        var cursor: Cursor
     }
 
     private struct Asset: Codable {
@@ -38,20 +52,52 @@ actor MediaStudioHistoryStore {
         self.transport = transport
     }
 
-    func load(owner: String) throws -> Snapshot {
+    func load(owner: String, after cursor: Cursor? = nil,
+              limit requestedLimit: Int = defaultPageSize) throws -> Snapshot {
         let directory = ownerDirectory(owner)
         guard FileManager.default.fileExists(atPath: directory.path) else { return Snapshot() }
-        let folders = try FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
-        )
-        var snapshot = Snapshot()
-        for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+        let limit = min(max(requestedLimit, 1), 200)
+        guard let folders = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { throw CocoaError(.fileReadUnknown) }
+        var candidates: [Candidate] = []
+        candidates.reserveCapacity(limit + 1)
+        for case let folder as URL in folders {
+            try Task.checkCancellation()
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
             let manifest = folder.appendingPathComponent("record.json")
             // An interrupted save has no committed manifest; it is not a completed creation.
             guard FileManager.default.fileExists(atPath: manifest.path) else { continue }
+            let modifiedAt = (try? manifest.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate) ?? .distantPast
+            let candidate = Candidate(
+                folder: folder,
+                cursor: .init(modifiedAt: modifiedAt, recordID: folder.lastPathComponent)
+            )
+            guard cursor.map({ Self.isAfter(candidate.cursor, cursor: $0) }) ?? true else { continue }
+            Self.retain(candidate, in: &candidates, capacity: limit + 1)
+        }
+
+        let hasMore = candidates.count > limit
+        let page = candidates.prefix(limit)
+        var snapshot = Snapshot()
+        for candidate in page {
+            try Task.checkCancellation()
+            let folder = candidate.folder
+            let manifest = folder.appendingPathComponent("record.json")
             do {
-                let entry = try JSONDecoder().decode(Entry.self, from: Data(contentsOf: manifest))
-                guard entry.version == 1, !entry.assets.isEmpty else { throw HistoryError.invalidRecord }
+                let entry = try JSONDecoder().decode(
+                    Entry.self,
+                    from: AppBoundedFileReader.read(
+                        manifest,
+                        maximumBytes: Self.maximumManifestBytes
+                    )
+                )
+                guard entry.version == 1, entry.id == folder.lastPathComponent,
+                      !entry.assets.isEmpty else { throw HistoryError.invalidRecord }
                 for asset in entry.assets {
                     guard asset.filename == URL(fileURLWithPath: asset.filename).lastPathComponent,
                           !asset.filename.hasPrefix("."),
@@ -70,7 +116,28 @@ actor MediaStudioHistoryStore {
         }
         snapshot.images.sort { $0.createdAt > $1.createdAt }
         snapshot.videos.sort { $0.createdAt > $1.createdAt }
+        if hasMore, let last = page.last { snapshot.nextCursor = last.cursor }
         return snapshot
+    }
+
+    /// Keeps only the newest `capacity` metadata records while walking the directory. JSON
+    /// bodies are decoded only for the requested page, so a large history cannot allocate one
+    /// decoded object per record during app activation.
+    private static func retain(_ candidate: Candidate, in values: inout [Candidate], capacity: Int) {
+        let index = values.firstIndex { isNewer(candidate.cursor, than: $0.cursor) } ?? values.endIndex
+        guard index < capacity else { return }
+        values.insert(candidate, at: index)
+        if values.count > capacity { values.removeLast() }
+    }
+
+    private static func isNewer(_ lhs: Cursor, than rhs: Cursor) -> Bool {
+        if lhs.modifiedAt != rhs.modifiedAt { return lhs.modifiedAt > rhs.modifiedAt }
+        return lhs.recordID > rhs.recordID
+    }
+
+    private static func isAfter(_ value: Cursor, cursor: Cursor) -> Bool {
+        if value.modifiedAt != cursor.modifiedAt { return value.modifiedAt < cursor.modifiedAt }
+        return value.recordID < cursor.recordID
     }
 
     func saveImage(_ result: ImageGenerationResult, prompt: String, owner: String) async throws -> MediaStudioViewModel.HistoryItem {
@@ -80,11 +147,14 @@ actor MediaStudioHistoryStore {
         for image in result.images {
             try Task.checkCancellation()
             let data: Data
-            if let base64 = image.base64Data, let decoded = Data(base64Encoded: base64) {
+            if let base64 = image.base64Data,
+               base64.utf8.count <= MediaStudioImageLoader.maximumEncodedCharacters,
+               let decoded = Data(base64Encoded: base64) {
                 data = decoded
             } else if let url = image.url, url.scheme?.lowercased() == "https" {
                 let response = try await transport.send(.init(
-                    url: url, method: "GET", headers: ["Accept": "image/*"], timeoutInterval: 120
+                    url: url, method: "GET", headers: ["Accept": "image/*"], timeoutInterval: 120,
+                    maximumResponseBytes: 20 * 1_024 * 1_024
                 ))
                 guard (200..<300).contains(response.statusCode) else { throw HistoryError.imageDownloadFailed }
                 data = response.body
@@ -126,7 +196,9 @@ actor MediaStudioHistoryStore {
     }
 
     private func commit(_ entry: Entry, folder: URL) throws {
-        try JSONEncoder().encode(entry).write(to: folder.appendingPathComponent("record.json"), options: .atomic)
+        let data = try JSONEncoder().encode(entry)
+        guard data.count <= Self.maximumManifestBytes else { throw HistoryError.invalidRecord }
+        try data.write(to: folder.appendingPathComponent("record.json"), options: .atomic)
     }
 
     private func imageItem(_ entry: Entry, folder: URL) -> MediaStudioViewModel.HistoryItem {

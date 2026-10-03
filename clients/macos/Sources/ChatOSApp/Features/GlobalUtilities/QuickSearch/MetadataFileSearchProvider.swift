@@ -6,6 +6,11 @@ struct MetadataFileSearchRecord: Sendable, Hashable {
     let contentType: String?
 }
 
+enum MetadataFileSearchPolicy {
+    static let timeout: Duration = .seconds(3)
+    static let maximumResultCount = 50
+}
+
 @MainActor
 final class MetadataFileSearchProvider {
     private var activeSession: MetadataFileQuerySession?
@@ -33,6 +38,7 @@ private final class MetadataFileQuerySession: NSObject {
     private let text: String
     private var continuation: CheckedContinuation<[MetadataFileSearchRecord], Never>?
     private var observers: [NSObjectProtocol] = []
+    private var timeoutTask: Task<Void, Never>?
     private var hasFinished = false
 
     init(text: String) {
@@ -70,12 +76,21 @@ private final class MetadataFileQuerySession: NSObject {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, self.query.resultCount >= 50 else { return }
+                    guard let self,
+                          self.query.resultCount >= MetadataFileSearchPolicy.maximumResultCount else {
+                        return
+                    }
                     self.finishWithCurrentResults()
                 }
             })
-            if !query.start() {
+            guard query.start() else {
                 finish([])
+                return
+            }
+            timeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: MetadataFileSearchPolicy.timeout)
+                guard !Task.isCancelled else { return }
+                self?.finishWithCurrentResults()
             }
         }
     }
@@ -86,7 +101,7 @@ private final class MetadataFileQuerySession: NSObject {
 
     private func finishWithCurrentResults() {
         query.disableUpdates()
-        let count = min(50, query.resultCount)
+        let count = min(MetadataFileSearchPolicy.maximumResultCount, query.resultCount)
         var records: [MetadataFileSearchRecord] = []
         records.reserveCapacity(count)
         for index in 0..<count {
@@ -108,6 +123,8 @@ private final class MetadataFileQuerySession: NSObject {
     private func finish(_ records: [MetadataFileSearchRecord]) {
         guard !hasFinished else { return }
         hasFinished = true
+        timeoutTask?.cancel()
+        timeoutTask = nil
         query.stop()
         let center = NotificationCenter.default
         observers.forEach(center.removeObserver)

@@ -1,4 +1,6 @@
+import ChatOSProcessRuntime
 import CryptoKit
+import Darwin
 import Foundation
 
 struct NativePluginInstaller: Sendable {
@@ -173,9 +175,11 @@ struct NativePluginInstaller: Sendable {
         expectedName: String,
         expectedVersion: String
     ) throws {
-        let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
-        guard data.count <= 1_024 * 1_024,
-              let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let data = try NativeBoundedFileReader.read(
+            fileURL,
+            maximumBytes: 1 * 1_024 * 1_024
+        )
+        guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               value["name"] as? String == expectedName,
               value["version"] as? String == expectedVersion,
               value["bin"] != nil else {
@@ -194,42 +198,100 @@ struct NativePluginInstaller: Sendable {
     }
 
     @discardableResult
-    func runTar(_ arguments: [String]) throws -> String {
-        let fileManager = FileManager.default
-        let outputDirectory = fileManager.temporaryDirectory
-            .appendingPathComponent("chatos-tar-\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: outputDirectory) }
-
-        let stdoutURL = outputDirectory.appendingPathComponent("stdout")
-        let stderrURL = outputDirectory.appendingPathComponent("stderr")
-        guard fileManager.createFile(atPath: stdoutURL.path, contents: nil),
-              fileManager.createFile(atPath: stderrURL.path, contents: nil) else {
-            throw NativeConnectorError.pluginInstallation("无法创建安装校验输出文件")
+    func runTar(
+        _ arguments: [String],
+        timeout: TimeInterval = 5 * 60,
+        maximumOutputBytes: Int = 8 * 1_024 * 1_024
+    ) throws -> String {
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        let outputCapture = NativeBoundedProcessOutput(maximumBytes: maximumOutputBytes)
+        let errorCapture = NativeBoundedProcessOutput(maximumBytes: 1 * 1_024 * 1_024)
+        NativeProcessPipeReader.install(
+            on: outputPipe.fileHandleForReading,
+            onData: outputCapture.append
+        )
+        NativeProcessPipeReader.install(
+            on: errorPipe.fileHandleForReading,
+            onData: errorCapture.append
+        )
+        let nullInput = open("/dev/null", O_RDONLY)
+        guard nullInput >= 0 else {
+            throw NativeConnectorError.pluginInstallation("无法打开 tar 标准输入")
         }
-        let stdout = try FileHandle(forWritingTo: stdoutURL)
-        let stderr = try FileHandle(forWritingTo: stderrURL)
-        defer {
-            try? stdout.close()
-            try? stderr.close()
+        defer { close(nullInput) }
+        let executable = "/usr/bin/tar"
+        let processArguments = [executable] + arguments
+        let environment = ProcessInfo.processInfo.environment
+        var processID: pid_t = 0
+        let spawnResult = withCStringArray(processArguments) { argv in
+            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+                chatos_spawn_process_group(
+                    executable,
+                    argv,
+                    envp,
+                    nil,
+                    nullInput,
+                    outputPipe.fileHandleForWriting.fileDescriptor,
+                    errorPipe.fileHandleForWriting.fileDescriptor,
+                    &processID
+                )
+            }
         }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        process.arguments = arguments
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
-        try? stdout.close()
-        try? stderr.close()
-
-        let output = String(decoding: try Data(contentsOf: stdoutURL), as: UTF8.self)
-        if process.terminationStatus != 0 {
-            let detail = String(decoding: try Data(contentsOf: stderrURL), as: UTF8.self)
+        outputPipe.fileHandleForWriting.closeFile()
+        errorPipe.fileHandleForWriting.closeFile()
+        guard spawnResult == 0, processID > 0 else {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            throw NativeConnectorError.pluginInstallation(
+                "无法启动 tar：\(String(cString: strerror(spawnResult)))"
+            )
+        }
+        let exitSignal = NativeProcessExitSignal.reap(processID: processID)
+        var exitCode = exitSignal.wait(timeout: timeout)
+        let timedOut = exitCode == nil
+        if timedOut {
+            _ = chatos_signal_process_group(processID, SIGTERM)
+            exitCode = exitSignal.wait(timeout: 0.75)
+            if exitCode == nil {
+                _ = chatos_signal_process_group(processID, SIGKILL)
+                exitCode = exitSignal.wait(timeout: 2)
+            }
+        }
+        _ = chatos_signal_process_group(processID, SIGKILL)
+        guard let exitCode else {
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            errorPipe.fileHandleForReading.readabilityHandler = nil
+            try? outputPipe.fileHandleForReading.close()
+            try? errorPipe.fileHandleForReading.close()
+            throw NativeConnectorError.pluginInstallation("tar 进程无法终止")
+        }
+        outputPipe.fileHandleForReading.readabilityHandler = nil
+        errorPipe.fileHandleForReading.readabilityHandler = nil
+        outputCapture.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+        errorCapture.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+        let output = outputCapture.snapshot
+        let error = errorCapture.snapshot
+        if timedOut {
+            throw NativeConnectorError.pluginInstallation("tar 执行超时")
+        }
+        guard !output.discarded, !error.discarded else {
+            throw NativeConnectorError.pluginInstallation("tar 输出超过安全限制")
+        }
+        if exitCode != 0 {
+            let detail = String(decoding: error.data, as: UTF8.self)
             throw NativeConnectorError.pluginInstallation(detail.trimmedNonEmpty ?? "tar 执行失败")
         }
-        return output
+        return String(decoding: output.data, as: UTF8.self)
+    }
+
+    private func withCStringArray<Result>(
+        _ values: [String],
+        _ body: ([UnsafeMutablePointer<CChar>?]) throws -> Result
+    ) rethrows -> Result {
+        let pointers = values.map { strdup($0) }
+        defer { pointers.forEach { free($0) } }
+        return try body(pointers + [nil])
     }
 
     private func sha256(of fileURL: URL) throws -> String {

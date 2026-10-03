@@ -41,6 +41,24 @@ final class TeamTodoRunPresentationTests: XCTestCase {
         XCTAssertEqual(presentations["todo-1"]?.committedPaths, ["new.swift"])
     }
 
+    func testBuildsPresentationFromSQLiteSummaryWithoutFullRun() {
+        let runID = UUID()
+        let presentations = TeamTodoRunPresentation.presentationsByTodoID(summaries: [
+            .init(
+                todoID: "todo-1",
+                runID: runID,
+                status: .completed,
+                receiptCount: 7,
+                committedPaths: ["Sources/App.swift"],
+                updatedAtUnixMs: 10
+            ),
+        ])
+
+        XCTAssertEqual(presentations["todo-1"]?.runID, runID)
+        XCTAssertEqual(presentations["todo-1"]?.receiptCount, 7)
+        XCTAssertEqual(presentations["todo-1"]?.committedPaths, ["Sources/App.swift"])
+    }
+
     private func makeRun(
         receipts: [String: AgentToolOutcome]
     ) throws -> LocalAgentGroupChatRun {

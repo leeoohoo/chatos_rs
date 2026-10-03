@@ -2,6 +2,8 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    static let maximumConcurrentCompanionRelayRequests = 32
+
     nonisolated static func isCompanionRelayMessageType(_ messageType: String) -> Bool {
         switch messageType {
         case "companion_resources_request",
@@ -33,13 +35,18 @@ extension NativeLocalConnectorService {
         _ data: Data,
         socket: URLSessionWebSocketTask
     ) async {
+        guard !Task.isCancelled, webSocket === socket else { return }
         let decoded = try? JSONDecoder().decode(NativeRelayRequest.self, from: data)
         let requestID = decoded?.requestID ?? ""
         let responseType = Self.companionResponseType(for: decoded?.type)
         do {
             guard let request = decoded else { throw NativeCompanionRelayError.unsupportedRequest }
             let response = try await processCompanionRelay(request)
+            try Task.checkCancellation()
+            guard webSocket === socket else { return }
             try await sendRelayResponse(response, socket: socket)
+        } catch is CancellationError {
+            return
         } catch {
             let status: Int
             if let companionError = error as? NativeCompanionRelayError {
@@ -60,8 +67,46 @@ extension NativeLocalConnectorService {
                 status: status,
                 body: .object(["error": .string(error.localizedDescription)])
             )
-            try? await sendRelayResponse(response, socket: socket)
+            if !Task.isCancelled, webSocket === socket {
+                try? await sendRelayResponse(response, socket: socket)
+            }
         }
+    }
+
+    func enqueueCompanionRelayMessage(
+        _ data: Data,
+        socket: URLSessionWebSocketTask
+    ) async {
+        guard webSocket === socket else { return }
+        guard companionRelayTasks.count < Self.maximumConcurrentCompanionRelayRequests else {
+            await sendCompanionRelayOverloadResponse(data, socket: socket)
+            return
+        }
+        let taskID = UUID()
+        companionRelayTasks[taskID] = Task { [weak self] in
+            guard let self else { return }
+            await self.handleCompanionRelayMessage(data, socket: socket)
+            await self.finishCompanionRelayTask(taskID)
+        }
+    }
+
+    private func finishCompanionRelayTask(_ taskID: UUID) {
+        companionRelayTasks.removeValue(forKey: taskID)
+    }
+
+    private func sendCompanionRelayOverloadResponse(
+        _ data: Data,
+        socket: URLSessionWebSocketTask
+    ) async {
+        let decoded = try? JSONDecoder().decode(NativeRelayRequest.self, from: data)
+        let response = NativeRelayResponse(
+            type: Self.companionResponseType(for: decoded?.type),
+            requestID: decoded?.requestID ?? "",
+            status: 429,
+            body: .object(["error": .string("本机 Companion 请求过多，请稍后重试。")])
+        )
+        guard webSocket === socket else { return }
+        try? await sendRelayResponse(response, socket: socket)
     }
 
     private func processCompanionRelay(
@@ -225,7 +270,7 @@ extension NativeLocalConnectorService {
                     roomID: roomID,
                     kind: .roomUpdated
                 ))
-                startCompanionAgentScheduler(ownerUserID: ownerUserID)
+                await startCompanionAgentScheduler(ownerUserID: ownerUserID)
             }
             body = try Self.nativeJSON(LocalConnectorCompanionAgentSendResponse(
                 message: Self.companionAgentMessage(posted.message),

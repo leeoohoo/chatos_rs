@@ -109,10 +109,26 @@ struct StoryStudioView: View {
                         Spacer()
                     }
                     ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 500), spacing: 18)], spacing: 18) {
-                            ForEach(viewModel.projects) { project in
-                                Button { viewModel.open(project.id) } label: { projectCard(project) }
-                                    .buttonStyle(.plain).disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                        VStack(spacing: 18) {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 500), spacing: 18)], spacing: 18) {
+                                ForEach(viewModel.projects) { project in
+                                    Button { viewModel.open(project.id) } label: { projectCard(project) }
+                                        .buttonStyle(.plain).disabled(viewModel.isBusy && viewModel.activeProjectID != project.id)
+                                }
+                            }
+                            if viewModel.hasMoreProjects {
+                                Button {
+                                    viewModel.loadMoreProjects()
+                                } label: {
+                                    if viewModel.isLoadingMoreProjects {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Label(appModel.localized("加载更早剧情", english: "Load Earlier Stories"),
+                                              systemImage: "clock.arrow.circlepath")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(viewModel.isLoadingMoreProjects)
                             }
                         }
                     }.contentMargins(.vertical, 2)

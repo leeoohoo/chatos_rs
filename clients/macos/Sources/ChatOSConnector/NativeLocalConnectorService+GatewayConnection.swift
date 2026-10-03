@@ -102,12 +102,7 @@ extension NativeLocalConnectorService {
                             lastGatewayPongAt = Date()
                             gatewayReconnectFailureCount = 0
                             Self.logger.info("Local Connector 网关长连接已建立")
-                            Task { [weak self] in
-                                _ = try? await self?.managedRuntimeConfig()
-                            }
-                            Task { [weak self] in
-                                try? await self?.publishPluginInstallationStatus()
-                            }
+                            startGatewayConnectedBootstrap(for: socket)
                         case "pong":
                             lastGatewayPongAt = Date()
                         case "error":
@@ -124,9 +119,7 @@ extension NativeLocalConnectorService {
                                     ?? "Local Connector 网关会话异常"
                             )
                         case let messageType where Self.isCompanionRelayMessageType(messageType):
-                            Task { [weak self] in
-                                await self?.handleCompanionRelayMessage(data, socket: socket)
-                            }
+                            await enqueueCompanionRelayMessage(data, socket: socket)
                         default:
                             break
                         }
@@ -326,17 +319,125 @@ extension NativeLocalConnectorService {
         gatewayReconnectFailureCount = min(gatewayReconnectFailureCount + 1, 6)
     }
 
-    func publishPluginInstallationStatus() async throws {
-        let token = try requireAccessToken()
-        let sources = try await gateway.pluginSources(token: token)
+    private func startGatewayConnectedBootstrap(for socket: URLSessionWebSocketTask) {
+        gatewayConnectedBootstrapGeneration &+= 1
+        let generation = gatewayConnectedBootstrapGeneration
+        gatewayConnectedBootstrapTask?.cancel()
+        gatewayConnectedBootstrapTask = Task { [weak self] in
+            await self?.runGatewayConnectedBootstrap(for: socket, generation: generation)
+            await self?.finishGatewayConnectedBootstrap(generation: generation)
+        }
+    }
+
+    private func runGatewayConnectedBootstrap(
+        for socket: URLSessionWebSocketTask,
+        generation: UInt64
+    ) async {
+        guard isGatewayConnectedBootstrapCurrent(socket: socket, generation: generation) else {
+            return
+        }
+        async let runtimeConfig: Void = refreshManagedRuntimeConfig(
+            for: socket,
+            generation: generation
+        )
+        async let pluginStatus: Void = refreshPluginInstallationStatus(
+            for: socket,
+            generation: generation
+        )
+        _ = await (runtimeConfig, pluginStatus)
+    }
+
+    private func refreshManagedRuntimeConfig(
+        for socket: URLSessionWebSocketTask,
+        generation: UInt64
+    ) async {
+        guard isGatewayConnectedBootstrapCurrent(socket: socket, generation: generation) else {
+            return
+        }
+        _ = try? await managedRuntimeConfig()
+    }
+
+    private func refreshPluginInstallationStatus(
+        for socket: URLSessionWebSocketTask,
+        generation: UInt64
+    ) async {
+        guard isGatewayConnectedBootstrapCurrent(socket: socket, generation: generation) else {
+            return
+        }
+        try? await publishPluginInstallationStatus(
+            expectedSocket: socket,
+            bootstrapGeneration: generation
+        )
+    }
+
+    private func finishGatewayConnectedBootstrap(generation: UInt64) {
+        guard gatewayConnectedBootstrapGeneration == generation else { return }
+        gatewayConnectedBootstrapTask = nil
+    }
+
+    private func isGatewayConnectedBootstrapCurrent(
+        socket: URLSessionWebSocketTask,
+        generation: UInt64
+    ) -> Bool {
+        Self.gatewayConnectedBootstrapIsCurrent(
+            expectedGeneration: generation,
+            currentGeneration: gatewayConnectedBootstrapGeneration,
+            isCancelled: Task.isCancelled,
+            socketMatches: webSocket === socket,
+            gatewayConnected: gatewayConnected
+        )
+    }
+
+    static func gatewayConnectedBootstrapIsCurrent(
+        expectedGeneration: UInt64,
+        currentGeneration: UInt64,
+        isCancelled: Bool,
+        socketMatches: Bool,
+        gatewayConnected: Bool
+    ) -> Bool {
+        !isCancelled
+            && expectedGeneration == currentGeneration
+            && socketMatches
+            && gatewayConnected
+    }
+
+    func publishPluginInstallationStatus(
+        expectedSocket: URLSessionWebSocketTask? = nil,
+        bootstrapGeneration: UInt64? = nil
+    ) async throws {
+        if let expectedSocket {
+            guard bootstrapGeneration.map({ generation in
+                isGatewayConnectedBootstrapCurrent(
+                    socket: expectedSocket,
+                    generation: generation
+                )
+            }) ?? (webSocket === expectedSocket) else {
+                throw CancellationError()
+            }
+        }
+        let sources = try await pluginSources()
+        try Task.checkCancellation()
+        if let expectedSocket {
+            guard bootstrapGeneration.map({ generation in
+                isGatewayConnectedBootstrapCurrent(
+                    socket: expectedSocket,
+                    generation: generation
+                )
+            }) ?? (webSocket === expectedSocket) else {
+                throw CancellationError()
+            }
+        }
         if reconcileInstalledPluginIdentities(with: sources.items) {
             try stateStore.save(state)
         }
-        try await sendPluginInstallationStatus()
+        try await sendPluginInstallationStatus(expectedSocket: expectedSocket)
     }
 
-    func sendPluginInstallationStatus() async throws {
-        guard let socket = webSocket,
+    func sendPluginInstallationStatus(
+        expectedSocket: URLSessionWebSocketTask? = nil
+    ) async throws {
+        guard let socket = expectedSocket ?? webSocket,
+              webSocket === socket,
               let ownerUserID = state.user?.id,
               let deviceID = state.deviceID else {
             return
@@ -362,6 +463,8 @@ extension NativeLocalConnectorService {
         guard let text = String(data: data, encoding: .utf8) else {
             throw NativeConnectorError.invalidResponse("无法编码 Plugin 安装状态")
         }
+        try Task.checkCancellation()
+        guard webSocket === socket, gatewayConnected else { return }
         try await socket.send(.string(text))
     }
 
@@ -402,6 +505,13 @@ extension NativeLocalConnectorService {
         }
         receiveTask?.cancel()
         heartbeatTask?.cancel()
+        gatewayConnectedBootstrapGeneration &+= 1
+        gatewayConnectedBootstrapTask?.cancel()
+        gatewayConnectedBootstrapTask = nil
+        let relayTasks = companionRelayTasks.values
+        companionRelayTasks.removeAll(keepingCapacity: true)
+        relayTasks.forEach { $0.cancel() }
+        await companionAgentDrainCoordinator.cancelAll()
         receiveTask = nil
         heartbeatTask = nil
         webSocket?.cancel(with: .goingAway, reason: nil)

@@ -12,6 +12,8 @@ final class ClipboardHistoryMonitor {
 
     private let processor: ClipboardCaptureProcessor
     private var monitorTask: Task<Void, Never>?
+    private var captureTask: Task<Void, Never>?
+    private var captureGeneration: UUID?
     private var lastChangeCount = NSPasteboard.general.changeCount
     private let maximumPayloadBytes = 25 * 1_024 * 1_024
     private var idlePollCount = 0
@@ -60,12 +62,14 @@ final class ClipboardHistoryMonitor {
         isRequestedRunning = false
         monitorTask?.cancel()
         monitorTask = nil
+        cancelCapture()
     }
 
     private func suspendForSystemSleep() {
         isSystemAwake = false
         monitorTask?.cancel()
         monitorTask = nil
+        cancelCapture()
     }
 
     private func resumeAfterSystemWake() {
@@ -89,20 +93,37 @@ final class ClipboardHistoryMonitor {
         let sourceBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         let processor = processor
         let maximumPayloadBytes = maximumPayloadBytes
-        Task { [weak self] in
+        let generation = UUID()
+        captureTask?.cancel()
+        captureGeneration = generation
+        captureTask = Task { [weak self] in
+            defer {
+                if self?.captureGeneration == generation {
+                    self?.captureTask = nil
+                    self?.captureGeneration = nil
+                }
+            }
             do {
+                try Task.checkCancellation()
                 guard let entry = try await processor.store(
                     source,
                     sourceBundleID: sourceBundleID,
                     maximumPayloadBytes: maximumPayloadBytes
                 ) else { return }
-                guard !Task.isCancelled else { return }
+                try Task.checkCancellation()
+                guard self?.captureGeneration == generation else { return }
                 self?.onEntryStored?(entry)
             } catch {
                 // Clipboard contents are private. Do not log payloads or previews here.
             }
         }
         return true
+    }
+
+    private func cancelCapture() {
+        captureTask?.cancel()
+        captureTask = nil
+        captureGeneration = nil
     }
 
     private func captureSource(_ pasteboard: NSPasteboard) -> ClipboardCaptureSource? {
@@ -127,10 +148,12 @@ final class ClipboardHistoryMonitor {
         }
 
         if let value = pasteboard.string(forType: .URL) {
+            guard !ClipboardSensitiveContentPolicy.shouldIgnore(value) else { return nil }
             return .url(value)
         }
 
         if let value = pasteboard.string(forType: .string) {
+            guard !ClipboardSensitiveContentPolicy.shouldIgnore(value) else { return nil }
             return .text(value)
         }
         return nil
@@ -150,6 +173,35 @@ final class ClipboardHistoryMonitor {
             let value = type.rawValue.lowercased()
             return blockedFragments.contains(where: value.contains)
         }
+    }
+}
+
+enum ClipboardSensitiveContentPolicy {
+    private static let maximumInspectedCharacters = 128 * 1_024
+
+    static func shouldIgnore(_ value: String) -> Bool {
+        let sample = String(value.prefix(maximumInspectedCharacters)).lowercased()
+        guard !sample.isEmpty else { return false }
+
+        let privateKeyHeaders = [
+            "-----begin private key-----",
+            "-----begin rsa private key-----",
+            "-----begin ec private key-----",
+            "-----begin openssh private key-----",
+        ]
+        if privateKeyHeaders.contains(where: sample.contains) {
+            return true
+        }
+
+        let hasCredentialWarning = sample.contains("\"warning_banner\"")
+            && sample.contains("do not share")
+            && (sample.contains("\"accesstoken\"") || sample.contains("\"access_token\""))
+        if hasCredentialWarning {
+            return true
+        }
+
+        return (sample.contains("\"accesstoken\"") && sample.contains("\"refreshtoken\""))
+            || (sample.contains("\"access_token\"") && sample.contains("\"refresh_token\""))
     }
 }
 
@@ -244,10 +296,11 @@ enum ClipboardPayloadPreparation {
     }
 
     private static func hash(prefix: String, data: Data) -> String {
-        var input = Data(prefix.utf8)
-        input.append(0)
-        input.append(data)
-        return SHA256.hash(data: input).map { String(format: "%02x", $0) }.joined()
+        var hasher = SHA256()
+        hasher.update(data: Data(prefix.utf8))
+        hasher.update(data: Data([0]))
+        hasher.update(data: data)
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -263,12 +316,14 @@ private actor ClipboardCaptureProcessor {
         sourceBundleID: String?,
         maximumPayloadBytes: Int
     ) async throws -> ClipboardHistoryEntry? {
+        try Task.checkCancellation()
         guard let captured = ClipboardPayloadPreparation.prepare(
             source,
             maximumPayloadBytes: maximumPayloadBytes
         ) else {
             return nil
         }
+        try Task.checkCancellation()
         return try await store.add(
             payload: captured.payload,
             contentHash: captured.hash,

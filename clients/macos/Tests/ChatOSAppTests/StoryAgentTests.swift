@@ -48,6 +48,30 @@ final class StoryAgentTests: XCTestCase {
         XCTAssertTrue(graph.content.contains("segmentReferences"))
     }
 
+    func testRunsLoadInBoundedPagesAndRemainDirectlyAddressable() async throws {
+        let store = fixture()
+        let project = project()
+        try await store.save(project, owner: "alice")
+        var ids: Set<UUID> = []
+        for _ in 0..<3 {
+            let value = try run(project)
+            ids.insert(value.id)
+            try await store.saveRun(value, owner: "alice")
+        }
+
+        let first = try await store.loadRuns(owner: "alice", projectID: project.id, limit: 2)
+        XCTAssertEqual(first.runs.count, 2)
+        let cursor = try XCTUnwrap(first.nextCursor)
+        let second = try await store.loadRuns(owner: "alice", projectID: project.id, after: cursor, limit: 2)
+        XCTAssertEqual(second.runs.count, 1)
+        XCTAssertNil(second.nextCursor)
+        XCTAssertEqual(Set((first.runs + second.runs).map(\.id)), ids)
+        for id in ids {
+            let loaded = try await store.loadRun(owner: "alice", projectID: project.id, runID: id)
+            XCTAssertEqual(loaded.id, id)
+        }
+    }
+
     func testProjectSchemaEncodesNormalizedTablesAndGraphPagesHaveNoGaps() throws {
         var value = project()
         value.characters = [.init(id: "hero", name: "主角", profile: characterProfile())]

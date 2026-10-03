@@ -1,6 +1,5 @@
 @preconcurrency import AppKit
 import ChatOSCore
-import ImageIO
 import SwiftUI
 
 struct PetSpriteAnimationView: View {
@@ -15,10 +14,11 @@ struct PetSpriteAnimationView: View {
     let isAnimationActive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var spriteIsReady = false
 
     var body: some View {
         Group {
-            if PetSpriteResource.isAvailable {
+            if spriteIsReady || PetSpriteResource.isAvailable {
                 NativePetSpriteView(configuration: PetSpriteAnimationPolicy.configuration(
                     animationState: animationState,
                     isDragging: isDragging,
@@ -32,6 +32,9 @@ struct PetSpriteAnimationView: View {
         }
         .aspectRatio(Atlas.cellWidth / Atlas.cellHeight, contentMode: .fit)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            spriteIsReady = await PetSpriteResource.prepare()
+        }
     }
 
     private var fallbackCharacter: some View {
@@ -207,15 +210,35 @@ private final class PetSpriteLayerView: NSView {
     }
 }
 
-private enum PetSpriteResource {
-    private static let columns = 8
-    private static let rows = 11
-    private static let cellWidth = 192
-    private static let cellHeight = 208
-    private static let renderedCellWidth = 180
-    private static let renderedCellHeight = 195
+enum PetSpriteAtlasPolicy {
+    static let columns = 8
+    static let rows = 11
+    static let cellWidth = 192
+    static let cellHeight = 208
+    static let renderedCellWidth = 180
+    static let renderedCellHeight = 195
+    static let maximumBytes = 20 * 1_024 * 1_024
+    static let sourcePixelCount = columns * cellWidth * rows * cellHeight
 
-    private static let frames: [CGImage]? = {
+    static func hasExpectedDimensions(width: Int, height: Int) -> Bool {
+        width == columns * cellWidth && height == rows * cellHeight
+    }
+}
+
+@MainActor
+enum PetSpriteResource {
+    private static var frames: [CGImage]?
+    private static let taskPool = AppSharedTaskPool<[CGImage]>(priority: .utility)
+
+    static func prepare() async -> Bool {
+        if isAvailable { return true }
+        let loaded = await taskPool.value(for: "fengtuan-sprite-atlas") { loadFrames() }
+        guard !Task.isCancelled else { return false }
+        if frames == nil { frames = loaded }
+        return isAvailable
+    }
+
+    nonisolated private static func loadFrames() -> [CGImage]? {
         let fileManager = FileManager.default
         let candidates: [URL?] = [
             Bundle.main.resourceURL?
@@ -226,31 +249,44 @@ private enum PetSpriteResource {
                 .appendingPathComponent(".codex/pets/fengtuan/spritesheet.webp"),
         ]
         for case let url? in candidates where fileManager.fileExists(atPath: url.path) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, [
-                kCGImageSourceShouldCache: false,
-            ] as CFDictionary),
-                  let atlas = CGImageSourceCreateImageAtIndex(source, 0, [
-                    kCGImageSourceShouldCacheImmediately: true,
-                  ] as CFDictionary),
-                  atlas.width == columns * cellWidth,
-                  atlas.height == rows * cellHeight else {
+            guard !Task.isCancelled,
+                  let data = try? AppBoundedFileReader.read(
+                    url,
+                    maximumBytes: PetSpriteAtlasPolicy.maximumBytes
+                  ),
+                  let decoded = AppImageThumbnailLoader.decode(
+                    data,
+                    maximumSourcePixelCount: PetSpriteAtlasPolicy.sourcePixelCount,
+                    maximumDisplayPixelSize: max(
+                        PetSpriteAtlasPolicy.columns * PetSpriteAtlasPolicy.cellWidth,
+                        PetSpriteAtlasPolicy.rows * PetSpriteAtlasPolicy.cellHeight
+                    )
+                  ),
+                  PetSpriteAtlasPolicy.hasExpectedDimensions(
+                    width: decoded.image.width,
+                    height: decoded.image.height
+                  ) else {
                 continue
             }
+            let atlas = decoded.image
             var renderedFrames: [CGImage] = []
-            renderedFrames.reserveCapacity(rows * columns)
-            for index in 0..<(rows * columns) {
-                let row = index / columns
-                let column = index % columns
+            renderedFrames.reserveCapacity(
+                PetSpriteAtlasPolicy.rows * PetSpriteAtlasPolicy.columns
+            )
+            for index in 0..<(PetSpriteAtlasPolicy.rows * PetSpriteAtlasPolicy.columns) {
+                guard !Task.isCancelled else { return nil }
+                let row = index / PetSpriteAtlasPolicy.columns
+                let column = index % PetSpriteAtlasPolicy.columns
                 guard let cropped = atlas.cropping(to: CGRect(
-                    x: column * cellWidth,
-                    y: row * cellHeight,
-                    width: cellWidth,
-                    height: cellHeight
+                    x: column * PetSpriteAtlasPolicy.cellWidth,
+                    y: row * PetSpriteAtlasPolicy.cellHeight,
+                    width: PetSpriteAtlasPolicy.cellWidth,
+                    height: PetSpriteAtlasPolicy.cellHeight
                 )),
                     let context = CGContext(
                         data: nil,
-                        width: renderedCellWidth,
-                        height: renderedCellHeight,
+                        width: PetSpriteAtlasPolicy.renderedCellWidth,
+                        height: PetSpriteAtlasPolicy.renderedCellHeight,
                         bitsPerComponent: 8,
                         bytesPerRow: 0,
                         space: CGColorSpaceCreateDeviceRGB(),
@@ -263,8 +299,8 @@ private enum PetSpriteResource {
                 context.draw(cropped, in: CGRect(
                     x: 0,
                     y: 0,
-                    width: renderedCellWidth,
-                    height: renderedCellHeight
+                    width: PetSpriteAtlasPolicy.renderedCellWidth,
+                    height: PetSpriteAtlasPolicy.renderedCellHeight
                 ))
                 guard let rendered = context.makeImage() else {
                     renderedFrames.removeAll()
@@ -272,23 +308,23 @@ private enum PetSpriteResource {
                 }
                 renderedFrames.append(rendered)
             }
-            if renderedFrames.count == rows * columns {
+            if renderedFrames.count == PetSpriteAtlasPolicy.rows * PetSpriteAtlasPolicy.columns {
                 return renderedFrames
             }
         }
         return nil
-    }()
+    }
 
     static var isAvailable: Bool {
-        frames?.count == rows * columns
+        frames?.count == PetSpriteAtlasPolicy.rows * PetSpriteAtlasPolicy.columns
     }
 
     static func frame(row: Int, column: Int) -> CGImage? {
         guard let frames,
-              (0..<rows).contains(row),
-              (0..<columns).contains(column) else {
+              (0..<PetSpriteAtlasPolicy.rows).contains(row),
+              (0..<PetSpriteAtlasPolicy.columns).contains(column) else {
             return nil
         }
-        return frames[row * columns + column]
+        return frames[row * PetSpriteAtlasPolicy.columns + column]
     }
 }

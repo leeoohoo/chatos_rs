@@ -1,3 +1,4 @@
+import ChatOSNetworking
 import Foundation
 
 public struct HTTPRequest: Sendable {
@@ -6,19 +7,22 @@ public struct HTTPRequest: Sendable {
     public var headers: [String: String]
     public var body: Data?
     public var timeoutInterval: TimeInterval?
+    public var maximumResponseBytes: Int?
 
     public init(
         url: URL,
         method: String,
         headers: [String: String] = [:],
         body: Data? = nil,
-        timeoutInterval: TimeInterval? = nil
+        timeoutInterval: TimeInterval? = nil,
+        maximumResponseBytes: Int? = nil
     ) {
         self.url = url
         self.method = method
         self.headers = headers
         self.body = body
         self.timeoutInterval = timeoutInterval
+        self.maximumResponseBytes = maximumResponseBytes
     }
 }
 
@@ -77,7 +81,21 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         }
         request.headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
 
-        let (data, response) = try await session.data(for: urlRequest)
+        let data: Data
+        let response: URLResponse
+        if let maximumResponseBytes = request.maximumResponseBytes {
+            do {
+                (data, response) = try await BoundedURLSessionDataLoader.load(
+                request: urlRequest,
+                session: session,
+                maximumBytes: maximumResponseBytes
+                )
+            } catch is BoundedURLSessionDataLoaderError {
+                throw ChatOSAPIError.invalidResponse
+            }
+        } else {
+            (data, response) = try await session.data(for: urlRequest)
+        }
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatOSAPIError.invalidResponse
         }
@@ -102,17 +120,35 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             result[String(describing: entry.key).lowercased()] = String(describing: entry.value)
         }
-        let stream = AsyncThrowingStream<Data, Error> { continuation in
+        let stream = AsyncThrowingStream<Data, Error>(
+            bufferingPolicy: .bufferingOldest(64)
+        ) { continuation in
             let task = Task {
                 do {
                     var chunk = Data(); chunk.reserveCapacity(4_096)
                     for try await byte in bytes {
                         chunk.append(byte)
                         if byte == 10 || chunk.count >= 4_096 {
-                            continuation.yield(chunk); chunk.removeAll(keepingCapacity: true)
+                            switch continuation.yield(chunk) {
+                            case .enqueued:
+                                chunk.removeAll(keepingCapacity: true)
+                            case .dropped:
+                                continuation.finish(throwing: ChatOSAPIError.invalidResponse)
+                                return
+                            case .terminated:
+                                return
+                            @unknown default:
+                                continuation.finish(throwing: ChatOSAPIError.invalidResponse)
+                                return
+                            }
                         }
                     }
-                    if !chunk.isEmpty { continuation.yield(chunk) }
+                    if !chunk.isEmpty {
+                        guard case .enqueued = continuation.yield(chunk) else {
+                            continuation.finish(throwing: ChatOSAPIError.invalidResponse)
+                            return
+                        }
+                    }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }

@@ -55,6 +55,22 @@ final class NativeLocalAgentNotepadServiceTests: XCTestCase {
             XCTAssertEqual(error, .notConfigured)
         }
     }
+
+    func testSuccessfulMutationPublishesChange() async throws {
+        let host = NotepadHostStub()
+        let service = NativeLocalAgentNotepadService(host: host)
+        await service.configure(ownerUserID: "user-1")
+        let changes = await service.changes()
+        let received = Task {
+            var iterator = changes.makeAsyncIterator()
+            return await iterator.next()
+        }
+
+        try await service.createFolder("work/ideas")
+
+        let change: Void? = await received.value
+        XCTAssertNotNil(change)
+    }
 }
 
 private actor NotepadHostStub: LocalAgentHostClientServicing {

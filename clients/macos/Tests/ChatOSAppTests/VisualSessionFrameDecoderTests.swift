@@ -44,6 +44,25 @@ struct VisualSessionFrameDecoderTests {
         #expect(repeated.session.frameData == nil)
     }
 
+    @Test("oversized frame bytes are rejected before image decoding")
+    func oversizedFrameIsRejected() async throws {
+        let oversized = Data(
+            repeating: 0,
+            count: VisualSessionFrameDecoder.maximumFrameBytes + 1
+        )
+
+        let prepared = await VisualSessionFrameDecoder.prepare(
+            [makeSession(sequence: 9, frameData: oversized)],
+            reusing: [:]
+        )
+
+        let result = try #require(prepared.first)
+        #expect(result.frameImage == nil)
+        #expect(result.session.frameData == nil)
+        #expect(VisualSessionFrameDecoder.maximumSourcePixelCount == 64_000_000)
+        #expect(VisualSessionFrameDecoder.maximumDisplayPixelSize == 800)
+    }
+
     private func makeSession(sequence: UInt64, frameData: Data?) -> PluginVisualSession {
         PluginVisualSession(
             id: "visual-1",

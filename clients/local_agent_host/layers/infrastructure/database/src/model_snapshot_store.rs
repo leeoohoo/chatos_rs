@@ -32,6 +32,25 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
             ));
         }
         let mut connection = self.pool.acquire().await.db()?;
+        if let Some(replay) = Self::replay(&mut connection, command).await? {
+            return Ok(replay);
+        }
+        if let Some(current) = fetch_snapshot(
+            &mut connection,
+            &snapshot.owner_user_id,
+            &snapshot.model_config_ref,
+            &snapshot.model_config_revision,
+        )
+        .await?
+        {
+            if current == *snapshot {
+                return Ok(current);
+            }
+            return Err(ClientStorageError::Conflict(format!(
+                "model config revision already contains different content: {}@{}",
+                snapshot.model_config_ref, snapshot.model_config_revision
+            )));
+        }
         Self::begin_immediate(&mut connection).await?;
         let result = async {
             if let Some(replay) = Self::replay(&mut connection, command).await? {
@@ -46,7 +65,6 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
             .await?
             {
                 if current == *snapshot {
-                    Self::record_receipt(&mut connection, command, &current, now_unix_ms).await?;
                     return Ok(current);
                 }
                 return Err(ClientStorageError::Conflict(format!(
@@ -211,6 +229,7 @@ mod tests {
         IdempotentCommand {
             command_id: id.to_string(),
             request_fingerprint: fingerprint.to_string(),
+            persist_receipt: true,
         }
     }
 
@@ -302,6 +321,12 @@ mod tests {
             )
             .await
             .expect("idempotent put");
+        let receipt_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM local_agent_command_receipts")
+                .fetch_one(&storage.pool)
+                .await
+                .expect("receipt count");
+        assert_eq!(receipt_count, 1);
         let columns: Vec<String> = sqlx::query("PRAGMA table_info(local_model_config_snapshots)")
             .fetch_all(&storage.pool)
             .await

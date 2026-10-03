@@ -27,7 +27,8 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
         let page = try await runtimeClient.listRuns(
             ownerUserID: ownerUserID,
             scope: "active",
-            limit: 500
+            status: "waiting_user",
+            limit: UInt32(min(normalizedLimit, 100))
         )
         var prompts: [AskUserPrompt] = []
         for run in page.runs where run.status == "waiting_user" {
@@ -124,20 +125,14 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
         for run: LocalAgentRunRecord,
         ownerUserID: String
     ) async throws -> AskUserPrompt? {
-        var cursor: Int64 = 0
-        var latest: LocalAgentEventRecord?
-        for _ in 0..<20 {
-            let page = try await taskClient.events(
-                ownerUserID: ownerUserID,
-                runID: run.runID,
-                afterCursor: cursor,
-                limit: 500
-            )
-            latest = page.events.last(where: { $0.eventType == "user_input_requested" }) ?? latest
-            guard page.events.count == 500, page.nextCursor > cursor else { break }
-            cursor = page.nextCursor
-        }
-        guard let event = latest,
+        let page = try await taskClient.events(
+            ownerUserID: ownerUserID,
+            runID: run.runID,
+            limit: 1,
+            eventType: "user_input_requested",
+            newestFirst: true
+        )
+        guard let event = page.events.first,
               let context = Self.context(for: run),
               let promptValue = event.payload?.object?["prompt"] else { return nil }
         return LocalAgentAskUserPromptMapper.map(

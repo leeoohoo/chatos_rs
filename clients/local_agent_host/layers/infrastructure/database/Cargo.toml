@@ -16,6 +16,7 @@ sha2 = "0.10"
 sqlx = { workspace = true, features = ["sqlite"] }
 thiserror = "2"
 tempfile = "3"
+tokio = { version = "1", features = ["fs"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]

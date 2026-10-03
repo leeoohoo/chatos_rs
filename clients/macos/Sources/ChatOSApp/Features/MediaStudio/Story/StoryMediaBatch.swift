@@ -155,32 +155,95 @@ enum StoryBatchError: LocalizedError {
 }
 
 extension StoryProjectStore {
-    func loadMediaBatches(owner: String, projectID: UUID) throws -> (batches: [StoryMediaBatch], unreadable: Int) {
+    private static var maximumMediaBatchBytes: Int { 32 * 1_024 * 1_024 }
+
+    func loadMediaBatches(owner: String, projectID: UUID, after cursor: PageCursor? = nil,
+                          limit: Int = defaultHistoryPageSize)
+        throws -> (batches: [StoryMediaBatch], unreadable: Int, nextCursor: PageCursor?) {
         let folder = try fileURL("project.json", projectID: projectID, owner: owner).deletingLastPathComponent()
-        guard FileManager.default.fileExists(atPath: folder.path) else { return ([], 0) }
         var batches: [StoryMediaBatch] = []; var unreadable = 0
-        for url in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.fileSizeKey]) where url.lastPathComponent.hasPrefix("media-batch-") && url.pathExtension == "json" {
+        let page = try filePage(in: folder, after: cursor, limit: limit) {
+            $0.lastPathComponent.hasPrefix("media-batch-") && $0.pathExtension == "json"
+        }
+        for candidate in page.candidates {
+            try Task.checkCancellation()
+            let url = candidate.url
             do {
-                guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= 32 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
-                let batch = try JSONDecoder().decode(StoryMediaBatch.self, from: Data(contentsOf: url))
+                let batch = try JSONDecoder().decode(
+                    StoryMediaBatch.self,
+                    from: AppBoundedFileReader.read(
+                        url,
+                        maximumBytes: Self.maximumMediaBatchBytes
+                    )
+                )
                 guard url.lastPathComponent == "media-batch-\(batch.id).json" else { throw StoryAgentError.invalidRun }
                 try batch.validate(owner: owner, projectID: projectID); batches.append(batch)
             } catch { unreadable += 1 }
         }
-        return (batches.sorted { $0.updatedAt > $1.updatedAt }, unreadable)
+        return (batches.sorted { $0.updatedAt > $1.updatedAt }, unreadable, page.nextCursor)
+    }
+
+    func loadMediaBatch(owner: String, projectID: UUID, batchID: UUID) throws -> StoryMediaBatch {
+        let url = try fileURL("media-batch-\(batchID).json", projectID: projectID, owner: owner)
+        let batch = try JSONDecoder().decode(
+            StoryMediaBatch.self,
+            from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumMediaBatchBytes)
+        )
+        guard batch.id == batchID else { throw StoryAgentError.invalidRun }
+        try batch.validate(owner: owner, projectID: projectID)
+        return batch
+    }
+
+    /// Checks the complete on-disk set one file at a time. It preserves the original safety
+    /// rule for starting a new batch without retaining every historical batch in memory.
+    func inspectMediaBatches(owner: String, projectID: UUID)
+        throws -> (hasUnfinished: Bool, unreadable: Int) {
+        let folder = try fileURL("project.json", projectID: projectID, owner: owner).deletingLastPathComponent()
+        guard FileManager.default.fileExists(atPath: folder.path) else { return (false, 0) }
+        guard let urls = FileManager.default.enumerator(
+            at: folder,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+        ) else { throw CocoaError(.fileReadUnknown) }
+        var hasUnfinished = false
+        var unreadable = 0
+        for case let url as URL in urls
+            where url.lastPathComponent.hasPrefix("media-batch-") && url.pathExtension == "json" {
+            try Task.checkCancellation()
+            do {
+                let batch = try JSONDecoder().decode(
+                    StoryMediaBatch.self,
+                    from: AppBoundedFileReader.read(url, maximumBytes: Self.maximumMediaBatchBytes)
+                )
+                guard url.lastPathComponent == "media-batch-\(batch.id).json" else {
+                    throw StoryAgentError.invalidRun
+                }
+                try batch.validate(owner: owner, projectID: projectID)
+                if !batch.finished { hasUnfinished = true }
+            } catch {
+                unreadable += 1
+            }
+        }
+        return (hasUnfinished, unreadable)
     }
     /// Write-ahead batch first, canonical project second. Repeating this on restart completes
     /// an interrupted second write, but never overwrites a different manual project edit.
     func commitMediaBatch(_ batch: StoryMediaBatch) throws {
         try batch.validate(owner: batch.owner, projectID: batch.draft.id)
         let manifest = try fileURL("project.json", projectID: batch.draft.id, owner: batch.owner)
-        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
+        let current = try JSONDecoder().decode(
+            StoryProject.self,
+            from: AppBoundedFileReader.read(
+                manifest,
+                maximumBytes: Self.maximumProjectBytes
+            )
+        )
         let digest = try StoryAgentRun.digest(current)
         let draftDigest = try StoryAgentRun.digest(batch.draft)
         guard try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: current)
                 || digest == draftDigest else { throw StoryAgentError.projectChanged }
         let data = try JSONEncoder().encode(batch)
-        guard data.count <= 32 * 1024 * 1024 else { throw StoryAgentError.invalidRun }
+        guard data.count <= Self.maximumMediaBatchBytes else { throw StoryAgentError.invalidRun }
         try data.write(to: try fileURL("media-batch-\(batch.id).json", projectID: batch.draft.id, owner: batch.owner), options: .atomic)
         if digest != draftDigest { try save(batch.draft, owner: batch.owner) }
     }
@@ -192,7 +255,13 @@ extension StoryProjectStore {
         guard !input.finished, input.steps.allSatisfy({ $0.kind == .videos }) else { return nil }
         try input.validate(owner: input.owner, projectID: input.draft.id)
         let manifest = try fileURL("project.json", projectID: input.draft.id, owner: input.owner)
-        let current = try JSONDecoder().decode(StoryProject.self, from: Data(contentsOf: manifest))
+        let current = try JSONDecoder().decode(
+            StoryProject.self,
+            from: AppBoundedFileReader.read(
+                manifest,
+                maximumBytes: Self.maximumProjectBytes
+            )
+        )
         guard input.steps.allSatisfy({ step in
             guard let jobID = input.jobs[step.id]?.jobID else { return false }
             return current.segments.first(where: { $0.id == step.targetID })?.video?.jobID == jobID

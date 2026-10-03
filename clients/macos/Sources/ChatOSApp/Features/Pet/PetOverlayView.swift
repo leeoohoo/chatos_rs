@@ -30,9 +30,11 @@ struct PetMessageView: View {
     @State private var cancellationErrors: [String: String] = [:]
 
     var body: some View {
-        if let primaryActivity = scopedPrimaryActivity
-            ?? interactionState.inspectedTaskActivity {
-            let activity = interactionState.inspectedTaskActivity
+        let inspectedActivity = interactionState.inspectedTaskActivity.map { inspected in
+            store.activities.first(where: { $0.id == inspected.id }) ?? inspected
+        }
+        if let primaryActivity = scopedPrimaryActivity ?? inspectedActivity {
+            let activity = inspectedActivity
                 ?? (interactionState.isMessageExpanded
                 ? interactionState.selectedActivityID.flatMap { selectedID in
                     store.activities.first(where: {

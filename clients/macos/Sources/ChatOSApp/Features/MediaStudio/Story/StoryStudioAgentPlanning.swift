@@ -15,6 +15,10 @@ extension StoryStudioViewModel {
                 let result = try await store.loadRuns(owner: owner, projectID: projectID)
                 let batches = try await store.loadMediaBatches(owner: owner, projectID: projectID)
                 guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
+                agentRunCursor = result.nextCursor
+                mediaBatchCursor = batches.nextCursor
+                hasMoreAgentRuns = result.nextCursor != nil
+                hasMoreMediaBatches = batches.nextCursor != nil
                 var runs = result.runs
                 var loadedBatches = batches.batches
                 if let canonical = projects.first(where: { $0.id == projectID }) {
@@ -44,6 +48,62 @@ extension StoryStudioViewModel {
         }
     }
 
+    func loadMoreAgentRuns() {
+        guard let owner, let projectID = selectedProjectID, let cursor = agentRunCursor,
+              !isLoadingAgentRuns, !isLoadingMoreAgentRuns else { return }
+        let token = session
+        isLoadingMoreAgentRuns = true
+        agentRunPageTask = Task {
+            defer {
+                if session == token, selectedProjectID == projectID { isLoadingMoreAgentRuns = false }
+            }
+            do {
+                let result = try await store.loadRuns(owner: owner, projectID: projectID, after: cursor)
+                guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
+                for run in result.runs { publishAgentRun(run, token: token) }
+                agentRunCursor = result.nextCursor
+                hasMoreAgentRuns = result.nextCursor != nil
+                if result.unreadable > 0 {
+                    errorMessage = "有 \(result.unreadable) 条更早规划运行记录无法读取，原文件已保留。"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if session == token, selectedProjectID == projectID { errorMessage = error.localizedDescription }
+            }
+        }
+    }
+
+    func loadMoreMediaBatches() {
+        guard let owner, let projectID = selectedProjectID, let cursor = mediaBatchCursor,
+              !isLoadingAgentRuns, !isLoadingMoreMediaBatches else { return }
+        let token = session
+        isLoadingMoreMediaBatches = true
+        mediaBatchPageTask = Task {
+            defer {
+                if session == token, selectedProjectID == projectID { isLoadingMoreMediaBatches = false }
+            }
+            do {
+                let result = try await store.loadMediaBatches(owner: owner, projectID: projectID, after: cursor)
+                guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
+                for var batch in result.batches {
+                    if let recovered = try await store.reconcileCompletedVideoBatch(batch) { batch = recovered }
+                    guard session == token, selectedProjectID == projectID, !Task.isCancelled else { return }
+                    publishMediaBatch(batch, token: token, updateProject: false)
+                }
+                mediaBatchCursor = result.nextCursor
+                hasMoreMediaBatches = result.nextCursor != nil
+                if result.unreadable > 0 {
+                    errorMessage = "有 \(result.unreadable) 条更早制作批次无法读取，原文件已保留。"
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                if session == token, selectedProjectID == projectID { errorMessage = error.localizedDescription }
+            }
+        }
+    }
+
     func publishAgentRun(_ value: StoryAgentRun, token: UUID) {
         guard session == token, owner == value.owner else { return }
         if let index = agentRuns.firstIndex(where: { $0.id == value.id }) {
@@ -65,10 +125,9 @@ extension StoryStudioViewModel {
     func resumeAgent(_ runID: UUID) {
         guard let project else { return }
         run("恢复剧情规划记录") { owner, token in
-            let history = try await self.store.loadRuns(owner: owner, projectID: project.id)
+            let saved = try await self.store.loadRun(owner: owner, projectID: project.id, runID: runID)
             try self.check(token)
-            guard let saved = history.runs.first(where: { $0.id == runID }),
-                  !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
+            guard !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
             let digest = try StoryAgentRun.digest(project)
             let draftDigest = try StoryAgentRun.digest(saved.draft)
             guard try StoryAgentRun.matchesPersistedDigest(saved.baseDigest, project: project)
@@ -82,10 +141,9 @@ extension StoryStudioViewModel {
     func abandonAgent(_ runID: UUID) {
         guard let project else { return }
         run("放弃中断的剧情规划草稿") { owner, token in
-            let history = try await self.store.loadRuns(owner: owner, projectID: project.id)
+            var saved = try await self.store.loadRun(owner: owner, projectID: project.id, runID: runID)
             try self.check(token)
-            guard var saved = history.runs.first(where: { $0.id == runID }),
-                  !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
+            guard !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
             saved.abandonedAt = Date()
             saved.checkpoint.stopReason = "用户已放弃这份中断草稿；正式项目未被修改。"
             saved.events.append(.init(kind: "abandoned", detail: "用户放弃中断草稿，正式项目保持不变",

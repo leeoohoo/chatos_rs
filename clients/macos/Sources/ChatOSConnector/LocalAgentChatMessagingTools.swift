@@ -4,6 +4,8 @@ import CryptoKit
 import Foundation
 
 extension LocalAgentChatToolProvider {
+    static let maximumReadableAttachmentBytes = 20 * 1_024 * 1_024
+
     func readMessages(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let beforeReference = try Self.optionalString(arguments, key: "before_message_ref")
@@ -86,7 +88,10 @@ extension LocalAgentChatToolProvider {
             messageID: messageID,
             attachmentID: attachmentID
         ) else { throw AgentGroupChatError.notFound }
-        let data = try Data(contentsOf: payload.localFileURL, options: [.mappedIfSafe])
+        let data = try Self.boundedAttachmentData(
+            at: payload.localFileURL,
+            expectedBytes: payload.attachment.size
+        )
         var response: [String: NativeJSONValue] = [
             "message_ref": .string(messageReference),
             "attachment_ref": .string(attachmentReference),
@@ -96,13 +101,11 @@ extension LocalAgentChatToolProvider {
             "size": .number(Double(payload.attachment.size)),
         ]
         if !data.prefix(8_000).contains(0), let text = String(data: data, encoding: .utf8) {
-            let characters = Array(text)
-            let start = min(offset, characters.count)
-            let end = min(start + limit, characters.count)
-            response["content"] = .string(String(characters[start..<end]))
-            response["offset"] = .number(Double(start))
-            response["next_offset"] = end < characters.count ? .number(Double(end)) : .null
-            response["has_more"] = .bool(end < characters.count)
+            let slice = Self.attachmentTextSlice(text, offset: offset, limit: limit)
+            response["content"] = .string(slice.content)
+            response["offset"] = .number(Double(slice.offset))
+            response["next_offset"] = slice.hasMore ? .number(Double(slice.nextOffset)) : .null
+            response["has_more"] = .bool(slice.hasMore)
         } else {
             response["content"] = .null
             response["multimodal_on_trigger"] = .bool(messageID == context.triggerMessageID)
@@ -113,6 +116,51 @@ extension LocalAgentChatToolProvider {
             )
         }
         return try Self.outcome(response)
+    }
+
+    static func attachmentTextSlice(
+        _ text: String,
+        offset: Int,
+        limit: Int
+    ) -> (content: String, offset: Int, nextOffset: Int, hasMore: Bool) {
+        let requestedOffset = max(0, offset)
+        let start = text.index(
+            text.startIndex,
+            offsetBy: requestedOffset,
+            limitedBy: text.endIndex
+        ) ?? text.endIndex
+        let actualOffset = start == text.endIndex
+            ? text.distance(from: text.startIndex, to: text.endIndex)
+            : requestedOffset
+        let end = text.index(
+            start,
+            offsetBy: max(1, limit),
+            limitedBy: text.endIndex
+        ) ?? text.endIndex
+        let nextOffset = actualOffset + text.distance(from: start, to: end)
+        return (
+            content: String(text[start..<end]),
+            offset: actualOffset,
+            nextOffset: nextOffset,
+            hasMore: end < text.endIndex
+        )
+    }
+
+    private static func boundedAttachmentData(at url: URL, expectedBytes: Int) throws -> Data {
+        guard expectedBytes > 0,
+              expectedBytes <= maximumReadableAttachmentBytes,
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              values.fileSize == expectedBytes,
+              let handle = try? FileHandle(forReadingFrom: url) else {
+            throw AgentGroupChatError.invalidField("attachment.data")
+        }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: maximumReadableAttachmentBytes + 1),
+              data.count == expectedBytes else {
+            throw AgentGroupChatError.invalidField("attachment.data")
+        }
+        return data
     }
 
 }

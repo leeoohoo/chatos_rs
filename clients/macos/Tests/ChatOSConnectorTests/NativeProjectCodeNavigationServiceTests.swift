@@ -50,6 +50,45 @@ final class NativeProjectCodeNavigationServiceTests: XCTestCase {
         XCTAssertEqual(references.token, "categoryApi")
         XCTAssertEqual(references.locations.map(\.relativePath), ["consumer.ts"])
     }
+
+    func testRejectsOversizedSourceBeforeLoadingItIntoMemory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-code-nav-large-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let sourceURL = root.appendingPathComponent("generated.ts")
+        try Data(repeating: UInt8(ascii: "x"), count: 2 * 1_024 * 1_024 + 1)
+            .write(to: sourceURL)
+
+        let stateURL = root.appendingPathComponent("connector-state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.deviceID = "device"
+        state.workspaces = [
+            .init(id: "workspace", alias: "test", absoluteRoot: root.path, fingerprint: "test"),
+        ]
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let connector = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: NavigationTicketProvider()
+        )
+        let service = NativeProjectCodeNavigationService(connector: connector)
+        let projectRoot = "local://connector/device/workspace"
+
+        do {
+            _ = try await service.definition(
+                projectRoot: projectRoot,
+                filePath: projectRoot + "/generated.ts",
+                line: 1,
+                column: 1
+            )
+            XCTFail("Expected an oversized source error")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "当前文件超过 2 MB，无法执行代码导航。")
+        }
+    }
 }
 
 private struct NavigationTicketProvider: LocalConnectorPairingTicketProviding {

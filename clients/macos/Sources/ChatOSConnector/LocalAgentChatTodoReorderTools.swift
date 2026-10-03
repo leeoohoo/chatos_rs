@@ -46,9 +46,7 @@ extension LocalAgentChatToolProvider {
             todoIDs: todoIDs,
             nowUnixMs: now()
         )
-        var response: [TodoResponse] = []
-        for todo in todos { response.append(try await todoResponse(todo)) }
-        return try Self.outcome(response)
+        return try Self.outcome(try await todoResponses(todos, sortResponses: false))
     }
 
 }

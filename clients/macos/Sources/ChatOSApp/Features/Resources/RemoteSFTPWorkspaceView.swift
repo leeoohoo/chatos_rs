@@ -160,23 +160,41 @@ struct RemoteSFTPWorkspaceView: View {
             if let notice = viewModel.notice {
                 notificationRow(notice, icon: "checkmark.circle.fill", color: .green)
             }
+            if viewModel.isLocalListingTruncated {
+                notificationRow(
+                    model.localized(
+                        "本机目录项目过多，仅显示前 10000 项。",
+                        english: "This local folder is too large; only the first 10,000 items are shown."
+                    ),
+                    icon: "exclamationmark.triangle.fill",
+                    color: .orange,
+                    isDismissible: false
+                )
+            }
             if let error = viewModel.errorMessage {
                 notificationRow(error, icon: "exclamationmark.triangle.fill", color: .orange)
             }
         }
     }
 
-    private func notificationRow(_ text: String, icon: String, color: Color) -> some View {
+    private func notificationRow(
+        _ text: String,
+        icon: String,
+        color: Color,
+        isDismissible: Bool = true
+    ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon).foregroundStyle(color)
             Text(text).appFont(.caption).lineLimit(2)
             Spacer()
-            Button("关闭", systemImage: "xmark") {
-                viewModel.notice = nil
-                viewModel.errorMessage = nil
+            if isDismissible {
+                Button("关闭", systemImage: "xmark") {
+                    viewModel.notice = nil
+                    viewModel.errorMessage = nil
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

@@ -41,7 +41,8 @@ extension ChatOSMediaGenerationService {
             method: "POST",
             headers: headers,
             body: body,
-            timeoutInterval: 10 * 60
+            timeoutInterval: 10 * 60,
+            maximumResponseBytes: 48 * 1_024 * 1_024
         )
     }
 

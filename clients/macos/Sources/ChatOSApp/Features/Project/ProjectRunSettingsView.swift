@@ -48,7 +48,6 @@ struct ProjectRunSettingsView: View {
         }
         .workspaceFill(alignment: .top)
         .task {
-            await viewModel.load()
             await viewModel.monitorRuns()
         }
         .overlay { if viewModel.isLoading { ProgressView().controlSize(.large) } }

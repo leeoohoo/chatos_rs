@@ -62,4 +62,27 @@ struct ClipboardHistoryStoreTests {
             pasteboardType: "public.png"
         ))
     }
+
+    @Test
+    func payloadReadRejectsFileGrowthBeyondRecordedSize() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatOSClipboardGrowthTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ClipboardHistoryStore(rootURL: root)
+        let entry = try await store.add(
+            payload: .text("small"),
+            contentHash: "growth-hash",
+            preview: "small",
+            sourceBundleID: nil
+        )
+        let payloadURL = root.appendingPathComponent(entry.payloadReference)
+        let handle = try FileHandle(forWritingTo: payloadURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(" unexpected growth".utf8))
+        try handle.close()
+
+        await #expect(throws: ClipboardHistoryStoreError.self) {
+            _ = try await store.payload(for: entry)
+        }
+    }
 }

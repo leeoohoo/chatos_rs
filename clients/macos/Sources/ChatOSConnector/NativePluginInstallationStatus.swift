@@ -72,10 +72,7 @@ enum NativePluginInstallationStatusBuilder {
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
         let manifestURL = installationURL.appendingPathComponent("chatos.plugin.json")
-        let manifest = try JSONDecoder().decode(
-            NativePluginManifest.self,
-            from: Data(contentsOf: manifestURL, options: .mappedIfSafe)
-        )
+        let manifest = try NativePluginManifestLoader.loadManifest(from: manifestURL)
         guard manifest.schemaVersion == 3, manifest.version == record.version else {
             throw NativePluginRuntimeError.invalidManifest("Plugin manifest 与已安装 Release 不一致")
         }

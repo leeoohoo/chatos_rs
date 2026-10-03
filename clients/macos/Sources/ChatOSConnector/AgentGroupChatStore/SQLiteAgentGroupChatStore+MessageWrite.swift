@@ -61,17 +61,36 @@ extension SQLiteAgentGroupChatStore {
                   room.status == .active else {
                 throw AgentGroupChatError.notFound
             }
-            try validateSender(ownerUserID: ownerUserID, roomID: roomID, draft: draft)
+            // A single membership snapshot validates every explicit mention and is also reused
+            // for direct-conversation routing. Previously each mentioned Agent performed its own
+            // SELECT, so message-send latency grew linearly before any message was persisted.
+            let activeMemberIDs: [String]? = if room.conversationKind.isDirect
+                || !draft.mentionedAgentIDs.isEmpty {
+                try AgentConversationRepository.activeMemberIDs(
+                    database,
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    preparedStatement: recordPreparedStatement
+                )
+            } else {
+                nil
+            }
+            let activeMemberIDSet = activeMemberIDs.map(Set.init)
+            try validateSender(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                draft: draft,
+                activeMemberIDs: activeMemberIDSet
+            )
             if let replyToMessageID = draft.replyToMessageID {
                 try requireMessage(ownerUserID: ownerUserID, roomID: roomID, messageID: replyToMessageID)
             }
             if let rootMessageID = draft.rootMessageID {
                 try requireMessage(ownerUserID: ownerUserID, roomID: roomID, messageID: rootMessageID)
             }
-            for agentID in draft.mentionedAgentIDs {
-                guard try readMember(ownerUserID: ownerUserID, roomID: roomID, agentID: agentID)?.status == .active else {
-                    throw AgentGroupChatError.notMember
-                }
+            if !draft.mentionedAgentIDs.isEmpty,
+               !draft.mentionedAgentIDs.allSatisfy({ activeMemberIDSet?.contains($0) == true }) {
+                throw AgentGroupChatError.notMember
             }
 
             let messageID = UUID().uuidString.lowercased()
@@ -93,19 +112,13 @@ extension SQLiteAgentGroupChatStore {
                     .integer(Int64(draft.hopCount)), .integer(now),
                 ]
             )
-            for (position, agentID) in draft.mentionedAgentIDs.enumerated() {
-                try execute(
-                    """
-                    INSERT INTO project_agent_message_mentions (
-                        owner_user_id, message_id, agent_id, position
-                    ) VALUES (?, ?, ?, ?)
-                    """,
-                    [
-                        .text(ownerUserID), .text(messageID), .text(agentID),
-                        .integer(Int64(position)),
-                    ]
-                )
-            }
+            try AgentMessageRepository.insertMentions(
+                database,
+                ownerUserID: ownerUserID,
+                messageID: messageID,
+                agentIDs: draft.mentionedAgentIDs,
+                preparedStatement: recordPreparedStatement
+            )
 
             if !draft.attachmentItems.isEmpty {
                 attachmentDirectoryToRemove = attachmentDirectoryURL(messageID: messageID)
@@ -128,12 +141,7 @@ extension SQLiteAgentGroupChatStore {
             )
             let candidates: [String]
             if room.conversationKind.isDirect {
-                candidates = try AgentConversationRepository.activeMemberIDs(
-                    database,
-                    ownerUserID: ownerUserID,
-                    roomID: roomID,
-                    preparedStatement: recordPreparedStatement
-                )
+                candidates = activeMemberIDs ?? []
             } else if !draft.mentionedAgentIDs.isEmpty {
                 candidates = draft.mentionedAgentIDs
             } else if draft.senderKind == .human, let defaultAgentID = room.defaultAgentID {
@@ -161,37 +169,36 @@ extension SQLiteAgentGroupChatStore {
 
             var deliveries: [ProjectAgentDelivery] = []
             if stopReason == nil {
-                for targetAgentID in targets {
-                    let triggerKind: ProjectAgentDeliveryTriggerKind = if draft.mentionedAgentIDs.isEmpty {
-                        .defaultAgent
-                    } else if draft.senderKind == .agent {
-                        .agentMention
-                    } else {
-                        .mention
-                    }
+                let triggerKind: ProjectAgentDeliveryTriggerKind = if draft.mentionedAgentIDs.isEmpty {
+                    .defaultAgent
+                } else if draft.senderKind == .agent {
+                    .agentMention
+                } else {
+                    .mention
+                }
+                deliveries = targets.map { targetAgentID in
                     let deliveryID = UUID().uuidString.lowercased()
                     let deduplicationKey = "\(messageID):\(targetAgentID)"
-                    try execute(
-                        """
-                        INSERT INTO project_agent_deliveries (
-                            owner_user_id, id, room_id, message_id, root_message_id,
-                            target_agent_id, trigger_kind, status, attempt, hop_count,
-                            deduplication_key, response_message_id, last_error,
-                            claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, NULL, NULL, NULL, NULL, ?)
-                        """,
-                        [
-                            .text(ownerUserID), .text(deliveryID), .text(roomID), .text(messageID),
-                            .text(rootMessageID), .text(targetAgentID), .text(triggerKind.rawValue),
-                            .integer(Int64(draft.hopCount)), .text(deduplicationKey), .integer(now),
-                        ]
-                    )
-                    guard let delivery = try readDelivery(
+                    return ProjectAgentDelivery(
+                        id: deliveryID,
                         ownerUserID: ownerUserID,
-                        deliveryID: deliveryID
-                    ) else { throw AgentGroupChatError.storage("delivery insert was not readable") }
-                    deliveries.append(delivery)
+                        roomID: roomID,
+                        messageID: messageID,
+                        rootMessageID: rootMessageID,
+                        targetAgentID: targetAgentID,
+                        triggerKind: triggerKind,
+                        status: .pending,
+                        attempt: 0,
+                        hopCount: draft.hopCount,
+                        deduplicationKey: deduplicationKey,
+                        createdAtUnixMs: now
+                    )
                 }
+                try AgentDeliveryRepository.insert(
+                    database,
+                    deliveries: deliveries,
+                    preparedStatement: recordPreparedStatement
+                )
             }
             return AgentGroupChatPostResult(
                 message: message,
@@ -289,7 +296,11 @@ extension SQLiteAgentGroupChatStore {
         }) else { return nil }
 
         let fileURL = try attachmentFileURL(relativePath: candidate.relativePath)
-        guard let data = try? Data(contentsOf: fileURL, options: [.mappedIfSafe]),
+        guard candidate.size > 0,
+              let data = try? NativeBoundedFileReader.read(
+                  fileURL,
+                  maximumBytes: candidate.size
+              ),
               data.count == candidate.size,
               Self.sha256(data) == candidate.sha256 else {
             try markAgentArtifactStorageFailed(

@@ -108,27 +108,3 @@ pub(super) async fn ensure_folder_exists(
         Err(ClientStorageError::NotFound(folder.to_string()))
     }
 }
-
-pub(super) async fn descendant_folders(
-    connection: &mut SqliteConnection,
-    owner_user_id: &str,
-    folder: &str,
-) -> Result<Vec<String>, ClientStorageError> {
-    sqlx::query_scalar(
-        "SELECT path FROM local_notepad_folders WHERE owner_user_id = ? \
-         AND (path = ? OR instr(path, ? || '/') = 1) ORDER BY path",
-    )
-    .bind(owner_user_id)
-    .bind(folder)
-    .bind(folder)
-    .fetch_all(&mut *connection)
-    .await
-    .db()
-}
-
-pub(super) fn replace_folder_prefix(value: &str, from: &str, to: &str) -> String {
-    if value == from {
-        return to.to_string();
-    }
-    format!("{to}{}", &value[from.len()..])
-}

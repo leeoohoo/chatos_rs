@@ -147,7 +147,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             content: "hello locally"
         ))
         XCTAssertTrue(acknowledgement.accepted)
-        let runPage = try await NativeLocalAgentRuntimeClient(host: lifecycle).listRuns(
+        let runtime = NativeLocalAgentRuntimeClient(host: lifecycle)
+        let runPage = try await runtime.listRuns(
             ownerUserID: "user-1",
             scope: "all"
         )
@@ -160,6 +161,25 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         }
         XCTAssertEqual(runtimeInput["selected_thinking_level"], .string("medium"))
         XCTAssertEqual(runtimeInput["reasoning_enabled"], .bool(true))
+        let latestEventCursor = try await runtime.latestEventCursor(ownerUserID: "user-1")
+        XCTAssertGreaterThan(latestEventCursor, 0)
+        let waitingForEvents = Task {
+            try await runtime.waitEvents(
+                ownerUserID: "user-1",
+                afterCursor: latestEventCursor,
+                timeoutMilliseconds: 300,
+                payloadMode: .routing
+            )
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let concurrentRequestStartedAt = ContinuousClock.now
+        _ = try await runtime.listRuns(ownerUserID: "user-1", scope: "all")
+        XCTAssertLessThan(
+            concurrentRequestStartedAt.duration(to: .now),
+            .milliseconds(200),
+            "A long event wait must not block unrelated Host requests"
+        )
+        _ = try await waitingForEvents.value
         let localHistory = try await conversationService.fetchHistory(.init(
             sessionID: "conversation-1",
             requestGeneration: 1
@@ -235,7 +255,21 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try await lifecycle.start(ownerUserID: "user-3")
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-3")
+
+        let responsiveProcessIdentifierValue = await lifecycle.processIdentifier
+        let responsiveProcessIdentifier = try XCTUnwrap(responsiveProcessIdentifierValue)
+        XCTAssertEqual(kill(responsiveProcessIdentifier, SIGSTOP), 0)
+        let stalledRequest = Task {
+            try await conversations.list(ownerUserID: "user-3")
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let clock = ContinuousClock()
+        let stopStartedAt = clock.now
         await lifecycle.stop()
+        let stopElapsed = stopStartedAt.duration(to: clock.now)
+        XCTAssertLessThan(stopElapsed, .milliseconds(250))
+        XCTAssertEqual(kill(responsiveProcessIdentifier, SIGCONT), 0)
+        _ = await stalledRequest.result
         owner = await lifecycle.activeOwnerUserID
         XCTAssertNil(owner)
     }

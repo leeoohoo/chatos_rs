@@ -62,12 +62,22 @@ extension AgentGroupChatViewModel {
             )
             messages = mergeMessages(messages, with: page.messages)
             hasOlderMessages = page.hasMore
+            let attachmentPlan = AgentAttachmentDataCachePolicy.loadPlan(messages: messages)
+            let retainedAttachmentData = AgentAttachmentDataCachePolicy.retainedData(
+                attachmentDataByID,
+                for: attachmentPlan
+            )
             let loadedAttachmentData = try await loadAttachmentData(
-                messages: page.messages,
+                requests: AgentAttachmentDataCachePolicy.missingRequests(
+                    in: attachmentPlan,
+                    cachedDataByID: retainedAttachmentData
+                ),
                 roomID: room.id,
                 store: store
             )
-            attachmentDataByID.merge(loadedAttachmentData) { _, new in new }
+            var nextAttachmentData = retainedAttachmentData
+            nextAttachmentData.merge(loadedAttachmentData) { _, new in new }
+            attachmentDataByID = nextAttachmentData
             errorMessage = nil
             return firstMessageID
         } catch {

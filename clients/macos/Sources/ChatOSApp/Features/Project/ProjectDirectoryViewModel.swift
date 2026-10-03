@@ -1,6 +1,36 @@
 import ChatOSCore
 import Foundation
 
+enum ProjectDirectoryMemoryPolicy {
+    static let maximumNavigationHistory = 128
+
+    static func isCachedPath(_ cachedPath: String, insideSubtree path: String) -> Bool {
+        cachedPath == path || cachedPath.hasPrefix(path + "/")
+    }
+
+    static func trimNavigationHistory<Value>(_ values: inout [Value]) {
+        let overflow = values.count - maximumNavigationHistory
+        if overflow > 0 { values.removeFirst(overflow) }
+    }
+
+    static func staleExpandedSubtreeRoots(
+        expandedPaths: Set<String>,
+        parentPath: String,
+        availableDirectoryPaths: Set<String>,
+        isListingTruncated: Bool
+    ) -> Set<String> {
+        guard !isListingTruncated else { return [] }
+        return Set(expandedPaths.filter { path in
+            directParentPath(of: path) == parentPath && !availableDirectoryPaths.contains(path)
+        })
+    }
+
+    private static func directParentPath(of path: String) -> String? {
+        guard let slash = path.lastIndex(of: "/") else { return nil }
+        return String(path[..<slash])
+    }
+}
+
 @MainActor
 final class ProjectDirectoryViewModel: ObservableObject {
     enum NavigationRequestKind: String {
@@ -91,6 +121,7 @@ final class ProjectDirectoryViewModel: ObservableObject {
             if expandedPaths.contains(entry.path) {
                 expandedPaths.remove(entry.path)
                 persistExpandedPaths()
+                evictCachedSubtree(at: entry.path)
                 rebuildVisibleEntries()
             } else {
                 expandedPaths.insert(entry.path)
@@ -259,6 +290,7 @@ final class ProjectDirectoryViewModel: ObservableObject {
                 line: selectedSymbol?.line ?? selectedLine ?? 1
             )
             if navigationHistory.last != point { navigationHistory.append(point) }
+            ProjectDirectoryMemoryPolicy.trimNavigationHistory(&navigationHistory)
         }
         let entry = ProjectFileEntry(
             name: URL(fileURLWithPath: location.relativePath).lastPathComponent,
@@ -402,6 +434,13 @@ final class ProjectDirectoryViewModel: ObservableObject {
         errorMessage = nil
         do {
             let listing = try await service.listEntries(path: path, forceRefresh: forceRefresh)
+            guard shouldRetainChildren(of: path) else {
+                evictCachedSubtree(at: path)
+                rebuildVisibleEntries()
+                isLoading = false
+                return
+            }
+            reconcileExpandedPaths(with: listing)
             childrenByPath[path] = listing.entries.sorted(by: entrySort)
             await restoreExpandedDescendants(of: path, forceRefresh: forceRefresh)
             rebuildVisibleEntries()
@@ -417,6 +456,13 @@ final class ProjectDirectoryViewModel: ObservableObject {
         for attempt in 0..<12 {
             do {
                 let listing = try await service.listEntries(path: path, forceRefresh: attempt > 0)
+                guard shouldRetainChildren(of: path) else {
+                    evictCachedSubtree(at: path)
+                    rebuildVisibleEntries()
+                    isLoading = false
+                    return
+                }
+                reconcileExpandedPaths(with: listing)
                 childrenByPath[path] = listing.entries.sorted(by: entrySort)
                 await restoreExpandedDescendants(of: path, forceRefresh: attempt > 0)
                 rebuildVisibleEntries()
@@ -467,6 +513,10 @@ final class ProjectDirectoryViewModel: ObservableObject {
     }
 
     private func restoreExpandedDescendants(of path: String, forceRefresh: Bool) async {
+        guard shouldRetainChildren(of: path) else {
+            evictCachedSubtree(at: path)
+            return
+        }
         let expandedChildren = (childrenByPath[path] ?? []).filter {
             $0.isDirectory && expandedPaths.contains($0.path)
         }
@@ -476,6 +526,11 @@ final class ProjectDirectoryViewModel: ObservableObject {
                     path: entry.path,
                     forceRefresh: forceRefresh
                 )
+                guard expandedPaths.contains(entry.path) else {
+                    evictCachedSubtree(at: entry.path)
+                    continue
+                }
+                reconcileExpandedPaths(with: listing)
                 childrenByPath[entry.path] = listing.entries.sorted(by: entrySort)
                 await restoreExpandedDescendants(of: entry.path, forceRefresh: forceRefresh)
             } catch {
@@ -483,6 +538,38 @@ final class ProjectDirectoryViewModel: ObservableObject {
                 continue
             }
         }
+    }
+
+    private func shouldRetainChildren(of path: String) -> Bool {
+        path == rootPath || expandedPaths.contains(path)
+    }
+
+    private func evictCachedSubtree(at path: String) {
+        let keys = childrenByPath.keys.filter {
+            ProjectDirectoryMemoryPolicy.isCachedPath($0, insideSubtree: path)
+        }
+        for key in keys { childrenByPath.removeValue(forKey: key) }
+    }
+
+    private func reconcileExpandedPaths(with listing: ProjectDirectoryListing) {
+        let directoryPaths = Set(listing.entries.lazy.filter(\.isDirectory).map(\.path))
+        let staleRoots = ProjectDirectoryMemoryPolicy.staleExpandedSubtreeRoots(
+            expandedPaths: expandedPaths,
+            parentPath: listing.path,
+            availableDirectoryPaths: directoryPaths,
+            isListingTruncated: listing.isTruncated
+        )
+        guard !staleRoots.isEmpty else { return }
+        expandedPaths = expandedPaths.filter { path in
+            !staleRoots.contains { staleRoot in
+                isCachedPath(path, insideSubtree: staleRoot)
+            }
+        }
+        persistExpandedPaths()
+    }
+
+    private func isCachedPath(_ path: String, insideSubtree subtree: String) -> Bool {
+        ProjectDirectoryMemoryPolicy.isCachedPath(path, insideSubtree: subtree)
     }
 
     private func persistExpandedPaths() {

@@ -6,29 +6,24 @@ import SwiftUI
 struct GeneratedMediaAssetView: View {
     let asset: GeneratedMediaAsset
     var compact = false
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    private var loadIdentity: String {
+        "\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(compact)"
+    }
 
     var body: some View {
         Group {
-            if let data = asset.base64Data.flatMap({ Data(base64Encoded: $0) }),
-               let image = NSImage(data: data) {
+            if let image {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-            } else if let url = asset.url {
-                if url.isFileURL, let image = NSImage(contentsOf: url) {
-                    Image(nsImage: image).resizable().scaledToFit()
-                } else {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case let .success(image): image.resizable().scaledToFit()
-                        case .failure: unavailable
-                        case .empty: ProgressView()
-                        @unknown default: unavailable
-                        }
-                    }
-                }
-            } else {
+            } else if loadFailed {
                 unavailable
+            } else {
+                ProgressView()
+                    .controlSize(compact ? .small : .regular)
             }
         }
         .frame(maxWidth: .infinity, minHeight: compact ? 82 : 260, maxHeight: compact ? 82 : 620)
@@ -38,12 +33,68 @@ struct GeneratedMediaAssetView: View {
             RoundedRectangle(cornerRadius: compact ? 9 : 13)
                 .stroke(Color.primary.opacity(0.08))
         }
+        .task(id: loadIdentity) {
+            image = nil
+            loadFailed = false
+            let loaded = await GeneratedMediaAssetImageCache.image(
+                for: asset,
+                maximumDisplayPixelSize: compact ? 512 : 2_048
+            )
+            guard !Task.isCancelled else { return }
+            image = loaded
+            loadFailed = loaded == nil
+        }
     }
 
     private var unavailable: some View {
         Image(systemName: "photo.badge.exclamationmark")
             .font(.system(size: compact ? 18 : 32))
             .foregroundStyle(.secondary)
+    }
+}
+
+@MainActor
+enum GeneratedMediaAssetImageCache {
+    nonisolated private static let maximumSourcePixelCount = 64_000_000
+    private static let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 96
+        cache.totalCostLimit = 192 * 1_024 * 1_024
+        return cache
+    }()
+    private static let taskPool = AppSharedThumbnailTaskPool()
+
+    static func image(
+        for asset: GeneratedMediaAsset,
+        maximumDisplayPixelSize: Int
+    ) async -> NSImage? {
+        let key = cacheKey(for: asset, maximumDisplayPixelSize: maximumDisplayPixelSize)
+        if let cached = cache.object(forKey: key as NSString) {
+            return cached
+        }
+
+        let decoded = await taskPool.value(for: key) {
+            guard let data = try? await MediaStudioImageLoader.data(for: asset) else {
+                return nil
+            }
+            guard !Task.isCancelled else { return nil }
+            return AppImageThumbnailLoader.decode(
+                data,
+                maximumSourcePixelCount: maximumSourcePixelCount,
+                maximumDisplayPixelSize: maximumDisplayPixelSize
+            )
+        }
+        guard let decoded else { return nil }
+        let image = NSImage(cgImage: decoded.image, size: .zero)
+        cache.setObject(image, forKey: key as NSString, cost: decoded.memoryCost)
+        return image
+    }
+
+    private static func cacheKey(
+        for asset: GeneratedMediaAsset,
+        maximumDisplayPixelSize: Int
+    ) -> String {
+        "\(asset.id)|\(asset.url?.absoluteString ?? "inline")|\(asset.base64Data?.count ?? 0)|\(maximumDisplayPixelSize)"
     }
 }
 

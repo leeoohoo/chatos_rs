@@ -31,6 +31,27 @@ final class AgentRuntimeTests: XCTestCase {
         XCTAssertEqual(try store.load(), managed)
     }
 
+    func testManagedSettingsSkipIdenticalWritesAndStillRemoveLegacyValue() throws {
+        let name = "AgentManagedSettingsIdempotencyTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var managed = AgentRuntimePreferences()
+        managed.global.maximumModelCalls = 725
+        let store = AgentSettingsStore(suiteName: name)
+
+        XCTAssertTrue(try store.saveManagedIfChanged(managed))
+        for _ in 0..<20 {
+            XCTAssertFalse(try store.saveManagedIfChanged(managed))
+        }
+
+        defaults.set(Data("legacy".utf8), forKey: "chatos.agent-runtime.settings.v1")
+        XCTAssertTrue(try store.saveManagedIfChanged(managed))
+        XCTAssertNil(defaults.object(forKey: "chatos.agent-runtime.settings.v1"))
+        for _ in 0..<20 {
+            XCTAssertFalse(try store.saveManagedIfChanged(managed))
+        }
+    }
+
     func testLegacyRetryDefaultMigratesOnceWithoutResettingContextSettings() throws {
         let name = "AgentRetryMigrationTests.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))

@@ -103,6 +103,7 @@ public struct NotepadImageAsset: Sendable, Equatable {
 }
 
 public protocol NotepadServicing: Sendable {
+    func changes() async -> AsyncStream<Void>
     func initialize() async throws
     func listFolders() async throws -> [String]
     func createFolder(_ folder: String) async throws
@@ -114,4 +115,12 @@ public protocol NotepadServicing: Sendable {
     func updateNote(id: String, update: NotepadNoteUpdate) async throws -> NotepadNoteDetail
     func uploadImage(_ image: NotepadImageUpload, noteID: String) async throws -> NotepadImageAsset
     func deleteNote(id: String) async throws
+}
+
+public extension NotepadServicing {
+    func changes() async -> AsyncStream<Void> {
+        AsyncStream { continuation in
+            continuation.finish()
+        }
+    }
 }

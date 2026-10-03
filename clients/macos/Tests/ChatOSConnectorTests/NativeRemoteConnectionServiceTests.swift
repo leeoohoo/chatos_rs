@@ -100,6 +100,30 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(listRequests, 0)
     }
 
+    func testDisabledConnectionCacheDoesNotRetainExpiredEntries() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let saved = try await upstream.createConnection(Self.passwordDraft)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-remote-no-cache-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: RemoteConnectionTesterSpy(),
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: NativeConnectorSecretStore(rootURL: root)
+            ),
+            connectionCacheTTL: 0
+        )
+
+        _ = try await service.getConnection(id: saved.id)
+        _ = try await service.getConnection(id: saved.id)
+
+        let retained = await service.cachedConnectionCount()
+        let getRequests = await upstream.getRequestCount()
+        XCTAssertEqual(retained, 0)
+        XCTAssertEqual(getRequests, 2)
+    }
+
     func testLegacyRouteMigratesToCurrentConnectorIdentifiers() async throws {
         let upstream = RemoteConnectionUpstreamStub()
         var legacyDraft = Self.passwordDraft
@@ -206,7 +230,9 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         process.environment = environment
         try process.run()
 
-        let promptDeadline = Date().addingTimeInterval(2)
+        // Fresh executable scripts can take a few seconds to start while macOS
+        // performs security inspection, especially during a concurrent build.
+        let promptDeadline = Date().addingTimeInterval(5)
         while !FileManager.default.fileExists(atPath: promptLogURL.path),
               Date() < promptDeadline {
             try await Task.sleep(for: .milliseconds(20))
@@ -230,6 +256,24 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(process.terminationStatus, 0)
         XCTAssertEqual(submittedCode, "614207")
+    }
+
+    func testSSHDiagnosticReadsOnlyBoundedTail() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-ssh-log-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let prefix = Data(repeating: UInt8(ascii: "a"), count: 2 * 1_024 * 1_024)
+        let marker = Data("AUTHENTICATED-TAIL".utf8)
+        try (prefix + marker).write(to: url)
+
+        let text = NativeSSHConnectionTester.readBoundedText(
+            from: url,
+            maxBytes: NativeSSHConnectionTester.diagnosticLogByteLimit
+        )
+
+        XCTAssertLessThanOrEqual(text.utf8.count, NativeSSHConnectionTester.diagnosticLogByteLimit)
+        XCTAssertTrue(text.hasSuffix("AUTHENTICATED-TAIL"))
+        XCTAssertFalse(text.hasPrefix(String(repeating: "a", count: 1_100_000)))
     }
 
     func testConnectionTestAcceptsOpenSSHAuthenticationBeforeBastionSessionExits() {

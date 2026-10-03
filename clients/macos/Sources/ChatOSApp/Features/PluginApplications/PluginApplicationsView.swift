@@ -351,15 +351,19 @@ struct PluginApplicationHostView: View {
 private struct PluginApplicationIcon: View {
     let application: LocalConnectorPluginApplication
     let size: CGFloat
+    @State private var icon: NSImage?
+
+    private static let maximumBytes = 5 * 1_024 * 1_024
+    private static let maximumSourcePixelCount = 16_000_000
+    private static let maximumDisplayPixelSize = 256
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
                 .fill(application.brandColor.flatMap(Color.init(pluginHex:)) ?? Color.accentColor)
                 .shadow(color: .black.opacity(0.12), radius: 5, y: 2)
-            if let iconURL = application.iconURL,
-               let image = NSImage(contentsOf: iconURL) {
-                Image(nsImage: image)
+            if let icon {
+                Image(nsImage: icon)
                     .resizable()
                     .scaledToFit()
                     .padding(size * 0.16)
@@ -372,6 +376,18 @@ private struct PluginApplicationIcon: View {
             }
         }
         .frame(width: size, height: size)
+        .task(id: application.iconURL) {
+            icon = nil
+            guard let iconURL = application.iconURL, iconURL.isFileURL else { return }
+            let loaded = await AppLocalImageThumbnailCache.image(
+                for: iconURL,
+                maximumBytes: Self.maximumBytes,
+                maximumSourcePixelCount: Self.maximumSourcePixelCount,
+                maximumDisplayPixelSize: Self.maximumDisplayPixelSize
+            )
+            guard !Task.isCancelled else { return }
+            icon = loaded
+        }
     }
 }
 

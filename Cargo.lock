@@ -718,6 +718,7 @@ dependencies = [
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
+ "libc",
  "memory_engine_sdk",
  "reqwest",
  "serde",

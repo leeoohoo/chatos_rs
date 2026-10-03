@@ -358,6 +358,21 @@ struct StoryMediaBatchPanel: View {
                                 }
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                         }
+                        if viewModel.hasMoreMediaBatches {
+                            Button {
+                                viewModel.loadMoreMediaBatches()
+                            } label: {
+                                if viewModel.isLoadingMoreMediaBatches {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Label(appModel.localized("加载更早制作记录", english: "Load Earlier Batches"),
+                                          systemImage: "clock.arrow.circlepath")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(viewModel.isLoadingMoreMediaBatches)
+                            .frame(maxWidth: .infinity)
+                        }
                     }
                 }.padding(24).frame(width: 700, height: 540)
             }

@@ -3,12 +3,14 @@ import Foundation
 
 @MainActor
 final class RemoteSFTPViewModel: ObservableObject {
+    nonisolated private static let maximumLocalDirectoryEntries = 10_000
     @Published private(set) var remotePath = "."
     @Published private(set) var remoteParentPath: String?
     @Published private(set) var remoteEntries: [RemoteFileEntry] = []
     @Published var selectedRemotePath: String?
     @Published private(set) var localPath: URL
     @Published private(set) var localEntries: [LocalFileEntry] = []
+    @Published private(set) var isLocalListingTruncated = false
     @Published var selectedLocalPath: String?
     @Published var searchText = ""
     @Published var showsHiddenFiles = false
@@ -172,9 +174,11 @@ final class RemoteSFTPViewModel: ObservableObject {
         errorMessage = nil
         let directory = localPath
         do {
-            localEntries = try await Task.detached(priority: .userInitiated) {
+            let listing = try await AppCancellableDetachedWork.run {
                 try Self.readLocalDirectory(directory)
-            }.value
+            }
+            localEntries = listing.entries
+            isLocalListingTruncated = listing.truncated
             selectedLocalPath = nil
         } catch {
             errorMessage = localized(
@@ -329,28 +333,49 @@ final class RemoteSFTPViewModel: ObservableObject {
             ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
-    nonisolated private static func readLocalDirectory(_ directory: URL) throws -> [LocalFileEntry] {
+    nonisolated private static func readLocalDirectory(_ directory: URL) throws -> LocalDirectoryReadResult {
+        try Task.checkCancellation()
         let keys: Set<URLResourceKey> = [
             .isDirectoryKey,
             .fileSizeKey,
             .contentModificationDateKey,
         ]
-        return try FileManager.default.contentsOfDirectory(
+        guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: Array(keys),
-            options: []
-        ).map { url in
+            options: [.skipsSubdirectoryDescendants]
+        ) else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+        var entries: [LocalFileEntry] = []
+        entries.reserveCapacity(1_024)
+        var truncated = false
+        for case let url as URL in enumerator {
+            try Task.checkCancellation()
+            guard entries.count < maximumLocalDirectoryEntries else {
+                truncated = true
+                break
+            }
             let values = try url.resourceValues(forKeys: keys)
-            return LocalFileEntry(
+            entries.append(LocalFileEntry(
                 url: url,
                 name: url.lastPathComponent,
                 isDirectory: values.isDirectory == true,
                 size: values.isDirectory == true ? nil : values.fileSize.map(Int64.init),
                 modifiedAt: values.contentModificationDate
-            )
-        }.sorted { lhs, rhs in
+            ))
+        }
+        try Task.checkCancellation()
+        entries.sort { lhs, rhs in
             if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
+        try Task.checkCancellation()
+        return .init(entries: entries, truncated: truncated)
     }
+}
+
+private struct LocalDirectoryReadResult: Sendable {
+    var entries: [LocalFileEntry]
+    var truncated: Bool
 }

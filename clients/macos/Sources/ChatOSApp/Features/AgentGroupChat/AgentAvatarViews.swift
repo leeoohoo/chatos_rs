@@ -1,5 +1,6 @@
 import AppKit
 import ChatOSCore
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -19,39 +20,31 @@ struct AgentAvatarView: View {
 
     var body: some View {
         Group {
-            if let data, let image = AgentAvatarImageCache.image(for: data) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
+            if let data {
+                AppAsyncDataImage(
+                    data: data,
+                    identity: "agent-avatar|\(name)",
+                    maximumDisplayPixelSize: 256
+                ) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    fallback
+                }
             } else {
-                Text(String(name.prefix(1)))
-                    .font(.system(size: max(12, size * 0.34), weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AppPalette.ai)
+                fallback
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityLabel("\(name)的头像")
     }
-}
 
-@MainActor
-private enum AgentAvatarImageCache {
-    private static let cache: NSCache<NSData, NSImage> = {
-        let cache = NSCache<NSData, NSImage>()
-        cache.countLimit = 128
-        cache.totalCostLimit = 64 * 1_024 * 1_024
-        return cache
-    }()
-
-    static func image(for data: Data) -> NSImage? {
-        let key = data as NSData
-        if let cached = cache.object(forKey: key) { return cached }
-        guard let image = NSImage(data: data) else { return nil }
-        cache.setObject(image, forKey: key, cost: data.count)
-        return image
+    private var fallback: some View {
+        Text(String(name.prefix(1)))
+            .font(.system(size: max(12, size * 0.34), weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppPalette.ai)
     }
 }
 
@@ -64,6 +57,8 @@ struct AgentAvatarEditor: View {
     @State private var showsGeneratedPicker = false
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var loadTask: Task<Void, Never>?
+    @State private var loadGeneration = UUID()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -134,27 +129,44 @@ struct AgentAvatarEditor: View {
                 onSelect: { avatarData = $0 }
             )
         }
+        .onDisappear {
+            loadGeneration = UUID()
+            loadTask?.cancel()
+            loadTask = nil
+        }
     }
 
     private func loadFile(_ url: URL) {
+        loadTask?.cancel()
+        loadGeneration = UUID()
+        let generation = loadGeneration
         isLoading = true
         errorMessage = nil
-        Task {
+        loadTask = Task {
             do {
-                let normalized = try await Task.detached(priority: .userInitiated) {
+                let normalized = try await AppCancellableDetachedWork.run {
                     let accessed = url.startAccessingSecurityScopedResource()
                     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                     let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
                     guard values.isRegularFile == true, (values.fileSize ?? 0) <= 20 * 1_024 * 1_024 else {
                         throw AgentAvatarImageError.invalidImage
                     }
-                    return try AgentAvatarImageProcessor.normalize(try Data(contentsOf: url))
-                }.value
+                    return try AgentAvatarImageProcessor.normalize(
+                        try AppBoundedFileReader.read(
+                            url,
+                            maximumBytes: 20 * 1_024 * 1_024
+                        )
+                    )
+                }
+                guard loadGeneration == generation, !Task.isCancelled else { return }
                 avatarData = normalized
             } catch {
+                guard loadGeneration == generation, !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
             }
+            guard loadGeneration == generation else { return }
             isLoading = false
+            loadTask = nil
         }
     }
 }
@@ -166,6 +178,8 @@ private struct AgentGeneratedAvatarPicker: View {
 
     @State private var loadingID: String?
     @State private var errorMessage: String?
+    @State private var loadTask: Task<Void, Never>?
+    @State private var loadGeneration = UUID()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -223,6 +237,11 @@ private struct AgentGeneratedAvatarPicker: View {
             }
         }
         .frame(width: 650, height: pickerHeight)
+        .onDisappear {
+            loadGeneration = UUID()
+            loadTask?.cancel()
+            loadTask = nil
+        }
     }
 
     private var pickerHeight: CGFloat {
@@ -231,66 +250,117 @@ private struct AgentGeneratedAvatarPicker: View {
     }
 
     private func select(_ asset: GeneratedMediaAsset) {
+        loadTask?.cancel()
+        loadGeneration = UUID()
+        let generation = loadGeneration
         loadingID = asset.id
         errorMessage = nil
-        Task {
+        loadTask = Task {
             do {
                 let source = try await MediaStudioImageLoader.data(for: asset)
-                let normalized = try await Task.detached(priority: .userInitiated) {
+                let normalized = try await AppCancellableDetachedWork.run {
                     try AgentAvatarImageProcessor.normalize(source)
-                }.value
+                }
+                guard loadGeneration == generation, !Task.isCancelled else { return }
                 onSelect(normalized)
                 dismiss()
             } catch {
+                guard loadGeneration == generation, !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription
                 loadingID = nil
             }
+            if loadGeneration == generation { loadTask = nil }
         }
     }
 }
 
 enum AgentAvatarImageProcessor {
-    static func normalize(_ data: Data) throws -> Data {
-        guard !data.isEmpty, data.count <= 20 * 1_024 * 1_024,
-              let source = NSImage(data: data), source.isValid else {
-            throw AgentAvatarImageError.invalidImage
-        }
+    static let maximumInputBytes = 20 * 1_024 * 1_024
+    static let maximumSourcePixelCount = 64_000_000
+    static let maximumDecodePixelSize = 2_048
+    static let outputPixelSize = 256
+    static let maximumOutputBytes = 512 * 1_024
 
-        let sourceSize = source.size
-        guard sourceSize.width > 0, sourceSize.height > 0 else {
+    static func normalize(_ data: Data) throws -> Data {
+        try Task.checkCancellation()
+        guard !data.isEmpty,
+              data.count <= maximumInputBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, [
+                kCGImageSourceShouldCache: false,
+              ] as CFDictionary),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
             throw AgentAvatarImageError.invalidImage
         }
-        let side = min(sourceSize.width, sourceSize.height)
-        let sourceRect = NSRect(
-            x: (sourceSize.width - side) / 2,
-            y: (sourceSize.height - side) / 2,
+        try Task.checkCancellation()
+        let sourceWidth = widthValue.doubleValue
+        let sourceHeight = heightValue.doubleValue
+        guard sourceWidth.isFinite, sourceHeight.isFinite,
+              sourceWidth > 0, sourceHeight > 0,
+              sourceWidth * sourceHeight <= Double(maximumSourcePixelCount),
+              let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maximumDecodePixelSize,
+                kCGImageSourceShouldCacheImmediately: true,
+              ] as CFDictionary) else {
+            throw AgentAvatarImageError.invalidImage
+        }
+        try Task.checkCancellation()
+        let side = min(decoded.width, decoded.height)
+        let cropRect = CGRect(
+            x: (decoded.width - side) / 2,
+            y: (decoded.height - side) / 2,
             width: side,
             height: side
         )
-        let targetSize = NSSize(width: 256, height: 256)
-        let target = NSImage(size: targetSize)
-        target.lockFocus()
-        NSColor.clear.setFill()
-        NSRect(origin: .zero, size: targetSize).fill()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        source.draw(
-            in: NSRect(origin: .zero, size: targetSize),
-            from: sourceRect,
-            operation: .sourceOver,
-            fraction: 1
-        )
-        target.unlockFocus()
-
-        guard let tiff = target.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let result = bitmap.representation(
-                using: .jpeg,
-                properties: [.compressionFactor: 0.86]
-              ),
-              result.count <= 512 * 1_024 else {
+        guard let cropped = decoded.cropping(to: cropRect),
+              let context = CGContext(
+                data: nil,
+                width: outputPixelSize,
+                height: outputPixelSize,
+                bitsPerComponent: 8,
+                bytesPerRow: outputPixelSize * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else {
             throw AgentAvatarImageError.cannotProcess
         }
-        return result
+        context.interpolationQuality = .high
+        context.draw(cropped, in: CGRect(
+            x: 0,
+            y: 0,
+            width: outputPixelSize,
+            height: outputPixelSize
+        ))
+        try Task.checkCancellation()
+        guard let outputImage = context.makeImage() else {
+            throw AgentAvatarImageError.cannotProcess
+        }
+
+        let encoded = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            encoded,
+            "public.jpeg" as CFString,
+            1,
+            nil
+        ) else {
+            throw AgentAvatarImageError.cannotProcess
+        }
+        CGImageDestinationAddImage(destination, outputImage, [
+            kCGImageDestinationLossyCompressionQuality: 0.86,
+        ] as CFDictionary)
+        try Task.checkCancellation()
+        guard CGImageDestinationFinalize(destination),
+              encoded.length > 0,
+              encoded.length <= maximumOutputBytes else {
+            throw AgentAvatarImageError.cannotProcess
+        }
+        try Task.checkCancellation()
+        return Data(referencing: encoded)
     }
 }
 

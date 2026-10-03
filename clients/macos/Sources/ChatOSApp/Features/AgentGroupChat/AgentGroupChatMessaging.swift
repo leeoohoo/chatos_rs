@@ -191,24 +191,21 @@ extension AgentGroupChatViewModel {
     }
 
     func loadAttachmentData(
-        messages: [ProjectAgentMessage],
+        requests: [AgentAttachmentDataLoadRequest],
         roomID: String,
         store: SQLiteAgentGroupChatStore
     ) async throws -> [String: Data] {
         var result: [String: Data] = [:]
-        for message in messages {
-            for attachment in message.attachmentItems where attachment.kind == .image {
-                guard let payload = try await store.messageAttachment(
-                    ownerUserID: ownerUserID,
-                    roomID: roomID,
-                    messageID: message.id,
-                    attachmentID: attachment.id
-                ) else { continue }
-                result[attachment.id] = try Data(
-                    contentsOf: payload.localFileURL,
-                    options: [.mappedIfSafe]
-                )
-            }
+        result.reserveCapacity(requests.count)
+        for request in requests {
+            try Task.checkCancellation()
+            guard let payload = try await store.messageAttachment(
+                ownerUserID: ownerUserID,
+                roomID: roomID,
+                messageID: request.messageID,
+                attachmentID: request.attachment.id
+            ) else { continue }
+            result[request.attachment.id] = try await AgentMessageAttachmentDataLoader.load(payload)
         }
         return result
     }
@@ -237,8 +234,10 @@ extension AgentGroupChatViewModel {
             guard let self else { return }
             repeat {
                 schedulerNeedsAnotherPass = false
+                var didProcessDelivery = false
                 do {
                     let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                    didProcessDelivery = !results.isEmpty
                     if let roomID = room?.id {
                         try await reconcileSchedulerResults(results, roomID: roomID)
                     }
@@ -248,8 +247,10 @@ extension AgentGroupChatViewModel {
                 } catch {
                     errorMessage = error.localizedDescription
                 }
-                await load()
-                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                if didProcessDelivery {
+                    await load()
+                    NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                }
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil
@@ -263,19 +264,23 @@ extension AgentGroupChatViewModel {
             guard let self else { return }
             repeat {
                 communicationSchedulerNeedsAnotherPass = false
+                var didProcessDelivery = false
                 do {
                     let results = try await scheduler.drainCommunication(
                         ownerUserID: ownerUserID,
                         roomID: roomID
                     )
+                    didProcessDelivery = !results.isEmpty
                     try await reconcileSchedulerResults(results, roomID: roomID)
                 } catch is CancellationError {
                     break
                 } catch {
                     errorMessage = error.localizedDescription
                 }
-                await load()
-                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                if didProcessDelivery {
+                    await load()
+                    NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                }
             } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
             communicationSchedulerTask = nil
         }

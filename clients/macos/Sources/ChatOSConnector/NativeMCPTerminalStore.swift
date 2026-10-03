@@ -2,6 +2,12 @@ import Foundation
 
 actor NativeMCPTerminalStore {
     private static let maximumLogs = 4_000
+    private static let retainedLogTarget = 3_500
+    private static let maximumLogBytesPerProcess = 2 * 1_024 * 1_024
+    private static let retainedLogBytesTarget = 1_536 * 1_024
+    private static let maximumLogEntryBytes = 2 * 1_024 * 1_024
+    fileprivate static let maximumPendingOutputBytes = 512 * 1_024
+    private static let defaultMaximumRetainedExitedProcesses = 100
     private static let maximumOutputCharacters = 512 * 1_024
     private static let maximumWaitMilliseconds = 2 * 60 * 60 * 1_000
     private static let defaultForegroundTimeoutMilliseconds = 5 * 60 * 1_000
@@ -9,6 +15,15 @@ actor NativeMCPTerminalStore {
     private static let minimumForegroundTimeoutMilliseconds = 1_000
 
     private var processes: [String: ManagedTerminalProcess] = [:]
+    private var nextProcessSequence = 0
+    private let maximumRetainedExitedProcesses: Int
+
+    init(
+        maximumRetainedExitedProcesses: Int = NativeMCPTerminalStore
+            .defaultMaximumRetainedExitedProcesses
+    ) {
+        self.maximumRetainedExitedProcesses = max(1, maximumRetainedExitedProcesses)
+    }
 
     static var toolNames: Set<String> {
         [
@@ -137,8 +152,11 @@ actor NativeMCPTerminalStore {
         process.standardError = error
 
         let now = Self.timestamp()
+        let processSequence = nextProcessSequence
+        nextProcessSequence += 1
         let managed = ManagedTerminalProcess(
             id: id,
+            sequence: processSequence,
             command: command,
             cwd: cwd,
             projectRoot: projectRoot.standardizedFileURL.resolvingSymlinksInPath(),
@@ -151,17 +169,31 @@ actor NativeMCPTerminalStore {
             exitCode: nil,
             startedAt: now,
             lastActiveAt: now,
-            logs: []
+            logs: [],
+            nextLogOffset: 0,
+            retainedLogBytes: 0,
+            logsWereTruncated: false,
+            outputBytesWereTruncated: false
         )
         processes[id] = managed
         append(kind: "command", content: command + "\n", to: id)
 
-        NativeProcessPipeReader.install(on: output.fileHandleForReading) { [weak self] data in
-            Task { await self?.append(kind: "stdout", data: data, to: id) }
-        }
-        NativeProcessPipeReader.install(on: error.fileHandleForReading) { [weak self] data in
-            Task { await self?.append(kind: "stderr", data: data, to: id) }
-        }
+        NativeProcessPipeReader.install(
+            on: output.fileHandleForReading,
+            onData: { [weak self] data in
+                guard managed.stdoutPending.append(data) else { return }
+                Task { await self?.flushPendingOutput(kind: "stdout", id: id) }
+            },
+            onEOF: { managed.stdoutDrain.complete() }
+        )
+        NativeProcessPipeReader.install(
+            on: error.fileHandleForReading,
+            onData: { [weak self] data in
+                guard managed.stderrPending.append(data) else { return }
+                Task { await self?.flushPendingOutput(kind: "stderr", id: id) }
+            },
+            onEOF: { managed.stderrDrain.complete() }
+        )
         process.terminationHandler = { [weak self] terminated in
             Task { await self?.finish(id: id, exitCode: Int(terminated.terminationStatus)) }
         }
@@ -245,20 +277,28 @@ actor NativeMCPTerminalStore {
     func call(
         name: String,
         arguments: [String: NativeJSONValue],
-        projectRoot: URL
+        projectRoot: URL,
+        ownerRunID: String? = nil
     ) async throws -> NativeJSONValue {
+        try validateOwnership(
+            name: name,
+            arguments: arguments,
+            ownerRunID: ownerRunID
+        )
         switch name {
         case "get_recent_logs":
             return recentLogs(
                 projectRoot: projectRoot,
                 perTerminalLimit: clamp(arguments.integer("per_terminal_limit") ?? 10, 1, 50),
-                terminalLimit: clamp(arguments.integer("terminal_limit") ?? 20, 1, 20)
+                terminalLimit: clamp(arguments.integer("terminal_limit") ?? 20, 1, 20),
+                ownerRunID: ownerRunID
             )
         case "process_list":
             return processList(
                 projectRoot: projectRoot,
                 includeExited: arguments.bool("include_exited") ?? false,
-                limit: clamp(arguments.integer("limit") ?? 20, 1, 100)
+                limit: clamp(arguments.integer("limit") ?? 20, 1, 100),
+                ownerRunID: ownerRunID
             )
         case "process_poll":
             return try poll(
@@ -286,6 +326,10 @@ actor NativeMCPTerminalStore {
                 "limit": .number(Double(limit)),
                 "has_more": values["has_more"] ?? .bool(false),
                 "next_offset": values["next_offset"] ?? .null,
+                "truncated": values["truncated"] ?? .bool(false),
+                "truncation": values["truncation"] ?? .object([
+                    "truncated": .bool(false),
+                ]),
             ])
         case "process_wait":
             return try await processWait(
@@ -306,7 +350,11 @@ actor NativeMCPTerminalStore {
         case "process_kill":
             return try kill(id: requiredID(arguments), projectRoot: projectRoot)
         case "process":
-            return try await compatibilityCall(arguments: arguments, projectRoot: projectRoot)
+            return try await compatibilityCall(
+                arguments: arguments,
+                projectRoot: projectRoot,
+                ownerRunID: ownerRunID
+            )
         default:
             throw NativeMCPTerminalError.unsupportedTool(name)
         }
@@ -323,9 +371,21 @@ actor NativeMCPTerminalStore {
         return matchingIDs.count
     }
 
+    @discardableResult
+    func cancelAllOwnedProcesses() -> Int {
+        let matchingIDs = processes.values.compactMap { process in
+            process.ownerRunID != nil && process.status != "exited" ? process.id : nil
+        }
+        for id in matchingIDs {
+            cancelProcess(id: id, reason: "terminal cancelled with executor reset")
+        }
+        return matchingIDs.count
+    }
+
     private func compatibilityCall(
         arguments: [String: NativeJSONValue],
-        projectRoot: URL
+        projectRoot: URL,
+        ownerRunID: String?
     ) async throws -> NativeJSONValue {
         guard let action = arguments.string("action")?.lowercased() else {
             throw NativeMCPTerminalError.invalidArguments("缺少参数：action")
@@ -336,7 +396,8 @@ actor NativeMCPTerminalStore {
             result = processList(
                 projectRoot: projectRoot,
                 includeExited: arguments.bool("include_exited") ?? false,
-                limit: clamp(arguments.integer("limit") ?? 20, 1, 100)
+                limit: clamp(arguments.integer("limit") ?? 20, 1, 100),
+                ownerRunID: ownerRunID
             )
         case "poll":
             result = try poll(id: requiredID(arguments), projectRoot: projectRoot, offset: arguments.integer("offset"), limit: clamp(arguments.integer("limit") ?? 80, 1, 200))
@@ -360,11 +421,17 @@ actor NativeMCPTerminalStore {
     private func recentLogs(
         projectRoot: URL,
         perTerminalLimit: Int,
-        terminalLimit: Int
+        terminalLimit: Int,
+        ownerRunID: String? = nil
     ) -> NativeJSONValue {
-        let matching = matchingProcesses(projectRoot: projectRoot, includeExited: true)
+        let matching = matchingProcesses(
+            projectRoot: projectRoot,
+            includeExited: true,
+            ownerRunID: ownerRunID
+        )
         let terminals = matching.prefix(terminalLimit).map { process in
             let logs = Array(process.logs.suffix(perTerminalLimit))
+            let truncated = process.logsWereTruncated
             return NativeJSONValue.object([
                 "terminal_id": .string(process.id),
                 "terminal_name": .string(terminalName(process)),
@@ -374,8 +441,13 @@ actor NativeMCPTerminalStore {
                 "last_active_at": .string(process.lastActiveAt),
                 "log_count": .number(Double(process.logs.count)),
                 "returned_log_count": .number(Double(logs.count)),
-                "truncated": .bool(false),
-                "truncation": .object(["truncated": .bool(false)]),
+                "truncated": .bool(truncated),
+                "truncation": .object([
+                    "truncated": .bool(truncated),
+                    "first_available_offset": process.logs.first.map {
+                        .number(Double($0.offset))
+                    } ?? .null,
+                ]),
                 "logs": .array(logs.map(\.jsonValue)),
             ])
         }
@@ -390,8 +462,17 @@ actor NativeMCPTerminalStore {
         ])
     }
 
-    private func processList(projectRoot: URL, includeExited: Bool, limit: Int) -> NativeJSONValue {
-        let matching = Array(matchingProcesses(projectRoot: projectRoot, includeExited: includeExited).prefix(limit))
+    private func processList(
+        projectRoot: URL,
+        includeExited: Bool,
+        limit: Int,
+        ownerRunID: String? = nil
+    ) -> NativeJSONValue {
+        let matching = Array(matchingProcesses(
+            projectRoot: projectRoot,
+            includeExited: includeExited,
+            ownerRunID: ownerRunID
+        ).prefix(limit))
         let entries = matching.map(snapshot)
         return .object([
             "status": .string("ok"),
@@ -416,11 +497,16 @@ actor NativeMCPTerminalStore {
     ) throws -> NativeJSONValue {
         let process = try requireProcess(id: id, projectRoot: projectRoot)
         let selected: [TerminalLog]
+        let requestedOffset = offset.map { max(0, $0) }
         if let offset {
             selected = Array(process.logs.filter { $0.offset >= max(0, offset) }.prefix(limit))
         } else {
             selected = Array(process.logs.suffix(limit))
         }
+        let firstAvailableOffset = process.logs.first?.offset ?? process.nextLogOffset
+        let truncated = process.logsWereTruncated
+            && (process.outputBytesWereTruncated
+                || requestedOffset.map { $0 < firstAvailableOffset } ?? true)
         guard case var .object(values) = snapshot(process) else { return .null }
         values["mode"] = .string(offset == nil ? "recent" : "offset")
         values["requested_offset"] = offset.map { .number(Double($0)) } ?? .null
@@ -429,8 +515,11 @@ actor NativeMCPTerminalStore {
         values["fetched_log_count"] = .number(Double(selected.count))
         values["returned_log_count"] = .number(Double(selected.count))
         values["has_more"] = .bool(offset != nil && process.logs.contains { $0.offset >= (selected.last?.offset ?? -1) + 1 })
-        values["truncated"] = .bool(false)
-        values["truncation"] = .object(["truncated": .bool(false)])
+        values["truncated"] = .bool(truncated)
+        values["truncation"] = .object([
+            "truncated": .bool(truncated),
+            "first_available_offset": .number(Double(firstAvailableOffset)),
+        ])
         values["logs"] = .array(selected.map(\.jsonValue))
         return .object(values)
     }
@@ -503,27 +592,95 @@ actor NativeMCPTerminalStore {
     }
 
     private func waitForExit(id: String, timeoutMilliseconds: Int) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(Double(timeoutMilliseconds) / 1_000)
-        while Date() < deadline {
-            guard let process = processes[id] else { throw NativeMCPTerminalError.processNotFound }
-            if process.status == "exited" { return false }
-            try await Task.sleep(for: .milliseconds(50))
+        let changes = try exitChanges(id: id)
+        let timedOut = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in changes { return false }
+                return false
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .milliseconds(timeoutMilliseconds))
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
         }
-        return true
+        try Task.checkCancellation()
+        return timedOut
     }
 
-    private func finish(id: String, exitCode: Int) {
+    private func exitChanges(id: String) throws -> AsyncStream<Void> {
+        guard let process = processes[id] else {
+            throw NativeMCPTerminalError.processNotFound
+        }
+        if process.status == "exited" {
+            return AsyncStream { continuation in
+                continuation.yield(())
+                continuation.finish()
+            }
+        }
+
+        let subscriberID = UUID()
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        process.exitContinuations[subscriberID] = pair.continuation
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeExitSubscriber(subscriberID, processID: id) }
+        }
+        return pair.stream
+    }
+
+    private func removeExitSubscriber(_ subscriberID: UUID, processID: String) {
+        processes[processID]?.exitContinuations.removeValue(forKey: subscriberID)
+    }
+
+    private func finish(id: String, exitCode: Int) async {
         guard let process = processes[id] else { return }
-        process.output.fileHandleForReading.readabilityHandler = nil
-        process.error.fileHandleForReading.readabilityHandler = nil
-        let stdout = process.output.fileHandleForReading.readDataToEndOfFile()
-        let stderr = process.error.fileHandleForReading.readDataToEndOfFile()
-        if !stdout.isEmpty { append(kind: "stdout", data: stdout, to: id) }
-        if !stderr.isEmpty { append(kind: "stderr", data: stderr, to: id) }
+        async let stdoutDrained = process.stdoutDrain.wait(timeoutMilliseconds: 1_000)
+        async let stderrDrained = process.stderrDrain.wait(timeoutMilliseconds: 1_000)
+        let drainsCompleted = await (stdoutDrained, stderrDrained)
+        if !drainsCompleted.0 || !drainsCompleted.1 {
+            // A descendant may have inherited the pipe and kept it open after
+            // the shell exited. Do not block the terminal actor indefinitely;
+            // preserve the bytes already drained and report that output may be
+            // incomplete.
+            process.logsWereTruncated = true
+            process.outputBytesWereTruncated = true
+            process.output.fileHandleForReading.readabilityHandler = nil
+            process.error.fileHandleForReading.readabilityHandler = nil
+        }
+        flushPendingOutput(kind: "stdout", id: id)
+        flushPendingOutput(kind: "stderr", id: id)
         process.status = "exited"
         process.exitCode = exitCode
         process.lastActiveAt = Self.timestamp()
+        let exitContinuations = process.exitContinuations.values
+        process.exitContinuations.removeAll()
+        for continuation in exitContinuations {
+            continuation.yield(())
+            continuation.finish()
+        }
         try? process.input.close()
+        try? process.output.fileHandleForReading.close()
+        try? process.error.fileHandleForReading.close()
+        pruneExitedProcesses()
+    }
+
+    private func flushPendingOutput(kind: String, id: String) {
+        guard let process = processes[id] else { return }
+        let pending = kind == "stderr" ? process.stderrPending : process.stdoutPending
+        guard let batch = pending.take() else { return }
+        if batch.discarded {
+            process.logsWereTruncated = true
+            process.outputBytesWereTruncated = true
+        }
+        if !batch.data.isEmpty {
+            append(kind: kind, data: batch.data, to: id)
+        }
     }
 
     private func append(kind: String, data: Data, to id: String) {
@@ -532,12 +689,51 @@ actor NativeMCPTerminalStore {
 
     private func append(kind: String, content: String, to id: String) {
         guard let process = processes[id], !content.isEmpty else { return }
-        let offset = (process.logs.last?.offset ?? -1) + 1
-        process.logs.append(.init(offset: offset, kind: kind, content: content, createdAt: Self.timestamp()))
-        if process.logs.count > Self.maximumLogs {
-            process.logs.removeFirst(process.logs.count - Self.maximumLogs)
+        let contentData = Data(content.utf8)
+        let retainedData: Data
+        if contentData.count > Self.maximumLogEntryBytes {
+            retainedData = Data(contentData.suffix(Self.maximumLogEntryBytes))
+            process.logsWereTruncated = true
+            process.outputBytesWereTruncated = true
+        } else {
+            retainedData = contentData
+        }
+        let retainedContent = String(decoding: retainedData, as: UTF8.self)
+        let offset = process.nextLogOffset
+        process.nextLogOffset += 1
+        process.logs.append(.init(
+            offset: offset,
+            kind: kind,
+            content: retainedContent,
+            byteCount: retainedData.count,
+            createdAt: Self.timestamp()
+        ))
+        process.retainedLogBytes += retainedData.count
+
+        if process.logs.count > Self.maximumLogs
+            || process.retainedLogBytes > Self.maximumLogBytesPerProcess {
+            var removeCount = 0
+            while process.logs.count - removeCount > 1,
+                  (process.logs.count - removeCount > Self.retainedLogTarget
+                    || process.retainedLogBytes > Self.retainedLogBytesTarget) {
+                process.retainedLogBytes -= process.logs[removeCount].byteCount
+                removeCount += 1
+            }
+            if removeCount > 0 {
+                process.logs.removeFirst(removeCount)
+                process.logsWereTruncated = true
+            }
         }
         process.lastActiveAt = Self.timestamp()
+    }
+
+    private func pruneExitedProcesses() {
+        let exited = processes.values
+            .filter { $0.status == "exited" }
+            .sorted { $0.sequence > $1.sequence }
+        for process in exited.dropFirst(maximumRetainedExitedProcesses) {
+            processes.removeValue(forKey: process.id)
+        }
     }
 
     private func requireProcess(id: String, projectRoot: URL) throws -> ManagedTerminalProcess {
@@ -547,10 +743,40 @@ actor NativeMCPTerminalStore {
         return process
     }
 
-    private func matchingProcesses(projectRoot: URL, includeExited: Bool) -> [ManagedTerminalProcess] {
+    private func matchingProcesses(
+        projectRoot: URL,
+        includeExited: Bool,
+        ownerRunID: String? = nil
+    ) -> [ManagedTerminalProcess] {
         processes.values.filter { process in
-            sameRoot(process.projectRoot, projectRoot) && (includeExited || process.status != "exited")
-        }.sorted { $0.startedAt > $1.startedAt }
+            sameRoot(process.projectRoot, projectRoot)
+                && (includeExited || process.status != "exited")
+                && (ownerRunID == nil || process.ownerRunID == ownerRunID)
+        }.sorted { $0.sequence > $1.sequence }
+    }
+
+    private func validateOwnership(
+        name: String,
+        arguments: [String: NativeJSONValue],
+        ownerRunID: String?
+    ) throws {
+        guard let ownerRunID else { return }
+        let processID: String?
+        if name == "process",
+           arguments.string("action")?.lowercased() == "list" {
+            processID = nil
+        } else {
+            processID = arguments.string("terminal_id")
+        }
+        guard let processID else {
+            guard name == "get_recent_logs" || name == "process_list" || name == "process" else {
+                throw NativeMCPTerminalError.processNotFound
+            }
+            return
+        }
+        guard processes[processID]?.ownerRunID == ownerRunID else {
+            throw NativeMCPTerminalError.processNotFound
+        }
     }
 
     private func sameRoot(_ lhs: URL, _ rhs: URL) -> Bool {
@@ -591,7 +817,9 @@ actor NativeMCPTerminalStore {
         let full = process.logs.filter { kinds.contains($0.kind) }.map(\.content).joined()
         let characters = full.count
         let maximum = maximum ?? Self.maximumOutputCharacters
-        guard characters > maximum else { return (full, characters, false) }
+        guard characters > maximum else {
+            return (full, characters, process.outputBytesWereTruncated)
+        }
         return (String(full.suffix(maximum)), characters, true)
     }
 
@@ -678,6 +906,7 @@ actor NativeMCPTerminalStore {
 
 private final class ManagedTerminalProcess: @unchecked Sendable {
     let id: String
+    let sequence: Int
     let command: String
     let cwd: URL
     let projectRoot: URL
@@ -691,9 +920,23 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
     let startedAt: String
     var lastActiveAt: String
     var logs: [TerminalLog]
+    var nextLogOffset: Int
+    var retainedLogBytes: Int
+    var logsWereTruncated: Bool
+    var outputBytesWereTruncated: Bool
+    var exitContinuations: [UUID: AsyncStream<Void>.Continuation]
+    let stdoutPending = NativeCoalescingProcessOutput(
+        maximumBytes: NativeMCPTerminalStore.maximumPendingOutputBytes
+    )
+    let stderrPending = NativeCoalescingProcessOutput(
+        maximumBytes: NativeMCPTerminalStore.maximumPendingOutputBytes
+    )
+    let stdoutDrain = NativeProcessPipeDrainSignal()
+    let stderrDrain = NativeProcessPipeDrainSignal()
 
     init(
         id: String,
+        sequence: Int,
         command: String,
         cwd: URL,
         projectRoot: URL,
@@ -706,9 +949,15 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         exitCode: Int?,
         startedAt: String,
         lastActiveAt: String,
-        logs: [TerminalLog]
+        logs: [TerminalLog],
+        nextLogOffset: Int,
+        retainedLogBytes: Int,
+        logsWereTruncated: Bool,
+        outputBytesWereTruncated: Bool,
+        exitContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     ) {
         self.id = id
+        self.sequence = sequence
         self.command = command
         self.cwd = cwd
         self.projectRoot = projectRoot
@@ -722,6 +971,122 @@ private final class ManagedTerminalProcess: @unchecked Sendable {
         self.startedAt = startedAt
         self.lastActiveAt = lastActiveAt
         self.logs = logs
+        self.nextLogOffset = nextLogOffset
+        self.retainedLogBytes = retainedLogBytes
+        self.logsWereTruncated = logsWereTruncated
+        self.outputBytesWereTruncated = outputBytesWereTruncated
+        self.exitContinuations = exitContinuations
+    }
+}
+
+/// Coordinates process termination with the final pipe-reader callback. A
+/// process exit can race the readability handler; waiting for EOF prevents a
+/// foreground result from being returned before its last output batch is
+/// accounted for.
+private final class NativeProcessPipeDrainSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+
+    func complete() {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        let pending = Array(continuations.values)
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pending {
+            continuation.yield(())
+            continuation.finish()
+        }
+    }
+
+    func wait(timeoutMilliseconds: Int) async -> Bool {
+        let changes = stream()
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await _ in changes { return true }
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(for: .milliseconds(timeoutMilliseconds))
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func stream() -> AsyncStream<Void> {
+        lock.lock()
+        if completed {
+            lock.unlock()
+            return AsyncStream { continuation in
+                continuation.yield(())
+                continuation.finish()
+            }
+        }
+        let subscriberID = UUID()
+        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        continuations[subscriberID] = pair.continuation
+        pair.continuation.onTermination = { [weak self] _ in
+            self?.remove(subscriberID)
+        }
+        lock.unlock()
+        return pair.stream
+    }
+
+    private func remove(_ subscriberID: UUID) {
+        lock.lock()
+        continuations.removeValue(forKey: subscriberID)
+        lock.unlock()
+    }
+}
+
+/// Keeps pipe readers non-blocking without creating one actor task per output
+/// fragment. Only one delivery task may be outstanding and queued bytes are
+/// bounded, so a command that writes faster than the actor can consume cannot
+/// create an unbounded task/data backlog.
+private final class NativeCoalescingProcessOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maximumBytes: Int
+    private var storage = Data()
+    private var deliveryScheduled = false
+    private var discarded = false
+
+    init(maximumBytes: Int) {
+        self.maximumBytes = max(1, maximumBytes)
+    }
+
+    /// Returns true only when the caller must schedule a delivery task.
+    func append(_ data: Data) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if !data.isEmpty {
+            storage.append(data)
+            if storage.count > maximumBytes {
+                storage = Data(storage.suffix(maximumBytes))
+                discarded = true
+            }
+        }
+        guard !deliveryScheduled, !storage.isEmpty else { return false }
+        deliveryScheduled = true
+        return true
+    }
+
+    func take() -> (data: Data, discarded: Bool)? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard deliveryScheduled else { return nil }
+        let result = (storage, discarded)
+        storage.removeAll(keepingCapacity: true)
+        discarded = false
+        deliveryScheduled = false
+        return result
     }
 }
 
@@ -729,6 +1094,7 @@ private struct TerminalLog: Sendable {
     let offset: Int
     let kind: String
     let content: String
+    let byteCount: Int
     let createdAt: String
 
     var jsonValue: NativeJSONValue {

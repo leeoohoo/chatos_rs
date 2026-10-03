@@ -5,9 +5,9 @@ use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
-    CreateRunCommand, CreateTaskGraphCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
-    HostResult, ListEventsCommand, LocalAgentStepOutcome, LocalAgentToolCall, LocalTaskSpec,
-    ResumeRunCommand, WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    CreateRunCommand, CreateTaskGraphCommand, GetEventCursorCommand, GetRunCommand, HostCommand,
+    HostRequestEnvelope, HostResult, ListEventsCommand, LocalAgentStepOutcome, LocalAgentToolCall,
+    LocalTaskSpec, ResumeRunCommand, WaitEventsCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -130,6 +130,9 @@ async fn run_detail_mutations_and_events_are_owner_scoped() {
                 after_cursor: 0,
                 limit: 100,
                 run_id: None,
+                event_type: None,
+                newest_first: false,
+                payload_mode: chatos_local_agent_protocol::LocalAgentEventPayloadMode::Full,
             }),
         ))
         .await
@@ -149,6 +152,7 @@ async fn run_detail_mutations_and_events_are_owner_scoped() {
                 limit: 100,
                 run_id: Some("run-a".to_string()),
                 timeout_ms: 1,
+                payload_mode: chatos_local_agent_protocol::LocalAgentEventPayloadMode::Full,
             }),
         ))
         .await
@@ -156,6 +160,32 @@ async fn run_detail_mutations_and_events_are_owner_scoped() {
     assert!(matches!(
         cross_filtered,
         HostResult::Events { events, next_cursor: 0 } if events.is_empty()
+    ));
+
+    let user_one_cursor = runtime
+        .try_handle(request(
+            "cursor-a",
+            HostCommand::GetEventCursor(GetEventCursorCommand {
+                owner_user_id: "user-1".to_string(),
+            }),
+        ))
+        .await
+        .expect("get user-1 cursor");
+    let user_two_cursor = runtime
+        .try_handle(request(
+            "cursor-b",
+            HostCommand::GetEventCursor(GetEventCursorCommand {
+                owner_user_id: "user-2".to_string(),
+            }),
+        ))
+        .await
+        .expect("get user-2 cursor");
+    assert!(matches!(
+        (user_one_cursor, user_two_cursor),
+        (
+            HostResult::EventCursor { cursor: user_one },
+            HostResult::EventCursor { cursor: user_two }
+        ) if user_one > user_two && user_two > 0
     ));
 }
 

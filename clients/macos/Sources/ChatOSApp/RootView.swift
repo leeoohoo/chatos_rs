@@ -38,7 +38,11 @@ struct RootView: View {
         .toolbar(removing: .sidebarToggle)
         .tint(.accentColor)
         .sheet(isPresented: $model.isNotepadPresented) {
-            NotepadSheet(service: model.notepadService) {
+            NotepadSheet(
+                service: model.notepadService,
+                eventHub: model.localAgentEventHub,
+                ownerUserID: model.localProjectOwnerUserID
+            ) {
                 model.isNotepadPresented = false
             }
         }
@@ -77,11 +81,13 @@ struct RootView: View {
                 }
             case .requirementSurveys:
                 if let ownerUserID = model.localProjectOwnerUserID,
-                   let requirementSurveyClient = model.requirementSurveyClient {
+                   let requirementSurveyClient = model.requirementSurveyClient,
+                   let localAgentEventHub = model.localAgentEventHub {
                     RequirementSurveyCenterView(
                         ownerUserID: ownerUserID,
                         projects: model.projects,
-                        client: requirementSurveyClient
+                        client: requirementSurveyClient,
+                        eventHub: localAgentEventHub
                     )
                     .id(ownerUserID)
                 } else {

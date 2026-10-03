@@ -25,8 +25,14 @@ final class NativePluginApplicationProcessRegistry: @unchecked Sendable {
         self.stateURL = stateURL
         self.pluginInstallationRootURL = pluginInstallationRootURL.standardizedFileURL
         records = Self.loadRecords(from: stateURL)
-        terminateRecordedProcessesSynchronously(graceMilliseconds: 500)
-        terminateLegacyOrphansSynchronously()
+        let startupRecords = Array(records.values)
+        DispatchQueue.global(qos: .utility).async { [self] in
+            terminateRecordedProcessesSynchronously(
+                startupRecords,
+                graceMilliseconds: 500
+            )
+            terminateLegacyOrphansSynchronously()
+        }
     }
 
     func register(pid: pid_t) throws {
@@ -55,11 +61,16 @@ final class NativePluginApplicationProcessRegistry: @unchecked Sendable {
     }
 
     func terminateAllSynchronously(graceMilliseconds: Int = 2_000) {
-        terminateRecordedProcessesSynchronously(graceMilliseconds: graceMilliseconds)
+        terminateRecordedProcessesSynchronously(
+            recordSnapshot(),
+            graceMilliseconds: graceMilliseconds
+        )
     }
 
-    private func terminateRecordedProcessesSynchronously(graceMilliseconds: Int) {
-        let snapshot = recordSnapshot()
+    private func terminateRecordedProcessesSynchronously(
+        _ snapshot: [Record],
+        graceMilliseconds: Int
+    ) {
         guard !snapshot.isEmpty else { return }
 
         for record in snapshot where Self.matches(record) {
@@ -81,7 +92,11 @@ final class NativePluginApplicationProcessRegistry: @unchecked Sendable {
 
         lock.lock()
         for record in snapshot where !Self.matches(record) {
-            records.removeValue(forKey: record.pid)
+            // Startup recovery runs concurrently with normal registration.
+            // Never remove a newly registered process that reused an old PID.
+            if records[record.pid] == record {
+                records.removeValue(forKey: record.pid)
+            }
         }
         persistLocked()
         lock.unlock()
@@ -95,15 +110,31 @@ final class NativePluginApplicationProcessRegistry: @unchecked Sendable {
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
         ps.arguments = ["-axo", "pid=,ppid=,pgid=,command="]
         let output = Pipe()
+        let capture = NativeBoundedProcessOutput(maximumBytes: 4 * 1_024 * 1_024)
+        NativeProcessPipeReader.install(
+            on: output.fileHandleForReading,
+            onData: capture.append
+        )
         ps.standardOutput = output
         ps.standardError = FileHandle.nullDevice
         do {
+            let exitSignal = NativeProcessExitSignal.install(on: ps)
             try ps.run()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            ps.waitUntilExit()
-            guard ps.terminationStatus == 0 else { return }
+            var exitCode = exitSignal.wait(timeout: 2)
+            if exitCode == nil {
+                _ = Darwin.kill(ps.processIdentifier, SIGTERM)
+                exitCode = exitSignal.wait(timeout: 0.25)
+            }
+            if exitCode == nil {
+                _ = Darwin.kill(ps.processIdentifier, SIGKILL)
+                exitCode = exitSignal.wait(timeout: 1)
+            }
+            output.fileHandleForReading.readabilityHandler = nil
+            capture.append(output.fileHandleForReading.readDataToEndOfFile())
+            let captured = capture.snapshot
+            guard exitCode == 0, !captured.discarded else { return }
             let prefix = pluginInstallationRootURL.path + "/"
-            let candidates = String(decoding: data, as: UTF8.self)
+            let candidates = String(decoding: captured.data, as: UTF8.self)
                 .split(separator: "\n")
                 .compactMap { line -> pid_t? in
                     let parts = line.split(
@@ -150,7 +181,10 @@ final class NativePluginApplicationProcessRegistry: @unchecked Sendable {
     }
 
     private static func loadRecords(from url: URL) -> [Int32: Record] {
-        guard let data = try? Data(contentsOf: url),
+        guard let data = try? NativeBoundedFileReader.read(
+            url,
+            maximumBytes: 1 * 1_024 * 1_024
+        ),
               let decoded = try? JSONDecoder().decode([Record].self, from: data) else {
             return [:]
         }

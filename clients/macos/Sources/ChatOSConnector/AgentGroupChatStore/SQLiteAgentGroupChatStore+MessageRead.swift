@@ -4,7 +4,78 @@ import CryptoKit
 import Foundation
 import SQLite3
 
+struct ProjectAgentConversationListSnapshot: Sendable, Equatable {
+    let activeMemberCountByRoomID: [String: Int]
+    let latestMessageByRoomID: [String: ProjectAgentMessage]
+}
+
 extension SQLiteAgentGroupChatStore {
+    /// Loads the two relation-backed values used by every row in the companion conversation
+    /// list with a constant number of SQLite statements. The former per-room implementation
+    /// performed a room lookup, member query, room lookup, message query and two relation queries
+    /// for every row, which made list refresh cost grow linearly by six statements per room.
+    func activeConversationListSnapshot(
+        ownerUserID: String
+    ) throws -> ProjectAgentConversationListSnapshot {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        let memberCounts = try query(
+            """
+            SELECT member.room_id, COUNT(*)
+            FROM project_agent_room_members member
+            JOIN project_agent_rooms room
+              ON room.owner_user_id = member.owner_user_id AND room.id = member.room_id
+            WHERE member.owner_user_id = ? AND member.status = 'active'
+              AND room.status = 'active'
+            GROUP BY member.room_id
+            """,
+            [.text(ownerUserID)]
+        ) { statement in
+            (Self.string(statement, 0), Int(sqlite3_column_int64(statement, 1)))
+        }
+        let latestMessageRows = try query(
+            """
+            WITH ranked_messages AS (
+                SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind,
+                       msg.sender_id, msg.content, msg.reply_to_message_id,
+                       msg.source_run_id, msg.causation_id, msg.root_message_id,
+                       msg.hop_count, msg.created_at_unix_ms,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY msg.room_id
+                           ORDER BY msg.created_at_unix_ms DESC, msg.id DESC
+                       ) AS row_number
+                FROM project_agent_messages msg
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = msg.owner_user_id AND room.id = msg.room_id
+                WHERE msg.owner_user_id = ? AND room.status = 'active'
+                  AND NOT (
+                    msg.sender_kind = 'system'
+                    AND msg.causation_id IN ('heartbeat', 'todo', 'todo_status')
+                  )
+            )
+            SELECT owner_user_id, id, room_id, sender_kind, sender_id, content,
+                   reply_to_message_id, source_run_id, causation_id, root_message_id,
+                   hop_count, created_at_unix_ms
+            FROM ranked_messages
+            WHERE row_number = 1
+            ORDER BY room_id
+            """,
+            [.text(ownerUserID)],
+            row: readMessageBase
+        )
+        let latestMessages = try hydrateMessageRelations(
+            latestMessageRows,
+            ownerUserID: ownerUserID
+        )
+        return .init(
+            activeMemberCountByRoomID: Dictionary(
+                uniqueKeysWithValues: memberCounts
+            ),
+            latestMessageByRoomID: Dictionary(
+                uniqueKeysWithValues: latestMessages.map { ($0.roomID, $0) }
+            )
+        )
+    }
+
     public func listMessages(
         ownerUserID: String,
         roomID: String,
@@ -22,15 +93,16 @@ extension SQLiteAgentGroupChatStore {
         if let afterUnixMs {
             guard afterUnixMs >= 0 else { throw AgentGroupChatError.invalidField("afterUnixMs") }
         }
-        return try AgentMessageRepository.list(
+        let messages = try AgentMessageRepository.list(
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,
             afterUnixMs: afterUnixMs,
             limit: limit,
             preparedStatement: recordPreparedStatement,
-            row: readMessage
+            row: readMessageBase
         )
+        return try hydrateMessageRelations(messages, ownerUserID: ownerUserID)
     }
 
     public func pageMessages(
@@ -59,15 +131,15 @@ extension SQLiteAgentGroupChatStore {
                 messageID: cursor.id
             )
         }
-        let loaded = try AgentMessageRepository.pageForward(
+        let loaded = try hydrateMessageRelations(AgentMessageRepository.pageForward(
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,
             after: messageCursor,
             limit: limit,
             preparedStatement: recordPreparedStatement,
-            row: readMessage
-        )
+            row: readMessageBase
+        ), ownerUserID: ownerUserID)
         let messages = Array(loaded.prefix(limit))
         return .init(
             messages: messages,
@@ -102,15 +174,15 @@ extension SQLiteAgentGroupChatStore {
                 messageID: cursor.id
             )
         }
-        let loaded = try AgentMessageRepository.pageBackward(
+        let loaded = try hydrateMessageRelations(AgentMessageRepository.pageBackward(
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,
             before: messageCursor,
             limit: limit,
             preparedStatement: recordPreparedStatement,
-            row: readMessage
-        )
+            row: readMessageBase
+        ), ownerUserID: ownerUserID)
         let newestFirst = Array(loaded.prefix(limit))
         let messages = Array(newestFirst.reversed())
         return .init(
@@ -149,7 +221,7 @@ extension SQLiteAgentGroupChatStore {
                 messageID: $0.messageID
             )
         }
-        let loaded = try AgentMessageRepository.listUnread(
+        let loaded = try hydrateMessageRelations(AgentMessageRepository.listUnread(
             database,
             ownerUserID: ownerUserID,
             roomID: roomID,
@@ -157,8 +229,8 @@ extension SQLiteAgentGroupChatStore {
             after: messageCursor,
             limit: limit,
             preparedStatement: recordPreparedStatement,
-            row: readMessage
-        )
+            row: readMessageBase
+        ), ownerUserID: ownerUserID)
         let messages = Array(loaded.prefix(limit))
         return .init(
             messages: messages,
@@ -203,23 +275,7 @@ extension SQLiteAgentGroupChatStore {
                 return existing
             }
             let updatedAt = max(nowUnixMs, message.createdAtUnixMs)
-            try execute(
-                """
-                INSERT INTO project_agent_read_cursors (
-                    owner_user_id, room_id, agent_id, message_id,
-                    message_created_at_unix_ms, updated_at_unix_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(owner_user_id, room_id, agent_id) DO UPDATE SET
-                    message_id = excluded.message_id,
-                    message_created_at_unix_ms = excluded.message_created_at_unix_ms,
-                    updated_at_unix_ms = excluded.updated_at_unix_ms
-                """,
-                [
-                    .text(ownerUserID), .text(roomID), .text(agentID), .text(message.id),
-                    .integer(message.createdAtUnixMs), .integer(updatedAt),
-                ]
-            )
-            return .init(
+            let cursor = ProjectAgentReadCursor(
                 ownerUserID: ownerUserID,
                 roomID: roomID,
                 agentID: agentID,
@@ -227,6 +283,12 @@ extension SQLiteAgentGroupChatStore {
                 messageCreatedAtUnixMs: message.createdAtUnixMs,
                 updatedAtUnixMs: updatedAt
             )
+            try AgentReadCursorRepository.upsert(
+                database,
+                cursors: [cursor],
+                preparedStatement: recordPreparedStatement
+            )
+            return cursor
         }
     }
 
@@ -245,14 +307,14 @@ extension SQLiteAgentGroupChatStore {
             guard try readAgent(ownerUserID: ownerUserID, agentID: agentID)?.status == .active else {
                 throw AgentGroupChatError.notFound
             }
-            let messages = try AgentMessageRepository.listAllUnread(
+            let messages = try hydrateMessageRelations(AgentMessageRepository.listAllUnread(
                 database,
                 ownerUserID: ownerUserID,
                 agentID: agentID,
                 limit: limit,
                 preparedStatement: recordPreparedStatement,
-                row: readMessage
-            )
+                row: readMessageBase
+            ), ownerUserID: ownerUserID)
             guard !messages.isEmpty else { return [] }
 
             var lastMessageByRoom: [String: ProjectAgentMessage] = [:]
@@ -263,27 +325,30 @@ extension SQLiteAgentGroupChatStore {
                 grouped[message.roomID, default: []].append(message)
                 lastMessageByRoom[message.roomID] = message
             }
-            for (roomID, message) in lastMessageByRoom {
-                try execute(
-                    """
-                    INSERT INTO project_agent_read_cursors (
-                        owner_user_id, room_id, agent_id, message_id,
-                        message_created_at_unix_ms, updated_at_unix_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(owner_user_id, room_id, agent_id) DO UPDATE SET
-                        message_id = excluded.message_id,
-                        message_created_at_unix_ms = excluded.message_created_at_unix_ms,
-                        updated_at_unix_ms = excluded.updated_at_unix_ms
-                    """,
-                    [
-                        .text(ownerUserID), .text(roomID), .text(agentID), .text(message.id),
-                        .integer(message.createdAtUnixMs),
-                        .integer(max(nowUnixMs, message.createdAtUnixMs)),
-                    ]
+            let cursors = lastMessageByRoom.map { roomID, message in
+                ProjectAgentReadCursor(
+                    ownerUserID: ownerUserID,
+                    roomID: roomID,
+                    agentID: agentID,
+                    messageID: message.id,
+                    messageCreatedAtUnixMs: message.createdAtUnixMs,
+                    updatedAtUnixMs: max(nowUnixMs, message.createdAtUnixMs)
                 )
             }
+            try AgentReadCursorRepository.upsert(
+                database,
+                cursors: cursors,
+                preparedStatement: recordPreparedStatement
+            )
+            let rooms = try AgentConversationRepository.rooms(
+                database,
+                ownerUserID: ownerUserID,
+                roomIDs: roomOrder,
+                preparedStatement: recordPreparedStatement
+            )
+            let roomsByID = Dictionary(uniqueKeysWithValues: rooms.map { ($0.id, $0) })
             return try roomOrder.map { roomID in
-                guard let room = try readRoom(ownerUserID: ownerUserID, roomID: roomID) else {
+                guard let room = roomsByID[roomID] else {
                     throw AgentGroupChatError.storage("unread conversation is missing")
                 }
                 return .init(room: room, messages: grouped[roomID] ?? [])

@@ -94,6 +94,8 @@ impl LocalAgentRuntime {
             .list_task_graphs(
                 &command.owner_user_id,
                 command.scope,
+                command.source_entity_type.as_deref(),
+                command.source_entity_id.as_deref(),
                 command.before_updated_at_unix_ms,
                 command.before_graph_id.as_deref(),
                 command.limit,

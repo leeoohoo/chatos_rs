@@ -120,12 +120,15 @@ struct WeChatCompanionSettingsView: View {
     private func ticketContent(_ ticket: WeChatBindTicket) -> some View {
         HStack(alignment: .top, spacing: 24) {
             Group {
-                if let image = NSImage(data: ticket.codeImageData) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.none)
-                        .scaledToFit()
-                } else {
+                AppAsyncDataImage(
+                    data: ticket.codeImageData,
+                    identity: "wechat-ticket|\(ticket.id)",
+                    maximumBytes: 2 * 1_024 * 1_024,
+                    maximumSourcePixelCount: 4_000_000,
+                    maximumDisplayPixelSize: 512
+                ) { image in
+                    image.resizable().interpolation(.none).scaledToFit()
+                } placeholder: {
                     Image(systemName: "qrcode")
                         .font(.system(size: 72))
                         .foregroundStyle(.secondary)
