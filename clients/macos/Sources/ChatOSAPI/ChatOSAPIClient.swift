@@ -73,6 +73,7 @@ public actor ChatOSAPIClient {
         }
 
         let requestAccessToken = accessToken
+        let requestAuthenticationSessionID = authenticationSessionID
         var headers = [
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -103,7 +104,8 @@ public actor ChatOSAPIClient {
             // logout deletes a still-valid user credential and signs the whole app out.
             if service == .userService,
                let requestAccessToken,
-               accessToken == requestAccessToken {
+               accessToken == requestAccessToken,
+               authenticationSessionID == requestAuthenticationSessionID {
                 accessToken = nil
                 authenticationSessionID = UUID()
                 try? await credentialStore?.deleteAccessToken()
@@ -115,7 +117,8 @@ public actor ChatOSAPIClient {
             throw ChatOSAPIError.unauthorized
         }
         if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty,
-           accessToken == requestAccessToken {
+           accessToken == requestAccessToken,
+           authenticationSessionID == requestAuthenticationSessionID {
             accessToken = refreshedToken
             try await credentialStore?.saveAccessToken(refreshedToken)
         }

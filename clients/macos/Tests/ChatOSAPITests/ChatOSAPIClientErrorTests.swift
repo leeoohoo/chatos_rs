@@ -182,6 +182,57 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         XCTAssertEqual(storedToken, "valid-user-token")
         XCTAssertFalse(credentialWasDeleted)
     }
+
+    func testUnauthorizedResponseFromPreviousSessionCannotExpireReauthenticatedSession() async throws {
+        let store = APIErrorCredentialStore(token: "reused-token")
+        let transport = APIErrorBlockingTransport(response: HTTPResponse(
+            statusCode: 401,
+            headers: ["content-type": "application/json"],
+            body: Data(#"{"error":"old request is unauthorized"}"#.utf8)
+        ))
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "reused-token",
+            credentialStore: store,
+            transport: transport
+        )
+        let expiration = expectation(description: "new authentication session is not expired")
+        expiration.isInverted = true
+        let observer = NotificationCenter.default.addObserver(
+            forName: .chatOSAuthenticationDidExpire,
+            object: nil,
+            queue: nil
+        ) { _ in
+            expiration.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let oldRequest = Task {
+            let _: ErrorResponseDTO = try await client.request(
+                "/auth/me",
+                service: .userService
+            )
+        }
+        await transport.waitUntilStarted()
+        // Re-authentication always creates a new internal session, even when the gateway returns
+        // the same opaque token string. The old response must not mutate this new session.
+        try await client.setAccessToken("reused-token")
+        await transport.resolve()
+
+        do {
+            try await oldRequest.value
+            XCTFail("Expected old request to fail")
+        } catch let error as ChatOSAPIError {
+            XCTAssertEqual(error, .unauthorized)
+        }
+        await fulfillment(of: [expiration], timeout: 0.1)
+        let currentToken = await client.currentAccessToken()
+        let storedToken = await store.storedToken()
+        let credentialWasDeleted = await store.wasDeleted()
+        XCTAssertEqual(currentToken, "reused-token")
+        XCTAssertEqual(storedToken, "reused-token")
+        XCTAssertFalse(credentialWasDeleted)
+    }
 }
 
 private struct ErrorResponseDTO: Decodable, Sendable {}
@@ -191,6 +242,39 @@ private struct APIErrorTransport: HTTPTransport {
 
     func send(_ request: HTTPRequest) async throws -> HTTPResponse {
         response
+    }
+}
+
+private actor APIErrorBlockingTransport: HTTPTransport {
+    private let response: HTTPResponse
+    private var didStart = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var responseContinuation: CheckedContinuation<HTTPResponse, Never>?
+
+    init(response: HTTPResponse) {
+        self.response = response
+    }
+
+    func send(_ request: HTTPRequest) async throws -> HTTPResponse {
+        didStart = true
+        let waiters = startWaiters
+        startWaiters.removeAll(keepingCapacity: false)
+        waiters.forEach { $0.resume() }
+        return await withCheckedContinuation { continuation in
+            responseContinuation = continuation
+        }
+    }
+
+    func waitUntilStarted() async {
+        if didStart { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func resolve() {
+        responseContinuation?.resume(returning: response)
+        responseContinuation = nil
     }
 }
 
