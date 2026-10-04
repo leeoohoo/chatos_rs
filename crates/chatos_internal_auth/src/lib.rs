@@ -178,7 +178,7 @@ pub fn verify_internal_service_token(
 }
 
 fn ensure_crypto_provider() {
-    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+    let _ = jsonwebtoken::crypto::aws_lc::DEFAULT_PROVIDER.install_default();
 }
 
 fn unix_timestamp() -> Result<usize, String> {

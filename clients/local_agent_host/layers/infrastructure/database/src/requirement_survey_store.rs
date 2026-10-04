@@ -125,7 +125,7 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
              ORDER BY updated_at_unix_ms DESC, survey_id DESC LIMIT ?"
         );
         let status = status.map(LocalRequirementSurveyStatus::as_str);
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(owner_user_id)
             .bind(project_resource_id)
             .bind(project_resource_id)
@@ -146,7 +146,7 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
         survey_id: &str,
     ) -> Result<Option<LocalRequirementSurvey>, ClientStorageError> {
         let query = format!("{SURVEY_SELECT} WHERE owner_user_id = ? AND survey_id = ?");
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(owner_user_id)
             .bind(survey_id)
             .fetch_optional(&self.pool)

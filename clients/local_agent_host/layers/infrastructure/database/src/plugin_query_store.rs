@@ -30,7 +30,7 @@ pub(super) async fn list_installations(
          WHERE owner_user_id = ?{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, installation_id DESC LIMIT ?"
     );
-    let mut query = sqlx::query(&sql).bind(owner_user_id);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_user_id);
     if let (Some(timestamp), Some(installation_id)) =
         (before_updated_at_unix_ms, before_installation_id)
     {

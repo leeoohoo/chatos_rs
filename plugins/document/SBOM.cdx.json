@@ -27,7 +27,7 @@
     "properties": [
       {
         "name": "chatos:source:packageLockSha256",
-        "value": "cd2ca369967e37bde7b8e00d8f64041041a5e49c3c8b517589a0de57e0974085"
+        "value": "392257a0cc6473194b04cc8d6ec2154b200118f7bb6a625b0a90472a8ef32dd1"
       },
       {
         "name": "chatos:source:esbuildMetafileSha256",

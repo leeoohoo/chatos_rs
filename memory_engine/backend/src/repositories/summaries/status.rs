@@ -103,7 +103,7 @@ where
     }
     let mut tx = db.begin().await.map_err(|e| e.to_string())?;
     let sql=format!("SELECT data FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=ANY($4) AND {condition} FOR UPDATE");
-    let mut q = sqlx::query_scalar::<_, Json<serde_json::Value>>(&sql)
+    let mut q = sqlx::query_scalar::<_, Json<serde_json::Value>>(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id)

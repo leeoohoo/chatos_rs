@@ -101,7 +101,7 @@ async fn apply_schema(
     statements: &[&str],
 ) -> Result<(), ClientStorageError> {
     for statement in statements {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(&mut *connection)
             .await
             .db()?;

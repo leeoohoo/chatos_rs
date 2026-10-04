@@ -46,7 +46,7 @@ pub async fn list_pending_subject_memory_source_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as(&format!("SELECT {COLS} FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1")).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1"))).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
 pub async fn mark_subject_memory_source_dispatch_published(
     db: &Db,
@@ -81,7 +81,7 @@ pub async fn replay_dead_lettered_subject_memory_source_dispatch(
     id: &str,
     v: i64,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as(&format!("UPDATE engine_summaries SET subject_memory_source_dispatch_version=subject_memory_source_dispatch_version+1,subject_memory_source_dispatch_requested_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_dead_letter_version=NULL,subject_memory_source_dispatch_dead_lettered_at=NULL,subject_memory_source_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND subject_memory_source_dispatch_version=$4 AND subject_memory_source_dispatch_dead_letter_version=$4 AND subject_memory_source_dispatch_consumed_version>=$4 AND NOT subject_memory_source_dispatch_pending RETURNING {COLS}")).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET subject_memory_source_dispatch_version=subject_memory_source_dispatch_version+1,subject_memory_source_dispatch_requested_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_dead_letter_version=NULL,subject_memory_source_dispatch_dead_lettered_at=NULL,subject_memory_source_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND subject_memory_source_dispatch_version=$4 AND subject_memory_source_dispatch_dead_letter_version=$4 AND subject_memory_source_dispatch_consumed_version>=$4 AND NOT subject_memory_source_dispatch_pending RETURNING {COLS}"))).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
 }
 async fn fetch(
     db: &Db,
@@ -90,7 +90,7 @@ async fn fetch(
     s: &str,
     id: &str,
 ) -> Result<Option<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as(q)
+    sqlx::query_as(sqlx::AssertSqlSafe(q))
         .bind(t)
         .bind(s)
         .bind(id)
@@ -105,7 +105,7 @@ async fn update(
     error: Option<&str>,
 ) -> Result<bool, String> {
     let q=format!("UPDATE engine_summaries SET {set} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND subject_memory_source_dispatch_version>=$4");
-    let mut query = sqlx::query(&q)
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(q))
         .bind(&e.tenant_id)
         .bind(&e.source_id)
         .bind(&e.id)

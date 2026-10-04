@@ -411,7 +411,8 @@ where
 {
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let sql = format!("SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 {condition} FOR UPDATE");
-    let mut query = sqlx::query_scalar::<_, Json<serde_json::Value>>(&sql)
+    let mut query =
+        sqlx::query_scalar::<_, Json<serde_json::Value>>(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id);
@@ -452,7 +453,7 @@ where
     };
     let mut tx = db.begin().await.map_err(|error| error.to_string())?;
     let sql = format!("SELECT data FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 {condition} FOR UPDATE");
-    let row = sqlx::query_scalar::<_, Json<serde_json::Value>>(&sql)
+    let row = sqlx::query_scalar::<_, Json<serde_json::Value>>(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id)
@@ -519,7 +520,7 @@ async fn count_scope(
     let sql = format!(
         "SELECT count(*) FROM {table} WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3"
     );
-    sqlx::query_scalar(&sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id)

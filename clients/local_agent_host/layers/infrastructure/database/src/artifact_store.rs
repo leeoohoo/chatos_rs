@@ -29,11 +29,11 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut database, command).await? {
                 return Ok(replay);
             }
-            if let Some(row) = sqlx::query(&format!(
+            if let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{ARTIFACT_SELECT} WHERE owner_user_id = ? AND artifact_id = (\
                  SELECT artifact_id FROM local_agent_artifacts \
                  WHERE owner_user_id = ? AND idempotency_key = ?)"
-            ))
+            )))
             .bind(&write.artifact.owner_user_id)
             .bind(&write.artifact.owner_user_id)
             .bind(&write.idempotency_key)
@@ -114,11 +114,11 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
         let rows = if let (Some(updated_at), Some(artifact_id)) =
             (before_updated_at_unix_ms, before_artifact_id)
         {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{ARTIFACT_SELECT} WHERE owner_user_id = ? AND \
                  (updated_at_unix_ms < ? OR (updated_at_unix_ms = ? AND artifact_id < ?)) \
                  ORDER BY updated_at_unix_ms DESC, artifact_id DESC LIMIT ?"
-            ))
+            )))
             .bind(owner_user_id)
             .bind(updated_at)
             .bind(updated_at)
@@ -128,10 +128,10 @@ impl LocalAgentArtifactStore for SqliteClientStorage {
             .await
             .db()?
         } else {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{ARTIFACT_SELECT} WHERE owner_user_id = ? \
                  ORDER BY updated_at_unix_ms DESC, artifact_id DESC LIMIT ?"
-            ))
+            )))
             .bind(owner_user_id)
             .bind(fetch_limit)
             .fetch_all(&self.pool)

@@ -14,9 +14,9 @@ pub(super) async fn fetch_note(
     owner_user_id: &str,
     note_id: &str,
 ) -> Result<Option<LocalNotepadNoteDetail>, ClientStorageError> {
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{NOTE_SELECT} WHERE owner_user_id = ? AND note_id = ?"
-    ))
+    )))
     .bind(owner_user_id)
     .bind(note_id)
     .fetch_optional(&mut *connection)

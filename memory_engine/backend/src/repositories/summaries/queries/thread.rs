@@ -104,7 +104,7 @@ pub async fn list_thread_summaries(
 }
 async fn fetch(
     db: &Db,
-    mut q: sqlx::QueryBuilder<'_, sqlx::Postgres>,
+    mut q: sqlx::QueryBuilder<sqlx::Postgres>,
 ) -> Result<Vec<EngineSummary>, String> {
     decode_summaries(
         q.build_query_scalar::<Json<serde_json::Value>>()

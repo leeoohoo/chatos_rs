@@ -27,7 +27,7 @@ memory_engine_sdk = { path = "../../crates/memory_engine_sdk", default-features 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate", "macros"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "json", "migrate", "macros"] }
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"

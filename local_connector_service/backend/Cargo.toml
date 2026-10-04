@@ -19,7 +19,7 @@ chatos_sandbox_contract = { path = "../../crates/chatos_sandbox_contract" }
 chatos_postgres = { path = "../../crates/chatos_postgres" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 futures = "0.3"
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "json", "migrate"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring", "postgres", "chrono", "json", "migrate"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 redis = { version = "0.27", features = ["connection-manager", "tokio-comp"] }
 base64 = "0.22"

@@ -36,7 +36,9 @@ pub async fn delete_thread_summary(
             " AND source_id=$3"
         });
     }
-    let mut q = sqlx::query(&sql).bind(thread_id).bind(summary_id);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(thread_id)
+        .bind(summary_id);
     if let Some(v) = tenant {
         q = q.bind(v);
     }

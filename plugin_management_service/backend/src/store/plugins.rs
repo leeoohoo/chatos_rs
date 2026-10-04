@@ -238,7 +238,7 @@ impl AppStore {
         };
         let predicate = "(NOT $1 OR (enabled AND (visibility=$2 OR (visibility=$3 AND owner_user_id=$4)))) AND ($1 OR $5::text IS NULL OR visibility=$5) AND ($1 OR $6::bool IS NULL OR enabled=$6) AND ($7::text IS NULL OR marketplace_id=$7) AND ($8::text IS NULL OR category=$8) AND ($9::bool IS NULL OR featured=$9) AND ($10::text IS NULL OR lower(id) LIKE lower($10) OR lower(name) LIKE lower($10) OR lower(display_name) LIKE lower($10) OR lower(data->>'description') LIKE lower($10) OR (lower(plugin_catalog_keywords_search_text(data->'keywords')) LIKE lower($10) AND EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(data->'keywords','[]')) keyword WHERE keyword ILIKE $10)))";
         let total_sql = format!("SELECT count(*) FROM plugin_catalog_entries WHERE {predicate}");
-        let total = sqlx::query_scalar::<_, i64>(&total_sql)
+        let total = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(total_sql))
             .bind(owner_view)
             .bind(PLUGIN_VISIBILITY_PUBLIC)
             .bind(PLUGIN_VISIBILITY_PRIVATE)
@@ -254,7 +254,7 @@ impl AppStore {
             .map_err(db_error)?;
         let items_sql = format!("SELECT data FROM plugin_catalog_entries WHERE {predicate} AND ($11::bool IS NULL OR ((NOT featured),category,display_name,id)>((NOT $11),$12::text,$13::text,$14::text)) ORDER BY (NOT featured),category,display_name,id LIMIT $15 OFFSET $16");
         let items = decode_all(
-            sqlx::query_scalar(&items_sql)
+            sqlx::query_scalar(sqlx::AssertSqlSafe(items_sql))
                 .bind(owner_view)
                 .bind(PLUGIN_VISIBILITY_PUBLIC)
                 .bind(PLUGIN_VISIBILITY_PRIVATE)

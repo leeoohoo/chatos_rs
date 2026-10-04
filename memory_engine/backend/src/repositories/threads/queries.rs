@@ -181,19 +181,19 @@ pub async fn list_threads(
     fetch_threads(db, query).await
 }
 
-fn append_optional_eq<'a>(
-    query: &mut QueryBuilder<'a, Postgres>,
+fn append_optional_eq(
+    query: &mut QueryBuilder<Postgres>,
     column: &str,
-    value: Option<&'a str>,
+    value: Option<&str>,
 ) {
     if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
         query.push(" AND ").push(column).push("=").push_bind(value);
     }
 }
 
-fn append_json_aliases<'a>(
-    query: &mut QueryBuilder<'a, Postgres>,
-    value: Option<&'a str>,
+fn append_json_aliases(
+    query: &mut QueryBuilder<Postgres>,
+    value: Option<&str>,
     paths: &[&str],
     first_is_column: bool,
 ) {
@@ -217,7 +217,7 @@ fn append_json_aliases<'a>(
 
 async fn fetch_threads(
     db: &Db,
-    mut query: QueryBuilder<'_, Postgres>,
+    mut query: QueryBuilder<Postgres>,
 ) -> Result<Vec<EngineThread>, String> {
     let rows = query
         .build_query_scalar::<Json<serde_json::Value>>()

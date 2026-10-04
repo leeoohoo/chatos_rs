@@ -7,6 +7,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
 
 permissions:
   contents: read
@@ -74,7 +76,6 @@ jobs:
 
   dependency-security:
     name: Dependency Security
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -87,10 +88,13 @@ jobs:
         run: cargo install cargo-audit --locked
 
       - name: Audit Rust lockfiles
+        shell: bash
         run: |
-          cargo audit --file Cargo.lock
-          cargo audit --file memory_engine/backend/Cargo.lock
-          cargo audit --file user_service/backend/Cargo.lock
+          set -euo pipefail
+          while IFS= read -r -d '' lockfile; do
+            echo "Auditing $lockfile"
+            cargo audit --file "$lockfile"
+          done < <(find . -type d \( -name .git -o -name node_modules -o -name target -o -name target-shared \) -prune -o -type f -name Cargo.lock -print0 | sort -z)
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -101,15 +105,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for dir in \
-            admin_console \
-            official_website_service/frontend \
-            plugins/diagram-studio \
-            plugins/document
-          do
+          while IFS= read -r -d '' lockfile; do
+            dir="$(dirname "$lockfile")"
             echo "Auditing $dir"
             npm --prefix "$dir" audit --omit=dev --audit-level=high
-          done
+          done < <(find . -type d \( -name .git -o -name node_modules -o -name target -o -name target-shared \) -prune -o -type f -name package-lock.json -print0 | sort -z)
 
   production-rust-services:
     name: Production Rust services

@@ -45,7 +45,7 @@ pub async fn list_pending_rollup_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<RollupDispatchOutbox>, String> {
-    sqlx::query_as(&format!("SELECT {COLS} FROM engine_summaries WHERE rollup_dispatch_pending ORDER BY rollup_dispatch_requested_at,updated_at LIMIT $1")).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE rollup_dispatch_pending ORDER BY rollup_dispatch_requested_at,updated_at LIMIT $1"))).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
 pub async fn mark_rollup_dispatch_published(
     db: &Db,
@@ -86,8 +86,8 @@ pub async fn rearm_rollup_dispatch_if_eligible(
     thread: &str,
     max_level: i64,
 ) -> Result<Option<RollupDispatchOutbox>, String> {
-    if let Some(value)=sqlx::query_as::<_,RollupDispatchOutbox>(&format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version<rollup_dispatch_version ORDER BY created_at LIMIT 1")).bind(t).bind(s).bind(thread).bind(max_level.max(0)).fetch_optional(db).await.map_err(|e|e.to_string())?{return Ok(Some(value));}
-    sqlx::query_as(&format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true WHERE id=(SELECT id FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version>=rollup_dispatch_version AND COALESCE(rollup_dispatch_dead_letter_version,-1)<rollup_dispatch_version ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING {COLS}"))
+    if let Some(value)=sqlx::query_as::<_,RollupDispatchOutbox>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version<rollup_dispatch_version ORDER BY created_at LIMIT 1"))).bind(t).bind(s).bind(thread).bind(max_level.max(0)).fetch_optional(db).await.map_err(|e|e.to_string())?{return Ok(Some(value));}
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true WHERE id=(SELECT id FROM engine_summaries WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND summary_type='thread_incremental' AND status='done' AND rollup_status='pending' AND level<=$4 AND rollup_dispatch_consumed_version>=rollup_dispatch_version AND COALESCE(rollup_dispatch_dead_letter_version,-1)<rollup_dispatch_version ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING {COLS}")))
         .bind(t).bind(s).bind(thread).bind(max_level.max(0)).fetch_optional(db).await.map_err(|e|e.to_string())
 }
 pub async fn replay_dead_lettered_rollup_dispatch(
@@ -97,7 +97,7 @@ pub async fn replay_dead_lettered_rollup_dispatch(
     id: &str,
     v: i64,
 ) -> Result<Option<RollupDispatchOutbox>, String> {
-    sqlx::query_as(&format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true,rollup_dispatch_dead_letter_version=NULL,rollup_dispatch_dead_lettered_at=NULL,rollup_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND rollup_status='pending' AND rollup_dispatch_version=$4 AND rollup_dispatch_dead_letter_version=$4 AND rollup_dispatch_consumed_version>=$4 AND NOT rollup_dispatch_pending RETURNING {COLS}")).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("UPDATE engine_summaries SET rollup_dispatch_version=rollup_dispatch_version+1,rollup_dispatch_requested_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=true,rollup_dispatch_dead_letter_version=NULL,rollup_dispatch_dead_lettered_at=NULL,rollup_dispatch_last_failed_at=NULL WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND status='done' AND rollup_status='pending' AND rollup_dispatch_version=$4 AND rollup_dispatch_dead_letter_version=$4 AND rollup_dispatch_consumed_version>=$4 AND NOT rollup_dispatch_pending RETURNING {COLS}"))).bind(t).bind(s).bind(id).bind(v).fetch_optional(db).await.map_err(|e|e.to_string())
 }
 async fn fetch(
     db: &Db,
@@ -106,7 +106,7 @@ async fn fetch(
     s: &str,
     id: &str,
 ) -> Result<Option<RollupDispatchOutbox>, String> {
-    sqlx::query_as(q)
+    sqlx::query_as(sqlx::AssertSqlSafe(q))
         .bind(t)
         .bind(s)
         .bind(id)
@@ -121,7 +121,7 @@ async fn update(
     error: Option<&str>,
 ) -> Result<bool, String> {
     let q=format!("UPDATE engine_summaries SET {set} WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND rollup_dispatch_version>=$4");
-    let mut query = sqlx::query(&q)
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(q))
         .bind(&e.tenant_id)
         .bind(&e.source_id)
         .bind(&e.id)

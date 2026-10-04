@@ -1064,13 +1064,13 @@ async fn version_two_database_migrates_through_conversation_schema() {
     .await
     .expect("migration table");
     for statement in crate::schema::SCHEMA_V1 {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(&mut connection)
             .await
             .expect("schema v1");
     }
     for statement in crate::schema::SCHEMA_V2 {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(&mut connection)
             .await
             .expect("schema v2");

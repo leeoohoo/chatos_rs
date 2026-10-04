@@ -52,7 +52,9 @@ async fn fetch_run(
     owner_user_id: &str,
     run_id: &str,
 ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
-    sqlx::query(&format!("{RUN_SELECT} AND owner_user_id = ?"))
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{RUN_SELECT} AND owner_user_id = ?"
+    )))
         .bind(run_id)
         .bind(owner_user_id)
         .fetch_optional(&mut *connection)
@@ -225,7 +227,7 @@ pub(super) async fn list_events(
              WHERE r.owner_user_id = ? AND e.cursor > ? AND e.run_id = ? \
              {event_type_filter} ORDER BY e.cursor {order} LIMIT ?"
         );
-        let mut query = sqlx::query(&sql)
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(payload_mode)
             .bind(owner_user_id)
             .bind(after_cursor)

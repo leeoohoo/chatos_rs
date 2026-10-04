@@ -230,12 +230,12 @@ impl LocalNotepadStore for SqliteClientStorage {
         limit: u32,
     ) -> Result<Vec<LocalNotepadNote>, ClientStorageError> {
         let rows = match query.filter(|value| !value.is_empty()) {
-            Some(query) => sqlx::query(&format!(
+            Some(query) => sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{NOTE_SELECT} WHERE owner_user_id = ? AND (\
                      instr(lower(title), lower(?)) > 0 OR instr(lower(folder), lower(?)) > 0 OR \
                      instr(lower(content), lower(?)) > 0 OR instr(lower(tags_json), lower(?)) > 0) \
                      ORDER BY updated_at_unix_ms DESC, note_id LIMIT ?"
-            ))
+            )))
             .bind(owner_user_id)
             .bind(query)
             .bind(query)
@@ -245,10 +245,10 @@ impl LocalNotepadStore for SqliteClientStorage {
             .fetch_all(&self.pool)
             .await
             .db()?,
-            None => sqlx::query(&format!(
+            None => sqlx::query(sqlx::AssertSqlSafe(format!(
                 "{NOTE_SELECT} WHERE owner_user_id = ? \
                      ORDER BY updated_at_unix_ms DESC, note_id LIMIT ?"
-            ))
+            )))
             .bind(owner_user_id)
             .bind(i64::from(limit))
             .fetch_all(&self.pool)

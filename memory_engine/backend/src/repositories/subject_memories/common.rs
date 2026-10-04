@@ -23,7 +23,7 @@ pub(crate) fn build_subject_memory_query<'a>(
     subject_id: &'a str,
     memory_type: Option<&'a str>,
     level: Option<i64>,
-) -> QueryBuilder<'a, Postgres> {
+) -> QueryBuilder<Postgres> {
     let mut query = QueryBuilder::new("SELECT data FROM engine_subject_memories WHERE tenant_id=");
     query
         .push_bind(tenant_id)

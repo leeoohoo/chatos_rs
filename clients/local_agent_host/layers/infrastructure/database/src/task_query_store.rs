@@ -64,7 +64,7 @@ pub(super) async fn list_graphs(
          FROM summaries WHERE 1 = 1{scope_filter}{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, graph_id DESC LIMIT ?"
     );
-    let mut query = sqlx::query(&sql).bind(owner_user_id);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_user_id);
     if let (Some(entity_type), Some(entity_id)) = (source_entity_type, source_entity_id) {
         query = query.bind(entity_type).bind(entity_id);
     }

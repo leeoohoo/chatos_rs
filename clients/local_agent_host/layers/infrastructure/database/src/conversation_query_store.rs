@@ -30,7 +30,7 @@ pub(super) async fn list_conversations(
          updated_at_unix_ms FROM local_conversations WHERE owner_user_id = ?{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, conversation_id ASC LIMIT ?"
     );
-    let mut query = sqlx::query(&sql).bind(owner_user_id);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_user_id);
     if let (Some(timestamp), Some(conversation_id)) =
         (before_updated_at_unix_ms, before_conversation_id)
     {

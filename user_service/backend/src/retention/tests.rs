@@ -40,9 +40,9 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
 
     assert_eq!(prune_expired_user_data(&pool, 10).await.unwrap(), 7);
     for (table, column, expired_id, live_id) in record_keys(&expired, &live) {
-        let remaining: Vec<String> = sqlx::query_scalar(&format!(
+        let remaining: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT {column} FROM {table} WHERE {column}=ANY($1) ORDER BY {column}"
-        ))
+        )))
         .bind(vec![expired_id, live_id.clone()])
         .fetch_all(&pool)
         .await
@@ -51,7 +51,9 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
     }
 
     for (table, column, expired_id, live_id) in record_keys(&expired, &live) {
-        sqlx::query(&format!("DELETE FROM {table} WHERE {column}=ANY($1)"))
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE {column}=ANY($1)"
+        )))
             .bind(vec![expired_id, live_id])
             .execute(&pool)
             .await
@@ -66,54 +68,59 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
 
 async fn insert_unix_expiry_records(pool: &sqlx::PgPool, user_id: &str, id: &str, expired: bool) {
     let expiry = if expired {
-        "extract(epoch FROM now())::bigint-1"
+        chrono::Utc::now().timestamp() - 1
     } else {
-        "extract(epoch FROM now())::bigint+3600"
+        chrono::Utc::now().timestamp() + 3_600
     };
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO revoked_tokens(jti,subject_id,revoked_at,expires_at) \
-         VALUES($1,$2,now(),{expiry})"
-    ))
+         VALUES($1,$2,now(),$3)",
+    )
     .bind(id)
     .bind(user_id)
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("revoked token");
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO registration_email_codes(email,expires_at,updated_at,data) \
-         VALUES($1,{expiry},now(),'{{}}'::jsonb)"
-    ))
+         VALUES($1,$2,now(),'{}'::jsonb)",
+    )
     .bind(format!("{id}@test.invalid"))
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("registration code");
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO local_connector_auth_tickets(id,ticket_hash,user_id,expires_at,updated_at,data) \
-         VALUES($1,$2,$3,{expiry},now(),'{{}}'::jsonb)"
-    ))
+         VALUES($1,$2,$3,$4,now(),'{}'::jsonb)",
+    )
     .bind(id)
     .bind(format!("ticket-hash-{id}"))
     .bind(user_id)
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("local connector ticket");
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO wechat_bind_tickets(id,ticket_hash,user_id,app_id,status,expires_at,updated_at,data) \
-         VALUES($1,$2,$3,'contract','pending',{expiry},now(),'{{}}'::jsonb)"
-    ))
+         VALUES($1,$2,$3,'contract','pending',$4,now(),'{}'::jsonb)",
+    )
     .bind(format!("wechat-{id}"))
     .bind(format!("wechat-hash-{id}"))
     .bind(user_id)
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("wechat ticket");
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO client_sessions(id,user_id,client_type,token_jti,expires_at,updated_at,data) \
-         VALUES($1,$2,'contract',$3,{expiry},now(),'{{}}'::jsonb)"
-    ))
+         VALUES($1,$2,'contract',$3,$4,now(),'{}'::jsonb)",
+    )
     .bind(format!("session-{id}"))
     .bind(user_id)
     .bind(format!("session-jti-{id}"))
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("client session");
@@ -121,22 +128,22 @@ async fn insert_unix_expiry_records(pool: &sqlx::PgPool, user_id: &str, id: &str
 
 async fn insert_timestamp_expiry_records(pool: &sqlx::PgPool, id: &str, expired: bool) {
     let expiry = if expired {
-        "now()-interval '1 second'"
+        chrono::Utc::now() - chrono::Duration::seconds(1)
     } else {
-        "now()+interval '1 hour'"
+        chrono::Utc::now() + chrono::Duration::hours(1)
     };
-    sqlx::query(&format!(
-        "INSERT INTO device_proof_nonces(id,expires_at) VALUES($1,{expiry})"
-    ))
+    sqlx::query("INSERT INTO device_proof_nonces(id,expires_at) VALUES($1,$2)")
     .bind(id)
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("device proof nonce");
-    sqlx::query(&format!(
+    sqlx::query(
         "INSERT INTO login_throttle(key,attempts,window_start_unix,expires_at) \
-         VALUES($1,1,1,{expiry})"
-    ))
+         VALUES($1,1,1,$2)",
+    )
     .bind(id)
+    .bind(expiry)
     .execute(pool)
     .await
     .expect("login throttle");

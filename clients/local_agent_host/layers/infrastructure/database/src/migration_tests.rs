@@ -47,7 +47,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     ];
     for (version, statements) in legacy_schemas {
         for statement in *statements {
-            sqlx::query(statement)
+            sqlx::query(sqlx::AssertSqlSafe(*statement))
                 .execute(&mut connection)
                 .await
                 .expect("legacy schema statement");
@@ -151,7 +151,9 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
         "local_capability_policy_snapshots",
         "local_model_config_snapshots",
     ] {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table}"
+        )))
             .fetch_one(&storage.pool)
             .await
             .expect("snapshot count");
@@ -227,7 +229,7 @@ async fn current_database_reopen_does_not_create_redundant_backup() {
 }
 
 async fn primary_key_columns(storage: &SqliteClientStorage, table: &str) -> Vec<String> {
-    let mut columns = sqlx::query(&format!("PRAGMA table_info({table})"))
+    let mut columns = sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
         .fetch_all(&storage.pool)
         .await
         .expect("table info")

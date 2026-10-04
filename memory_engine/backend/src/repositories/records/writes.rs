@@ -223,7 +223,7 @@ pub async fn delete_records_by_thread(
     if normalized.is_some() {
         sql.push_str(" AND record_type=$4");
     }
-    let mut query = sqlx::query(&sql)
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(tenant_id)
         .bind(source_id)
         .bind(thread_id);

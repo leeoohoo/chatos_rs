@@ -108,7 +108,7 @@ async fn list_internal(
             .map_err(|e| e.to_string())?,
     )
 }
-fn append_prefixed<'a>(q: &mut QueryBuilder<'a, Postgres>, column: &str, value: Option<&'a str>) {
+fn append_prefixed(q: &mut QueryBuilder<Postgres>, column: &str, value: Option<&str>) {
     if let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) {
         q.push(" AND ").push(column).push("=").push_bind(v);
     }

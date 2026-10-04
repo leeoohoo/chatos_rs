@@ -118,7 +118,7 @@ async fn run(args: Args) -> Result<(), String> {
     };
     let mut cursor = source
         .collection::<UserRecord>("users")
-        .find(filter, None)
+        .find(filter)
         .await
         .map_err(redacted_error("read source users"))?;
     let mut users = Vec::new();
@@ -328,7 +328,7 @@ async fn load_identities(
     };
     let mut cursor = source
         .collection::<UserExternalIdentityRecord>("user_external_identities")
-        .find(filter, None)
+        .find(filter)
         .await
         .map_err(redacted_error("read source external identities"))?;
     let mut identities = Vec::new();

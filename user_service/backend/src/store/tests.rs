@@ -49,7 +49,9 @@ async fn postgres_super_admin_bootstrap_contract() {
         .expect("connect contract test database");
     let schema = format!("user_admin_gate_{}", uuid::Uuid::new_v4().simple());
     let quoted_schema = format!("\"{schema}\"");
-    sqlx::query(format!("CREATE SCHEMA {quoted_schema}").as_str())
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA {quoted_schema}"
+    )))
         .execute(&root_pool)
         .await
         .expect("create isolated contract test schema");
@@ -60,7 +62,7 @@ async fn postgres_super_admin_bootstrap_contract() {
         .after_connect(move |connection, _metadata| {
             let search_path = search_path.clone();
             Box::pin(async move {
-                sqlx::query(search_path.as_str())
+                sqlx::query(sqlx::AssertSqlSafe(search_path))
                     .execute(connection)
                     .await?;
                 Ok(())
@@ -165,7 +167,9 @@ async fn postgres_super_admin_bootstrap_contract() {
         .is_none());
 
     pool.close().await;
-    sqlx::query(format!("DROP SCHEMA {quoted_schema} CASCADE").as_str())
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA {quoted_schema} CASCADE"
+    )))
         .execute(&root_pool)
         .await
         .expect("drop isolated contract test schema");

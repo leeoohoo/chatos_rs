@@ -50,7 +50,7 @@ pub(super) async fn list_runs(
          WHERE owner_user_id = ?{scope_filter}{status_filter}{updated_after_filter}{cursor_filter} \
          ORDER BY updated_at_unix_ms DESC, run_id DESC LIMIT ?"
     );
-    let mut query = sqlx::query(&sql).bind(owner_user_id);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_user_id);
     if let Some(status) = status {
         query = query.bind(status.as_str());
     }

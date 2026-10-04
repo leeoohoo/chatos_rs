@@ -28,7 +28,7 @@ impl LocalRemoteConnectionStore for SqliteClientStorage {
             "{REMOTE_CONNECTION_SELECT} WHERE owner_user_id = ? \
              ORDER BY updated_at_unix_ms DESC, connection_id"
         );
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(owner_user_id)
             .fetch_all(&self.pool)
             .await
@@ -45,7 +45,7 @@ impl LocalRemoteConnectionStore for SqliteClientStorage {
     ) -> Result<Option<LocalRemoteConnection>, ClientStorageError> {
         let query =
             format!("{REMOTE_CONNECTION_SELECT} WHERE owner_user_id = ? AND connection_id = ?");
-        sqlx::query(&query)
+        sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(owner_user_id)
             .bind(connection_id)
             .fetch_optional(&self.pool)

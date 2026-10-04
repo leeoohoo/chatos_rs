@@ -39,8 +39,9 @@ exclude = [
 resolver = "2"
 
 [workspace.dependencies]
-sqlx = { version = "0.8.6", default-features = false, features = [
-  "runtime-tokio-rustls",
+sqlx = { version = "0.9.0", default-features = false, features = [
+  "runtime-tokio",
+  "tls-rustls-ring",
   "postgres",
   "chrono",
   "json",

@@ -62,7 +62,7 @@ pub(crate) fn build_summary_query<'a>(
     summary_type: Option<&'a str>,
     status: Option<&'a str>,
     level: Option<i64>,
-) -> QueryBuilder<'a, Postgres> {
+) -> QueryBuilder<Postgres> {
     let mut query = QueryBuilder::new(select);
     query.push(" WHERE thread_id=").push_bind(thread_id);
     append(&mut query, "tenant_id", tenant_id);
@@ -75,10 +75,10 @@ pub(crate) fn build_summary_query<'a>(
     query
 }
 
-pub(crate) fn append<'a>(
-    query: &mut QueryBuilder<'a, Postgres>,
+pub(crate) fn append(
+    query: &mut QueryBuilder<Postgres>,
     column: &str,
-    value: Option<&'a str>,
+    value: Option<&str>,
 ) {
     if let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) {
         query.push(" AND ").push(column).push("=").push_bind(value);

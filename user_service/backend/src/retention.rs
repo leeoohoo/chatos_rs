@@ -123,7 +123,7 @@ async fn prune_expired_user_data(pool: &sqlx::PgPool, batch_size: i64) -> Result
              DELETE FROM {table} target USING expired WHERE target.ctid=expired.ctid"
         );
         deleted = deleted.saturating_add(
-            sqlx::query(&statement)
+            sqlx::query(sqlx::AssertSqlSafe(statement))
                 .bind(batch_size)
                 .execute(&mut *transaction)
                 .await
@@ -138,7 +138,7 @@ async fn prune_expired_user_data(pool: &sqlx::PgPool, batch_size: i64) -> Result
              DELETE FROM {table} target USING expired WHERE target.ctid=expired.ctid"
         );
         deleted = deleted.saturating_add(
-            sqlx::query(&statement)
+            sqlx::query(sqlx::AssertSqlSafe(statement))
                 .bind(batch_size)
                 .execute(&mut *transaction)
                 .await

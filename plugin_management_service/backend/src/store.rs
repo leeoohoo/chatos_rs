@@ -373,7 +373,7 @@ pub(super) fn db_error(error: sqlx::Error) -> String {
 }
 
 pub(super) async fn fetch_one<T: DeserializeOwned>(
-    query: &str,
+    query: &'static str,
     id: &str,
     pool: &chatos_postgres::PgPool,
 ) -> Result<Option<T>, String> {

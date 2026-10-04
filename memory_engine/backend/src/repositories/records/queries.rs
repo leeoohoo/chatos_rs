@@ -274,7 +274,7 @@ pub async fn list_turn_process_records(
 
 async fn fetch(
     db: &Db,
-    mut query: QueryBuilder<'_, Postgres>,
+    mut query: QueryBuilder<Postgres>,
 ) -> Result<Vec<EngineRecord>, String> {
     let rows = query
         .build_query_scalar::<Json<serde_json::Value>>()

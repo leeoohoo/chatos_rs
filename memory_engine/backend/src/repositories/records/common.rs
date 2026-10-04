@@ -16,7 +16,7 @@ pub(crate) fn build_record_query<'a>(
     role: Option<&'a str>,
     record_type: Option<&'a str>,
     summary_status: Option<&'a str>,
-) -> QueryBuilder<'a, Postgres> {
+) -> QueryBuilder<Postgres> {
     let mut query = QueryBuilder::new(select);
     query.push(" WHERE thread_id=").push_bind(thread_id);
     append(&mut query, "tenant_id", tenant_id);
@@ -33,7 +33,7 @@ pub(crate) fn build_record_query<'a>(
     query
 }
 
-fn append<'a>(query: &mut QueryBuilder<'a, Postgres>, column: &str, value: Option<&'a str>) {
+fn append(query: &mut QueryBuilder<Postgres>, column: &str, value: Option<&str>) {
     if let Some(value) = normalized(value) {
         query.push(" AND ").push(column).push("=").push_bind(value);
     }

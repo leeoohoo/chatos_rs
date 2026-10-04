@@ -275,9 +275,9 @@ async fn fetch_installation_for_owner(
     owner_user_id: &str,
     installation_id: &str,
 ) -> Result<Option<LocalPluginInstallationRecord>, ClientStorageError> {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "{INSTALLATION_SELECT} WHERE installation_id = ? AND owner_user_id = ?"
-    ))
+    )))
     .bind(installation_id)
     .bind(owner_user_id)
     .fetch_optional(&mut *connection)
