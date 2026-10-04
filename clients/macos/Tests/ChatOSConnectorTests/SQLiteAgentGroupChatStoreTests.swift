@@ -3247,6 +3247,147 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
         XCTAssertEqual(retriedTodo?.status, .inProgress)
     }
 
+    func testBlockedCompletedTodoReopenCreatesIndependentExecutorAttempt() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "重新执行者")
+        let room = try await makeRoom(store, projectID: "todo-reopen-project")
+        _ = try await store.addMember(
+            ownerUserID: "alice",
+            roomID: room.id,
+            agentID: agent.id,
+            draft: .init(role: "执行者")
+        )
+        let todo = try await store.createAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            requestKey: "reopen-completed-delivery",
+            draft: .init(title: "解除阻塞后重新执行", teamRoomID: room.id),
+            nowUnixMs: 100
+        )
+        let firstValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 101
+        )
+        let first = try XCTUnwrap(firstValue)
+        let firstClaimValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 102
+        )
+        _ = try XCTUnwrap(firstClaimValue)
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .blocked, blockedReason: "等待本地门禁解除"),
+            nowUnixMs: 103
+        )
+        _ = try await store.completeHeartbeatDelivery(
+            ownerUserID: "alice",
+            deliveryID: first.id,
+            nowUnixMs: 104
+        )
+        _ = try await store.updateAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            todoID: todo.id,
+            update: .init(status: .pending, blockedReason: ""),
+            nowUnixMs: 105
+        )
+
+        let secondValue = try await store.startNextReadyAgentTodo(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            nowUnixMs: 106
+        )
+        let second = try XCTUnwrap(secondValue)
+        XCTAssertNotEqual(second.id, first.id)
+        XCTAssertEqual(first.todoID, todo.id)
+        XCTAssertEqual(second.todoID, todo.id)
+        XCTAssertEqual(second.deduplicationKey, "todo:\(todo.id):attempt:106")
+        let completedFirst = try await store.delivery(ownerUserID: "alice", deliveryID: first.id)
+        XCTAssertEqual(completedFirst?.status, .completed)
+        let reopenedTodo = try await store.todoForDelivery(ownerUserID: "alice", deliveryID: second.id)
+        XCTAssertEqual(reopenedTodo?.id, todo.id)
+        XCTAssertEqual(try sqliteInt(
+            url,
+            sql: "SELECT COUNT(*) FROM project_agent_deliveries WHERE trigger_kind = 'todo'"
+        ), 2)
+    }
+
+    func testNeedsReviewManagerRunDoesNotBlockLaterCommunication() async throws {
+        let url = databaseURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try SQLiteAgentGroupChatStore(databaseURL: url)
+        let agent = try await makeAgent(store, name: "通讯恢复者")
+        let room = try await store.openHumanAgentDirect(ownerUserID: "alice", agentID: agent.id)
+        let firstPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "第一条消息")
+        )
+        let firstValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            lane: .manager,
+            nowUnixMs: 101
+        )
+        let first = try XCTUnwrap(firstValue)
+        let runID = UUID()
+        let context = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: room.projectID,
+            roomID: room.id,
+            agentID: agent.id,
+            deliveryID: first.id,
+            triggerMessageID: firstPost.message.id,
+            rootMessageID: firstPost.message.rootMessageID,
+            runID: runID.uuidString.lowercased(),
+            hopCount: first.hopCount,
+            lane: .manager
+        )
+        var checkpoint = AgentRunCheckpoint(
+            scope: LocalAgentGroupChatRun.runtimeScope(for: context),
+            messages: [.init(role: .system, content: "communication")]
+        )
+        checkpoint.id = runID
+        checkpoint.status = .needsReview
+        checkpoint.stopReason = "本地确定性写入被拒绝"
+        try await store.saveRun(try LocalAgentGroupChatRun(
+            id: runID,
+            context: context,
+            modelConfigID: agent.draft.modelConfigID,
+            policy: .init(),
+            checkpoint: checkpoint,
+            createdAtUnixMs: 101,
+            updatedAtUnixMs: 102
+        ))
+        let secondPost = try await store.postMessage(
+            ownerUserID: "alice",
+            roomID: room.id,
+            draft: .init(senderKind: .human, senderID: "alice", content: "第二条消息")
+        )
+
+        let quarantinedCount = try await store.quarantineNeedsReviewManagerDeliveries(
+            ownerUserID: "alice",
+            nowUnixMs: 103
+        )
+        XCTAssertEqual(quarantinedCount, 1)
+        let quarantinedFirst = try await store.delivery(ownerUserID: "alice", deliveryID: first.id)
+        XCTAssertEqual(quarantinedFirst?.status, .failed)
+        let secondValue = try await store.claimNextDelivery(
+            ownerUserID: "alice",
+            agentID: agent.id,
+            lane: .manager,
+            nowUnixMs: 104
+        )
+        let second = try XCTUnwrap(secondValue)
+        XCTAssertEqual(second.id, secondPost.deliveries.first?.id)
+    }
+
     func testScheduleStateNeverAdvertisesTodoThatExecutorLaneCannotStart() async throws {
         let url = databaseURL()
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

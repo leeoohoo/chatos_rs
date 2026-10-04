@@ -18,9 +18,7 @@ struct TeamTodoRunPresentation: Equatable, Sendable {
         var result: [String: TeamTodoRunPresentation] = [:]
         for run in runs {
             guard let delivery = deliveriesByRunID[run.id],
-                  delivery.triggerKind == .todo,
-                  delivery.deduplicationKey.hasPrefix("todo:") else { continue }
-            let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+                  let todoID = delivery.todoID else { continue }
             guard result[todoID] == nil else { continue }
             result[todoID] = .init(run: run)
         }

@@ -422,12 +422,14 @@ extension SQLiteAgentGroupChatStore {
                     UPDATE project_agent_deliveries
                     SET status = 'cancelled', last_error = ?, completed_at_unix_ms = ?
                     WHERE owner_user_id = ? AND target_agent_id = ?
-                      AND deduplication_key = ? AND trigger_kind = 'todo'
+                      AND (deduplication_key = ? OR deduplication_key LIKE ?)
+                      AND trigger_kind = 'todo'
                       AND status IN ('pending', 'running')
                     """,
                     [
                         .text("Todo 已由项目经理停止。"), .integer(revised.updatedAtUnixMs),
                         .text(ownerUserID), .text(agentID), .text("todo:\(todoID)"),
+                        .text("todo:\(todoID):attempt:%"),
                     ]
                 )
             }
@@ -449,13 +451,14 @@ extension SQLiteAgentGroupChatStore {
              AND run.delivery_id = delivery.id
             WHERE delivery.owner_user_id = ?
               AND delivery.target_agent_id = ?
-              AND delivery.deduplication_key = ?
+              AND (delivery.deduplication_key = ? OR delivery.deduplication_key LIKE ?)
               AND delivery.trigger_kind = 'todo'
               AND delivery.status = 'running'
               AND run.status = ?
             """,
             [
                 .text(ownerUserID), .text(agentID), .text("todo:\(todoID)"),
+                .text("todo:\(todoID):attempt:%"),
                 .text(AgentRunCheckpoint.Status.needsReview.rawValue),
             ]
         ) > 0

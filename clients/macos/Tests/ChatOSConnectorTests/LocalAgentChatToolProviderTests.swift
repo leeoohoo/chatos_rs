@@ -160,16 +160,13 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(coverage.coveredTools, liveDefinitions.count)
 
         let professionRef = snapshot.skills[0].skillRef
-        do {
-            _ = try await provider.execute(.init(
-                id: "list-before-activate",
-                name: "agent_skill_list_resources",
-                arguments: try toolArguments(["skill_ref": professionRef])
-            ))
-            XCTFail("Resources must require activation")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("skill_ref_not_activated"))
-        }
+        let listBeforeActivation = try await provider.execute(.init(
+            id: "list-before-activate",
+            name: "agent_skill_list_resources",
+            arguments: try toolArguments(["skill_ref": professionRef])
+        ))
+        XCTAssertTrue(listBeforeActivation.isError)
+        XCTAssertTrue(listBeforeActivation.content.contains("skill_ref_not_activated"))
 
         let activation = try await provider.execute(.init(
             id: "activate",
@@ -195,16 +192,13 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
             try XCTUnwrap(LocalAgentSkillCatalog.profession(key: "security_engineer")),
             language: .simplifiedChinese
         )
-        do {
-            _ = try await provider.execute(.init(
-                id: "identity-switch",
-                name: "agent_skill_activate",
-                arguments: try toolArguments(["skill_ref": unbound.skillRef])
-            ))
-            XCTFail("An unbound profession must not be activatable")
-        } catch {
-            XCTAssertTrue(error.localizedDescription.contains("skill_ref"))
-        }
+        let identitySwitch = try await provider.execute(.init(
+            id: "identity-switch",
+            name: "agent_skill_activate",
+            arguments: try toolArguments(["skill_ref": unbound.skillRef])
+        ))
+        XCTAssertTrue(identitySwitch.isError)
+        XCTAssertTrue(identitySwitch.content.contains("skill_ref"))
 
         let productRef = "product-skill:chatos-project-team-setup"
         let productActivation = try await provider.execute(.init(

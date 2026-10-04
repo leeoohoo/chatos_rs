@@ -222,7 +222,19 @@ impl LocalToolScheduler {
         let heartbeat_interval = claim_heartbeat_interval(self.lease_duration_ms);
         loop {
             tokio::select! {
-                outcome = &mut execution => return Ok(Some(outcome)),
+                outcome = &mut execution => {
+                    // Re-check the wall-clock lease after wake from system sleep. Committing an
+                    // outcome under an expired claim is a normal lost-ownership condition, not a
+                    // fatal coordinator error.
+                    let renewed = self.runtime.renew_tool_claim(
+                        &self.owner_user_id,
+                        &claim.invocation.invocation_id,
+                        &claim.claim_token,
+                        claim.invocation.version,
+                        self.lease_duration_ms,
+                    ).await?;
+                    return Ok(renewed.then_some(outcome));
+                },
                 _ = tokio::time::sleep(heartbeat_interval) => {
                     let renewed = self.runtime.renew_tool_claim(
                         &self.owner_user_id,

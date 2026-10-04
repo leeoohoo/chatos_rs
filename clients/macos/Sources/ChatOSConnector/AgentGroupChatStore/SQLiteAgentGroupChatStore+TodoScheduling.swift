@@ -244,11 +244,20 @@ extension SQLiteAgentGroupChatStore {
         todo: LocalAgentTodo,
         nowUnixMs: Int64
     ) throws -> ProjectAgentDelivery {
-        let deduplicationKey = "todo:\(todo.id)"
-        let existing = try readDelivery(
+        let baseDeduplicationKey = "todo:\(todo.id)"
+        let existing = try AgentDeliveryRepository.latestTodoDelivery(
+            database,
             ownerUserID: ownerUserID,
-            deduplicationKey: deduplicationKey
+            todoID: todo.id,
+            preparedStatement: recordPreparedStatement
         )
+        let deduplicationKey = if existing == nil {
+            baseDeduplicationKey
+        } else if existing?.status == .failed {
+            existing!.deduplicationKey
+        } else {
+            "\(baseDeduplicationKey):attempt:\(nowUnixMs)"
+        }
         return try prepareTodoDelivery(
             ownerUserID: ownerUserID,
             agentID: agentID,
@@ -269,47 +278,51 @@ extension SQLiteAgentGroupChatStore {
     ) throws -> ProjectAgentDelivery {
         if let existing = existingDelivery {
             guard existing.triggerKind == .todo,
-                  existing.targetAgentID == agentID,
-                  existing.status == .failed else {
+                  existing.targetAgentID == agentID else {
                 throw AgentGroupChatError.conflict
             }
-            try execute(
-                """
-                UPDATE project_agent_messages
-                SET content = ?
-                WHERE owner_user_id = ? AND id = ?
-                """,
-                [
-                    .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
-                    .text(ownerUserID), .text(existing.messageID),
-                ]
-            )
-            try execute(
-                """
-                UPDATE project_agent_deliveries
-                SET status = 'pending', response_message_id = NULL, last_error = NULL,
-                    claimed_at_unix_ms = NULL, completed_at_unix_ms = NULL
-                WHERE owner_user_id = ? AND id = ? AND status = 'failed'
-                """,
-                [.text(ownerUserID), .text(existing.id)]
-            )
-            guard sqlite3_changes(database) == 1 else {
+            if existing.status == .failed {
+                try execute(
+                    """
+                    UPDATE project_agent_messages
+                    SET content = ?
+                    WHERE owner_user_id = ? AND id = ?
+                    """,
+                    [
+                        .text(todo.detail.isEmpty ? todo.title : "\(todo.title)\n\n\(todo.detail)"),
+                        .text(ownerUserID), .text(existing.messageID),
+                    ]
+                )
+                try execute(
+                    """
+                    UPDATE project_agent_deliveries
+                    SET status = 'pending', response_message_id = NULL, last_error = NULL,
+                        claimed_at_unix_ms = NULL, completed_at_unix_ms = NULL
+                    WHERE owner_user_id = ? AND id = ? AND status = 'failed'
+                    """,
+                    [.text(ownerUserID), .text(existing.id)]
+                )
+                guard sqlite3_changes(database) == 1 else {
+                    throw AgentGroupChatError.conflict
+                }
+                return .init(
+                    id: existing.id,
+                    ownerUserID: existing.ownerUserID,
+                    roomID: existing.roomID,
+                    messageID: existing.messageID,
+                    rootMessageID: existing.rootMessageID,
+                    targetAgentID: existing.targetAgentID,
+                    triggerKind: existing.triggerKind,
+                    status: .pending,
+                    attempt: existing.attempt,
+                    hopCount: existing.hopCount,
+                    deduplicationKey: existing.deduplicationKey,
+                    createdAtUnixMs: existing.createdAtUnixMs
+                )
+            }
+            guard existing.status == .completed || existing.status == .cancelled else {
                 throw AgentGroupChatError.conflict
             }
-            return .init(
-                id: existing.id,
-                ownerUserID: existing.ownerUserID,
-                roomID: existing.roomID,
-                messageID: existing.messageID,
-                rootMessageID: existing.rootMessageID,
-                targetAgentID: existing.targetAgentID,
-                triggerKind: existing.triggerKind,
-                status: .pending,
-                attempt: existing.attempt,
-                hopCount: existing.hopCount,
-                deduplicationKey: existing.deduplicationKey,
-                createdAtUnixMs: existing.createdAtUnixMs
-            )
         }
 
         let messageID = UUID().uuidString.lowercased()

@@ -33,6 +33,17 @@ public struct ProjectAgentDelivery: Codable, Sendable, Equatable, Identifiable {
 
     public var lane: LocalAgentRunLane { triggerKind == .todo ? .executor : .manager }
 
+    /// A Todo may have multiple independent executor Runs across Human/manager reopen cycles.
+    /// The first Run keeps the historical `todo:<id>` key; later Runs append an attempt suffix.
+    public var todoID: String? {
+        guard triggerKind == .todo, deduplicationKey.hasPrefix("todo:") else { return nil }
+        let value = String(deduplicationKey.dropFirst("todo:".count))
+        if let marker = value.range(of: ":attempt:") {
+            return String(value[..<marker.lowerBound])
+        }
+        return value
+    }
+
     public init(
         id: String,
         ownerUserID: String,

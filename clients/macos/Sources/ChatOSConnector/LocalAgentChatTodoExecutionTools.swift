@@ -330,9 +330,7 @@ extension LocalAgentChatToolProvider {
     }
 
     func todoBoundToDelivery(_ delivery: ProjectAgentDelivery) async throws -> LocalAgentTodo? {
-        guard delivery.triggerKind == .todo,
-              delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
-        let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+        guard let todoID = delivery.todoID else { return nil }
         guard let todo = try await store.todos(
             ownerUserID: context.ownerUserID,
             todoIDs: [todoID]

@@ -52,6 +52,8 @@ extension AppModel {
             agentHeartbeatTask = nil
             agentCommunicationTask?.cancel()
             agentCommunicationTask = nil
+            agentExecutorRecoveryTask?.cancel()
+            agentExecutorRecoveryTask = nil
             agentArtifactStorageTask?.cancel()
             agentArtifactStorageTask = nil
             agentArtifactStorageOwnerUserID = nil
@@ -179,6 +181,11 @@ extension AppModel {
 
     func recoverLocalAgentHostAfterSystemWake() {
         guard let ownerUserID = authenticatedUserID else { return }
+        // A delayed crash retry scheduled before sleep must not restart the freshly recovered
+        // process a second time after wake.
+        localAgentCrashRecoveryTask?.cancel()
+        localAgentCrashRecoveryTask = nil
+        localAgentCrashRecoveryAttempts = 0
         // A child process or its stdio pipes may not survive system sleep even
         // though the SwiftUI application does. Re-run the complete bootstrap so
         // credentials are sourced again instead of being retained in memory.
@@ -242,6 +249,8 @@ extension AppModel {
         localAgentHostHealthCheckGeneration &+= 1
         localAgentHostHealthCheckTask?.cancel()
         localAgentHostHealthCheckTask = nil
+        agentExecutorRecoveryTask?.cancel()
+        agentExecutorRecoveryTask = nil
     }
 
     func recoverLocalAgentHostAfterUnexpectedExit() {

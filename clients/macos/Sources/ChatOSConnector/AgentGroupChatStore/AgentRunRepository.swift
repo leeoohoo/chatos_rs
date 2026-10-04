@@ -308,14 +308,18 @@ enum AgentRunRepository {
         return try AgentGroupChatDatabase.query(
             handle,
             """
-            WITH ranked AS (
-                SELECT substr(delivery.deduplication_key, 6) AS todo_id,
+            WITH todo_runs AS (
+                SELECT CASE
+                           WHEN instr(substr(delivery.deduplication_key, 6), ':attempt:') > 0
+                           THEN substr(
+                               substr(delivery.deduplication_key, 6),
+                               1,
+                               instr(substr(delivery.deduplication_key, 6), ':attempt:') - 1
+                           )
+                           ELSE substr(delivery.deduplication_key, 6)
+                       END AS todo_id,
                        run.id AS run_id, run.status, run.run_json,
-                       run.updated_at_unix_ms,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY delivery.deduplication_key
-                           ORDER BY run.updated_at_unix_ms DESC, run.id DESC
-                       ) AS recency_rank
+                       run.updated_at_unix_ms
                 FROM local_agent_group_chat_runs run
                 JOIN project_agent_deliveries delivery
                   ON delivery.owner_user_id = run.owner_user_id
@@ -323,6 +327,13 @@ enum AgentRunRepository {
                 WHERE run.owner_user_id = ? AND run.room_id = ?
                   AND delivery.trigger_kind = 'todo'
                   AND delivery.deduplication_key LIKE 'todo:%'
+            ), ranked AS (
+                SELECT todo_id, run_id, status, run_json, updated_at_unix_ms,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY todo_id
+                           ORDER BY updated_at_unix_ms DESC, run_id DESC
+                       ) AS recency_rank
+                FROM todo_runs
             )
             SELECT todo_id, run_id, status,
                    (SELECT COUNT(*)

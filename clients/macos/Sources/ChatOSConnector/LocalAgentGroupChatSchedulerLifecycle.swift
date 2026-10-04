@@ -148,20 +148,29 @@ extension LocalAgentGroupChatScheduler {
         deliveryID: String
     ) async throws -> DeliveryAttemptReceipt {
         let store = try await service.store()
-        guard let delivery = try await store.delivery(
+        guard var delivery = try await store.delivery(
             ownerUserID: ownerUserID,
             deliveryID: deliveryID
         ), let room = try await store.room(
             ownerUserID: ownerUserID,
             roomID: delivery.roomID
         ), room.projectID == projectID, room.status == .active,
-           delivery.status == .running,
            var savedRun = try await store.run(
             ownerUserID: ownerUserID,
             deliveryID: deliveryID
            ), savedRun.checkpoint.status == .needsReview,
            let inFlightCallID = savedRun.checkpoint.inFlightCallID,
            savedRun.checkpoint.pendingCalls.contains(where: { $0.id == inFlightCallID }) else {
+            throw AgentGroupChatError.conflict
+        }
+
+        if delivery.status == .failed, delivery.lane == .manager {
+            delivery = try await store.reactivateManagerDeliveryForReview(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID,
+                nowUnixMs: now()
+            )
+        } else if delivery.status != .running {
             throw AgentGroupChatError.conflict
         }
 

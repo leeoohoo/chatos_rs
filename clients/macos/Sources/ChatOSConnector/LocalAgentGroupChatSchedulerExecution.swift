@@ -363,13 +363,23 @@ extension LocalAgentGroupChatScheduler {
         _ = try await session.finish(checkpoint: finalCheckpoint)
         if finalCheckpoint.status == .needsReview,
            currentDelivery?.status == .running {
-            try await suspendTodoForReview(
-                store: store,
-                ownerUserID: ownerUserID,
-                delivery: delivery,
-                runID: context.runID,
-                detail: finalCheckpoint.stopReason ?? "执行中断，需要检查副作用后再决定是否重试。"
-            )
+            if delivery.lane == .executor {
+                try await suspendTodoForReview(
+                    store: store,
+                    ownerUserID: ownerUserID,
+                    delivery: delivery,
+                    runID: context.runID,
+                    detail: finalCheckpoint.stopReason ?? "执行中断，需要检查副作用后再决定是否重试。"
+                )
+            } else {
+                _ = try await store.failDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: delivery.id,
+                    error: finalCheckpoint.stopReason
+                        ?? "通讯 Run 中断，等待用户检查；后续通讯仍会继续。",
+                    nowUnixMs: now()
+                )
+            }
         }
 
         switch finalCheckpoint.status {

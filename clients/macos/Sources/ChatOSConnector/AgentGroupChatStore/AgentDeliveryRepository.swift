@@ -87,6 +87,28 @@ enum AgentDeliveryRepository {
         ).first
     }
 
+    static func latestTodoDelivery(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        todoID: String,
+        preparedStatement: () -> Void
+    ) throws -> ProjectAgentDelivery? {
+        let baseKey = "todo:\(todoID)"
+        preparedStatement()
+        return try AgentGroupChatDatabase.query(
+            handle,
+            """
+            SELECT \(columns) FROM project_agent_deliveries
+            WHERE owner_user_id = ? AND trigger_kind = 'todo'
+              AND (deduplication_key = ? OR deduplication_key LIKE ?)
+            ORDER BY created_at_unix_ms DESC, id DESC
+            LIMIT 1
+            """,
+            [.text(ownerUserID), .text(baseKey), .text("\(baseKey):attempt:%")],
+            row: AgentGroupChatRowMapper.delivery
+        ).first
+    }
+
     static func delivery(
         _ handle: OpaquePointer?,
         ownerUserID: String,

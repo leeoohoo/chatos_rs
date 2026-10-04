@@ -157,6 +157,26 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     }
 
     public func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        do {
+            return try await executeValidated(call)
+        } catch let error as AgentGroupChatError {
+            // Validation, authorization and optimistic-concurrency failures are known to have
+            // rolled back locally. Returning them as tool failures lets the model correct its
+            // plan instead of misclassifying a deterministic rejection as an unknown side effect.
+            // Storage failures remain interruptions because COMMIT/I/O outcome can be uncertain.
+            guard case .storage = error else {
+                return Self.structuredFailure(
+                    code: Self.errorCode(error),
+                    field: Self.errorField(error),
+                    message: error.localizedDescription,
+                    retryable: error != .permissionDenied
+                )
+            }
+            throw error
+        }
+    }
+
+    private func executeValidated(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         if let failure = try await productSkillGateFailure(for: call.name) {
             return failure
         }

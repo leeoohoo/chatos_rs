@@ -114,8 +114,6 @@ extension AgentGroupChatViewModel {
     }
 
     private static func todoID(for delivery: ProjectAgentDelivery) -> String? {
-        guard delivery.triggerKind == .todo,
-              delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
-        return String(delivery.deduplicationKey.dropFirst("todo:".count))
+        delivery.todoID
     }
 }

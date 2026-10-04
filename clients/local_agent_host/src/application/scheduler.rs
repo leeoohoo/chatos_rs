@@ -183,7 +183,20 @@ impl LocalAgentScheduler {
         let heartbeat_interval = claim_heartbeat_interval(self.lease_duration_ms);
         loop {
             tokio::select! {
-                outcome = &mut execution => return Ok(Some(outcome)),
+                outcome = &mut execution => {
+                    // A laptop may remain suspended past the wall-clock lease while the
+                    // executor future is also ready when the runtime resumes. Verify ownership
+                    // once more before committing; a lost claim is recovered durably by the
+                    // next scheduler pass and must never terminate the Host process.
+                    let renewed = self.runtime.renew_run_claim(
+                        &self.owner_user_id,
+                        &claim.run.run_id,
+                        &claim.claim_token,
+                        claim.run.version,
+                        self.lease_duration_ms,
+                    ).await?;
+                    return Ok(renewed.then_some(outcome));
+                },
                 _ = tokio::time::sleep(heartbeat_interval) => {
                     let renewed = self.runtime.renew_run_claim(
                         &self.owner_user_id,

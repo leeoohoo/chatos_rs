@@ -119,15 +119,32 @@ impl LocalAgentHostCoordinator {
         &self,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
+        let mut failure_backoff = Duration::from_millis(100);
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            self.drain_ready_work(&shutdown).await?;
+            if self.drain_ready_work(&shutdown).await.is_err() {
+                tokio::select! {
+                    _ = self.wakeup.notified() => {}
+                    _ = tokio::time::sleep(failure_backoff) => {}
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                }
+                failure_backoff = (failure_backoff * 2).min(Duration::from_secs(5));
+                continue;
+            }
+            failure_backoff = Duration::from_millis(100);
             if *shutdown.borrow() {
                 return Ok(());
             }
-            let delay = self.next_retry_delay().await?;
+            let delay = match self.next_retry_delay().await {
+                Ok(delay) => delay,
+                Err(_) => Duration::from_secs(1),
+            };
             tokio::select! {
                 _ = self.wakeup.notified() => {}
                 _ = tokio::time::sleep(delay) => {}
@@ -201,12 +218,13 @@ impl LocalAgentHostCoordinator {
             (None, None) => None,
         };
         let Some(next_retry_at) = next_retry_at else {
-            return Ok(Duration::from_secs(24 * 60 * 60));
+            return Ok(Duration::from_secs(30));
         };
         let now = system_now_unix_ms()?;
         Ok(Duration::from_millis(
             u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
-        ))
+        )
+        .min(Duration::from_secs(30)))
     }
 
     fn signal_activity(&self) {
@@ -227,7 +245,11 @@ impl LocalAgentHostCoordinator {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
         loop {
             tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => return response,
+                _ = tokio::time::sleep_until(deadline) => {
+                    // A recovery transaction can persist events without an in-process activity
+                    // signal. Always perform one final durable read at the timeout boundary.
+                    return self.runtime.handle(request.clone()).await;
+                },
                 changed = activity.changed() => {
                     if changed.is_err() {
                         return response;

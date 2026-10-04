@@ -14,9 +14,11 @@ extension AppModel {
     func restartAgentHeartbeatCoordinator() {
         agentHeartbeatTask?.cancel()
         agentCommunicationTask?.cancel()
+        agentExecutorRecoveryTask?.cancel()
         guard let ownerUserID = authenticatedUserID else {
             agentHeartbeatTask = nil
             agentCommunicationTask = nil
+            agentExecutorRecoveryTask = nil
             return
         }
         let service = agentGroupChatService
@@ -77,18 +79,65 @@ extension AppModel {
                 }
             }
         }
+        agentExecutorRecoveryTask = Task { [weak self] in
+            let changes = await service.changes(ownerUserID: ownerUserID)
+            let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+                continuation.yield()
+                let changeTask = Task {
+                    for await change in changes {
+                        guard !Task.isCancelled else { break }
+                        if change.kind == .roomUpdated || change.kind == .runUpdated {
+                            continuation.yield()
+                        }
+                    }
+                }
+                let fallbackTask = Task {
+                    while !Task.isCancelled {
+                        do {
+                            try await Task.sleep(
+                                for: AgentRuntimePollingPolicy.executorRecoveryInterval
+                            )
+                        } catch {
+                            break
+                        }
+                        continuation.yield()
+                    }
+                }
+                continuation.onTermination = { _ in
+                    changeTask.cancel()
+                    fallbackTask.cancel()
+                }
+            }
+            for await _ in wakeups {
+                guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else { return }
+                do {
+                    _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    guard !Task.isCancelled else { return }
+                }
+            }
+        }
         agentHeartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
                     let store = try await service.store()
                     let now = Int64(Date().timeIntervalSince1970 * 1_000)
-                    _ = try await store.enqueueDueAgentHeartbeats(
+                    let deliveries = try await store.enqueueDueAgentHeartbeats(
                         ownerUserID: ownerUserID,
                         nowUnixMs: now
                     )
-                    // Communication has its own coordinator above. This pass recovers and drains
-                    // durable executor work left pending by an app crash after enqueue.
-                    _ = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                    // Heartbeats are manager-lane work. Publish a process-local invalidation so
+                    // the durable account coordinator drains them without making this deadline
+                    // loop wait behind a long executor Run.
+                    for roomID in Set(deliveries.map(\.roomID)) {
+                        await service.publishChange(.init(
+                            ownerUserID: ownerUserID,
+                            roomID: roomID,
+                            kind: .roomUpdated
+                        ))
+                    }
                     guard !Task.isCancelled, self?.authenticatedUserID == ownerUserID else {
                         return
                     }
@@ -219,7 +268,8 @@ enum AgentRuntimePollingPolicy {
     static let minimumHeartbeatDelayMilliseconds: Int64 = 1_000
     static let maximumHeartbeatDelayMilliseconds: Int64 = 300_000
     static let idleHeartbeatDelayMilliseconds: Int64 = 1_800_000
-    static let communicationRecoveryInterval: Duration = .seconds(1_800)
+    static let communicationRecoveryInterval: Duration = .seconds(30)
+    static let executorRecoveryInterval: Duration = .seconds(30)
     static let minimumArtifactStorageDelayMilliseconds: Int64 = 1_000
     static let maximumArtifactStorageDelayMilliseconds: Int64 = 300_000
     static let idleArtifactStorageDelayMilliseconds: Int64 = 1_800_000

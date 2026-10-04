@@ -826,7 +826,7 @@ enum AgentTodoRepository {
         )
     }
 
-    /// Resolves the durable `todo:<id>` Delivery identity and Todo in one statement. Keeping the
+    /// Resolves the durable `todo:<id>[:attempt:<n>]` Delivery identity and Todo in one statement. Keeping the
     /// target Agent in the JOIN preserves the old two-read authorization semantics without an
     /// intermediate Delivery allocation or a second SQLite round trip.
     static func forDelivery(
@@ -841,7 +841,8 @@ enum AgentTodoRepository {
         var predicate = """
         d.owner_user_id = ? AND d.id = ? AND d.trigger_kind = 'todo'
           AND d.target_agent_id = t.agent_id
-          AND d.deduplication_key = 'todo:' || t.id
+          AND (d.deduplication_key = 'todo:' || t.id
+               OR d.deduplication_key LIKE 'todo:' || t.id || ':attempt:%')
         """
         var values: [AgentGroupChatDatabase.Value] = [.text(ownerUserID), .text(deliveryID)]
         if requireRunning {

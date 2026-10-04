@@ -458,11 +458,11 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
         XCTAssertEqual(reviewed.checkpoint.status, .needsReview)
         XCTAssertEqual(reviewed.checkpoint.messages.first?.content, "system")
         XCTAssertTrue(reviewed.checkpoint.instructionBundleItems.isEmpty)
-        let runningDelivery = try await store.delivery(
+        let quarantinedDelivery = try await store.delivery(
             ownerUserID: "alice",
             deliveryID: delivery.id
         )
-        XCTAssertEqual(runningDelivery?.status, .running)
+        XCTAssertEqual(quarantinedDelivery?.status, .failed)
         let listedRuns = try await store.listUnfinishedRuns(
             ownerUserID: "alice",
             projectID: room.projectID,

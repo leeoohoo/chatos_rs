@@ -135,9 +135,9 @@ struct PerformancePolicyTests {
         #expect(PetStatusRefreshPolicy.activeInterval == .seconds(20))
     }
 
-    @Test("agent heartbeat polling sleeps longer when no heartbeat is configured")
-    func agentHeartbeatPollingBacksOff() {
-        #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(1_800))
+    @Test("agent runtime reconciles communications quickly while idle heartbeat polling backs off")
+    func agentRuntimeRecoveryAndHeartbeatPollingIntervals() {
+        #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(30))
         #expect(AgentRuntimePollingPolicy.heartbeatDelayMilliseconds(
             nextDueUnixMs: nil,
             nowUnixMs: 1_000

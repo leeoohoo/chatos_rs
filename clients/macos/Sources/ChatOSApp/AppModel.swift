@@ -158,6 +158,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var languagePreferencesSaveGeneration: UInt64 = 0
     var agentHeartbeatTask: Task<Void, Never>?
     var agentCommunicationTask: Task<Void, Never>?
+    var agentExecutorRecoveryTask: Task<Void, Never>?
     var agentArtifactStorageTask: Task<Void, Never>?
     var agentArtifactStorageOwnerUserID: String?
     var localConnectorRecoveryTask: Task<Void, Never>?

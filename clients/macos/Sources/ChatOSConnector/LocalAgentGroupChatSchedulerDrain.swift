@@ -84,6 +84,10 @@ extension LocalAgentGroupChatScheduler {
     ) async throws -> [DeliveryAttemptReceipt] {
         guard maximumRuns > 0 else { return [] }
         let store = try await service.store()
+        _ = try await store.quarantineNeedsReviewManagerDeliveries(
+            ownerUserID: ownerUserID,
+            nowUnixMs: now()
+        )
         guard try await store.hasPendingDeliveries(
             ownerUserID: ownerUserID,
             lane: .manager
@@ -421,12 +425,8 @@ extension LocalAgentGroupChatScheduler {
         let executorTodoIDsByDeliveryID = Dictionary(uniqueKeysWithValues: launchOrder.compactMap {
             work -> (String, String)? in
             guard work.delivery.lane == .executor,
-                  work.delivery.triggerKind == .todo,
-                  work.delivery.deduplicationKey.hasPrefix("todo:") else { return nil }
-            return (
-                work.delivery.id,
-                String(work.delivery.deduplicationKey.dropFirst("todo:".count))
-            )
+                  let todoID = work.delivery.todoID else { return nil }
+            return (work.delivery.id, todoID)
         })
         let executorTodos = try await store.todos(
             ownerUserID: ownerUserID,

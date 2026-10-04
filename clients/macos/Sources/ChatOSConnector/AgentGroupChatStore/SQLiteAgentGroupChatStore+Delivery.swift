@@ -301,9 +301,7 @@ extension SQLiteAgentGroupChatStore {
             guard sqlite3_changes(database) == 1 else {
                 throw AgentGroupChatError.conflict
             }
-            if delivery.triggerKind == .todo,
-               delivery.deduplicationKey.hasPrefix("todo:") {
-                let todoID = String(delivery.deduplicationKey.dropFirst("todo:".count))
+            if let todoID = delivery.todoID {
                 try execute(
                     """
                     UPDATE local_agent_todos
@@ -322,6 +320,73 @@ extension SQLiteAgentGroupChatStore {
             ) else {
                 throw AgentGroupChatError.conflict
             }
+            return updated
+        }
+    }
+
+    /// A manager Run that stopped for Human review must not monopolize the Agent's communication
+    /// lane. Its checkpoint remains `needsReview`, while the delivery leaves the running queue so
+    /// later Human messages, Todo notifications and heartbeats can continue.
+    func quarantineNeedsReviewManagerDeliveries(
+        ownerUserID: String,
+        nowUnixMs: Int64
+    ) throws -> Int {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        guard nowUnixMs >= 0 else { throw AgentGroupChatError.invalidField("nowUnixMs") }
+        return try transaction {
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'failed', last_error = ?, completed_at_unix_ms = ?
+                WHERE owner_user_id = ? AND status = 'running' AND trigger_kind != 'todo'
+                  AND EXISTS (
+                      SELECT 1 FROM local_agent_group_chat_runs run
+                      WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
+                        AND run.delivery_id = project_agent_deliveries.id
+                        AND run.status = ?
+                  )
+                """,
+                [
+                    .text("通讯 Run 中断，等待用户检查；后续通讯仍会继续。"),
+                    .integer(nowUnixMs), .text(ownerUserID),
+                    .text(AgentRunCheckpoint.Status.needsReview.rawValue),
+                ]
+            )
+            return Int(sqlite3_changes(database))
+        }
+    }
+
+    func reactivateManagerDeliveryForReview(
+        ownerUserID: String,
+        deliveryID: String,
+        nowUnixMs: Int64
+    ) throws -> ProjectAgentDelivery {
+        try validateDeliveryMutation(
+            ownerUserID: ownerUserID,
+            deliveryID: deliveryID,
+            nowUnixMs: nowUnixMs
+        )
+        return try transaction {
+            guard let delivery = try readDelivery(
+                ownerUserID: ownerUserID,
+                deliveryID: deliveryID
+            ), delivery.status == .failed, delivery.lane == .manager else {
+                throw AgentGroupChatError.conflict
+            }
+            try execute(
+                """
+                UPDATE project_agent_deliveries
+                SET status = 'running', last_error = NULL, completed_at_unix_ms = NULL,
+                    claimed_at_unix_ms = ?
+                WHERE owner_user_id = ? AND id = ? AND status = 'failed'
+                """,
+                [.integer(nowUnixMs), .text(ownerUserID), .text(deliveryID)]
+            )
+            guard sqlite3_changes(database) == 1,
+                  let updated = try readDelivery(
+                    ownerUserID: ownerUserID,
+                    deliveryID: deliveryID
+                  ) else { throw AgentGroupChatError.conflict }
             return updated
         }
     }
