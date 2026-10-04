@@ -9,21 +9,37 @@ import SwiftUI
 
 @MainActor
 extension AppModel {
+    func ensureAgentRuntimeCoordinators() {
+        guard AgentRuntimeCoordinatorPolicy.shouldStart(
+            hasHeartbeatTask: agentHeartbeatTask.map { !$0.isCancelled } ?? false,
+            hasCommunicationTask: agentCommunicationTask.map { !$0.isCancelled } ?? false,
+            hasExecutorRecoveryTask: agentExecutorRecoveryTask.map { !$0.isCancelled } ?? false
+        ) else { return }
+        restartAgentHeartbeatCoordinator()
+    }
+
     /// Runs independently of the Agent workspace UI. A due Agent gets one account-level wake-up;
     /// Relay reads its complete unread inbox and its durable TodoList in that single run.
     func restartAgentHeartbeatCoordinator() {
+        agentRuntimeCoordinatorGeneration &+= 1
+        let generation = agentRuntimeCoordinatorGeneration
         agentHeartbeatTask?.cancel()
         agentCommunicationTask?.cancel()
         agentExecutorRecoveryTask?.cancel()
+        agentHeartbeatTask = nil
+        agentCommunicationTask = nil
+        agentExecutorRecoveryTask = nil
         guard let ownerUserID = authenticatedUserID else {
-            agentHeartbeatTask = nil
-            agentCommunicationTask = nil
-            agentExecutorRecoveryTask = nil
             return
         }
         let service = agentGroupChatService
         let scheduler = agentGroupChatScheduler
         agentCommunicationTask = Task { [weak self] in
+            defer {
+                if self?.agentRuntimeCoordinatorGeneration == generation {
+                    self?.agentCommunicationTask = nil
+                }
+            }
             let batchSize = 64
             let changes = await service.changes(ownerUserID: ownerUserID)
             let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
@@ -79,6 +95,11 @@ extension AppModel {
             }
         }
         agentExecutorRecoveryTask = Task { [weak self] in
+            defer {
+                if self?.agentRuntimeCoordinatorGeneration == generation {
+                    self?.agentExecutorRecoveryTask = nil
+                }
+            }
             let changes = await service.changes(ownerUserID: ownerUserID)
             let wakeups = AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
                 continuation.yield()
@@ -121,6 +142,11 @@ extension AppModel {
             }
         }
         agentHeartbeatTask = Task { [weak self] in
+            defer {
+                if self?.agentRuntimeCoordinatorGeneration == generation {
+                    self?.agentHeartbeatTask = nil
+                }
+            }
             while !Task.isCancelled {
                 do {
                     let store = try await service.store()
@@ -171,6 +197,7 @@ extension AppModel {
 
     private func startAgentArtifactStorageCoordinator(forceRestart: Bool) {
         guard let ownerUserID = authenticatedUserID else {
+            agentArtifactStorageGeneration &+= 1
             agentArtifactStorageTask?.cancel()
             agentArtifactStorageTask = nil
             agentArtifactStorageOwnerUserID = nil
@@ -184,10 +211,18 @@ extension AppModel {
             forceRestart: forceRestart
         ) else { return }
 
+        agentArtifactStorageGeneration &+= 1
+        let generation = agentArtifactStorageGeneration
         agentArtifactStorageTask?.cancel()
         agentArtifactStorageOwnerUserID = ownerUserID
         let service = agentGroupChatService
         agentArtifactStorageTask = Task { [weak self] in
+            defer {
+                if self?.agentArtifactStorageGeneration == generation {
+                    self?.agentArtifactStorageTask = nil
+                    self?.agentArtifactStorageOwnerUserID = nil
+                }
+            }
             let changes = await service.changes(ownerUserID: ownerUserID)
             let wakeups = AsyncStream<Void>.makeStream(
                 bufferingPolicy: .bufferingNewest(1)
@@ -250,6 +285,16 @@ extension AppModel {
         }
     }
 
+}
+
+enum AgentRuntimeCoordinatorPolicy {
+    static func shouldStart(
+        hasHeartbeatTask: Bool,
+        hasCommunicationTask: Bool,
+        hasExecutorRecoveryTask: Bool
+    ) -> Bool {
+        !hasHeartbeatTask || !hasCommunicationTask || !hasExecutorRecoveryTask
+    }
 }
 
 enum AgentArtifactStorageCoordinatorPolicy {

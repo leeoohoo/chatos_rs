@@ -150,6 +150,16 @@ struct PerformancePolicyTests {
 
     @Test("agent runtime reconciles communications quickly while idle heartbeat polling backs off")
     func agentRuntimeRecoveryAndHeartbeatPollingIntervals() {
+        #expect(!AgentRuntimeCoordinatorPolicy.shouldStart(
+            hasHeartbeatTask: true,
+            hasCommunicationTask: true,
+            hasExecutorRecoveryTask: true
+        ))
+        #expect(AgentRuntimeCoordinatorPolicy.shouldStart(
+            hasHeartbeatTask: true,
+            hasCommunicationTask: false,
+            hasExecutorRecoveryTask: true
+        ))
         #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(30))
         #expect(AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .roomUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .runUpdated))

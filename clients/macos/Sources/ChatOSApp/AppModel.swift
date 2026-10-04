@@ -159,8 +159,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var agentHeartbeatTask: Task<Void, Never>?
     var agentCommunicationTask: Task<Void, Never>?
     var agentExecutorRecoveryTask: Task<Void, Never>?
+    var agentRuntimeCoordinatorGeneration: UInt64 = 0
     var agentArtifactStorageTask: Task<Void, Never>?
     var agentArtifactStorageOwnerUserID: String?
+    var agentArtifactStorageGeneration: UInt64 = 0
     var localConnectorRecoveryTask: Task<Void, Never>?
     var localConnectorSleepPreparationTask: Task<Void, Never>?
     var localConnectorSleepPreparationGeneration: UInt64 = 0
@@ -480,6 +482,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 self?.authentication.retrySessionRestoreIfNeeded()
                 self?.recoverLocalConnector(forceReconnect: false)
                 self?.recoverLocalAgentHostIfNeeded()
+                self?.ensureAgentRuntimeCoordinators()
                 self?.ensureAgentArtifactStorageCoordinator()
                 self?.startVisualSessionMonitoring()
             }

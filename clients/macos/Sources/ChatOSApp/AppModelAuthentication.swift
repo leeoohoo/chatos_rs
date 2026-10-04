@@ -249,6 +249,11 @@ extension AppModel {
         localAgentHostHealthCheckGeneration &+= 1
         localAgentHostHealthCheckTask?.cancel()
         localAgentHostHealthCheckTask = nil
+        agentRuntimeCoordinatorGeneration &+= 1
+        agentHeartbeatTask?.cancel()
+        agentHeartbeatTask = nil
+        agentCommunicationTask?.cancel()
+        agentCommunicationTask = nil
         agentExecutorRecoveryTask?.cancel()
         agentExecutorRecoveryTask = nil
     }
