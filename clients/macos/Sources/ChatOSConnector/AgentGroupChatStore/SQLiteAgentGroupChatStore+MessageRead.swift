@@ -35,10 +35,7 @@ extension SQLiteAgentGroupChatStore {
         let latestMessageRows = try query(
             """
             WITH ranked_messages AS (
-                SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind,
-                       msg.sender_id, msg.content, msg.reply_to_message_id,
-                       msg.source_run_id, msg.causation_id, msg.root_message_id,
-                       msg.hop_count, msg.created_at_unix_ms,
+                SELECT msg.owner_user_id, msg.id, msg.room_id,
                        ROW_NUMBER() OVER (
                            PARTITION BY msg.room_id
                            ORDER BY msg.created_at_unix_ms DESC, msg.id DESC
@@ -52,12 +49,15 @@ extension SQLiteAgentGroupChatStore {
                     AND msg.causation_id IN ('heartbeat', 'todo', 'todo_status')
                   )
             )
-            SELECT owner_user_id, id, room_id, sender_kind, sender_id, content,
-                   reply_to_message_id, source_run_id, causation_id, root_message_id,
-                   hop_count, created_at_unix_ms
-            FROM ranked_messages
-            WHERE row_number = 1
-            ORDER BY room_id
+            SELECT msg.owner_user_id, msg.id, msg.room_id, msg.sender_kind,
+                   msg.sender_id, msg.content, msg.reply_to_message_id,
+                   msg.source_run_id, msg.causation_id, msg.root_message_id,
+                   msg.hop_count, msg.created_at_unix_ms
+            FROM ranked_messages ranked
+            JOIN project_agent_messages msg
+              ON msg.owner_user_id = ranked.owner_user_id AND msg.id = ranked.id
+            WHERE ranked.row_number = 1
+            ORDER BY msg.room_id
             """,
             [.text(ownerUserID)],
             row: readMessageBase

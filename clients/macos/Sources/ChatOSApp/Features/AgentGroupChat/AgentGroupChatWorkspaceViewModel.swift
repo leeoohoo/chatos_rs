@@ -6,11 +6,19 @@ import Foundation
 struct AgentWorkspaceRefreshPlan: Equatable {
     private(set) var reloadWorkspace = false
     private(set) var reloadTriggerRuns = false
+    private(set) var updatedRunIDs: Set<UUID> = []
 
-    mutating func record(_ kind: NativeAgentGroupChatChange.Kind) {
-        reloadTriggerRuns = true
-        if kind != .runUpdated {
+    mutating func record(_ change: NativeAgentGroupChatChange) {
+        switch change.kind {
+        case .runUpdated:
+            if let runID = change.runID {
+                updatedRunIDs.insert(runID)
+            } else {
+                reloadTriggerRuns = true
+            }
+        case .deliveryClaimed, .roomUpdated:
             reloadWorkspace = true
+            reloadTriggerRuns = true
         }
     }
 
@@ -103,7 +111,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                         || change.kind == .runUpdated else {
                     continue
                 }
-                self?.pendingRefreshPlan.record(change.kind)
+                self?.pendingRefreshPlan.record(change)
                 refreshCoalescer.signal()
             }
         }
@@ -120,6 +128,8 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         }
         if plan.reloadTriggerRuns {
             await loadTriggerRuns()
+        } else if !plan.updatedRunIDs.isEmpty {
+            await refreshTriggerRuns(plan.updatedRunIDs)
         }
     }
 
@@ -339,6 +349,59 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         } while triggerRunsReloadRequested
+    }
+
+    private func refreshTriggerRuns(_ runIDs: Set<UUID>) async {
+        guard let selectedAgentID else { return }
+        do {
+            let store = try await resolveStore()
+            let roomsByID = Dictionary(uniqueKeysWithValues:
+                (rooms + directConversations).map { ($0.id, $0) }
+            )
+            for runID in runIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+                guard self.selectedAgentID == selectedAgentID,
+                      let run = try await store.run(ownerUserID: ownerUserID, runID: runID),
+                      run.context.agentID == selectedAgentID,
+                      let delivery = try await store.delivery(
+                          ownerUserID: ownerUserID,
+                          deliveryID: run.context.deliveryID
+                      ) else { continue }
+                let summary = LocalAgentRunHistorySummary(
+                    run: run,
+                    triggerKind: delivery.triggerKind
+                )
+                let presentation = TriggerRunPresentation(
+                    summary: summary,
+                    delivery: delivery,
+                    room: roomsByID[summary.roomID]
+                )
+                if let index = triggerRuns.firstIndex(where: { $0.id == runID }) {
+                    triggerRuns[index] = presentation
+                } else {
+                    triggerRuns.append(presentation)
+                }
+                if triggerRunDetailsByID[runID]?.run.updatedAtUnixMs
+                    != summary.updatedAtUnixMs {
+                    triggerRunDetailsByID.removeValue(forKey: runID)
+                }
+            }
+            triggerRuns.sort {
+                if $0.summary.updatedAtUnixMs != $1.summary.updatedAtUnixMs {
+                    return $0.summary.updatedAtUnixMs > $1.summary.updatedAtUnixMs
+                }
+                return $0.id.uuidString > $1.id.uuidString
+            }
+            if triggerRuns.count > 100 {
+                let removedIDs = Set(triggerRuns.dropFirst(100).map(\.id))
+                triggerRuns.removeSubrange(100...)
+                for runID in removedIDs {
+                    triggerRunDetailsByID.removeValue(forKey: runID)
+                    requestedTriggerRunDetailIDs.remove(runID)
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func loadTriggerRunDetails(_ runID: UUID) async {

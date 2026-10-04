@@ -205,7 +205,7 @@ enum AgentTodoRepository {
                 ORDER BY t.agent_id
                 LIMIT ?
             ), ranked AS (
-                SELECT \(qualifiedColumns),
+                SELECT t.id AS todo_id, t.agent_id,
                        ROW_NUMBER() OVER (
                          PARTITION BY t.agent_id
                          ORDER BY t.priority DESC, t.sort_order, t.created_at_unix_ms, t.id
@@ -239,11 +239,17 @@ enum AgentTodoRepository {
                       AND delivery.status IN ('pending', 'running')
                   )
             )
-            SELECT \(columns) FROM ranked
-            WHERE ready_position = 1
-            ORDER BY agent_id
+            SELECT \(qualifiedColumns)
+            FROM ranked
+            JOIN local_agent_todos t
+              ON t.owner_user_id = ? AND t.id = ranked.todo_id
+            WHERE ranked.ready_position = 1
+            ORDER BY t.agent_id
             """,
-            [.text(ownerUserID), .integer(Int64(limit)), .text(ownerUserID)],
+            [
+                .text(ownerUserID), .integer(Int64(limit)), .text(ownerUserID),
+                .text(ownerUserID),
+            ],
             row: AgentGroupChatRowMapper.todo
         )
     }

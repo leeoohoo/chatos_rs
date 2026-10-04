@@ -157,8 +157,11 @@ final class AgentDirectChatViewModel: ObservableObject {
                 await self?.load()
             }
             defer { refreshCoalescer.cancel() }
-            for await _ in changes {
+            for await change in changes {
                 guard !Task.isCancelled else { break }
+                guard AgentDirectChatRefreshPolicy.shouldReloadTimeline(
+                    for: change.kind
+                ) else { continue }
                 refreshCoalescer.signal()
             }
         }
@@ -636,5 +639,15 @@ final class AgentDirectChatViewModel: ObservableObject {
         } else {
             schedulerIssue = nil
         }
+    }
+}
+
+enum AgentDirectChatRefreshPolicy {
+    static func shouldReloadTimeline(
+        for changeKind: NativeAgentGroupChatChange.Kind
+    ) -> Bool {
+        // Messages, proposals and attachment state publish roomUpdated. Run checkpoints do not
+        // change the direct-chat timeline and can otherwise force a full reload every model step.
+        changeKind == .roomUpdated
     }
 }

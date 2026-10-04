@@ -32,11 +32,10 @@ extension AppModel {
                 let changeTask = Task {
                     for await change in changes {
                         guard !Task.isCancelled else { break }
-                        switch change.kind {
-                        case .roomUpdated, .runUpdated:
+                        if AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(
+                            for: change.kind
+                        ) {
                             continuation.yield()
-                        case .deliveryClaimed:
-                            break
                         }
                     }
                 }
@@ -305,8 +304,19 @@ enum AgentRuntimePollingPolicy {
         for changeKind: NativeAgentGroupChatChange.Kind
     ) -> Bool {
         switch changeKind {
-        case .runUpdated, .roomUpdated: true
-        case .deliveryClaimed: false
+        case .roomUpdated: true
+        case .deliveryClaimed, .runUpdated: false
+        }
+    }
+
+    static func shouldWakeCommunicationRecovery(
+        for changeKind: NativeAgentGroupChatChange.Kind
+    ) -> Bool {
+        switch changeKind {
+        case .roomUpdated: true
+        // Model/tool checkpoints do not create communication work. Chat and Todo mutations
+        // publish roomUpdated, while startup and the fallback timer reconcile missed signals.
+        case .deliveryClaimed, .runUpdated: false
         }
     }
 

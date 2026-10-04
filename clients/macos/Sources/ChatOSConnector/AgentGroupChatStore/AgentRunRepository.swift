@@ -323,8 +323,7 @@ enum AgentRunRepository {
                            )
                            ELSE substr(delivery.deduplication_key, 6)
                        END AS todo_id,
-                       run.id AS run_id, run.status, run.run_json,
-                       run.updated_at_unix_ms
+                       run.id AS run_id, run.status, run.updated_at_unix_ms
                 FROM local_agent_group_chat_runs run
                 JOIN project_agent_deliveries delivery
                   ON delivery.owner_user_id = run.owner_user_id
@@ -333,22 +332,22 @@ enum AgentRunRepository {
                   AND delivery.trigger_kind = 'todo'
                   AND delivery.deduplication_key LIKE 'todo:%'
             ), ranked AS (
-                SELECT todo_id, run_id, status, run_json, updated_at_unix_ms,
+                SELECT todo_id, run_id, status, updated_at_unix_ms,
                        ROW_NUMBER() OVER (
                            PARTITION BY todo_id
                            ORDER BY updated_at_unix_ms DESC, run_id DESC
                        ) AS recency_rank
                 FROM todo_runs
             )
-            SELECT todo_id, run_id, status,
+            SELECT ranked.todo_id, ranked.run_id, ranked.status,
                    (SELECT COUNT(*)
-                    FROM json_each(ranked.run_json, '$.checkpoint.receipts')),
+                    FROM json_each(run.run_json, '$.checkpoint.receipts')),
                    COALESCE((
                        SELECT json_group_array(path)
                        FROM (
                            SELECT DISTINCT committed.value AS path
                            FROM json_each(
-                               ranked.run_json,
+                               run.run_json,
                                '$.checkpoint.receipts'
                            ) receipt
                            JOIN json_tree(
@@ -367,13 +366,18 @@ enum AgentRunRepository {
                            ORDER BY path
                        )
                    ), '[]'),
-                   updated_at_unix_ms
+                   ranked.updated_at_unix_ms
             FROM ranked
+            JOIN local_agent_group_chat_runs run
+              ON run.owner_user_id = ? AND run.id = ranked.run_id
             WHERE recency_rank = 1
-            ORDER BY updated_at_unix_ms DESC, run_id DESC
+            ORDER BY ranked.updated_at_unix_ms DESC, ranked.run_id DESC
             LIMIT ?
             """,
-            [.text(ownerUserID), .text(roomID), .integer(Int64(limit))]
+            [
+                .text(ownerUserID), .text(roomID), .text(ownerUserID),
+                .integer(Int64(limit)),
+            ]
         ) { statement in
             guard let runID = UUID(uuidString: string(statement, 1)),
                   let status = AgentRunCheckpoint.Status(rawValue: string(statement, 2)),

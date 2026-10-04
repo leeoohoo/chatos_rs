@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSConnector
 import Foundation
 import Testing
 @testable import ChatOSApp
@@ -8,16 +9,28 @@ struct PerformancePolicyTests {
     @Test("agent workspace coalesces changes into the minimum refresh scope")
     func agentWorkspaceCoalescesChangeRefreshes() {
         var plan = AgentWorkspaceRefreshPlan()
-        plan.record(.runUpdated)
+        let runID = UUID()
+        plan.record(.init(
+            ownerUserID: "alice",
+            roomID: "room-1",
+            runID: runID,
+            kind: .runUpdated
+        ))
         #expect(!plan.reloadWorkspace)
-        #expect(plan.reloadTriggerRuns)
+        #expect(!plan.reloadTriggerRuns)
+        #expect(plan.updatedRunIDs == [runID])
 
-        plan.record(.deliveryClaimed)
+        plan.record(.init(
+            ownerUserID: "alice",
+            roomID: "room-1",
+            kind: .deliveryClaimed
+        ))
         #expect(plan.reloadWorkspace)
         #expect(plan.reloadTriggerRuns)
         let consumed = plan.take()
         #expect(consumed.reloadWorkspace)
         #expect(consumed.reloadTriggerRuns)
+        #expect(consumed.updatedRunIDs == [runID])
         #expect(plan == .init())
     }
 
@@ -138,6 +151,9 @@ struct PerformancePolicyTests {
     @Test("agent runtime reconciles communications quickly while idle heartbeat polling backs off")
     func agentRuntimeRecoveryAndHeartbeatPollingIntervals() {
         #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(30))
+        #expect(AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .roomUpdated))
+        #expect(!AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .runUpdated))
+        #expect(!AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .deliveryClaimed))
         #expect(AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .roomUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .runUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .deliveryClaimed))
@@ -158,7 +174,7 @@ struct PerformancePolicyTests {
     @Test("agent artifact storage wakes from changes and sleeps longer without retries")
     func agentArtifactStorageUsesChangesAndDueTime() {
         #expect(AgentRuntimePollingPolicy.shouldWakeArtifactStorage(for: .roomUpdated))
-        #expect(AgentRuntimePollingPolicy.shouldWakeArtifactStorage(for: .runUpdated))
+        #expect(!AgentRuntimePollingPolicy.shouldWakeArtifactStorage(for: .runUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeArtifactStorage(for: .deliveryClaimed))
         #expect(AgentRuntimePollingPolicy.artifactStorageDelayMilliseconds(
             nextDueUnixMs: 900,
@@ -172,6 +188,13 @@ struct PerformancePolicyTests {
             nextDueUnixMs: nil,
             nowUnixMs: 1_000
         ) == 1_800_000)
+    }
+
+    @Test("direct Agent chat reloads only for timeline mutations")
+    func directAgentChatIgnoresRunCheckpoints() {
+        #expect(AgentDirectChatRefreshPolicy.shouldReloadTimeline(for: .roomUpdated))
+        #expect(!AgentDirectChatRefreshPolicy.shouldReloadTimeline(for: .runUpdated))
+        #expect(!AgentDirectChatRefreshPolicy.shouldReloadTimeline(for: .deliveryClaimed))
     }
 
     @Test("pet task process uses activity versions instead of frequent fallback polling")
