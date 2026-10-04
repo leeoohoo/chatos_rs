@@ -1,11 +1,11 @@
-import {
-  assertDiagramDocument,
-  type DiagramDocument,
-  type DiagramEdge,
-  type DiagramKind,
-  type DiagramNode,
-  type DiagramNodeCategory,
-  type DiagramNodeIcon
+import { assertDiagramDocument } from './schema.js';
+import type {
+  DiagramDocument,
+  DiagramEdge,
+  DiagramKind,
+  DiagramNode,
+  DiagramNodeCategory,
+  DiagramNodeIcon
 } from './schema.js';
 import {
   parseSequenceActivationHandle,
@@ -14,56 +14,57 @@ import {
   sequenceActivationSlotCount,
   sequenceActivationSlotPercentage,
   sequenceLifelineSlotCount,
-  sequenceSlotPercentage,
-  type SequenceActivationSide
+  sequenceSlotPercentage
 } from './sequence.js';
+import type { SequenceActivationSide } from './sequence.js';
 import { createMindMapEdge, layoutMindMap } from './mindmap.js';
 import {
-  activityRanks,
-  activityText,
-  activeActivation,
-  addLayoutMetadata,
   absolutePosition,
   chunk,
-  componentDetectionKeywords,
-  deploymentKeywords,
   edgeEndpointY,
   encodeBase64Url,
   escapeQuoted,
   extractLayout,
   fragmentKind,
   fragmentKeywords,
+  isSafeOpaqueLine,
+  layoutPrefix,
+  owningLifeline,
+  parseMessage,
+  parseParticipant,
+  participantKeyword,
+  participantKeywords,
+  singleLine,
+  stableHash,
+  uniqueAliases,
+  unquote
+} from './plantuml-support.js';
+import {
+  activityRanks,
+  activityText,
+  activeActivation,
+  addLayoutMetadata,
+  componentDetectionKeywords,
+  deploymentKeywords,
   genericEdgeHandles,
   inferMissingSequenceActivations,
-  isSafeOpaqueLine,
   laneFill,
   layoutStructuralNodes,
-  layoutPrefix,
   maximumSourceLength,
   messageY,
   nearestCommonDescendant,
   normalizeStructuralEndpoint,
-  owningLifeline,
-  parseMessage,
-  parseParticipant,
   parseStructuralDeclaration,
   parseStructuralEdge,
   participantAppearance,
-  participantKeyword,
-  participantKeywords,
   safeIdentifier,
   sanitizeAlias,
   sequenceHandleForY,
-  singleLine,
-  stableHash,
   structuralAppearance,
   structuralKeyword,
-  uniqueActivityTails,
-  uniqueAliases,
-  unquote,
-  type ActivityTail,
-  type LayoutPayload
+  uniqueActivityTails
 } from './plantuml-support.js';
+import type { ActivityTail, LayoutPayload } from './plantuml-support.js';
 
 
 import type { PlantUmlImportOptions } from './plantuml.js';

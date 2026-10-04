@@ -1,127 +1,6 @@
-import {
-  autoLayoutContainer,
-  breakpointFor,
-  cloneComponentSubtrees,
-  constrainComponentFrame,
-  componentsForPage,
-  createSymbolFromSelection,
-  deriveResponsivePageFromDevice,
-  detachSymbolInstance,
-  descendantIds,
-  flattenComponentTree,
-  fitContentCanvasToComponents,
-  growPageToFitContent,
-  moveComponentsWithDescendants,
-  reflowPageForViewport,
-  instantiateSymbol,
-  resolveComponent,
-  selectedRootIds,
-  setSymbolOverride,
-  snapComponentFrame,
-  syncSymbolInstances,
-  updateComponentFrame,
-  updateComponentStyle,
-  updateSymbolFromInstance,
-  type ResolvedWebDesignComponent,
-  type SnapGuides
-} from '../../src/editor-model';
-import {
-  componentsInSlot,
-  editableSlotsForUiComponent,
-  growUiContentContainersToFit,
-  isOverlayUiContentContainer,
-  isUiContentContainer,
-  slotIdForDescendant,
-  visibleComponentsInSlot
-} from '../../src/library-slots';
-import { applyUiLibraryVariant, createComponentFromUiLibrary, uiLibraryByName, UI_LIBRARIES, variantsForBoundComponent } from '../../src/ui-libraries';
-import { officialRuntimePresentation } from '../library-runtime/registry';
-import {
-  pagesForDocument,
-  tokensForDocument,
-  type WebComponentStyle,
-  type WebComponentConstraints,
-  type WebComponentVisualState,
-  type WebComponentType,
-  type WebDesignAsset,
-  type WebDesignComponent,
-  type WebDesignDevice,
-  type WebDesignDocument,
-  type WebDesignJsonValue,
-  type WebDesignLibraryName,
-  type WebDesignProject,
-  type WebHorizontalConstraint,
-  type WebDesignSymbol,
-  type WebDesignTokens,
-  type WebSymbolOverride
-} from '../../src/schema';
-import { libraryPreviewSelection, type LibraryPreviewPointerEvent, type LibraryPreviewSelection } from '../library-runtime/element-selection';
-import { indexSceneDocument, isSceneContainer, isSceneSlotContainer, type SceneDocument, type SceneNode, type ScenePrototypeLink, type SceneResponsiveNodeOverride, type SceneVariableCollection } from '../../src/v2/scene-schema';
-import { inspectorCapabilities as resolveInspectorCapabilities } from './inspector-model';
-import { editableSlotsForSceneLibraryNode, resolveSceneInsertionTarget, type SceneInsertionFocus, type SceneInsertionTarget } from './scene-insertion-target';
-
-import {
-  BasicShapeId,
-  SCENE_RESPONSIVE_EDITOR_RULES,
-  SLOT_EDITOR_HEADER_HEIGHT,
-  SLOT_EDITOR_CANVAS_INSETS,
-  slotEditorFrameBounds,
-  palette,
-  fillPresets,
-  shadowPresets,
-  basicShapeDefaults,
-  contentContainerAncestor,
-  overlayContentContainerAncestor,
-  growCanvasForDevice,
-  growAllCanvases,
-  createSlotStarterComponents,
-  materializeExistingSlotContent,
-  visibleCssColor,
-  cssPixels,
-  svgDataUrl,
-  horizontalConstraintOptions,
-  ViewportSelection,
-  STUDIO_PROJECT_QUERY,
-  STUDIO_DESIGN_QUERY,
-  studioLocationSelection,
-  replaceStudioLocation,
-  DEFAULT_VIEWPORT_SELECTIONS,
-  viewportSelectionsForDocument,
-  editableDocumentPayload,
-  Interaction,
-  CanvasPan,
-  CanvasMarquee,
-  LayerAction,
-  AlignAction,
-  LibraryTab,
-  VariantPickerTarget,
-  VariantPickerPointerDrag,
-  EditingSlot,
-  SceneContentFocus,
-  SelectionCandidatePopover,
-  InspectorVisualState,
-  InspectorTab,
-  PERSONAL_SYMBOLS_STORAGE_KEY,
-  SCENE_SNIPPETS_STORAGE_KEY,
-  WORKSPACE_ARTBOARD_HEADER_HEIGHT,
-  WORKSPACE_SURFACE_LABELS,
-  WORKSPACE_SURFACE_SIZES,
-  deviceForWorkspaceArtboard,
-  workspaceArtboardContentBounds,
-  workspaceArtboardSignature,
-  loadPersonalSymbols,
-  VARIANT_PROP_LABELS,
-  INTERNAL_LIBRARY_PROPS,
-  inspectableLibraryProps,
-  bindLibraryPreviewElement,
-  variantDifferenceLabels,
-  INTERACTIVE_COMPONENT_PREVIEWS,
-  OPEN_OVERLAY_PREVIEWS,
-  WIDE_VARIANT_PREVIEWS,
-  variantIsInteractive,
-  LazyVariantPreview,
-  SelectableVariantCard
-} from './WebDesignStudioSupport';
+import { uiLibraryByName } from '../../src/ui-libraries';
+import type { WebDesignLibraryName } from '../../src/schema';
+import { workspaceArtboardSignature } from './WebDesignStudioSupport';
 import { createWebDesignCoreActions } from './WebDesignCoreActions';
 import { createWebDesignInsertActions } from './WebDesignInsertActions';
 import { createWebDesignCanvasActions } from './WebDesignCanvasActions';
@@ -129,18 +8,7 @@ import { createWebDesignViewportActions } from './WebDesignViewportActions';
 import { createWebDesignSelectionActions } from './WebDesignSelectionActions';
 import { createWebDesignAssetActions } from './WebDesignAssetActions';
 import { createWebDesignDocumentActions } from './WebDesignDocumentActions';
-import {
-  NumberField,
-  SceneNumberField,
-  ColorValueField,
-  AdvancedCssEditor,
-  JsonPropertyEditor,
-  JsonObjectEditor,
-  runtimeSlotContentMap,
-  RuntimeSlotContent,
-  RuntimeSlotCanvasComponent,
-  formatProjectDate
-} from './WebDesignInspectorFields';
+import { formatProjectDate } from './WebDesignInspectorFields';
 import { createWebDesignRenderHelpers } from './WebDesignRenderHelpers';
 import { renderWebDesignStudioWorkspace } from './WebDesignStudioWorkspace';
 import { createWebDesignWorkspaceContext } from './WebDesignWorkspaceContext';
@@ -149,36 +17,22 @@ import type { WebDesignDeferredActions } from './WebDesignActionContracts';
 export function WebDesignStudioApp() {
   const studioState = useWebDesignStudioState();
   const {
-    actionsRef, repository, setRepository, documents, setDocuments, activeProject,
-    setActiveProject, document, setDocument, sceneDocument, setSceneDocument, sceneHistory,
-    setSceneHistory, sceneLoadState, setSceneLoadState, sceneReloadToken, setSceneReloadToken, ready,
-    setReady, screen, setScreen, persistedRevision, setPersistedRevision, selectedId,
-    setSelectedId, selectedIds, setSelectedIds, selectionCandidatePopover, setSelectionCandidatePopover, marqueeRect,
-    setMarqueeRect, pageId, setPageId, clipboard, setClipboard, sceneClipboard,
-    setSceneClipboard, snapGuides, setSnapGuides, dirty, setDirty, saving,
-    setSaving, previewOverlayPageId, setPreviewOverlayPageId, interactionMode, setInteractionMode, device,
-    setDevice, viewportSelections, setViewportSelections, workspaceCamera, setWorkspaceCamera, workspacePlacement,
-    setWorkspacePlacement, activeArtboardId, setActiveArtboardId, scenePreviewHeights, setScenePreviewHeights, newSurfaceKind,
-    setNewSurfaceKind, past, setPast, future, setFuture, toast,
-    setToast, annotationText, setAnnotationText, aiInstruction, setAiInstruction, sceneAiContext,
-    setSceneAiContext, sceneAnnotationPreparingId, setSceneAnnotationPreparingId, generationPlan, setGenerationPlan, generationReview,
-    setGenerationReview, generationLoading, setGenerationLoading, generationAction, setGenerationAction, generationRejectionReason,
-    setGenerationRejectionReason, paletteQuery, setPaletteQuery, libraryTab, setLibraryTab, personalSymbols,
-    setPersonalSymbols, sceneSnippets, setSceneSnippets, sceneVariablesDraft, setSceneVariablesDraft, variantPickerTarget,
-    setVariantPickerTarget, sceneContentFocus, setSceneContentFocus, variantPickerDrag, setVariantPickerDrag, themePickerOpen,
-    setThemePickerOpen, projectLibraryOpen, setProjectLibraryOpen, newDesignOpen, setNewDesignOpen, newDesignName,
-    setNewDesignName, deleteDesignTarget, setDeleteDesignTarget, deletingDesign, setDeletingDesign, editingSlot,
-    setEditingSlot, inspectorVisualState, setInspectorVisualState, inspectorTab, setInspectorTab, workspaceShell,
-    dispatchWorkspaceShell, interaction, canvasPan, canvasMarquee, spacePressed, workspaceCameraContext,
-    workspaceCameraBeforeSlot, slotCameraContext, persistedWorkspaceArtboards, variantPickerDragRef, documentRef, sceneDocumentRef,
-    sceneCommandQueue, sceneHistoryRequestId, assetInput, canvasStage, canvasScroll, zoom,
-    interactionZoom, canvasPanning, setCanvasPanning, canvasPanReady, setCanvasPanReady, selected,
-    selectedSceneEntry, selectedSceneNode, sceneResponsiveRuleSpec, selectedSceneResponsiveOverride, selectedScenePositionEditable, activeScenePage,
-    sceneEditingActive, selectedFrame, selectedIdSet, activeWorkspaceArtboard, breakpoint, viewportPresets,
-    configuredViewportSelection, activeViewportWidth, sceneViewportMatch, viewportSelection, viewportPreset, previewViewportHeight,
-    renderedCanvasHeight, pages, previewOverlayPage, previewOverlayArtboard, selectedPrototypeTarget, activeProjectDocuments,
-    tokens, currentPage, pageComponents, editingContainer, editingSlotDefinition, editingSlotComponents,
-    editingVisibleComponents, editingSlotCanvasSize, inspectedFrame, inspectedStyle
+    actionsRef,
+    repository,
+    activeProject,
+    document,
+    ready,
+    screen,
+    toast,
+    newDesignOpen,
+    setNewDesignOpen,
+    newDesignName,
+    setNewDesignName,
+    deleteDesignTarget,
+    setDeleteDesignTarget,
+    deletingDesign,
+    selectedSceneNode,
+    activeProjectDocuments,
   } = studioState;
   const selectedSceneLibrary = selectedSceneNode?.type === 'library-instance'
     ? uiLibraryByName(selectedSceneNode.library as WebDesignLibraryName)

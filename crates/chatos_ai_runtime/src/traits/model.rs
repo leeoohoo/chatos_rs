@@ -66,6 +66,73 @@ pub struct ModelRuntimeConfig {
     pub output_format: Option<JsonSchemaOutputFormat>,
 }
 
+macro_rules! impl_model_request_builders {
+    () => {
+        pub fn with_responses_support(mut self, supports_responses: bool) -> Self {
+            self.supports_responses = supports_responses;
+            self
+        }
+
+        pub fn with_instructions(mut self, instructions: Option<String>) -> Self {
+            self.instructions = instructions;
+            self
+        }
+
+        pub fn with_temperature(mut self, temperature: Option<f64>) -> Self {
+            self.temperature = temperature;
+            self
+        }
+
+        pub fn with_max_output_tokens(mut self, max_output_tokens: Option<i64>) -> Self {
+            self.max_output_tokens = max_output_tokens;
+            self
+        }
+
+        pub fn with_thinking_level(mut self, thinking_level: Option<String>) -> Self {
+            self.thinking_level = thinking_level;
+            self
+        }
+
+        pub fn with_prompt_cache_key(mut self, prompt_cache_key: Option<String>) -> Self {
+            self.prompt_cache_key = prompt_cache_key;
+            self
+        }
+
+        pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
+            self.previous_response_id = previous_response_id;
+            self
+        }
+
+        pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
+            self.request_cwd = request_cwd;
+            self
+        }
+
+        pub fn with_prompt_cache_retention(mut self, include_prompt_cache_retention: bool) -> Self {
+            self.include_prompt_cache_retention = include_prompt_cache_retention;
+            self
+        }
+
+        pub fn with_request_body_limit_bytes(
+            mut self,
+            request_body_limit_bytes: Option<usize>,
+        ) -> Self {
+            self.request_body_limit_bytes = request_body_limit_bytes;
+            self
+        }
+
+        pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
+            self.max_transient_retries = max_transient_retries;
+            self
+        }
+
+        pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
+            self.output_format = output_format;
+            self
+        }
+    };
+}
+
 impl ModelRuntimeConfig {
     pub fn openai_compatible(
         base_url: impl Into<String>,
@@ -82,71 +149,10 @@ impl ModelRuntimeConfig {
         }
     }
 
-    pub fn with_responses_support(mut self, supports_responses: bool) -> Self {
-        self.supports_responses = supports_responses;
-        self
-    }
+    impl_model_request_builders!();
 
     pub fn with_images_support(mut self, supports_images: Option<bool>) -> Self {
         self.supports_images = supports_images;
-        self
-    }
-
-    pub fn with_instructions(mut self, instructions: Option<String>) -> Self {
-        self.instructions = instructions;
-        self
-    }
-
-    pub fn with_temperature(mut self, temperature: Option<f64>) -> Self {
-        self.temperature = temperature;
-        self
-    }
-
-    pub fn with_max_output_tokens(mut self, max_output_tokens: Option<i64>) -> Self {
-        self.max_output_tokens = max_output_tokens;
-        self
-    }
-
-    pub fn with_thinking_level(mut self, thinking_level: Option<String>) -> Self {
-        self.thinking_level = thinking_level;
-        self
-    }
-
-    pub fn with_prompt_cache_key(mut self, prompt_cache_key: Option<String>) -> Self {
-        self.prompt_cache_key = prompt_cache_key;
-        self
-    }
-
-    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
-        self.previous_response_id = previous_response_id;
-        self
-    }
-
-    pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
-        self.request_cwd = request_cwd;
-        self
-    }
-
-    pub fn with_prompt_cache_retention(mut self, include_prompt_cache_retention: bool) -> Self {
-        self.include_prompt_cache_retention = include_prompt_cache_retention;
-        self
-    }
-
-    pub fn with_request_body_limit_bytes(
-        mut self,
-        request_body_limit_bytes: Option<usize>,
-    ) -> Self {
-        self.request_body_limit_bytes = request_body_limit_bytes;
-        self
-    }
-
-    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
-        self.max_transient_retries = max_transient_retries;
-        self
-    }
-
-    pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
-        self.output_format = output_format;
         self
     }
 
@@ -224,6 +230,8 @@ pub struct ModelRequest {
 }
 
 impl ModelRequest {
+    impl_model_request_builders!();
+
     pub fn from_runtime_config(
         config: &ModelRuntimeConfig,
         input: Value,
@@ -261,71 +269,8 @@ impl ModelRequest {
         }
     }
 
-    pub fn with_responses_support(mut self, supports_responses: bool) -> Self {
-        self.supports_responses = supports_responses;
-        self
-    }
-
-    pub fn with_instructions(mut self, instructions: Option<String>) -> Self {
-        self.instructions = instructions;
-        self
-    }
-
     pub fn with_tools(mut self, tools: Vec<Value>) -> Self {
         self.tools = tools;
-        self
-    }
-
-    pub fn with_temperature(mut self, temperature: Option<f64>) -> Self {
-        self.temperature = temperature;
-        self
-    }
-
-    pub fn with_max_output_tokens(mut self, max_output_tokens: Option<i64>) -> Self {
-        self.max_output_tokens = max_output_tokens;
-        self
-    }
-
-    pub fn with_thinking_level(mut self, thinking_level: Option<String>) -> Self {
-        self.thinking_level = thinking_level;
-        self
-    }
-
-    pub fn with_prompt_cache_key(mut self, prompt_cache_key: Option<String>) -> Self {
-        self.prompt_cache_key = prompt_cache_key;
-        self
-    }
-
-    pub fn with_previous_response_id(mut self, previous_response_id: Option<String>) -> Self {
-        self.previous_response_id = previous_response_id;
-        self
-    }
-
-    pub fn with_request_cwd(mut self, request_cwd: Option<String>) -> Self {
-        self.request_cwd = request_cwd;
-        self
-    }
-
-    pub fn with_prompt_cache_retention(mut self, include_prompt_cache_retention: bool) -> Self {
-        self.include_prompt_cache_retention = include_prompt_cache_retention;
-        self
-    }
-
-    pub fn with_request_body_limit_bytes(
-        mut self,
-        request_body_limit_bytes: Option<usize>,
-    ) -> Self {
-        self.request_body_limit_bytes = request_body_limit_bytes;
-        self
-    }
-
-    pub fn with_max_transient_retries(mut self, max_transient_retries: Option<usize>) -> Self {
-        self.max_transient_retries = max_transient_retries;
-        self
-    }
-
-    pub fn with_output_format(mut self, output_format: Option<JsonSchemaOutputFormat>) -> Self {
-        self.output_format = output_format;
         self
     }
 }
