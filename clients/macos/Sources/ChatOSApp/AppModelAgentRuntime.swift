@@ -86,7 +86,9 @@ extension AppModel {
                 let changeTask = Task {
                     for await change in changes {
                         guard !Task.isCancelled else { break }
-                        if change.kind == .roomUpdated || change.kind == .runUpdated {
+                        if AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(
+                            for: change.kind
+                        ) {
                             continuation.yield()
                         }
                     }
@@ -305,6 +307,18 @@ enum AgentRuntimePollingPolicy {
         switch changeKind {
         case .runUpdated, .roomUpdated: true
         case .deliveryClaimed: false
+        }
+    }
+
+    static func shouldWakeExecutorRecovery(
+        for changeKind: NativeAgentGroupChatChange.Kind
+    ) -> Bool {
+        switch changeKind {
+        case .roomUpdated: true
+        // A running Agent persists several checkpoints per model/tool turn. Those updates belong
+        // to the live owner in this process and must not launch an interrupted-Run scan. Queue
+        // mutations publish roomUpdated; startup and the fallback timer cover crash recovery.
+        case .deliveryClaimed, .runUpdated: false
         }
     }
 }

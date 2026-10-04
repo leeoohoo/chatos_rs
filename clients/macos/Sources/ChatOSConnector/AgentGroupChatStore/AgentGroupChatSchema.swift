@@ -511,6 +511,10 @@ enum AgentGroupChatSchema {
         );
         CREATE INDEX IF NOT EXISTS local_agent_group_chat_runs_status
             ON local_agent_group_chat_runs(owner_user_id, status, updated_at_unix_ms);
+        CREATE INDEX IF NOT EXISTS local_agent_group_chat_runs_agent_recency
+            ON local_agent_group_chat_runs(
+                owner_user_id, agent_id, updated_at_unix_ms DESC, id DESC
+            );
 
         CREATE TABLE IF NOT EXISTS local_agent_group_chat_schema_migrations (
             version INTEGER PRIMARY KEY NOT NULL

@@ -138,6 +138,9 @@ struct PerformancePolicyTests {
     @Test("agent runtime reconciles communications quickly while idle heartbeat polling backs off")
     func agentRuntimeRecoveryAndHeartbeatPollingIntervals() {
         #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(30))
+        #expect(AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .roomUpdated))
+        #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .runUpdated))
+        #expect(!AgentRuntimePollingPolicy.shouldWakeExecutorRecovery(for: .deliveryClaimed))
         #expect(AgentRuntimePollingPolicy.heartbeatDelayMilliseconds(
             nextDueUnixMs: nil,
             nowUnixMs: 1_000

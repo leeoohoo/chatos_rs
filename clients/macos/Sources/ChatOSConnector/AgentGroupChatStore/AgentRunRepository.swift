@@ -150,8 +150,8 @@ enum AgentRunRepository {
             handle,
             """
             WITH ranked AS (
-                SELECT run.run_json, run.delivery_id, run.agent_id,
-                       run.updated_at_unix_ms, run.id, agent.name,
+                SELECT run.delivery_id, run.agent_id, run.updated_at_unix_ms,
+                       run.id, agent.name,
                        ROW_NUMBER() OVER (
                            PARTITION BY run.agent_id
                            ORDER BY run.updated_at_unix_ms DESC, run.id DESC
@@ -162,16 +162,21 @@ enum AgentRunRepository {
                  AND agent.id = run.agent_id
                 WHERE run.owner_user_id = ? AND agent.status = 'active'
             )
-            SELECT ranked.run_json
+            SELECT run.run_json
             FROM ranked
             JOIN project_agent_deliveries delivery
               ON delivery.owner_user_id = ? AND delivery.id = ranked.delivery_id
+            JOIN local_agent_group_chat_runs run
+              ON run.owner_user_id = ? AND run.id = ranked.id
             WHERE ranked.agent_rank <= 20 AND delivery.status = 'running'
             ORDER BY ranked.name, ranked.agent_id,
                      ranked.updated_at_unix_ms DESC, ranked.id DESC
             LIMIT ?
             """,
-            [.text(ownerUserID), .text(ownerUserID), .integer(Int64(limit))]
+            [
+                .text(ownerUserID), .text(ownerUserID), .text(ownerUserID),
+                .integer(Int64(limit)),
+            ]
         ) { string($0, 0) }
         return try values.map(AgentGroupChatRowMapper.run)
     }
