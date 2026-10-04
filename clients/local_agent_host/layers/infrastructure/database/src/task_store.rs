@@ -129,6 +129,23 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         event_id: &str,
         now_unix_ms: i64,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
+        // The scheduler checks this on every wake and after every model/tool commit. Avoid taking
+        // SQLite's write reservation when the account has no materializable task; the
+        // transactional implementation below rechecks the candidate before writing.
+        let has_ready_task = sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM local_tasks t \
+             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+             WHERE g.owner_user_id = ? AND t.status = 'ready' \
+             AND t.active_run_id IS NULL LIMIT 1",
+        )
+        .bind(owner_user_id)
+        .fetch_optional(&self.pool)
+        .await
+        .db()?
+        .is_some();
+        if !has_ready_task {
+            return Ok(None);
+        }
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
         let result = super::task_lifecycle::start_next_task_run(
@@ -533,5 +550,31 @@ mod tests {
             storage.list_task_runs("user-1", "missing-task", 0).await,
             Err(ClientStorageError::InvalidState(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn idle_task_materialization_does_not_wait_for_the_sqlite_writer() {
+        let root = tempfile::tempdir().expect("temporary database root");
+        let storage = SqliteClientStorage::connect_file(&root.path().join("agent.sqlite3"))
+            .await
+            .expect("storage");
+        let mut writer = storage.pool.acquire().await.expect("writer connection");
+        SqliteClientStorage::begin_immediate(&mut writer)
+            .await
+            .expect("hold write reservation");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            storage.start_next_task_run("user-1", "run-idle", "event-idle", 10_000),
+        )
+        .await
+        .expect("idle scheduler must stay read-only")
+        .expect("idle task lookup");
+        assert!(result.is_none());
+
+        sqlx::query("ROLLBACK")
+            .execute(&mut *writer)
+            .await
+            .expect("release writer");
     }
 }
