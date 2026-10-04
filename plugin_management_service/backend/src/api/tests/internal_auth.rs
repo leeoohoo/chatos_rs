@@ -271,21 +271,8 @@ async fn system_stats_accepts_valid_scoped_signed_token() {
         chatos_config_sdk::PlatformPressureLevel::Normal
     );
     assert!(!response.plugin_catalog.scheduled_sync_pressure_paused);
-    assert_eq!(response.plugin_catalog.queue, "plugin.catalog.sync");
-    assert_eq!(
-        response.plugin_catalog.retry_queue,
-        "plugin.catalog.sync.retry"
-    );
-    assert_eq!(
-        response.plugin_catalog.schedule_queue,
-        "plugin.catalog.sync.schedule"
-    );
-    assert_eq!(
-        response.plugin_catalog.dead_letter_queue,
-        "plugin.catalog.sync.dlq"
-    );
-    assert!(!response.plugin_catalog.rabbitmq_queues.enabled);
-    assert!(response.plugin_catalog.rabbitmq_queues.queues.is_empty());
+    assert_eq!(response.plugin_catalog.dispatch_backend, "postgres");
+    assert_eq!(response.plugin_catalog.ready_events, 0);
 }
 
 #[tokio::test]
@@ -381,48 +368,6 @@ async fn internal_router_does_not_expose_public_or_browser_routes() {
         );
     }
     server.abort();
-}
-
-#[tokio::test]
-async fn system_stats_redacts_rabbitmq_inspection_failures() {
-    let mut state = test_state_with_secret(Some("a-long-internal-test-secret")).await;
-    state.config.require_signed_internal_requests = true;
-    state.config.plugin_catalog_sync_enabled = true;
-    state.rabbitmq_queue_inspector = chatos_queue_observability::RabbitMqQueueInspector::new(
-        "invalid://guest:secret@broker.example.invalid/private",
-    )
-    .expect("create invalid RabbitMQ queue inspector");
-    let token = chatos_service_runtime::issue_internal_service_token(
-        "a-long-internal-test-secret",
-        "local-connector-service",
-        INTERNAL_TOKEN_AUDIENCE,
-        SYSTEM_STATS_READ_SCOPE,
-        60,
-    )
-    .expect("issue signed system stats token");
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-plugin-management-caller-service",
-        HeaderValue::from_static("local-connector-service"),
-    );
-    headers.insert(
-        "x-plugin-management-internal-token",
-        HeaderValue::from_str(token.as_str()).expect("token header"),
-    );
-
-    let Json(response) = get_system_stats(State(state), headers)
-        .await
-        .expect("load unavailable system stats");
-    let encoded = serde_json::to_string(&response).expect("serialize system stats");
-
-    assert!(response.plugin_catalog.rabbitmq_queues.enabled);
-    assert!(!response.plugin_catalog.rabbitmq_queues.available);
-    assert_eq!(
-        response.plugin_catalog.rabbitmq_queues.error.as_deref(),
-        Some("rabbitmq_queue_inspection_unavailable")
-    );
-    assert!(!encoded.contains("secret"));
-    assert!(!encoded.contains("broker.example.invalid"));
 }
 
 #[tokio::test]
@@ -578,15 +523,8 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             local_connector_max_tool_snapshot_bytes: 512 * 1024,
             plugin_catalog_sync_enabled: false,
             plugin_catalog_sync_interval: Duration::from_secs(15 * 60),
-            plugin_catalog_rabbitmq_url: "amqp://guest:guest@127.0.0.1:5672/%2f".to_string(),
-            plugin_catalog_rabbitmq_exchange: "chatos.command".to_string(),
-            plugin_catalog_queue: "plugin.catalog.sync".to_string(),
-            plugin_catalog_retry_queue: "plugin.catalog.sync.retry".to_string(),
-            plugin_catalog_schedule_queue: "plugin.catalog.sync.schedule".to_string(),
-            plugin_catalog_dead_letter_queue: "plugin.catalog.sync.dlq".to_string(),
             plugin_catalog_max_delivery_attempts: 5,
             plugin_catalog_retry_delay: Duration::from_secs(30),
-            plugin_catalog_rabbitmq_reconnect_delay: Duration::from_secs(2),
             plugin_catalog_consumer_concurrency: 2,
             plugin_catalog_outbox_reconcile_interval: Duration::from_secs(60),
             plugin_catalog_outbox_batch_size: 100,
@@ -606,10 +544,6 @@ async fn test_state_with_secret(internal_api_secret: Option<&str>) -> AppState {
             chatos_service_runtime::HttpClientTimeouts::new(Duration::from_secs(1)),
         )
         .expect("build User Service test client"),
-        rabbitmq_queue_inspector: chatos_queue_observability::RabbitMqQueueInspector::new(
-            "amqp://guest:guest@127.0.0.1:5672/%2f",
-        )
-        .expect("create RabbitMQ queue inspector"),
         pressure,
     }
 }

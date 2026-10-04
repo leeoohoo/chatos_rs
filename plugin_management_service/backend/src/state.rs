@@ -4,7 +4,6 @@
 use std::fs;
 use tracing::warn;
 
-use chatos_queue_observability::RabbitMqQueueInspector;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 
 use crate::auth::login_via_user_service;
@@ -19,7 +18,6 @@ pub struct AppState {
     pub config: AppConfig,
     pub store: AppStore,
     pub(crate) user_service_http: reqwest::Client,
-    pub(crate) rabbitmq_queue_inspector: RabbitMqQueueInspector,
     pub(crate) pressure: PluginManagementPressureState,
 }
 
@@ -50,8 +48,6 @@ impl AppState {
         let user_service_http =
             build_http_client(HttpClientTimeouts::new(config.user_service_request_timeout))
                 .map_err(|err| format!("build user_service client failed: {err}"))?;
-        let rabbitmq_queue_inspector =
-            RabbitMqQueueInspector::new(config.plugin_catalog_rabbitmq_url.clone())?;
         if config.seed_system_resources {
             let admin_user_id = resolve_seed_admin_user_id(&config, &user_service_http).await;
             seed_system_resources(&store, admin_user_id.as_str()).await?;
@@ -61,7 +57,6 @@ impl AppState {
             config,
             store,
             user_service_http,
-            rabbitmq_queue_inspector,
             pressure,
         })
     }

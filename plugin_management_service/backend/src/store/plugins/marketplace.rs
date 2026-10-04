@@ -146,22 +146,65 @@ impl AppStore {
         Ok(row.map(outbox_event))
     }
 
-    pub async fn list_pending_plugin_catalog_sync_events(
+    pub async fn plugin_catalog_sync_backlog(&self) -> Result<u64, String> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM plugin_catalog_sync_outbox WHERE pending AND requested_at<=now()",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
+    pub async fn claim_pending_plugin_catalog_sync_events(
         &self,
         limit: i64,
+        scheduled_before: DateTime<Utc>,
+        claim_token: &str,
+        claim_until: DateTime<Utc>,
     ) -> Result<Vec<PluginCatalogSyncOutboxEvent>, String> {
-        let rows = sqlx::query_as::<_, OutboxRow>("SELECT marketplace_id,event_version,requested_at,scheduled FROM plugin_catalog_sync_outbox WHERE pending ORDER BY requested_at,marketplace_id LIMIT $1")
-            .bind(limit.clamp(1,10_000)).fetch_all(&self.pool).await.map_err(db_error)?;
+        if claim_token.trim().is_empty() {
+            return Err("Plugin Catalog database claim token must not be empty".to_string());
+        }
+        let rows = sqlx::query_as::<_, OutboxRow>("WITH candidates AS (SELECT marketplace_id FROM plugin_catalog_sync_outbox WHERE pending AND (NOT scheduled OR requested_at<=$1) ORDER BY requested_at,marketplace_id LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE plugin_catalog_sync_outbox o SET pending=FALSE,published_version=o.event_version,claim_token=$3,claim_until=$4 FROM candidates c WHERE o.marketplace_id=c.marketplace_id RETURNING o.marketplace_id,o.event_version,o.requested_at,o.scheduled")
+            .bind(scheduled_before).bind(limit.clamp(1,10_000)).bind(claim_token).bind(claim_until)
+            .fetch_all(&self.pool).await.map_err(db_error)?;
         Ok(rows.into_iter().map(outbox_event).collect())
     }
 
-    pub async fn mark_plugin_catalog_sync_event_published(
+    pub async fn defer_plugin_catalog_sync_claim(
         &self,
         event: &PluginCatalogSyncOutboxEvent,
+        available_at: DateTime<Utc>,
+        error: Option<&str>,
     ) -> Result<bool, String> {
-        let result = sqlx::query("UPDATE plugin_catalog_sync_outbox SET pending=FALSE,published_version=$1 WHERE marketplace_id=$2 AND event_version=$1 AND pending")
-            .bind(event.event_version).bind(&event.marketplace_id).execute(&self.pool).await.map_err(db_error)?;
+        let result = sqlx::query("UPDATE plugin_catalog_sync_outbox SET pending=TRUE,requested_at=$1,last_error=$2,claim_token=NULL,claim_until=NULL WHERE marketplace_id=$3 AND event_version=$4 AND consumed_version<$4")
+            .bind(available_at).bind(error).bind(&event.marketplace_id).bind(event.event_version)
+            .execute(&self.pool).await.map_err(db_error)?;
         Ok(result.rows_affected() == 1)
+    }
+
+    pub async fn fail_plugin_catalog_sync_claim(
+        &self,
+        event: &PluginCatalogSyncOutboxEvent,
+        error: &str,
+        retry_at: DateTime<Utc>,
+        max_attempts: u32,
+    ) -> Result<bool, String> {
+        let max_attempts = i32::try_from(max_attempts.max(1)).unwrap_or(i32::MAX);
+        let dead_lettered = sqlx::query_scalar::<_, bool>("UPDATE plugin_catalog_sync_outbox SET processing_attempts=processing_attempts+1,pending=(processing_attempts+1<$1),requested_at=$2,last_error=$3,claim_token=NULL,claim_until=NULL,consumed_version=CASE WHEN processing_attempts+1>=$1 THEN event_version ELSE consumed_version END,dead_letter_version=CASE WHEN processing_attempts+1>=$1 THEN event_version ELSE dead_letter_version END,dead_lettered_at=CASE WHEN processing_attempts+1>=$1 THEN now() ELSE dead_lettered_at END WHERE marketplace_id=$4 AND event_version=$5 AND consumed_version<$5 RETURNING processing_attempts>=$1")
+            .bind(max_attempts).bind(retry_at).bind(error).bind(&event.marketplace_id).bind(event.event_version)
+            .fetch_optional(&self.pool).await.map_err(db_error)?;
+        Ok(dead_lettered.unwrap_or(false))
+    }
+
+    pub async fn recover_stale_plugin_catalog_sync_claims(
+        &self,
+        limit: i64,
+    ) -> Result<u64, String> {
+        let result = sqlx::query("WITH candidates AS (SELECT marketplace_id FROM plugin_catalog_sync_outbox WHERE NOT pending AND consumed_version<event_version AND claim_until<=now() AND COALESCE(dead_letter_version,-1)<event_version ORDER BY claim_until,marketplace_id LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE plugin_catalog_sync_outbox o SET pending=TRUE,claim_token=NULL,claim_until=NULL FROM candidates c WHERE o.marketplace_id=c.marketplace_id")
+            .bind(limit.clamp(1,10_000)).execute(&self.pool).await.map_err(db_error)?;
+        Ok(result.rows_affected())
     }
 
     pub async fn plugin_catalog_sync_event_consumed(
@@ -176,26 +219,16 @@ impl AppStore {
     pub async fn complete_plugin_catalog_sync_event(
         &self,
         event: &PluginCatalogSyncOutboxEvent,
-        schedule_next: bool,
+        schedule_next_at: Option<DateTime<Utc>>,
     ) -> Result<Option<PluginCatalogSyncOutboxEvent>, String> {
-        if !schedule_next {
-            sqlx::query("UPDATE plugin_catalog_sync_outbox SET consumed_version=$1,pending=FALSE WHERE marketplace_id=$2 AND event_version=$1 AND consumed_version<$1")
+        let Some(schedule_next_at) = schedule_next_at else {
+            sqlx::query("UPDATE plugin_catalog_sync_outbox SET consumed_version=$1,pending=FALSE,processing_attempts=0,claim_token=NULL,claim_until=NULL WHERE marketplace_id=$2 AND event_version=$1 AND consumed_version<$1")
                 .bind(event.event_version).bind(&event.marketplace_id).execute(&self.pool).await.map_err(db_error)?;
             return Ok(None);
-        }
-        let row = sqlx::query_as::<_, OutboxRow>("UPDATE plugin_catalog_sync_outbox SET consumed_version=$1,event_version=event_version+1,pending=TRUE,scheduled=TRUE,requested_at=now(),published_version=NULL WHERE marketplace_id=$2 AND event_version=$1 AND consumed_version<$1 RETURNING marketplace_id,event_version,requested_at,scheduled")
-            .bind(event.event_version).bind(&event.marketplace_id).fetch_optional(&self.pool).await.map_err(db_error)?;
+        };
+        let row = sqlx::query_as::<_, OutboxRow>("UPDATE plugin_catalog_sync_outbox SET consumed_version=$1,event_version=event_version+1,pending=TRUE,scheduled=TRUE,requested_at=$2,published_version=NULL,processing_attempts=0,claim_token=NULL,claim_until=NULL WHERE marketplace_id=$3 AND event_version=$1 AND consumed_version<$1 RETURNING marketplace_id,event_version,requested_at,scheduled")
+            .bind(event.event_version).bind(schedule_next_at).bind(&event.marketplace_id).fetch_optional(&self.pool).await.map_err(db_error)?;
         Ok(row.map(outbox_event))
-    }
-
-    pub async fn mark_plugin_catalog_sync_event_dead_lettered(
-        &self,
-        event: &PluginCatalogSyncOutboxEvent,
-        error: &str,
-    ) -> Result<bool, String> {
-        let result = sqlx::query("UPDATE plugin_catalog_sync_outbox SET consumed_version=$1,pending=FALSE,dead_letter_version=$1,dead_lettered_at=now(),last_error=$2 WHERE marketplace_id=$3 AND event_version=$1 AND consumed_version<$1")
-            .bind(event.event_version).bind(error).bind(&event.marketplace_id).execute(&self.pool).await.map_err(db_error)?;
-        Ok(result.rows_affected() == 1)
     }
 
     pub async fn replay_dead_lettered_plugin_catalog_sync(
@@ -203,7 +236,7 @@ impl AppStore {
         marketplace_id: &str,
         dead_letter_version: i64,
     ) -> Result<Option<PluginCatalogSyncOutboxEvent>, String> {
-        let row = sqlx::query_as::<_, OutboxRow>("UPDATE plugin_catalog_sync_outbox o SET event_version=o.event_version+1,pending=TRUE,scheduled=FALSE,requested_at=now(),published_version=NULL,dead_letter_version=NULL,dead_lettered_at=NULL,last_error=NULL FROM plugin_marketplaces m WHERE o.marketplace_id=m.id AND o.marketplace_id=$1 AND m.enabled AND m.trust_level=$2 AND m.source_kind=ANY($3) AND COALESCE(m.catalog_url,'')<>'' AND o.event_version=$4 AND o.dead_letter_version=$4 AND o.consumed_version>=$4 AND NOT o.pending RETURNING o.marketplace_id,o.event_version,o.requested_at,o.scheduled")
+        let row = sqlx::query_as::<_, OutboxRow>("UPDATE plugin_catalog_sync_outbox o SET event_version=o.event_version+1,pending=TRUE,scheduled=FALSE,requested_at=now(),published_version=NULL,dead_letter_version=NULL,dead_lettered_at=NULL,last_error=NULL,processing_attempts=0,claim_token=NULL,claim_until=NULL FROM plugin_marketplaces m WHERE o.marketplace_id=m.id AND o.marketplace_id=$1 AND m.enabled AND m.trust_level=$2 AND m.source_kind=ANY($3) AND COALESCE(m.catalog_url,'')<>'' AND o.event_version=$4 AND o.dead_letter_version=$4 AND o.consumed_version>=$4 AND NOT o.pending RETURNING o.marketplace_id,o.event_version,o.requested_at,o.scheduled")
             .bind(marketplace_id).bind(PLUGIN_TRUST_TRUSTED).bind(vec![PLUGIN_MARKETPLACE_SOURCE_OFFICIAL_REGISTRY,PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY]).bind(dead_letter_version)
             .fetch_optional(&self.pool).await.map_err(db_error)?;
         Ok(row.map(outbox_event))

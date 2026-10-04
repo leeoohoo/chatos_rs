@@ -5,7 +5,6 @@ use axum::extract::State;
 use axum::http::{header, HeaderMap};
 use axum::response::IntoResponse;
 use axum::Json;
-use chatos_queue_observability::{RabbitMqQueueRuntimeStats, RabbitMqQueueSpec};
 use serde::Serialize;
 
 use super::{
@@ -26,11 +25,8 @@ pub(super) struct PluginManagementSystemStatsResponse {
 pub(super) struct PluginCatalogSystemStats {
     pub enabled: bool,
     pub consumer_concurrency: usize,
-    pub queue: String,
-    pub retry_queue: String,
-    pub schedule_queue: String,
-    pub dead_letter_queue: String,
-    pub rabbitmq_queues: RabbitMqQueueRuntimeStats,
+    pub dispatch_backend: &'static str,
+    pub ready_events: u64,
     pub pressure_level: PlatformPressureLevel,
     pub scheduled_sync_pressure_paused: bool,
 }
@@ -43,7 +39,19 @@ pub(super) async fn get_system_stats(
     require_internal_api_secret(&state, &headers, caller_service, SYSTEM_STATS_READ_SCOPE)?;
 
     let config = &state.config;
-    let rabbitmq_queues = rabbitmq_queue_stats(&state).await;
+    let ready_events = if config.plugin_catalog_sync_enabled {
+        state
+            .store
+            .plugin_catalog_sync_backlog()
+            .await
+            .map_err(|error| {
+                ApiError::internal(format!(
+                    "load Plugin Catalog database backlog failed: {error}"
+                ))
+            })?
+    } else {
+        0
+    };
     let pressure_level = state.pressure.snapshot().level;
 
     Ok(Json(PluginManagementSystemStatsResponse {
@@ -51,11 +59,8 @@ pub(super) async fn get_system_stats(
         plugin_catalog: PluginCatalogSystemStats {
             enabled: config.plugin_catalog_sync_enabled,
             consumer_concurrency: config.plugin_catalog_consumer_concurrency,
-            queue: config.plugin_catalog_queue.clone(),
-            retry_queue: config.plugin_catalog_retry_queue.clone(),
-            schedule_queue: config.plugin_catalog_schedule_queue.clone(),
-            dead_letter_queue: config.plugin_catalog_dead_letter_queue.clone(),
-            rabbitmq_queues,
+            dispatch_backend: "postgres",
+            ready_events,
             pressure_level,
             scheduled_sync_pressure_paused: pressure_level == PlatformPressureLevel::Critical,
         },
@@ -63,10 +68,8 @@ pub(super) async fn get_system_stats(
 }
 
 pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl IntoResponse {
-    let stats = rabbitmq_queue_stats(&state).await;
     let pressure_level = state.pressure.snapshot().level;
-    let mut body =
-        chatos_queue_observability::render_prometheus_metrics("plugin-management-service", &stats);
+    let mut body = String::new();
     body.push_str(&chatos_postgres::render_pool_metrics(
         state.store.pool(),
         "plugin-management",
@@ -80,26 +83,4 @@ pub(super) async fn prometheus_metrics(State(state): State<AppState>) -> impl In
         u8::from(pressure_level == PlatformPressureLevel::Critical)
     ));
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
-}
-
-async fn rabbitmq_queue_stats(state: &AppState) -> RabbitMqQueueRuntimeStats {
-    let config = &state.config;
-    if !config.plugin_catalog_sync_enabled {
-        return RabbitMqQueueRuntimeStats::disabled();
-    }
-    state
-        .rabbitmq_queue_inspector
-        .inspect(&[
-            RabbitMqQueueSpec::new("catalog_sync", config.plugin_catalog_queue.as_str()),
-            RabbitMqQueueSpec::new("catalog_retry", config.plugin_catalog_retry_queue.as_str()),
-            RabbitMqQueueSpec::new(
-                "catalog_schedule",
-                config.plugin_catalog_schedule_queue.as_str(),
-            ),
-            RabbitMqQueueSpec::new(
-                "catalog_dead_letter",
-                config.plugin_catalog_dead_letter_queue.as_str(),
-            ),
-        ])
-        .await
 }

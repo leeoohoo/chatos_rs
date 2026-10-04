@@ -4,7 +4,6 @@
 use std::time::Duration;
 
 use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ServicePressureSignal};
-use chatos_queue_observability::{RabbitMqQueueRuntimeStats, RabbitMqQueueSpec};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -104,8 +103,19 @@ pub fn start_pressure_reporter(
     tokio::spawn(async move {
         loop {
             let policy = state.pressure.snapshot();
-            let stats = inspect_main_queue(&state).await;
-            let signal = pressure_signal_from_queue_stats(&stats, &policy);
+            let signal = if !state.config.plugin_catalog_sync_enabled {
+                pressure_signal_from_backlog(false, 0, &policy)
+            } else {
+                match state.store.plugin_catalog_sync_backlog().await {
+                    Ok(ready_events) => pressure_signal_from_backlog(true, ready_events, &policy),
+                    Err(error) => ServicePressureSignal {
+                        level: PlatformPressureLevel::Critical,
+                        reason: format!(
+                            "Plugin Catalog database backlog inspection failed: {error}"
+                        ),
+                    },
+                }
+            };
             if let Err(error) = client
                 .report_pressure(service_id.as_str(), running_version.as_deref(), &signal)
                 .await
@@ -153,65 +163,27 @@ pub fn start_pressure_reporter(
     })
 }
 
-async fn inspect_main_queue(state: &AppState) -> RabbitMqQueueRuntimeStats {
-    if !state.config.plugin_catalog_sync_enabled {
-        return RabbitMqQueueRuntimeStats::disabled();
-    }
-    state
-        .rabbitmq_queue_inspector
-        .inspect(&[RabbitMqQueueSpec::new(
-            "catalog_sync",
-            state.config.plugin_catalog_queue.as_str(),
-        )])
-        .await
-}
-
-fn pressure_signal_from_queue_stats(
-    stats: &RabbitMqQueueRuntimeStats,
+fn pressure_signal_from_backlog(
+    enabled: bool,
+    ready_events: u64,
     policy: &PluginManagementPressurePolicy,
 ) -> ServicePressureSignal {
-    if !stats.enabled {
+    if !enabled {
         return ServicePressureSignal {
             level: PlatformPressureLevel::Normal,
             reason: "Plugin catalog sync is disabled".to_string(),
         };
     }
-    if !stats.available {
-        return ServicePressureSignal {
-            level: PlatformPressureLevel::Critical,
-            reason: "Plugin catalog sync queue inspection unavailable".to_string(),
-        };
-    }
-    let Some(queue) = stats
-        .queues
-        .iter()
-        .find(|queue| queue.role == "catalog_sync")
-    else {
-        return ServicePressureSignal {
-            level: PlatformPressureLevel::Critical,
-            reason: "Plugin catalog sync queue stats missing".to_string(),
-        };
-    };
-    if queue.messages > 0 && queue.consumers == 0 {
-        return ServicePressureSignal {
-            level: PlatformPressureLevel::Critical,
-            reason: format!(
-                "Plugin catalog sync queue has no consumer; ready_messages={}",
-                queue.messages
-            ),
-        };
-    }
-    let ready_messages = u64::from(queue.messages);
-    let level = if ready_messages >= policy.queue_critical_messages {
+    let level = if ready_events >= policy.queue_critical_messages {
         PlatformPressureLevel::Critical
-    } else if ready_messages >= policy.queue_elevated_messages {
+    } else if ready_events >= policy.queue_elevated_messages {
         PlatformPressureLevel::Elevated
     } else {
         PlatformPressureLevel::Normal
     };
     ServicePressureSignal {
         level,
-        reason: format!("Plugin catalog sync ready_messages={ready_messages}"),
+        reason: format!("Plugin Catalog database ready_events={ready_events}"),
     }
 }
 
@@ -234,7 +206,6 @@ fn required_u64(
 mod tests {
     use std::collections::BTreeMap;
 
-    use chatos_queue_observability::RabbitMqQueueDepth;
     use serde_json::json;
 
     use super::*;
@@ -270,68 +241,32 @@ mod tests {
         }
     }
 
-    fn stats(messages: u32, consumers: u32) -> RabbitMqQueueRuntimeStats {
-        RabbitMqQueueRuntimeStats {
-            enabled: true,
-            available: true,
-            queues: vec![RabbitMqQueueDepth {
-                role: "catalog_sync".to_string(),
-                name: "plugin.catalog.sync".to_string(),
-                messages,
-                consumers,
-            }],
-            error: None,
-        }
-    }
-
     #[test]
-    fn catalog_queue_depth_maps_to_normal_elevated_and_critical() {
+    fn catalog_backlog_maps_to_normal_elevated_and_critical() {
         let policy = PluginManagementPressurePolicy::from_snapshot(&snapshot(100, 1_000, 5_000))
             .expect("valid pressure policy");
         assert_eq!(
-            pressure_signal_from_queue_stats(&stats(99, 1), &policy).level,
+            pressure_signal_from_backlog(true, 99, &policy).level,
             PlatformPressureLevel::Normal
         );
         assert_eq!(
-            pressure_signal_from_queue_stats(&stats(100, 1), &policy).level,
+            pressure_signal_from_backlog(true, 100, &policy).level,
             PlatformPressureLevel::Elevated
         );
         assert_eq!(
-            pressure_signal_from_queue_stats(&stats(1_000, 1), &policy).level,
+            pressure_signal_from_backlog(true, 1_000, &policy).level,
             PlatformPressureLevel::Critical
         );
     }
 
     #[test]
-    fn disabled_sync_is_normal_but_unavailable_inspection_is_critical() {
+    fn disabled_sync_is_normal() {
         let policy = PluginManagementPressurePolicy::from_snapshot(&snapshot(100, 1_000, 5_000))
             .expect("valid pressure policy");
         assert_eq!(
-            pressure_signal_from_queue_stats(&RabbitMqQueueRuntimeStats::disabled(), &policy).level,
+            pressure_signal_from_backlog(false, 0, &policy).level,
             PlatformPressureLevel::Normal
         );
-        assert_eq!(
-            pressure_signal_from_queue_stats(
-                &RabbitMqQueueRuntimeStats {
-                    enabled: true,
-                    available: false,
-                    queues: Vec::new(),
-                    error: Some("unavailable".to_string()),
-                },
-                &policy,
-            )
-            .level,
-            PlatformPressureLevel::Critical
-        );
-    }
-
-    #[test]
-    fn backlog_without_a_consumer_is_critical() {
-        let policy = PluginManagementPressurePolicy::from_snapshot(&snapshot(100, 1_000, 5_000))
-            .expect("valid pressure policy");
-        let signal = pressure_signal_from_queue_stats(&stats(1, 0), &policy);
-        assert_eq!(signal.level, PlatformPressureLevel::Critical);
-        assert!(signal.reason.contains("no consumer"));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -23,15 +23,8 @@ pub struct AppConfig {
     pub local_connector_max_tool_snapshot_bytes: usize,
     pub plugin_catalog_sync_enabled: bool,
     pub plugin_catalog_sync_interval: Duration,
-    pub plugin_catalog_rabbitmq_url: String,
-    pub plugin_catalog_rabbitmq_exchange: String,
-    pub plugin_catalog_queue: String,
-    pub plugin_catalog_retry_queue: String,
-    pub plugin_catalog_schedule_queue: String,
-    pub plugin_catalog_dead_letter_queue: String,
     pub plugin_catalog_max_delivery_attempts: u32,
     pub plugin_catalog_retry_delay: Duration,
-    pub plugin_catalog_rabbitmq_reconnect_delay: Duration,
     pub plugin_catalog_consumer_concurrency: usize,
     pub plugin_catalog_outbox_reconcile_interval: Duration,
     pub plugin_catalog_outbox_batch_size: i64,
@@ -87,22 +80,6 @@ impl AppConfig {
                 required_u64("PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS")?
                     .clamp(60, 24 * 60 * 60),
             ),
-            plugin_catalog_rabbitmq_url: require_config_center_secret(
-                "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL",
-            )?,
-            plugin_catalog_rabbitmq_exchange: require_config_center_text(
-                "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE",
-            )?,
-            plugin_catalog_queue: require_config_center_text("PLUGIN_MANAGEMENT_CATALOG_QUEUE")?,
-            plugin_catalog_retry_queue: require_config_center_text(
-                "PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE",
-            )?,
-            plugin_catalog_schedule_queue: require_config_center_text(
-                "PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE",
-            )?,
-            plugin_catalog_dead_letter_queue: require_config_center_text(
-                "PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE",
-            )?,
             plugin_catalog_max_delivery_attempts: u32::try_from(
                 required_u64("PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS")?.clamp(1, 100),
             )
@@ -112,9 +89,6 @@ impl AppConfig {
             plugin_catalog_retry_delay: Duration::from_millis(
                 required_u64("PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS")?
                     .clamp(100, 24 * 60 * 60 * 1_000),
-            ),
-            plugin_catalog_rabbitmq_reconnect_delay: Duration::from_millis(
-                required_u64("PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS")?.clamp(100, 60_000),
             ),
             plugin_catalog_consumer_concurrency: required_usize(
                 "PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY",
@@ -155,20 +129,6 @@ impl AppConfig {
             )?,
         };
 
-        let catalog_queues = [
-            config.plugin_catalog_queue.as_str(),
-            config.plugin_catalog_retry_queue.as_str(),
-            config.plugin_catalog_schedule_queue.as_str(),
-            config.plugin_catalog_dead_letter_queue.as_str(),
-        ];
-        if catalog_queues.iter().any(|queue| queue.trim().is_empty())
-            || catalog_queues.iter().copied().collect::<HashSet<_>>().len() != catalog_queues.len()
-        {
-            return Err(
-                "Plugin Catalog main, retry, schedule, and dead-letter queues must be non-empty and distinct"
-                    .to_string(),
-            );
-        }
         if config.plugin_catalog_sync_lock_timeout <= config.plugin_catalog_request_timeout {
             return Err(
                 "PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS must exceed PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS"
