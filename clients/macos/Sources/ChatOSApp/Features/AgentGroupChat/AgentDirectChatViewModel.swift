@@ -591,8 +591,10 @@ final class AgentDirectChatViewModel: ObservableObject {
             guard let self else { return }
             repeat {
                 schedulerNeedsAnotherPass = false
+                var didProcessDelivery = false
                 do {
                     let receipts = try await scheduler.drainAccount(ownerUserID: ownerUserID)
+                    didProcessDelivery = !receipts.isEmpty
                     try await reconcileSchedulerResults(receipts)
                 } catch is CancellationError {
                     // Another visible surface may already own the account drain. Its durable
@@ -600,8 +602,9 @@ final class AgentDirectChatViewModel: ObservableObject {
                 } catch {
                     errorMessage = error.localizedDescription
                 }
-                await load()
-                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                if didProcessDelivery {
+                    NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                }
             } while schedulerNeedsAnotherPass
             isRunningAgents = false
             schedulerTask = nil
@@ -615,19 +618,22 @@ final class AgentDirectChatViewModel: ObservableObject {
             guard let self else { return }
             repeat {
                 communicationSchedulerNeedsAnotherPass = false
+                var didProcessDelivery = false
                 do {
                     let receipts = try await scheduler.drainCommunication(
                         ownerUserID: ownerUserID,
                         roomID: conversationID
                     )
+                    didProcessDelivery = !receipts.isEmpty
                     try await reconcileSchedulerResults(receipts)
                 } catch is CancellationError {
                     break
                 } catch {
                     errorMessage = error.localizedDescription
                 }
-                await load()
-                NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                if didProcessDelivery {
+                    NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
+                }
             } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
             communicationSchedulerTask = nil
         }

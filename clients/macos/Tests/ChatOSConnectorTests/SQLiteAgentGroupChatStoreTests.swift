@@ -2199,6 +2199,12 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             - interruptedBefore
         XCTAssertEqual(interrupted, [run])
         XCTAssertEqual(interruptedQueryCount, 1)
+        let runningDeliveryRuns = try await reopened.listRunsWithRunningDeliveries(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertEqual(runningDeliveryRuns, [run])
         let listedForRoom = try await reopened.listRoomRuns(
             ownerUserID: "alice",
             roomID: room.id,
@@ -2254,6 +2260,24 @@ final class SQLiteAgentGroupChatStoreTests: XCTestCase {
             limit: 10
         )
         XCTAssertTrue(listedForOtherAgent.isEmpty)
+        _ = try await reopened.failDelivery(
+            ownerUserID: "alice",
+            deliveryID: claimed.id,
+            error: "terminal delivery",
+            nowUnixMs: run.updatedAtUnixMs + 1
+        )
+        let staleUnfinishedRuns = try await reopened.listUnfinishedRuns(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertEqual(staleUnfinishedRuns, [run])
+        let terminalDeliveryRuns = try await reopened.listRunsWithRunningDeliveries(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            limit: 10
+        )
+        XCTAssertTrue(terminalDeliveryRuns.isEmpty)
 
         let otherContext = try LocalAgentChatRunContext(
             ownerUserID: "alice",

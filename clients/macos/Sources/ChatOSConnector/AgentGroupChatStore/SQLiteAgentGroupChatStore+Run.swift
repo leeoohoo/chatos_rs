@@ -106,6 +106,25 @@ extension SQLiteAgentGroupChatStore {
         )
     }
 
+    public func listRunsWithRunningDeliveries(
+        ownerUserID: String,
+        projectID: String,
+        limit: Int
+    ) throws -> [LocalAgentGroupChatRun] {
+        try AgentGroupChatValidation.identifier(ownerUserID, field: "ownerUserID")
+        try AgentGroupChatValidation.identifier(projectID, field: "projectID")
+        guard (1...500).contains(limit) else {
+            throw AgentGroupChatError.invalidField("limit")
+        }
+        return try AgentRunRepository.listForRunningDeliveries(
+            database,
+            ownerUserID: ownerUserID,
+            projectID: projectID,
+            limit: limit,
+            preparedStatement: recordPreparedStatement
+        )
+    }
+
     /// Trigger Runs belong to an Agent, independent of whether their source is a private chat,
     /// team message, heartbeat, Todo, or Todo status change.
     public func listAgentRuns(

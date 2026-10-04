@@ -237,10 +237,20 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             settings: .init(suiteName: settingsSuite),
             projectTypeKeyProvider: { _, _ in "desktop_application" }
         )
+        let changes = await nativeService.changes(ownerUserID: "alice", roomID: room.id)
+        let roomUpdateReceived = expectation(description: "delivery completion invalidates room")
+        let observer = Task {
+            for await change in changes where change.kind == .roomUpdated {
+                roomUpdateReceived.fulfill()
+                return
+            }
+        }
+        defer { observer.cancel() }
         let results = try await scheduler.drainProject(
             ownerUserID: "alice",
             projectID: "project-1"
         )
+        await fulfillment(of: [roomUpdateReceived], timeout: 1)
 
         XCTAssertEqual(results.count, 1)
         XCTAssertEqual(results.first?.outcome, .completed)

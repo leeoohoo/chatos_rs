@@ -20,17 +20,26 @@ struct PerformancePolicyTests {
         #expect(!plan.reloadTriggerRuns)
         #expect(plan.updatedRunIDs == [runID])
 
+        let claimedRunID = UUID()
         plan.record(.init(
             ownerUserID: "alice",
             roomID: "room-1",
+            runID: claimedRunID,
             kind: .deliveryClaimed
+        ))
+        #expect(!plan.reloadWorkspace)
+        #expect(!plan.reloadTriggerRuns)
+        plan.record(.init(
+            ownerUserID: "alice",
+            roomID: "room-1",
+            kind: .roomUpdated
         ))
         #expect(plan.reloadWorkspace)
         #expect(plan.reloadTriggerRuns)
         let consumed = plan.take()
         #expect(consumed.reloadWorkspace)
         #expect(consumed.reloadTriggerRuns)
-        #expect(consumed.updatedRunIDs == [runID])
+        #expect(consumed.updatedRunIDs == [runID, claimedRunID])
         #expect(plan == .init())
     }
 

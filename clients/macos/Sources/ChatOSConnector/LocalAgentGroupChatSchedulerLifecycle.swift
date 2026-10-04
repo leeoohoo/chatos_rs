@@ -79,8 +79,9 @@ extension LocalAgentGroupChatScheduler {
            ) else {
             throw AgentGroupChatError.conflict
         }
+        let receipt: DeliveryAttemptReceipt
         do {
-            return try await runClaimedDelivery(
+            receipt = try await runClaimedDelivery(
                 store: store,
                 ownerUserID: ownerUserID,
                 projectID: projectID,
@@ -107,13 +108,23 @@ extension LocalAgentGroupChatScheduler {
                 runID: paused.id,
                 kind: .runUpdated
             ))
-            return .init(
+            receipt = .init(
                 deliveryID: delivery.id,
                 agentID: delivery.targetAgentID,
                 outcome: .suspended,
                 detail: paused.checkpoint.stopReason
             )
         }
+        // Recovery can be owned by the process-wide coordinator while the corresponding chat is
+        // visible. A final room invalidation makes the durable response/Todo state observable;
+        // intermediate checkpoints remain lightweight `runUpdated` events.
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: room.id,
+            agentID: delivery.targetAgentID,
+            kind: .roomUpdated
+        ))
+        return receipt
     }
 
     /// Explicit Human authorization to retry the single write/billable call whose outcome could
@@ -284,6 +295,12 @@ extension LocalAgentGroupChatScheduler {
             runID: run.id,
             kind: .runUpdated
         ))
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: run.context.roomID,
+            agentID: run.context.agentID,
+            kind: .roomUpdated
+        ))
     }
 
     func runClaimedDeliveryHandlingFailure(
@@ -294,6 +311,7 @@ extension LocalAgentGroupChatScheduler {
         member: ProjectAgentRoomMember,
         delivery: ProjectAgentDelivery
     ) async throws -> DeliveryAttemptReceipt {
+        let receipt: DeliveryAttemptReceipt
         do {
             // A failed Todo delivery can be explicitly reactivated by moving its Todo back to
             // pending. Delivery and Run are intentionally one-to-one, so the next claim must
@@ -302,7 +320,7 @@ extension LocalAgentGroupChatScheduler {
                 ownerUserID: ownerUserID,
                 deliveryID: delivery.id
             )
-            return try await runClaimedDelivery(
+            receipt = try await runClaimedDelivery(
                 store: store,
                 ownerUserID: ownerUserID,
                 projectID: projectID,
@@ -346,12 +364,21 @@ extension LocalAgentGroupChatScheduler {
                     stage: "executor_failed"
                 )
             }
-            return .init(
+            receipt = .init(
                 deliveryID: delivery.id,
                 agentID: delivery.targetAgentID,
                 outcome: .failed,
                 detail: detail
             )
         }
+        // The active chat may not own this drain. Publish only once after the final Delivery and
+        // response mutation so background completion cannot leave a visible timeline stale.
+        await service.publishChange(.init(
+            ownerUserID: ownerUserID,
+            roomID: room.id,
+            agentID: delivery.targetAgentID,
+            kind: .roomUpdated
+        ))
+        return receipt
     }
 }

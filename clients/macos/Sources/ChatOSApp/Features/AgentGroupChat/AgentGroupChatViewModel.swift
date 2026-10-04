@@ -362,48 +362,57 @@ final class AgentGroupChatViewModel: ObservableObject {
                     roomID: room.id,
                     status: .pending
                 )
+                try Task.checkCancellation()
                 let pendingRemovalProposals = try await store.listAgentRemovalProposals(
                     ownerUserID: ownerUserID,
                     roomID: room.id,
                     status: .pending
                 )
+                try Task.checkCancellation()
                 let pendingTeamProposals = try await store.listTeamProposals(
                     ownerUserID: ownerUserID,
                     sourceRoomID: room.id,
                     status: .pending
                 )
+                try Task.checkCancellation()
                 let pendingMembershipProposals = try await store.listMembershipProposals(
                     ownerUserID: ownerUserID,
                     sourceRoomID: room.id,
                     status: .pending
                 )
+                try Task.checkCancellation()
                 let teamTodos = try await store.listTeamTodos(
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id,
                     includeTerminal: true
                 )
+                try Task.checkCancellation()
                 let teamAssets = try await store.listTeamAssets(
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id,
                     includeArchived: false
                 )
+                try Task.checkCancellation()
                 let projectDashboard = try await store.projectDashboard(
                     ownerUserID: ownerUserID,
                     teamRoomID: room.id
                 )
-                let unfinishedRuns = try await store.listUnfinishedRuns(
+                try Task.checkCancellation()
+                let runningRuns = try await store.listRunsWithRunningDeliveries(
                     ownerUserID: ownerUserID,
                     projectID: projectID,
                     limit: 100
                 )
-                let unfinishedDeliveries = try await store.deliveries(
+                try Task.checkCancellation()
+                let runningDeliveries = try await store.deliveries(
                     ownerUserID: ownerUserID,
-                    deliveryIDs: unfinishedRuns.map(\.context.deliveryID)
+                    deliveryIDs: runningRuns.map(\.context.deliveryID)
                 )
+                try Task.checkCancellation()
                 let profileNames = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0.draft.name) })
                 var interruptedRuns: [InterruptedRunPresentation] = []
-                for run in unfinishedRuns where run.checkpoint.status != .completed {
-                    guard let delivery = unfinishedDeliveries[run.context.deliveryID],
+                for run in runningRuns where run.checkpoint.status != .completed {
+                    guard let delivery = runningDeliveries[run.context.deliveryID],
                           delivery.status == .running else { continue }
                     interruptedRuns.append(.init(
                         run: run,
@@ -416,12 +425,13 @@ final class AgentGroupChatViewModel: ObservableObject {
                     roomID: room.id,
                     limit: 500
                 )
+                try Task.checkCancellation()
                 let todoRunPresentationsByTodoID =
                     TeamTodoRunPresentation.presentationsByTodoID(summaries: todoRunSummaries)
-                let visibleUnfinishedRuns = unfinishedRuns.filter { $0.context.roomID == room.id }
+                let visibleUnfinishedRuns = runningRuns.filter { $0.context.roomID == room.id }
                 let visibleUnfinishedDeliveries: [UUID: ProjectAgentDelivery] = Dictionary(
                     uniqueKeysWithValues: visibleUnfinishedRuns.compactMap {
-                        guard let delivery = unfinishedDeliveries[$0.context.deliveryID] else {
+                        guard let delivery = runningDeliveries[$0.context.deliveryID] else {
                             return nil
                         }
                         return ($0.id, delivery)

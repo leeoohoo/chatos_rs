@@ -10,13 +10,13 @@ struct AgentWorkspaceRefreshPlan: Equatable {
 
     mutating func record(_ change: NativeAgentGroupChatChange) {
         switch change.kind {
-        case .runUpdated:
+        case .deliveryClaimed, .runUpdated:
             if let runID = change.runID {
                 updatedRunIDs.insert(runID)
             } else {
                 reloadTriggerRuns = true
             }
-        case .deliveryClaimed, .roomUpdated:
+        case .roomUpdated:
             reloadWorkspace = true
             reloadTriggerRuns = true
         }
@@ -109,6 +109,11 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
                 guard change.kind == .roomUpdated
                         || change.kind == .deliveryClaimed
                         || change.kind == .runUpdated else {
+                    continue
+                }
+                if change.kind != .roomUpdated,
+                   let changedAgentID = change.agentID,
+                   changedAgentID != self?.selectedAgentID {
                     continue
                 }
                 self?.pendingRefreshPlan.record(change)

@@ -136,6 +136,45 @@ enum AgentRunRepository {
         return try values.map(AgentGroupChatRowMapper.run)
     }
 
+    /// Loads only Runs whose durable Delivery still owns an execution lane. A checkpoint can
+    /// remain paused or needs-review after its Delivery has already reached a terminal state, so
+    /// filtering only `run.status` makes every room refresh decode stale, potentially very large
+    /// Run JSON values forever.
+    static func listForRunningDeliveries(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        projectID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentGroupChatRun] {
+        preparedStatement()
+        let values: [String] = try AgentGroupChatDatabase.query(
+            handle,
+            """
+            WITH candidates AS (
+                SELECT run.id, run.updated_at_unix_ms
+                FROM local_agent_group_chat_runs run
+                JOIN project_agent_deliveries delivery
+                  ON delivery.owner_user_id = run.owner_user_id
+                 AND delivery.id = run.delivery_id
+                WHERE run.owner_user_id = ? AND run.project_id = ?
+                  AND delivery.status = 'running'
+                ORDER BY run.updated_at_unix_ms DESC, run.id DESC LIMIT ?
+            )
+            SELECT run.run_json
+            FROM candidates
+            JOIN local_agent_group_chat_runs run
+              ON run.owner_user_id = ? AND run.id = candidates.id
+            ORDER BY candidates.updated_at_unix_ms DESC, candidates.id DESC
+            """,
+            [
+                .text(ownerUserID), .text(projectID), .integer(Int64(limit)),
+                .text(ownerUserID),
+            ]
+        ) { string($0, 0) }
+        return try values.map(AgentGroupChatRowMapper.run)
+    }
+
     /// Matches the former recovery scan semantics in one statement: only the latest twenty Runs
     /// per active Agent are considered, and only those whose durable Delivery is still running
     /// become candidates. Agent ordering remains identical to `listAgents`.

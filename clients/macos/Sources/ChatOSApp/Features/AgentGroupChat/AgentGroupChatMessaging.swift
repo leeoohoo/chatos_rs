@@ -248,7 +248,6 @@ extension AgentGroupChatViewModel {
                     errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
-                    await load()
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
             } while schedulerNeedsAnotherPass
@@ -278,7 +277,6 @@ extension AgentGroupChatViewModel {
                     errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
-                    await load()
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
             } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
