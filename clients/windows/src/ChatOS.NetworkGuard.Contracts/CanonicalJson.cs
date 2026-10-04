@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace ChatOS.NetworkGuard.Contracts;
 
-internal static class CanonicalJson
+public static class CanonicalJson
 {
     private static readonly JsonSerializerOptions StringOptions = new()
     {
