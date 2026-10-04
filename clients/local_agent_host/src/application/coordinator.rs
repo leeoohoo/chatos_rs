@@ -37,6 +37,7 @@ pub struct LocalAgentHostCoordinator {
     tool_scheduler: Option<LocalToolScheduler>,
     memory_sync_worker: Option<LocalMemorySyncWorker>,
     wakeup: Arc<Notify>,
+    memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
     reserved_ipc_tools: Vec<String>,
 }
@@ -72,6 +73,7 @@ impl LocalAgentHostCoordinator {
             tool_scheduler,
             memory_sync_worker: None,
             wakeup: Arc::new(Notify::new()),
+            memory_wakeup: Arc::new(Notify::new()),
             activity,
             reserved_ipc_tools: Vec::new(),
         })
@@ -113,9 +115,25 @@ impl LocalAgentHostCoordinator {
 
     pub fn wake(&self) {
         self.wakeup.notify_one();
+        self.memory_wakeup.notify_one();
     }
 
     pub async fn run_until_shutdown(
+        &self,
+        shutdown: watch::Receiver<bool>,
+    ) -> Result<(), LocalAgentCoordinatorError> {
+        if self.memory_sync_worker.is_none() {
+            return self.run_schedulers_until_shutdown(shutdown).await;
+        }
+        let scheduler_loop = self.run_schedulers_until_shutdown(shutdown.clone());
+        let memory_loop = self.run_memory_until_shutdown(shutdown);
+        let (scheduler_result, memory_result) = tokio::join!(scheduler_loop, memory_loop);
+        scheduler_result?;
+        memory_result?;
+        Ok(())
+    }
+
+    async fn run_schedulers_until_shutdown(
         &self,
         mut shutdown: watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
@@ -141,7 +159,7 @@ impl LocalAgentHostCoordinator {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            let delay = match self.next_retry_delay().await {
+            let delay = match self.next_run_retry_delay().await {
                 Ok(delay) => delay,
                 Err(_) => Duration::from_secs(1),
             };
@@ -161,7 +179,6 @@ impl LocalAgentHostCoordinator {
         &self,
         shutdown: &watch::Receiver<bool>,
     ) -> Result<(), LocalAgentCoordinatorError> {
-        let mut sync_memory = true;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
@@ -185,38 +202,14 @@ impl LocalAgentHostCoordinator {
                 }
                 progressed |= committed;
             }
-            if sync_memory {
-                if let Some(worker) = self.memory_sync_worker.as_ref() {
-                    match worker.run_once().await? {
-                        MemorySyncTick::Idle => {}
-                        MemorySyncTick::Synced { .. } => {
-                            self.signal_activity();
-                            progressed = true;
-                        }
-                        MemorySyncTick::RetryScheduled { .. } => {
-                            self.signal_activity();
-                            sync_memory = false;
-                        }
-                    }
-                }
-            }
             if !progressed {
                 return Ok(());
             }
         }
     }
 
-    async fn next_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
-        let run_retry_at = self.runtime.next_retry_at(&self.owner_user_id).await?;
-        let memory_retry_at = match self.memory_sync_worker.as_ref() {
-            Some(worker) => worker.next_retry_at().await?,
-            None => None,
-        };
-        let next_retry_at = match (run_retry_at, memory_retry_at) {
-            (Some(run), Some(memory)) => Some(run.min(memory)),
-            (Some(value), None) | (None, Some(value)) => Some(value),
-            (None, None) => None,
-        };
+    async fn next_run_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
+        let next_retry_at = self.runtime.next_retry_at(&self.owner_user_id).await?;
         let Some(next_retry_at) = next_retry_at else {
             return Ok(Duration::from_secs(30));
         };
@@ -225,6 +218,68 @@ impl LocalAgentHostCoordinator {
             u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
         )
         .min(Duration::from_secs(30)))
+    }
+
+    async fn run_memory_until_shutdown(
+        &self,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<(), LocalAgentCoordinatorError> {
+        let Some(worker) = self.memory_sync_worker.as_ref() else {
+            return Ok(());
+        };
+        let mut failure_backoff = Duration::from_millis(100);
+        loop {
+            if *shutdown.borrow() {
+                return Ok(());
+            }
+            match worker.run_once().await {
+                Ok(MemorySyncTick::Synced { .. }) => {
+                    self.signal_activity();
+                    failure_backoff = Duration::from_millis(100);
+                    continue;
+                }
+                Ok(MemorySyncTick::RetryScheduled { .. }) => {
+                    self.signal_activity();
+                    failure_backoff = Duration::from_millis(100);
+                }
+                Ok(MemorySyncTick::Idle) => {
+                    failure_backoff = Duration::from_millis(100);
+                }
+                Err(_) => {
+                    tokio::select! {
+                        _ = self.memory_wakeup.notified() => {}
+                        _ = tokio::time::sleep(failure_backoff) => {}
+                        changed = shutdown.changed() => {
+                            if changed.is_err() || *shutdown.borrow() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    failure_backoff = (failure_backoff * 2).min(Duration::from_secs(5));
+                    continue;
+                }
+            }
+            let delay = match worker.next_retry_at().await {
+                Ok(Some(next_retry_at)) => {
+                    let now = system_now_unix_ms()?;
+                    Duration::from_millis(
+                        u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
+                    )
+                    .min(Duration::from_secs(30))
+                }
+                Ok(None) => Duration::from_secs(30),
+                Err(_) => Duration::from_secs(1),
+            };
+            tokio::select! {
+                _ = self.memory_wakeup.notified() => {}
+                _ = tokio::time::sleep(delay) => {}
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     fn signal_activity(&self) {
