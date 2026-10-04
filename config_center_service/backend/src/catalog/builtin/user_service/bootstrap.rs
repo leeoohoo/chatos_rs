@@ -28,7 +28,7 @@ pub(super) fn password_definition(now: &str) -> ConfigDefinitionRecord {
         "User Service / Bootstrap",
         "service",
         Some("user-service"),
-        json!("admin123456"),
+        json!("ChatOS-Local-Admin-2026!"),
         "restart_required",
         &["USER_SERVICE_SUPER_ADMIN_PASSWORD"],
         37502,

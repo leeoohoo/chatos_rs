@@ -166,8 +166,10 @@ public sealed partial class MainWindowViewModel
         var code = VerificationCode.Trim();
         if (code.Length != 6 || code.Any(character => !char.IsAsciiDigit(character)))
             return Localization.Text("请输入 6 位邮箱验证码。", "Enter the 6-digit email verification code.");
-        if (Password.Length < 6)
-            return Localization.Text("密码至少需要 6 个字符。", "The password must contain at least 6 characters.");
+        if (Password.Length < 12)
+            return Localization.Text("密码至少需要 12 个字符。", "The password must contain at least 12 characters.");
+        if (Password.Length > 128)
+            return Localization.Text("密码最多允许 128 个字符。", "The password must contain at most 128 characters.");
         if (!string.Equals(Password, ConfirmPassword, StringComparison.Ordinal))
             return Localization.Text("两次输入的密码不一致。", "The passwords do not match.");
         return null;

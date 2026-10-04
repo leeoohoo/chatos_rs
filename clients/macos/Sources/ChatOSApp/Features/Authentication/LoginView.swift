@@ -169,7 +169,7 @@ struct LoginView: View {
 
                 fieldLabel(model.localized("密码", english: "Password"))
                 SecureField(
-                    model.localized("至少 6 个字符", english: "At least 6 characters"),
+                    model.localized("12–128 个字符", english: "12–128 characters"),
                     text: $authentication.password
                 )
                     .textFieldStyle(.roundedBorder)

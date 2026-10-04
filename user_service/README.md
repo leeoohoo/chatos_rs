@@ -112,7 +112,7 @@ The user and model pages live in the unified admin console. Its `/api/admin/user
 On first startup the service creates a default `super_admin` account:
 
 - username: `admin`
-- password: `admin123456`
+- password: `ChatOS-Local-Admin-2026!`
 
 Change the default password and JWT secret before production use.
 

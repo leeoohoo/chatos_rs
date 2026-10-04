@@ -613,7 +613,7 @@ pub(super) fn definitions(now: &str) -> Vec<ConfigDefinitionRecord> {
             "Plugin Management / Bootstrap",
             "service",
             Some("plugin-management-service"),
-            json!("admin123456"),
+            json!("ChatOS-Local-Admin-2026!"),
             "restart_required",
             &["PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD"],
             385,

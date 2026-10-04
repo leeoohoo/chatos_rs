@@ -184,7 +184,7 @@ impl AppConfig {
         validate_production_secret(
             "PLUGIN_MANAGEMENT_SERVICE_SUPER_ADMIN_PASSWORD",
             Some(config.super_admin_password.as_str()),
-            &["admin123456"],
+            &["admin123456", "ChatOS-Local-Admin-2026!"],
         )?;
         for (caller_service, secret) in &config.internal_api_secrets {
             validate_production_secret(

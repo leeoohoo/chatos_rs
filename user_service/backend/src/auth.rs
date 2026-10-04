@@ -19,6 +19,20 @@ use argon2::Argon2;
 use crate::config::AppConfig;
 use crate::models::{AuthUser, UserRecord, PRINCIPAL_TYPE_HUMAN_USER, USER_ROLE_SUPER_ADMIN};
 
+pub const MIN_PASSWORD_CHARACTERS: usize = 12;
+pub const MAX_PASSWORD_CHARACTERS: usize = 128;
+
+const COMMON_PASSWORDS: &[&str] = &[
+    "123456789012",
+    "adminadminadmin",
+    "administrator",
+    "letmeinplease",
+    "password1234",
+    "password12345",
+    "password123456",
+    "qwertyuiop12",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthClaims {
     pub iss: String,
@@ -143,9 +157,7 @@ pub fn normalize_display_name(value: Option<&str>, fallback: &str) -> String {
 }
 
 pub fn hash_password(password: &str) -> Result<String, String> {
-    if password.trim().is_empty() {
-        return Err("password is required".to_string());
-    }
+    validate_new_password(password)?;
     let mut salt_bytes = [0_u8; 16];
     rand::fill(&mut salt_bytes);
     let salt = SaltString::encode_b64(&salt_bytes).map_err(|err| err.to_string())?;
@@ -153,6 +165,28 @@ pub fn hash_password(password: &str) -> Result<String, String> {
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|err| err.to_string())
+}
+
+pub fn validate_new_password(password: &str) -> Result<(), String> {
+    if password.trim().is_empty() {
+        return Err("password is required".to_string());
+    }
+    let character_count = password.chars().take(MAX_PASSWORD_CHARACTERS + 1).count();
+    if character_count < MIN_PASSWORD_CHARACTERS {
+        return Err(format!(
+            "password must contain at least {MIN_PASSWORD_CHARACTERS} characters"
+        ));
+    }
+    if character_count > MAX_PASSWORD_CHARACTERS {
+        return Err(format!(
+            "password must contain at most {MAX_PASSWORD_CHARACTERS} characters"
+        ));
+    }
+    let normalized = password.trim().to_ascii_lowercase();
+    if COMMON_PASSWORDS.contains(&normalized.as_str()) {
+        return Err("password is too common".to_string());
+    }
+    Ok(())
 }
 
 pub fn verify_password(password: &str, password_hash: &str) -> bool {
@@ -257,4 +291,37 @@ fn now_timestamp() -> usize {
 
 pub fn unauthorized(message: &str) -> (StatusCode, Json<serde_json::Value>) {
     (StatusCode::UNAUTHORIZED, Json(json!({ "error": message })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_password_policy_rejects_short_long_blank_and_common_values() {
+        assert_eq!(
+            validate_new_password("short").unwrap_err(),
+            "password must contain at least 12 characters"
+        );
+        assert_eq!(
+            validate_new_password(&"x".repeat(MAX_PASSWORD_CHARACTERS + 1)).unwrap_err(),
+            "password must contain at most 128 characters"
+        );
+        assert_eq!(
+            validate_new_password("            ").unwrap_err(),
+            "password is required"
+        );
+        assert_eq!(
+            validate_new_password("Password1234").unwrap_err(),
+            "password is too common"
+        );
+    }
+
+    #[test]
+    fn compliant_password_is_hashed_and_verified() {
+        let password = "correct horse battery staple";
+        let hash = hash_password(password).expect("hash compliant password");
+        assert!(verify_password(password, &hash));
+        assert!(!verify_password("different password value", &hash));
+    }
 }

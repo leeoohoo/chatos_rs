@@ -526,7 +526,11 @@ export function UsersPage() {
           <Form.Item
             name="password"
             label={editingUser ? '重置密码' : '密码'}
-            rules={[{ required: !editingUser, message: '请输入密码' }]}
+            rules={[
+              { required: !editingUser, message: '请输入密码' },
+              { min: 12, message: '密码至少需要 12 个字符' },
+              { max: 128, message: '密码最多允许 128 个字符' },
+            ]}
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
@@ -571,7 +575,11 @@ export function UsersPage() {
           <Form.Item
             name="password"
             label="Chat OS / Harness 密码"
-            rules={[{ required: true, message: '请输入密码' }]}
+            rules={[
+              { required: true, message: '请输入密码' },
+              { min: 12, message: '密码至少需要 12 个字符' },
+              { max: 128, message: '密码最多允许 128 个字符' },
+            ]}
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>

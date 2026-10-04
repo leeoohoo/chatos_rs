@@ -38,7 +38,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string RegistrationVerificationCodePlaceholder => Text("6 位验证码", "6-digit code");
     public string ConfirmPassword => Text("确认密码", "Confirm password");
     public string ConfirmPasswordPlaceholder => Text("再次输入密码", "Enter password again");
-    public string MinimumPasswordPlaceholder => Text("至少 6 个字符", "At least 6 characters");
+    public string MinimumPasswordPlaceholder => Text("12–128 个字符", "12–128 characters");
     public string NoAccount => Text("还没有账号？", "New to ChatOS?");
     public string AlreadyHaveAccount => Text("已有账号？", "Already have an account?");
     public string BackToSignIn => Text("返回登录", "Back to sign in");

@@ -3,6 +3,9 @@ import Foundation
 
 @MainActor
 final class AuthenticationViewModel: ObservableObject {
+    private static let minimumPasswordLength = 12
+    private static let maximumPasswordLength = 128
+
     enum Mode: Equatable {
         case signIn
         case register
@@ -228,7 +231,8 @@ final class AuthenticationViewModel: ObservableObject {
         guard isLikelyEmail(username),
               normalizedVerificationCode.count == 6,
               normalizedVerificationCode.allSatisfy(\.isNumber),
-              password.count >= 6,
+              password.count >= Self.minimumPasswordLength,
+              password.count <= Self.maximumPasswordLength,
               password == confirmPassword else {
             errorMessage = registrationValidationMessage(forCodeOnly: false)
             return
@@ -358,7 +362,8 @@ final class AuthenticationViewModel: ObservableObject {
             || !normalizedVerificationCode.allSatisfy(\.isNumber) {
             return "请输入 6 位邮箱验证码。"
         }
-        if password.count < 6 { return "密码至少需要 6 个字符。" }
+        if password.count < Self.minimumPasswordLength { return "密码至少需要 12 个字符。" }
+        if password.count > Self.maximumPasswordLength { return "密码最多允许 128 个字符。" }
         if password != confirmPassword { return "两次输入的密码不一致。" }
         return "请检查注册信息。"
     }

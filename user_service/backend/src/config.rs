@@ -211,7 +211,7 @@ impl AppConfig {
         validate_production_secret(
             "USER_SERVICE_SUPER_ADMIN_PASSWORD",
             Some(config.super_admin_password.as_str()),
-            &["admin123456"],
+            &["admin123456", "ChatOS-Local-Admin-2026!"],
         )?;
         validate_production_secret(
             "USER_SERVICE_MEMORY_ENGINE_INTERNAL_API_SECRET",

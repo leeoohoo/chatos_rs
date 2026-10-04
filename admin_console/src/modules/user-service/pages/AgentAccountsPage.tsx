@@ -322,7 +322,11 @@ export function AgentAccountsPage() {
             <Form.Item
               name="password"
               label="初始密码"
-              rules={[{ required: true, message: '请输入初始密码' }]}
+              rules={[
+                { required: true, message: '请输入初始密码' },
+                { min: 12, message: '密码至少需要 12 个字符' },
+                { max: 128, message: '密码最多允许 128 个字符' },
+              ]}
             >
               <Input.Password autoComplete="new-password" />
             </Form.Item>
@@ -362,7 +366,11 @@ export function AgentAccountsPage() {
           <Form.Item
             name="password"
             label="新密码"
-            rules={[{ required: true, message: '请输入新密码' }]}
+            rules={[
+              { required: true, message: '请输入新密码' },
+              { min: 12, message: '密码至少需要 12 个字符' },
+              { max: 128, message: '密码最多允许 128 个字符' },
+            ]}
           >
             <Input.Password autoComplete="new-password" />
           </Form.Item>
