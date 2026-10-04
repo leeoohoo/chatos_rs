@@ -144,12 +144,9 @@ import {
 import { createWebDesignRenderHelpers } from './WebDesignRenderHelpers';
 import { renderWebDesignStudioWorkspace } from './WebDesignStudioWorkspace';
 import { useWebDesignStudioState } from './useWebDesignStudioState';
+import type { WebDesignDeferredActions } from './WebDesignActionContracts';
 export function WebDesignStudioApp() {
   const studioState = useWebDesignStudioState();
-  const actionContext: Record<string, any> = { ...studioState };
-  for (const actionName of ["showToast","updateScenePreviewHeight","chooseLibraryTab","activateWorkspaceArea","activateWorkspaceTool","setCurrent","openDocument","commit","commitWithCanvasGrowth","changeLive","changeLiveWithCanvasGrowth","historyDocument","applySceneDocument","refreshSceneHistory","refreshGenerationState","runGenerationReviewAction","commitSceneCommand","undoScene","redoScene","undo","redo","updateComponent","save","refresh","createNew","refreshCatalog","createDesignFromSheet","openProjectDocument","goToActiveProject","confirmDeleteProjectDocument","onPaletteDrag","addUiLibraryComponent","scenePageRoot","insertSceneLibraryComponent","insertSceneBasicShape","onSceneCanvasDrop","insertUiLibraryComponent","chooseUiLibraryPreviewElement","beginUiLibraryPreviewPointerDrag","moveUiLibraryPreviewPointerDragAt","finishUiLibraryPreviewPointerDragAt","handleUiLibraryPreviewPointerEvent","dropUiLibraryPreviewElement","enterSlotEditor","resetSlotEditorCamera","editComponentSlot","exitSlotEditor","insertSlotTemplate","onCanvasDrop","beginInteraction","beginCanvasPan","beginCanvasMarquee","updateSelected","updateSelectedFrame","updateInspectedFrame","updateSelectedStyle","clearSelectedVisualState","updateSelectedCustomCss","updateSelectedHorizontalConstraint","updateSelectedSizeConstraints","deleteSelected","duplicateSelected","copySelected","pasteClipboard","reorderSelected","alignSelected","nudgeSelected","toggleHidden","toggleLocked","activateWorkspaceArtboard","updateActiveWorkspaceViewport","addWorkspaceSurface","fitWorkspaceArtboard","fitActiveWorkspaceArtboard","fitSlotEditorContent","fitWorkspaceSelection","focusWorkspaceArtboard","focusWorkspaceArtboardByPageId","updateBreakpoint","selectViewportPreset","updateCustomViewportWidth","updateCustomViewportHeight","withGeneratedResponsiveLayouts","generateResponsiveLayouts","fitCanvasToWidth","fitCanvasWidth","setCanvasZoom","toggleInteractionMode","selectComponent","selectableNodesForCurrentEditor","selectionOverlayItemsFor","selectSelectionChild","selectSelectionParent","sceneSelectionRootIds","cloneSceneSubtree","insertSceneCopies","copySceneSelection","duplicateSceneSelection","pasteSceneClipboard","wrapSceneSelection","ungroupSceneSelection","nudgeSceneSelection","alignSceneSelection","distributeSceneSelection","reorderSceneSelection","deleteSceneSelection","updateSceneNodeById","updateSceneNode","applySelectedSceneLibraryVariant","focusSceneContent","updateSelectedSceneResponsiveOverride","replaceSelectedSceneResponsiveOverride","clearSelectedSceneResponsiveOverride","groupSelected","ungroupSelected","updateSelectedLayout","applySelectedAutoLayout","saveSelectionAsSymbol","insertSymbol","renamePersonalSymbol","removePersonalSymbol","saveSceneSelectionAsSnippet","insertSceneSnippet","renameSceneSnippet","removeSceneSnippet","applySceneVariablesDraft","seedSceneVariables","toggleSelectedSymbolOverride","synchronizeSelectedSymbol","updateSelectedSymbolDefinition","updateSelectedLibraryProp","applySelectedLibraryVariant","detachSelectedSymbol","updateTokens","applyDesignTheme","updateTokenColor","applyColorToken","applyRadiusToken","switchPage","addPage","duplicateScenePage","duplicatePage","deleteCurrentPage","updateCurrentPage","useAsset","importAssets","downloadTextFile","exportCurrentPage","exportReact","exportVue","activatePreviewInteraction","activateScenePrototype","addLegacyAnnotation","prepareSceneAnnotation","addSceneAnnotation","changeSceneAnnotationStatus","submitSceneAiInstruction","addAiRequest","renderGenerationReviewPanel","renderWorkspaceArtboard","renderPreviewSurfaceOverlay"]) {
-    actionContext[actionName] = (...args: any[]) => actionContext['implementation:' + actionName](...args);
-  }
   const {
     actionsRef, repository, setRepository, documents, setDocuments, activeProject,
     setActiveProject, document, setDocument, sceneDocument, setSceneDocument, sceneHistory,
@@ -182,7 +179,34 @@ export function WebDesignStudioApp() {
     tokens, currentPage, pageComponents, editingContainer, editingSlotDefinition, editingSlotComponents,
     editingVisibleComponents, editingSlotCanvasSize, inspectedFrame, inspectedStyle
   } = studioState;
-  const webDesignCoreActions = createWebDesignCoreActions(actionContext);
+  const selectedSceneLibrary = selectedSceneNode?.type === 'library-instance'
+    ? uiLibraryByName(selectedSceneNode.library as WebDesignLibraryName)
+    : undefined;
+  const selectedSceneLibraryDefinition = selectedSceneNode?.type === 'library-instance'
+    ? selectedSceneLibrary?.components.find((item) => item.id === selectedSceneNode.component)
+    : undefined;
+  const selectedSceneLibraryVariants = selectedSceneNode?.type === 'library-instance' && selectedSceneLibrary
+    ? selectedSceneLibrary.variants[selectedSceneNode.component]
+      ?? [{ id: 'default', label: '默认款式', props: {} }]
+    : [];
+
+  let webDesignCanvasActions!: ReturnType<typeof createWebDesignCanvasActions>;
+  let webDesignViewportActions!: ReturnType<typeof createWebDesignViewportActions>;
+  let webDesignSelectionActions!: ReturnType<typeof createWebDesignSelectionActions>;
+  const deferredActions: WebDesignDeferredActions = {
+    editComponentSlot: (...args) => webDesignCanvasActions.editComponentSlot(...args),
+    activateWorkspaceArtboard: (...args) => webDesignViewportActions.activateWorkspaceArtboard(...args),
+    withGeneratedResponsiveLayouts: (...args) =>
+      webDesignViewportActions.withGeneratedResponsiveLayouts(...args),
+    selectComponent: (...args) => webDesignSelectionActions.selectComponent(...args),
+    selectableNodesForCurrentEditor: (...args) =>
+      webDesignSelectionActions.selectableNodesForCurrentEditor(...args),
+    copySceneSelection: () => webDesignSelectionActions.copySceneSelection(),
+    duplicateSceneSelection: () => webDesignSelectionActions.duplicateSceneSelection(),
+    pasteSceneClipboard: () => webDesignSelectionActions.pasteSceneClipboard()
+  };
+
+  const webDesignCoreActions = createWebDesignCoreActions(studioState);
   const {
     showToast, updateScenePreviewHeight, chooseLibraryTab, activateWorkspaceArea, activateWorkspaceTool, setCurrent,
     openDocument, commit, commitWithCanvasGrowth, changeLive, changeLiveWithCanvasGrowth, historyDocument,
@@ -190,21 +214,24 @@ export function WebDesignStudioApp() {
     redoScene, undo, redo, updateComponent, save, refresh,
     createNew, refreshCatalog, createDesignFromSheet, openProjectDocument, goToActiveProject, confirmDeleteProjectDocument
   } = webDesignCoreActions;
-  for (const [name, implementation] of Object.entries(webDesignCoreActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignInsertActions = createWebDesignInsertActions(actionContext);
+
+  const webDesignInsertActions = createWebDesignInsertActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...deferredActions
+  });
   const {
     onPaletteDrag, addUiLibraryComponent, scenePageRoot, insertSceneLibraryComponent, insertSceneBasicShape, onSceneCanvasDrop,
     insertUiLibraryComponent, chooseUiLibraryPreviewElement, beginUiLibraryPreviewPointerDrag, moveUiLibraryPreviewPointerDragAt, finishUiLibraryPreviewPointerDragAt, handleUiLibraryPreviewPointerEvent,
     dropUiLibraryPreviewElement
   } = webDesignInsertActions;
-  for (const [name, implementation] of Object.entries(webDesignInsertActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignCanvasActions = createWebDesignCanvasActions(actionContext);
+
+  webDesignCanvasActions = createWebDesignCanvasActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...deferredActions
+  });
   const {
     enterSlotEditor, resetSlotEditorCamera, editComponentSlot, exitSlotEditor, insertSlotTemplate, onCanvasDrop,
     beginInteraction, beginCanvasPan, beginCanvasMarquee, updateSelected, updateSelectedFrame, updateInspectedFrame,
@@ -212,22 +239,30 @@ export function WebDesignStudioApp() {
     duplicateSelected, copySelected, pasteClipboard, reorderSelected, alignSelected, nudgeSelected,
     toggleHidden, toggleLocked
   } = webDesignCanvasActions;
-  for (const [name, implementation] of Object.entries(webDesignCanvasActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignViewportActions = createWebDesignViewportActions(actionContext);
+
+  webDesignViewportActions = createWebDesignViewportActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions
+  });
   const {
     activateWorkspaceArtboard, updateActiveWorkspaceViewport, addWorkspaceSurface, fitWorkspaceArtboard, fitActiveWorkspaceArtboard, fitSlotEditorContent,
     fitWorkspaceSelection, focusWorkspaceArtboard, focusWorkspaceArtboardByPageId, updateBreakpoint, selectViewportPreset, updateCustomViewportWidth,
     updateCustomViewportHeight, withGeneratedResponsiveLayouts, generateResponsiveLayouts, fitCanvasToWidth, fitCanvasWidth, setCanvasZoom,
     toggleInteractionMode
   } = webDesignViewportActions;
-  for (const [name, implementation] of Object.entries(webDesignViewportActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignSelectionActions = createWebDesignSelectionActions(actionContext);
+
+  webDesignSelectionActions = createWebDesignSelectionActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions,
+    ...webDesignViewportActions,
+    selectedSceneLibrary,
+    selectedSceneLibraryDefinition,
+    selectedSceneLibraryVariants
+  });
   const {
     selectComponent, selectableNodesForCurrentEditor,
     selectionOverlayItemsFor, selectSelectionChild, selectSelectionParent, sceneSelectionRootIds, cloneSceneSubtree, insertSceneCopies,
@@ -235,11 +270,15 @@ export function WebDesignStudioApp() {
     alignSceneSelection, distributeSceneSelection, reorderSceneSelection, deleteSceneSelection, updateSceneNodeById, updateSceneNode,
     applySelectedSceneLibraryVariant, focusSceneContent, updateSelectedSceneResponsiveOverride, replaceSelectedSceneResponsiveOverride, clearSelectedSceneResponsiveOverride
   } = webDesignSelectionActions;
-  for (const [name, implementation] of Object.entries(webDesignSelectionActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignAssetActions = createWebDesignAssetActions(actionContext);
+
+  const webDesignAssetActions = createWebDesignAssetActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions,
+    ...webDesignViewportActions,
+    ...webDesignSelectionActions
+  });
   const {
     groupSelected, ungroupSelected, updateSelectedLayout, applySelectedAutoLayout, saveSelectionAsSymbol, insertSymbol,
     renamePersonalSymbol, removePersonalSymbol, saveSceneSelectionAsSnippet, insertSceneSnippet, renameSceneSnippet, removeSceneSnippet,
@@ -247,21 +286,45 @@ export function WebDesignStudioApp() {
     applySelectedLibraryVariant, detachSelectedSymbol, updateTokens, applyDesignTheme, updateTokenColor, applyColorToken,
     applyRadiusToken
   } = webDesignAssetActions;
-  for (const [name, implementation] of Object.entries(webDesignAssetActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
-  const webDesignDocumentActions = createWebDesignDocumentActions(actionContext);
+
+  const webDesignDocumentActions = createWebDesignDocumentActions({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions,
+    ...webDesignViewportActions,
+    ...webDesignSelectionActions,
+    ...webDesignAssetActions
+  });
   const {
     switchPage, addPage, duplicateScenePage, duplicatePage, deleteCurrentPage, updateCurrentPage,
     useAsset, importAssets, downloadTextFile, exportCurrentPage, exportReact, exportVue,
     activatePreviewInteraction, activateScenePrototype, addLegacyAnnotation, prepareSceneAnnotation, addSceneAnnotation, changeSceneAnnotationStatus,
     submitSceneAiInstruction, addAiRequest
   } = webDesignDocumentActions;
-  for (const [name, implementation] of Object.entries(webDesignDocumentActions)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
+
+  actionsRef.current = {
+    openDocument,
+    showToast,
+    changeLiveWithCanvasGrowth,
+    toggleInteractionMode,
+    save,
+    undo,
+    redo,
+    ungroupSelected,
+    groupSelected,
+    duplicateSelected,
+    copySelected,
+    pasteClipboard,
+    selectSelectionChild,
+    selectSelectionParent,
+    activateWorkspaceTool,
+    deleteSceneSelection,
+    deleteSelected,
+    nudgeSceneSelection,
+    nudgeSelected
+  };
+
   const storageBadge = <span className={`service-pill ${repository?.mode === 'server' ? 'online' : ''}`}>{repository?.mode === 'server' ? '本地服务' : '浏览器存储'}</span>;
   const newDesignModal = newDesignOpen && activeProject && <div className="studio-modal-backdrop" onPointerDown={() => setNewDesignOpen(false)}>
     <section className="studio-modal project-create-modal" onPointerDown={(event) => event.stopPropagation()}>
@@ -318,13 +381,6 @@ export function WebDesignStudioApp() {
   const canUngroupScene = Boolean(selectedSceneNode
     && (selectedSceneNode.type === 'group' || selectedSceneNode.type === 'frame')
     && selectedSceneNode.layout.mode === 'free');
-  const selectedSceneLibrary = selectedSceneNode?.type === 'library-instance' ? uiLibraryByName(selectedSceneNode.library as WebDesignLibraryName) : undefined;
-  const selectedSceneLibraryDefinition = selectedSceneNode?.type === 'library-instance'
-    ? selectedSceneLibrary?.components.find((item) => item.id === selectedSceneNode.component)
-    : undefined;
-  const selectedSceneLibraryVariants = selectedSceneNode?.type === 'library-instance' && selectedSceneLibrary
-    ? selectedSceneLibrary.variants[selectedSceneNode.component] ?? [{ id: 'default', label: '默认款式', props: {} }]
-    : [];
   const selectedSceneRegistryElement = selectedSceneNode?.type === 'library-instance'
     ? libraryPreviewSelection(selectedSceneNode.properties.registryElement)
     : undefined;
@@ -370,26 +426,21 @@ export function WebDesignStudioApp() {
     ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
     : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
 
-  Object.assign(actionContext, {
-    layerComponents, sceneLayerNodes, directChildCount, canUngroup, canUngroupScene,
-    selectedSceneLibrary, selectedSceneLibraryDefinition, selectedSceneLibraryVariants,
-    selectedSceneRegistryElement, selectedSceneEditableSlots, selectedSymbol, selectedLibrary,
-    selectedLibraryDefinition, selectedLibraryVariants, selectedRegistryElement, selectedEditableSlots,
-    inspectorCapabilities, selectedInspectableLibraryProps, aiTarget, normalizedPaletteQuery,
-    filteredPalette, filteredPersonalSymbols, filteredSceneSnippets, activeUiLibrary,
-    filteredUiLibraryComponents, variantPickerLibrary, variantPickerDefinition, variantPickerVariants,
-    variantPickerPresentation, sceneAiTarget, sceneAnnotationTasks, aiQuickPrompts
+  const webDesignRenderHelpers = createWebDesignRenderHelpers({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions,
+    ...webDesignViewportActions,
+    ...webDesignSelectionActions,
+    ...webDesignAssetActions,
+    ...webDesignDocumentActions
   });
-  const webDesignRenderHelpers = createWebDesignRenderHelpers(actionContext);
   const {
     renderGenerationReviewPanel,
     renderWorkspaceArtboard,
     renderPreviewSurfaceOverlay
   } = webDesignRenderHelpers;
-  for (const [name, implementation] of Object.entries(webDesignRenderHelpers)) {
-    actionContext['implementation:' + name] = implementation;
-    actionContext[name] = implementation;
-  }
   return renderWebDesignStudioWorkspace({
     repository, activeProject, document, sceneDocument, sceneHistory, ready,
     screen, persistedRevision, selectedId, setSelectedId, selectedIds, setSelectedIds,

@@ -37,9 +37,10 @@ import {
   InspectorVisualState, InspectorTab, PERSONAL_SYMBOLS_STORAGE_KEY, SCENE_SNIPPETS_STORAGE_KEY, deviceForWorkspaceArtboard,
   workspaceArtboardContentBounds, workspaceArtboardSignature, loadPersonalSymbols
 } from './WebDesignStudioSupport';
+import type { WebDesignStateActions } from './WebDesignActionContracts';
 
 export function useWebDesignStudioState() {
-  const actionsRef = useRef<Record<string, any>>({});
+  const actionsRef = useRef<WebDesignStateActions>(null!);
   const [repository, setRepository] = useState<DesignRepository>();
   const [documents, setDocuments] = useState<DesignSummary[]>([]);
   const [activeProject, setActiveProject] = useState<WebDesignProject>();
