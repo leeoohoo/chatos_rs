@@ -101,7 +101,13 @@ public actor ChatOSAPIClient {
             try await credentialStore?.saveAccessToken(refreshedToken)
         }
         if response.statusCode == 401 {
-            if let requestAccessToken, accessToken == requestAccessToken {
+            // Only the user service is authoritative for the desktop login session. Memory is an
+            // optional downstream service and can reject a request because of its own rollout,
+            // scope, or transient authentication state. Treating that response as a global
+            // logout deletes a still-valid user credential and signs the whole app out.
+            if service == .userService,
+               let requestAccessToken,
+               accessToken == requestAccessToken {
                 accessToken = nil
                 authenticationSessionID = UUID()
                 try? await credentialStore?.deleteAccessToken()

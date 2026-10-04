@@ -131,6 +131,51 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
         XCTAssertNil(currentToken)
         XCTAssertTrue(credentialWasDeleted)
     }
+
+    func testMemoryUnauthorizedRequestPreservesLoginCredentialAndDoesNotPublishExpiration() async throws {
+        let store = APIErrorCredentialStore(token: "valid-user-token")
+        let client = ChatOSAPIClient(
+            configuration: .init(baseURL: URL(string: "https://example.com")!),
+            accessToken: "valid-user-token",
+            credentialStore: store,
+            transport: APIErrorTransport(
+                response: HTTPResponse(
+                    statusCode: 401,
+                    headers: ["content-type": "application/json"],
+                    body: Data(#"{"error":"memory scope is unavailable"}"#.utf8)
+                )
+            )
+        )
+        let expiration = expectation(description: "authentication expiration is not published")
+        expiration.isInverted = true
+        let observer = NotificationCenter.default.addObserver(
+            forName: .chatOSAuthenticationDidExpire,
+            object: nil,
+            queue: nil
+        ) { _ in
+            expiration.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        do {
+            let _: ErrorResponseDTO = try await client.request(
+                "/context/compose",
+                method: "POST",
+                service: .memoryEngine
+            )
+            XCTFail("Expected request to fail")
+        } catch let error as ChatOSAPIError {
+            XCTAssertEqual(error, .unauthorized)
+        }
+
+        await fulfillment(of: [expiration], timeout: 0.1)
+        let currentToken = await client.currentAccessToken()
+        let storedToken = await store.storedToken()
+        let credentialWasDeleted = await store.wasDeleted()
+        XCTAssertEqual(currentToken, "valid-user-token")
+        XCTAssertEqual(storedToken, "valid-user-token")
+        XCTAssertFalse(credentialWasDeleted)
+    }
 }
 
 private struct ErrorResponseDTO: Decodable, Sendable {}
@@ -164,4 +209,6 @@ private actor APIErrorCredentialStore: CredentialStoring {
     }
 
     func wasDeleted() -> Bool { deleted }
+
+    func storedToken() -> String? { token }
 }
