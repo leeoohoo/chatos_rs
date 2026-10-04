@@ -26,14 +26,17 @@ pub async fn get_thread(
     source_id: Option<&str>,
     thread_id: &str,
 ) -> Result<Option<EngineThread>, String> {
+    let tenant_id = normalize_optional_text(tenant_id)
+        .ok_or_else(|| "tenant_id is required to read a thread by id".to_string())?;
+    let source_id = normalize_optional_text(source_id)
+        .ok_or_else(|| "source_id is required to read a thread by id".to_string())?;
     let mut query = QueryBuilder::<Postgres>::new("SELECT data FROM engine_threads WHERE id=");
-    query.push_bind(thread_id);
-    if let Some(value) = normalize_optional_text(tenant_id) {
-        query.push(" AND tenant_id=").push_bind(value);
-    }
-    if let Some(value) = normalize_optional_text(source_id) {
-        query.push(" AND source_id=").push_bind(value);
-    }
+    query
+        .push_bind(thread_id)
+        .push(" AND tenant_id=")
+        .push_bind(tenant_id)
+        .push(" AND source_id=")
+        .push_bind(source_id);
     query
         .build_query_scalar::<Json<serde_json::Value>>()
         .fetch_optional(db)

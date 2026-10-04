@@ -40,9 +40,11 @@ pub async fn mark_subject_memories_rolled_up(
         memory.rolled_up_at = Some(now.clone());
         memory.updated_at = now.clone();
         marked += sqlx::query(
-            "UPDATE engine_subject_memories SET rollup_status='done',updated_at=$2,data=$3 \
-             WHERE id=$1 AND rollup_status='pending'",
+            "UPDATE engine_subject_memories SET rollup_status='done',updated_at=$4,data=$5 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3 AND rollup_status='pending'",
         )
+        .bind(&memory.tenant_id)
+        .bind(&memory.source_id)
         .bind(&memory.id)
         .bind(timestamp(&now)?)
         .bind(json(&memory)?)

@@ -51,11 +51,13 @@ pub async fn get_thread(
     Path(thread_id): Path<String>,
     Json(req): Json<SdkGetThreadRequest>,
 ) -> Result<Json<GetThreadResponse>, (StatusCode, String)> {
-    let tenant_id = auth.require_optional_tenant(req.tenant_id.as_deref())?;
-    let item = threads::get_thread(
+    let tenant_id = auth
+        .require_optional_tenant(req.tenant_id.as_deref())?
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "tenant_id is required".to_string()))?;
+    let item = threads::get_thread_by_id(
         &state.pool,
         tenant_id,
-        Some(auth.source_id()),
+        auth.source_id(),
         thread_id.as_str(),
     )
     .await

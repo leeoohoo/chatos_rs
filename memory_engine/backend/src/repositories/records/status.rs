@@ -190,8 +190,10 @@ where
             (None, None)
         };
         count+=sqlx::query(
-            "UPDATE engine_records SET summary_status=$2,summary_id=$3,summary_job_run_id=$4,summary_started_at=$5,data=$6 WHERE id=$1"
-        ).bind(&record.id).bind(&record.summary_status).bind(&record.summary_id).bind(claim_job).bind(started).bind(json(&record)?)
+            "UPDATE engine_records SET summary_status=$4,summary_id=$5,summary_job_run_id=$6,summary_started_at=$7,data=$8 \
+             WHERE tenant_id=$1 AND source_id=$2 AND id=$3"
+        ).bind(&record.tenant_id).bind(&record.source_id).bind(&record.id)
+          .bind(&record.summary_status).bind(&record.summary_id).bind(claim_job).bind(started).bind(json(&record)?)
           .execute(&mut *tx).await.map_err(|e|e.to_string())?.rows_affected() as usize;
     }
     tx.commit().await.map_err(|e| e.to_string())?;

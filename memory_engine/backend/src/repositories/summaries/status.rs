@@ -119,14 +119,14 @@ where
         mutate(&mut summary, &now);
         summary.updated_at = now.clone();
         let result=if let Some(key)=scope_key{
-            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$2,subject_memory_scope_keys=array_append(subject_memory_scope_keys,$3),updated_at=$4,data=$5 WHERE id=$1")
-                .bind(&summary.id).bind(summary.subject_memory_summarized).bind(key).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$4,subject_memory_scope_keys=array_append(subject_memory_scope_keys,$5),updated_at=$6,data=$7 WHERE tenant_id=$1 AND source_id=$2 AND id=$3")
+                .bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.id).bind(summary.subject_memory_summarized).bind(key).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
         }else if consume_rollup{
-            sqlx::query("UPDATE engine_summaries SET rollup_status=$2,rollup_dispatch_pending=false,rollup_dispatch_consumed_version=GREATEST(rollup_dispatch_consumed_version,rollup_dispatch_version),rollup_dispatch_consumed_at=$3,updated_at=$3,data=$4 WHERE id=$1")
-                .bind(&summary.id).bind(&summary.rollup_status).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+            sqlx::query("UPDATE engine_summaries SET rollup_status=$4,rollup_dispatch_pending=false,rollup_dispatch_consumed_version=GREATEST(rollup_dispatch_consumed_version,rollup_dispatch_version),rollup_dispatch_consumed_at=$5,updated_at=$5,data=$6 WHERE tenant_id=$1 AND source_id=$2 AND id=$3")
+                .bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.id).bind(&summary.rollup_status).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
         }else{
-            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$2,updated_at=$3,data=$4 WHERE id=$1")
-                .bind(&summary.id).bind(summary.subject_memory_summarized).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
+            sqlx::query("UPDATE engine_summaries SET subject_memory_summarized=$4,updated_at=$5,data=$6 WHERE tenant_id=$1 AND source_id=$2 AND id=$3")
+                .bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.id).bind(summary.subject_memory_summarized).bind(timestamp(&now)?).bind(json(&summary)?).execute(&mut *tx).await
         }.map_err(|e|e.to_string())?;
         count += result.rows_affected() as usize;
     }

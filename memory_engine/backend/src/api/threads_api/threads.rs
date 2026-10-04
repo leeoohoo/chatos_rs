@@ -39,11 +39,19 @@ pub async fn get_thread(
     Path(thread_id): Path<String>,
     Query(query): Query<GetThreadQuery>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    let tenant_id = auth.resolve_tenant_scope(query.tenant_id.as_deref())?;
-    let item = threads::get_thread(
+    let tenant_id = auth
+        .resolve_tenant_scope(query.tenant_id.as_deref())?
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "tenant_id is required".to_string()))?;
+    let source_id = query
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "source_id is required".to_string()))?;
+    let item = threads::get_thread_by_id(
         &state.pool,
-        tenant_id.as_deref(),
-        query.source_id.as_deref(),
+        tenant_id.as_str(),
+        source_id,
         thread_id.as_str(),
     )
     .await

@@ -15,45 +15,36 @@ pub async fn delete_thread_summary(
     tenant_id: Option<&str>,
     source_id: Option<&str>,
 ) -> Result<usize, String> {
-    let tenant = tenant_id.map(str::trim).filter(|v| !v.is_empty());
-    let source = source_id.map(str::trim).filter(|v| !v.is_empty());
-    let reset = if let (Some(t), Some(s)) = (tenant, source) {
-        crate::repositories::records::reset_records_summary_by_summary_id(
-            db, t, s, thread_id, summary_id,
-        )
-        .await?
-    } else {
-        0
-    };
-    let mut sql = "DELETE FROM engine_summaries WHERE thread_id=$1 AND id=$2".to_string();
-    if tenant.is_some() {
-        sql.push_str(" AND tenant_id=$3");
-    }
-    if source.is_some() {
-        sql.push_str(if tenant.is_some() {
-            " AND source_id=$4"
-        } else {
-            " AND source_id=$3"
-        });
-    }
-    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
+    let tenant = tenant_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "tenant_id is required to delete a summary".to_string())?;
+    let source = source_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "source_id is required to delete a summary".to_string())?;
+    let reset = crate::repositories::records::reset_records_summary_by_summary_id(
+        db, tenant, source, thread_id, summary_id,
+    )
+    .await?;
+    let q = sqlx::query(
+        "DELETE FROM engine_summaries \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4",
+    )
+        .bind(tenant)
+        .bind(source)
         .bind(thread_id)
         .bind(summary_id);
-    if let Some(v) = tenant {
-        q = q.bind(v);
-    }
-    if let Some(v) = source {
-        q = q.bind(v);
-    }
     let deleted = q
         .execute(db)
         .await
         .map_err(|e| e.to_string())?
         .rows_affected();
     if reset > 0 {
-        if let (Some(t), Some(s)) = (tenant, source) {
-            crate::repositories::threads::refresh_summary_queue_state(db, t, s, thread_id).await?;
-        }
+        crate::repositories::threads::refresh_summary_queue_state(
+            db, tenant, source, thread_id,
+        )
+        .await?;
     }
     Ok(if deleted > 0 || reset > 0 { reset } else { 0 })
 }
@@ -225,7 +216,7 @@ async fn upsert_summary_row(
 ) -> Result<(), String> {
     let rollup = summary.status == "done" && summary.rollup_status == "pending";
     let subject = summary.status == "done" && summary.subject_memory_summarized == 0;
-    let result = sqlx::query("INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,source_digest,status,rollup_status,subject_memory_summarized,rollup_dispatch_pending,rollup_dispatch_version,rollup_dispatch_requested_at,subject_memory_source_dispatch_pending,subject_memory_source_dispatch_version,subject_memory_source_dispatch_requested_at,created_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12 THEN 1 ELSE 0 END,CASE WHEN $12 THEN now() ELSE NULL END,$13,CASE WHEN $13 THEN 1 ELSE 0 END,CASE WHEN $13 THEN now() ELSE NULL END,$14,$15,$16) ON CONFLICT(id) DO UPDATE SET subject_id=EXCLUDED.subject_id,summary_type=EXCLUDED.summary_type,level=EXCLUDED.level,source_digest=EXCLUDED.source_digest,status=EXCLUDED.status,rollup_status=EXCLUDED.rollup_status,subject_memory_summarized=EXCLUDED.subject_memory_summarized,rollup_dispatch_pending=$12,rollup_dispatch_version=engine_summaries.rollup_dispatch_version+CASE WHEN $12 THEN 1 ELSE 0 END,rollup_dispatch_requested_at=CASE WHEN $12 THEN now() ELSE engine_summaries.rollup_dispatch_requested_at END,rollup_dispatch_last_error=CASE WHEN $12 THEN NULL ELSE engine_summaries.rollup_dispatch_last_error END,subject_memory_source_dispatch_pending=$13,subject_memory_source_dispatch_version=engine_summaries.subject_memory_source_dispatch_version+CASE WHEN $13 THEN 1 ELSE 0 END,subject_memory_source_dispatch_requested_at=CASE WHEN $13 THEN now() ELSE engine_summaries.subject_memory_source_dispatch_requested_at END,subject_memory_source_dispatch_last_error=CASE WHEN $13 THEN NULL ELSE engine_summaries.subject_memory_source_dispatch_last_error END,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data WHERE engine_summaries.tenant_id=EXCLUDED.tenant_id AND engine_summaries.source_id=EXCLUDED.source_id AND engine_summaries.thread_id=EXCLUDED.thread_id")
+    let result = sqlx::query("INSERT INTO engine_summaries(id,tenant_id,source_id,thread_id,subject_id,summary_type,level,source_digest,status,rollup_status,subject_memory_summarized,rollup_dispatch_pending,rollup_dispatch_version,rollup_dispatch_requested_at,subject_memory_source_dispatch_pending,subject_memory_source_dispatch_version,subject_memory_source_dispatch_requested_at,created_at,updated_at,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,CASE WHEN $12 THEN 1 ELSE 0 END,CASE WHEN $12 THEN now() ELSE NULL END,$13,CASE WHEN $13 THEN 1 ELSE 0 END,CASE WHEN $13 THEN now() ELSE NULL END,$14,$15,$16) ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET subject_id=EXCLUDED.subject_id,summary_type=EXCLUDED.summary_type,level=EXCLUDED.level,source_digest=EXCLUDED.source_digest,status=EXCLUDED.status,rollup_status=EXCLUDED.rollup_status,subject_memory_summarized=EXCLUDED.subject_memory_summarized,rollup_dispatch_pending=$12,rollup_dispatch_version=engine_summaries.rollup_dispatch_version+CASE WHEN $12 THEN 1 ELSE 0 END,rollup_dispatch_requested_at=CASE WHEN $12 THEN now() ELSE engine_summaries.rollup_dispatch_requested_at END,rollup_dispatch_last_error=CASE WHEN $12 THEN NULL ELSE engine_summaries.rollup_dispatch_last_error END,subject_memory_source_dispatch_pending=$13,subject_memory_source_dispatch_version=engine_summaries.subject_memory_source_dispatch_version+CASE WHEN $13 THEN 1 ELSE 0 END,subject_memory_source_dispatch_requested_at=CASE WHEN $13 THEN now() ELSE engine_summaries.subject_memory_source_dispatch_requested_at END,subject_memory_source_dispatch_last_error=CASE WHEN $13 THEN NULL ELSE engine_summaries.subject_memory_source_dispatch_last_error END,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data WHERE engine_summaries.thread_id=EXCLUDED.thread_id")
         .bind(&summary.id).bind(&summary.tenant_id).bind(&summary.source_id).bind(&summary.thread_id).bind(&summary.subject_id).bind(&summary.summary_type)
         .bind(summary.level).bind(&summary.source_digest).bind(&summary.status).bind(&summary.rollup_status).bind(summary.subject_memory_summarized)
         .bind(rollup&&increment_dispatch).bind(subject&&increment_dispatch).bind(timestamp(&summary.created_at)?).bind(timestamp(&summary.updated_at)?).bind(json(summary)?)

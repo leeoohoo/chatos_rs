@@ -80,14 +80,27 @@ async fn enrich_thread_display_names(
     .collect::<Result<Vec<EngineThread>, _>>()?;
     let names = threads
         .into_iter()
-        .map(|thread| (thread.id.clone(), preferred_thread_display_name(&thread)))
+        .map(|thread| {
+            (
+                (
+                    thread.tenant_id.clone(),
+                    thread.source_id.clone(),
+                    thread.id.clone(),
+                ),
+                preferred_thread_display_name(&thread),
+            )
+        })
         .collect::<HashMap<_, _>>();
     for run in &mut items {
-        if let Some(name) = run
-            .thread_id
+        let key = run
+            .tenant_id
             .as_ref()
-            .and_then(|thread_id| names.get(thread_id))
-        {
+            .zip(run.source_id.as_ref())
+            .zip(run.thread_id.as_ref())
+            .map(|((tenant_id, source_id), thread_id)| {
+                (tenant_id.clone(), source_id.clone(), thread_id.clone())
+            });
+        if let Some(name) = key.as_ref().and_then(|key| names.get(key)) {
             run.thread_display_name = Some(name.clone());
         }
     }

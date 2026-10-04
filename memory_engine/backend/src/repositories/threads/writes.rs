@@ -70,11 +70,10 @@ pub async fn upsert_thread(
           pending_record_count,pending_summary_tokens,summary_job_run_id,summary_locked_at, \
           summary_lock_expires_at,created_at,updated_at,archived_at,data) \
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) \
-         ON CONFLICT(id) DO UPDATE SET subject_id=EXCLUDED.subject_id,thread_type=EXCLUDED.thread_type, \
+         ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET subject_id=EXCLUDED.subject_id,thread_type=EXCLUDED.thread_type, \
          external_thread_id=EXCLUDED.external_thread_id,status=EXCLUDED.status, \
          updated_at=EXCLUDED.updated_at,archived_at=EXCLUDED.archived_at,data=EXCLUDED.data \
-         WHERE engine_threads.tenant_id=EXCLUDED.tenant_id \
-         AND engine_threads.source_id=EXCLUDED.source_id",
+         ",
     )
     .bind(&thread.id)
     .bind(&thread.tenant_id)
@@ -96,9 +95,7 @@ pub async fn upsert_thread(
     .execute(db)
     .await
     .map_err(|error| error.to_string())?;
-    if result.rows_affected() == 0 {
-        return Err("thread id is already owned by another tenant or source".to_string());
-    }
+    debug_assert!(result.rows_affected() > 0);
     Ok(thread)
 }
 
@@ -480,9 +477,11 @@ async fn save_thread(
     thread: &EngineThread,
 ) -> Result<(), String> {
     sqlx::query(
-        "UPDATE engine_threads SET summary_status=$2,pending_record_count=$3,pending_summary_tokens=$4, \
-         summary_job_run_id=$5,summary_locked_at=$6,summary_lock_expires_at=$7,updated_at=$8,data=$9 WHERE id=$1",
-    ).bind(&thread.id).bind(&thread.summary_status).bind(thread.pending_record_count)
+        "UPDATE engine_threads SET summary_status=$4,pending_record_count=$5,pending_summary_tokens=$6, \
+         summary_job_run_id=$7,summary_locked_at=$8,summary_lock_expires_at=$9,updated_at=$10,data=$11 \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3",
+    ).bind(&thread.tenant_id).bind(&thread.source_id).bind(&thread.id)
+      .bind(&thread.summary_status).bind(thread.pending_record_count)
       .bind(thread.pending_summary_tokens).bind(&thread.summary_job_run_id)
       .bind(optional_timestamp(thread.summary_locked_at.as_deref())?)
       .bind(optional_timestamp(thread.summary_lock_expires_at.as_deref())?)

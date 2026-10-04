@@ -77,7 +77,7 @@ async fn list_internal(
     if label.is_empty() {
         return Ok(Vec::new());
     }
-    let mut q=QueryBuilder::<Postgres>::new("SELECT s.data FROM engine_summaries s JOIN engine_threads t ON t.id=s.thread_id WHERE s.tenant_id=");
+    let mut q=QueryBuilder::<Postgres>::new("SELECT s.data FROM engine_summaries s JOIN engine_threads t ON t.tenant_id=s.tenant_id AND t.source_id=s.source_id AND t.id=s.thread_id WHERE s.tenant_id=");
     q.push_bind(tenant_id)
         .push(" AND s.source_id=")
         .push_bind(source_id)

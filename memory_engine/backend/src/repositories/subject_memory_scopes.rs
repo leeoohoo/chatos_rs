@@ -304,12 +304,13 @@ pub async fn claim_pending_subject_memory_dispatches(
     limit: i64,
 ) -> Result<Vec<SubjectMemoryScopeDispatchOutbox>, String> {
     sqlx::query_as::<_, SubjectMemoryScopeDispatchOutbox>(
-        "WITH candidates AS (SELECT id FROM engine_subject_memory_scopes \
+        "WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_subject_memory_scopes \
          WHERE subject_memory_dispatch_pending ORDER BY subject_memory_dispatch_requested_at,updated_at \
          LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_subject_memory_scopes s SET \
          subject_memory_dispatch_published_version=GREATEST(s.subject_memory_dispatch_published_version,s.subject_memory_dispatch_version), \
          subject_memory_dispatch_published_at=now(),subject_memory_dispatch_last_error=NULL, \
-         subject_memory_dispatch_pending=false FROM candidates c WHERE s.id=c.id \
+         subject_memory_dispatch_pending=false FROM candidates c WHERE s.tenant_id=c.tenant_id \
+         AND s.source_id=c.source_id AND s.id=c.id \
          RETURNING s.id,s.tenant_id,s.source_id,s.scope_key,s.subject_memory_dispatch_version, \
          s.subject_memory_dispatch_published_version,s.subject_memory_dispatch_consumed_version, \
          s.subject_memory_dispatch_pending",
@@ -344,14 +345,15 @@ pub async fn recover_stale_subject_memory_dispatches(
     limit: i64,
 ) -> Result<u64, String> {
     let result = sqlx::query(
-        "WITH candidates AS (SELECT id FROM engine_subject_memory_scopes \
+        "WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_subject_memory_scopes \
          WHERE NOT subject_memory_dispatch_pending \
          AND subject_memory_dispatch_consumed_version<subject_memory_dispatch_version \
          AND subject_memory_dispatch_published_at<=$1 \
          AND COALESCE(subject_memory_dispatch_dead_letter_version,-1)<subject_memory_dispatch_version \
          ORDER BY subject_memory_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) \
          UPDATE engine_subject_memory_scopes s SET subject_memory_dispatch_pending=true, \
-         subject_memory_dispatch_last_error=NULL FROM candidates c WHERE s.id=c.id",
+         subject_memory_dispatch_last_error=NULL FROM candidates c WHERE s.tenant_id=c.tenant_id \
+         AND s.source_id=c.source_id AND s.id=c.id",
     )
     .bind(crate::repositories::postgres::timestamp(stale_before)?)
     .bind(limit.clamp(1, 10_000))

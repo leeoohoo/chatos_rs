@@ -126,12 +126,10 @@ pub(crate) async fn upsert_record_row(
          SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11 \
          WHERE EXISTS(SELECT 1 FROM engine_threads \
          WHERE id=$2 AND tenant_id=$3 AND source_id=$4) \
-         ON CONFLICT(id) DO UPDATE SET \
+         ON CONFLICT(tenant_id,source_id,id) DO UPDATE SET \
          external_record_id=EXCLUDED.external_record_id,role=EXCLUDED.role,record_type=EXCLUDED.record_type, \
          summary_status=EXCLUDED.summary_status,summary_id=EXCLUDED.summary_id,created_at=EXCLUDED.created_at,data=EXCLUDED.data \
-         WHERE engine_records.tenant_id=EXCLUDED.tenant_id \
-         AND engine_records.source_id=EXCLUDED.source_id \
-         AND engine_records.thread_id=EXCLUDED.thread_id",
+         WHERE engine_records.thread_id=EXCLUDED.thread_id",
     )
     .bind(&record.id)
     .bind(&record.thread_id)
@@ -149,7 +147,7 @@ pub(crate) async fn upsert_record_row(
     .map_err(|error| error.to_string())?;
     if result.rows_affected() == 0 {
         return Err(
-            "record id is already owned by another tenant, source, or thread, or the thread scope does not exist"
+            "record id is already owned by another thread in this tenant/source scope, or the thread scope does not exist"
                 .to_string(),
         );
     }
