@@ -3,37 +3,19 @@
 
 use std::sync::Arc;
 
-use futures_util::StreamExt;
-use lapin::{
-    message::Delivery,
-    options::{BasicAckOptions, BasicGetOptions, BasicNackOptions},
-    Channel,
-};
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
-use crate::rabbitmq_queue::{self, QueueTopology};
 use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
 use crate::services::subject_memory;
 use crate::state::AppState;
 
 const SOURCE_AVAILABLE_EVENT: &str = "source_available";
 const SCOPE_REQUESTED_EVENT: &str = "scope_requested";
+const SUBJECT_MEMORY_CLAIM_LEASE_SECS: i64 = 300;
 
-fn queue_topology(config: &AppConfig) -> QueueTopology<'_> {
-    QueueTopology {
-        exchange: config.rabbitmq_exchange.as_str(),
-        queue: config.subject_memory_queue.as_str(),
-        retry_queue: config.subject_memory_retry_queue.as_str(),
-        dead_letter_queue: config.subject_memory_dead_letter_queue.as_str(),
-        retry_delay: config.subject_memory_retry_delay,
-        stream_name: "subject memory",
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SubjectMemoryEnvelope {
     event_type: String,
     tenant_id: String,
@@ -123,291 +105,150 @@ fn required_id<'a>(value: Option<&'a str>, field: &str) -> Result<&'a str, Strin
 }
 
 pub async fn publish_pending_source_for_summary(
-    config: &AppConfig,
+    _config: &AppConfig,
     db: &crate::db::Db,
     tenant_id: &str,
     source_id: &str,
     summary_id: &str,
 ) -> Result<bool, String> {
-    let Some(event) =
-        summaries::get_pending_subject_memory_source_dispatch(db, tenant_id, source_id, summary_id)
-            .await?
-    else {
-        return Ok(false);
-    };
-    let (_connection, channel) = open_publisher(config).await?;
-    publish_source_outbox(db, config, &channel, &event).await?;
-    Ok(true)
+    Ok(summaries::get_pending_subject_memory_source_dispatch(
+        db, tenant_id, source_id, summary_id,
+    )
+    .await?
+    .is_some())
 }
 
 pub async fn publish_pending_scope(
-    config: &AppConfig,
+    _config: &AppConfig,
     db: &crate::db::Db,
     tenant_id: &str,
     source_id: &str,
     scope_key: &str,
 ) -> Result<bool, String> {
-    let Some(event) = subject_memory_scopes::get_pending_subject_memory_dispatch(
+    Ok(subject_memory_scopes::get_pending_subject_memory_dispatch(
         db, tenant_id, source_id, scope_key,
     )
     .await?
-    else {
-        return Ok(false);
-    };
-    let (_connection, channel) = open_publisher(config).await?;
-    publish_scope_outbox(db, config, &channel, &event).await?;
-    Ok(true)
+    .is_some())
 }
 
 pub async fn publish_rearmed_source_dispatch(
-    config: &AppConfig,
-    db: &crate::db::Db,
-    event: &summaries::SubjectMemorySourceDispatchOutbox,
+    _config: &AppConfig,
+    _db: &crate::db::Db,
+    _event: &summaries::SubjectMemorySourceDispatchOutbox,
 ) -> Result<(), String> {
-    let (_connection, channel) = open_publisher(config).await?;
-    publish_source_outbox(db, config, &channel, event).await
+    Ok(())
 }
 
 pub async fn publish_rearmed_scope_dispatch(
-    config: &AppConfig,
-    db: &crate::db::Db,
-    event: &subject_memory_scopes::SubjectMemoryScopeDispatchOutbox,
+    _config: &AppConfig,
+    _db: &crate::db::Db,
+    _event: &subject_memory_scopes::SubjectMemoryScopeDispatchOutbox,
 ) -> Result<(), String> {
-    let (_connection, channel) = open_publisher(config).await?;
-    publish_scope_outbox(db, config, &channel, event).await
+    Ok(())
 }
 
 pub async fn archive_subject_memory_source_dead_letter(
-    config: &AppConfig,
-    tenant_id: &str,
-    source_id: &str,
-    summary_id: &str,
-    version: i64,
-    scan_limit: usize,
+    _config: &AppConfig,
+    _tenant_id: &str,
+    _source_id: &str,
+    _summary_id: &str,
+    _version: i64,
+    _scan_limit: usize,
 ) -> Result<bool, String> {
-    archive_subject_memory_dead_letter(
-        config,
-        SOURCE_AVAILABLE_EVENT,
-        tenant_id,
-        source_id,
-        summary_id,
-        version,
-        scan_limit,
-    )
-    .await
+    Ok(true)
 }
 
 pub async fn archive_subject_memory_scope_dead_letter(
-    config: &AppConfig,
-    tenant_id: &str,
-    source_id: &str,
-    scope_key: &str,
-    version: i64,
-    scan_limit: usize,
+    _config: &AppConfig,
+    _tenant_id: &str,
+    _source_id: &str,
+    _scope_key: &str,
+    _version: i64,
+    _scan_limit: usize,
 ) -> Result<bool, String> {
-    archive_subject_memory_dead_letter(
-        config,
-        SCOPE_REQUESTED_EVENT,
-        tenant_id,
-        source_id,
-        scope_key,
-        version,
-        scan_limit,
-    )
-    .await
-}
-
-async fn archive_subject_memory_dead_letter(
-    config: &AppConfig,
-    event_type: &str,
-    tenant_id: &str,
-    source_id: &str,
-    item_id: &str,
-    version: i64,
-    scan_limit: usize,
-) -> Result<bool, String> {
-    let (_connection, channel) = open_publisher(config).await?;
-    let mut unmatched = Vec::new();
-    let mut matched = None;
-    for _ in 0..scan_limit.clamp(1, 1_000) {
-        let Some(delivery) = channel
-            .basic_get(
-                config.subject_memory_dead_letter_queue.as_str(),
-                BasicGetOptions::default(),
-            )
-            .await
-            .map_err(|err| err.to_string())?
-        else {
-            break;
-        };
-        let is_match =
-            serde_json::from_slice::<SubjectMemoryEnvelope>(&delivery.data).is_ok_and(|envelope| {
-                envelope.event_type == event_type
-                    && envelope.tenant_id == tenant_id
-                    && envelope.source_id == source_id
-                    && envelope.message_identity() == item_id
-                    && envelope.version == version
-            });
-        if is_match {
-            matched = Some(delivery);
-            break;
-        }
-        unmatched.push(delivery);
-    }
-    let archived = matched.is_some();
-    if let Some(delivery) = matched {
-        delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    for delivery in unmatched {
-        delivery
-            .nack(BasicNackOptions {
-                multiple: false,
-                requeue: true,
-            })
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(archived)
+    Ok(true)
 }
 
 pub fn start(state: Arc<AppState>) {
-    for consumer_index in 0..state.config.worker_subject_memory_concurrency.max(1) {
-        tokio::spawn(run_consumer(state.clone(), consumer_index));
+    for worker_index in 0..state.config.worker_subject_memory_concurrency.max(1) {
+        tokio::spawn(run_worker(state.clone(), worker_index));
     }
-    tokio::spawn(run_outbox_reconciler(state));
+    tokio::spawn(run_reconciler(state));
 }
 
-async fn run_consumer(state: Arc<AppState>, consumer_index: usize) {
+async fn run_worker(state: Arc<AppState>, worker_index: usize) {
+    let mut interval = tokio::time::interval(state.config.subject_memory_outbox_reconcile_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        match open_consumer(&state.config, consumer_index).await {
-            Ok((connection, channel, mut consumer)) => {
-                let _connection = connection;
-                info!(
-                    queue = state.config.subject_memory_queue.as_str(),
-                    consumer_index, "Memory Engine subject memory consumer connected to RabbitMQ"
-                );
-                while let Some(delivery) = consumer.next().await {
-                    let delivery = match delivery {
-                        Ok(delivery) => delivery,
-                        Err(err) => {
-                            warn!(
-                                consumer_index,
-                                error = err.to_string().as_str(),
-                                "Memory Engine subject memory delivery failed"
-                            );
-                            break;
-                        }
-                    };
-                    if let Err(err) = handle_delivery(&state, &channel, delivery).await {
-                        warn!(
-                            consumer_index,
-                            error = err.as_str(),
-                            "Memory Engine subject memory consumer channel will reconnect"
-                        );
-                        break;
-                    }
-                }
-            }
-            Err(err) => warn!(
-                consumer_index,
-                error = err.as_str(),
-                "Memory Engine subject memory consumer failed to connect to RabbitMQ"
+        interval.tick().await;
+        match process_claimed_batch(&state).await {
+            Ok(count) if count > 0 => info!(
+                worker_index,
+                processed_count = count,
+                "Memory Engine processed subject-memory database dispatches"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                worker_index,
+                error,
+                "Memory Engine subject-memory database worker failed"
             ),
         }
-        tokio::time::sleep(state.config.rabbitmq_reconnect_delay).await;
     }
 }
 
-async fn handle_delivery(
-    state: &Arc<AppState>,
-    channel: &Channel,
-    delivery: Delivery,
-) -> Result<(), String> {
-    let envelope = match serde_json::from_slice::<SubjectMemoryEnvelope>(&delivery.data) {
-        Ok(envelope) => envelope,
-        Err(err) => {
-            warn!(
-                error = err.to_string().as_str(),
-                "discarded invalid Memory Engine subject memory event"
-            );
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|ack_err| ack_err.to_string())?;
-            return Ok(());
-        }
-    };
+async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
+    let mut envelopes = summaries::claim_pending_subject_memory_source_dispatches(
+        &state.pool,
+        state.config.subject_memory_outbox_batch_size,
+    )
+    .await?
+    .iter()
+    .map(SubjectMemoryEnvelope::from_source)
+    .collect::<Vec<_>>();
+    envelopes.extend(
+        subject_memory_scopes::claim_pending_subject_memory_dispatches(
+            &state.pool,
+            state.config.subject_memory_outbox_batch_size,
+        )
+        .await?
+        .iter()
+        .map(SubjectMemoryEnvelope::from_scope),
+    );
 
-    match process_event(state, channel, &envelope).await {
-        Ok(()) => delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string()),
-        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
-        }
-        Err(error) => {
-            mark_failed(&state.pool, &envelope, error.as_str()).await;
-            let next_attempt = envelope.attempt.saturating_add(1);
-            let mut next = envelope.clone();
-            next.attempt = next_attempt;
-            if next_attempt >= state.config.subject_memory_max_delivery_attempts {
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.subject_memory_dead_letter_queue.as_str(),
-                    &next,
-                )
-                .await?;
-                mark_dead_lettered(&state.pool, &envelope, error.as_str()).await?;
+    let mut processed = 0usize;
+    for envelope in envelopes {
+        match process_event(state, &envelope).await {
+            Ok(()) => processed = processed.saturating_add(1),
+            Err(error)
+                if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
+            {
+                processed = processed.saturating_add(1);
+            }
+            Err(error) => {
+                mark_failed_and_defer(&state.pool, &envelope, error.as_str()).await?;
                 warn!(
-                    event_type = envelope.event_type.as_str(),
+                    event_type = envelope.event_type,
                     event_id = envelope.message_identity(),
                     version = envelope.version,
-                    attempt = next_attempt,
-                    error = error.as_str(),
-                    "Memory Engine subject memory event exhausted retries and entered the DLQ"
-                );
-            } else {
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.subject_memory_retry_queue.as_str(),
-                    &next,
-                )
-                .await?;
-                warn!(
-                    event_type = envelope.event_type.as_str(),
-                    event_id = envelope.message_identity(),
-                    version = envelope.version,
-                    attempt = next_attempt,
                     retry_delay_ms = state.config.subject_memory_retry_delay.as_millis(),
-                    error = error.as_str(),
-                    "Memory Engine subject memory event failed and was deferred"
+                    error,
+                    "Memory Engine subject-memory database dispatch was deferred"
                 );
             }
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
         }
     }
+    Ok(processed)
 }
 
 async fn process_event(
     state: &Arc<AppState>,
-    channel: &Channel,
     envelope: &SubjectMemoryEnvelope,
 ) -> Result<(), String> {
     match envelope.event_type.as_str() {
-        SOURCE_AVAILABLE_EVENT => process_source_event(state, channel, envelope).await,
-        SCOPE_REQUESTED_EVENT => process_scope_event(state, channel, envelope).await,
+        SOURCE_AVAILABLE_EVENT => process_source_event(state, envelope).await,
+        SCOPE_REQUESTED_EVENT => process_scope_event(state, envelope).await,
         _ => Err(format!(
             "unsupported subject memory event type {}",
             envelope.event_type
@@ -417,7 +258,6 @@ async fn process_event(
 
 async fn process_source_event(
     state: &Arc<AppState>,
-    channel: &Channel,
     envelope: &SubjectMemoryEnvelope,
 ) -> Result<(), String> {
     let event = envelope.source_outbox()?;
@@ -452,30 +292,23 @@ async fn process_source_event(
         summaries::mark_subject_memory_source_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     };
-    let labels = thread.labels.unwrap_or_default();
     let scopes = subject_memory_scopes::list_matching_active_subject_memory_scopes(
         &state.pool,
         envelope.tenant_id.as_str(),
         envelope.source_id.as_str(),
-        labels.as_slice(),
+        thread.labels.unwrap_or_default().as_slice(),
         event.summary_type.as_str(),
         10_000,
     )
     .await?;
     for scope in scopes {
-        let Some(scope_event) = subject_memory_scopes::rearm_subject_memory_dispatch(
+        subject_memory_scopes::rearm_subject_memory_dispatch(
             &state.pool,
             scope.tenant_id.as_str(),
             scope.source_id.as_str(),
             scope.scope_key.as_str(),
         )
-        .await?
-        else {
-            continue;
-        };
-        if scope_event.subject_memory_dispatch_pending {
-            publish_scope_outbox(&state.pool, &state.config, channel, &scope_event).await?;
-        }
+        .await?;
     }
     summaries::mark_subject_memory_source_dispatch_consumed(&state.pool, &event).await?;
     Ok(())
@@ -483,7 +316,6 @@ async fn process_source_event(
 
 async fn process_scope_event(
     state: &Arc<AppState>,
-    channel: &Channel,
     envelope: &SubjectMemoryEnvelope,
 ) -> Result<(), String> {
     let event = envelope.scope_outbox()?;
@@ -506,7 +338,6 @@ async fn process_scope_event(
         subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
-
     let Some(scope) = subject_memory_scopes::get_subject_memory_scope(
         &state.pool,
         envelope.tenant_id.as_str(),
@@ -523,127 +354,119 @@ async fn process_scope_event(
         subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
         return Ok(());
     }
-
     subject_memory::run_scope_once(&state.config, &state.pool, &scope).await?;
     subject_memory_scopes::mark_subject_memory_dispatch_consumed(&state.pool, &event).await?;
     if subject_memory::scope_has_pending_work(&state.pool, &scope).await? {
-        if let Some(next) = subject_memory_scopes::rearm_subject_memory_dispatch(
+        subject_memory_scopes::rearm_subject_memory_dispatch(
             &state.pool,
             scope.tenant_id.as_str(),
             scope.source_id.as_str(),
             scope.scope_key.as_str(),
         )
-        .await?
-        {
-            if next.subject_memory_dispatch_pending {
-                publish_scope_outbox(&state.pool, &state.config, channel, &next).await?;
-            }
-        }
+        .await?;
     }
     Ok(())
 }
 
-async fn mark_failed(db: &crate::db::Db, envelope: &SubjectMemoryEnvelope, error: &str) {
-    match envelope.event_type.as_str() {
-        SOURCE_AVAILABLE_EVENT => {
-            if let Ok(event) = envelope.source_outbox() {
-                let _ =
-                    summaries::mark_subject_memory_source_dispatch_failed(db, &event, error).await;
-            }
-        }
-        SCOPE_REQUESTED_EVENT => {
-            if let Ok(event) = envelope.scope_outbox() {
-                let _ =
-                    subject_memory_scopes::mark_subject_memory_dispatch_failed(db, &event, error)
-                        .await;
-            }
-        }
-        _ => {}
-    }
-}
-
-async fn mark_dead_lettered(
+async fn mark_failed_and_defer(
     db: &crate::db::Db,
     envelope: &SubjectMemoryEnvelope,
     error: &str,
 ) -> Result<(), String> {
     match envelope.event_type.as_str() {
         SOURCE_AVAILABLE_EVENT => {
-            summaries::mark_subject_memory_source_dispatch_dead_lettered(
-                db,
-                &envelope.source_outbox()?,
-                error,
-            )
-            .await?;
+            let event = envelope.source_outbox()?;
+            summaries::mark_subject_memory_source_dispatch_failed(db, &event, error).await?;
+            summaries::defer_subject_memory_source_dispatch(db, &event).await?;
         }
         SCOPE_REQUESTED_EVENT => {
-            subject_memory_scopes::mark_subject_memory_dispatch_dead_lettered(
-                db,
-                &envelope.scope_outbox()?,
-                error,
-            )
-            .await?;
+            let event = envelope.scope_outbox()?;
+            subject_memory_scopes::mark_subject_memory_dispatch_failed(db, &event, error).await?;
+            subject_memory_scopes::defer_subject_memory_dispatch(db, &event).await?;
         }
         _ => {}
     }
     Ok(())
 }
 
-async fn publish_source_outbox(
-    db: &crate::db::Db,
-    config: &AppConfig,
-    channel: &Channel,
-    event: &summaries::SubjectMemorySourceDispatchOutbox,
-) -> Result<(), String> {
-    publish_envelope(
-        channel,
-        config,
-        config.subject_memory_queue.as_str(),
-        &SubjectMemoryEnvelope::from_source(event),
+async fn run_reconciler(state: Arc<AppState>) {
+    let mut interval = tokio::time::interval(state.config.subject_memory_outbox_reconcile_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut recovery_offset = 0_u64;
+    loop {
+        interval.tick().await;
+        let stale_before = (chrono::Utc::now()
+            - chrono::Duration::seconds(SUBJECT_MEMORY_CLAIM_LEASE_SECS))
+        .to_rfc3339();
+        let source_recovery = summaries::recover_stale_subject_memory_source_dispatches(
+            &state.pool,
+            stale_before.as_str(),
+            state.config.subject_memory_outbox_batch_size,
+        )
+        .await;
+        let scope_recovery = subject_memory_scopes::recover_stale_subject_memory_dispatches(
+            &state.pool,
+            stale_before.as_str(),
+            state.config.subject_memory_outbox_batch_size,
+        )
+        .await;
+        if let Err(error) = source_recovery {
+            warn!(error, "Memory Engine failed to recover subject source database claims");
+        }
+        if let Err(error) = scope_recovery {
+            warn!(error, "Memory Engine failed to recover subject scope database claims");
+        }
+        match arm_pending_scopes(&state, recovery_offset).await {
+            Ok((count, next_offset)) => {
+                recovery_offset = next_offset;
+                if count > 0 {
+                    info!(armed_count = count, "Memory Engine armed subject-memory scopes");
+                }
+            }
+            Err(error) => warn!(error, "Memory Engine failed to arm subject-memory scopes"),
+        }
+    }
+}
+
+async fn arm_pending_scopes(state: &AppState, recovery_offset: u64) -> Result<(usize, u64), String> {
+    let policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
+    if !policy.enabled {
+        return Ok((0, recovery_offset));
+    }
+    let scopes = subject_memory_scopes::list_active_subject_memory_scopes_page(
+        &state.pool,
+        None,
+        None,
+        state.config.subject_memory_outbox_batch_size,
+        recovery_offset,
     )
     .await?;
-    summaries::mark_subject_memory_source_dispatch_published(db, event).await?;
-    Ok(())
+    let scanned_count = scopes.len() as u64;
+    let mut armed = 0usize;
+    for scope in scopes {
+        if !subject_memory::scope_has_pending_work(&state.pool, &scope).await? {
+            continue;
+        }
+        if subject_memory_scopes::rearm_subject_memory_dispatch(
+            &state.pool,
+            scope.tenant_id.as_str(),
+            scope.source_id.as_str(),
+            scope.scope_key.as_str(),
+        )
+        .await?
+        .is_some()
+        {
+            armed = armed.saturating_add(1);
+        }
+    }
+    let batch_size = state.config.subject_memory_outbox_batch_size.max(1) as u64;
+    let next_offset = if scanned_count < batch_size {
+        0
+    } else {
+        recovery_offset.saturating_add(scanned_count)
+    };
+    Ok((armed, next_offset))
 }
 
-async fn publish_scope_outbox(
-    db: &crate::db::Db,
-    config: &AppConfig,
-    channel: &Channel,
-    event: &subject_memory_scopes::SubjectMemoryScopeDispatchOutbox,
-) -> Result<(), String> {
-    publish_envelope(
-        channel,
-        config,
-        config.subject_memory_queue.as_str(),
-        &SubjectMemoryEnvelope::from_scope(event),
-    )
-    .await?;
-    subject_memory_scopes::mark_subject_memory_dispatch_published(db, event).await?;
-    Ok(())
-}
-
-async fn publish_envelope(
-    channel: &Channel,
-    config: &AppConfig,
-    routing_key: &str,
-    envelope: &SubjectMemoryEnvelope,
-) -> Result<(), String> {
-    let payload = serde_json::to_vec(envelope).map_err(|err| err.to_string())?;
-    rabbitmq_queue::publish_persistent_json(
-        channel,
-        &queue_topology(config),
-        routing_key,
-        payload.as_slice(),
-        format!(
-            "memory-subject:{}:{}:{}:{}",
-            envelope.event_type,
-            envelope.message_identity(),
-            envelope.version,
-            envelope.attempt
-        ),
-    )
-    .await
-}
-
-include!("subject_memory_queue_part01.rs");
+#[cfg(test)]
+include!("subject_memory_queue_inline_tests.rs");

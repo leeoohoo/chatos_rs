@@ -10,7 +10,6 @@ use crate::db::Db;
 use crate::models::MemoryEngineWorkerRuntimeStats;
 use crate::pressure::MemoryEnginePressureState;
 use chatos_cloud_agent_runtime::CloudAgentStateStore;
-use chatos_queue_observability::RabbitMqQueueInspector;
 
 #[derive(Default)]
 pub struct MemoryEngineRuntimeStats {
@@ -44,7 +43,6 @@ pub struct AppState {
     pub config: AppConfig,
     pub user_service_http: reqwest::Client,
     pub runtime_stats: Arc<MemoryEngineRuntimeStats>,
-    pub rabbitmq_queue_inspector: RabbitMqQueueInspector,
     pub pressure: MemoryEnginePressureState,
     pub cloud_agent_store: CloudAgentStateStore,
 }

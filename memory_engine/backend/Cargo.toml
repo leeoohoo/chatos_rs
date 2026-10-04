@@ -16,7 +16,6 @@ chrono = { version = "0.4", features = ["serde", "clock"] }
 async-trait = "0.1"
 chatos_service_runtime = { path = "../../crates/chatos_service_runtime", features = ["axum-support"] }
 chatos_internal_tls = { path = "../../crates/chatos_internal_tls" }
-chatos_queue_observability = { path = "../../crates/chatos_queue_observability" }
 chatos_config_sdk = { path = "../../crates/chatos_config_sdk" }
 chatos_agent = { path = "../../agent", default-features = false, features = ["runtime"] }
 chatos_ai_runtime = { path = "../../crates/chatos_ai_runtime" }
@@ -32,7 +31,6 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 tower-http = { version = "0.7", features = ["cors", "trace"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
-lapin = "2.5"
 hex = "0.4"
 sha2 = "0.11"
 urlencoding = "2"

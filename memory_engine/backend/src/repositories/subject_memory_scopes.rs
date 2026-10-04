@@ -299,31 +299,66 @@ pub async fn get_subject_memory_dispatch_state(
     load_dispatch(db, tenant_id, source_id, scope_key, false).await
 }
 
-pub async fn list_pending_subject_memory_dispatches(
+pub async fn claim_pending_subject_memory_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SubjectMemoryScopeDispatchOutbox>, String> {
     sqlx::query_as::<_, SubjectMemoryScopeDispatchOutbox>(
-        "SELECT id,tenant_id,source_id,scope_key,subject_memory_dispatch_version, \
-         subject_memory_dispatch_published_version,subject_memory_dispatch_consumed_version, \
-         subject_memory_dispatch_pending FROM engine_subject_memory_scopes \
+        "WITH candidates AS (SELECT id FROM engine_subject_memory_scopes \
          WHERE subject_memory_dispatch_pending ORDER BY subject_memory_dispatch_requested_at,updated_at \
-         LIMIT $1",
-    ).bind(limit.clamp(1, 10_000)).fetch_all(db).await.map_err(|error| error.to_string())
+         LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_subject_memory_scopes s SET \
+         subject_memory_dispatch_published_version=GREATEST(s.subject_memory_dispatch_published_version,s.subject_memory_dispatch_version), \
+         subject_memory_dispatch_published_at=now(),subject_memory_dispatch_last_error=NULL, \
+         subject_memory_dispatch_pending=false FROM candidates c WHERE s.id=c.id \
+         RETURNING s.id,s.tenant_id,s.source_id,s.scope_key,s.subject_memory_dispatch_version, \
+         s.subject_memory_dispatch_published_version,s.subject_memory_dispatch_consumed_version, \
+         s.subject_memory_dispatch_pending",
+    )
+    .bind(limit.clamp(1, 10_000))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())
 }
 
-pub async fn mark_subject_memory_dispatch_published(
+pub async fn defer_subject_memory_dispatch(
     db: &Db,
     event: &SubjectMemoryScopeDispatchOutbox,
 ) -> Result<bool, String> {
     sqlx::query(
-        "UPDATE engine_subject_memory_scopes SET subject_memory_dispatch_published_version= \
-         GREATEST(subject_memory_dispatch_published_version,$4),subject_memory_dispatch_published_at=now(), \
-         subject_memory_dispatch_last_error=NULL,subject_memory_dispatch_pending=subject_memory_dispatch_version>$4 \
+        "UPDATE engine_subject_memory_scopes SET subject_memory_dispatch_pending=true \
          WHERE tenant_id=$1 AND source_id=$2 AND scope_key=$3 AND subject_memory_dispatch_version>=$4",
-    ).bind(&event.tenant_id).bind(&event.source_id).bind(&event.scope_key)
-      .bind(event.subject_memory_dispatch_version).execute(db).await
-      .map(|result| result.rows_affected() > 0).map_err(|error| error.to_string())
+    )
+    .bind(&event.tenant_id)
+    .bind(&event.source_id)
+    .bind(&event.scope_key)
+    .bind(event.subject_memory_dispatch_version)
+    .execute(db)
+    .await
+    .map(|result| result.rows_affected() > 0)
+    .map_err(|error| error.to_string())
+}
+
+pub async fn recover_stale_subject_memory_dispatches(
+    db: &Db,
+    stale_before: &str,
+    limit: i64,
+) -> Result<u64, String> {
+    let result = sqlx::query(
+        "WITH candidates AS (SELECT id FROM engine_subject_memory_scopes \
+         WHERE NOT subject_memory_dispatch_pending \
+         AND subject_memory_dispatch_consumed_version<subject_memory_dispatch_version \
+         AND subject_memory_dispatch_published_at<=$1 \
+         AND COALESCE(subject_memory_dispatch_dead_letter_version,-1)<subject_memory_dispatch_version \
+         ORDER BY subject_memory_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) \
+         UPDATE engine_subject_memory_scopes s SET subject_memory_dispatch_pending=true, \
+         subject_memory_dispatch_last_error=NULL FROM candidates c WHERE s.id=c.id",
+    )
+    .bind(crate::repositories::postgres::timestamp(stale_before)?)
+    .bind(limit.clamp(1, 10_000))
+    .execute(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(result.rows_affected())
 }
 
 pub async fn mark_subject_memory_dispatch_consumed(
@@ -346,14 +381,6 @@ pub async fn mark_subject_memory_dispatch_failed(
     error: &str,
 ) -> Result<bool, String> {
     update_dispatch_error(db, event, error, false).await
-}
-
-pub async fn mark_subject_memory_dispatch_dead_lettered(
-    db: &Db,
-    event: &SubjectMemoryScopeDispatchOutbox,
-    error: &str,
-) -> Result<bool, String> {
-    update_dispatch_error(db, event, error, true).await
 }
 
 pub async fn rearm_subject_memory_dispatch(

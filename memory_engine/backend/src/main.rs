@@ -10,7 +10,6 @@ mod internal_tls;
 mod jobs;
 mod models;
 mod pressure;
-mod rabbitmq_queue;
 mod repositories;
 mod rollup_queue;
 mod services;
@@ -64,8 +63,6 @@ async fn main() -> Result<(), String> {
         config.user_service_request_timeout_ms.max(300),
     )))
     .map_err(|err| format!("build user_service client failed: {err}"))?;
-    let rabbitmq_queue_inspector =
-        chatos_queue_observability::RabbitMqQueueInspector::new(config.rabbitmq_url.clone())?;
     let pressure_policy = pressure::MemoryEnginePressurePolicy::from_snapshot(
         &pressure_snapshot,
         config.worker_summary_concurrency,
@@ -79,7 +76,6 @@ async fn main() -> Result<(), String> {
         config: config.clone(),
         user_service_http,
         runtime_stats: Arc::new(MemoryEngineRuntimeStats::default()),
-        rabbitmq_queue_inspector,
         pressure: pressure::MemoryEnginePressureState::new(pressure_policy),
         cloud_agent_store,
     });

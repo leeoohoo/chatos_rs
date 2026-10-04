@@ -7,8 +7,8 @@ use chatos_cloud_agent_protocol::{CloudAgentOrdering, CloudAgentRunPhase, CloudA
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-mod execution;
 mod database_driver;
+mod execution;
 mod input_history;
 mod input_projection;
 mod reducer;
@@ -16,6 +16,10 @@ mod run_contract;
 mod state_repository;
 mod state_store;
 
+pub use database_driver::{
+    spawn_cloud_agent_database_worker, CloudAgentDatabaseWorkerConfig, CloudAgentServiceAdapter,
+    CloudAgentServiceRuntime, CloudAgentWorkerOwner,
+};
 pub use execution::{
     consume_cloud_agent_single_step, CloudAgentConsumeDisposition, CloudAgentProfile,
     CloudAgentProfileRegistry, CloudAgentSingleStepExecution, CloudAgentSingleStepExecutor,
@@ -24,10 +28,6 @@ pub use execution::{
 pub use input_projection::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_mcp_result_input_items,
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
-};
-pub use database_driver::{
-    spawn_cloud_agent_database_worker, CloudAgentDatabaseWorkerConfig,
-    CloudAgentServiceAdapter, CloudAgentServiceRuntime, CloudAgentWorkerOwner,
 };
 pub use reducer::{materialize_mcp_command, reduce_single_step, CloudAgentModelTrigger};
 pub use run_contract::{

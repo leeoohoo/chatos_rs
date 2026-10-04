@@ -20,29 +20,14 @@ pub struct AppConfig {
     pub worker_rollup_concurrency: usize,
     pub worker_subject_memory_concurrency: usize,
     pub worker_reconcile_concurrency: usize,
-    pub rabbitmq_url: String,
-    pub rabbitmq_exchange: String,
-    pub rabbitmq_reconnect_delay: Duration,
     pub cloud_agent_outbox_reconcile_interval: Duration,
     pub cloud_agent_outbox_batch_size: i64,
-    pub summary_queue: String,
-    pub summary_retry_queue: String,
-    pub summary_dead_letter_queue: String,
-    pub summary_max_delivery_attempts: u32,
     pub summary_retry_delay: Duration,
     pub summary_outbox_reconcile_interval: Duration,
     pub summary_outbox_batch_size: i64,
-    pub rollup_queue: String,
-    pub rollup_retry_queue: String,
-    pub rollup_dead_letter_queue: String,
-    pub rollup_max_delivery_attempts: u32,
     pub rollup_retry_delay: Duration,
     pub rollup_outbox_reconcile_interval: Duration,
     pub rollup_outbox_batch_size: i64,
-    pub subject_memory_queue: String,
-    pub subject_memory_retry_queue: String,
-    pub subject_memory_dead_letter_queue: String,
-    pub subject_memory_max_delivery_attempts: u32,
     pub subject_memory_retry_delay: Duration,
     pub subject_memory_outbox_reconcile_interval: Duration,
     pub subject_memory_outbox_batch_size: i64,
@@ -76,21 +61,11 @@ impl AppConfig {
             required_usize("MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY")?.max(1);
         let worker_reconcile_concurrency =
             required_usize("MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY")?.max(1);
-        let rabbitmq_url = required_text("MEMORY_ENGINE_RABBITMQ_URL")?;
-        let rabbitmq_exchange = required_text("MEMORY_ENGINE_RABBITMQ_EXCHANGE")?;
-        let rabbitmq_reconnect_delay = Duration::from_millis(
-            required_u64("MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS")?.max(100),
-        );
         let cloud_agent_outbox_reconcile_interval = Duration::from_millis(
             required_u64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS")?.max(1_000),
         );
         let cloud_agent_outbox_batch_size =
             required_i64("MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE")?.max(1);
-        let summary_queue = required_text("MEMORY_ENGINE_SUMMARY_QUEUE")?;
-        let summary_retry_queue = required_text("MEMORY_ENGINE_SUMMARY_RETRY_QUEUE")?;
-        let summary_dead_letter_queue = required_text("MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE")?;
-        let summary_max_delivery_attempts =
-            required_u32("MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS")?.max(1);
         let summary_retry_delay =
             Duration::from_millis(required_u64("MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS")?.max(100));
         let summary_outbox_reconcile_interval = Duration::from_millis(
@@ -98,11 +73,6 @@ impl AppConfig {
         );
         let summary_outbox_batch_size =
             required_i64("MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE")?.max(1);
-        let rollup_queue = required_text("MEMORY_ENGINE_ROLLUP_QUEUE")?;
-        let rollup_retry_queue = required_text("MEMORY_ENGINE_ROLLUP_RETRY_QUEUE")?;
-        let rollup_dead_letter_queue = required_text("MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE")?;
-        let rollup_max_delivery_attempts =
-            required_u32("MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS")?.max(1);
         let rollup_retry_delay =
             Duration::from_millis(required_u64("MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS")?.max(100));
         let rollup_outbox_reconcile_interval = Duration::from_millis(
@@ -110,12 +80,6 @@ impl AppConfig {
         );
         let rollup_outbox_batch_size =
             required_i64("MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE")?.max(1);
-        let subject_memory_queue = required_text("MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE")?;
-        let subject_memory_retry_queue = required_text("MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE")?;
-        let subject_memory_dead_letter_queue =
-            required_text("MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE")?;
-        let subject_memory_max_delivery_attempts =
-            required_u32("MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS")?.max(1);
         let subject_memory_retry_delay = Duration::from_millis(
             required_u64("MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS")?.max(100),
         );
@@ -160,29 +124,14 @@ impl AppConfig {
             worker_rollup_concurrency,
             worker_subject_memory_concurrency,
             worker_reconcile_concurrency,
-            rabbitmq_url,
-            rabbitmq_exchange,
-            rabbitmq_reconnect_delay,
             cloud_agent_outbox_reconcile_interval,
             cloud_agent_outbox_batch_size,
-            summary_queue,
-            summary_retry_queue,
-            summary_dead_letter_queue,
-            summary_max_delivery_attempts,
             summary_retry_delay,
             summary_outbox_reconcile_interval,
             summary_outbox_batch_size,
-            rollup_queue,
-            rollup_retry_queue,
-            rollup_dead_letter_queue,
-            rollup_max_delivery_attempts,
             rollup_retry_delay,
             rollup_outbox_reconcile_interval,
             rollup_outbox_batch_size,
-            subject_memory_queue,
-            subject_memory_retry_queue,
-            subject_memory_dead_letter_queue,
-            subject_memory_max_delivery_attempts,
             subject_memory_retry_delay,
             subject_memory_outbox_reconcile_interval,
             subject_memory_outbox_batch_size,
@@ -272,11 +221,6 @@ fn required_u64(key: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
         .map_err(|err| format!("{key} must be a valid integer: {err}"))
-}
-
-fn required_u32(key: &str) -> Result<u32, String> {
-    let value = required_u64(key)?;
-    u32::try_from(value).map_err(|_| format!("{key} is too large"))
 }
 
 fn required_i64(key: &str) -> Result<i64, String> {

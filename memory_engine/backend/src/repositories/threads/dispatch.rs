@@ -19,18 +19,6 @@ pub struct SummaryDispatchOutbox {
 
 const COLUMNS: &str = "tenant_id,source_id,id AS thread_id,summary_dispatch_version,summary_dispatch_published_version,summary_dispatch_consumed_version";
 
-pub async fn get_pending_summary_dispatch(
-    db: &Db,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<Option<SummaryDispatchOutbox>, String> {
-    fetch_optional(db, &format!(
-        "SELECT {COLUMNS} FROM engine_threads WHERE tenant_id=$1 AND source_id=$2 AND id=$3 \
-         AND summary_dispatch_pending AND (summary_status<>'running' OR summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now())"
-    ), tenant_id, source_id, thread_id).await
-}
-
 pub async fn get_summary_dispatch_state(
     db: &Db,
     tenant_id: &str,
@@ -49,15 +37,25 @@ pub async fn get_summary_dispatch_state(
     .await
 }
 
-pub async fn list_pending_summary_dispatches(
+pub async fn claim_pending_summary_dispatches(
     db: &Db,
     limit: i64,
 ) -> Result<Vec<SummaryDispatchOutbox>, String> {
     sqlx::query_as::<_, SummaryDispatchOutbox>(sqlx::AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM engine_threads WHERE summary_dispatch_pending \
+        "WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_threads \
+         WHERE summary_dispatch_pending \
          AND (summary_status<>'running' OR summary_lock_expires_at IS NULL OR summary_lock_expires_at<=now()) \
-         ORDER BY summary_dispatch_requested_at,updated_at LIMIT $1"
-    ))).bind(limit.clamp(1,10_000)).fetch_all(db).await.map_err(|error| error.to_string())
+         ORDER BY summary_dispatch_requested_at,updated_at LIMIT $1 FOR UPDATE SKIP LOCKED) \
+         UPDATE engine_threads t SET \
+         summary_dispatch_published_version=GREATEST(t.summary_dispatch_published_version,t.summary_dispatch_version), \
+         summary_dispatch_published_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=false \
+         FROM candidates c WHERE t.tenant_id=c.tenant_id AND t.source_id=c.source_id AND t.id=c.id \
+         RETURNING {COLUMNS}"
+    )))
+    .bind(limit.clamp(1, 10_000))
+    .fetch_all(db)
+    .await
+    .map_err(|error| error.to_string())
 }
 
 pub async fn list_eligible_summary_dispatches(
@@ -98,20 +96,6 @@ pub async fn defer_summary_dispatch_until_unlock(
         db,
         event,
         "summary_dispatch_pending=true,summary_dispatch_last_error=NULL",
-    )
-    .await
-}
-
-pub async fn mark_summary_dispatch_published(
-    db: &Db,
-    event: &SummaryDispatchOutbox,
-) -> Result<bool, String> {
-    update_event(
-        db,
-        event,
-        "summary_dispatch_published_version=GREATEST(summary_dispatch_published_version,$4), \
-         summary_dispatch_published_at=now(),summary_dispatch_last_error=NULL, \
-         summary_dispatch_pending=(summary_dispatch_version>$4)",
     )
     .await
 }

@@ -42,17 +42,17 @@ pub async fn get_subject_memory_source_dispatch_state(
     )
     .await
 }
-pub async fn list_pending_subject_memory_source_dispatches(
-    db: &Db,
-    limit: i64,
-) -> Result<Vec<SubjectMemorySourceDispatchOutbox>, String> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1"))).bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
+pub async fn claim_pending_subject_memory_source_dispatches(db:&Db,limit:i64)->Result<Vec<SubjectMemorySourceDispatchOutbox>,String>{
+    sqlx::query_as::<_,SubjectMemorySourceDispatchOutbox>(sqlx::AssertSqlSafe(format!("WITH candidates AS (SELECT id FROM engine_summaries WHERE subject_memory_source_dispatch_pending ORDER BY subject_memory_source_dispatch_requested_at,updated_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_published_version=GREATEST(s.subject_memory_source_dispatch_published_version,s.subject_memory_source_dispatch_version),subject_memory_source_dispatch_published_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=false FROM candidates c WHERE s.id=c.id RETURNING {COLS}")))
+        .bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
-pub async fn mark_subject_memory_source_dispatch_published(
-    db: &Db,
-    e: &SubjectMemorySourceDispatchOutbox,
-) -> Result<bool, String> {
-    update(db,e,"subject_memory_source_dispatch_published_version=GREATEST(subject_memory_source_dispatch_published_version,$4),subject_memory_source_dispatch_published_at=now(),subject_memory_source_dispatch_last_error=NULL,subject_memory_source_dispatch_pending=(subject_memory_source_dispatch_version>$4)",None).await
+pub async fn defer_subject_memory_source_dispatch(db:&Db,e:&SubjectMemorySourceDispatchOutbox)->Result<bool,String>{
+    update(db,e,"subject_memory_source_dispatch_pending=true",None).await
+}
+pub async fn recover_stale_subject_memory_source_dispatches(db:&Db,stale_before:&str,limit:i64)->Result<u64,String>{
+    let result=sqlx::query("WITH candidates AS (SELECT id FROM engine_summaries WHERE NOT subject_memory_source_dispatch_pending AND subject_memory_source_dispatch_consumed_version<subject_memory_source_dispatch_version AND subject_memory_source_dispatch_published_at<=$1 AND COALESCE(subject_memory_source_dispatch_dead_letter_version,-1)<subject_memory_source_dispatch_version ORDER BY subject_memory_source_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET subject_memory_source_dispatch_pending=true,subject_memory_source_dispatch_last_error=NULL FROM candidates c WHERE s.id=c.id")
+        .bind(crate::repositories::postgres::timestamp(stale_before)?).bind(limit.clamp(1,10000)).execute(db).await.map_err(|e|e.to_string())?;
+    Ok(result.rows_affected())
 }
 pub async fn mark_subject_memory_source_dispatch_consumed(
     db: &Db,
@@ -66,13 +66,6 @@ pub async fn mark_subject_memory_source_dispatch_failed(
     error: &str,
 ) -> Result<bool, String> {
     update(db,e,"subject_memory_source_dispatch_last_error=$5,subject_memory_source_dispatch_last_failed_at=now()",Some(error)).await
-}
-pub async fn mark_subject_memory_source_dispatch_dead_lettered(
-    db: &Db,
-    e: &SubjectMemorySourceDispatchOutbox,
-    error: &str,
-) -> Result<bool, String> {
-    update(db,e,"subject_memory_source_dispatch_consumed_version=GREATEST(subject_memory_source_dispatch_consumed_version,$4),subject_memory_source_dispatch_dead_letter_version=$4,subject_memory_source_dispatch_dead_lettered_at=now(),subject_memory_source_dispatch_last_error=$5",Some(error)).await
 }
 pub async fn replay_dead_lettered_subject_memory_source_dispatch(
     db: &Db,

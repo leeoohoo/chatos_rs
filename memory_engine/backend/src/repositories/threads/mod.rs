@@ -72,11 +72,11 @@ fn parse_cursor_time(field: &str, value: &str) -> Result<DateTime<Utc>, String> 
 }
 
 pub use dispatch::{
-    defer_summary_dispatch_until_unlock, get_pending_summary_dispatch, get_summary_dispatch_state,
-    list_eligible_summary_dispatches, list_pending_summary_dispatches,
+    claim_pending_summary_dispatches, defer_summary_dispatch_until_unlock,
+    get_summary_dispatch_state, list_eligible_summary_dispatches,
     list_stale_published_summary_dispatches, mark_summary_dispatch_consumed,
     mark_summary_dispatch_dead_lettered, mark_summary_dispatch_failed,
-    mark_summary_dispatch_published, rearm_stale_published_summary_dispatch,
+    rearm_stale_published_summary_dispatch,
     rearm_summary_dispatch_if_eligible, replay_dead_lettered_summary_dispatch,
     SummaryDispatchOutbox,
 };

@@ -65,16 +65,17 @@ impl<'a> ListSummariesQuery<'a> {
 }
 
 pub use dispatch::{
-    get_pending_rollup_dispatch, get_rollup_dispatch_state, list_pending_rollup_dispatches,
-    mark_rollup_dispatch_consumed, mark_rollup_dispatch_dead_lettered, mark_rollup_dispatch_failed,
-    mark_rollup_dispatch_published, rearm_rollup_dispatch_if_eligible,
-    replay_dead_lettered_rollup_dispatch, RollupDispatchOutbox,
+    claim_pending_rollup_dispatches, defer_rollup_dispatch, get_pending_rollup_dispatch,
+    get_rollup_dispatch_state, mark_rollup_dispatch_consumed, mark_rollup_dispatch_failed,
+    rearm_rollup_dispatch_if_eligible,
+    recover_stale_rollup_dispatches, replay_dead_lettered_rollup_dispatch,
+    RollupDispatchOutbox,
 };
 pub use subject_dispatch::{
+    claim_pending_subject_memory_source_dispatches, defer_subject_memory_source_dispatch,
     get_pending_subject_memory_source_dispatch, get_subject_memory_source_dispatch_state,
-    list_pending_subject_memory_source_dispatches, mark_subject_memory_source_dispatch_consumed,
-    mark_subject_memory_source_dispatch_dead_lettered, mark_subject_memory_source_dispatch_failed,
-    mark_subject_memory_source_dispatch_published,
+    mark_subject_memory_source_dispatch_consumed, mark_subject_memory_source_dispatch_failed,
+    recover_stale_subject_memory_source_dispatches,
     replay_dead_lettered_subject_memory_source_dispatch, SubjectMemorySourceDispatchOutbox,
 };
 

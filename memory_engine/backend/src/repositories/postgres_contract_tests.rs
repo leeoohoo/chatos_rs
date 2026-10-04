@@ -863,16 +863,12 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         .expect("summarize records"),
         1
     );
-    let rollup_event =
-        super::summaries::get_pending_rollup_dispatch(&pool, &tenant, &source, &summary.id)
-            .await
-            .expect("rollup event")
-            .expect("pending rollup event");
-    assert!(
-        super::summaries::mark_rollup_dispatch_published(&pool, &rollup_event)
-            .await
-            .expect("publish rollup")
-    );
+    let rollup_event = super::summaries::claim_pending_rollup_dispatches(&pool, 10)
+        .await
+        .expect("claim rollup event")
+        .into_iter()
+        .find(|event| event.id == summary.id)
+        .expect("pending rollup event");
     assert!(
         super::summaries::mark_rollup_dispatch_consumed(&pool, &rollup_event)
             .await

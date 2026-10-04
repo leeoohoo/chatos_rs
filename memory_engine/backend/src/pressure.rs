@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chatos_config_sdk::{ConfigClient, ConfigSnapshot, ServicePressureSignal};
-use chatos_queue_observability::{RabbitMqQueueRuntimeStats, RabbitMqQueueSpec};
 use tokio::sync::watch;
 
+use crate::models::MemoryEngineBacklogStats;
+use crate::repositories::observability;
 use crate::state::AppState;
 
 pub use chatos_config_sdk::PlatformPressureLevel;
@@ -174,17 +175,13 @@ pub fn start_pressure_reporter(
     tokio::spawn(async move {
         loop {
             let policy = state.pressure.snapshot();
-            let stats = state
-                .rabbitmq_queue_inspector
-                .inspect(&[
-                    RabbitMqQueueSpec::new("rollup", state.config.rollup_queue.as_str()),
-                    RabbitMqQueueSpec::new(
-                        "subject_memory",
-                        state.config.subject_memory_queue.as_str(),
-                    ),
-                ])
-                .await;
-            let signal = pressure_signal_from_queue_stats(&stats, &policy);
+            let signal = match observability::system_backlog_stats(&state.pool).await {
+                Ok(backlog) => pressure_signal_from_backlog(&backlog, &policy),
+                Err(error) => ServicePressureSignal {
+                    level: PlatformPressureLevel::Critical,
+                    reason: format!("memory database backlog inspection failed: {error}"),
+                },
+            };
             if let Err(error) = client
                 .report_pressure(service_id.as_str(), running_version.as_deref(), &signal)
                 .await
@@ -199,41 +196,25 @@ pub fn start_pressure_reporter(
     });
 }
 
-fn pressure_signal_from_queue_stats(
-    stats: &RabbitMqQueueRuntimeStats,
+fn pressure_signal_from_backlog(
+    backlog: &MemoryEngineBacklogStats,
     policy: &MemoryEnginePressurePolicy,
 ) -> ServicePressureSignal {
-    if !stats.available {
-        return ServicePressureSignal {
-            level: PlatformPressureLevel::Critical,
-            reason: "memory RabbitMQ queue inspection unavailable".to_string(),
-        };
-    }
-    let ready_messages = stats
-        .queues
-        .iter()
-        .map(|queue| u64::from(queue.messages))
-        .sum::<u64>();
-    if stats
-        .queues
-        .iter()
-        .any(|queue| queue.messages > 0 && queue.consumers == 0)
-    {
-        return ServicePressureSignal {
-            level: PlatformPressureLevel::Critical,
-            reason: format!("memory queue has no consumer; ready_messages={ready_messages}"),
-        };
-    }
-    let level = if ready_messages >= policy.queue_critical_messages {
+    let ready_work = backlog
+        .summary
+        .pending_threads
+        .max(0)
+        .saturating_add(backlog.rollup.pending_summaries.max(0)) as u64;
+    let level = if ready_work >= policy.queue_critical_messages {
         PlatformPressureLevel::Critical
-    } else if ready_messages >= policy.queue_elevated_messages {
+    } else if ready_work >= policy.queue_elevated_messages {
         PlatformPressureLevel::Elevated
     } else {
         PlatformPressureLevel::Normal
     };
     ServicePressureSignal {
         level,
-        reason: format!("memory ready_messages={ready_messages}"),
+        reason: format!("memory database ready_work={ready_work}"),
     }
 }
 
@@ -339,35 +320,19 @@ mod tests {
     }
 
     #[test]
-    fn queue_signal_uses_managed_thresholds_and_detects_missing_consumers() {
+    fn backlog_signal_uses_managed_thresholds() {
         let policy = MemoryEnginePressurePolicy::from_snapshot(&snapshot("normal", 1, 5_000), 4)
             .expect("pressure policy");
-        let stats = RabbitMqQueueRuntimeStats {
-            enabled: true,
-            available: true,
-            queues: vec![chatos_queue_observability::RabbitMqQueueDepth {
-                role: "rollup".to_string(),
-                name: "rollup".to_string(),
-                messages: 100,
-                consumers: 1,
-            }],
-            error: None,
+        let backlog = MemoryEngineBacklogStats {
+            summary: crate::models::MemoryEngineSummaryBacklogStats {
+                pending_threads: 100,
+                ..Default::default()
+            },
+            ..Default::default()
         };
         assert_eq!(
-            pressure_signal_from_queue_stats(&stats, &policy).level,
+            pressure_signal_from_backlog(&backlog, &policy).level,
             PlatformPressureLevel::Elevated
-        );
-
-        let stalled = RabbitMqQueueRuntimeStats {
-            queues: vec![chatos_queue_observability::RabbitMqQueueDepth {
-                consumers: 0,
-                ..stats.queues[0].clone()
-            }],
-            ..stats
-        };
-        assert_eq!(
-            pressure_signal_from_queue_stats(&stalled, &policy).level,
-            PlatformPressureLevel::Critical
         );
     }
 }

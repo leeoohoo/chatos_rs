@@ -3,37 +3,17 @@
 
 use std::sync::Arc;
 
-use futures_util::StreamExt;
-use lapin::{
-    message::Delivery,
-    options::{BasicAckOptions, BasicGetOptions, BasicNackOptions},
-    Channel,
-};
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::config::AppConfig;
 use crate::models::now_rfc3339;
-use crate::rabbitmq_queue::{self, QueueTopology};
 use crate::repositories::{control_plane, threads};
 use crate::services::summary;
 use crate::state::AppState;
 
-const SUMMARY_QUEUE_TRIGGER: &str = "queue";
-const SUMMARY_DISPATCH_PUBLISH_LEASE_SECS: i64 = 300;
+const SUMMARY_QUEUE_TRIGGER: &str = "database_worker";
+const SUMMARY_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
 
-fn queue_topology(config: &AppConfig) -> QueueTopology<'_> {
-    QueueTopology {
-        exchange: config.rabbitmq_exchange.as_str(),
-        queue: config.summary_queue.as_str(),
-        retry_queue: config.summary_retry_queue.as_str(),
-        dead_letter_queue: config.summary_dead_letter_queue.as_str(),
-        retry_delay: config.summary_retry_delay,
-        stream_name: "summary",
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
     tenant_id: String,
     source_id: String,
@@ -67,82 +47,23 @@ impl SummaryRequestedEnvelope {
     }
 }
 
-pub async fn publish_pending_summary_for_thread(
-    state: &AppState,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-) -> Result<bool, String> {
-    let Some(event) =
-        threads::get_pending_summary_dispatch(&state.pool, tenant_id, source_id, thread_id).await?
-    else {
-        return Ok(false);
-    };
-    publish_outbox_event(&state.pool, &state.config, &event).await?;
-    Ok(true)
-}
-
 pub async fn publish_rearmed_summary_dispatch(
-    state: &AppState,
-    event: &threads::SummaryDispatchOutbox,
+    _state: &AppState,
+    _event: &threads::SummaryDispatchOutbox,
 ) -> Result<(), String> {
-    publish_outbox_event(&state.pool, &state.config, event).await
+    Ok(())
 }
 
 pub async fn archive_summary_dead_letter(
-    config: &AppConfig,
-    tenant_id: &str,
-    source_id: &str,
-    thread_id: &str,
-    version: i64,
-    scan_limit: usize,
+    _config: &crate::config::AppConfig,
+    _tenant_id: &str,
+    _source_id: &str,
+    _thread_id: &str,
+    _version: i64,
+    _scan_limit: usize,
 ) -> Result<bool, String> {
-    let topology = queue_topology(config);
-    let (_connection, channel) =
-        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
-    let mut unmatched = Vec::new();
-    let mut matched = None;
-    for _ in 0..scan_limit.clamp(1, 1_000) {
-        let Some(delivery) = channel
-            .basic_get(
-                config.summary_dead_letter_queue.as_str(),
-                BasicGetOptions::default(),
-            )
-            .await
-            .map_err(|err| err.to_string())?
-        else {
-            break;
-        };
-        let is_match = serde_json::from_slice::<SummaryRequestedEnvelope>(&delivery.data)
-            .is_ok_and(|envelope| {
-                envelope.tenant_id == tenant_id
-                    && envelope.source_id == source_id
-                    && envelope.thread_id == thread_id
-                    && envelope.version == version
-            });
-        if is_match {
-            matched = Some(delivery);
-            break;
-        }
-        unmatched.push(delivery);
-    }
-    let archived = matched.is_some();
-    if let Some(delivery) = matched {
-        delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    for delivery in unmatched {
-        delivery
-            .nack(BasicNackOptions {
-                multiple: false,
-                requeue: true,
-            })
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(archived)
+    // Dead letters are database state now. Replay clears the old marker atomically.
+    Ok(true)
 }
 
 pub async fn dead_letter_current_summary_dispatch(
@@ -162,115 +83,51 @@ pub async fn dead_letter_current_summary_dispatch(
     {
         return Ok(false);
     }
-
-    let topology = queue_topology(&state.config);
-    let (_connection, channel) =
-        rabbitmq_queue::open_publisher(state.config.rabbitmq_url.as_str(), &topology).await?;
-    let mut envelope = SummaryRequestedEnvelope::from_outbox(&event);
-    envelope.attempt = state.config.summary_max_delivery_attempts;
-    publish_envelope(
-        &channel,
-        &state.config,
-        state.config.summary_dead_letter_queue.as_str(),
-        &envelope,
-    )
-    .await?;
     threads::mark_summary_dispatch_dead_lettered(&state.pool, &event, error).await?;
     warn!(
         thread_id,
         version = event.summary_dispatch_version,
         error,
-        dead_letter_queue = state.config.summary_dead_letter_queue.as_str(),
-        "Memory Engine Cloud Agent summary failure entered the DLQ"
+        "Memory Engine summary database dispatch was dead-lettered"
     );
     Ok(true)
 }
 
 pub fn start(state: Arc<AppState>) {
-    for consumer_index in 0..state.config.worker_summary_concurrency.max(1) {
-        tokio::spawn(run_consumer(state.clone(), consumer_index));
+    for worker_index in 0..state.config.worker_summary_concurrency.max(1) {
+        tokio::spawn(run_worker(state.clone(), worker_index));
     }
-    tokio::spawn(run_outbox_reconciler(state));
+    tokio::spawn(run_reconciler(state));
 }
 
-async fn run_consumer(state: Arc<AppState>, consumer_index: usize) {
+async fn run_worker(state: Arc<AppState>, worker_index: usize) {
     let mut pressure = state.pressure.subscribe();
+    let mut interval = tokio::time::interval(state.config.summary_outbox_reconcile_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        if wait_until_consumer_enabled(&mut pressure, consumer_index)
+        if wait_until_consumer_enabled(&mut pressure, worker_index)
             .await
             .is_err()
         {
             return;
         }
-        let mut paused_for_pressure = false;
-        let topology = queue_topology(&state.config);
-        let consumer_tag = format!("memory-engine-summary-{consumer_index}");
-        match rabbitmq_queue::open_consumer(
-            state.config.rabbitmq_url.as_str(),
-            &topology,
-            consumer_tag.as_str(),
-        )
-        .await
-        {
-            Ok((connection, channel, mut consumer)) => {
-                let _connection = connection;
-                info!(
-                    queue = state.config.summary_queue.as_str(),
-                    consumer_index, "Memory Engine summary consumer connected to RabbitMQ"
-                );
-                loop {
-                    tokio::select! {
-                        changed = pressure.changed() => {
-                            if changed.is_err() {
-                                return;
-                            }
-                            if !summary_consumer_enabled(&pressure.borrow(), consumer_index) {
-                                paused_for_pressure = true;
-                                info!(
-                                    consumer_index,
-                                    pressure_level = ?pressure.borrow().level,
-                                    "Memory Engine summary consumer paused by platform pressure"
-                                );
-                                break;
-                            }
-                        }
-                        delivery = consumer.next() => {
-                            let Some(delivery) = delivery else {
-                                break;
-                            };
-                            let delivery = match delivery {
-                                Ok(delivery) => delivery,
-                                Err(err) => {
-                                    warn!(
-                                        consumer_index,
-                                        error = err.to_string().as_str(),
-                                        "Memory Engine summary delivery failed"
-                                    );
-                                    break;
-                                }
-                            };
-                            if let Err(err) = handle_delivery(&state, &channel, delivery).await {
-                                warn!(
-                                    consumer_index,
-                                    error = err.as_str(),
-                                    "Memory Engine summary consumer channel will reconnect"
-                                );
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            Err(err) => warn!(
-                consumer_index,
-                error = err.as_str(),
-                "Memory Engine summary consumer failed to connect to RabbitMQ"
-            ),
-        }
-        if paused_for_pressure {
+        interval.tick().await;
+        if !summary_consumer_enabled(&pressure.borrow(), worker_index) {
             continue;
         }
-        tokio::time::sleep(state.config.rabbitmq_reconnect_delay).await;
+        match process_claimed_batch(&state).await {
+            Ok(count) if count > 0 => info!(
+                worker_index,
+                processed_count = count,
+                "Memory Engine processed summary database dispatches"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                worker_index,
+                error,
+                "Memory Engine summary database worker failed"
+            ),
+        }
     }
 }
 
@@ -291,87 +148,36 @@ fn summary_consumer_enabled(
     consumer_index < policy.active_summary_concurrency
 }
 
-async fn handle_delivery(
-    state: &Arc<AppState>,
-    channel: &Channel,
-    delivery: Delivery,
-) -> Result<(), String> {
-    let envelope = match serde_json::from_slice::<SummaryRequestedEnvelope>(&delivery.data) {
-        Ok(envelope) => envelope,
-        Err(err) => {
-            warn!(
-                error = err.to_string().as_str(),
-                "discarded invalid Memory Engine summary event"
-            );
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|ack_err| ack_err.to_string())?;
-            return Ok(());
-        }
-    };
-
-    match process_summary_event(state, &envelope).await {
-        Ok(()) => delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string()),
-        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
-        }
-        Err(error) => {
-            let event = envelope.as_outbox();
-            let _ =
-                threads::mark_summary_dispatch_failed(&state.pool, &event, error.as_str()).await;
-            let next_attempt = envelope.attempt.saturating_add(1);
-            if next_attempt >= state.config.summary_max_delivery_attempts {
-                let mut dead = envelope.clone();
-                dead.attempt = next_attempt;
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.summary_dead_letter_queue.as_str(),
-                    &dead,
-                )
-                .await?;
-                threads::mark_summary_dispatch_dead_lettered(&state.pool, &event, error.as_str())
-                    .await?;
+async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
+    let events = threads::claim_pending_summary_dispatches(
+        &state.pool,
+        state.config.summary_outbox_batch_size,
+    )
+    .await?;
+    let mut processed = 0usize;
+    for event in events {
+        let envelope = SummaryRequestedEnvelope::from_outbox(&event);
+        match process_summary_event(state, &envelope).await {
+            Ok(()) => processed = processed.saturating_add(1),
+            Err(error)
+                if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
+            {
+                processed = processed.saturating_add(1);
+            }
+            Err(error) => {
+                threads::mark_summary_dispatch_failed(&state.pool, &event, error.as_str()).await?;
+                threads::defer_summary_dispatch_until_unlock(&state.pool, &event).await?;
                 warn!(
-                    thread_id = envelope.thread_id.as_str(),
-                    version = envelope.version,
-                    attempt = next_attempt,
-                    error = error.as_str(),
-                    dead_letter_queue = state.config.summary_dead_letter_queue.as_str(),
-                    "Memory Engine summary event exhausted retries and entered the DLQ"
-                );
-            } else {
-                let mut retry = envelope.clone();
-                retry.attempt = next_attempt;
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.summary_retry_queue.as_str(),
-                    &retry,
-                )
-                .await?;
-                warn!(
-                    thread_id = envelope.thread_id.as_str(),
-                    version = envelope.version,
-                    attempt = next_attempt,
+                    thread_id = event.thread_id,
+                    version = event.summary_dispatch_version,
+                    error,
                     retry_delay_ms = state.config.summary_retry_delay.as_millis(),
-                    error = error.as_str(),
-                    "Memory Engine summary event failed and was deferred"
+                    "Memory Engine summary database dispatch was deferred"
                 );
             }
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
         }
     }
+    Ok(processed)
 }
 
 async fn process_summary_event(
@@ -419,14 +225,14 @@ async fn process_summary_event(
         return Ok(());
     }
 
-    let run_result = summary::run_thread_summary_with_thread(
+    let run_response = match summary::run_thread_summary_with_thread(
         &state.config,
         &state.pool,
         thread,
         SUMMARY_QUEUE_TRIGGER,
     )
-    .await;
-    let run_response = match run_result {
+    .await
+    {
         Ok(response) => response,
         Err(error) if error.contains("summary slot already occupied") => {
             return Err(
@@ -436,9 +242,6 @@ async fn process_summary_event(
         Err(error) => return Err(error),
     };
 
-    // A no-op means the authoritative record query found nothing to summarize even though the
-    // denormalized thread counters crossed the dispatch threshold. Reconcile those counters before
-    // consuming the event so a stale thread cannot be rearmed and republished forever.
     if !run_response.generated {
         threads::refresh_summary_queue_state(
             &state.pool,
@@ -457,20 +260,6 @@ async fn process_summary_event(
         token_threshold,
     )
     .await?;
-    if let Err(err) = publish_pending_summary_for_thread(
-        state,
-        envelope.tenant_id.as_str(),
-        envelope.source_id.as_str(),
-        envelope.thread_id.as_str(),
-    )
-    .await
-    {
-        warn!(
-            thread_id = envelope.thread_id.as_str(),
-            error = err.as_str(),
-            "Memory Engine left rearmed summary event in Outbox for recovery"
-        );
-    }
     Ok(())
 }
 
@@ -482,95 +271,39 @@ fn summary_slot_is_active(thread: &crate::models::EngineThread, now: &str) -> bo
             .is_some_and(|expires_at| expires_at > now)
 }
 
-async fn publish_outbox_event(
-    db: &crate::db::Db,
-    config: &AppConfig,
-    event: &threads::SummaryDispatchOutbox,
-) -> Result<(), String> {
-    let topology = queue_topology(config);
-    let (_connection, channel) =
-        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
-    publish_envelope(
-        &channel,
-        config,
-        config.summary_queue.as_str(),
-        &SummaryRequestedEnvelope::from_outbox(event),
-    )
-    .await?;
-    threads::mark_summary_dispatch_published(db, event).await?;
-    Ok(())
-}
-
-async fn publish_envelope(
-    channel: &Channel,
-    config: &AppConfig,
-    routing_key: &str,
-    envelope: &SummaryRequestedEnvelope,
-) -> Result<(), String> {
-    let payload = serde_json::to_vec(envelope).map_err(|err| err.to_string())?;
-    rabbitmq_queue::publish_persistent_json(
-        channel,
-        &queue_topology(config),
-        routing_key,
-        payload.as_slice(),
-        format!(
-            "memory-summary:{}:{}:{}",
-            envelope.thread_id, envelope.version, envelope.attempt
-        ),
-    )
-    .await
-}
-
-async fn run_outbox_reconciler(state: Arc<AppState>) {
+async fn run_reconciler(state: Arc<AppState>) {
     let mut interval = tokio::time::interval(state.config.summary_outbox_reconcile_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
-        match recover_stale_published_summary_dispatches(&state).await {
+        match recover_stale_claims(&state).await {
             Ok(count) if count > 0 => info!(
                 recovered_count = count,
-                lease_seconds = SUMMARY_DISPATCH_PUBLISH_LEASE_SECS,
-                "Memory Engine recovered stale published summary dispatches"
+                lease_seconds = SUMMARY_DISPATCH_CLAIM_LEASE_SECS,
+                "Memory Engine recovered stale summary database claims"
             ),
             Ok(_) => {}
-            Err(err) => warn!(
-                error = err.as_str(),
-                "Memory Engine failed to recover stale published summary dispatches"
-            ),
+            Err(error) => warn!(error, "Memory Engine failed to recover summary database claims"),
         }
         match arm_automatic_summary_dispatches(&state).await {
             Ok(count) if count > 0 => info!(
                 armed_count = count,
-                "Memory Engine armed automatic summary Outbox events"
+                "Memory Engine armed automatic summary database dispatches"
             ),
             Ok(_) => {}
-            Err(err) => warn!(
-                error = err.as_str(),
-                "Memory Engine failed to arm automatic summary Outbox events"
-            ),
-        }
-        match publish_pending_outbox_batch(&state).await {
-            Ok(count) if count > 0 => info!(
-                published_count = count,
-                "Memory Engine reconciled pending summary Outbox events"
-            ),
-            Ok(_) => {}
-            Err(err) => warn!(
-                error = err.as_str(),
-                "Memory Engine failed to reconcile summary Outbox events"
-            ),
+            Err(error) => warn!(error, "Memory Engine failed to arm summary database dispatches"),
         }
     }
 }
 
-async fn recover_stale_published_summary_dispatches(state: &AppState) -> Result<usize, String> {
+async fn recover_stale_claims(state: &AppState) -> Result<usize, String> {
     let policy = control_plane::get_effective_job_policy(&state.pool, "summary").await?;
     if !policy.enabled {
         return Ok(0);
     }
     let token_threshold = summary::required_thread_summary_token_limit(policy.token_limit)?;
     let stale_before = (chrono::Utc::now()
-        - chrono::Duration::seconds(SUMMARY_DISPATCH_PUBLISH_LEASE_SECS))
+        - chrono::Duration::seconds(SUMMARY_DISPATCH_CLAIM_LEASE_SECS))
     .to_rfc3339();
     let candidates = threads::list_stale_published_summary_dispatches(
         &state.pool,
@@ -590,7 +323,7 @@ async fn recover_stale_published_summary_dispatches(state: &AppState) -> Result<
         .await?
         .is_some()
         {
-            recovered += 1;
+            recovered = recovered.saturating_add(1);
         }
     }
     Ok(recovered)
@@ -620,24 +353,10 @@ async fn arm_automatic_summary_dispatches(state: &AppState) -> Result<usize, Str
         .await?
         .is_some()
         {
-            armed += 1;
+            armed = armed.saturating_add(1);
         }
     }
     Ok(armed)
-}
-
-async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String> {
-    let events = threads::list_pending_summary_dispatches(
-        &state.pool,
-        state.config.summary_outbox_batch_size,
-    )
-    .await?;
-    let mut published = 0usize;
-    for event in events {
-        publish_outbox_event(&state.pool, &state.config, &event).await?;
-        published += 1;
-    }
-    Ok(published)
 }
 
 #[cfg(test)]

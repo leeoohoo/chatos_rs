@@ -10,8 +10,8 @@ use tracing::{info, warn};
 
 use crate::{
     consume_cloud_agent_single_step, CloudAgentConsumeDisposition, CloudAgentConsumeInput,
-    CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentProfileRegistry,
-    CloudAgentRunStore, CloudAgentSingleStepExecutor, CloudAgentStateStore,
+    CloudAgentModelTrigger, CloudAgentOutboxIntent, CloudAgentProfileRegistry, CloudAgentRunStore,
+    CloudAgentSingleStepExecutor, CloudAgentStateStore,
 };
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 8;
@@ -171,7 +171,10 @@ where
 {
     tokio::spawn(async move {
         if let Err(error) = config.validate() {
-            warn!(error, "Cloud Agent database worker configuration is invalid");
+            warn!(
+                error,
+                "Cloud Agent database worker configuration is invalid"
+            );
             return;
         }
         let mut interval = tokio::time::interval(config.poll_interval);
@@ -187,8 +190,7 @@ where
                 Ok(_) => {}
                 Err(error) => warn!(
                     owner_service = owner.owner_service(),
-                    error,
-                    "Cloud Agent database worker failed"
+                    error, "Cloud Agent database worker failed"
                 ),
             }
         }
@@ -276,9 +278,11 @@ where
             CloudAgentConsumeDisposition::Committed
             | CloudAgentConsumeDisposition::Duplicate
             | CloudAgentConsumeDisposition::Terminal,
-        ) => store
-            .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token)
-            .await,
+        ) => {
+            store
+                .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token)
+                .await
+        }
         Ok(CloudAgentConsumeDisposition::OutOfOrder | CloudAgentConsumeDisposition::Conflict) => {
             requeue_claimed_intent(
                 store,
@@ -292,9 +296,11 @@ where
             .await?;
             Ok(false)
         }
-        Err(error) if delivery_error_is_stale(error.as_str()) => store
-            .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token)
-            .await,
+        Err(error) if delivery_error_is_stale(error.as_str()) => {
+            store
+                .mark_claimed_outbox_published(intent.event_id.as_str(), claim_token)
+                .await
+        }
         Err(error) => {
             requeue_claimed_intent(
                 store,
@@ -327,8 +333,7 @@ async fn requeue_claimed_intent(
     max_attempts: u32,
 ) -> Result<(), String> {
     let next_available_at = chrono::Utc::now()
-        + chrono::Duration::from_std(delay)
-            .unwrap_or_else(|_| chrono::Duration::minutes(5));
+        + chrono::Duration::from_std(delay).unwrap_or_else(|_| chrono::Duration::minutes(5));
     if let Some(failure) = store
         .mark_claimed_outbox_publish_failed(
             intent.event_id.as_str(),

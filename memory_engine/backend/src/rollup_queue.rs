@@ -3,36 +3,18 @@
 
 use std::sync::Arc;
 
-use futures_util::StreamExt;
-use lapin::{
-    message::Delivery,
-    options::{BasicAckOptions, BasicGetOptions, BasicNackOptions},
-    Channel,
-};
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
-use crate::rabbitmq_queue::{self, QueueTopology};
 use crate::repositories::{control_plane, summaries};
 use crate::services::{control_plane as cp_service, summary};
 use crate::state::AppState;
 
-const ROLLUP_QUEUE_TRIGGER: &str = "queue";
+const ROLLUP_QUEUE_TRIGGER: &str = "database_worker";
+const ROLLUP_DISPATCH_CLAIM_LEASE_SECS: i64 = 300;
 
-fn queue_topology(config: &AppConfig) -> QueueTopology<'_> {
-    QueueTopology {
-        exchange: config.rabbitmq_exchange.as_str(),
-        queue: config.rollup_queue.as_str(),
-        retry_queue: config.rollup_retry_queue.as_str(),
-        dead_letter_queue: config.rollup_dead_letter_queue.as_str(),
-        retry_delay: config.rollup_retry_delay,
-        stream_name: "rollup",
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RollupRequestedEnvelope {
     tenant_id: String,
     source_id: String,
@@ -71,222 +53,95 @@ impl RollupRequestedEnvelope {
 }
 
 pub async fn publish_pending_rollup_for_summary(
-    config: &AppConfig,
+    _config: &AppConfig,
     db: &crate::db::Db,
     tenant_id: &str,
     source_id: &str,
     summary_id: &str,
 ) -> Result<bool, String> {
-    let Some(event) =
-        summaries::get_pending_rollup_dispatch(db, tenant_id, source_id, summary_id).await?
-    else {
-        return Ok(false);
-    };
-    publish_outbox_event(db, config, &event).await?;
-    Ok(true)
+    Ok(
+        summaries::get_pending_rollup_dispatch(db, tenant_id, source_id, summary_id)
+            .await?
+            .is_some(),
+    )
 }
 
 pub async fn publish_rearmed_rollup_dispatch(
-    state: &AppState,
-    event: &summaries::RollupDispatchOutbox,
+    _state: &AppState,
+    _event: &summaries::RollupDispatchOutbox,
 ) -> Result<(), String> {
-    publish_outbox_event(&state.pool, &state.config, event).await
+    Ok(())
 }
 
 pub async fn archive_rollup_dead_letter(
-    config: &AppConfig,
-    tenant_id: &str,
-    source_id: &str,
-    summary_id: &str,
-    version: i64,
-    scan_limit: usize,
+    _config: &AppConfig,
+    _tenant_id: &str,
+    _source_id: &str,
+    _summary_id: &str,
+    _version: i64,
+    _scan_limit: usize,
 ) -> Result<bool, String> {
-    let topology = queue_topology(config);
-    let (_connection, channel) =
-        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
-    let mut unmatched = Vec::new();
-    let mut matched = None;
-    for _ in 0..scan_limit.clamp(1, 1_000) {
-        let Some(delivery) = channel
-            .basic_get(
-                config.rollup_dead_letter_queue.as_str(),
-                BasicGetOptions::default(),
-            )
-            .await
-            .map_err(|err| err.to_string())?
-        else {
-            break;
-        };
-        let is_match = serde_json::from_slice::<RollupRequestedEnvelope>(&delivery.data).is_ok_and(
-            |envelope| {
-                envelope.tenant_id == tenant_id
-                    && envelope.source_id == source_id
-                    && envelope.summary_id == summary_id
-                    && envelope.version == version
-            },
-        );
-        if is_match {
-            matched = Some(delivery);
-            break;
-        }
-        unmatched.push(delivery);
-    }
-    let archived = matched.is_some();
-    if let Some(delivery) = matched {
-        delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    for delivery in unmatched {
-        delivery
-            .nack(BasicNackOptions {
-                multiple: false,
-                requeue: true,
-            })
-            .await
-            .map_err(|err| err.to_string())?;
-    }
-    Ok(archived)
+    Ok(true)
 }
 
 pub fn start(state: Arc<AppState>) {
-    for consumer_index in 0..state.config.worker_rollup_concurrency.max(1) {
-        tokio::spawn(run_consumer(state.clone(), consumer_index));
+    for worker_index in 0..state.config.worker_rollup_concurrency.max(1) {
+        tokio::spawn(run_worker(state.clone(), worker_index));
     }
-    tokio::spawn(run_outbox_reconciler(state));
+    tokio::spawn(run_reconciler(state));
 }
 
-async fn run_consumer(state: Arc<AppState>, consumer_index: usize) {
+async fn run_worker(state: Arc<AppState>, worker_index: usize) {
+    let mut interval = tokio::time::interval(state.config.rollup_outbox_reconcile_interval);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        let topology = queue_topology(&state.config);
-        let consumer_tag = format!("memory-engine-rollup-{consumer_index}");
-        match rabbitmq_queue::open_consumer(
-            state.config.rabbitmq_url.as_str(),
-            &topology,
-            consumer_tag.as_str(),
-        )
-        .await
-        {
-            Ok((connection, channel, mut consumer)) => {
-                let _connection = connection;
-                info!(
-                    queue = state.config.rollup_queue.as_str(),
-                    consumer_index, "Memory Engine rollup consumer connected to RabbitMQ"
-                );
-                while let Some(delivery) = consumer.next().await {
-                    let delivery = match delivery {
-                        Ok(delivery) => delivery,
-                        Err(err) => {
-                            warn!(
-                                consumer_index,
-                                error = err.to_string().as_str(),
-                                "Memory Engine rollup delivery failed"
-                            );
-                            break;
-                        }
-                    };
-                    if let Err(err) = handle_delivery(&state, &channel, delivery).await {
-                        warn!(
-                            consumer_index,
-                            error = err.as_str(),
-                            "Memory Engine rollup consumer channel will reconnect"
-                        );
-                        break;
-                    }
-                }
-            }
-            Err(err) => warn!(
-                consumer_index,
-                error = err.as_str(),
-                "Memory Engine rollup consumer failed to connect to RabbitMQ"
+        interval.tick().await;
+        match process_claimed_batch(&state).await {
+            Ok(count) if count > 0 => info!(
+                worker_index,
+                processed_count = count,
+                "Memory Engine processed rollup database dispatches"
+            ),
+            Ok(_) => {}
+            Err(error) => warn!(
+                worker_index,
+                error,
+                "Memory Engine rollup database worker failed"
             ),
         }
-        tokio::time::sleep(state.config.rabbitmq_reconnect_delay).await;
     }
 }
 
-async fn handle_delivery(
-    state: &Arc<AppState>,
-    channel: &Channel,
-    delivery: Delivery,
-) -> Result<(), String> {
-    let envelope = match serde_json::from_slice::<RollupRequestedEnvelope>(&delivery.data) {
-        Ok(envelope) => envelope,
-        Err(err) => {
-            warn!(
-                error = err.to_string().as_str(),
-                "discarded invalid Memory Engine rollup event"
-            );
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|ack_err| ack_err.to_string())?;
-            return Ok(());
-        }
-    };
-
-    match process_rollup_event(state, &envelope).await {
-        Ok(()) => delivery
-            .ack(BasicAckOptions::default())
-            .await
-            .map_err(|err| err.to_string()),
-        Err(error) if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED => {
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
-        }
-        Err(error) => {
-            let event = envelope.as_outbox();
-            let _ =
-                summaries::mark_rollup_dispatch_failed(&state.pool, &event, error.as_str()).await;
-            let next_attempt = envelope.attempt.saturating_add(1);
-            if next_attempt >= state.config.rollup_max_delivery_attempts {
-                let mut dead = envelope.clone();
-                dead.attempt = next_attempt;
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.rollup_dead_letter_queue.as_str(),
-                    &dead,
-                )
-                .await?;
-                summaries::mark_rollup_dispatch_dead_lettered(&state.pool, &event, error.as_str())
-                    .await?;
+async fn process_claimed_batch(state: &Arc<AppState>) -> Result<usize, String> {
+    let events = summaries::claim_pending_rollup_dispatches(
+        &state.pool,
+        state.config.rollup_outbox_batch_size,
+    )
+    .await?;
+    let mut processed = 0usize;
+    for event in events {
+        let envelope = RollupRequestedEnvelope::from_outbox(&event);
+        match process_rollup_event(state, &envelope).await {
+            Ok(()) => processed = processed.saturating_add(1),
+            Err(error)
+                if error == crate::services::memory_cloud_agent::MEMORY_CLOUD_AGENT_DEFERRED =>
+            {
+                processed = processed.saturating_add(1);
+            }
+            Err(error) => {
+                summaries::mark_rollup_dispatch_failed(&state.pool, &event, error.as_str()).await?;
+                summaries::defer_rollup_dispatch(&state.pool, &event).await?;
                 warn!(
-                    summary_id = envelope.summary_id.as_str(),
-                    version = envelope.version,
-                    attempt = next_attempt,
-                    error = error.as_str(),
-                    dead_letter_queue = state.config.rollup_dead_letter_queue.as_str(),
-                    "Memory Engine rollup event exhausted retries and entered the DLQ"
-                );
-            } else {
-                let mut retry = envelope.clone();
-                retry.attempt = next_attempt;
-                publish_envelope(
-                    channel,
-                    &state.config,
-                    state.config.rollup_retry_queue.as_str(),
-                    &retry,
-                )
-                .await?;
-                warn!(
-                    summary_id = envelope.summary_id.as_str(),
-                    version = envelope.version,
-                    attempt = next_attempt,
+                    summary_id = event.id,
+                    version = event.rollup_dispatch_version,
                     retry_delay_ms = state.config.rollup_retry_delay.as_millis(),
-                    error = error.as_str(),
-                    "Memory Engine rollup event failed and was deferred"
+                    error,
+                    "Memory Engine rollup database dispatch was deferred"
                 );
             }
-            delivery
-                .ack(BasicAckOptions::default())
-                .await
-                .map_err(|err| err.to_string())
         }
     }
+    Ok(processed)
 }
 
 async fn process_rollup_event(
@@ -351,88 +206,51 @@ async fn process_rollup_event(
     .await?
     .is_some()
     {
-        if let Some(next) = summaries::rearm_rollup_dispatch_if_eligible(
+        summaries::rearm_rollup_dispatch_if_eligible(
             &state.pool,
             envelope.tenant_id.as_str(),
             envelope.source_id.as_str(),
             envelope.thread_id.as_str(),
             settings.max_level,
         )
-        .await?
-        {
-            if next.rollup_dispatch_pending {
-                publish_outbox_event(&state.pool, &state.config, &next).await?;
-            }
-        }
+        .await?;
     }
     Ok(())
 }
 
-async fn publish_outbox_event(
-    db: &crate::db::Db,
-    config: &AppConfig,
-    event: &summaries::RollupDispatchOutbox,
-) -> Result<(), String> {
-    let topology = queue_topology(config);
-    let (_connection, channel) =
-        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
-    publish_envelope(
-        &channel,
-        config,
-        config.rollup_queue.as_str(),
-        &RollupRequestedEnvelope::from_outbox(event),
-    )
-    .await?;
-    summaries::mark_rollup_dispatch_published(db, event).await?;
-    Ok(())
-}
-
-async fn publish_envelope(
-    channel: &Channel,
-    config: &AppConfig,
-    routing_key: &str,
-    envelope: &RollupRequestedEnvelope,
-) -> Result<(), String> {
-    let payload = serde_json::to_vec(envelope).map_err(|err| err.to_string())?;
-    rabbitmq_queue::publish_persistent_json(
-        channel,
-        &queue_topology(config),
-        routing_key,
-        payload.as_slice(),
-        format!(
-            "memory-rollup:{}:{}:{}",
-            envelope.summary_id, envelope.version, envelope.attempt
-        ),
-    )
-    .await
-}
-
-async fn run_outbox_reconciler(state: Arc<AppState>) {
+async fn run_reconciler(state: Arc<AppState>) {
     let mut interval = tokio::time::interval(state.config.rollup_outbox_reconcile_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
-        match reconcile_rollup_outbox(&state).await {
+        let stale_before = (chrono::Utc::now()
+            - chrono::Duration::seconds(ROLLUP_DISPATCH_CLAIM_LEASE_SECS))
+        .to_rfc3339();
+        match summaries::recover_stale_rollup_dispatches(
+            &state.pool,
+            stale_before.as_str(),
+            state.config.rollup_outbox_batch_size,
+        )
+        .await
+        {
             Ok(count) if count > 0 => info!(
-                published_count = count,
-                "Memory Engine reconciled pending rollup Outbox events"
+                recovered_count = count,
+                "Memory Engine recovered stale rollup database claims"
             ),
             Ok(_) => {}
-            Err(err) => warn!(
-                error = err.as_str(),
-                "Memory Engine failed to reconcile rollup Outbox events"
-            ),
+            Err(error) => warn!(error, "Memory Engine failed to recover rollup database claims"),
+        }
+        if let Err(error) = arm_rollup_dispatches(&state).await {
+            warn!(error, "Memory Engine failed to arm rollup database dispatches");
         }
     }
 }
 
-async fn reconcile_rollup_outbox(state: &AppState) -> Result<usize, String> {
-    let mut published = publish_pending_outbox_batch(state).await?;
+async fn arm_rollup_dispatches(state: &AppState) -> Result<usize, String> {
     let policy = control_plane::get_effective_job_policy(&state.pool, "rollup").await?;
     if !policy.enabled {
-        return Ok(published);
+        return Ok(0);
     }
-
     let settings = cp_service::build_rollup_settings_from_policy(&policy);
     let candidates = summaries::list_threads_with_pending_rollups(
         &state.pool,
@@ -442,6 +260,7 @@ async fn reconcile_rollup_outbox(state: &AppState) -> Result<usize, String> {
         state.config.rollup_outbox_batch_size,
     )
     .await?;
+    let mut armed = 0usize;
     for (tenant_id, source_id, thread_id) in candidates {
         if summary::prepare_thread_rollup(
             &state.pool,
@@ -455,7 +274,7 @@ async fn reconcile_rollup_outbox(state: &AppState) -> Result<usize, String> {
         {
             continue;
         }
-        let Some(event) = summaries::rearm_rollup_dispatch_if_eligible(
+        if summaries::rearm_rollup_dispatch_if_eligible(
             &state.pool,
             tenant_id.as_str(),
             source_id.as_str(),
@@ -463,29 +282,12 @@ async fn reconcile_rollup_outbox(state: &AppState) -> Result<usize, String> {
             settings.max_level,
         )
         .await?
-        else {
-            continue;
-        };
-        if event.rollup_dispatch_pending {
-            publish_outbox_event(&state.pool, &state.config, &event).await?;
-            published += 1;
+        .is_some()
+        {
+            armed = armed.saturating_add(1);
         }
     }
-    Ok(published)
-}
-
-async fn publish_pending_outbox_batch(state: &AppState) -> Result<usize, String> {
-    let events = summaries::list_pending_rollup_dispatches(
-        &state.pool,
-        state.config.rollup_outbox_batch_size,
-    )
-    .await?;
-    let mut published = 0usize;
-    for event in events {
-        publish_outbox_event(&state.pool, &state.config, &event).await?;
-        published += 1;
-    }
-    Ok(published)
+    Ok(armed)
 }
 
 #[cfg(test)]
@@ -505,9 +307,7 @@ mod tests {
             rollup_dispatch_consumed_version: 5,
             rollup_dispatch_pending: true,
         };
-
         let envelope = RollupRequestedEnvelope::from_outbox(&event);
-
         assert_eq!(envelope.thread_id, "thread-1");
         assert_eq!(envelope.summary_id, "summary-1");
         assert_eq!(envelope.version, 7);

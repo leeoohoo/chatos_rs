@@ -7,7 +7,6 @@ use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use axum::Json;
-use chatos_queue_observability::{RabbitMqQueueRuntimeStats, RabbitMqQueueSpec};
 use tokio::try_join;
 
 use crate::models::{
@@ -32,7 +31,6 @@ pub async fn system_stats(
             format!("load Memory Engine system stats failed: {err}"),
         )
     })?;
-    let rabbitmq_queues = rabbitmq_queue_stats(&state).await;
     let pressure = state.pressure.snapshot();
 
     Ok(Json(MemoryEngineSystemStatsResponse {
@@ -58,15 +56,14 @@ pub async fn system_stats(
             reconcile_paused: pressure.reconcile_paused,
             refresh_interval_ms: pressure.refresh_interval.as_millis().min(u64::MAX as u128) as u64,
         },
-        rabbitmq_queues,
+        dispatch_backend: "postgres",
         backlog,
         job_runs_last_24h,
     }))
 }
 
 pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let stats = rabbitmq_queue_stats(&state).await;
-    let mut body = chatos_queue_observability::render_prometheus_metrics("memory-engine", &stats);
+    let mut body = String::new();
     body.push_str(&chatos_postgres::render_pool_metrics(
         &state.pool,
         "memory-engine-api",
@@ -108,27 +105,4 @@ pub async fn prometheus_metrics(State(state): State<Arc<AppState>>) -> impl Into
         .as_str(),
     );
     ([(header::CONTENT_TYPE, PROMETHEUS_CONTENT_TYPE)], body)
-}
-
-async fn rabbitmq_queue_stats(state: &AppState) -> RabbitMqQueueRuntimeStats {
-    state
-        .rabbitmq_queue_inspector
-        .inspect(&[
-            RabbitMqQueueSpec::new("rollup", state.config.rollup_queue.as_str()),
-            RabbitMqQueueSpec::new("rollup_retry", state.config.rollup_retry_queue.as_str()),
-            RabbitMqQueueSpec::new(
-                "rollup_dead_letter",
-                state.config.rollup_dead_letter_queue.as_str(),
-            ),
-            RabbitMqQueueSpec::new("subject_memory", state.config.subject_memory_queue.as_str()),
-            RabbitMqQueueSpec::new(
-                "subject_memory_retry",
-                state.config.subject_memory_retry_queue.as_str(),
-            ),
-            RabbitMqQueueSpec::new(
-                "subject_memory_dead_letter",
-                state.config.subject_memory_dead_letter_queue.as_str(),
-            ),
-        ])
-        .await
 }
