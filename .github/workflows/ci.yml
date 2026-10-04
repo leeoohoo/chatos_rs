@@ -41,12 +41,17 @@ jobs:
           CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
         run: python3 scripts/check_source_size_policy.py --scope owned
 
+      - name: Reject new production-code clones
+        env:
+          CODE_QUALITY_DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          CODE_QUALITY_DIFF_HEAD: ${{ github.sha }}
+        run: python3 scripts/check_new_code_clones.py --min-lines 25
+
       - name: Reject hand-edited registry generated output
         run: node plugins/web-design-studio/scripts/registry-generated-integrity.mjs --check
 
   static-security:
     name: Secret and Container Config Scan
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -63,14 +68,14 @@ jobs:
           hide-progress: true
           skip-dirs: node_modules,target,target-shared
 
-      - name: Report container configuration findings
+      - name: Reject high-risk container configuration findings
         uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: config
           scan-ref: .
           severity: HIGH,CRITICAL
           format: table
-          exit-code: "0"
+          exit-code: "1"
           hide-progress: true
           skip-dirs: node_modules,target,target-shared
 

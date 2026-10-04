@@ -2,6 +2,13 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 services:
+  harness:
+    # Host-run development services need Harness, but it must never listen on
+    # a non-loopback interface through the production Compose definition.
+    ports:
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${HARNESS_PORT:-3000}:3000"
+      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${HARNESS_SSH_PORT:-3022}:3022"
+
   prometheus:
     extra_hosts:
       # On macOS, VPN/TUN software can route Docker Desktop's host-gateway

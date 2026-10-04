@@ -219,13 +219,8 @@ EOF
 
 source "$SCRIPT_DIR/deploy-mtls.sh"
 print_urls() {
-  local local_connector_service_port gateway_port
-  local harness_port harness_ssh_host harness_ssh_port consul_port
+  local gateway_port consul_port
   consul_port="$(env_value CONSUL_HTTP_PORT 8500)"
-  harness_port="$(env_value HARNESS_PORT 3000)"
-  harness_ssh_host="$(env_value HARNESS_SSH_PUBLIC_HOST "$(env_value HARNESS_SSH_HOST localhost)")"
-  harness_ssh_port="$(env_value HARNESS_SSH_PORT 3022)"
-  local_connector_service_port="$(env_value LOCAL_CONNECTOR_SERVICE_PORT 39230)"
   gateway_port="$(env_value APISIX_GATEWAY_PORT 9080)"
   cat <<EOF
 
@@ -235,9 +230,6 @@ Gateway:                  http://localhost:${gateway_port}
 Official website:         https://jgoool.com
 Unified admin console:    https://admin.jgoool.com
 Consul:                   http://localhost:${consul_port}
-Harness:                  http://localhost:${harness_port}
-Harness SSH:              ssh://git@${harness_ssh_host}:${harness_ssh_port}
-Local Connector Service:  http://localhost:${local_connector_service_port}
 
 Logs:    $0 logs
 Status:  $0 ps

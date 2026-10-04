@@ -172,7 +172,9 @@ services:
     image: ${APISIX_IMAGE:-apache/apisix:3.11.0-debian}
     restart: unless-stopped
     ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${APISIX_GATEWAY_PORT:-9080}:9080"
+      # Nginx is the only public ingress. Keep APISIX on the host loopback so
+      # direct requests cannot bypass TLS and response-security headers.
+      - "${CHATOS_GATEWAY_BIND_HOST:-127.0.0.1}:${APISIX_GATEWAY_PORT:-9080}:9080"
       - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${APISIX_CONTROL_PORT:-9092}:9092"
     volumes:
       - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro

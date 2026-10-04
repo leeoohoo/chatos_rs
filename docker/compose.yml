@@ -373,8 +373,6 @@ services:
       CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET: ${CONFIG_CENTER_USER_SERVICE_CALLER_SIGNING_SECRET:-change_me_config_center_user_service_signing_secret}
       CONFIG_CENTER_CONSUL_REQUIRED: ${CONFIG_CENTER_CONSUL_REQUIRED:-false}
       CONFIG_CENTER_CORS_ORIGINS: ${CONFIG_CENTER_CORS_ORIGINS:-http://127.0.0.1:39271,http://localhost:39271}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${CONFIG_CENTER_BACKEND_PORT:-39270}:39270"
     depends_on:
       consul:
         condition: service_healthy
@@ -422,9 +420,6 @@ services:
       GITNESS_REGISTRY_STORAGE_TYPE: filesystem
       GITNESS_REGISTRY_FILESYSTEM_ROOT_DIRECTORY: /data/registry
       XDG_CACHE_HOME: /data
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${HARNESS_PORT:-3000}:3000"
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${HARNESS_SSH_PORT:-3022}:3022"
     volumes:
       - harness-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
@@ -501,8 +496,6 @@ services:
       HARNESS_SYNTHETIC_EMAIL_DOMAIN: ${HARNESS_SYNTHETIC_EMAIL_DOMAIN:-chatos.local}
       HARNESS_SPACE_PREFIX: ${HARNESS_SPACE_PREFIX:-u-}
       HARNESS_PROJECT_PAT_PREFIX: ${HARNESS_PROJECT_PAT_PREFIX:-chatos-project}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${USER_SERVICE_PORT:-39190}:39190"
     depends_on:
       consul:
         condition: service_healthy
@@ -555,8 +548,6 @@ services:
       MEMORY_ENGINE_USER_SERVICE_INTERNAL_BASE_URL: https://user-service-backend:39192
       USER_SERVICE_MTLS_CA_CERT_PATH: /run/secrets/user_service_mtls_ca
       USER_SERVICE_MTLS_CLIENT_IDENTITY_PATH: /run/secrets/user_service_mtls_client_identity
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${MEMORY_ENGINE_PORT:-7081}:7081"
     depends_on:
       consul:
         condition: service_healthy
@@ -649,8 +640,6 @@ services:
       PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES: ${PLUGIN_MANAGEMENT_ARTIFACT_MAX_BYTES:-134217728}
     volumes:
       - plugin-management-data:/data/plugin-management
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${PLUGIN_MANAGEMENT_SERVICE_PORT:-39260}:39260"
     depends_on:
       consul:
         condition: service_healthy
@@ -689,8 +678,6 @@ services:
       LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS: ${LOCAL_CONNECTOR_MANAGED_REQUIREMENTS_BUNDLE_TTL_SECONDS:-86400}
       PLUGIN_MANAGEMENT_SERVICE_URL: http://plugin-management-backend:39260
       PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET: ${PLUGIN_MANAGEMENT_LOCAL_CONNECTOR_SERVICE_INTERNAL_API_SECRET:-change_me_plugin_management_local_connector_secret}
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${LOCAL_CONNECTOR_SERVICE_PORT:-39230}:39230"
     volumes:
       - local-connector-data:/data/local_connector
     depends_on:
@@ -745,8 +732,6 @@ services:
       LOCAL_CONNECTOR_SERVICE_PORT: ${LOCAL_CONNECTOR_SERVICE_PORT:-39230}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    ports:
-      - "${CHATOS_PUBLIC_BIND_HOST:-127.0.0.1}:${OFFICIAL_WEBSITE_PORT:-39250}:39250"
     depends_on:
       consul:
         condition: service_healthy
