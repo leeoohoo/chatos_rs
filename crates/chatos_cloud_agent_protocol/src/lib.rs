@@ -5,7 +5,7 @@
 //!
 //! This crate deliberately contains no queue client, model client, MCP client, or
 //! service-specific business logic. Cloud services persist these records and use
-//! their identities for CAS/idempotency; RabbitMQ delivery order is never treated
+//! their identities for CAS/idempotency; transport delivery order is never treated
 //! as the source of truth.
 
 use chrono::{DateTime, Utc};

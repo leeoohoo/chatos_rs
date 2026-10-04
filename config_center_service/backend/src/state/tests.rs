@@ -6,7 +6,7 @@ use super::support::*;
 
 use super::*;
 use crate::catalog::{
-    DEFAULT_LOCAL_RABBITMQ_URL, LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
+    LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_PATH_CONFIG_KEY,
@@ -30,28 +30,21 @@ use crate::catalog::{
     LOCAL_CONNECTOR_VALKEY_KEY_PREFIX_CONFIG_KEY, LOCAL_CONNECTOR_VALKEY_RECONNECT_MS_CONFIG_KEY,
     LOCAL_CONNECTOR_VALKEY_URL_CONFIG_KEY, MEMORY_ENGINE_AI_REQUEST_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_DATABASE_URL_CONFIG_KEY, MEMORY_ENGINE_HOST_CONFIG_KEY,
-    MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
-    MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
-    MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_PORT_CONFIG_KEY, MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_LOCK_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
-    MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
-    MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+    MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_LOCK_TIMEOUT_SECS_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-    MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY,
-    MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
-    MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
     MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY,
-    MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY, MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
-    MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY, MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY,
+    MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_BASE_URL_CONFIG_KEY,
     MEMORY_ENGINE_USER_SERVICE_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     MEMORY_ENGINE_WORKER_ENABLED_CONFIG_KEY, MEMORY_ENGINE_WORKER_INTERVAL_SECS_CONFIG_KEY,
@@ -64,19 +57,12 @@ use crate::catalog::{
     PLUGIN_MANAGEMENT_ARTIFACT_PUBLIC_BASE_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_ARTIFACT_STORAGE_DIR_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_MAX_BYTES_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_OUTBOX_BATCH_SIZE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
-    PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_ENABLED_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_INTERVAL_SECONDS_CONFIG_KEY,
     PLUGIN_MANAGEMENT_CATALOG_SYNC_LOCK_TIMEOUT_SECONDS_CONFIG_KEY,
@@ -463,22 +449,6 @@ fn memory_engine_runtime_backfill_adds_all_service_defaults() {
         values.get(MEMORY_ENGINE_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY),
         Some(&json!(1_000))
     );
-    assert_eq!(
-        values.get(MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY),
-        Some(&json!(DEFAULT_LOCAL_RABBITMQ_URL))
-    );
-    assert_eq!(
-        values.get(MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY),
-        Some(&json!("memory_engine.summary.requested"))
-    );
-    assert_eq!(
-        values.get(MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY),
-        Some(&json!("memory_engine.rollup.requested"))
-    );
-    assert_eq!(
-        values.get(MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY),
-        Some(&json!("memory_engine.subject_memory.requested"))
-    );
     assert!(changed_keys.contains(&MEMORY_ENGINE_HOST_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_PORT_CONFIG_KEY.to_string()));
     assert!(changed_keys.contains(&MEMORY_ENGINE_INTERNAL_MTLS_PORT_CONFIG_KEY.to_string()));
@@ -609,30 +579,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             json!(2),
         ),
         (
-            MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY.to_string(),
-            json!(DEFAULT_LOCAL_RABBITMQ_URL),
-        ),
-        (
-            MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY.to_string(),
-            json!("memory_engine"),
-        ),
-        (
-            MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY.to_string(),
-            json!(3_000),
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.summary.requested"),
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.summary.requested.retry"),
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.summary.requested.dead"),
-        ),
-        (
             MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
             json!(8),
         ),
@@ -649,18 +595,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
             json!(100),
         ),
         (
-            MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.rollup.requested"),
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.rollup.requested.retry"),
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.rollup.requested.dead"),
-        ),
-        (
             MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
             json!(8),
         ),
@@ -675,18 +609,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
         (
             MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY.to_string(),
             json!(100),
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.subject_memory.requested"),
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.subject_memory.requested.retry"),
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
-            json!("memory_engine.subject_memory.requested.dead"),
         ),
         (
             MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
@@ -764,22 +686,6 @@ fn memory_engine_snapshot_exposes_runtime_environment_aliases() {
         Some(&"2".to_string())
     );
     assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_RABBITMQ_URL"),
-        Some(&DEFAULT_LOCAL_RABBITMQ_URL.to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_SUMMARY_QUEUE"),
-        Some(&"memory_engine.summary.requested".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_ROLLUP_QUEUE"),
-        Some(&"memory_engine.rollup.requested".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE"),
-        Some(&"memory_engine.subject_memory.requested".to_string())
-    );
-    assert_eq!(
         snapshot
             .env
             .get("MEMORY_ENGINE_RECORD_SYNC_LEASE_TIMEOUT_SECS"),
@@ -811,8 +717,6 @@ fn plugin_management_runtime_backfill_adds_all_service_defaults() {
     assert!(
         changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS_CONFIG_KEY.to_string())
     );
-    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY.to_string()));
-    assert!(changed_keys.contains(&PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY.to_string()));
     assert!(changed_keys
         .contains(&PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY.to_string()));
     assert!(changed_keys
@@ -906,40 +810,12 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             json!(15 * 60),
         ),
         (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY.to_string(),
-            json!("amqp://guest:guest@127.0.0.1:5672/%2f"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY.to_string(),
-            json!("chatos.command"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY.to_string(),
-            json!("plugin.catalog.sync"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY.to_string(),
-            json!("plugin.catalog.sync.retry"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY.to_string(),
-            json!("plugin.catalog.sync.schedule"),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY.to_string(),
-            json!("plugin.catalog.sync.dlq"),
-        ),
-        (
             PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY.to_string(),
             json!(5),
         ),
         (
             PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY.to_string(),
             json!(30_000),
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY.to_string(),
-            json!(2_000),
         ),
         (
             PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY.to_string(),
@@ -1039,14 +915,6 @@ fn plugin_management_snapshot_exposes_runtime_environment_aliases() {
             .env
             .get("PLUGIN_MANAGEMENT_CATALOG_REQUEST_TIMEOUT_MS"),
         Some(&"30000".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL"),
-        Some(&"amqp://guest:guest@127.0.0.1:5672/%2f".to_string())
-    );
-    assert_eq!(
-        snapshot.env.get("PLUGIN_MANAGEMENT_CATALOG_QUEUE"),
-        Some(&"plugin.catalog.sync".to_string())
     );
     assert_eq!(
         snapshot

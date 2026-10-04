@@ -55,7 +55,7 @@ pub fn build_public_router(state: AppState) -> Router {
         .route("/api/config/v1/audit-events", get(audit_events))
         .route(
             "/api/config/v1/environments/{environment}/queue-operations",
-            get(queue_operations).post(replay_queue_operation),
+            post(replay_queue_operation),
         )
         .route(
             "/api/config/v1/environments/{environment}/pressure",
@@ -234,13 +234,6 @@ async fn audit_events(State(state): State<AppState>, Query(query): Query<LimitQu
             .list_audit(query.limit.unwrap_or(200).clamp(1, 1000))
             .await,
     )
-}
-
-async fn queue_operations(
-    State(state): State<AppState>,
-    Path(environment): Path<String>,
-) -> Response {
-    result_json(crate::queue_operations::inspect(&state, environment.as_str()).await)
 }
 
 async fn pressure_status(

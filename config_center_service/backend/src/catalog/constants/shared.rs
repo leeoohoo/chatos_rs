@@ -57,9 +57,6 @@ pub const PLATFORM_PRESSURE_ESCALATION_STABLE_SECONDS_CONFIG_KEY: &str =
     "platform.pressure.controller.escalation_stable_seconds";
 pub const PLATFORM_PRESSURE_RECOVERY_STABLE_SECONDS_CONFIG_KEY: &str =
     "platform.pressure.controller.recovery_stable_seconds";
-pub const DEFAULT_RABBITMQ_ROOT_VHOST_URI_SEGMENT: &str = "%2f";
-pub const DEFAULT_LOCAL_RABBITMQ_URL: &str =
-    "amqp://chatos:change_me_rabbitmq_password@127.0.0.1:5672/%2f";
 pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_URL_CONFIG_KEY: &str =
     "shared.downstream.plugin_management_service_url";
 pub const SHARED_PLUGIN_MANAGEMENT_SERVICE_INTERNAL_URL_CONFIG_KEY: &str =

@@ -44,20 +44,10 @@ pub const MEMORY_ENGINE_WORKER_SUBJECT_MEMORY_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.subject_memory_concurrency";
 pub const MEMORY_ENGINE_WORKER_RECONCILE_CONCURRENCY_CONFIG_KEY: &str =
     "memory_engine.worker.reconcile_concurrency";
-pub const MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY: &str = "memory_engine.queue.rabbitmq_url";
-pub const MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
-    "memory_engine.queue.rabbitmq_exchange";
-pub const MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY: &str =
-    "memory_engine.queue.rabbitmq_reconnect_delay_ms";
 pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.cloud_agent_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_CLOUD_AGENT_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.cloud_agent_outbox_batch_size";
-pub const MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY: &str = "memory_engine.queue.summary_queue";
-pub const MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.summary_retry_queue";
-pub const MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.summary_dead_letter_queue";
 pub const MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
     "memory_engine.queue.summary_max_delivery_attempts";
 pub const MEMORY_ENGINE_SUMMARY_RETRY_DELAY_MS_CONFIG_KEY: &str =
@@ -66,11 +56,6 @@ pub const MEMORY_ENGINE_SUMMARY_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.summary_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_SUMMARY_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.summary_outbox_batch_size";
-pub const MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY: &str = "memory_engine.queue.rollup_queue";
-pub const MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.rollup_retry_queue";
-pub const MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.rollup_dead_letter_queue";
 pub const MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
     "memory_engine.queue.rollup_max_delivery_attempts";
 pub const MEMORY_ENGINE_ROLLUP_RETRY_DELAY_MS_CONFIG_KEY: &str =
@@ -79,12 +64,6 @@ pub const MEMORY_ENGINE_ROLLUP_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =
     "memory_engine.queue.rollup_outbox_reconcile_ms";
 pub const MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY: &str =
     "memory_engine.queue.rollup_outbox_batch_size";
-pub const MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.subject_memory_queue";
-pub const MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.subject_memory_retry_queue";
-pub const MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
-    "memory_engine.queue.subject_memory_dead_letter_queue";
 pub const MEMORY_ENGINE_SUBJECT_MEMORY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
     "memory_engine.queue.subject_memory_max_delivery_attempts";
 pub const MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_DELAY_MS_CONFIG_KEY: &str =

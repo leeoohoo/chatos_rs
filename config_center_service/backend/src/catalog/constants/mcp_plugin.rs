@@ -29,23 +29,10 @@ pub const PLUGIN_MANAGEMENT_PRESSURE_QUEUE_CRITICAL_MESSAGES_CONFIG_KEY: &str =
     "plugin_management.pressure.queue_critical_messages";
 pub const PLUGIN_MANAGEMENT_PRESSURE_REPORT_INTERVAL_MS_CONFIG_KEY: &str =
     "plugin_management.pressure.report_interval_ms";
-pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY: &str =
-    "plugin_management.catalog.rabbitmq_url";
-pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY: &str =
-    "plugin_management.catalog.rabbitmq_exchange";
-pub const PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY: &str = "plugin_management.catalog.queue";
-pub const PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY: &str =
-    "plugin_management.catalog.retry_queue";
-pub const PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY: &str =
-    "plugin_management.catalog.schedule_queue";
-pub const PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY: &str =
-    "plugin_management.catalog.dead_letter_queue";
 pub const PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY: &str =
     "plugin_management.catalog.max_delivery_attempts";
 pub const PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY: &str =
     "plugin_management.catalog.retry_delay_ms";
-pub const PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY: &str =
-    "plugin_management.catalog.rabbitmq_reconnect_ms";
 pub const PLUGIN_MANAGEMENT_CATALOG_CONSUMER_CONCURRENCY_CONFIG_KEY: &str =
     "plugin_management.catalog.consumer_concurrency";
 pub const PLUGIN_MANAGEMENT_CATALOG_OUTBOX_RECONCILE_MS_CONFIG_KEY: &str =

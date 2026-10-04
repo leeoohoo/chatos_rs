@@ -3,7 +3,6 @@
 
 use std::collections::BTreeMap;
 
-use chatos_queue_observability::{RabbitMqQueueInspector, RabbitMqQueueRuntimeStats};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -11,29 +10,9 @@ use uuid::Uuid;
 use crate::models::{AuditEventRecord, CurrentUser};
 use crate::state::AppState;
 
-mod managed_streams;
 mod replay_targets;
 
-use managed_streams::resolve_managed_streams;
 use replay_targets::{replay_memory_engine, replay_plugin_management};
-
-#[derive(Debug, Clone, Serialize)]
-pub struct QueueOperationsResponse {
-    pub environment: String,
-    pub release_id: String,
-    pub revision: i64,
-    pub streams: Vec<QueueOperationsStream>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct QueueOperationsStream {
-    pub service: String,
-    pub stream: String,
-    pub main_queue: String,
-    pub retry_queue: String,
-    pub dead_letter_queue: String,
-    pub runtime: RabbitMqQueueRuntimeStats,
-}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueueReplayRequest {
@@ -59,43 +38,6 @@ pub struct QueueReplayResponse {
     pub event_type: Option<String>,
     pub event_enqueued: bool,
     pub dead_letter_archived: bool,
-}
-
-pub async fn inspect(
-    state: &AppState,
-    environment: &str,
-) -> Result<QueueOperationsResponse, String> {
-    let environment = environment.trim();
-    if environment.is_empty() {
-        return Err("environment is required".to_string());
-    }
-    let release = state
-        .store
-        .get_active_release(environment)
-        .await?
-        .ok_or_else(|| format!("active configuration release not found for {environment}"))?;
-    let managed_streams = resolve_managed_streams(&release.values)?;
-    let mut inspectors = BTreeMap::<String, RabbitMqQueueInspector>::new();
-    let mut streams = Vec::with_capacity(managed_streams.len());
-    for stream in managed_streams {
-        let inspector = match inspectors.get(stream.rabbitmq_url()) {
-            Some(inspector) => inspector.clone(),
-            None => {
-                let rabbitmq_url = stream.rabbitmq_url().to_string();
-                let inspector = RabbitMqQueueInspector::new(rabbitmq_url.clone())?;
-                inspectors.insert(rabbitmq_url, inspector.clone());
-                inspector
-            }
-        };
-        let runtime = stream.inspect_runtime(&inspector).await;
-        streams.push(stream.into_response(runtime));
-    }
-    Ok(QueueOperationsResponse {
-        environment: environment.to_string(),
-        release_id: release.id,
-        revision: release.revision,
-        streams,
-    })
 }
 
 pub async fn replay(

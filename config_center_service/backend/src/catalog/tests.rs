@@ -222,36 +222,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
             "integer",
         ),
         (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_URL",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_EXCHANGE",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_QUEUE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_QUEUE",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_RETRY_QUEUE",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_SCHEDULE_QUEUE",
-            "string",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_DEAD_LETTER_QUEUE",
-            "string",
-        ),
-        (
             PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CATALOG_MAX_DELIVERY_ATTEMPTS",
             "integer",
@@ -259,11 +229,6 @@ fn catalog_exposes_plugin_management_runtime_routes_via_env_projection() {
         (
             PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS_CONFIG_KEY,
             "PLUGIN_MANAGEMENT_CATALOG_RETRY_DELAY_MS",
-            "duration_ms",
-        ),
-        (
-            PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS_CONFIG_KEY,
-            "PLUGIN_MANAGEMENT_CATALOG_RABBITMQ_RECONNECT_MS",
             "duration_ms",
         ),
         (
@@ -741,42 +706,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_RABBITMQ_URL_CONFIG_KEY,
-            "MEMORY_ENGINE_RABBITMQ_URL",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_RABBITMQ_EXCHANGE_CONFIG_KEY,
-            "MEMORY_ENGINE_RABBITMQ_EXCHANGE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS_CONFIG_KEY,
-            "MEMORY_ENGINE_RABBITMQ_RECONNECT_DELAY_MS",
-            "duration_ms",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUMMARY_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_RETRY_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUMMARY_RETRY_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUMMARY_DEAD_LETTER_QUEUE",
-            "string",
-            false,
-        ),
-        (
             MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
             "MEMORY_ENGINE_SUMMARY_MAX_DELIVERY_ATTEMPTS",
             "integer",
@@ -801,24 +730,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             false,
         ),
         (
-            MEMORY_ENGINE_ROLLUP_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_ROLLUP_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_RETRY_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_ROLLUP_RETRY_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_ROLLUP_DEAD_LETTER_QUEUE",
-            "string",
-            false,
-        ),
-        (
             MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS_CONFIG_KEY,
             "MEMORY_ENGINE_ROLLUP_MAX_DELIVERY_ATTEMPTS",
             "integer",
@@ -840,24 +751,6 @@ fn catalog_exposes_memory_engine_runtime_routes_via_env_projection() {
             MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE_CONFIG_KEY,
             "MEMORY_ENGINE_ROLLUP_OUTBOX_BATCH_SIZE",
             "integer",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUBJECT_MEMORY_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUBJECT_MEMORY_RETRY_QUEUE",
-            "string",
-            false,
-        ),
-        (
-            MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE_CONFIG_KEY,
-            "MEMORY_ENGINE_SUBJECT_MEMORY_DEAD_LETTER_QUEUE",
-            "string",
             false,
         ),
         (
