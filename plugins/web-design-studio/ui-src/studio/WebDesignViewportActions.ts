@@ -7,14 +7,9 @@ import { fitWorkspaceRect, fitWorkspaceWidth, unionWorkspaceRects, zoomWorkspace
 import type { WorkspaceArtboardPlacement, WorkspaceSurfaceKind } from '../../src/v2/workspace-placement-store';
 import { sceneArtboardSelectionBounds } from './SceneArtboardCanvas';
 import { SLOT_EDITOR_HEADER_HEIGHT, SLOT_EDITOR_CANVAS_INSETS, slotEditorFrameBounds, ViewportSelection, WORKSPACE_SURFACE_LABELS, WORKSPACE_SURFACE_SIZES, deviceForWorkspaceArtboard, workspaceArtboardContentBounds } from './WebDesignStudioSupport';
+import type { WebDesignViewportActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions>;
-
-export function createWebDesignViewportActions(context: WebDesignActionContext) {
+export function createWebDesignViewportActions(context: WebDesignViewportActionContext) {
   const {
     sceneDocument,
     setSelectedId,

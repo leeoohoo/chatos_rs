@@ -1,6 +1,59 @@
 import type { WebDesignComponent, WebDesignDocument } from '../../src/schema';
+import type {
+  UiComponentDefinition,
+  UiComponentVariant,
+  UiLibraryCatalog,
+} from '../../src/ui-library';
 import type { WorkspaceArtboardPlacement } from '../../src/v2/workspace-placement-store';
 import type { EditorSelectableNode } from './selection-model';
+
+export type WebDesignStudioState =
+  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState>;
+
+export type WebDesignCoreActionContext = WebDesignStudioState;
+
+export type WebDesignInsertActionContext =
+  WebDesignStudioState &
+  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
+  Pick<WebDesignDeferredActions,
+    'editComponentSlot' | 'activateWorkspaceArtboard' | 'withGeneratedResponsiveLayouts'>;
+
+export type WebDesignCanvasActionContext =
+  WebDesignStudioState &
+  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
+  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
+  Pick<WebDesignDeferredActions,
+    | 'withGeneratedResponsiveLayouts'
+    | 'selectComponent'
+    | 'selectableNodesForCurrentEditor'
+    | 'copySceneSelection'
+    | 'duplicateSceneSelection'
+    | 'pasteSceneClipboard'>;
+
+export type WebDesignViewportActionContext =
+  WebDesignStudioState &
+  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
+  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
+  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions>;
+
+export type WebDesignSelectionActionContext =
+  WebDesignViewportActionContext & {
+    selectedSceneLibrary: UiLibraryCatalog | undefined;
+    selectedSceneLibraryDefinition: UiComponentDefinition | undefined;
+    selectedSceneLibraryVariants: readonly UiComponentVariant[];
+  };
+
+export type WebDesignAssetActionContext =
+  WebDesignSelectionActionContext &
+  ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions>;
+
+export type WebDesignDocumentActionContext =
+  WebDesignAssetActionContext &
+  ReturnType<typeof import('./WebDesignAssetActions').createWebDesignAssetActions>;
+
+export type WebDesignRenderContext =
+  WebDesignDocumentActionContext &
+  ReturnType<typeof import('./WebDesignDocumentActions').createWebDesignDocumentActions>;
 
 /**
  * Actions invoked by an earlier action group but implemented by a later group.

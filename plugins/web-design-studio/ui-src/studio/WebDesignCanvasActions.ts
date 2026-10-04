@@ -7,21 +7,9 @@ import { type LibraryPreviewSelection } from '../library-runtime/element-selecti
 import { selectionCandidatesAtPoint } from './selection-model';
 import { BasicShapeId, palette, basicShapeDefaults, contentContainerAncestor, createSlotStarterComponents, materializeExistingSlotContent, Interaction, LayerAction, AlignAction, VariantPickerTarget, EditingSlot } from './WebDesignStudioSupport';
 import { materializeOfficialDemoContent } from './WebDesignStudioSupport';
-import type { WebDesignDeferredActions } from './WebDesignActionContracts';
+import type { WebDesignCanvasActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  Pick<WebDesignDeferredActions,
-    | 'withGeneratedResponsiveLayouts'
-    | 'selectComponent'
-    | 'selectableNodesForCurrentEditor'
-    | 'copySceneSelection'
-    | 'duplicateSceneSelection'
-    | 'pasteSceneClipboard'>;
-
-export function createWebDesignCanvasActions(context: WebDesignActionContext) {
+export function createWebDesignCanvasActions(context: WebDesignCanvasActionContext) {
   const {
     selectedId,
     setSelectedId,

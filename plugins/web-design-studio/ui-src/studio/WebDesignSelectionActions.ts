@@ -1,26 +1,14 @@
 import { componentsForPage, resolveComponent } from '../../src/editor-model';
 import { editableSlotsForUiComponent, slotIdForDescendant, visibleComponentsInSlot } from '../../src/library-slots';
-import { uiLibraryByName } from '../../src/ui-libraries';
-import type { UiComponentDefinition, UiComponentVariant } from '../../src/ui-library';
 import { type WebDesignComponent, type WebDesignDevice, type WebDesignDocument } from '../../src/schema';
 import { indexSceneDocument, isSceneContainer, isSceneSlotContainer, type SceneNode, type SceneResponsiveNodeOverride } from '../../src/v2/scene-schema';
 import type { SceneEditorCommand } from '../../src/v2/scene-editor-command';
 import { type SelectionOverlayItem } from './SelectionOverlay';
 import { deepestSelectionChild, type EditorSelectableNode } from './selection-model';
 import { contentContainerAncestor } from './WebDesignStudioSupport';
+import type { WebDesignSelectionActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions> &
-  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions> & {
-    selectedSceneLibrary: ReturnType<typeof uiLibraryByName>;
-    selectedSceneLibraryDefinition: UiComponentDefinition | undefined;
-    selectedSceneLibraryVariants: UiComponentVariant[];
-  };
-
-export function createWebDesignSelectionActions(context: WebDesignActionContext) {
+export function createWebDesignSelectionActions(context: WebDesignSelectionActionContext) {
   const {
     sceneDocument,
     selectedId,

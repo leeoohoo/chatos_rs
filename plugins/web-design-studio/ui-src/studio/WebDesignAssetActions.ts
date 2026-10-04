@@ -26,16 +26,9 @@ import {
 import { indexSceneDocument, type SceneVariableCollection } from '../../src/v2/scene-schema';
 import { resolveSceneInsertionTarget } from './scene-insertion-target';
 import { createSceneSnippet, instantiateSceneSnippet, type SceneSnippet } from './scene-snippet-library';
+import type { WebDesignAssetActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions> &
-  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions> &
-  ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions>;
-
-export function createWebDesignAssetActions(context: WebDesignActionContext) {
+export function createWebDesignAssetActions(context: WebDesignAssetActionContext) {
   const {
     document,
     setSelectedId,

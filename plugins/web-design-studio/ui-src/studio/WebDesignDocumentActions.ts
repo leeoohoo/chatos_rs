@@ -17,17 +17,9 @@ import type {
   WorkspaceSurfaceKind
 } from '../../src/v2/workspace-placement-store';
 import type { ScenePrototypeLink } from '../../src/v2/scene-schema';
+import type { WebDesignDocumentActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions> &
-  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions> &
-  ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions> &
-  ReturnType<typeof import('./WebDesignAssetActions').createWebDesignAssetActions>;
-
-export function createWebDesignDocumentActions(context: WebDesignActionContext) {
+export function createWebDesignDocumentActions(context: WebDesignDocumentActionContext) {
   const {
     repository,
     document,

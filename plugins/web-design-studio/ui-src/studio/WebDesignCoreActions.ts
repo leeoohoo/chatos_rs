@@ -4,11 +4,9 @@ import { type WorkspaceArea, type WorkspaceTool } from './workspace-shell-model'
 import { type SceneDocument } from '../../src/v2/scene-schema';
 import type { SceneEditorCommand } from '../../src/v2/scene-editor-command';
 import { growCanvasForDevice, replaceStudioLocation, viewportSelectionsForDocument, editableDocumentPayload, LibraryTab } from './WebDesignStudioSupport';
+import type { WebDesignCoreActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState>;
-
-export function createWebDesignCoreActions(context: WebDesignActionContext) {
+export function createWebDesignCoreActions(context: WebDesignCoreActionContext) {
   const {
     repository,
     setDocuments,

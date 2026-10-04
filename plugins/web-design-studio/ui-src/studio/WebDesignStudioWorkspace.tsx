@@ -114,16 +114,16 @@ return (
 
           {workspaceShell.activeArea === 'tools' && <>
             <div className="panel-intro"><strong>视觉原语</strong><span>用矩形、圆形和直线组合背景、光效、装饰与容器；产品控件使用成熟 UI 库</span></div>
-            <div className="palette-grid shapes-grid">{filteredPalette.map((item: any) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
+            <div className="palette-grid shapes-grid">{filteredPalette.map((item) => <div key={item.id} className="palette-item" draggable onDragStart={(event) => onPaletteDrag(event, item.id)}><span className="palette-icon">{item.icon}</span><span>{item.label}</span></div>)}</div>
           </>}
 
           {workspaceShell.activeArea === 'assets' && activeUiLibrary && <>
             <div className={`ui-library-heading library-${activeUiLibrary.id}`}><div className="ui-library-logo-mark">{activeUiLibrary.brandMark}</div><div><strong>{activeUiLibrary.displayName}</strong><span>{activeUiLibrary.license ? `开源组件 · ${activeUiLibrary.license} · ${activeUiLibrary.version}` : activeUiLibrary.id === 'shadcn' ? `本地源码组件 · ${activeUiLibrary.version}` : `官方运行时 · v${activeUiLibrary.version}`}</span></div></div>
             <div className="panel-intro"><strong>{activeUiLibrary.displayName} 组件总览</strong><span>先打开组件，再点击或拖动你真正需要的单个官方示例</span></div>
             {activeUiLibrary.categories.map((category: string) => {
-              const items = filteredUiLibraryComponents.filter((item: any) => item.category === category);
+              const items = filteredUiLibraryComponents.filter((item) => item.category === category);
               return items.length > 0 && <div key={category} className="ui-library-category"><div className="ui-library-category-title">{category}</div><div className="ui-library-component-list">
-                {items.map((item: any) => <button key={item.id} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
+                {items.map((item) => <button key={item.id} onClick={() => setVariantPickerTarget({ library: activeUiLibrary.id, componentId: item.id })}><span className="ui-library-list-icon">{item.icon}</span><strong>{item.id}</strong><small>{item.label}</small><em>{item.status === 'deprecated' ? `已废弃 · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : item.introduced ? `v${item.introduced} · ${activeUiLibrary.variants[item.id]?.length ?? 1} 款` : `${activeUiLibrary.variants[item.id]?.length ?? 1} 款`}</em><b>›</b></button>)}
               </div></div>;
             })}
           </>}
@@ -131,7 +131,7 @@ return (
           {workspaceShell.activeArea === 'my' && <>
             <div className="panel-intro my-library-intro"><strong>我的设计组合</strong><span>保存真实 Scene 子树，下次插入后仍可继续拆分、移动、批注和让 AI 修改。</span></div>
             {sceneDocument && selectedIds.length > 0 && <button className="my-library-save" onClick={saveSceneSelectionAsSnippet}><span>＋</span><div><strong>保存当前选中</strong><small>{selectedIds.length === 1 ? selectedSceneNode?.name : `${selectedIds.length} 个 Scene 图层`}</small></div></button>}
-            {filteredSceneSnippets.length > 0 ? <div className="my-library-grid">{filteredSceneSnippets.map((snippet: any) => <article key={snippet.id} className="my-library-card"><button className="my-library-insert" onClick={() => void insertSceneSnippet(snippet)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{snippet.name}</strong><small>{snippet.nodes.length} 个根层 · {Math.round(snippet.width)} × {Math.round(snippet.height)}</small></span></button><footer><button onClick={() => renameSceneSnippet(snippet)}>重命名</button><button className="danger" onClick={() => removeSceneSnippet(snippet.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的设计组合</strong><p>{sceneDocument ? '在画布中选择一个 Scene 图层，或按住 Shift 选择同一容器里的多个图层，再保存为自己的组合。' : '请先让 AI 创建第一个 Scene 页面，再保存可复用的视觉组合。'}</p></div>}
+            {filteredSceneSnippets.length > 0 ? <div className="my-library-grid">{filteredSceneSnippets.map((snippet) => <article key={snippet.id} className="my-library-card"><button className="my-library-insert" onClick={() => void insertSceneSnippet(snippet)}><span className="my-library-preview"><i /><i /><i /></span><span><strong>{snippet.name}</strong><small>{snippet.nodes.length} 个根层 · {Math.round(snippet.width)} × {Math.round(snippet.height)}</small></span></button><footer><button onClick={() => renameSceneSnippet(snippet)}>重命名</button><button className="danger" onClick={() => removeSceneSnippet(snippet.id)}>移除</button></footer></article>)}</div> : <div className="my-library-empty"><span>◇</span><strong>还没有保存的设计组合</strong><p>{sceneDocument ? '在画布中选择一个 Scene 图层，或按住 Shift 选择同一容器里的多个图层，再保存为自己的组合。' : '请先让 AI 创建第一个 Scene 页面，再保存可复用的视觉组合。'}</p></div>}
           </>}
 
           {workspaceShell.activeArea === 'layers' && <>
@@ -145,7 +145,7 @@ return (
                   : undefined}
             </div>
             <div className="layers-list expanded">
-              {sceneDocument ? sceneLayerNodes.map(({ node, depth }: any) => <div key={node.id} className={`layer-row ${selectedIdSet.has(node.id) ? 'selected' : ''} ${!node.visible ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => {
+              {sceneDocument ? sceneLayerNodes.map(({ node, depth }) => <div key={node.id} className={`layer-row ${selectedIdSet.has(node.id) ? 'selected' : ''} ${!node.visible ? 'hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }} onClick={(event) => {
                 const additive = event.shiftKey || event.metaKey || event.ctrlKey;
                 if (!additive) {
                   setSelectedId(node.id);
@@ -201,7 +201,7 @@ return (
             <div className="panel-intro"><strong>AI 视觉设计</strong><span>计划、候选截图、视觉 Diff 与人工批注都绑定 Scene 稳定节点；AI 一次只推进一个有界步骤。</span></div>
             <div className="scene-ai-sidebar-progress">{renderGenerationReviewPanel()}</div>
             <div className="panel-title layer-title"><span>待处理视觉批注</span><small>{sceneAnnotationTasks.length}</small></div>
-            <div className="ai-sidebar-request-list">{sceneAnnotationTasks.map(({ node, annotation }: any) => <article key={annotation.id}><strong>{node.name}</strong><p>{annotation.body}</p><small>Scene r{sceneDocument?.revision} · {new Date(annotation.createdAt).toLocaleString()}</small><button disabled={sceneAnnotationPreparingId === annotation.id} onClick={() => void prepareSceneAnnotation(node.id, annotation.id)}>准备视觉上下文</button></article>)}</div>
+            <div className="ai-sidebar-request-list">{sceneAnnotationTasks.map(({ node, annotation }) => <article key={annotation.id}><strong>{node.name}</strong><p>{annotation.body}</p><small>Scene r{sceneDocument?.revision} · {new Date(annotation.createdAt).toLocaleString()}</small><button disabled={sceneAnnotationPreparingId === annotation.id} onClick={() => void prepareSceneAnnotation(node.id, annotation.id)}>准备视觉上下文</button></article>)}</div>
             {sceneAnnotationTasks.length === 0 && <div className="ai-sidebar-empty"><span>✓</span><strong>没有待处理视觉批注</strong><p>{sceneDocument ? '选择图层后写下具体的构图、层级、留白、字体或图片问题。' : '先让 AI 规划一个页面并开始第一个视觉步骤。'}</p></div>}
             <div className="panel-title section-title">给 AI 一个小任务</div>
             <div className="ai-quick-prompts sidebar-prompts">{aiQuickPrompts.map((prompt: string) => <button key={prompt} onClick={() => setAiInstruction(prompt)}>{prompt}</button>)}</div>
@@ -409,13 +409,13 @@ return (
           {selectedSceneNode.type === 'library-instance' && <section className="scene-library-inspector">
             <header><div><span>官方组件</span><strong>{selectedSceneLibrary?.displayName ?? selectedSceneNode.library} · {selectedSceneLibraryDefinition?.label ?? selectedSceneNode.component}</strong></div><em>{selectedSceneLibrary?.version ?? 'runtime'}</em></header>
             <div className="scene-library-binding-grid"><label className="field-label">组件库<input value={selectedSceneNode.library} readOnly /></label><label className="field-label">组件<input value={selectedSceneNode.component} readOnly /></label></div>
-            <label className="field-label">官方款式<select value={selectedSceneNode.variant ?? selectedSceneLibraryVariants[0]?.id ?? 'default'} disabled={selectedSceneNode.locked || selectedSceneLibraryVariants.length === 0} onChange={(event) => void applySelectedSceneLibraryVariant(event.target.value)}>{selectedSceneLibraryVariants.map((variant: any) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
+            <label className="field-label">官方款式<select value={selectedSceneNode.variant ?? selectedSceneLibraryVariants[0]?.id ?? 'default'} disabled={selectedSceneNode.locked || selectedSceneLibraryVariants.length === 0} onChange={(event) => void applySelectedSceneLibraryVariant(event.target.value)}>{selectedSceneLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>
             <label className="field-label">展示内容<textarea key={`${selectedSceneNode.id}:${selectedSceneNode.content ?? ''}`} rows={3} defaultValue={selectedSceneNode.content ?? ''} disabled={selectedSceneNode.locked} onBlur={(event) => {
               if (event.currentTarget.value !== (selectedSceneNode.content ?? '')) void updateSceneNode([{ path: ['content'], value: event.currentTarget.value }], '用户修改 Scene 官方组件内容。');
             }} /></label>
             <div className="scene-library-runtime-actions"><button disabled={selectedSceneNode.locked || !selectedSceneLibrary} onClick={() => selectedSceneLibrary && setVariantPickerTarget({ library: selectedSceneLibrary.id, componentId: selectedSceneNode.component, replaceComponentId: selectedSceneNode.id })}>{selectedSceneRegistryElement ? '重新选择官方元素' : '浏览官方示例与元素'}</button>{selectedSceneRegistryElement && <span>{selectedSceneRegistryElement.label}</span>}</div>
             <JsonObjectEditor label="组件属性 / 示例数据" value={selectedSceneNode.properties} disabled={selectedSceneNode.locked} onChange={(value) => void updateSceneNode([{ path: ['properties'], value }], '用户修改 Scene 官方组件属性和示例数据。')} />
-            {selectedSceneEditableSlots.length > 0 && <div className="scene-content-slots"><div className="panel-title section-title">内部内容区</div><p className="helper-text">进入内容区后，左侧拖入或点击插入的官方组件会成为当前组件的真实 Scene 子层，不会生成另一套编辑器数据。</p>{selectedSceneEditableSlots.map((slot: any) => {
+            {selectedSceneEditableSlots.length > 0 && <div className="scene-content-slots"><div className="panel-title section-title">内部内容区</div><p className="helper-text">进入内容区后，左侧拖入或点击插入的官方组件会成为当前组件的真实 Scene 子层，不会生成另一套编辑器数据。</p>{selectedSceneEditableSlots.map((slot) => {
               const activeSlot = Boolean(sceneContentFocus && sceneContentFocus.pageId === selectedSceneEntry?.pageId && sceneContentFocus.nodeId === selectedSceneNode.id && sceneContentFocus.slot === slot.id);
               return <button key={slot.id} className={activeSlot ? 'active' : ''} onClick={() => activeSlot ? setSceneContentFocus(undefined) : focusSceneContent(selectedSceneNode.id, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{selectedSceneNode.slots[slot.id]?.length ?? 0} 层</em><b>{activeSlot ? '退出' : '进入编辑'}</b></button>;
             })}</div>}
@@ -582,20 +582,20 @@ return (
             {selectedLibraryDefinition?.status === 'deprecated' && <div className="ui-library-deprecation-note">官网已将该组件标记为废弃；新设计建议使用 Listy。</div>}
             {selectedEditableSlots.length > 0 && <div className="content-slots-panel">
               <div className="content-slots-heading"><div><strong>内部内容</strong><span>像页面一样继续设计</span></div><em>{selectedEditableSlots.length} 个区域</em></div>
-              {selectedEditableSlots.map((slot: any) => {
+              {selectedEditableSlots.map((slot) => {
                 const count = componentsInSlot(document, selected.id, slot.id).length;
                 const officialDemo = Boolean(selected.library?.props.registryDemo);
                 return <button key={slot.id} className={editingSlot?.componentId === selected.id && editingSlot.slotId === slot.id ? 'active' : ''} onClick={() => void editComponentSlot(selected, slot.id)}><span><strong>{slot.label}</strong><small>{slot.description}</small></span><em>{count > 0 ? `${count} 个组件` : officialDemo ? '尚未拆分' : '空白'}</em><b>{officialDemo && count === 0 ? '拆开并编辑 ›' : '进入编辑 ›'}</b></button>;
               })}
             </div>}
-            {selectedRegistryElement ? <div className="selected-registry-element-summary"><div><span>已选择的独立元素</span><strong>{selectedRegistryElement.label}</strong><small>{selected.library.variant ? `来源款式：${selectedLibraryVariants.find((variant: any) => variant.id === selected.library?.variant)?.label ?? selected.library.variant}` : '保留官方真实运行时'}</small></div><button onClick={() => setVariantPickerTarget({ library: selected.library!.name, componentId: selected.library!.component, replaceComponentId: selected.id })}>重新选择</button></div>
-              : <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant: any) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>}
-            {selectedInspectableLibraryProps.filter(([, value]: [string, any]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]: [string, any]) => typeof value === 'boolean'
+            {selectedRegistryElement ? <div className="selected-registry-element-summary"><div><span>已选择的独立元素</span><strong>{selectedRegistryElement.label}</strong><small>{selected.library.variant ? `来源款式：${selectedLibraryVariants.find((variant) => variant.id === selected.library?.variant)?.label ?? selected.library.variant}` : '保留官方真实运行时'}</small></div><button onClick={() => setVariantPickerTarget({ library: selected.library!.name, componentId: selected.library!.component, replaceComponentId: selected.id })}>重新选择</button></div>
+              : <label className="field-label ui-library-variant-field">展现款式<select value={selected.library.variant ?? selectedLibraryVariants[0]?.id} onChange={(event) => applySelectedLibraryVariant(event.target.value)}>{selectedLibraryVariants.map((variant) => <option key={variant.id} value={variant.id}>{variant.label}</option>)}</select></label>}
+            {selectedInspectableLibraryProps.filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value)).map(([key, value]) => typeof value === 'boolean'
               ? <label key={key} className="ui-library-boolean-prop"><input type="checkbox" checked={value} onChange={(event) => updateSelectedLibraryProp(key, event.target.checked)} /><span>{key}</span></label>
               : typeof value === 'number'
                 ? <NumberField key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />
                 : <label key={key} className="field-label">{key}<input value={String(value)} onChange={(event) => updateSelectedLibraryProp(key, event.target.value)} /></label>)}
-            {selectedInspectableLibraryProps.some(([, value]: [string, any]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{selectedInspectableLibraryProps.filter(([, value]: [string, any]) => value !== null && typeof value === 'object').map(([key, value]: [string, any]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
+            {selectedInspectableLibraryProps.some(([, value]) => value !== null && typeof value === 'object') && <div className="ui-library-data-editors"><div className="panel-title section-title">示例数据</div>{selectedInspectableLibraryProps.filter(([, value]) => value !== null && typeof value === 'object').map(([key, value]) => <JsonPropertyEditor key={key} label={key} value={value} onChange={(next) => updateSelectedLibraryProp(key, next)} />)}</div>}
           </div>}
           </>}
           {inspectorTab === 'prototype' && <>
@@ -687,7 +687,7 @@ return (
     {variantPickerDefinition && variantPickerLibrary && <div className={`studio-side-surface-host ${variantPickerDrag?.dragging ? 'dragging-library-element' : ''}`}>
       <section className="studio-modal studio-side-surface variant-picker" data-library-portal-host>
         <header><div><span className="eyebrow">{variantPickerLibrary.displayName} · {variantPickerDefinition.category}</span><h2>{variantPickerDefinition.id} · {variantPickerDefinition.label}</h2><p>移动到想要的元素上，点击直接插入，或按住拖到画布中的准确位置。</p></div><button onClick={() => setVariantPickerTarget(undefined)}>×</button></header>
-        <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant: any) => {
+        <div className={`variant-preview-grid ${WIDE_VARIANT_PREVIEWS.has(variantPickerDefinition.id) || variantPickerPresentation?.previewSpan === 'wide' ? 'wide-component-previews' : ''} ${variantPickerVariants.length === 1 ? 'single-component-preview' : ''}`}>{variantPickerVariants.map((variant) => {
           const previewComponent = applyUiLibraryVariant(createComponentFromUiLibrary(variantPickerLibrary.id, variantPickerDefinition.id, 0, 0), variant.id);
           previewComponent.id = `library-preview-${variantPickerLibrary.id}-${variantPickerDefinition.id}-${variant.id}`;
           const differences = variantDifferenceLabels(variant);

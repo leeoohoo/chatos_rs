@@ -8,7 +8,7 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.8", features = ["json", "multipart"] }
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 chatos_agent = { path = "../../agent", default-features = false }

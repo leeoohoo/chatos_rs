@@ -3,18 +3,9 @@ import { workspaceArtboardRenderTier, workspaceViewportReady } from '../../src/v
 import type { WorkspaceArtboardPlacement } from '../../src/v2/workspace-placement-store';
 import { SceneArtboardCanvas, sceneArtboardContentHeight } from './SceneArtboardCanvas';
 import { WORKSPACE_SURFACE_LABELS, WORKSPACE_SURFACE_SIZES, deviceForWorkspaceArtboard, workspaceArtboardContentBounds } from './WebDesignStudioSupport';
+import type { WebDesignRenderContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions> &
-  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions> &
-  ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions> &
-  ReturnType<typeof import('./WebDesignAssetActions').createWebDesignAssetActions> &
-  ReturnType<typeof import('./WebDesignDocumentActions').createWebDesignDocumentActions>;
-
-export function createWebDesignRenderHelpers(context: WebDesignActionContext) {
+export function createWebDesignRenderHelpers(context: WebDesignRenderContext) {
   const {
     repository,
     sceneDocument,

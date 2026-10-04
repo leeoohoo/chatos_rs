@@ -10,15 +10,9 @@ import { indexSceneDocument, type SceneDocument, type SceneNode } from '../../sr
 import { createSceneBasicShape, createSceneLibraryInstance } from './scene-node-factory';
 import { resolveSceneInsertionTarget, type SceneInsertionTarget } from './scene-insertion-target';
 import { BasicShapeId, palette, contentContainerAncestor, createSlotStarterComponents, VariantPickerTarget, VariantPickerPointerDrag, bindLibraryPreviewElement } from './WebDesignStudioSupport';
-import type { WebDesignDeferredActions } from './WebDesignActionContracts';
+import type { WebDesignInsertActionContext } from './WebDesignActionContracts';
 
-type WebDesignActionContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  Pick<WebDesignDeferredActions,
-    'editComponentSlot' | 'activateWorkspaceArtboard' | 'withGeneratedResponsiveLayouts'>;
-
-export function createWebDesignInsertActions(context: WebDesignActionContext) {
+export function createWebDesignInsertActions(context: WebDesignInsertActionContext) {
   const {
     setSelectedId,
     setSelectedIds,
