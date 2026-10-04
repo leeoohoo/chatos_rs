@@ -19,19 +19,9 @@ import {
   NumberField, SceneNumberField, ColorValueField, AdvancedCssEditor,
   JsonPropertyEditor, JsonObjectEditor, runtimeSlotContentMap
 } from './WebDesignInspectorFields';
+import type { WebDesignWorkspaceContext } from './WebDesignWorkspaceContext';
 
-type WebDesignWorkspaceContext =
-  ReturnType<typeof import('./useWebDesignStudioState').useWebDesignStudioState> &
-  ReturnType<typeof import('./WebDesignCoreActions').createWebDesignCoreActions> &
-  ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
-  ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions> &
-  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions> &
-  ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions> &
-  ReturnType<typeof import('./WebDesignAssetActions').createWebDesignAssetActions> &
-  ReturnType<typeof import('./WebDesignDocumentActions').createWebDesignDocumentActions> &
-  ReturnType<typeof import('./WebDesignRenderHelpers').createWebDesignRenderHelpers>;
-
-export function renderWebDesignStudioWorkspace(context: Record<string, any>) {
+export function renderWebDesignStudioWorkspace(context: WebDesignWorkspaceContext) {
   const {
     repository, activeProject, document, sceneDocument, sceneHistory, ready,
     screen, persistedRevision, selectedId, setSelectedId, selectedIds, setSelectedIds,
@@ -71,7 +61,7 @@ export function renderWebDesignStudioWorkspace(context: Record<string, any>) {
     variantPickerDefinition, variantPickerVariants, variantPickerPresentation, sceneAiTarget, sceneAnnotationTasks, aiQuickPrompts,
     renderGenerationReviewPanel, renderWorkspaceArtboard, renderPreviewSurfaceOverlay, layerComponents, aiTarget, normalizedPaletteQuery,
     filteredPersonalSymbols, storageBadge, newDesignModal
-  } = context as WebDesignWorkspaceContext & Record<string, any>;
+  } = context;
 
   if (!activeProject || !document) return null;
 

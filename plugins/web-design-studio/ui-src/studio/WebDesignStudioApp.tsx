@@ -143,6 +143,7 @@ import {
 } from './WebDesignInspectorFields';
 import { createWebDesignRenderHelpers } from './WebDesignRenderHelpers';
 import { renderWebDesignStudioWorkspace } from './WebDesignStudioWorkspace';
+import { createWebDesignWorkspaceContext } from './WebDesignWorkspaceContext';
 import { useWebDesignStudioState } from './useWebDesignStudioState';
 import type { WebDesignDeferredActions } from './WebDesignActionContracts';
 export function WebDesignStudioApp() {
@@ -370,62 +371,6 @@ export function WebDesignStudioApp() {
 
   if (!document || !activeProject) return <div className="loading-screen"><div className="loading-dot" />正在打开网站项目…</div>;
 
-  const layerComponents = flattenComponentTree(document, pageId);
-  const sceneLayerNodes = sceneDocument
-    ? [...indexSceneDocument(sceneDocument).values()]
-      .filter((entry) => entry.pageId === pageId)
-      .map((entry) => ({ node: entry.node, depth: Math.max(0, entry.path.length - 2) }))
-    : [];
-  const directChildCount = selected ? document.components.filter((component) => component.parentId === selected.id).length : 0;
-  const canUngroup = Boolean(selected?.id.startsWith('group-') && directChildCount > 0);
-  const canUngroupScene = Boolean(selectedSceneNode
-    && (selectedSceneNode.type === 'group' || selectedSceneNode.type === 'frame')
-    && selectedSceneNode.layout.mode === 'free');
-  const selectedSceneRegistryElement = selectedSceneNode?.type === 'library-instance'
-    ? libraryPreviewSelection(selectedSceneNode.properties.registryElement)
-    : undefined;
-  const selectedSceneEditableSlots = selectedSceneNode?.type === 'library-instance'
-    ? editableSlotsForSceneLibraryNode(selectedSceneNode)
-    : [];
-  const selectedSymbol = selected?.symbolId ? document.symbols?.find((symbol) => symbol.id === selected.symbolId) : undefined;
-  const selectedLibrary = uiLibraryByName(selected?.library?.name);
-  const selectedLibraryDefinition = selected?.library ? selectedLibrary?.components.find((item) => item.id === selected.library?.component) : undefined;
-  const selectedLibraryVariants = selected?.library ? variantsForBoundComponent(selected) : [];
-  const selectedRegistryElement = libraryPreviewSelection(selected?.library?.props.registryElement);
-  const selectedEditableSlots = selected ? editableSlotsForUiComponent(selected) : [];
-  const inspectorCapabilities = selected ? resolveInspectorCapabilities(selected.type, {
-    library: Boolean(selected.library),
-    directChildCount,
-    editableSlotCount: selectedEditableSlots.length
-  }) : undefined;
-  const selectedInspectableLibraryProps = selected?.library ? inspectableLibraryProps(selected.library.props) : [];
-  const aiTarget = selected ?? editingContainer;
-  const normalizedPaletteQuery = paletteQuery.trim().toLowerCase();
-  const filteredPalette = palette.filter((item) => !normalizedPaletteQuery
-    || `${item.label} ${item.id} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const filteredPersonalSymbols = personalSymbols.filter((symbol) => !normalizedPaletteQuery
-    || `${symbol.name} ${symbol.components.map((component) => component.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const filteredSceneSnippets = sceneSnippets.filter((snippet) => !normalizedPaletteQuery
-    || `${snippet.name} ${snippet.nodes.map((node) => node.name).join(' ')}`.toLowerCase().includes(normalizedPaletteQuery));
-  const activeUiLibrary = libraryTab !== 'components' && libraryTab !== 'my' && libraryTab !== 'layers' ? uiLibraryByName(libraryTab) : undefined;
-  const filteredUiLibraryComponents = activeUiLibrary?.components.filter((item) => !normalizedPaletteQuery
-    || `${item.id} ${item.label} ${item.keywords.join(' ')}`.toLowerCase().includes(normalizedPaletteQuery)) ?? [];
-  const variantPickerLibrary = variantPickerTarget ? uiLibraryByName(variantPickerTarget.library) : undefined;
-  const variantPickerDefinition = variantPickerTarget ? variantPickerLibrary?.components.find((item) => item.id === variantPickerTarget.componentId) : undefined;
-  const variantPickerVariants = variantPickerDefinition && variantPickerLibrary ? variantPickerLibrary.variants[variantPickerDefinition.id] ?? [{ id: 'default', label: '默认款式', props: {} }] : [];
-  const variantPickerPresentation = variantPickerDefinition && variantPickerLibrary
-    ? officialRuntimePresentation(variantPickerLibrary.id, String(variantPickerDefinition.props?.componentSlug ?? variantPickerDefinition.id))
-    : undefined;
-  const sceneAiTarget = selectedSceneNode ?? activeScenePage?.children[0];
-  const sceneAnnotationTasks = sceneDocument
-    ? [...indexSceneDocument(sceneDocument).values()].flatMap((entry) => entry.node.annotations
-      .filter((annotation) => annotation.status === 'open')
-      .map((annotation) => ({ annotation, node: entry.node, pageId: entry.pageId })))
-    : [];
-  const aiQuickPrompts = selectedSceneNode
-    ? ['让这个组件更精致、更有层次', '优化尺寸、间距和对齐', '给我 3 个更好看的视觉方案']
-    : ['设计一个像 Apple 官网一样克制高级的页面', '统一整页的字号、间距、圆角和色彩', '检查并修复页面中不协调的视觉细节'];
-
   const webDesignRenderHelpers = createWebDesignRenderHelpers({
     ...studioState,
     ...webDesignCoreActions,
@@ -436,48 +381,21 @@ export function WebDesignStudioApp() {
     ...webDesignAssetActions,
     ...webDesignDocumentActions
   });
-  const {
-    renderGenerationReviewPanel,
-    renderWorkspaceArtboard,
-    renderPreviewSurfaceOverlay
-  } = webDesignRenderHelpers;
-  return renderWebDesignStudioWorkspace({
-    repository, activeProject, document, sceneDocument, sceneHistory, ready,
-    screen, persistedRevision, selectedId, setSelectedId, selectedIds, setSelectedIds,
-    selectionCandidatePopover, setSelectionCandidatePopover, marqueeRect, pageId, clipboard, sceneClipboard,
-    dirty, saving, interactionMode, device, workspaceCamera, workspacePlacement,
-    newSurfaceKind, setNewSurfaceKind, past, future, toast, annotationText,
-    setAnnotationText, aiInstruction, setAiInstruction, sceneAiContext, sceneAnnotationPreparingId, generationPlan,
-    paletteQuery, setPaletteQuery, libraryTab, sceneVariablesDraft, setSceneVariablesDraft, setVariantPickerTarget,
-    sceneContentFocus, setSceneContentFocus, variantPickerDrag, themePickerOpen, setThemePickerOpen, projectLibraryOpen,
-    setProjectLibraryOpen, setDeleteDesignTarget, editingSlot, inspectorVisualState, setInspectorVisualState, inspectorTab,
-    setInspectorTab, workspaceShell, dispatchWorkspaceShell, interaction, assetInput, canvasStage,
-    canvasScroll, zoom, canvasPanning, canvasPanReady, selected, selectedSceneEntry,
-    selectedSceneNode, sceneResponsiveRuleSpec, selectedSceneResponsiveOverride, selectedScenePositionEditable, activeScenePage, sceneEditingActive,
-    selectedIdSet, activeWorkspaceArtboard, viewportPresets, renderedCanvasHeight, pages, selectedPrototypeTarget,
-    activeProjectDocuments, tokens, currentPage, editingContainer, editingSlotDefinition, editingSlotComponents,
-    editingVisibleComponents, editingSlotCanvasSize, inspectedFrame, inspectedStyle, showToast, chooseLibraryTab,
-    activateWorkspaceArea, activateWorkspaceTool, undo, redo, save, refresh,
-    createNew, openProjectDocument, goToActiveProject, onPaletteDrag, chooseUiLibraryPreviewElement, moveUiLibraryPreviewPointerDragAt,
-    finishUiLibraryPreviewPointerDragAt, handleUiLibraryPreviewPointerEvent, editComponentSlot, exitSlotEditor, insertSlotTemplate, onCanvasDrop,
-    beginInteraction, beginCanvasPan, beginCanvasMarquee, updateSelected, updateInspectedFrame, updateSelectedStyle,
-    clearSelectedVisualState, updateSelectedCustomCss, updateSelectedHorizontalConstraint, updateSelectedSizeConstraints, deleteSelected, duplicateSelected,
-    copySelected, pasteClipboard, reorderSelected, alignSelected, toggleHidden, toggleLocked,
-    addWorkspaceSurface, fitActiveWorkspaceArtboard, fitSlotEditorContent, fitWorkspaceSelection, focusWorkspaceArtboardByPageId, selectViewportPreset,
-    updateCustomViewportWidth, updateCustomViewportHeight, setCanvasZoom, toggleInteractionMode, selectComponent, selectionOverlayItemsFor,
-    copySceneSelection, duplicateSceneSelection, pasteSceneClipboard, wrapSceneSelection, ungroupSceneSelection, alignSceneSelection,
-    distributeSceneSelection, reorderSceneSelection, deleteSceneSelection, updateSceneNodeById, updateSceneNode, applySelectedSceneLibraryVariant,
-    focusSceneContent, updateSelectedSceneResponsiveOverride, replaceSelectedSceneResponsiveOverride, clearSelectedSceneResponsiveOverride, groupSelected, ungroupSelected,
-    updateSelectedLayout, applySelectedAutoLayout, saveSelectionAsSymbol, saveSceneSelectionAsSnippet, insertSceneSnippet, renameSceneSnippet,
-    removeSceneSnippet, applySceneVariablesDraft, toggleSelectedSymbolOverride, synchronizeSelectedSymbol, updateSelectedSymbolDefinition, updateSelectedLibraryProp,
-    applySelectedLibraryVariant, detachSelectedSymbol, applyDesignTheme, applyColorToken, applyRadiusToken, switchPage,
-    addPage, duplicatePage, deleteCurrentPage, updateCurrentPage, useAsset, importAssets,
-    activatePreviewInteraction, addLegacyAnnotation, prepareSceneAnnotation, addSceneAnnotation, changeSceneAnnotationStatus, submitSceneAiInstruction,
-    addAiRequest, deleteDesignModal, sceneLayerNodes, directChildCount, canUngroup, canUngroupScene,
-    selectedSceneLibrary, selectedSceneLibraryDefinition, selectedSceneLibraryVariants, selectedSceneRegistryElement, selectedSceneEditableSlots, selectedSymbol,
-    selectedLibrary, selectedLibraryDefinition, selectedLibraryVariants, selectedRegistryElement, selectedEditableSlots, inspectorCapabilities,
-    selectedInspectableLibraryProps, filteredPalette, filteredSceneSnippets, activeUiLibrary, filteredUiLibraryComponents, variantPickerLibrary,
-    variantPickerDefinition, variantPickerVariants, variantPickerPresentation, sceneAiTarget, sceneAnnotationTasks, aiQuickPrompts,
-    renderGenerationReviewPanel, renderWorkspaceArtboard, renderPreviewSurfaceOverlay
-  });
+  return renderWebDesignStudioWorkspace(createWebDesignWorkspaceContext({
+    ...studioState,
+    ...webDesignCoreActions,
+    ...webDesignInsertActions,
+    ...webDesignCanvasActions,
+    ...webDesignViewportActions,
+    ...webDesignSelectionActions,
+    ...webDesignAssetActions,
+    ...webDesignDocumentActions,
+    ...webDesignRenderHelpers,
+    selectedSceneLibrary,
+    selectedSceneLibraryDefinition,
+    selectedSceneLibraryVariants,
+    storageBadge,
+    newDesignModal,
+    deleteDesignModal,
+  }));
 }
