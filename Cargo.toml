@@ -9,6 +9,7 @@ members = [
   "crates/chatos_cloud_agent_runtime",
   "crates/chatos_ai_runtime",
   "crates/chatos_internal_auth",
+  "crates/chatos_internal_tls",
   "crates/chatos_remote_runtime",
   "crates/chatos_sandbox_contract",
   "crates/memory_engine_sdk",

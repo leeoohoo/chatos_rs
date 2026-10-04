@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::fs::File;
-use std::io::BufReader;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use axum_server::tls_rustls::RustlsConfig;
-use rustls::server::WebPkiClientVerifier;
-use rustls::{RootCertStore, ServerConfig};
+use chatos_internal_tls::load_mtls_server_config;
 
 #[derive(Debug, Clone)]
 pub struct UserServiceInternalTlsConfig {
@@ -57,56 +53,12 @@ fn load_internal_mtls_config_from_paths(
     server_key_path: &Path,
     client_ca_cert_path: &Path,
 ) -> Result<RustlsConfig, String> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let server_certificates = read_certificates(server_cert_path)?;
-    let server_key = read_private_key(server_key_path)?;
-    let mut client_roots = RootCertStore::empty();
-    for certificate in read_certificates(client_ca_cert_path)? {
-        client_roots
-            .add(certificate)
-            .map_err(|err| format!("invalid User Service mTLS client CA: {err}"))?;
-    }
-    if client_roots.is_empty() {
-        return Err("User Service mTLS client CA contains no certificates".to_string());
-    }
-    let verifier = WebPkiClientVerifier::builder(Arc::new(client_roots))
-        .build()
-        .map_err(|err| format!("build User Service mTLS client verifier failed: {err}"))?;
-    let server_config = ServerConfig::builder()
-        .with_client_cert_verifier(verifier)
-        .with_single_cert(server_certificates, server_key)
-        .map_err(|err| format!("build User Service mTLS server config failed: {err}"))?;
-    Ok(RustlsConfig::from_config(Arc::new(server_config)))
-}
-
-fn read_certificates(
-    path: &Path,
-) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, String> {
-    let file = File::open(path)
-        .map_err(|err| format!("open certificate file {} failed: {err}", path.display()))?;
-    let certificates = rustls_pemfile::certs(&mut BufReader::new(file))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| format!("parse certificate file {} failed: {err}", path.display()))?;
-    if certificates.is_empty() {
-        return Err(format!(
-            "certificate file {} contains no certificates",
-            path.display()
-        ));
-    }
-    Ok(certificates)
-}
-
-fn read_private_key(path: &Path) -> Result<rustls::pki_types::PrivateKeyDer<'static>, String> {
-    let file = File::open(path)
-        .map_err(|err| format!("open private key file {} failed: {err}", path.display()))?;
-    rustls_pemfile::private_key(&mut BufReader::new(file))
-        .map_err(|err| format!("parse private key file {} failed: {err}", path.display()))?
-        .ok_or_else(|| {
-            format!(
-                "private key file {} contains no private key",
-                path.display()
-            )
-        })
+    load_mtls_server_config(
+        server_cert_path,
+        server_key_path,
+        client_ca_cert_path,
+        "User Service",
+    )
 }
 
 fn required_env(key: &str) -> Result<String, String> {

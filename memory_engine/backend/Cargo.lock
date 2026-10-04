@@ -673,6 +673,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatos_internal_tls"
+version = "0.1.0"
+dependencies = [
+ "axum-server",
+ "rustls",
+ "rustls-pki-types",
+]
+
+[[package]]
 name = "chatos_mcp_runtime"
 version = "0.1.0"
 dependencies = [
@@ -2027,6 +2036,7 @@ dependencies = [
  "chatos_cloud_agent_protocol",
  "chatos_cloud_agent_runtime",
  "chatos_config_sdk",
+ "chatos_internal_tls",
  "chatos_plugin_management_sdk",
  "chatos_postgres",
  "chatos_queue_observability",
@@ -2037,8 +2047,6 @@ dependencies = [
  "lapin",
  "memory_engine_sdk",
  "reqwest",
- "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "sha2 0.11.0",
