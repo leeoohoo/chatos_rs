@@ -8,6 +8,7 @@ use chatos_agent::ManagedRuntimeConfigBundle;
 use chatos_config_sdk::ConfigClient;
 use chatos_service_runtime::{build_http_client, HttpClientTimeouts};
 use futures::StreamExt;
+use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 use crate::config::AppConfig;
@@ -26,6 +27,7 @@ use chatos_plugin_management_sdk::{PluginManagementClient, PluginManagementClien
 
 const LOCAL_CONNECTOR_CONFIG_WATCH_INTERVAL: Duration = Duration::from_secs(15);
 const RELAY_PENDING_REAPER_INTERVAL: Duration = Duration::from_secs(5);
+const MAX_CONCURRENT_PLUGIN_ARTIFACT_DOWNLOADS: usize = 8;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -33,6 +35,7 @@ pub struct AppState {
     pub relay: ConnectorRelay,
     pub store: ConnectorStore,
     pub plugin_management_client: PluginManagementClient,
+    pub(crate) plugin_artifact_download_slots: Arc<Semaphore>,
     local_connector_config_center_client: ConfigClient,
     user_service_http: reqwest::Client,
     pub(crate) managed_requirements_signer: Option<Arc<ManagedRequirementsSigner>>,
@@ -140,6 +143,9 @@ impl AppState {
             relay,
             store,
             plugin_management_client,
+            plugin_artifact_download_slots: Arc::new(Semaphore::new(
+                MAX_CONCURRENT_PLUGIN_ARTIFACT_DOWNLOADS,
+            )),
             local_connector_config_center_client,
             user_service_http,
             managed_requirements_signer,

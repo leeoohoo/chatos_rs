@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::pin::Pin;
 use std::time::Duration;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
 use axum::http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE, VARY};
 use axum::http::{HeaderValue, StatusCode};
@@ -15,9 +17,11 @@ use chatos_plugin_management_sdk::{
     UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
     PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
 };
-use futures::StreamExt;
+use futures::{stream, Stream, StreamExt};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use tokio::sync::OwnedSemaphorePermit;
 use url::{Host, Url};
 
 use crate::models::CurrentUser;
@@ -112,6 +116,17 @@ pub(super) async fn proxy_plugin_release_artifact(
     ensure_source_preference_identity(&source, user.effective_owner_user_id())?;
     verify_install_source_signature(&source)?;
     let url = validate_artifact_url(source.release.artifact_ref.as_str())?;
+    let download_permit = tokio::time::timeout(
+        Duration::from_secs(10),
+        state.plugin_artifact_download_slots.clone().acquire_owned(),
+    )
+    .await
+    .map_err(|_| {
+        ApiError::service_unavailable(
+            "Plugin artifact download capacity is busy; retry the request shortly",
+        )
+    })?
+    .map_err(|_| ApiError::service_unavailable("Plugin artifact downloads are unavailable"))?;
     let upstream = if source.marketplace.source_kind == PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY {
         state
             .plugin_management_client
@@ -144,9 +159,12 @@ pub(super) async fn proxy_plugin_release_artifact(
             "Plugin artifact exceeds the proxy download size limit",
         ));
     }
-    let artifact = read_artifact_with_limit(upstream).await?;
-    let artifact_length = artifact.len();
-    let response = Response::builder()
+    let artifact_stream = stream_artifact_with_limit_and_digest(
+        upstream,
+        source.release.artifact_sha256.clone(),
+        download_permit,
+    );
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/gzip")
         .header(
@@ -160,34 +178,79 @@ pub(super) async fn proxy_plugin_release_artifact(
         .header(
             "x-chatos-plugin-artifact-sha256",
             header_value(source.release.artifact_sha256.as_str())?,
-        )
-        .header(CONTENT_LENGTH, artifact_length);
+        );
+    if let Some(content_length) = content_length {
+        response = response.header(CONTENT_LENGTH, content_length);
+    }
     response
-        .body(Body::from(artifact))
+        .body(Body::from_stream(artifact_stream))
         .map_err(|error| ApiError::internal(format!("build Plugin artifact proxy failed: {error}")))
 }
 
-async fn read_artifact_with_limit(upstream: reqwest::Response) -> Result<Vec<u8>, ApiError> {
-    let mut artifact = Vec::with_capacity(
-        upstream
-            .content_length()
-            .and_then(|length| usize::try_from(length).ok())
-            .unwrap_or_default(),
-    );
-    let mut stream = upstream.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            ApiError::bad_gateway(format!("read Plugin artifact response failed: {error}"))
-        })?;
-        let next_size = artifact.len().saturating_add(chunk.len());
-        if u64::try_from(next_size).unwrap_or(u64::MAX) > MAX_PLUGIN_ARTIFACT_BYTES {
-            return Err(ApiError::bad_gateway(
-                "Plugin artifact exceeded the proxy download size limit",
-            ));
+struct ArtifactStreamState {
+    upstream: Pin<Box<dyn Stream<Item = Result<Bytes, io::Error>> + Send>>,
+    hasher: Sha256,
+    bytes_read: u64,
+    expected_sha256: String,
+    _download_permit: OwnedSemaphorePermit,
+}
+
+fn stream_artifact_with_limit_and_digest(
+    upstream: reqwest::Response,
+    expected_sha256: String,
+    download_permit: OwnedSemaphorePermit,
+) -> impl Stream<Item = Result<Bytes, io::Error>> + Send {
+    checked_artifact_stream(upstream.bytes_stream(), expected_sha256, download_permit)
+}
+
+fn checked_artifact_stream<S, E>(
+    upstream: S,
+    expected_sha256: String,
+    download_permit: OwnedSemaphorePermit,
+) -> impl Stream<Item = Result<Bytes, io::Error>> + Send
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    let state = ArtifactStreamState {
+        upstream: Box::pin(
+            upstream.map(|item| item.map_err(|error| io::Error::other(error.to_string()))),
+        ),
+        hasher: Sha256::new(),
+        bytes_read: 0,
+        expected_sha256: expected_sha256.to_ascii_lowercase(),
+        _download_permit: download_permit,
+    };
+    stream::try_unfold(state, |mut state| async move {
+        match state.upstream.next().await {
+            Some(Ok(chunk)) => {
+                let chunk_length = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+                state.bytes_read = state
+                    .bytes_read
+                    .checked_add(chunk_length)
+                    .ok_or_else(|| io::Error::other("Plugin artifact download size overflowed"))?;
+                if state.bytes_read > MAX_PLUGIN_ARTIFACT_BYTES {
+                    return Err(io::Error::other(
+                        "Plugin artifact exceeded the proxy download size limit",
+                    ));
+                }
+                state.hasher.update(&chunk);
+                Ok(Some((chunk, state)))
+            }
+            Some(Err(error)) => Err(io::Error::other(format!(
+                "read Plugin artifact response failed: {error}"
+            ))),
+            None => {
+                let actual_sha256 = hex::encode(state.hasher.finalize());
+                if actual_sha256 != state.expected_sha256 {
+                    return Err(io::Error::other(
+                        "Plugin artifact content SHA-256 did not match the signed release",
+                    ));
+                }
+                Ok(None)
+            }
         }
-        artifact.extend_from_slice(&chunk);
-    }
-    Ok(artifact)
+    })
 }
 
 fn ensure_source_preference_identity(
@@ -394,6 +457,9 @@ fn is_public_ipv6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::TryStreamExt;
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
 
     #[test]
     fn artifact_url_allows_http_only_for_loopback_development() {
@@ -435,5 +501,49 @@ mod tests {
         assert!(is_public_ip(
             "2606:4700:4700::1111".parse().expect("public IPv6")
         ));
+    }
+
+    #[tokio::test]
+    async fn artifact_stream_verifies_digest_and_holds_download_slot_until_eof() {
+        let slots = Arc::new(Semaphore::new(1));
+        let permit = slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("download permit");
+        let expected = hex::encode(Sha256::digest(b"plugin artifact"));
+        let stream = checked_artifact_stream(
+            stream::iter([
+                Ok::<_, io::Error>(Bytes::from_static(b"plugin ")),
+                Ok::<_, io::Error>(Bytes::from_static(b"artifact")),
+            ]),
+            expected,
+            permit,
+        );
+        assert!(slots.clone().try_acquire_owned().is_err());
+        let chunks = stream
+            .try_collect::<Vec<_>>()
+            .await
+            .expect("verified stream");
+        assert_eq!(chunks.concat(), b"plugin artifact");
+        assert!(slots.try_acquire_owned().is_ok());
+    }
+
+    #[tokio::test]
+    async fn artifact_stream_rejects_content_that_does_not_match_signed_digest() {
+        let permit = Arc::new(Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("download permit");
+        let stream = checked_artifact_stream(
+            stream::iter([Ok::<_, io::Error>(Bytes::from_static(b"tampered"))]),
+            hex::encode(Sha256::digest(b"expected")),
+            permit,
+        );
+        let error = stream
+            .try_collect::<Vec<_>>()
+            .await
+            .expect_err("digest mismatch must fail the response body");
+        assert!(error.to_string().contains("did not match"));
     }
 }
