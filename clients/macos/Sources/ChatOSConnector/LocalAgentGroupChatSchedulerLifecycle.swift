@@ -371,14 +371,6 @@ extension LocalAgentGroupChatScheduler {
                 detail: detail
             )
         }
-        // The active chat may not own this drain. Publish only once after the final Delivery and
-        // response mutation so background completion cannot leave a visible timeline stale.
-        await service.publishChange(.init(
-            ownerUserID: ownerUserID,
-            roomID: room.id,
-            agentID: delivery.targetAgentID,
-            kind: .roomUpdated
-        ))
         return receipt
     }
 }

@@ -462,6 +462,15 @@ extension LocalAgentGroupChatScheduler {
                         detail: Self.failureDetail(error)
                     )
                 }
+                // The failure wrapper itself can fail while persisting its terminal state. Keep
+                // invalidation outside that wrapper so a visible room always reconciles durable
+                // state after this claimed attempt leaves the scheduler.
+                await service.publishChange(.init(
+                    ownerUserID: ownerUserID,
+                    roomID: work.room.id,
+                    agentID: work.delivery.targetAgentID,
+                    kind: .roomUpdated
+                ))
                 return OrderedDeliveryAttemptReceipt(order: work.order, receipt: receipt)
             }
             handle?.install { task.cancel() }
