@@ -27,14 +27,29 @@ struct AgentListPaginationBar: View {
             Spacer(minLength: 8)
 
             if !compact, pageSizeOptions.count > 1 {
-                Picker("每页", selection: $pageSize) {
+                Menu {
                     ForEach(pageSizeOptions, id: \.self) { size in
-                        Text("\(size) / 页").tag(size)
+                        Button {
+                            pageSize = size
+                        } label: {
+                            if size == pageSize {
+                                Label {
+                                    Text(verbatim: "\(size) / 页")
+                                } icon: {
+                                    Image(systemName: "checkmark")
+                                }
+                            } else {
+                                Text(verbatim: "\(size) / 页")
+                            }
+                        }
                     }
+                } label: {
+                    Text(verbatim: "\(pageSize) / 页")
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                .menuStyle(.borderlessButton)
                 .controlSize(.small)
+                .fixedSize()
+                .accessibilityLabel("每页")
             }
 
             Button {
