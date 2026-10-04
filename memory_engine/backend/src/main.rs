@@ -10,6 +10,7 @@ mod internal_tls;
 mod jobs;
 mod models;
 mod pressure;
+mod rabbitmq_queue;
 mod repositories;
 mod rollup_queue;
 mod services;

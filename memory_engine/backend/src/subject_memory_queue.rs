@@ -6,26 +6,32 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use lapin::{
     message::Delivery,
-    options::{
-        BasicAckOptions, BasicConsumeOptions, BasicGetOptions, BasicNackOptions,
-        BasicPublishOptions, BasicQosOptions, ConfirmSelectOptions, ExchangeDeclareOptions,
-        QueueBindOptions, QueueDeclareOptions,
-    },
-    publisher_confirm::Confirmation,
-    types::{AMQPValue, FieldTable},
-    BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
+    options::{BasicAckOptions, BasicGetOptions, BasicNackOptions},
+    Channel,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
+use crate::rabbitmq_queue::{self, QueueTopology};
 use crate::repositories::{control_plane, subject_memory_scopes, summaries, threads};
 use crate::services::subject_memory;
 use crate::state::AppState;
 
 const SOURCE_AVAILABLE_EVENT: &str = "source_available";
 const SCOPE_REQUESTED_EVENT: &str = "scope_requested";
+
+fn queue_topology(config: &AppConfig) -> QueueTopology<'_> {
+    QueueTopology {
+        exchange: config.rabbitmq_exchange.as_str(),
+        queue: config.subject_memory_queue.as_str(),
+        retry_queue: config.subject_memory_retry_queue.as_str(),
+        dead_letter_queue: config.subject_memory_dead_letter_queue.as_str(),
+        retry_delay: config.subject_memory_retry_delay,
+        stream_name: "subject memory",
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SubjectMemoryEnvelope {
@@ -624,46 +630,20 @@ async fn publish_envelope(
     envelope: &SubjectMemoryEnvelope,
 ) -> Result<(), String> {
     let payload = serde_json::to_vec(envelope).map_err(|err| err.to_string())?;
-    let confirmation = channel
-        .basic_publish(
-            config.rabbitmq_exchange.as_str(),
-            routing_key,
-            BasicPublishOptions {
-                mandatory: true,
-                ..BasicPublishOptions::default()
-            },
-            payload.as_slice(),
-            BasicProperties::default()
-                .with_content_type("application/json".into())
-                .with_delivery_mode(2)
-                .with_message_id(
-                    format!(
-                        "memory-subject:{}:{}:{}:{}",
-                        envelope.event_type,
-                        envelope.message_identity(),
-                        envelope.version,
-                        envelope.attempt
-                    )
-                    .into(),
-                ),
-        )
-        .await
-        .map_err(|err| err.to_string())?
-        .await
-        .map_err(|err| err.to_string())?;
-    match confirmation {
-        Confirmation::Ack(None) => Ok(()),
-        Confirmation::Ack(Some(_)) => Err(format!(
-            "RabbitMQ returned unroutable Memory Engine subject memory event for {routing_key}"
-        )),
-        Confirmation::Nack(_) => Err(format!(
-            "RabbitMQ rejected Memory Engine subject memory event for {routing_key}"
-        )),
-        Confirmation::NotRequested => Err(
-            "RabbitMQ publisher confirm was not enabled for Memory Engine subject memory event"
-                .to_string(),
+    rabbitmq_queue::publish_persistent_json(
+        channel,
+        &queue_topology(config),
+        routing_key,
+        payload.as_slice(),
+        format!(
+            "memory-subject:{}:{}:{}:{}",
+            envelope.event_type,
+            envelope.message_identity(),
+            envelope.version,
+            envelope.attempt
         ),
-    }
+    )
+    .await
 }
 
 include!("subject_memory_queue_part01.rs");

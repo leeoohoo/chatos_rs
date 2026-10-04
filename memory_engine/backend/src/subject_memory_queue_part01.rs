@@ -1,122 +1,18 @@
-async fn ensure_topology(channel: &Channel, config: &AppConfig) -> Result<(), String> {
-    channel
-        .exchange_declare(
-            config.rabbitmq_exchange.as_str(),
-            ExchangeKind::Direct,
-            ExchangeDeclareOptions {
-                durable: true,
-                ..ExchangeDeclareOptions::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    declare_and_bind(
-        channel,
-        config,
-        config.subject_memory_queue.as_str(),
-        FieldTable::default(),
-    )
-    .await?;
-
-    let retry_delay_ms =
-        u32::try_from(config.subject_memory_retry_delay.as_millis()).map_err(|_| {
-            "Memory Engine subject memory retry delay exceeds RabbitMQ limit".to_string()
-        })?;
-    let mut retry_arguments = FieldTable::default();
-    retry_arguments.insert("x-message-ttl".into(), AMQPValue::LongUInt(retry_delay_ms));
-    retry_arguments.insert(
-        "x-dead-letter-exchange".into(),
-        AMQPValue::LongString(config.rabbitmq_exchange.clone().into()),
-    );
-    retry_arguments.insert(
-        "x-dead-letter-routing-key".into(),
-        AMQPValue::LongString(config.subject_memory_queue.clone().into()),
-    );
-    declare_and_bind(
-        channel,
-        config,
-        config.subject_memory_retry_queue.as_str(),
-        retry_arguments,
-    )
-    .await?;
-    declare_and_bind(
-        channel,
-        config,
-        config.subject_memory_dead_letter_queue.as_str(),
-        FieldTable::default(),
-    )
-    .await
-}
-
-async fn declare_and_bind(
-    channel: &Channel,
-    config: &AppConfig,
-    queue: &str,
-    arguments: FieldTable,
-) -> Result<(), String> {
-    channel
-        .queue_declare(
-            queue,
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            arguments,
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .queue_bind(
-            queue,
-            config.rabbitmq_exchange.as_str(),
-            queue,
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-async fn open_publisher(config: &AppConfig) -> Result<(Connection, Channel), String> {
-    let connection = Connection::connect(
-        config.rabbitmq_url.as_str(),
-        ConnectionProperties::default(),
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    let channel = connection
-        .create_channel()
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .confirm_select(ConfirmSelectOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    ensure_topology(&channel, config).await?;
-    Ok((connection, channel))
+async fn open_publisher(config: &AppConfig) -> Result<(lapin::Connection, Channel), String> {
+    rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &queue_topology(config)).await
 }
 
 async fn open_consumer(
     config: &AppConfig,
     consumer_index: usize,
-) -> Result<(Connection, Channel, lapin::Consumer), String> {
-    let (connection, channel) = open_publisher(config).await?;
-    channel
-        .basic_qos(1, BasicQosOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    let consumer = channel
-        .basic_consume(
-            config.subject_memory_queue.as_str(),
-            format!("memory-engine-subject-memory-{consumer_index}").as_str(),
-            BasicConsumeOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok((connection, channel, consumer))
+) -> Result<(lapin::Connection, Channel, lapin::Consumer), String> {
+    let consumer_tag = format!("memory-engine-subject-memory-{consumer_index}");
+    rabbitmq_queue::open_consumer(
+        config.rabbitmq_url.as_str(),
+        &queue_topology(config),
+        consumer_tag.as_str(),
+    )
+    .await
 }
 
 async fn run_outbox_reconciler(state: Arc<AppState>) {

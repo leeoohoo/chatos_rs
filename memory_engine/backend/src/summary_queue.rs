@@ -6,26 +6,32 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use lapin::{
     message::Delivery,
-    options::{
-        BasicAckOptions, BasicConsumeOptions, BasicGetOptions, BasicNackOptions,
-        BasicPublishOptions, BasicQosOptions, ConfirmSelectOptions, ExchangeDeclareOptions,
-        QueueBindOptions, QueueDeclareOptions,
-    },
-    publisher_confirm::Confirmation,
-    types::{AMQPValue, FieldTable},
-    BasicProperties, Channel, Connection, ConnectionProperties, ExchangeKind,
+    options::{BasicAckOptions, BasicGetOptions, BasicNackOptions},
+    Channel,
 };
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::AppConfig;
 use crate::models::now_rfc3339;
+use crate::rabbitmq_queue::{self, QueueTopology};
 use crate::repositories::{control_plane, threads};
 use crate::services::summary;
 use crate::state::AppState;
 
 const SUMMARY_QUEUE_TRIGGER: &str = "queue";
 const SUMMARY_DISPATCH_PUBLISH_LEASE_SECS: i64 = 300;
+
+fn queue_topology(config: &AppConfig) -> QueueTopology<'_> {
+    QueueTopology {
+        exchange: config.rabbitmq_exchange.as_str(),
+        queue: config.summary_queue.as_str(),
+        retry_queue: config.summary_retry_queue.as_str(),
+        dead_letter_queue: config.summary_dead_letter_queue.as_str(),
+        retry_delay: config.summary_retry_delay,
+        stream_name: "summary",
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SummaryRequestedEnvelope {
@@ -91,7 +97,9 @@ pub async fn archive_summary_dead_letter(
     version: i64,
     scan_limit: usize,
 ) -> Result<bool, String> {
-    let (_connection, channel) = open_publisher(config).await?;
+    let topology = queue_topology(config);
+    let (_connection, channel) =
+        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
     let mut unmatched = Vec::new();
     let mut matched = None;
     for _ in 0..scan_limit.clamp(1, 1_000) {
@@ -155,7 +163,9 @@ pub async fn dead_letter_current_summary_dispatch(
         return Ok(false);
     }
 
-    let (_connection, channel) = open_publisher(&state.config).await?;
+    let topology = queue_topology(&state.config);
+    let (_connection, channel) =
+        rabbitmq_queue::open_publisher(state.config.rabbitmq_url.as_str(), &topology).await?;
     let mut envelope = SummaryRequestedEnvelope::from_outbox(&event);
     envelope.attempt = state.config.summary_max_delivery_attempts;
     publish_envelope(
@@ -193,7 +203,15 @@ async fn run_consumer(state: Arc<AppState>, consumer_index: usize) {
             return;
         }
         let mut paused_for_pressure = false;
-        match open_consumer(&state.config, consumer_index).await {
+        let topology = queue_topology(&state.config);
+        let consumer_tag = format!("memory-engine-summary-{consumer_index}");
+        match rabbitmq_queue::open_consumer(
+            state.config.rabbitmq_url.as_str(),
+            &topology,
+            consumer_tag.as_str(),
+        )
+        .await
+        {
             Ok((connection, channel, mut consumer)) => {
                 let _connection = connection;
                 info!(
@@ -469,21 +487,9 @@ async fn publish_outbox_event(
     config: &AppConfig,
     event: &threads::SummaryDispatchOutbox,
 ) -> Result<(), String> {
-    let connection = Connection::connect(
-        config.rabbitmq_url.as_str(),
-        ConnectionProperties::default(),
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    let channel = connection
-        .create_channel()
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .confirm_select(ConfirmSelectOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    ensure_topology(&channel, config).await?;
+    let topology = queue_topology(config);
+    let (_connection, channel) =
+        rabbitmq_queue::open_publisher(config.rabbitmq_url.as_str(), &topology).await?;
     publish_envelope(
         &channel,
         config,
@@ -502,176 +508,17 @@ async fn publish_envelope(
     envelope: &SummaryRequestedEnvelope,
 ) -> Result<(), String> {
     let payload = serde_json::to_vec(envelope).map_err(|err| err.to_string())?;
-    let confirmation = channel
-        .basic_publish(
-            config.rabbitmq_exchange.as_str(),
-            routing_key,
-            BasicPublishOptions {
-                mandatory: true,
-                ..BasicPublishOptions::default()
-            },
-            payload.as_slice(),
-            BasicProperties::default()
-                .with_content_type("application/json".into())
-                .with_delivery_mode(2)
-                .with_message_id(
-                    format!(
-                        "memory-summary:{}:{}:{}",
-                        envelope.thread_id, envelope.version, envelope.attempt
-                    )
-                    .into(),
-                ),
-        )
-        .await
-        .map_err(|err| err.to_string())?
-        .await
-        .map_err(|err| err.to_string())?;
-    match confirmation {
-        Confirmation::Ack(None) => Ok(()),
-        Confirmation::Ack(Some(_)) => Err(format!(
-            "RabbitMQ returned unroutable Memory Engine summary event for {routing_key}"
-        )),
-        Confirmation::Nack(_) => Err(format!(
-            "RabbitMQ rejected Memory Engine summary event for {routing_key}"
-        )),
-        Confirmation::NotRequested => Err(
-            "RabbitMQ publisher confirm was not enabled for Memory Engine summary event"
-                .to_string(),
+    rabbitmq_queue::publish_persistent_json(
+        channel,
+        &queue_topology(config),
+        routing_key,
+        payload.as_slice(),
+        format!(
+            "memory-summary:{}:{}:{}",
+            envelope.thread_id, envelope.version, envelope.attempt
         ),
-    }
-}
-
-async fn ensure_topology(channel: &Channel, config: &AppConfig) -> Result<(), String> {
-    channel
-        .exchange_declare(
-            config.rabbitmq_exchange.as_str(),
-            ExchangeKind::Direct,
-            ExchangeDeclareOptions {
-                durable: true,
-                ..ExchangeDeclareOptions::default()
-            },
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    declare_and_bind(
-        channel,
-        config,
-        config.summary_queue.as_str(),
-        FieldTable::default(),
-    )
-    .await?;
-
-    let retry_delay_ms = u32::try_from(config.summary_retry_delay.as_millis())
-        .map_err(|_| "Memory Engine summary retry delay exceeds RabbitMQ limit".to_string())?;
-    let mut retry_arguments = FieldTable::default();
-    retry_arguments.insert("x-message-ttl".into(), AMQPValue::LongUInt(retry_delay_ms));
-    retry_arguments.insert(
-        "x-dead-letter-exchange".into(),
-        AMQPValue::LongString(config.rabbitmq_exchange.clone().into()),
-    );
-    retry_arguments.insert(
-        "x-dead-letter-routing-key".into(),
-        AMQPValue::LongString(config.summary_queue.clone().into()),
-    );
-    declare_and_bind(
-        channel,
-        config,
-        config.summary_retry_queue.as_str(),
-        retry_arguments,
-    )
-    .await?;
-    declare_and_bind(
-        channel,
-        config,
-        config.summary_dead_letter_queue.as_str(),
-        FieldTable::default(),
     )
     .await
-}
-
-async fn declare_and_bind(
-    channel: &Channel,
-    config: &AppConfig,
-    queue: &str,
-    arguments: FieldTable,
-) -> Result<(), String> {
-    channel
-        .queue_declare(
-            queue,
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            arguments,
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .queue_bind(
-            queue,
-            config.rabbitmq_exchange.as_str(),
-            queue,
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok(())
-}
-
-async fn open_publisher(config: &AppConfig) -> Result<(Connection, Channel), String> {
-    let connection = Connection::connect(
-        config.rabbitmq_url.as_str(),
-        ConnectionProperties::default(),
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    let channel = connection
-        .create_channel()
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .confirm_select(ConfirmSelectOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    ensure_topology(&channel, config).await?;
-    Ok((connection, channel))
-}
-
-async fn open_consumer(
-    config: &AppConfig,
-    consumer_index: usize,
-) -> Result<(Connection, Channel, lapin::Consumer), String> {
-    let connection = Connection::connect(
-        config.rabbitmq_url.as_str(),
-        ConnectionProperties::default(),
-    )
-    .await
-    .map_err(|err| err.to_string())?;
-    let channel = connection
-        .create_channel()
-        .await
-        .map_err(|err| err.to_string())?;
-    channel
-        .confirm_select(ConfirmSelectOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    ensure_topology(&channel, config).await?;
-    channel
-        .basic_qos(1, BasicQosOptions::default())
-        .await
-        .map_err(|err| err.to_string())?;
-    let consumer = channel
-        .basic_consume(
-            config.summary_queue.as_str(),
-            format!("memory-engine-summary-{consumer_index}").as_str(),
-            BasicConsumeOptions::default(),
-            FieldTable::default(),
-        )
-        .await
-        .map_err(|err| err.to_string())?;
-    Ok((connection, channel, consumer))
 }
 
 async fn run_outbox_reconciler(state: Arc<AppState>) {
