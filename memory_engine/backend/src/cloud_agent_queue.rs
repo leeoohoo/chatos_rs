@@ -7,7 +7,7 @@ use std::time::Duration;
 use chatos_cloud_agent_protocol::{CloudAgentRunRecord, CloudAgentRunStatus};
 use chatos_cloud_agent_runtime::{
     cloud_agent_trigger_execution_identity, CloudAgentModelTrigger, CloudAgentProfile,
-    CloudAgentProfileRegistry, CloudAgentRabbitMqTopology, CloudAgentServiceRuntime,
+    CloudAgentDatabaseWorkerConfig, CloudAgentProfileRegistry, CloudAgentServiceRuntime,
     CloudAgentSingleStepExecution, CloudAgentSingleStepOutput,
 };
 use chatos_plugin_management_sdk::SystemAgentKey;
@@ -19,9 +19,6 @@ use crate::services::ai_pipeline::cloud_agent::CloudSummaryPipelineState;
 use crate::state::AppState;
 
 pub(crate) const MEMORY_CLOUD_AGENT_ROUTING_KEY: &str = "cloud_agent.memory_engine.runtime";
-pub(crate) const MEMORY_CLOUD_AGENT_RETRY_ROUTING_KEY: &str =
-    "cloud_agent.memory_engine.runtime.retry";
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct MemoryCloudAgentInput {
     pub pipeline: CloudSummaryPipelineState,
@@ -193,26 +190,18 @@ fn runtime(state: Arc<AppState>) -> CloudAgentServiceRuntime<CloudAgentProfileRe
     CloudAgentServiceRuntime::new(registry, MEMORY_CLOUD_AGENT_ROUTING_KEY)
 }
 
-fn topology(state: &AppState) -> CloudAgentRabbitMqTopology {
-    CloudAgentRabbitMqTopology {
-        rabbitmq_url: state.config.rabbitmq_url.clone(),
-        exchange: state.config.rabbitmq_exchange.clone(),
-        runtime_queue: MEMORY_CLOUD_AGENT_ROUTING_KEY.to_string(),
-        retry_queue: MEMORY_CLOUD_AGENT_RETRY_ROUTING_KEY.to_string(),
-        consumer_tag: "memory-engine-cloud-agent-runtime".to_string(),
-        reconnect_delay: state.config.rabbitmq_reconnect_delay,
-        outbox_reconcile_interval: state.config.cloud_agent_outbox_reconcile_interval,
-        outbox_batch_size: state.config.cloud_agent_outbox_batch_size,
-        prefetch_count: 32,
-        consumer_concurrency: 4,
+fn worker_config(state: &AppState) -> CloudAgentDatabaseWorkerConfig {
+    CloudAgentDatabaseWorkerConfig {
+        poll_interval: state.config.cloud_agent_outbox_reconcile_interval,
+        batch_size: state.config.cloud_agent_outbox_batch_size,
+        worker_concurrency: 4,
         conflict_retry_delay: Duration::from_secs(1),
     }
 }
 
 pub(crate) fn start(state: Arc<AppState>) {
-    chatos_cloud_agent_runtime::spawn_cloud_agent_outbox_reconciler(
-        topology(&state),
-        runtime(state.clone()),
+    chatos_cloud_agent_runtime::spawn_cloud_agent_database_worker(
+        worker_config(&state),
+        runtime(state),
     );
-    chatos_cloud_agent_runtime::spawn_cloud_agent_consumer(topology(&state), runtime(state));
 }

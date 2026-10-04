@@ -8,9 +8,9 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod execution;
+mod database_driver;
 mod input_history;
 mod input_projection;
-mod rabbitmq_driver;
 mod reducer;
 mod run_contract;
 mod state_repository;
@@ -25,10 +25,9 @@ pub use input_projection::{
     cloud_agent_mcp_result_callback_payload, cloud_agent_mcp_result_input_items,
     cloud_agent_trigger_execution_identity, cloud_agent_trigger_input_items,
 };
-pub use rabbitmq_driver::{
-    publish_cloud_agent_intent, spawn_cloud_agent_consumer, spawn_cloud_agent_outbox_reconciler,
-    CloudAgentQueueOwner, CloudAgentRabbitMqTopology, CloudAgentServiceAdapter,
-    CloudAgentServiceRuntime,
+pub use database_driver::{
+    spawn_cloud_agent_database_worker, CloudAgentDatabaseWorkerConfig,
+    CloudAgentServiceAdapter, CloudAgentServiceRuntime, CloudAgentWorkerOwner,
 };
 pub use reducer::{materialize_mcp_command, reduce_single_step, CloudAgentModelTrigger};
 pub use run_contract::{
