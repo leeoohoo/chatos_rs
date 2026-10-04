@@ -1,5 +1,3 @@
-import { createBrowserAuthTokenStore } from '@chatos/frontend-runtime';
-
 export const ADMIN_AUTH_TOKEN_KEY = 'chatos_admin_auth_token';
 export const ADMIN_AUTH_CHANGED_EVENT = 'chatos-admin-auth-changed';
 
@@ -12,31 +10,39 @@ const LEGACY_TOKEN_KEYS = [
   'chatos.configuration-center.token',
 ] as const;
 
-const store = createBrowserAuthTokenStore({
-  storageKey: ADMIN_AUTH_TOKEN_KEY,
-  changeEvent: ADMIN_AUTH_CHANGED_EVENT,
-});
+const PERSISTED_TOKEN_KEYS = [ADMIN_AUTH_TOKEN_KEY, ...LEGACY_TOKEN_KEYS] as const;
+let authToken: string | null = null;
 
-export function migrateLegacyAuthToken(): string | null {
-  const existing = store.getAuthToken();
-  if (existing) {
-    return existing;
-  }
-  for (const key of LEGACY_TOKEN_KEYS) {
-    const token = localStorage.getItem(key)?.trim();
-    if (token) {
-      store.setAuthToken(token);
-      return token;
-    }
-  }
-  return null;
+function dispatchAuthChanged() {
+  globalThis.window?.dispatchEvent(new Event(ADMIN_AUTH_CHANGED_EVENT));
 }
 
-export const getAuthToken = () => store.getAuthToken();
-export const setAuthToken = (token: string) => store.setAuthToken(token);
-export const clearAuthToken = () => {
-  store.clearAuthToken();
-  for (const key of LEGACY_TOKEN_KEYS) {
-    localStorage.removeItem(key);
+function clearPersistedAuthTokens() {
+  try {
+    for (const key of PERSISTED_TOKEN_KEYS) {
+      globalThis.localStorage?.removeItem(key);
+    }
+  } catch {
+    // Storage may be unavailable under hardened browser privacy policies.
   }
+}
+
+// Do not leave a previously persisted administrator token readable by scripts.
+clearPersistedAuthTokens();
+
+export function migrateLegacyAuthToken(): string | null {
+  clearPersistedAuthTokens();
+  return authToken;
+}
+
+export const getAuthToken = () => authToken;
+export const setAuthToken = (token: string) => {
+  authToken = token;
+  clearPersistedAuthTokens();
+  dispatchAuthChanged();
+};
+export const clearAuthToken = () => {
+  authToken = null;
+  clearPersistedAuthTokens();
+  dispatchAuthChanged();
 };
