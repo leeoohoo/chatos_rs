@@ -5,6 +5,40 @@ import Foundation
 import XCTest
 
 final class LocalAgentGroupChatSchedulerTests: XCTestCase {
+    func testLocalChangeStreamPreservesRoomUpdateAcrossCheckpointOverflow() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let service = NativeAgentGroupChatService(
+            databaseURL: folder.appendingPathComponent("chat.db")
+        )
+        let stream = await service.changes(ownerUserID: "user-1", roomID: "room-1")
+        await service.publishChange(.init(
+            ownerUserID: "user-1",
+            roomID: "room-1",
+            kind: .roomUpdated
+        ))
+        for _ in 0..<128 {
+            await service.publishChange(.init(
+                ownerUserID: "user-1",
+                roomID: "room-1",
+                runID: UUID(),
+                kind: .runUpdated
+            ))
+        }
+
+        var iterator = stream.makeAsyncIterator()
+        var received: [NativeAgentGroupChatChange] = []
+        for _ in 0..<64 {
+            if let change = await iterator.next() {
+                received.append(change)
+            }
+        }
+        XCTAssertEqual(received.count, 64)
+        XCTAssertTrue(received.contains { $0.kind == .roomUpdated })
+    }
+
     func testLocalChangeStreamDeliversDurableInvalidationToMatchingRoom() async throws {
         let service = NativeAgentGroupChatService(
             databaseURL: FileManager.default.temporaryDirectory

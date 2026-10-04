@@ -202,7 +202,16 @@ public actor NativeAgentGroupChatService {
         for observer in changeObservers.values
         where observer.ownerUserID == change.ownerUserID
             && (observer.roomID == nil || observer.roomID == change.roomID) {
-            observer.continuation.yield(change)
+            let result = observer.continuation.yield(change)
+            // `bufferingNewest` normally drops the oldest element. A stalled UI can therefore
+            // lose the only room invalidation behind a burst of model/tool checkpoints and stay
+            // stale indefinitely. Reinsert that durable-state signal at the newest edge; the
+            // buffer remains bounded and later checkpoint bursts keep carrying it forward.
+            if case let .dropped(dropped) = result,
+               dropped.kind == .roomUpdated,
+               change.kind != .roomUpdated {
+                observer.continuation.yield(dropped)
+            }
         }
     }
 

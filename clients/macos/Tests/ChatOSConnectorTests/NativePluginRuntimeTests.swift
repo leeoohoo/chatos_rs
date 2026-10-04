@@ -2088,7 +2088,10 @@ struct NativePluginRuntimeTests {
                 invocationID: "first-call",
                 toolName: "observe",
                 arguments: .object([:]),
-                timeout: .milliseconds(150)
+                // Keep a wide margin over the observation window. The full Connector suite runs
+                // many process-heavy tests in parallel, so a 150 ms deadline could expire before
+                // the test task resumed from its 60 ms sleep and falsely report a lease breach.
+                timeout: .seconds(2)
             )
         }
         try await waitForTestFile(at: first.4)
