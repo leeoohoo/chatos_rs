@@ -401,52 +401,23 @@ final class AgentDirectChatViewModel: ObservableObject {
         guard proposalActionIDs.insert(proposal.id).inserted else { return nil }
         defer { proposalActionIDs.remove(proposal.id) }
         do {
-            let createdProject: WorkspaceProject?
-            let resolvedProjectID: String
-            if let existingProjectID = proposal.draft.existingProjectID {
-                let registry = try await projectsService.registry()
-                guard let project = try await registry.get(
-                    ownerUserID: ownerUserID,
-                    id: existingProjectID
-                ), project.status == .active else {
-                    throw ProjectRegistryError.notFound
-                }
-                createdProject = nil
-                resolvedProjectID = project.id
-            } else if let importedDraft = proposal.draft.importedProjectDraft,
-                      let absolutePath = proposal.draft.importedProjectAbsolutePath {
-                let project = try await projectsService.createFromExistingDirectory(
-                    ownerUserID: ownerUserID,
-                    draft: importedDraft,
-                    absolutePath: absolutePath
-                )
-                createdProject = project
-                resolvedProjectID = project.id
-            } else if let newProjectName = proposal.draft.newProjectName {
-                let project = try await projectsService.createInDefaultWorkspace(
-                    ownerUserID: ownerUserID,
-                    name: newProjectName,
-                    description: proposal.draft.newProjectDescription,
-                    projectTypeKey: proposal.draft.newProjectTypeKey
-                        ?? LocalAgentSkillCatalog.legacyProjectTypeKey
-                )
-                createdProject = project
-                resolvedProjectID = project.id
-            } else {
-                throw AgentGroupChatError.conflict
-            }
+            let resolution = try await resolveTeamProposalProject(
+                ownerUserID: ownerUserID,
+                draft: proposal.draft,
+                projectsService: projectsService
+            )
             let store = try await resolveStore()
             _ = try await store.approveTeamProposal(
                 ownerUserID: ownerUserID,
                 sourceRoomID: conversationID,
                 proposalID: proposal.id,
-                resolvedProjectID: resolvedProjectID,
+                resolvedProjectID: resolution.projectID,
                 nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
             )
             NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
             await load()
             startScheduler()
-            return createdProject
+            return resolution.createdProject
         } catch {
             errorMessage = error.localizedDescription
             return nil

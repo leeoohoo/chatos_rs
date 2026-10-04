@@ -12,7 +12,7 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
     private readonly IApprovalReviewerReadinessService? _reviewerReadiness;
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
-    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly SettingsOperationRunner _operations;
 
     public ApprovalSettingsViewModel(
         CommandApprovalCoordinator coordinator,
@@ -23,6 +23,7 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
         _coordinator = coordinator;
         _localization = localization;
         _dispatcher = dispatcher;
+        _operations = new SettingsOperationRunner(dispatcher);
         _reviewerReadiness = reviewerReadiness;
         _coordinator.PendingChanged += OnPendingChanged;
         _localization.PropertyChanged += OnLocalizationChanged;
@@ -150,35 +151,18 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
     {
         _coordinator.PendingChanged -= OnPendingChanged;
         _localization.PropertyChanged -= OnLocalizationChanged;
-        _operationGate.Dispose();
+        _operations.Dispose();
     }
 
     private async Task RunAsync(
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)
-    {
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await _dispatcher.InvokeAsync(() =>
-            {
-                IsBusy = true;
-                ErrorMessage = null;
-                ActionMessage = null;
-            }, cancellationToken).ConfigureAwait(false);
-            await operation(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            await _dispatcher.InvokeAsync(() => IsBusy = false).ConfigureAwait(false);
-            _operationGate.Release();
-        }
-    }
+        => await _operations.RunAsync(
+            operation,
+            () => { IsBusy = true; ErrorMessage = null; ActionMessage = null; },
+            message => ErrorMessage = message,
+            () => IsBusy = false,
+            cancellationToken).ConfigureAwait(false);
 
     private void Apply(
         ConnectorApprovalMode mode,

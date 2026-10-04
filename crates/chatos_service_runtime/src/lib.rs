@@ -13,6 +13,7 @@ mod http_error;
 mod identity;
 mod internal_audit;
 mod internal_token;
+mod network;
 #[cfg(feature = "axum-support")]
 mod request_id;
 mod runtime;
@@ -40,6 +41,7 @@ pub use internal_token::{
     issue_internal_service_token_with_trace_id_for_owner, verify_internal_service_token,
     InternalServiceTokenClaims,
 };
+pub use network::is_public_ip;
 #[cfg(feature = "axum-support")]
 pub use request_id::{
     request_id_from_headers, request_id_middleware, resolve_request_id, RequestId,

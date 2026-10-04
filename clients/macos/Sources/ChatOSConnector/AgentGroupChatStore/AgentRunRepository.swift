@@ -268,36 +268,10 @@ enum AgentRunRepository {
         limit: Int,
         preparedStatement: () -> Void
     ) throws -> [LocalAgentRunHistorySummary] {
-        preparedStatement()
-        return try AgentGroupChatDatabase.query(
-            handle,
-            """
-            SELECT run.id, run.agent_id, run.delivery_id, run.project_id, run.room_id,
-                   delivery.message_id, delivery.trigger_kind, run.status,
-                   COALESCE(json_array_length(run.run_json, '$.events'), 0),
-                   COALESCE(json_extract(run.run_json, '$.checkpoint.modelCalls'), 0),
-                   json_extract(run.run_json, '$.checkpoint.memory.scope.threadID'),
-                   json_extract(run.run_json, '$.checkpoint.stopReason'),
-                   (SELECT json_extract(event.value, '$.detail')
-                    FROM json_each(run.run_json, '$.events') event
-                    WHERE json_extract(event.value, '$.kind') IN ('needs_review', 'resume_failed')
-                    ORDER BY CAST(event.key AS INTEGER) DESC LIMIT 1),
-                   COALESCE(json_extract(run.run_json, '$.checkpoint.elapsedSeconds'), 0),
-                   CASE WHEN length(trim(COALESCE(
-                       json_extract(run.run_json, '$.checkpoint.result'),
-                       json_extract(run.run_json, '$.checkpoint.completionResult'), ''
-                   ))) > 0 THEN 1 ELSE 0 END,
-                   run.updated_at_unix_ms
-            FROM local_agent_group_chat_runs run
-            JOIN project_agent_deliveries delivery
-              ON delivery.owner_user_id = run.owner_user_id
-             AND delivery.id = run.delivery_id
-            WHERE run.owner_user_id = ? AND run.room_id = ?
-            ORDER BY run.updated_at_unix_ms DESC, run.id DESC
-            LIMIT ?
-            """,
-            [.text(ownerUserID), .text(roomID), .integer(Int64(limit))]
-        ) { try historySummary($0) }
+        try listHistorySummaries(
+            handle, ownerUserID: ownerUserID, scopeColumn: "room_id", scopeID: roomID,
+            limit: limit, preparedStatement: preparedStatement
+        )
     }
 
     static func listHistorySummariesForAgent(
@@ -307,6 +281,21 @@ enum AgentRunRepository {
         limit: Int,
         preparedStatement: () -> Void
     ) throws -> [LocalAgentRunHistorySummary] {
+        try listHistorySummaries(
+            handle, ownerUserID: ownerUserID, scopeColumn: "agent_id", scopeID: agentID,
+            limit: limit, preparedStatement: preparedStatement
+        )
+    }
+
+    private static func listHistorySummaries(
+        _ handle: OpaquePointer?,
+        ownerUserID: String,
+        scopeColumn: String,
+        scopeID: String,
+        limit: Int,
+        preparedStatement: () -> Void
+    ) throws -> [LocalAgentRunHistorySummary] {
+        precondition(scopeColumn == "room_id" || scopeColumn == "agent_id")
         preparedStatement()
         return try AgentGroupChatDatabase.query(
             handle,
@@ -331,11 +320,11 @@ enum AgentRunRepository {
             JOIN project_agent_deliveries delivery
               ON delivery.owner_user_id = run.owner_user_id
              AND delivery.id = run.delivery_id
-            WHERE run.owner_user_id = ? AND run.agent_id = ?
+            WHERE run.owner_user_id = ? AND run.\(scopeColumn) = ?
             ORDER BY run.updated_at_unix_ms DESC, run.id DESC
             LIMIT ?
             """,
-            [.text(ownerUserID), .text(agentID), .integer(Int64(limit))]
+            [.text(ownerUserID), .text(scopeID), .integer(Int64(limit))]
         ) { try historySummary($0) }
     }
 

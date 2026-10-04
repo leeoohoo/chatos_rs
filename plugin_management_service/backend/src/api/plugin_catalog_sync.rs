@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::collections::{BTreeMap, HashMap};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,6 +10,7 @@ use chatos_plugin_management_sdk::{
     normalized_plugin_catalog_sha256, verify_plugin_catalog_document, verify_plugin_catalog_update,
     PluginCatalogDocument, PluginReleaseRecord, SigningKeyRef, PLUGIN_SIGNING_KEY_USAGE_CATALOG,
 };
+use chatos_service_runtime::is_public_ip;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use futures_util::StreamExt;
 use reqwest::redirect::Policy;

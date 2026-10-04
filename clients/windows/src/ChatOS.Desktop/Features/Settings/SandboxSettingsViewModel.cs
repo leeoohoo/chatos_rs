@@ -15,7 +15,7 @@ public sealed partial class SandboxSettingsViewModel : ObservableObject
     private readonly IUiDispatcher _dispatcher;
     private readonly IControlledNetworkGuardClient? _networkGuard;
     private readonly IConnectorControlledNetworkReadinessService? _controlledNetworkReadiness;
-    private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly SettingsOperationRunner _operations;
 
     public SandboxSettingsViewModel(
         IConnectorSandboxSettingsStore store,
@@ -27,6 +27,7 @@ public sealed partial class SandboxSettingsViewModel : ObservableObject
         _store = store;
         _localization = localization;
         _dispatcher = dispatcher;
+        _operations = new SettingsOperationRunner(dispatcher);
         _networkGuard = networkGuard;
         _controlledNetworkReadiness = controlledNetworkReadiness;
         _localization.PropertyChanged += (_, _) => OnPropertyChanged(string.Empty);
@@ -253,27 +254,10 @@ public sealed partial class SandboxSettingsViewModel : ObservableObject
     private async Task RunAsync(
         Func<CancellationToken, Task> operation,
         CancellationToken cancellationToken)
-    {
-        await _operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await _dispatcher.InvokeAsync(() =>
-            {
-                IsBusy = true;
-                ErrorMessage = null;
-                ActionMessage = null;
-            }, cancellationToken).ConfigureAwait(false);
-            await operation(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            await _dispatcher.InvokeAsync(() => IsBusy = false).ConfigureAwait(false);
-            _operationGate.Release();
-        }
-    }
+        => await _operations.RunAsync(
+            operation,
+            () => { IsBusy = true; ErrorMessage = null; ActionMessage = null; },
+            message => ErrorMessage = message,
+            () => IsBusy = false,
+            cancellationToken).ConfigureAwait(false);
 }

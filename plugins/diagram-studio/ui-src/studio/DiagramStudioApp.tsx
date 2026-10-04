@@ -399,6 +399,10 @@ export function DiagramStudioApp() {
     importDiagram,
     saveImported
   } = createDiagramEditorActions({
+    repository,
+    activeProject,
+    refreshDocuments,
+    refreshProjects,
     document,
     setDocument,
     setDirty,
@@ -419,21 +423,17 @@ export function DiagramStudioApp() {
     setMindmapEdit,
     dragSnapshot,
     resizeSnapshot,
-    repository,
     canvasRef,
     openResolvedDocument,
     persistedRevision,
-    refreshDocuments,
     setPlantUmlSource,
     setPlantUmlError,
     setPlantUmlVisible,
     plantUmlSource,
-    activeProject
-    ,updateDocumentLive
-    ,setInspectorVisible
-    ,setExportVisible
-    ,setActiveProject
-    ,refreshProjects
+    updateDocumentLive,
+    setInspectorVisible,
+    setExportVisible,
+    setActiveProject
   });
   const selectedNodes = document?.nodes.filter((node) => selectedNodeIds.has(node.id)) ?? [];
   const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : undefined;

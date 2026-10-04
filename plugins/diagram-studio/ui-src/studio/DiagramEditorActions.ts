@@ -1,5 +1,5 @@
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react';
-import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type FinalConnectionState, type NodeChange } from '@xyflow/react';
+import { addEdge, applyEdgeChanges, applyNodeChanges, type Connection, type EdgeChange, type FinalConnectionState, type NodeChange, type ReactFlowInstance } from '@xyflow/react';
 import { toPng, toSvg } from 'html-to-image';
 import type { DiagramDocument, DiagramEdge, DiagramKind, DiagramNode, DiagramProject } from '../../src/schema';
 import { layoutDiagram } from '../../src/layout';
@@ -14,20 +14,48 @@ import { absoluteNodePosition, balancedMindMapSide, closestActivationHandle, clo
 
 type Repository = Awaited<ReturnType<typeof createRepository>>;
 
-interface DiagramEditorActionContext extends Record<string, any> {
+interface DiagramEditorActionContext {
   document?: DiagramDocument;
+  setDocument: Dispatch<SetStateAction<DiagramDocument | undefined>>;
+  setDirty: Dispatch<SetStateAction<boolean>>;
   selectedNodeIds: Set<string>;
   selectedEdgeId?: string;
   setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>>;
+  setSelectedEdgeId: Dispatch<SetStateAction<string | undefined>>;
   setPast: Dispatch<SetStateAction<DiagramDocument[]>>;
   setFuture: Dispatch<SetStateAction<DiagramDocument[]>>;
   nodeMeasurements: MutableRefObject<NodeMeasurementCache>;
   dragSnapshot: MutableRefObject<DiagramDocument | null>;
   resizeSnapshot: MutableRefObject<DiagramDocument | null>;
   edgeMoveSnapshot: MutableRefObject<DiagramDocument | null>;
+  edgeMoveChanged: MutableRefObject<boolean>;
+  lastSequenceConnect: MutableRefObject<{
+    source: string;
+    target: string;
+    sourceSlot?: number;
+    targetSlot?: number;
+    at: number;
+  } | undefined>;
+  sequenceMessagePreset: SequenceMessagePreset;
+  commit: (document: DiagramDocument) => void;
+  showToast: (message: string) => void;
+  reactFlow: ReactFlowInstance;
+  setMindmapEdit: Dispatch<SetStateAction<{ nodeId: string; value: string } | undefined>>;
   repository?: Repository;
+  canvasRef: RefObject<HTMLDivElement | null>;
+  openResolvedDocument: (document: DiagramDocument) => void;
+  persistedRevision: number;
+  refreshDocuments: (repository: Repository) => Promise<void>;
+  setPlantUmlSource: Dispatch<SetStateAction<string>>;
+  setPlantUmlError: Dispatch<SetStateAction<string | undefined>>;
+  setPlantUmlVisible: Dispatch<SetStateAction<boolean>>;
   activeProject?: DiagramProject;
+  setActiveProject: Dispatch<SetStateAction<DiagramProject | undefined>>;
+  refreshProjects: (repository: Repository) => Promise<void>;
   plantUmlSource: string;
+  updateDocumentLive: (document: DiagramDocument) => void;
+  setInspectorVisible: Dispatch<SetStateAction<boolean>>;
+  setExportVisible: Dispatch<SetStateAction<boolean>>;
 }
 
 export function createDiagramEditorActions(context: DiagramEditorActionContext) {
@@ -61,12 +89,12 @@ export function createDiagramEditorActions(context: DiagramEditorActionContext) 
     setPlantUmlError,
     setPlantUmlVisible,
     plantUmlSource,
-    activeProject
-    ,updateDocumentLive
-    ,setInspectorVisible
-    ,setExportVisible
-    ,setActiveProject
-    ,refreshProjects
+    activeProject,
+    updateDocumentLive,
+    setInspectorVisible,
+    setExportVisible,
+    setActiveProject,
+    refreshProjects
   } = context;
 
   function onNodesChange(changes: NodeChange[]) {

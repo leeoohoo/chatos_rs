@@ -2,7 +2,6 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -17,6 +16,7 @@ use chatos_plugin_management_sdk::{
     UpdateUserPluginPreferenceRequest, UpdateUserPluginPreferenceResponse,
     PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
 };
+use chatos_service_runtime::is_public_ip;
 use futures::{stream, Stream, StreamExt};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
@@ -419,45 +419,11 @@ async fn build_artifact_client(url: &Url) -> Result<reqwest::Client, ApiError> {
         })
 }
 
-fn is_public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => is_public_ipv4(ip),
-        IpAddr::V6(ip) => is_public_ipv6(ip),
-    }
-}
-
-fn is_public_ipv4(ip: Ipv4Addr) -> bool {
-    let octets = ip.octets();
-    !(ip.is_private()
-        || ip.is_loopback()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_documentation()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-        || octets[0] == 0
-        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
-        || (octets[0] == 198 && matches!(octets[1], 18 | 19))
-        || octets[0] >= 240)
-}
-
-fn is_public_ipv6(ip: Ipv6Addr) -> bool {
-    let segments = ip.segments();
-    if let Some(mapped) = ip.to_ipv4_mapped() {
-        return is_public_ipv4(mapped);
-    }
-    !(ip.is_loopback()
-        || ip.is_unspecified()
-        || ip.is_multicast()
-        || (segments[0] & 0xfe00) == 0xfc00
-        || (segments[0] & 0xffc0) == 0xfe80
-        || (segments[0] == 0x2001 && segments[1] == 0x0db8))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use futures::TryStreamExt;
+    use std::net::IpAddr;
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
