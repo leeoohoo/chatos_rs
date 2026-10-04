@@ -2,35 +2,6 @@
 # Required Notice: Copyright (c) 2025 AI Chat Team
 
 services:
-  rabbitmq:
-    image: ${RABBITMQ_IMAGE:-rabbitmq:3.13-management-alpine}
-    restart: unless-stopped
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-chatos}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-change_me_rabbitmq_password}
-      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-/}
-    ports:
-      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_PORT:-5672}:5672"
-      - "${CHATOS_INFRA_BIND_HOST:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
-    volumes:
-      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-    deploy:
-      resources:
-        limits:
-          cpus: "${RABBITMQ_CPU_LIMIT:-1.0}"
-          memory: ${RABBITMQ_MEMORY_LIMIT:-1G}
-        reservations:
-          cpus: "${RABBITMQ_CPU_RESERVATION:-0.10}"
-          memory: ${RABBITMQ_MEMORY_RESERVATION:-256M}
-    networks:
-      - cloud
-
   valkey:
     image: ${VALKEY_IMAGE:-valkey/valkey:8-alpine}
     restart: unless-stopped
@@ -222,7 +193,6 @@ services:
       MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS: ${MEMORY_ENGINE_REQUIRE_SIGNED_INTERNAL_REQUESTS:-true}
 
 volumes:
-  rabbitmq-data:
   valkey-data:
   prometheus-data:
   alertmanager-data:

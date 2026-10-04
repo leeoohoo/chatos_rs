@@ -18,19 +18,6 @@ scrape_configs:
     static_configs:
       - targets: ["cadvisor:8080"]
 
-  - job_name: rabbitmq
-    static_configs:
-      - targets: ["rabbitmq:15692"]
-
-  - job_name: rabbitmq-queue-rates
-    metrics_path: /metrics/detailed
-    params:
-      family:
-        - channel_queue_exchange_metrics
-        - channel_queue_metrics
-    static_configs:
-      - targets: ["rabbitmq:15692"]
-
   - job_name: memory-engine
     static_configs:
       - targets: ["host.docker.internal:7081"]

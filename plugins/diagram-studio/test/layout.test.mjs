@@ -130,7 +130,7 @@ package "后台任务系统" as task_boundary {
 package "业务支撑与数据" as data_boundary {
   component "项目与记忆服务" as memory
   database "MongoDB" as database
-  queue "RabbitMQ" as queue
+  database "PostgreSQL Worker" as queue
 }
 package "外部系统" as external_boundary {
   cloud "模型服务" as model

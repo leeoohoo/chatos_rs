@@ -240,9 +240,6 @@ infra_service_host_port() {
     minio)
       printf '%s\n' "${MINIO_API_PORT:-39000}"
       ;;
-    rabbitmq)
-      printf '%s\n' "${RABBITMQ_PORT:-5672}"
-      ;;
     valkey)
       printf '%s\n' "${VALKEY_PORT:-6379}"
       ;;

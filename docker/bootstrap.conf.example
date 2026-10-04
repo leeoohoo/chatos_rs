@@ -23,10 +23,6 @@ POSTGRES_MIGRATION_PASSWORD=change_me_postgres_migration_password
 POSTGRES_SERVER_MAX_CONNECTIONS=200
 EXPECTED_MIGRATED_USER_COUNT=
 EXPECTED_MIGRATED_WECHAT_IDENTITY_COUNT=
-RABBITMQ_DEFAULT_USER=chatos
-RABBITMQ_DEFAULT_PASS=change_me_rabbitmq_password
-RABBITMQ_DEFAULT_VHOST=/
-RABBITMQ_AMQP_VHOST=%2f
 VALKEY_PASSWORD=change_me_valkey_password
 
 # Cross-service model runtime lookup. ChatOS Cloud Agent workers use this

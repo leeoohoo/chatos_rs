@@ -11,26 +11,6 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
-      "id": 1,
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
-      "targets": [{ "editorMode": "code", "expr": "sum(chatos_rabbitmq_queue_observability_enabled * (1 - chatos_rabbitmq_queue_observability_available))", "legendFormat": "Unavailable", "range": true, "refId": "A" }],
-      "title": "Queue Inspection Unavailable",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
-      "id": 2,
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
-      "targets": [{ "editorMode": "code", "expr": "sum(chatos_rabbitmq_queue_messages{role=~\".*dead_letter\"})", "legendFormat": "DLQ", "range": true, "refId": "A" }],
-      "title": "Dead-Letter Messages",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
       "id": 3,
@@ -48,26 +28,6 @@
       "targets": [{ "editorMode": "code", "expr": "chatos_mcp_runtime_session_cache_bytes", "legendFormat": "Cache Bytes", "range": true, "refId": "A" }],
       "title": "MCP Cache Bytes",
       "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
-      "id": 5,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [{ "editorMode": "code", "expr": "chatos_rabbitmq_queue_messages", "legendFormat": "{{service}} / {{role}} / {{queue}}", "range": true, "refId": "A" }],
-      "title": "RabbitMQ Queue Backlog",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
-      "id": 6,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [{ "editorMode": "code", "expr": "chatos_rabbitmq_queue_consumers", "legendFormat": "{{service}} / {{role}} / {{queue}}", "range": true, "refId": "A" }],
-      "title": "RabbitMQ Consumers",
-      "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -114,33 +74,6 @@
         { "editorMode": "code", "expr": "rate(chatos_mcp_runtime_session_cache_oversized_rejections_total[5m])", "legendFormat": "Oversized", "range": true, "refId": "C" }
       ],
       "title": "MCP Cache Eviction and Rejection Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
-      "id": 11,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_queue_messages_published_total[5m]))", "legendFormat": "published / {{queue}}", "range": true, "refId": "A" },
-        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_delivered_ack_total[5m]) + rate(rabbitmq_detailed_channel_messages_delivered_total[5m]))", "legendFormat": "delivered / {{queue}}", "range": true, "refId": "B" },
-        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_acked_total[5m]))", "legendFormat": "acked / {{queue}}", "range": true, "refId": "C" }
-      ],
-      "title": "RabbitMQ Publish and Consumption Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
-      "id": 12,
-      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
-      "targets": [
-        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_queue_messages_published_total{queue=~\".*retry.*\"}[5m]))", "legendFormat": "retry publish / {{queue}}", "range": true, "refId": "A" },
-        { "editorMode": "code", "expr": "sum by (queue) (rate(rabbitmq_detailed_channel_messages_redelivered_total[5m]))", "legendFormat": "redelivered / {{queue}}", "range": true, "refId": "B" }
-      ],
-      "title": "RabbitMQ Retry and Redelivery Rate",
       "type": "timeseries"
     },
     {
@@ -194,7 +127,7 @@
   ],
   "refresh": "15s",
   "schemaVersion": 39,
-  "tags": ["chatos", "http", "rabbitmq", "cache", "containers"],
+  "tags": ["chatos", "http", "cache", "containers"],
   "templating": { "list": [] },
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
