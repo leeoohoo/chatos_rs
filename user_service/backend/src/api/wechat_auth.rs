@@ -12,8 +12,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::auth::normalize_username;
 use crate::auth::{issue_user_token_with_scopes, CurrentPrincipal};
-use crate::auth::{normalize_username, verify_password};
 use crate::models::WeChatMiniProgramDevelopmentLoginRequest;
 use crate::models::{
     AuthUser, ClaimWeChatBindTicketRequest, ClaimWeChatBindTicketResponse, ClientSessionRecord,
@@ -29,7 +29,6 @@ use crate::store::now_rfc3339;
 use crate::store::wechat_auth::BindExternalIdentityResult;
 use crate::wechat::{WeChatExchangeError, WeChatMiniProgramClient, WeChatMiniProgramIdentity};
 
-use super::unauthorized;
 use super::{
     bad_request, conflict, forbidden, internal_error, not_found, service_unavailable, ApiResult,
     ApiStatusResult,
@@ -142,62 +141,14 @@ pub async fn development_login(
         "wechat-development:{}",
         crate::login_throttle::request_source(&headers, addr)
     );
-    if state
-        .login_throttle
-        .is_locked(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        )
-        .await
-        .map_err(internal_error)?
-    {
-        return Err(unauthorized("invalid username or password"));
-    }
-
-    let Some(user) = state
-        .store
-        .find_user_by_username(username.as_str())
-        .await
-        .map_err(internal_error)?
-    else {
-        state
-            .login_throttle
-            .record_failure(
-                username.as_str(),
-                Some(source.as_str()),
-                now_unix,
-                &state.config,
-            )
-            .await
-            .map_err(internal_error)?;
-        return Err(unauthorized("invalid username or password"));
-    };
-    if !user.enabled || !verify_password(input.password.as_str(), user.password_hash.as_str()) {
-        state
-            .login_throttle
-            .record_failure(
-                username.as_str(),
-                Some(source.as_str()),
-                now_unix,
-                &state.config,
-            )
-            .await
-            .map_err(internal_error)?;
-        return Err(unauthorized("invalid username or password"));
-    }
-
-    state
-        .login_throttle
-        .record_success(username.as_str(), Some(source.as_str()))
-        .await
-        .map_err(internal_error)?;
-    state
-        .store
-        .touch_user_last_login(user.id.as_str())
-        .await
-        .map_err(internal_error)?;
+    let user = super::auth::authenticate_password_user(
+        &state,
+        username.as_str(),
+        input.password.as_str(),
+        source.as_str(),
+        now_unix,
+    )
+    .await?;
     let (token, client_session_id) = issue_client_session(
         &state,
         &user,

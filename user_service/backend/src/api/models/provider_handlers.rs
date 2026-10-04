@@ -152,33 +152,7 @@ pub(in crate::api) async fn update_model_provider(
     Extension(principal): Extension<CurrentPrincipal>,
     Json(input): Json<UpdateUserModelProviderRequest>,
 ) -> ApiResult<serde_json::Value> {
-    let Some(mut record) = state
-        .store
-        .find_user_model_provider_by_id(id.as_str())
-        .await
-        .map_err(internal_error)?
-    else {
-        return Err(not_found("model provider not found"));
-    };
-    if !is_supported_provider(record.provider.as_str()) {
-        return Err(not_found("model provider not found"));
-    }
-    ensure_provider_access(&principal, &record)?;
-    let previous = record.clone();
-    apply_model_provider_update(&mut record, input)?;
-    record.updated_at = now_rfc3339();
-    let saved = state
-        .store
-        .save_user_model_provider(&record)
-        .await
-        .map_err(internal_error)?;
-    let sync_warnings =
-        sync_imported_models_from_provider_state(&state, &saved, Some(&previous)).await?;
-    Ok(Json(model_provider_public_value(
-        saved,
-        false,
-        Some(sync_warnings),
-    )))
+    update_model_provider_record(&state, id.as_str(), &principal, input, false).await
 }
 
 pub(in crate::api) async fn refresh_model_provider_models(
@@ -187,9 +161,19 @@ pub(in crate::api) async fn refresh_model_provider_models(
     Extension(principal): Extension<CurrentPrincipal>,
     Json(input): Json<UpdateUserModelProviderRequest>,
 ) -> ApiResult<serde_json::Value> {
+    update_model_provider_record(&state, id.as_str(), &principal, input, true).await
+}
+
+async fn update_model_provider_record(
+    state: &AppState,
+    id: &str,
+    principal: &CurrentPrincipal,
+    input: UpdateUserModelProviderRequest,
+    refresh_models: bool,
+) -> ApiResult<serde_json::Value> {
     let Some(mut record) = state
         .store
-        .find_user_model_provider_by_id(id.as_str())
+        .find_user_model_provider_by_id(id)
         .await
         .map_err(internal_error)?
     else {
@@ -198,7 +182,7 @@ pub(in crate::api) async fn refresh_model_provider_models(
     if !is_supported_provider(record.provider.as_str()) {
         return Err(not_found("model provider not found"));
     }
-    ensure_provider_access(&principal, &record)?;
+    ensure_provider_access(principal, &record)?;
     let previous = record.clone();
     apply_model_provider_update(&mut record, input)?;
     record.updated_at = now_rfc3339();
@@ -208,9 +192,15 @@ pub(in crate::api) async fn refresh_model_provider_models(
         .await
         .map_err(internal_error)?;
     let mut sync_warnings =
-        sync_imported_models_from_provider_state(&state, &saved, Some(&previous)).await?;
-    let (provider, refresh_warnings) = refresh_provider_models_from_record(&state, saved).await?;
-    sync_warnings.extend(refresh_warnings);
+        sync_imported_models_from_provider_state(state, &saved, Some(&previous)).await?;
+    let provider = if refresh_models {
+        let (provider, refresh_warnings) =
+            refresh_provider_models_from_record(state, saved).await?;
+        sync_warnings.extend(refresh_warnings);
+        provider
+    } else {
+        saved
+    };
     Ok(Json(model_provider_public_value(
         provider,
         false,

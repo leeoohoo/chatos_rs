@@ -17,6 +17,7 @@ mod internal_token;
 mod request_id;
 mod runtime;
 mod security;
+mod user_service_auth;
 mod utils;
 
 pub use config::{DiscoveryMode, RuntimeConfig};
@@ -49,5 +50,9 @@ pub use runtime::{
     resolve_service_url, ChatosServiceRuntime,
 };
 pub use security::{is_production_environment, validate_production_secret};
+pub use user_service_auth::{
+    UserServiceAuthUser, UserServiceLoginRequest, UserServiceLoginResponse,
+    UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
+};
 
 pub const DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN: &str = "chatos-memory-engine-dev-operator-token";

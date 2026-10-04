@@ -6,6 +6,47 @@ use super::*;
 mod maintenance_services;
 
 impl AppState {
+    async fn migrate_release_default_values<F>(
+        &self,
+        defaults: &BTreeMap<String, Value>,
+        ensure_values: F,
+    ) -> Result<BTreeMap<(String, i64), BTreeMap<String, Value>>, String>
+    where
+        F: Fn(
+            &mut BTreeMap<String, Value>,
+            &BTreeMap<String, Value>,
+        ) -> Result<Vec<String>, String>,
+    {
+        let mut values_by_release = BTreeMap::new();
+        for mut release in self.store.list_all_releases().await? {
+            let changed_keys = ensure_values(&mut release.values, defaults)?;
+            let effective_values = defaults
+                .iter()
+                .map(|(key, fallback)| {
+                    (
+                        key.clone(),
+                        release
+                            .values
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            values_by_release.insert(
+                (release.environment.clone(), release.revision),
+                effective_values,
+            );
+            if !changed_keys.is_empty() {
+                for key in changed_keys {
+                    ensure_changed_key(&mut release.changed_keys, key.as_str());
+                }
+                self.store.save_release(&release).await?;
+            }
+        }
+        Ok(values_by_release)
+    }
+
     pub(super) async fn migrate_postgres_pool_config(&self) -> Result<(), String> {
         let definitions = self.store.list_definitions().await?;
         let defaults = definitions
@@ -246,34 +287,11 @@ impl AppState {
                 "Local Connector runtime configuration definitions are incomplete".to_string(),
             );
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys =
-                ensure_local_connector_runtime_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, fallback)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| fallback.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_local_connector_runtime_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if snapshot.service_name != "local-connector-service" {
@@ -323,34 +341,11 @@ impl AppState {
                 "memory engine runtime configuration definitions are incomplete".to_string(),
             );
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_memory_engine_runtime_values(&mut release.values, &defaults);
-            let effective_values = defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                effective_values,
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_memory_engine_runtime_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if snapshot.service_name != "memory-engine" {

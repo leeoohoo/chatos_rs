@@ -8,47 +8,14 @@ use chatos_service_runtime::http_body::{
 };
 use chatos_service_runtime::{
     bearer_token_from_headers, normalized_identity_text as normalized, BearerTokenError,
+    UserServiceAuthUser, UserServiceLoginRequest, UserServiceLoginResponse,
+    UserServiceVerifyResponse,
 };
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::AppConfig;
 use crate::models::{CurrentUser, LoginRequest, LoginResponse};
-
-#[derive(Debug, Serialize)]
-struct UserServiceLoginRequest<'a> {
-    username: &'a str,
-    password: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceAuthUser {
-    id: String,
-    username: Option<String>,
-    display_name: Option<String>,
-    role: Option<String>,
-    principal_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceLoginResponse {
-    token: String,
-    user: UserServiceAuthUser,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifiedPrincipal {
-    principal_type: String,
-    user_id: Option<String>,
-    username: Option<String>,
-    display_name: Option<String>,
-    role: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifyResponse {
-    principal: UserServiceVerifiedPrincipal,
-}
 
 pub async fn login(
     config: &AppConfig,

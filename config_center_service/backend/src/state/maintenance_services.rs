@@ -9,33 +9,11 @@ impl AppState {
         if defaults.len() != PLATFORM_PRESSURE_CONFIG_KEYS.len() {
             return Err("platform pressure configuration definitions are incomplete".to_string());
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_platform_pressure_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, default)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| default.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_platform_pressure_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             let snapshot_defaults = values_by_release
@@ -77,35 +55,11 @@ impl AppState {
                 "internal request security configuration definitions are incomplete".to_string(),
             );
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys =
-                ensure_internal_request_security_values(&mut release.values, &defaults);
-            let effective_values = defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                effective_values,
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_internal_request_security_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if ![
@@ -188,34 +142,11 @@ impl AppState {
         if defaults.len() != 6 {
             return Err("user service SMTP configuration definitions are incomplete".to_string());
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_user_service_smtp_values(&mut release.values, &defaults);
-            let effective_values = defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                effective_values,
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_user_service_smtp_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if snapshot.service_name != "user-service" {
@@ -267,34 +198,9 @@ impl AppState {
                 "user service runtime configuration definitions are incomplete".to_string(),
             );
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys = ensure_user_service_startup_values(&mut release.values, &defaults)?;
-            let effective_values = defaults
-                .iter()
-                .map(|(key, fallback)| {
-                    (
-                        key.clone(),
-                        release
-                            .values
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| fallback.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                effective_values,
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, ensure_user_service_startup_values)
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             if snapshot.service_name != "user-service" {
@@ -345,34 +251,11 @@ impl AppState {
                 "Plugin Management runtime configuration definitions are incomplete".to_string(),
             );
         }
-        let mut values_by_release = BTreeMap::new();
-
-        for mut release in self.store.list_all_releases().await? {
-            let changed_keys =
-                ensure_plugin_management_runtime_values(&mut release.values, &defaults);
-            values_by_release.insert(
-                (release.environment.clone(), release.revision),
-                defaults
-                    .iter()
-                    .map(|(key, fallback)| {
-                        (
-                            key.clone(),
-                            release
-                                .values
-                                .get(key)
-                                .cloned()
-                                .unwrap_or_else(|| fallback.clone()),
-                        )
-                    })
-                    .collect::<BTreeMap<_, _>>(),
-            );
-            if !changed_keys.is_empty() {
-                for key in changed_keys {
-                    ensure_changed_key(&mut release.changed_keys, key.as_str());
-                }
-                self.store.save_release(&release).await?;
-            }
-        }
+        let values_by_release = self
+            .migrate_release_default_values(&defaults, |values, defaults| {
+                Ok(ensure_plugin_management_runtime_values(values, defaults))
+            })
+            .await?;
 
         for mut snapshot in self.store.list_all_snapshots().await? {
             let release_defaults = values_by_release

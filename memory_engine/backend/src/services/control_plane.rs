@@ -97,6 +97,31 @@ pub fn build_rollup_settings_from_policy(policy: &EngineJobPolicy) -> RollupSett
     }
 }
 
+pub fn apply_rollup_setting_overrides(
+    settings: &mut RollupSettings,
+    token_limit: Option<i64>,
+    target_summary_tokens: Option<i64>,
+    count_limit: Option<i64>,
+    keep_level0_count: Option<i64>,
+    max_level: Option<i64>,
+) {
+    if let Some(value) = token_limit {
+        settings.token_limit = value.max(500);
+    }
+    if let Some(value) = target_summary_tokens {
+        settings.target_summary_tokens = value.max(128);
+    }
+    if let Some(value) = count_limit {
+        settings.count_limit = value.max(0);
+    }
+    if let Some(value) = keep_level0_count {
+        settings.keep_level0_count = value.max(0);
+    }
+    if let Some(value) = max_level {
+        settings.max_level = value.max(1);
+    }
+}
+
 pub fn merge_metadata(
     base: Option<serde_json::Value>,
     extra: serde_json::Value,

@@ -14,7 +14,8 @@ use super::super::render::{
 use super::super::selectors::mark_summary_sources_subject_memory_summarized;
 use super::super::{PendingSourceSummary, SubjectMemoryJobSettings};
 use super::common::{
-    build_failed_job_run, finish_subject_memory_job_run, SubjectMemoryJobProgress,
+    build_failed_job_run, finish_subject_memory_job_run, tombstone_generated_subject_memory,
+    SubjectMemoryJobProgress,
 };
 
 pub(crate) async fn process_level0_selection(
@@ -153,31 +154,12 @@ pub(crate) async fn process_level0_selection(
     {
         Ok(marked) => marked,
         Err(err) => {
-            let delete_req = UpsertSubjectMemoryRequest {
-                id: None,
-                tenant_id: req.tenant_id.clone(),
-                source_id: req.source_id.clone(),
-                memory_type: req.memory_type.clone(),
-                text: String::new(),
-                level: Some(0),
-                source_digest: Some(source_digest.clone()),
-                confidence: None,
-                last_seen_at: None,
-                metadata: None,
-                rollup_status: Some("pending".to_string()),
-                rollup_memory_key: None,
-                rolled_up_at: None,
-                status: Some("deleted".to_string()),
-                created_at: None,
-                updated_at: None,
-            };
-            let _ = subject_memories::upsert_generated_subject_memory(
+            tombstone_generated_subject_memory(
                 db,
-                req.subject_id.as_str(),
+                req,
                 memory_key.as_str(),
-                delete_req,
-                Some(source_digest.clone()),
-                "pending",
+                source_digest.as_str(),
+                0,
             )
             .await;
             finish_subject_memory_job_run(

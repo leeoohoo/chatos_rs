@@ -64,21 +64,14 @@ pub async fn run_pending_rollups_once(
         )
         .max(1);
     let mut settings = cp_service::build_rollup_settings_from_policy(&policy);
-    if let Some(value) = req.token_limit {
-        settings.token_limit = value.max(500);
-    }
-    if let Some(value) = req.target_summary_tokens {
-        settings.target_summary_tokens = value.max(128);
-    }
-    if let Some(value) = req.count_limit {
-        settings.count_limit = value.max(0);
-    }
-    if let Some(value) = req.keep_level0_count {
-        settings.keep_level0_count = value.max(0);
-    }
-    if let Some(value) = req.max_level {
-        settings.max_level = value.max(1);
-    }
+    cp_service::apply_rollup_setting_overrides(
+        &mut settings,
+        req.token_limit,
+        req.target_summary_tokens,
+        req.count_limit,
+        req.keep_level0_count,
+        req.max_level,
+    );
 
     crate::jobs::summary_jobs::run_pending_thread_rollups(
         &state.pool,

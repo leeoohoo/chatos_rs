@@ -8,55 +8,18 @@ use chatos_service_runtime::http_body::{
 };
 use chatos_service_runtime::{
     bearer_token_from_headers as parse_bearer_token_from_headers,
-    normalized_identity_text as normalize_identity_text, BearerTokenError,
+    normalized_identity_text as normalize_identity_text, BearerTokenError, UserServiceAuthUser,
+    UserServiceLoginRequest, UserServiceLoginResponse, UserServiceVerifiedPrincipal,
+    UserServiceVerifyResponse,
 };
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::AppConfig;
 use crate::models::{CurrentUser, LoginRequest, LoginResponse};
 
 #[derive(Debug, Clone)]
 pub struct AccessToken(pub String);
-
-#[derive(Debug, Serialize)]
-struct UserServiceLoginRequest<'a> {
-    username: &'a str,
-    password: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceAuthUser {
-    id: String,
-    username: Option<String>,
-    display_name: Option<String>,
-    role: Option<String>,
-    principal_type: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceLoginResponse {
-    token: String,
-    user: UserServiceAuthUser,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifiedPrincipal {
-    principal_type: String,
-    user_id: Option<String>,
-    username: Option<String>,
-    display_name: Option<String>,
-    role: Option<String>,
-    agent_account_id: Option<String>,
-    owner_user_id: Option<String>,
-    owner_username: Option<String>,
-    owner_display_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifyResponse {
-    principal: UserServiceVerifiedPrincipal,
-}
 
 pub async fn login_via_user_service(
     config: &AppConfig,

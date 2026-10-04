@@ -7,7 +7,6 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use axum::{Extension, Json};
 use chrono::Utc;
-use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -47,75 +46,14 @@ pub async fn login(
 
     let now_unix = Utc::now().timestamp();
     let source = crate::login_throttle::request_source(&headers, addr);
-    if state
-        .login_throttle
-        .is_locked(
-            username.as_str(),
-            Some(source.as_str()),
-            now_unix,
-            &state.config,
-        )
-        .await
-        .map_err(internal_error)?
-    {
-        return Err(unauthorized("invalid username or password"));
-    }
-
-    let Some(user) = state
-        .store
-        .find_user_by_username(username.as_str())
-        .await
-        .map_err(internal_error)?
-    else {
-        state
-            .login_throttle
-            .record_failure(
-                username.as_str(),
-                Some(source.as_str()),
-                now_unix,
-                &state.config,
-            )
-            .await
-            .map_err(internal_error)?;
-        return Err(unauthorized("invalid username or password"));
-    };
-    if !user.enabled {
-        state
-            .login_throttle
-            .record_failure(
-                username.as_str(),
-                Some(source.as_str()),
-                now_unix,
-                &state.config,
-            )
-            .await
-            .map_err(internal_error)?;
-        return Err(unauthorized("invalid username or password"));
-    }
-    if !verify_password(input.password.as_str(), user.password_hash.as_str()) {
-        state
-            .login_throttle
-            .record_failure(
-                username.as_str(),
-                Some(source.as_str()),
-                now_unix,
-                &state.config,
-            )
-            .await
-            .map_err(internal_error)?;
-        return Err(unauthorized("invalid username or password"));
-    }
-    state
-        .login_throttle
-        .record_success(username.as_str(), Some(source.as_str()))
-        .await
-        .map_err(internal_error)?;
-
-    state
-        .store
-        .touch_user_last_login(user.id.as_str())
-        .await
-        .map_err(internal_error)?;
+    let user = authenticate_password_user(
+        &state,
+        username.as_str(),
+        input.password.as_str(),
+        source.as_str(),
+        now_unix,
+    )
+    .await?;
     let _ = ensure_harness_user_public_register_on_login(&state, &user).await;
     let token = encode_user_token(&state.config, &user).map_err(internal_error)?;
 
@@ -130,6 +68,53 @@ pub async fn login(
             0,
         ),
     }))
+}
+
+pub(super) async fn authenticate_password_user(
+    state: &AppState,
+    username: &str,
+    password: &str,
+    source: &str,
+    now_unix: i64,
+) -> Result<UserRecord, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    if state
+        .login_throttle
+        .is_locked(username, Some(source), now_unix, &state.config)
+        .await
+        .map_err(internal_error)?
+    {
+        return Err(super::unauthorized("invalid username or password"));
+    }
+
+    let user = state
+        .store
+        .find_user_by_username(username)
+        .await
+        .map_err(internal_error)?;
+    let valid = user
+        .as_ref()
+        .is_some_and(|user| user.enabled && verify_password(password, user.password_hash.as_str()));
+    if !valid {
+        state
+            .login_throttle
+            .record_failure(username, Some(source), now_unix, &state.config)
+            .await
+            .map_err(internal_error)?;
+        return Err(super::unauthorized("invalid username or password"));
+    }
+
+    let user = user.expect("validated password user must exist");
+    state
+        .login_throttle
+        .record_success(username, Some(source))
+        .await
+        .map_err(internal_error)?;
+    state
+        .store
+        .touch_user_last_login(user.id.as_str())
+        .await
+        .map_err(internal_error)?;
+    Ok(user)
 }
 
 pub async fn send_register_email_code(
@@ -599,13 +584,6 @@ pub async fn logout(
         .await
         .map_err(internal_error)?;
     Ok(axum::http::StatusCode::NO_CONTENT)
-}
-
-fn unauthorized(message: &str) -> (axum::http::StatusCode, Json<serde_json::Value>) {
-    (
-        axum::http::StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": message })),
-    )
 }
 
 fn current_auth_user(

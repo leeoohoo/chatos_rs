@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+mod cleanup;
 mod job_run;
 mod prepare;
 mod state;
@@ -16,3 +17,4 @@ pub(crate) const SUBJECT_MEMORY_JOB_TYPE: &str = "subject_memory";
 pub(crate) const SUBJECT_MEMORY_COMPAT_JOB_TYPE: &str = "agent_memory";
 pub(crate) const SUBJECT_MEMORY_SCOPE_TRIGGER: &str = "subject_scope_runner";
 pub(crate) const SUBJECT_MEMORY_MANUAL_TRIGGER: &str = "manual_subject_memory";
+pub(crate) use cleanup::tombstone_generated_subject_memory;
