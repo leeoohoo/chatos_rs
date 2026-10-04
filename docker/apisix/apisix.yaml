@@ -233,16 +233,38 @@ routes:
 
   # The native connector uses its historical public paths. Route the whole
   # dedicated hostname to the connector instead of exposing port 39230.
-  - id: local-connector-public-host
-    priority: 700
-    hosts:
+  - id: block-local-connector-public-metrics
+    priority: 950
+    hosts: &connector_hosts
       - connector.jgoool.com
       - local-connector.jgoool.com
+    uri: /metrics
+    plugins:
+      request-id: *request_id
+      fault-injection: *reject_not_found
+
+  - id: block-local-connector-aliased-metrics
+    priority: 950
+    uri: /api/connector/metrics
+    plugins:
+      request-id: *request_id
+      fault-injection: *reject_not_found
+
+  - id: local-connector-public-host
+    priority: 700
+    hosts: *connector_hosts
     uri: /*
     plugins:
       request-id: *request_id
       client-control:
         max_body_size: 134217728
+      limit-req: &api_ip_rate_limit
+        rate: 60
+        burst: 120
+        rejected_code: 429
+        rejected_msg: '{"error":"gateway rate limit exceeded"}'
+        key_type: var
+        key: remote_addr
     enable_websocket: true
     upstream:
       type: roundrobin
@@ -268,13 +290,7 @@ routes:
         allow_credential: false
       client-control: &api_body_limit
         max_body_size: 134217728
-      limit-req: &api_ip_rate_limit
-        rate: 60
-        burst: 120
-        rejected_code: 429
-        rejected_msg: '{"error":"gateway rate limit exceeded"}'
-        key_type: var
-        key: remote_addr
+      limit-req: *api_ip_rate_limit
       proxy-rewrite:
         regex_uri:
           - "^/api/user/?(.*)"

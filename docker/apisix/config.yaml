@@ -16,3 +16,16 @@ apisix:
 
 nginx_config:
   error_log_level: warn
+  http:
+    # The public listener is bound to loopback and reached through the host
+    # Nginx reverse proxy. Trust only private/loopback proxy peers and use the
+    # X-Real-IP value that Nginx overwrites on every request.
+    real_ip_header: X-Real-IP
+    real_ip_recursive: "off"
+    real_ip_from:
+      - 127.0.0.1
+      - "::1"
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+      - "fc00::/7"
