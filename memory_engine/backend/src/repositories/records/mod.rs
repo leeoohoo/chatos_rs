@@ -61,6 +61,8 @@ pub use status::{
     claim_records_for_summary, mark_claimed_records_summarized, mark_records_summarized,
     release_records_from_summary, reset_records_summary_by_summary_id,
 };
+#[cfg(test)]
+pub(crate) use writes::upsert_record_row;
 #[allow(unused_imports)]
 pub use writes::{batch_sync_records, delete_record_by_id, delete_records_by_thread};
 

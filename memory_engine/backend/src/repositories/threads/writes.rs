@@ -64,7 +64,7 @@ pub async fn upsert_thread(
             .archived_at
             .or_else(|| (status == "archived").then(|| updated_at.clone())),
     };
-    sqlx::query(
+    let result = sqlx::query(
         "INSERT INTO engine_threads \
          (id,tenant_id,source_id,subject_id,thread_type,external_thread_id,status,summary_status, \
           pending_record_count,pending_summary_tokens,summary_job_run_id,summary_locked_at, \
@@ -72,7 +72,9 @@ pub async fn upsert_thread(
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) \
          ON CONFLICT(id) DO UPDATE SET subject_id=EXCLUDED.subject_id,thread_type=EXCLUDED.thread_type, \
          external_thread_id=EXCLUDED.external_thread_id,status=EXCLUDED.status, \
-         updated_at=EXCLUDED.updated_at,archived_at=EXCLUDED.archived_at,data=EXCLUDED.data",
+         updated_at=EXCLUDED.updated_at,archived_at=EXCLUDED.archived_at,data=EXCLUDED.data \
+         WHERE engine_threads.tenant_id=EXCLUDED.tenant_id \
+         AND engine_threads.source_id=EXCLUDED.source_id",
     )
     .bind(&thread.id)
     .bind(&thread.tenant_id)
@@ -94,7 +96,32 @@ pub async fn upsert_thread(
     .execute(db)
     .await
     .map_err(|error| error.to_string())?;
+    if result.rows_affected() == 0 {
+        return Err("thread id is already owned by another tenant or source".to_string());
+    }
     Ok(thread)
+}
+
+pub(crate) async fn ensure_thread_scope(
+    db: &Db,
+    tenant_id: &str,
+    source_id: &str,
+    thread_id: &str,
+) -> Result<(), String> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM engine_threads \
+         WHERE tenant_id=$1 AND source_id=$2 AND id=$3)",
+    )
+    .bind(tenant_id)
+    .bind(source_id)
+    .bind(thread_id)
+    .fetch_one(db)
+    .await
+    .map_err(|error| error.to_string())?;
+    if !exists {
+        return Err("thread not found in the requested tenant and source scope".to_string());
+    }
+    Ok(())
 }
 
 pub async fn delete_thread(

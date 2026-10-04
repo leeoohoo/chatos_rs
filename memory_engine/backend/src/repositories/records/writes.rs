@@ -89,15 +89,7 @@ async fn batch_sync_records_inner(
         if let Some(key) = previous.as_ref().and_then(CompactTurnKey::from_record) {
             keys.insert(key);
         }
-        sqlx::query(
-            "INSERT INTO engine_records(id,thread_id,tenant_id,source_id,external_record_id,role,record_type,summary_status,summary_id,created_at,data) \
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET \
-             external_record_id=EXCLUDED.external_record_id,role=EXCLUDED.role,record_type=EXCLUDED.record_type, \
-             summary_status=EXCLUDED.summary_status,summary_id=EXCLUDED.summary_id,created_at=EXCLUDED.created_at,data=EXCLUDED.data"
-        ).bind(&record.id).bind(&record.thread_id).bind(&record.tenant_id).bind(&record.source_id)
-          .bind(&record.external_record_id).bind(&record.role).bind(&record.record_type).bind(&record.summary_status)
-          .bind(&record.summary_id).bind(timestamp(&record.created_at)?).bind(json(&record)?)
-          .execute(&mut *tx).await.map_err(|e|e.to_string())?;
+        upsert_record_row(&mut tx, &record).await?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
     for key in keys {
@@ -123,6 +115,45 @@ async fn batch_sync_records_inner(
         .await?;
     }
     Ok(inserted)
+}
+
+pub(crate) async fn upsert_record_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    record: &EngineRecord,
+) -> Result<(), String> {
+    let result = sqlx::query(
+        "INSERT INTO engine_records(id,thread_id,tenant_id,source_id,external_record_id,role,record_type,summary_status,summary_id,created_at,data) \
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11 \
+         WHERE EXISTS(SELECT 1 FROM engine_threads \
+         WHERE id=$2 AND tenant_id=$3 AND source_id=$4) \
+         ON CONFLICT(id) DO UPDATE SET \
+         external_record_id=EXCLUDED.external_record_id,role=EXCLUDED.role,record_type=EXCLUDED.record_type, \
+         summary_status=EXCLUDED.summary_status,summary_id=EXCLUDED.summary_id,created_at=EXCLUDED.created_at,data=EXCLUDED.data \
+         WHERE engine_records.tenant_id=EXCLUDED.tenant_id \
+         AND engine_records.source_id=EXCLUDED.source_id \
+         AND engine_records.thread_id=EXCLUDED.thread_id",
+    )
+    .bind(&record.id)
+    .bind(&record.thread_id)
+    .bind(&record.tenant_id)
+    .bind(&record.source_id)
+    .bind(&record.external_record_id)
+    .bind(&record.role)
+    .bind(&record.record_type)
+    .bind(&record.summary_status)
+    .bind(&record.summary_id)
+    .bind(timestamp(&record.created_at)?)
+    .bind(json(record)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(|error| error.to_string())?;
+    if result.rows_affected() == 0 {
+        return Err(
+            "record id is already owned by another tenant, source, or thread, or the thread scope does not exist"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn make_record(

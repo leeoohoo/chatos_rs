@@ -8,7 +8,10 @@ use chatos_cloud_agent_runtime::{
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::models::{EngineRecord, EngineSummary, UpsertSubjectMemoryRequest, UpsertThreadRequest};
+use crate::models::{
+    EngineRecord, EngineSummary, UpsertSubjectMemoryRequest, UpsertThreadRequest,
+    UpsertThreadSummaryRequest,
+};
 use crate::repositories::postgres::{json, timestamp};
 
 async fn pool() -> Option<crate::db::Db> {
@@ -18,6 +21,175 @@ async fn pool() -> Option<crate::db::Db> {
         .connect(&url)
         .await
         .ok()
+}
+
+#[tokio::test]
+async fn postgres_rejects_cross_scope_id_collisions_without_mutating_owner_data() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    let suffix = Uuid::new_v4().to_string();
+    let tenant_a = format!("scope-owner-a-{suffix}");
+    let tenant_b = format!("scope-owner-b-{suffix}");
+    let source_a = format!("scope-source-a-{suffix}");
+    let source_b = format!("scope-source-b-{suffix}");
+    let thread_a = format!("scope-thread-shared-{suffix}");
+    let thread_b = format!("scope-thread-b-{suffix}");
+    let subject_a = format!("scope-subject-a-{suffix}");
+    let subject_b = format!("scope-subject-b-{suffix}");
+    let timestamp = "2026-10-04T08:00:00Z".to_string();
+
+    let make_thread =
+        |tenant: &str, source: &str, subject: &str, title: &str| UpsertThreadRequest {
+            tenant_id: tenant.to_string(),
+            source_id: source.to_string(),
+            subject_id: subject.to_string(),
+            thread_type: "chat".to_string(),
+            external_thread_id: None,
+            title: Some(title.to_string()),
+            labels: None,
+            metadata: None,
+            status: Some("active".to_string()),
+            created_at: Some(timestamp.clone()),
+            updated_at: Some(timestamp.clone()),
+            archived_at: None,
+        };
+    super::threads::upsert_thread(
+        &pool,
+        &thread_a,
+        make_thread(&tenant_a, &source_a, &subject_a, "owner title"),
+    )
+    .await
+    .expect("insert owner thread");
+    let thread_error = super::threads::upsert_thread(
+        &pool,
+        &thread_a,
+        make_thread(&tenant_b, &source_b, &subject_b, "attacker title"),
+    )
+    .await
+    .expect_err("cross-scope thread id must be rejected");
+    assert!(thread_error.contains("already owned"));
+    let owner_thread = super::threads::get_thread_by_id(&pool, &tenant_a, &source_a, &thread_a)
+        .await
+        .expect("load owner thread")
+        .expect("owner thread still exists");
+    assert_eq!(owner_thread.title.as_deref(), Some("owner title"));
+
+    super::threads::upsert_thread(
+        &pool,
+        &thread_b,
+        make_thread(&tenant_b, &source_b, &subject_b, "tenant b thread"),
+    )
+    .await
+    .expect("insert tenant B thread");
+
+    let record_id = format!("scope-record-shared-{suffix}");
+    let owner_record = EngineRecord {
+        id: record_id.clone(),
+        thread_id: thread_a.clone(),
+        tenant_id: tenant_a.clone(),
+        source_id: source_a.clone(),
+        external_record_id: None,
+        role: "user".to_string(),
+        record_type: "message".to_string(),
+        content: "owner record".to_string(),
+        structured_payload: None,
+        metadata: None,
+        summary_status: "pending".to_string(),
+        summary_id: None,
+        summarized_at: None,
+        created_at: timestamp.clone(),
+    };
+    let mut tx = pool.begin().await.expect("begin owner record transaction");
+    super::records::upsert_record_row(&mut tx, &owner_record)
+        .await
+        .expect("insert owner record");
+    tx.commit().await.expect("commit owner record");
+
+    let attacker_record = EngineRecord {
+        thread_id: thread_b.clone(),
+        tenant_id: tenant_b.clone(),
+        source_id: source_b.clone(),
+        content: "attacker record".to_string(),
+        ..owner_record.clone()
+    };
+    let mut tx = pool
+        .begin()
+        .await
+        .expect("begin attacker record transaction");
+    let record_error = super::records::upsert_record_row(&mut tx, &attacker_record)
+        .await
+        .expect_err("cross-scope record id must be rejected");
+    assert!(record_error.contains("already owned"));
+    tx.rollback().await.expect("rollback rejected record");
+    let stored_record =
+        super::records::get_record_by_id(&pool, &record_id, &tenant_a, &source_a, Some(&thread_a))
+            .await
+            .expect("load owner record")
+            .expect("owner record still exists");
+    assert_eq!(stored_record.content, "owner record");
+
+    let summary_id = format!("scope-summary-shared-{suffix}");
+    let make_summary =
+        |tenant: &str, source: &str, subject: &str, text: &str| UpsertThreadSummaryRequest {
+            tenant_id: tenant.to_string(),
+            source_id: source.to_string(),
+            subject_id: subject.to_string(),
+            summary_type: "thread_incremental".to_string(),
+            level: Some(0),
+            source_digest: None,
+            summary_text: text.to_string(),
+            source_record_start_id: None,
+            source_record_end_id: None,
+            source_record_count: Some(1),
+            status: Some("done".to_string()),
+            rollup_status: Some("pending".to_string()),
+            rollup_summary_id: None,
+            rolled_up_at: None,
+            subject_memory_summarized: Some(0),
+            subject_memory_summarized_at: None,
+            metadata: None,
+            created_at: Some(timestamp.clone()),
+            updated_at: Some(timestamp.clone()),
+        };
+    super::summaries::upsert_thread_summary(
+        &pool,
+        &thread_a,
+        &summary_id,
+        make_summary(&tenant_a, &source_a, &subject_a, "owner summary"),
+    )
+    .await
+    .expect("insert owner summary");
+    let summary_error = super::summaries::upsert_thread_summary(
+        &pool,
+        &thread_b,
+        &summary_id,
+        make_summary(&tenant_b, &source_b, &subject_b, "attacker summary"),
+    )
+    .await
+    .expect_err("cross-scope summary id must be rejected");
+    assert!(summary_error.contains("already owned"));
+    let stored_summary = sqlx::query_scalar::<_, sqlx::types::Json<serde_json::Value>>(
+        "SELECT data FROM engine_summaries \
+         WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4",
+    )
+    .bind(&tenant_a)
+    .bind(&source_a)
+    .bind(&thread_a)
+    .bind(&summary_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load owner summary");
+    let stored_summary: EngineSummary =
+        crate::repositories::postgres::decode(stored_summary).expect("decode owner summary");
+    assert_eq!(stored_summary.summary_text, "owner summary");
+
+    super::threads::delete_thread(&pool, &tenant_a, &source_a, &thread_a)
+        .await
+        .expect("cleanup owner thread");
+    super::threads::delete_thread(&pool, &tenant_b, &source_b, &thread_b)
+        .await
+        .expect("cleanup tenant B thread");
 }
 
 #[tokio::test]
