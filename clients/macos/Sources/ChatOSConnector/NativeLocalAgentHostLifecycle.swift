@@ -601,7 +601,10 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             do {
                 let response = try LocalAgentHostFrameCodec.read(
                     from: output,
-                    deadline: UInt64.max
+                    deadline: UInt64.max,
+                    shouldCancel: { [weak self] in
+                        self?.isTransportClosed ?? true
+                    }
                 )
                 let commandID = try Self.commandID(in: response)
                 completePendingResponse(commandID: commandID, response: response)
@@ -746,6 +749,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
 enum LocalAgentHostFrameCodec {
     static let maximumFrameBytes = 4 * 1_024 * 1_024
+    private static let maximumPollSliceMilliseconds: UInt64 = 250
 
     static func write(
         _ payload: Data,
@@ -763,16 +767,27 @@ enum LocalAgentHostFrameCodec {
 
     static func read(
         from handle: FileHandle,
-        deadline: UInt64 = deadline(timeoutMilliseconds: 75_000)
+        deadline: UInt64 = deadline(timeoutMilliseconds: 75_000),
+        shouldCancel: @Sendable () -> Bool = { false }
     ) throws -> Data {
-        let header = try readExactly(4, from: handle.fileDescriptor, deadline: deadline)
+        let header = try readExactly(
+            4,
+            from: handle.fileDescriptor,
+            deadline: deadline,
+            shouldCancel: shouldCancel
+        )
         let length = header.withUnsafeBytes { rawBuffer in
             rawBuffer.loadUnaligned(as: UInt32.self).bigEndian
         }
         guard length > 0, length <= maximumFrameBytes else {
             throw NativeLocalAgentHostError.invalidFrame
         }
-        return try readExactly(Int(length), from: handle.fileDescriptor, deadline: deadline)
+        return try readExactly(
+            Int(length),
+            from: handle.fileDescriptor,
+            deadline: deadline,
+            shouldCancel: shouldCancel
+        )
     }
 
     static func deadline(timeoutMilliseconds: Int) -> UInt64 {
@@ -818,7 +833,8 @@ enum LocalAgentHostFrameCodec {
     private static func readExactly(
         _ count: Int,
         from fileDescriptor: Int32,
-        deadline: UInt64
+        deadline: UInt64,
+        shouldCancel: @Sendable () -> Bool
     ) throws -> Data {
         var result = Data(count: count)
         try result.withUnsafeMutableBytes { buffer in
@@ -830,7 +846,8 @@ enum LocalAgentHostFrameCodec {
                 try wait(
                     for: Int16(POLLIN),
                     fileDescriptor: fileDescriptor,
-                    deadline: deadline
+                    deadline: deadline,
+                    shouldCancel: shouldCancel
                 )
                 let received = Darwin.read(
                     fileDescriptor,
@@ -852,9 +869,11 @@ enum LocalAgentHostFrameCodec {
     private static func wait(
         for events: Int16,
         fileDescriptor: Int32,
-        deadline: UInt64
+        deadline: UInt64,
+        shouldCancel: @Sendable () -> Bool = { false }
     ) throws {
         while true {
+            if shouldCancel() { throw CancellationError() }
             let now = DispatchTime.now().uptimeNanoseconds
             guard now < deadline else {
                 throw NativeLocalAgentHostError.requestTimedOut
@@ -863,15 +882,22 @@ enum LocalAgentHostFrameCodec {
             let wholeMilliseconds = remainingNanoseconds / 1_000_000
             let roundedMilliseconds = wholeMilliseconds
                 + (remainingNanoseconds % 1_000_000 == 0 ? 0 : 1)
-            let timeout = Int32(min(roundedMilliseconds, UInt64(Int32.max)))
+            // `close(2)` from another thread does not reliably wake an existing `poll(2)` on
+            // Darwin. Bound each wait so a stopped/restarted Host can retire its old response
+            // reader instead of retaining a queue thread and pipe for days.
+            let timeout = Int32(min(
+                roundedMilliseconds,
+                min(maximumPollSliceMilliseconds, UInt64(Int32.max))
+            ))
             var descriptor = pollfd(fd: fileDescriptor, events: events, revents: 0)
             let result = Darwin.poll(&descriptor, 1, timeout)
             if result > 0 {
+                if shouldCancel() { throw CancellationError() }
                 if descriptor.revents & events != 0 { return }
                 throw NativeLocalAgentHostError.invalidFrame
             }
             if result == 0 {
-                throw NativeLocalAgentHostError.requestTimedOut
+                continue
             }
             if errno != EINTR {
                 throw NativeLocalAgentHostError.invalidFrame

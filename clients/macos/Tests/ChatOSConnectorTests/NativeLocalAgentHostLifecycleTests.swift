@@ -305,6 +305,34 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         }
     }
 
+    func testFrameCodecInfiniteReadStopsWhenTransportIsCancelled() async throws {
+        let pipe = Pipe()
+        defer {
+            try? pipe.fileHandleForWriting.close()
+            try? pipe.fileHandleForReading.close()
+        }
+        let probe = LocalAgentHostReadCancellationProbe()
+        let completion = expectation(description: "infinite response read is cancelled")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                _ = try LocalAgentHostFrameCodec.read(
+                    from: pipe.fileHandleForReading,
+                    deadline: UInt64.max,
+                    shouldCancel: { probe.shouldCancel }
+                )
+                probe.finish(error: nil)
+            } catch {
+                probe.finish(error: error)
+            }
+            completion.fulfill()
+        }
+
+        try await Task.sleep(for: .milliseconds(50))
+        probe.cancel()
+        await fulfillment(of: [completion], timeout: 1)
+        XCTAssertTrue(probe.error is CancellationError)
+    }
+
     func testLaunchArgumentsAndEnvironmentKeepMemoryTokenOffCommandLine() throws {
         let database = URL(fileURLWithPath: "/tmp/chatos-local-agent-test.sqlite3")
         let configuration = NativeLocalAgentHostConfiguration(
@@ -367,6 +395,23 @@ private final class NativeProcessPipeReaderProbe: @unchecked Sendable {
 
     var data: Data { lock.withLock { received } }
     var eofCount: Int { lock.withLock { reachedEOFCount } }
+}
+
+private final class LocalAgentHostReadCancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var finishedError: Error?
+
+    var shouldCancel: Bool { lock.withLock { cancelled } }
+    var error: Error? { lock.withLock { finishedError } }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
+    }
+
+    func finish(error: Error?) {
+        lock.withLock { finishedError = error }
+    }
 }
 
 private func XCTAssertThrowsErrorAsync(
