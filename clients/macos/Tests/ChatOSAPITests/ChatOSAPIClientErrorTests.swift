@@ -100,7 +100,10 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
             transport: APIErrorTransport(
                 response: HTTPResponse(
                     statusCode: 401,
-                    headers: ["content-type": "application/json"],
+                    headers: [
+                        "content-type": "application/json",
+                        "x-access-token": "invalid-user-refresh-token",
+                    ],
                     body: Data(#"{"error":"invalid or expired token"}"#.utf8)
                 )
             )
@@ -141,7 +144,10 @@ final class ChatOSAPIClientErrorTests: XCTestCase {
             transport: APIErrorTransport(
                 response: HTTPResponse(
                     statusCode: 401,
-                    headers: ["content-type": "application/json"],
+                    headers: [
+                        "content-type": "application/json",
+                        "x-access-token": "invalid-memory-refresh-token",
+                    ],
                     body: Data(#"{"error":"memory scope is unavailable"}"#.utf8)
                 )
             )

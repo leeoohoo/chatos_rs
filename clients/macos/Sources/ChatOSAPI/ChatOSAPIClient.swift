@@ -96,10 +96,6 @@ public actor ChatOSAPIClient {
         if let expectedAuthenticationSessionID, expectedAuthenticationSessionID != authenticationSessionID {
             throw ChatOSAPIError.unauthorized
         }
-        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty, accessToken == requestAccessToken {
-            accessToken = refreshedToken
-            try await credentialStore?.saveAccessToken(refreshedToken)
-        }
         if response.statusCode == 401 {
             // Only the user service is authoritative for the desktop login session. Memory is an
             // optional downstream service and can reject a request because of its own rollout,
@@ -117,6 +113,11 @@ public actor ChatOSAPIClient {
                 )
             }
             throw ChatOSAPIError.unauthorized
+        }
+        if let refreshedToken = response.headers["x-access-token"]?.trimmedNonEmpty,
+           accessToken == requestAccessToken {
+            accessToken = refreshedToken
+            try await credentialStore?.saveAccessToken(refreshedToken)
         }
         guard (200..<300).contains(response.statusCode) else {
             let payload = APIErrorPayload.decode(
