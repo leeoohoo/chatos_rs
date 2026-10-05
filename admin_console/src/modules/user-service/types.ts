@@ -96,9 +96,17 @@ export interface CreateUserPayload {
 
 export interface UpdateUserPayload {
   display_name?: string;
-  password?: string;
   role?: UserRole;
   enabled?: boolean;
+}
+
+export interface ChangePasswordPayload {
+  current_password: string;
+  new_password: string;
+}
+
+export interface ResetUserPasswordPayload {
+  password: string;
 }
 
 export interface ProvisionHarnessPayload {

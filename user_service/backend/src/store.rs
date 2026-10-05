@@ -85,6 +85,7 @@ impl AppStore {
             username: username.clone(),
             display_name: normalize_display_name(Some(config.display_name), &username),
             password_hash: hash_password(config.password)?,
+            credential_version: 0,
             role: USER_ROLE_SUPER_ADMIN.to_string(),
             enabled: true,
             created_at: now.clone(),
@@ -279,13 +280,14 @@ impl AppStore {
     pub async fn insert_user_record(&self, user: &UserRecord) -> Result<(), String> {
         sqlx::query(
             r#"INSERT INTO users
-            (id, username, display_name, password_hash, role, enabled, created_at, updated_at, last_login_at, data)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)"#,
+            (id, username, display_name, password_hash, credential_version, role, enabled, created_at, updated_at, last_login_at, data)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
         )
         .bind(&user.id)
         .bind(&user.username)
         .bind(&user.display_name)
         .bind(&user.password_hash)
+        .bind(user.credential_version)
         .bind(&user.role)
         .bind(user.enabled)
         .bind(timestamp(&user.created_at)?)
@@ -300,13 +302,15 @@ impl AppStore {
 
     pub async fn update_user_record(&self, user: &UserRecord) -> Result<(), String> {
         sqlx::query(
-            r#"UPDATE users SET username=$2, display_name=$3, password_hash=$4, role=$5,
-            enabled=$6, updated_at=$7, last_login_at=$8, data=$9 WHERE id=$1"#,
+            r#"UPDATE users SET username=$2, display_name=$3, password_hash=$4,
+            credential_version=$5, role=$6, enabled=$7, updated_at=$8, last_login_at=$9,
+            data=$10 WHERE id=$1"#,
         )
         .bind(&user.id)
         .bind(&user.username)
         .bind(&user.display_name)
         .bind(&user.password_hash)
+        .bind(user.credential_version)
         .bind(&user.role)
         .bind(user.enabled)
         .bind(timestamp(&user.updated_at)?)
@@ -316,6 +320,37 @@ impl AppStore {
         .await
         .map(|_| ())
         .map_err(db_error)
+    }
+
+    pub async fn update_user_credentials_and_revoke_sessions(
+        &self,
+        user: &UserRecord,
+    ) -> Result<(), String> {
+        let mut transaction = self.pool.begin().await.map_err(db_error)?;
+        sqlx::query(
+            r#"UPDATE users SET password_hash=$2,credential_version=$3,updated_at=$4,data=$5
+            WHERE id=$1"#,
+        )
+        .bind(&user.id)
+        .bind(&user.password_hash)
+        .bind(user.credential_version)
+        .bind(timestamp(&user.updated_at)?)
+        .bind(json(user)?)
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+        sqlx::query(
+            r#"UPDATE client_sessions SET revoked_at=$2,updated_at=$2,
+            data=data || jsonb_build_object('revoked_at',$3::text,'revoked_by','credential_change','updated_at',$3::text)
+            WHERE user_id=$1 AND revoked_at IS NULL"#,
+        )
+        .bind(&user.id)
+        .bind(timestamp(&user.updated_at)?)
+        .bind(&user.updated_at)
+        .execute(&mut *transaction)
+        .await
+        .map_err(db_error)?;
+        transaction.commit().await.map_err(db_error)
     }
 
     pub async fn touch_user_last_login(&self, id: &str) -> Result<(), String> {

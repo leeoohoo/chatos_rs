@@ -208,15 +208,23 @@ mod tests {
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
 
-        let identity =
-            verify_internal_request(&headers, secret, MEMORY_ENGINE_CALLER, MODEL_RUNTIME_READ_SCOPE)
-                .expect("matching Memory Engine model runtime request");
+        let identity = verify_internal_request(
+            &headers,
+            secret,
+            MEMORY_ENGINE_CALLER,
+            MODEL_RUNTIME_READ_SCOPE,
+        )
+        .expect("matching Memory Engine model runtime request");
         assert_eq!(identity.caller_service, MEMORY_ENGINE_CALLER);
         assert_eq!(identity.scope, MODEL_RUNTIME_READ_SCOPE);
 
-        let wrong_scope =
-            verify_internal_request(&headers, secret, MEMORY_ENGINE_CALLER, MODEL_SETTINGS_READ_SCOPE)
-                .expect_err("scope mismatch must fail");
+        let wrong_scope = verify_internal_request(
+            &headers,
+            secret,
+            MEMORY_ENGINE_CALLER,
+            MODEL_SETTINGS_READ_SCOPE,
+        )
+        .expect_err("scope mismatch must fail");
         assert_eq!(wrong_scope.0, StatusCode::UNAUTHORIZED);
 
         let wrong_caller = verify_internal_request(

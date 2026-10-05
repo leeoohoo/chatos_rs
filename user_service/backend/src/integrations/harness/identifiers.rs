@@ -175,6 +175,7 @@ mod tests {
             username: username.to_string(),
             display_name: username.to_string(),
             password_hash: "hash".to_string(),
+            credential_version: 0,
             role: USER_ROLE_USER.to_string(),
             enabled: true,
             created_at: "2026-01-01T00:00:00Z".to_string(),

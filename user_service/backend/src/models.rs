@@ -28,6 +28,8 @@ pub struct UserRecord {
     pub username: String,
     pub display_name: String,
     pub password_hash: String,
+    #[serde(default)]
+    pub credential_version: i64,
     pub role: String,
     pub enabled: bool,
     pub created_at: String,
@@ -598,9 +600,19 @@ pub struct CreateUserRequest {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateUserRequest {
     pub display_name: Option<String>,
-    pub password: Option<String>,
     pub role: Option<String>,
     pub enabled: Option<bool>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ResetUserPasswordRequest {
+    pub password: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

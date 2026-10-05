@@ -52,9 +52,9 @@ async fn postgres_super_admin_bootstrap_contract() {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "CREATE SCHEMA {quoted_schema}"
     )))
-        .execute(&root_pool)
-        .await
-        .expect("create isolated contract test schema");
+    .execute(&root_pool)
+    .await
+    .expect("create isolated contract test schema");
 
     let search_path = format!("SET search_path TO {quoted_schema}");
     let pool = sqlx::postgres::PgPoolOptions::new()
@@ -77,6 +77,7 @@ async fn postgres_super_admin_bootstrap_contract() {
             username TEXT NOT NULL UNIQUE,
             display_name TEXT NOT NULL,
             password_hash TEXT NOT NULL,
+            credential_version BIGINT NOT NULL DEFAULT 0,
             role TEXT NOT NULL,
             enabled BOOLEAN NOT NULL,
             created_at TIMESTAMPTZ NOT NULL,
@@ -170,9 +171,9 @@ async fn postgres_super_admin_bootstrap_contract() {
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP SCHEMA {quoted_schema} CASCADE"
     )))
-        .execute(&root_pool)
-        .await
-        .expect("drop isolated contract test schema");
+    .execute(&root_pool)
+    .await
+    .expect("drop isolated contract test schema");
     root_pool.close().await;
 }
 
@@ -182,6 +183,7 @@ fn existing_user(username: &str, password_hash: &str) -> UserRecord {
         username: username.to_string(),
         display_name: "Existing User".to_string(),
         password_hash: password_hash.to_string(),
+        credential_version: 0,
         role: USER_ROLE_USER.to_string(),
         enabled: false,
         created_at: "2026-01-01T00:00:00+00:00".to_string(),

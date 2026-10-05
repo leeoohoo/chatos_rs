@@ -53,7 +53,7 @@ Vite 会把 `/api/admin/plugin-management` 交给本地 APISIX，再转发到 `h
 - 保护接口使用 Bearer token。
 - 后端通过 User Service `/api/auth/verify` 校验 token。
 - `super_admin` 可以管理 public、system_private 和系统 agent 的内部 MCP 矩阵。
-- 普通用户可以创建仅自己可见的 personal Plugin Marketplace；服务端会强制使用 private visibility、`admin_registry`、HTTPS signed Catalog 和显式 Catalog trust root。
+- 普通用户可以创建仅自己可见的 personal Plugin Marketplace；服务端会强制使用 private visibility、`admin_registry`、HTTPS signed Catalog 和显式 Catalog trust root。`admin_registry` 只表示信任来源；带 `catalog_url` 的 Marketplace 会从已验证 Release 的 `artifact_ref` 下载制品，只有不带 `catalog_url` 的平台直管 Marketplace 才使用平台本地制品库。
 - 系统 agent 配置页面及接口不向普通用户开放。
 - 普通用户自己的 MCP/skills 后续由 Local Connector Client 上报。
 

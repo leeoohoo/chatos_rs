@@ -54,10 +54,10 @@ async fn postgres_retention_prunes_expired_ephemeral_user_data() {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE {column}=ANY($1)"
         )))
-            .bind(vec![expired_id, live_id])
-            .execute(&pool)
-            .await
-            .expect("cleanup retention records");
+        .bind(vec![expired_id, live_id])
+        .execute(&pool)
+        .await
+        .expect("cleanup retention records");
     }
     sqlx::query("DELETE FROM users WHERE id=$1")
         .bind(&user_id)
@@ -133,11 +133,11 @@ async fn insert_timestamp_expiry_records(pool: &sqlx::PgPool, id: &str, expired:
         chrono::Utc::now() + chrono::Duration::hours(1)
     };
     sqlx::query("INSERT INTO device_proof_nonces(id,expires_at) VALUES($1,$2)")
-    .bind(id)
-    .bind(expiry)
-    .execute(pool)
-    .await
-    .expect("device proof nonce");
+        .bind(id)
+        .bind(expiry)
+        .execute(pool)
+        .await
+        .expect("device proof nonce");
     sqlx::query(
         "INSERT INTO login_throttle(key,attempts,window_start_unix,expires_at) \
          VALUES($1,1,1,$2)",

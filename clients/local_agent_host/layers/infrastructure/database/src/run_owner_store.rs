@@ -55,13 +55,13 @@ async fn fetch_run(
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "{RUN_SELECT} AND owner_user_id = ?"
     )))
-        .bind(run_id)
-        .bind(owner_user_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .db()?
-        .map(decode_run)
-        .transpose()
+    .bind(run_id)
+    .bind(owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .map(decode_run)
+    .transpose()
 }
 
 #[allow(clippy::too_many_arguments)]

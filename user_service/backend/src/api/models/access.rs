@@ -91,6 +91,7 @@ mod tests {
             username: Some(user_id.to_string()),
             display_name: None,
             role: Some("user".to_string()),
+            credential_version: None,
             agent_account_id: None,
             owner_user_id: None,
             owner_username: None,

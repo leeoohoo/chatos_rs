@@ -3,6 +3,7 @@
 
 import type {
   AgentAccountListItem,
+  ChangePasswordPayload,
   CreateAgentAccountPayload,
   CreateInviteCodePayload,
   CreateInviteCodeResponse,
@@ -10,6 +11,7 @@ import type {
   CurrentUserResponse,
   HealthResponse,
   ResetAgentPasswordPayload,
+  ResetUserPasswordPayload,
   SystemConfigResponse,
   CreateUserModelConfigPayload,
   CreateUserModelProviderPayload,
@@ -104,6 +106,16 @@ export const api = {
   updateUser: (id: string, payload: UpdateUserPayload) =>
     request<UserSummaryRecord>(`/api/users/${id}`, {
       method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  changePassword: (payload: ChangePasswordPayload) =>
+    request<void>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  resetUserPassword: (id: string, payload: ResetUserPasswordPayload) =>
+    request<UserSummaryRecord>(`/api/users/${id}/reset-password`, {
+      method: 'POST',
       body: JSON.stringify(payload),
     }),
   provisionHarnessUser: (id: string, payload: ProvisionHarnessPayload) =>

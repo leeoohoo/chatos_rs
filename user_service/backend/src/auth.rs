@@ -46,6 +46,8 @@ pub struct AuthClaims {
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub role: Option<String>,
+    #[serde(default)]
+    pub credential_version: Option<i64>,
     pub agent_account_id: Option<String>,
     pub owner_user_id: Option<String>,
     pub owner_username: Option<String>,
@@ -72,6 +74,7 @@ pub struct CurrentPrincipal {
     pub username: Option<String>,
     pub display_name: Option<String>,
     pub role: Option<String>,
+    pub credential_version: Option<i64>,
     pub agent_account_id: Option<String>,
     pub owner_user_id: Option<String>,
     pub owner_username: Option<String>,
@@ -113,6 +116,7 @@ impl From<AuthClaims> for CurrentPrincipal {
             username: value.username,
             display_name: value.display_name,
             role: value.role,
+            credential_version: value.credential_version,
             agent_account_id: value.agent_account_id,
             owner_user_id: value.owner_user_id,
             owner_username: value.owner_username,
@@ -198,6 +202,10 @@ pub fn verify_password(password: &str, password_hash: &str) -> bool {
         .is_ok()
 }
 
+pub fn credential_version_matches(token_version: Option<i64>, current_version: i64) -> bool {
+    token_version.unwrap_or_default() == current_version
+}
+
 pub fn encode_user_token(config: &AppConfig, user: &UserRecord) -> Result<String, String> {
     issue_user_token(config, user, config.user_access_ttl_seconds).map(|issued| issued.token)
 }
@@ -233,6 +241,7 @@ pub fn issue_user_token_with_scopes(
             username: Some(user.username.clone()),
             display_name: Some(user.display_name.clone()),
             role: Some(user.role.clone()),
+            credential_version: Some(user.credential_version),
             agent_account_id: None,
             owner_user_id: None,
             owner_username: None,
@@ -323,5 +332,13 @@ mod tests {
         let hash = hash_password(password).expect("hash compliant password");
         assert!(verify_password(password, &hash));
         assert!(!verify_password("different password value", &hash));
+    }
+
+    #[test]
+    fn credential_version_invalidates_tokens_after_password_change() {
+        assert!(credential_version_matches(Some(3), 3));
+        assert!(!credential_version_matches(Some(2), 3));
+        assert!(credential_version_matches(None, 0));
+        assert!(!credential_version_matches(None, 1));
     }
 }

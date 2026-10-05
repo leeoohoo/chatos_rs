@@ -5,18 +5,24 @@ use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 use serde::Deserialize;
 
-use crate::auth::{hash_password, normalize_display_name, normalize_username, CurrentPrincipal};
+use crate::auth::{
+    hash_password, normalize_display_name, normalize_username, verify_password, CurrentPrincipal,
+};
 use crate::integrations::{
     provision_harness_user_public_register, provision_harness_user_public_register_result,
 };
 use crate::models::{
-    CreateUserRequest, ProvisionHarnessUserRequest, UpdateUserRequest, UserOptionRecord,
-    UserRecord, UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
+    ChangePasswordRequest, CreateUserRequest, ProvisionHarnessUserRequest,
+    ResetUserPasswordRequest, UpdateUserRequest, UserOptionRecord, UserRecord,
+    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
-use super::{bad_request, forbidden, internal_error, not_found, require_super_admin, ApiResult};
+use super::{
+    bad_request, forbidden, internal_error, not_found, require_super_admin, unauthorized,
+    ApiResult, ApiStatusResult,
+};
 
 #[derive(Debug, Default, Deserialize)]
 pub struct UserListPageQuery {
@@ -148,6 +154,7 @@ pub async fn create_user(
         username: username.clone(),
         display_name: normalize_display_name(input.display_name.as_deref(), &username),
         password_hash: hash_password(input.password.as_str()).map_err(bad_request)?,
+        credential_version: 0,
         role: role.to_string(),
         enabled: input.enabled.unwrap_or(true),
         created_at: now.clone(),
@@ -244,10 +251,14 @@ pub async fn provision_harness_user(
     }
 
     user.password_hash = hash_password(input.password.as_str()).map_err(bad_request)?;
+    user.credential_version = user
+        .credential_version
+        .checked_add(1)
+        .ok_or_else(|| internal_error("credential version overflowed"))?;
     user.updated_at = now_rfc3339();
     state
         .store
-        .update_user_record(&user)
+        .update_user_credentials_and_revoke_sessions(&user)
         .await
         .map_err(internal_error)?;
 
@@ -262,6 +273,83 @@ pub async fn provision_harness_user(
         .map_err(internal_error)?
         .ok_or_else(|| internal_error("updated user summary missing"))?;
     Ok(Json(summary))
+}
+
+pub async fn change_password(
+    State(state): State<AppState>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Json(input): Json<ChangePasswordRequest>,
+) -> ApiStatusResult {
+    let user_id = principal
+        .user_id
+        .as_deref()
+        .ok_or_else(|| unauthorized("human user identity is required"))?;
+    let Some(mut user) = state
+        .store
+        .find_user_by_id(user_id)
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    if !verify_password(input.current_password.as_str(), user.password_hash.as_str()) {
+        return Err(unauthorized("current password is incorrect"));
+    }
+    if verify_password(input.new_password.as_str(), user.password_hash.as_str()) {
+        return Err(bad_request(
+            "new password must differ from the current password",
+        ));
+    }
+    update_user_credentials(&state, &mut user, input.new_password.as_str()).await?;
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}
+
+pub async fn reset_user_password(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Extension(principal): Extension<CurrentPrincipal>,
+    Json(input): Json<ResetUserPasswordRequest>,
+) -> ApiResult<UserSummaryRecord> {
+    require_super_admin(&principal)?;
+    if principal.user_id.as_deref() == Some(id.as_str()) {
+        return Err(forbidden(
+            "use the authenticated change-password endpoint for your own password",
+        ));
+    }
+    let Some(mut user) = state
+        .store
+        .find_user_by_id(id.as_str())
+        .await
+        .map_err(internal_error)?
+    else {
+        return Err(not_found("user not found"));
+    };
+    update_user_credentials(&state, &mut user, input.password.as_str()).await?;
+    let summary = state
+        .store
+        .get_user_summary(user.id.as_str())
+        .await
+        .map_err(internal_error)?
+        .ok_or_else(|| internal_error("updated user summary missing"))?;
+    Ok(Json(summary))
+}
+
+async fn update_user_credentials(
+    state: &AppState,
+    user: &mut UserRecord,
+    password: &str,
+) -> Result<(), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    user.password_hash = hash_password(password).map_err(bad_request)?;
+    user.credential_version = user
+        .credential_version
+        .checked_add(1)
+        .ok_or_else(|| internal_error("credential version overflowed"))?;
+    user.updated_at = now_rfc3339();
+    state
+        .store
+        .update_user_credentials_and_revoke_sessions(user)
+        .await
+        .map_err(internal_error)
 }
 
 pub async fn update_user(
@@ -287,10 +375,6 @@ pub async fn update_user(
     if let Some(display_name) = input.display_name.as_deref() {
         user.display_name = normalize_display_name(Some(display_name), user.username.as_str());
     }
-    if let Some(password) = input.password.as_deref() {
-        user.password_hash = hash_password(password).map_err(bad_request)?;
-    }
-
     if let Some(role) = input.role.as_deref() {
         if !principal.is_super_admin() {
             return Err(forbidden("only super_admin can change role"));

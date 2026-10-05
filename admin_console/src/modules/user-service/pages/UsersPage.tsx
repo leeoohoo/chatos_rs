@@ -39,6 +39,7 @@ import type {
 type UserFormValues = {
   username: string;
   display_name?: string;
+  current_password?: string;
   password?: string;
   role: UserRole;
   enabled: boolean;
@@ -56,7 +57,7 @@ type InviteCodeFormValues = {
 
 export function UsersPage() {
   const { message } = App.useApp();
-  const { user: currentUser } = useAdminAuth();
+  const { user: currentUser, logout } = useAdminAuth();
   const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserSummaryRecord | null>(null);
@@ -93,11 +94,38 @@ export function UsersPage() {
   });
 
   const updateUserMutation = useMutation({
-    mutationFn: ({ id, payload }: { id: string; payload: UpdateUserPayload }) =>
-      api.updateUser(id, payload),
-    onSuccess: async () => {
+    mutationFn: async ({
+      id,
+      payload,
+      password,
+      currentPassword,
+      isSelf,
+    }: {
+      id: string;
+      payload: UpdateUserPayload;
+      password?: string;
+      currentPassword?: string;
+      isSelf: boolean;
+    }) => {
+      const user = await api.updateUser(id, payload);
+      if (!password) return { user, changedOwnPassword: false };
+      if (isSelf) {
+        await api.changePassword({
+          current_password: currentPassword || '',
+          new_password: password,
+        });
+        return { user, changedOwnPassword: true };
+      }
+      await api.resetUserPassword(id, { password });
+      return { user, changedOwnPassword: false };
+    },
+    onSuccess: async ({ changedOwnPassword }) => {
       message.success('用户已更新');
       closeDrawer();
+      if (changedOwnPassword) {
+        await logout();
+        return;
+      }
       await queryClient.invalidateQueries({ queryKey: ['user-service', 'users'] });
     },
     onError: showError,
@@ -356,6 +384,7 @@ export function UsersPage() {
       username: user.username,
       display_name: user.display_name,
       password: undefined,
+      current_password: undefined,
       role: user.role,
       enabled: user.enabled,
     });
@@ -383,17 +412,26 @@ export function UsersPage() {
 
   function submitUser(values: UserFormValues) {
     if (editingUser) {
+      const password = values.password?.trim() ? values.password : undefined;
+      const isSelf = editingUser.id === currentUser.id;
+      if (password && isSelf && !values.current_password?.trim()) {
+        message.error('修改自己的密码必须输入当前密码');
+        return;
+      }
       const payload: UpdateUserPayload = {
         display_name: values.display_name,
       };
-      if (values.password?.trim()) {
-        payload.password = values.password;
-      }
       if (isSuperAdmin) {
         payload.role = values.role;
         payload.enabled = values.enabled;
       }
-      updateUserMutation.mutate({ id: editingUser.id, payload });
+      updateUserMutation.mutate({
+        id: editingUser.id,
+        payload,
+        password,
+        currentPassword: values.current_password,
+        isSelf,
+      });
       return;
     }
 
@@ -523,6 +561,11 @@ export function UsersPage() {
           <Form.Item name="display_name" label="显示名">
             <Input autoComplete="name" />
           </Form.Item>
+          {editingUser?.id === currentUser.id ? (
+            <Form.Item name="current_password" label="当前密码（修改密码时必填）">
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+          ) : null}
           <Form.Item
             name="password"
             label={editingUser ? '重置密码' : '密码'}

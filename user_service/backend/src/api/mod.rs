@@ -13,7 +13,8 @@ use tower_http::trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
 
 use crate::auth::{
-    bearer_token_from_headers, decode_user_service_token, unauthorized, CurrentPrincipal,
+    bearer_token_from_headers, credential_version_matches, decode_user_service_token, unauthorized,
+    CurrentPrincipal,
 };
 use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
@@ -63,6 +64,7 @@ fn protected_api(state: AppState) -> Router<AppState> {
             "/api/auth/local-connector-ticket",
             post(auth::issue_local_connector_ticket),
         )
+        .route("/api/auth/change-password", post(users::change_password))
         .route(
             "/api/invite-codes",
             get(invite_codes::list_invite_codes).post(invite_codes::create_invite_code),
@@ -78,6 +80,10 @@ fn protected_api(state: AppState) -> Router<AppState> {
         .route("/api/users/page", get(users::list_users_page))
         .route("/api/users/options", get(users::list_user_options))
         .route("/api/users/{id}", patch(users::update_user))
+        .route(
+            "/api/users/{id}/reset-password",
+            post(users::reset_user_password),
+        )
         .route(
             "/api/users/{id}/harness-provisioning",
             post(users::provision_harness_user),
@@ -320,6 +326,9 @@ async fn refresh_principal_identity(
             };
             if !user.enabled {
                 return Err(unauthorized("user has been disabled"));
+            }
+            if !credential_version_matches(principal.credential_version, user.credential_version) {
+                return Err(unauthorized("token credentials are stale"));
             }
             principal.username = Some(user.username);
             principal.display_name = Some(user.display_name);

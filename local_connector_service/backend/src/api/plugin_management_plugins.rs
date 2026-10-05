@@ -127,7 +127,10 @@ pub(super) async fn proxy_plugin_release_artifact(
         )
     })?
     .map_err(|_| ApiError::service_unavailable("Plugin artifact downloads are unavailable"))?;
-    let upstream = if source.marketplace.source_kind == PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY {
+    let upstream = if uses_internal_artifact_store(
+        source.marketplace.source_kind.as_str(),
+        source.marketplace.catalog_url.as_deref(),
+    ) {
         state
             .plugin_management_client
             .download_plugin_artifact_for_service(source.release.artifact_sha256.as_str())
@@ -185,6 +188,10 @@ pub(super) async fn proxy_plugin_release_artifact(
     response
         .body(Body::from_stream(artifact_stream))
         .map_err(|error| ApiError::internal(format!("build Plugin artifact proxy failed: {error}")))
+}
+
+fn uses_internal_artifact_store(source_kind: &str, catalog_url: Option<&str>) -> bool {
+    source_kind == PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY && catalog_url.is_none()
 }
 
 struct ArtifactStreamState {
@@ -443,6 +450,22 @@ mod tests {
         );
         assert!(validate_artifact_url("http://user@127.0.0.1:39260/demo.tgz").is_err());
         assert!(validate_artifact_url("https://plugins.example.com/demo.zip#hash").is_err());
+    }
+
+    #[test]
+    fn only_direct_admin_registry_uses_internal_artifact_store() {
+        assert!(uses_internal_artifact_store(
+            PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
+            None,
+        ));
+        assert!(!uses_internal_artifact_store(
+            PLUGIN_MARKETPLACE_SOURCE_ADMIN_REGISTRY,
+            Some("https://plugins.example.com/catalog.json"),
+        ));
+        assert!(!uses_internal_artifact_store(
+            "official_registry",
+            Some("https://plugins.example.com/catalog.json"),
+        ));
     }
 
     #[test]

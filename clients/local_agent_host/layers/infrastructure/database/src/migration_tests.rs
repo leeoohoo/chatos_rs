@@ -151,12 +151,11 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
         "local_capability_policy_snapshots",
         "local_model_config_snapshots",
     ] {
-        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM {table}"
-        )))
-            .fetch_one(&storage.pool)
-            .await
-            .expect("snapshot count");
+        let count: i64 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&storage.pool)
+                .await
+                .expect("snapshot count");
         assert_eq!(
             count, 0,
             "legacy {table} rows must not be assigned an owner"
