@@ -31,20 +31,18 @@ pub async fn delete_thread_summary(
         "DELETE FROM engine_summaries \
          WHERE tenant_id=$1 AND source_id=$2 AND thread_id=$3 AND id=$4",
     )
-        .bind(tenant)
-        .bind(source)
-        .bind(thread_id)
-        .bind(summary_id);
+    .bind(tenant)
+    .bind(source)
+    .bind(thread_id)
+    .bind(summary_id);
     let deleted = q
         .execute(db)
         .await
         .map_err(|e| e.to_string())?
         .rows_affected();
     if reset > 0 {
-        crate::repositories::threads::refresh_summary_queue_state(
-            db, tenant, source, thread_id,
-        )
-        .await?;
+        crate::repositories::threads::refresh_summary_queue_state(db, tenant, source, thread_id)
+            .await?;
     }
     Ok(if deleted > 0 || reset > 0 { reset } else { 0 })
 }

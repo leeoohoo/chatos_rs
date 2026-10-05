@@ -36,4 +36,5 @@ sha2 = "0.11"
 urlencoding = "2"
 
 [dev-dependencies]
+chatos_internal_tls = { path = "../../crates/chatos_internal_tls", features = ["test-support"] }
 tower = { version = "0.5", features = ["util"] }

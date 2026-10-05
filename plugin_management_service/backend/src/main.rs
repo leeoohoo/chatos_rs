@@ -3,7 +3,10 @@
 
 use plugin_management_service_backend::{
     build_internal_router, build_public_router,
-    internal_tls::{load_internal_mtls_config, PluginManagementInternalTlsConfig},
+    internal_tls::{
+        load_internal_mtls_config, PluginManagementInternalTlsConfig,
+        PLUGIN_MANAGEMENT_INTERNAL_MTLS_ENV,
+    },
     load_plugin_management_dotenv, start_plugin_catalog_sync_queue, AppConfig, AppState,
 };
 use tracing_subscriber::EnvFilter;
@@ -35,7 +38,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = AppConfig::from_env()?;
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();
-    let internal_tls = PluginManagementInternalTlsConfig::from_env(config.host, config.port)?;
+    let internal_tls = PluginManagementInternalTlsConfig::from_env(
+        config.host,
+        config.port,
+        &PLUGIN_MANAGEMENT_INTERNAL_MTLS_ENV,
+    )?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone(), pressure_state).await?;
     start_plugin_catalog_sync_queue(state.clone());

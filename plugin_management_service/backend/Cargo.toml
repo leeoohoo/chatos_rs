@@ -37,3 +37,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 zeroize = "1"
+
+[dev-dependencies]
+chatos_internal_tls = { path = "../../crates/chatos_internal_tls", features = ["test-support"] }

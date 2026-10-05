@@ -136,9 +136,9 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
         .expect("owner thread still exists");
     assert_eq!(owner_thread.title.as_deref(), Some("owner title"));
     let tenant_b_thread = super::threads::get_thread_by_id(&pool, &tenant_b, &source_b, &thread_b)
-    .await
-    .expect("load tenant B thread")
-    .expect("tenant B thread still exists");
+        .await
+        .expect("load tenant B thread")
+        .expect("tenant B thread still exists");
     assert_eq!(tenant_b_thread.title.as_deref(), Some("attacker title"));
 
     let record_id = format!("scope-record-shared-{suffix}");
@@ -171,7 +171,10 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
         content: "attacker record".to_string(),
         ..owner_record.clone()
     };
-    let mut tx = pool.begin().await.expect("begin tenant B record transaction");
+    let mut tx = pool
+        .begin()
+        .await
+        .expect("begin tenant B record transaction");
     super::records::upsert_record_row(&mut tx, &attacker_record)
         .await
         .expect("same record id is valid in another tenant");
@@ -182,16 +185,11 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
             .expect("load owner record")
             .expect("owner record still exists");
     assert_eq!(stored_record.content, "owner record");
-    let tenant_b_record = super::records::get_record_by_id(
-        &pool,
-        &record_id,
-        &tenant_b,
-        &source_b,
-        Some(&thread_b),
-    )
-    .await
-    .expect("load tenant B record")
-    .expect("tenant B record still exists");
+    let tenant_b_record =
+        super::records::get_record_by_id(&pool, &record_id, &tenant_b, &source_b, Some(&thread_b))
+            .await
+            .expect("load tenant B record")
+            .expect("tenant B record still exists");
     assert_eq!(tenant_b_record.content, "attacker record");
 
     let summary_id = format!("scope-summary-shared-{suffix}");
@@ -258,16 +256,11 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
     )
     .await
     .expect("update tenant A record only");
-    let tenant_b_record = super::records::get_record_by_id(
-        &pool,
-        &record_id,
-        &tenant_b,
-        &source_b,
-        Some(&thread_b),
-    )
-    .await
-    .expect("reload tenant B record")
-    .expect("tenant B record remains");
+    let tenant_b_record =
+        super::records::get_record_by_id(&pool, &record_id, &tenant_b, &source_b, Some(&thread_b))
+            .await
+            .expect("reload tenant B record")
+            .expect("tenant B record remains");
     assert_eq!(tenant_b_record.summary_status, "pending");
 
     super::summaries::mark_summaries_subject_memory_summarized(
@@ -303,18 +296,16 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
             .expect("load tenant B after tenant A delete")
             .is_some()
     );
-    assert!(
-        super::records::get_record_by_id(
-            &pool,
-            &record_id,
-            &tenant_b,
-            &source_b,
-            Some(&thread_b),
-        )
-        .await
-        .expect("load tenant B record after tenant A cascade")
-        .is_some()
-    );
+    assert!(super::records::get_record_by_id(
+        &pool,
+        &record_id,
+        &tenant_b,
+        &source_b,
+        Some(&thread_b),
+    )
+    .await
+    .expect("load tenant B record after tenant A cascade")
+    .is_some());
     super::threads::delete_thread(&pool, &tenant_b, &source_b, &thread_b)
         .await
         .expect("cleanup tenant B thread");
@@ -1078,8 +1069,7 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         1
     );
 
-    let cloud_agent_repository =
-        super::cloud_agent::CloudAgentPostgresStore::new(pool.clone());
+    let cloud_agent_repository = super::cloud_agent::CloudAgentPostgresStore::new(pool.clone());
     let store = CloudAgentStateStore::from_repository(cloud_agent_repository.clone());
     let run_id = format!("memory-run-{suffix}");
     let run = create_cloud_agent_run(

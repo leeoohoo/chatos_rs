@@ -11,7 +11,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use user_service_backend::{
     build_internal_router, build_public_router,
-    internal_tls::{load_internal_mtls_config, UserServiceInternalTlsConfig},
+    internal_tls::{
+        load_internal_mtls_config, UserServiceInternalTlsConfig, USER_SERVICE_INTERNAL_MTLS_ENV,
+    },
     load_user_service_dotenv, AppConfig, AppState,
 };
 
@@ -26,7 +28,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _telemetry = init_tracing(&config)?;
     resolve_downstream_services(&mut config).await;
     let bind_addr = config.bind_addr();
-    let internal_tls = UserServiceInternalTlsConfig::from_env(config.host, config.port)?;
+    let internal_tls = UserServiceInternalTlsConfig::from_env(
+        config.host,
+        config.port,
+        &USER_SERVICE_INTERNAL_MTLS_ENV,
+    )?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let state = AppState::new(config.clone()).await?;
     let retention_handle = state.retention.spawn();

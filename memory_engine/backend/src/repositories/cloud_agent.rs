@@ -122,7 +122,9 @@ impl CloudAgentStateRepository for CloudAgentPostgresStore {
         claim_token: &str,
         claim_until: DateTime<Utc>,
     ) -> Result<Vec<CloudAgentPendingOutboxIntent>, String> {
-        if claim_token.trim().is_empty() { return Err("Cloud Agent outbox claim token must not be empty".to_string()); }
+        if claim_token.trim().is_empty() {
+            return Err("Cloud Agent outbox claim token must not be empty".to_string());
+        }
         let rows=sqlx::query_as::<_,(Json<serde_json::Value>,i32)>("WITH candidates AS (SELECT event_id FROM cloud_agent_outbox WHERE (status='pending' AND available_at<=now()) OR (status='publishing' AND claim_until<=now()) ORDER BY available_at,event_id LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE cloud_agent_outbox o SET status='publishing',claim_token=$2,claim_until=$3,updated_at=now() FROM candidates c WHERE o.event_id=c.event_id RETURNING o.data,o.publish_attempts")
             .bind(limit.max(1)).bind(claim_token).bind(claim_until).fetch_all(&self.pool).await.map_err(db_error)?;
         rows.into_iter()
@@ -135,7 +137,11 @@ impl CloudAgentStateRepository for CloudAgentPostgresStore {
             .collect()
     }
 
-    async fn mark_claimed_outbox_published(&self, id: &str, claim_token: &str) -> Result<bool, String> {
+    async fn mark_claimed_outbox_published(
+        &self,
+        id: &str,
+        claim_token: &str,
+    ) -> Result<bool, String> {
         sqlx::query("UPDATE cloud_agent_outbox SET status='published',publish_attempts=publish_attempts+1,claim_token=NULL,claim_until=NULL,updated_at=now() WHERE event_id=$1 AND status='publishing' AND claim_token=$2")
             .bind(id).bind(claim_token).execute(&self.pool).await.map(|r|r.rows_affected()==1).map_err(db_error)
     }

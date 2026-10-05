@@ -89,8 +89,8 @@ pub async fn list_thread_records(
         .cursor()
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let page = records::list_records_page(&state.pool, values)
-    .await
-    .map_err(internal_error)?;
+        .await
+        .map_err(internal_error)?;
     Ok(Json(page))
 }
 

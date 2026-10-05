@@ -42,14 +42,21 @@ pub async fn get_rollup_dispatch_state(
     )
     .await
 }
-pub async fn claim_pending_rollup_dispatches(db:&Db,limit:i64)->Result<Vec<RollupDispatchOutbox>,String>{
+pub async fn claim_pending_rollup_dispatches(
+    db: &Db,
+    limit: i64,
+) -> Result<Vec<RollupDispatchOutbox>, String> {
     sqlx::query_as::<_,RollupDispatchOutbox>(sqlx::AssertSqlSafe(format!("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE rollup_dispatch_pending ORDER BY rollup_dispatch_requested_at,updated_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET rollup_dispatch_published_version=GREATEST(s.rollup_dispatch_published_version,s.rollup_dispatch_version),rollup_dispatch_published_at=now(),rollup_dispatch_last_error=NULL,rollup_dispatch_pending=false FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id RETURNING {RETURNING_COLS}")))
         .bind(limit.clamp(1,10000)).fetch_all(db).await.map_err(|e|e.to_string())
 }
-pub async fn defer_rollup_dispatch(db:&Db,e:&RollupDispatchOutbox)->Result<bool,String>{
-    update(db,e,"rollup_dispatch_pending=true",None).await
+pub async fn defer_rollup_dispatch(db: &Db, e: &RollupDispatchOutbox) -> Result<bool, String> {
+    update(db, e, "rollup_dispatch_pending=true", None).await
 }
-pub async fn recover_stale_rollup_dispatches(db:&Db,stale_before:&str,limit:i64)->Result<u64,String>{
+pub async fn recover_stale_rollup_dispatches(
+    db: &Db,
+    stale_before: &str,
+    limit: i64,
+) -> Result<u64, String> {
     let result=sqlx::query("WITH candidates AS (SELECT tenant_id,source_id,id FROM engine_summaries WHERE NOT rollup_dispatch_pending AND rollup_dispatch_consumed_version<rollup_dispatch_version AND rollup_dispatch_published_at<=$1 AND COALESCE(rollup_dispatch_dead_letter_version,-1)<rollup_dispatch_version ORDER BY rollup_dispatch_published_at,updated_at LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE engine_summaries s SET rollup_dispatch_pending=true,rollup_dispatch_last_error=NULL FROM candidates c WHERE s.tenant_id=c.tenant_id AND s.source_id=c.source_id AND s.id=c.id")
         .bind(crate::repositories::postgres::timestamp(stale_before)?).bind(limit.clamp(1,10000)).execute(db).await.map_err(|e|e.to_string())?;
     Ok(result.rows_affected())

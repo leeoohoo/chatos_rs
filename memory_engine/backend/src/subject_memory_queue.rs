@@ -111,11 +111,11 @@ pub async fn publish_pending_source_for_summary(
     source_id: &str,
     summary_id: &str,
 ) -> Result<bool, String> {
-    Ok(summaries::get_pending_subject_memory_source_dispatch(
-        db, tenant_id, source_id, summary_id,
+    Ok(
+        summaries::get_pending_subject_memory_source_dispatch(db, tenant_id, source_id, summary_id)
+            .await?
+            .is_some(),
     )
-    .await?
-    .is_some())
 }
 
 pub async fn publish_pending_scope(
@@ -191,8 +191,7 @@ async fn run_worker(state: Arc<AppState>, worker_index: usize) {
             Ok(_) => {}
             Err(error) => warn!(
                 worker_index,
-                error,
-                "Memory Engine subject-memory database worker failed"
+                error, "Memory Engine subject-memory database worker failed"
             ),
         }
     }
@@ -411,16 +410,25 @@ async fn run_reconciler(state: Arc<AppState>) {
         )
         .await;
         if let Err(error) = source_recovery {
-            warn!(error, "Memory Engine failed to recover subject source database claims");
+            warn!(
+                error,
+                "Memory Engine failed to recover subject source database claims"
+            );
         }
         if let Err(error) = scope_recovery {
-            warn!(error, "Memory Engine failed to recover subject scope database claims");
+            warn!(
+                error,
+                "Memory Engine failed to recover subject scope database claims"
+            );
         }
         match arm_pending_scopes(&state, recovery_offset).await {
             Ok((count, next_offset)) => {
                 recovery_offset = next_offset;
                 if count > 0 {
-                    info!(armed_count = count, "Memory Engine armed subject-memory scopes");
+                    info!(
+                        armed_count = count,
+                        "Memory Engine armed subject-memory scopes"
+                    );
                 }
             }
             Err(error) => warn!(error, "Memory Engine failed to arm subject-memory scopes"),
@@ -428,7 +436,10 @@ async fn run_reconciler(state: Arc<AppState>) {
     }
 }
 
-async fn arm_pending_scopes(state: &AppState, recovery_offset: u64) -> Result<(usize, u64), String> {
+async fn arm_pending_scopes(
+    state: &AppState,
+    recovery_offset: u64,
+) -> Result<(usize, u64), String> {
     let policy = control_plane::get_effective_job_policy(&state.pool, "subject_memory").await?;
     if !policy.enabled {
         return Ok((0, recovery_offset));

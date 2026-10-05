@@ -108,8 +108,8 @@ pub async fn list_thread_summaries(
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let (items, has_more): (Vec<EngineSummary>, bool) =
         summaries::list_thread_summaries(&state.pool, values)
-    .await
-    .map_err(internal_error)?;
+            .await
+            .map_err(internal_error)?;
     Ok(Json(json!({ "items": items, "has_more": has_more })))
 }
 

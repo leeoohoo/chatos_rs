@@ -27,7 +27,9 @@ use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, Tr
 use tracing::{info, Level};
 
 use crate::config::AppConfig;
-use crate::internal_tls::{load_internal_mtls_config, MemoryEngineInternalTlsConfig};
+use crate::internal_tls::{
+    load_internal_mtls_config, MemoryEngineInternalTlsConfig, MEMORY_ENGINE_INTERNAL_MTLS_ENV,
+};
 use crate::state::{AppState, MemoryEngineRuntimeStats};
 
 #[tokio::main]
@@ -135,6 +137,7 @@ async fn main() -> Result<(), String> {
             .parse()
             .map_err(|err| format!("MEMORY_ENGINE_HOST must be a valid IP address: {err}"))?,
         config.port,
+        &MEMORY_ENGINE_INTERNAL_MTLS_ENV,
     )?;
     let internal_mtls_config = load_internal_mtls_config(&internal_tls)?;
     let _service_runtime =

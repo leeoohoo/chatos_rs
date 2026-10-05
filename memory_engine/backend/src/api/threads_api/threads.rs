@@ -107,8 +107,8 @@ pub async fn list_threads_query(
         .cursor()
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let items = threads::list_threads(&state.pool, values)
-    .await
-    .map_err(internal_error)?;
+        .await
+        .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))
 }
 

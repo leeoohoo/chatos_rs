@@ -272,10 +272,7 @@ pub async fn list_turn_process_records(
     Ok(items)
 }
 
-async fn fetch(
-    db: &Db,
-    mut query: QueryBuilder<Postgres>,
-) -> Result<Vec<EngineRecord>, String> {
+async fn fetch(db: &Db, mut query: QueryBuilder<Postgres>) -> Result<Vec<EngineRecord>, String> {
     let rows = query
         .build_query_scalar::<Json<serde_json::Value>>()
         .fetch_all(db)

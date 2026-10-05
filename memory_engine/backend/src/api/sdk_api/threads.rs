@@ -54,14 +54,10 @@ pub async fn get_thread(
     let tenant_id = auth
         .require_optional_tenant(req.tenant_id.as_deref())?
         .ok_or_else(|| (StatusCode::BAD_REQUEST, "tenant_id is required".to_string()))?;
-    let item = threads::get_thread_by_id(
-        &state.pool,
-        tenant_id,
-        auth.source_id(),
-        thread_id.as_str(),
-    )
-    .await
-    .map_err(internal_error)?;
+    let item =
+        threads::get_thread_by_id(&state.pool, tenant_id, auth.source_id(), thread_id.as_str())
+            .await
+            .map_err(internal_error)?;
     Ok(Json(crate::models::GetThreadResponse { item }))
 }
 
@@ -110,7 +106,7 @@ pub async fn list_threads(
         .cursor()
         .map_err(|message| (StatusCode::BAD_REQUEST, message))?;
     let items = threads::list_threads(&state.pool, values)
-    .await
-    .map_err(internal_error)?;
+        .await
+        .map_err(internal_error)?;
     Ok(Json(json!({ "items": items })))
 }

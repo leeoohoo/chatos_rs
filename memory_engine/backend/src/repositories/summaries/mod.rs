@@ -34,11 +34,7 @@ pub struct SummaryListCursor<'a> {
 
 impl<'a> ListSummariesQuery<'a> {
     pub fn cursor(&self) -> Result<Option<SummaryListCursor<'a>>, String> {
-        match (
-            self.after_level,
-            self.after_created_at,
-            self.after_id,
-        ) {
+        match (self.after_level, self.after_created_at, self.after_id) {
             (None, None, None) => Ok(None),
             (Some(level), Some(created_at), Some(id)) => {
                 if level < 0 {
@@ -67,9 +63,8 @@ impl<'a> ListSummariesQuery<'a> {
 pub use dispatch::{
     claim_pending_rollup_dispatches, defer_rollup_dispatch, get_pending_rollup_dispatch,
     get_rollup_dispatch_state, mark_rollup_dispatch_consumed, mark_rollup_dispatch_failed,
-    rearm_rollup_dispatch_if_eligible,
-    recover_stale_rollup_dispatches, replay_dead_lettered_rollup_dispatch,
-    RollupDispatchOutbox,
+    rearm_rollup_dispatch_if_eligible, recover_stale_rollup_dispatches,
+    replay_dead_lettered_rollup_dispatch, RollupDispatchOutbox,
 };
 pub use subject_dispatch::{
     claim_pending_subject_memory_source_dispatches, defer_subject_memory_source_dispatch,

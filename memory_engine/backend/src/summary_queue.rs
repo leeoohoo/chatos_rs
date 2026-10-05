@@ -124,8 +124,7 @@ async fn run_worker(state: Arc<AppState>, worker_index: usize) {
             Ok(_) => {}
             Err(error) => warn!(
                 worker_index,
-                error,
-                "Memory Engine summary database worker failed"
+                error, "Memory Engine summary database worker failed"
             ),
         }
     }
@@ -283,7 +282,10 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine recovered stale summary database claims"
             ),
             Ok(_) => {}
-            Err(error) => warn!(error, "Memory Engine failed to recover summary database claims"),
+            Err(error) => warn!(
+                error,
+                "Memory Engine failed to recover summary database claims"
+            ),
         }
         match arm_automatic_summary_dispatches(&state).await {
             Ok(count) if count > 0 => info!(
@@ -291,7 +293,10 @@ async fn run_reconciler(state: Arc<AppState>) {
                 "Memory Engine armed automatic summary database dispatches"
             ),
             Ok(_) => {}
-            Err(error) => warn!(error, "Memory Engine failed to arm summary database dispatches"),
+            Err(error) => warn!(
+                error,
+                "Memory Engine failed to arm summary database dispatches"
+            ),
         }
     }
 }

@@ -6,7 +6,13 @@ name = "chatos_internal_tls"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+test-support = ["dep:axum", "dep:reqwest", "dep:tokio"]
+
 [dependencies]
+axum = { version = "0.8", optional = true }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
+reqwest = { version = "0.12", features = ["rustls-tls"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = { version = "1", features = ["std"] }
+tokio = { version = "1", features = ["full"], optional = true }

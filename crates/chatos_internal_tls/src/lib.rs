@@ -3,7 +3,8 @@
 
 //! Shared construction of mutually authenticated TLS server configuration.
 
-use std::path::Path;
+use std::net::{IpAddr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum_server::tls_rustls::RustlsConfig;
@@ -11,6 +12,59 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
+#[derive(Debug, Clone, Copy)]
+pub struct InternalMtlsEnvironment {
+    pub port: &'static str,
+    pub public_port: &'static str,
+    pub server_cert_path: &'static str,
+    pub server_key_path: &'static str,
+    pub client_ca_cert_path: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct InternalMtlsConfig {
+    pub bind_addr: SocketAddr,
+    pub server_cert_path: PathBuf,
+    pub server_key_path: PathBuf,
+    pub client_ca_cert_path: PathBuf,
+}
+
+impl InternalMtlsConfig {
+    pub fn from_env(
+        host: IpAddr,
+        public_port: u16,
+        environment: &InternalMtlsEnvironment,
+    ) -> Result<Self, String> {
+        let port = required_env(environment.port)?
+            .parse::<u16>()
+            .map_err(|err| format!("{} must be a valid port: {err}", environment.port))?;
+        if port == public_port {
+            return Err(format!(
+                "{} must differ from {}",
+                environment.port, environment.public_port
+            ));
+        }
+        Ok(Self {
+            bind_addr: SocketAddr::new(host, port),
+            server_cert_path: PathBuf::from(required_env(environment.server_cert_path)?),
+            server_key_path: PathBuf::from(required_env(environment.server_key_path)?),
+            client_ca_cert_path: PathBuf::from(required_env(environment.client_ca_cert_path)?),
+        })
+    }
+
+    pub fn load_server_config(&self, service_name: &str) -> Result<RustlsConfig, String> {
+        load_mtls_server_config(
+            self.server_cert_path.as_path(),
+            self.server_key_path.as_path(),
+            self.client_ca_cert_path.as_path(),
+            service_name,
+        )
+    }
+}
 
 /// Load an mTLS server configuration from PEM files.
 ///
@@ -44,6 +98,14 @@ pub fn load_mtls_server_config(
         .map_err(|err| format!("build {service_name} mTLS server config failed: {err}"))?;
 
     Ok(RustlsConfig::from_config(Arc::new(server_config)))
+}
+
+fn required_env(key: &str) -> Result<String, String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{key} is required as deployment Secret material"))
 }
 
 fn read_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, String> {

@@ -76,9 +76,8 @@ pub use dispatch::{
     get_summary_dispatch_state, list_eligible_summary_dispatches,
     list_stale_published_summary_dispatches, mark_summary_dispatch_consumed,
     mark_summary_dispatch_dead_lettered, mark_summary_dispatch_failed,
-    rearm_stale_published_summary_dispatch,
-    rearm_summary_dispatch_if_eligible, replay_dead_lettered_summary_dispatch,
-    SummaryDispatchOutbox,
+    rearm_stale_published_summary_dispatch, rearm_summary_dispatch_if_eligible,
+    replay_dead_lettered_summary_dispatch, SummaryDispatchOutbox,
 };
 #[allow(unused_imports)]
 pub use queries::{
@@ -125,6 +124,9 @@ mod tests {
             before_id: Some("  "),
             ..ListThreadsQuery::default()
         };
-        assert_eq!(empty_id.cursor().unwrap_err(), "before_id must be non-empty");
+        assert_eq!(
+            empty_id.cursor().unwrap_err(),
+            "before_id must be non-empty"
+        );
     }
 }

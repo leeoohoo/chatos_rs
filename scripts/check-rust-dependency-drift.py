@@ -37,6 +37,9 @@ BASELINE: dict[str, dict[str, str]] = {
     "crates/chatos_ai_runtime/Cargo.toml": {
         "axum": "0.8",
     },
+    "crates/chatos_internal_tls/Cargo.toml": {
+        "axum": "0.8",
+    },
     "crates/chatos_postgres/Cargo.toml": {
         "sqlx": "workspace",
     },

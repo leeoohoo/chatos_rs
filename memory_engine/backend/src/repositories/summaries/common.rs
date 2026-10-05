@@ -75,11 +75,7 @@ pub(crate) fn build_summary_query<'a>(
     query
 }
 
-pub(crate) fn append(
-    query: &mut QueryBuilder<Postgres>,
-    column: &str,
-    value: Option<&str>,
-) {
+pub(crate) fn append(query: &mut QueryBuilder<Postgres>, column: &str, value: Option<&str>) {
     if let Some(value) = value.map(str::trim).filter(|v| !v.is_empty()) {
         query.push(" AND ").push(column).push("=").push_bind(value);
     }

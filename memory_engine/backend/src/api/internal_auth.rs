@@ -118,22 +118,15 @@ mod tests {
             "x-memory-internal-token",
             HeaderValue::from_str(token.as_str()).expect("token header"),
         );
-        let claims = require_internal_request(
-            &config,
-            &headers,
-            OPERATOR_SCOPE,
-            &["configuration-center"],
-        )
-        .expect("valid token")
-        .expect("signed identity");
+        let claims =
+            require_internal_request(&config, &headers, OPERATOR_SCOPE, &["configuration-center"])
+                .expect("valid token")
+                .expect("signed identity");
         assert_eq!(claims.caller, "configuration-center");
-        assert!(require_internal_request(
-            &config,
-            &headers,
-            DATA_SCOPE,
-            &["configuration-center"]
-        )
-        .is_err());
+        assert!(
+            require_internal_request(&config, &headers, DATA_SCOPE, &["configuration-center"])
+                .is_err()
+        );
     }
 
     fn test_config() -> AppConfig {

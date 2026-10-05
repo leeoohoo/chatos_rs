@@ -14,7 +14,7 @@ pub async fn init_pool(config: &AppConfig) -> Result<chatos_postgres::PgPool, St
         format!("memory-engine-{role}"),
         "MEMORY_ENGINE",
     )
-        .map_err(|error| error.to_string())?;
+    .map_err(|error| error.to_string())?;
     chatos_postgres::connect(&config)
         .await
         .map_err(|error| error.to_string())

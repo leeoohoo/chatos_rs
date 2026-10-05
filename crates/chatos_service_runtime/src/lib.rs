@@ -53,8 +53,8 @@ pub use runtime::{
 };
 pub use security::{is_production_environment, validate_production_secret};
 pub use user_service_auth::{
-    UserServiceAuthUser, UserServiceLoginRequest, UserServiceLoginResponse,
-    UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
+    request_user_service_json, UserServiceAuthUser, UserServiceLoginRequest,
+    UserServiceLoginResponse, UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
 };
 
 pub const DEFAULT_MEMORY_ENGINE_OPERATOR_TOKEN: &str = "chatos-memory-engine-dev-operator-token";

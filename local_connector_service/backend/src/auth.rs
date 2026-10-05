@@ -2,37 +2,16 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use axum::http::HeaderMap;
-use chatos_service_runtime::http_body::{
-    read_response_json_limited, read_response_preview_text_limited_or_message,
-    ERROR_BODY_PREVIEW_LIMIT_BYTES, JSON_BODY_LIMIT_BYTES,
-};
 use chatos_service_runtime::{
     bearer_token_from_headers as parse_bearer_token_from_headers,
-    normalize_owned_identity_text as normalize_text, BearerTokenError,
+    normalize_owned_identity_text as normalize_text, request_user_service_json, BearerTokenError,
+    UserServiceVerifiedPrincipal, UserServiceVerifyResponse,
 };
 use reqwest::Method;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::AppConfig;
 use crate::models::CurrentUser;
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifiedPrincipal {
-    jti: String,
-    principal_type: String,
-    user_id: Option<String>,
-    username: Option<String>,
-    display_name: Option<String>,
-    role: Option<String>,
-    owner_user_id: Option<String>,
-    #[serde(default)]
-    scopes: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct UserServiceVerifyResponse {
-    principal: UserServiceVerifiedPrincipal,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceProofVerificationRequest {
@@ -63,31 +42,15 @@ pub async fn verify_token_via_user_service(
     client: &reqwest::Client,
     token: &str,
 ) -> Result<CurrentUser, String> {
-    let endpoint = format!(
-        "{}/api/auth/verify",
-        config.user_service_base_url.trim().trim_end_matches('/')
-    );
-    let response = client
-        .request(Method::GET, endpoint)
-        .bearer_auth(token.trim())
-        .send()
-        .await
-        .map_err(|err| format!("user_service request failed: {err}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let text =
-            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
-                .await;
-        return Err(if text.trim().is_empty() {
-            format!("user_service verify failed with status {status}")
-        } else {
-            text
-        });
-    }
-    let payload =
-        read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
-            .await
-            .map_err(|err| format!("parse user_service verify response failed: {err}"))?;
+    let payload = request_user_service_json::<(), UserServiceVerifyResponse>(
+        client,
+        config.user_service_base_url.as_str(),
+        Method::GET,
+        "/api/auth/verify",
+        Some(token),
+        None,
+    )
+    .await?;
     current_user_from_principal(payload.principal)
 }
 
@@ -97,32 +60,15 @@ pub async fn verify_request_via_user_service(
     token: &str,
     proof: &DeviceProofVerificationRequest,
 ) -> Result<CurrentUser, String> {
-    let endpoint = format!(
-        "{}/api/auth/device-proof/verify",
-        config.user_service_base_url.trim().trim_end_matches('/')
-    );
-    let response = client
-        .request(Method::POST, endpoint)
-        .bearer_auth(token.trim())
-        .json(proof)
-        .send()
-        .await
-        .map_err(|err| format!("user_service request failed: {err}"))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let text =
-            read_response_preview_text_limited_or_message(response, ERROR_BODY_PREVIEW_LIMIT_BYTES)
-                .await;
-        return Err(if text.trim().is_empty() {
-            format!("user_service device proof verification failed with status {status}")
-        } else {
-            text
-        });
-    }
-    let payload =
-        read_response_json_limited::<UserServiceVerifyResponse>(response, JSON_BODY_LIMIT_BYTES)
-            .await
-            .map_err(|err| format!("parse user_service verify response failed: {err}"))?;
+    let payload = request_user_service_json::<_, UserServiceVerifyResponse>(
+        client,
+        config.user_service_base_url.as_str(),
+        Method::POST,
+        "/api/auth/device-proof/verify",
+        Some(token),
+        Some(proof),
+    )
+    .await?;
     current_user_from_principal(payload.principal)
 }
 

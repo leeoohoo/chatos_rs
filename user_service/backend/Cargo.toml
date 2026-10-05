@@ -40,3 +40,6 @@ tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+chatos_internal_tls = { path = "../../crates/chatos_internal_tls", features = ["test-support"] }
