@@ -33,7 +33,7 @@ async fn postgres_schema_uses_tenant_scoped_resource_keys() {
         "SELECT conrelid::regclass::text,contype::text,pg_get_constraintdef(oid) \
          FROM pg_constraint WHERE conrelid::regclass::text=ANY($1) AND contype IN ('p','f')",
     )
-    .bind(&[
+    .bind([
         "engine_subjects",
         "engine_subject_memory_scopes",
         "engine_subject_memories",

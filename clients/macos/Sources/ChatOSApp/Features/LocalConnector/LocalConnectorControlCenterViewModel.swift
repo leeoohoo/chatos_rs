@@ -1,12 +1,6 @@
 import ChatOSCore
 import Foundation
 
-enum LocalConnectorApprovalMonitoringPolicy {
-    static func consistencyCheckInterval(hasStreamingService: Bool) -> Duration {
-        hasStreamingService ? .seconds(60) : .seconds(2)
-    }
-}
-
 @MainActor
 final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published var selectedTab: LocalConnectorControlTab = .connection
@@ -659,24 +653,6 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     func clearMessages() {
         errorMessage = nil
         notice = nil
-    }
-
-    nonisolated private static func fetchStatusWithStartupRetry(
-        service: any LocalConnectorControlServicing
-    ) async throws -> LocalConnectorStatus {
-        var lastError: Error?
-        for attempt in 0..<20 {
-            do {
-                return try await service.fetchStatus()
-            } catch {
-                try Task.checkCancellation()
-                lastError = error
-                if attempt < 19 {
-                    try await Task.sleep(for: .milliseconds(150))
-                }
-            }
-        }
-        throw lastError ?? URLError(.cannotConnectToHost)
     }
 
     private func load(_ operation: @escaping @MainActor () async throws -> Void) {

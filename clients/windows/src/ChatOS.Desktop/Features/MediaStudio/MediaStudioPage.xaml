@@ -13,17 +13,10 @@
 
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
         <Grid Padding="28,22,28,26" RowSpacing="12">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
 
             <Grid ColumnSpacing="14">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="11">
                     <Border Width="38" Height="38" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="11">
                         <FontIcon Glyph="&#xE735;" FontSize="19" Foreground="{StaticResource ChatOSPurpleBrush}" />
@@ -47,18 +40,11 @@
             <Pivot x:Name="StudioPivot" Grid.Row="2">
                 <PivotItem Header="图片创作">
                     <Grid Margin="0,10,0,0" ColumnSpacing="14">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="360" />
-                        </Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="360" /></Grid.ColumnDefinitions>
 
                         <Border Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
                             <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="62" />
-                                    <RowDefinition Height="1" />
-                                    <RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="62" /><RowDefinition Height="1" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                 <Grid Padding="18,0">
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="图片画布" Style="{StaticResource ChatOSHeadlineTextStyle}" />

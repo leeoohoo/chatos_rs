@@ -6,10 +6,10 @@ actor NativeMCPTerminalStore {
     private static let maximumLogBytesPerProcess = 2 * 1_024 * 1_024
     private static let retainedLogBytesTarget = 1_536 * 1_024
     private static let maximumLogEntryBytes = 2 * 1_024 * 1_024
-    fileprivate static let maximumPendingOutputBytes = 512 * 1_024
+    static let maximumPendingOutputBytes = 512 * 1_024
     private static let defaultMaximumRetainedExitedProcesses = 100
-    private static let maximumOutputCharacters = 512 * 1_024
-    private static let maximumWaitMilliseconds = 2 * 60 * 60 * 1_000
+    static let maximumOutputCharacters = 512 * 1_024
+    static let maximumWaitMilliseconds = 2 * 60 * 60 * 1_000
     private static let defaultForegroundTimeoutMilliseconds = 5 * 60 * 1_000
     private static let maximumForegroundTimeoutMilliseconds = 15 * 60 * 1_000
     private static let minimumForegroundTimeoutMilliseconds = 1_000
@@ -289,27 +289,27 @@ actor NativeMCPTerminalStore {
         case "get_recent_logs":
             return recentLogs(
                 projectRoot: projectRoot,
-                perTerminalLimit: clamp(arguments.integer("per_terminal_limit") ?? 10, 1, 50),
-                terminalLimit: clamp(arguments.integer("terminal_limit") ?? 20, 1, 20),
+                perTerminalLimit: clamp(arguments.terminalInteger("per_terminal_limit") ?? 10, 1, 50),
+                terminalLimit: clamp(arguments.terminalInteger("terminal_limit") ?? 20, 1, 20),
                 ownerRunID: ownerRunID
             )
         case "process_list":
             return processList(
                 projectRoot: projectRoot,
-                includeExited: arguments.bool("include_exited") ?? false,
-                limit: clamp(arguments.integer("limit") ?? 20, 1, 100),
+                includeExited: arguments.terminalBool("include_exited") ?? false,
+                limit: clamp(arguments.terminalInteger("limit") ?? 20, 1, 100),
                 ownerRunID: ownerRunID
             )
         case "process_poll":
             return try poll(
                 id: requiredID(arguments),
                 projectRoot: projectRoot,
-                offset: arguments.integer("offset"),
-                limit: clamp(arguments.integer("limit") ?? 80, 1, 200)
+                offset: arguments.terminalInteger("offset"),
+                limit: clamp(arguments.terminalInteger("limit") ?? 80, 1, 200)
             )
         case "process_log":
-            let offset = arguments.integer("offset")
-            let limit = clamp(arguments.integer("limit") ?? 200, 1, 200)
+            let offset = arguments.terminalInteger("offset")
+            let limit = clamp(arguments.terminalInteger("limit") ?? 200, 1, 200)
             let polled = try poll(
                 id: requiredID(arguments),
                 projectRoot: projectRoot,
@@ -317,7 +317,7 @@ actor NativeMCPTerminalStore {
                 limit: limit
             )
             guard case let .object(values) = polled else { return polled }
-            let logs = values.array("logs")
+            let logs = values.terminalArray("logs")
             return .object([
                 "terminal_id": values["terminal_id"] ?? .null,
                 "status": values["status"] ?? .string("unknown"),
@@ -338,14 +338,14 @@ actor NativeMCPTerminalStore {
                 timeoutMilliseconds: timeoutMilliseconds(arguments)
             )
         case "process_write":
-            guard let data = arguments.string("data") else {
+            guard let data = arguments.terminalString("data") else {
                 throw NativeMCPTerminalError.invalidArguments("缺少参数：data")
             }
             return try write(
                 id: requiredID(arguments),
                 projectRoot: projectRoot,
                 data: data,
-                submit: arguments.bool("submit") ?? false
+                submit: arguments.terminalBool("submit") ?? false
             )
         case "process_kill":
             return try kill(id: requiredID(arguments), projectRoot: projectRoot)
@@ -387,7 +387,7 @@ actor NativeMCPTerminalStore {
         projectRoot: URL,
         ownerRunID: String?
     ) async throws -> NativeJSONValue {
-        guard let action = arguments.string("action")?.lowercased() else {
+        guard let action = arguments.terminalString("action")?.lowercased() else {
             throw NativeMCPTerminalError.invalidArguments("缺少参数：action")
         }
         var result: NativeJSONValue
@@ -395,12 +395,12 @@ actor NativeMCPTerminalStore {
         case "list":
             result = processList(
                 projectRoot: projectRoot,
-                includeExited: arguments.bool("include_exited") ?? false,
-                limit: clamp(arguments.integer("limit") ?? 20, 1, 100),
+                includeExited: arguments.terminalBool("include_exited") ?? false,
+                limit: clamp(arguments.terminalInteger("limit") ?? 20, 1, 100),
                 ownerRunID: ownerRunID
             )
         case "poll":
-            result = try poll(id: requiredID(arguments), projectRoot: projectRoot, offset: arguments.integer("offset"), limit: clamp(arguments.integer("limit") ?? 80, 1, 200))
+            result = try poll(id: requiredID(arguments), projectRoot: projectRoot, offset: arguments.terminalInteger("offset"), limit: clamp(arguments.terminalInteger("limit") ?? 80, 1, 200))
         case "log":
             result = try await call(name: "process_log", arguments: arguments, projectRoot: projectRoot)
         case "wait":
@@ -408,7 +408,7 @@ actor NativeMCPTerminalStore {
         case "kill":
             result = try kill(id: requiredID(arguments), projectRoot: projectRoot)
         case "write", "submit", "close":
-            let data = action == "close" ? "\u{4}" : (arguments.string("data") ?? "")
+            let data = action == "close" ? "\u{4}" : (arguments.terminalString("data") ?? "")
             result = try write(id: requiredID(arguments), projectRoot: projectRoot, data: data, submit: action == "submit")
         default:
             throw NativeMCPTerminalError.invalidArguments("不支持的进程操作：\(action)")
@@ -763,10 +763,10 @@ actor NativeMCPTerminalStore {
         guard let ownerRunID else { return }
         let processID: String?
         if name == "process",
-           arguments.string("action")?.lowercased() == "list" {
+           arguments.terminalString("action")?.lowercased() == "list" {
             processID = nil
         } else {
-            processID = arguments.string("terminal_id")
+            processID = arguments.terminalString("terminal_id")
         }
         guard let processID else {
             guard name == "get_recent_logs" || name == "process_list" || name == "process" else {
@@ -779,379 +779,4 @@ actor NativeMCPTerminalStore {
         }
     }
 
-    private func sameRoot(_ lhs: URL, _ rhs: URL) -> Bool {
-        lhs.standardizedFileURL.resolvingSymlinksInPath().path
-            == rhs.standardizedFileURL.resolvingSymlinksInPath().path
-    }
-
-    private func snapshot(_ process: ManagedTerminalProcess) -> NativeJSONValue {
-        let output = combinedOutput(process, kinds: ["stdout", "stderr"], maximum: 1_200)
-        let busy = process.status != "exited"
-        return .object([
-            "terminal_id": .string(process.id),
-            "process_id": .string(process.id),
-            "terminal_name": .string(terminalName(process)),
-            "status": .string(process.status),
-            "process_status": .string(busy ? "running" : "exited"),
-            "busy": .bool(busy),
-            "has_session": .bool(true),
-            "command": .string(process.command),
-            "pid": process.process.processIdentifier > 0 ? .number(Double(process.process.processIdentifier)) : .null,
-            "started_at": .string(process.startedAt),
-            "uptime_seconds": .null,
-            "cwd": .string(displayPath(process.cwd, relativeTo: process.projectRoot)),
-            "project_id": .null,
-            "last_active_at": .string(process.lastActiveAt),
-            "output_preview": .string(output.text),
-            "output_tail": .string(output.text),
-            "output_tail_chars": .number(Double(output.characters)),
-            "exit_code": process.exitCode.map { .number(Double($0)) } ?? .null,
-        ])
-    }
-
-    private func combinedOutput(
-        _ process: ManagedTerminalProcess,
-        kinds: Set<String>,
-        maximum: Int? = nil
-    ) -> (text: String, characters: Int, truncated: Bool) {
-        let full = process.logs.filter { kinds.contains($0.kind) }.map(\.content).joined()
-        let characters = full.count
-        let maximum = maximum ?? Self.maximumOutputCharacters
-        guard characters > maximum else {
-            return (full, characters, process.outputBytesWereTruncated)
-        }
-        return (String(full.suffix(maximum)), characters, true)
-    }
-
-    private func terminalName(_ process: ManagedTerminalProcess) -> String {
-        let path = displayPath(process.cwd, relativeTo: process.projectRoot)
-        return path == "." ? process.projectRoot.lastPathComponent : process.cwd.lastPathComponent
-    }
-
-    private func displayPath(_ url: URL, relativeTo root: URL) -> String {
-        let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
-        let resolvedRoot = root.standardizedFileURL.resolvingSymlinksInPath()
-        guard resolvedURL.path != resolvedRoot.path else { return "." }
-        let prefix = resolvedRoot.path.hasSuffix("/") ? resolvedRoot.path : resolvedRoot.path + "/"
-        return resolvedURL.path.hasPrefix(prefix) ? String(resolvedURL.path.dropFirst(prefix.count)) : resolvedURL.path
-    }
-
-    private func requiredID(_ values: [String: NativeJSONValue]) throws -> String {
-        guard let id = values.string("terminal_id")?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else {
-            throw NativeMCPTerminalError.invalidArguments("缺少参数：terminal_id")
-        }
-        return id
-    }
-
-    private func timeoutMilliseconds(_ values: [String: NativeJSONValue]) -> Int {
-        if let milliseconds = values.integer("timeout_ms") {
-            return clamp(milliseconds, 1_000, Self.maximumWaitMilliseconds)
-        }
-        if let seconds = values.integer("timeout") {
-            return clamp(seconds * 1_000, 1_000, Self.maximumWaitMilliseconds)
-        }
-        return 30_000
-    }
-
-    private func clamp(_ value: Int, _ minimum: Int, _ maximum: Int) -> Int {
-        Swift.min(Swift.max(value, minimum), maximum)
-    }
-
-    private func resultScope(_ count: Int) -> String {
-        count > 1 ? "multiple_terminals" : count == 1 ? "single_terminal" : "no_terminal"
-    }
-
-    private static func timestamp() -> String { ISO8601DateFormatter().string(from: Date()) }
-
-    private static func processReadProperties(defaultLimit: Int) -> [String: NativeJSONValue] {
-        [
-            "terminal_id": .object(["type": .string("string")]),
-            "offset": integerSchema(minimum: 0, maximum: nil),
-            "limit": .object([
-                "type": .string("integer"),
-                "minimum": .number(1),
-                "maximum": .number(200),
-                "default": .number(Double(defaultLimit)),
-            ]),
-        ]
-    }
-
-    private static func integerSchema(minimum: Int, maximum: Int?) -> NativeJSONValue {
-        var values: [String: NativeJSONValue] = [
-            "type": .string("integer"),
-            "minimum": .number(Double(minimum)),
-        ]
-        if let maximum { values["maximum"] = .number(Double(maximum)) }
-        return .object(values)
-    }
-
-    private static func definition(
-        name: String,
-        description: String,
-        properties: [String: NativeJSONValue],
-        required: [String]
-    ) -> NativeJSONValue {
-        .object([
-            "name": .string(name),
-            "description": .string(description),
-            "inputSchema": .object([
-                "type": .string("object"),
-                "properties": .object(properties),
-                "required": .array(required.map(NativeJSONValue.string)),
-                "additionalProperties": .bool(false),
-            ]),
-        ])
-    }
-}
-
-private final class ManagedTerminalProcess: @unchecked Sendable {
-    let id: String
-    let sequence: Int
-    let command: String
-    let cwd: URL
-    let projectRoot: URL
-    let ownerRunID: String?
-    let process: Process
-    let input: FileHandle
-    let output: Pipe
-    let error: Pipe
-    var status: String
-    var exitCode: Int?
-    let startedAt: String
-    var lastActiveAt: String
-    var logs: [TerminalLog]
-    var nextLogOffset: Int
-    var retainedLogBytes: Int
-    var logsWereTruncated: Bool
-    var outputBytesWereTruncated: Bool
-    var exitContinuations: [UUID: AsyncStream<Void>.Continuation]
-    let stdoutPending = NativeCoalescingProcessOutput(
-        maximumBytes: NativeMCPTerminalStore.maximumPendingOutputBytes
-    )
-    let stderrPending = NativeCoalescingProcessOutput(
-        maximumBytes: NativeMCPTerminalStore.maximumPendingOutputBytes
-    )
-    let stdoutDrain = NativeProcessPipeDrainSignal()
-    let stderrDrain = NativeProcessPipeDrainSignal()
-
-    init(
-        id: String,
-        sequence: Int,
-        command: String,
-        cwd: URL,
-        projectRoot: URL,
-        ownerRunID: String?,
-        process: Process,
-        input: FileHandle,
-        output: Pipe,
-        error: Pipe,
-        status: String,
-        exitCode: Int?,
-        startedAt: String,
-        lastActiveAt: String,
-        logs: [TerminalLog],
-        nextLogOffset: Int,
-        retainedLogBytes: Int,
-        logsWereTruncated: Bool,
-        outputBytesWereTruncated: Bool,
-        exitContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-    ) {
-        self.id = id
-        self.sequence = sequence
-        self.command = command
-        self.cwd = cwd
-        self.projectRoot = projectRoot
-        self.ownerRunID = ownerRunID
-        self.process = process
-        self.input = input
-        self.output = output
-        self.error = error
-        self.status = status
-        self.exitCode = exitCode
-        self.startedAt = startedAt
-        self.lastActiveAt = lastActiveAt
-        self.logs = logs
-        self.nextLogOffset = nextLogOffset
-        self.retainedLogBytes = retainedLogBytes
-        self.logsWereTruncated = logsWereTruncated
-        self.outputBytesWereTruncated = outputBytesWereTruncated
-        self.exitContinuations = exitContinuations
-    }
-}
-
-/// Coordinates process termination with the final pipe-reader callback. A
-/// process exit can race the readability handler; waiting for EOF prevents a
-/// foreground result from being returned before its last output batch is
-/// accounted for.
-private final class NativeProcessPipeDrainSignal: @unchecked Sendable {
-    private let lock = NSLock()
-    private var completed = false
-    private var continuations: [UUID: AsyncStream<Void>.Continuation] = [:]
-
-    func complete() {
-        lock.lock()
-        guard !completed else {
-            lock.unlock()
-            return
-        }
-        completed = true
-        let pending = Array(continuations.values)
-        continuations.removeAll()
-        lock.unlock()
-        for continuation in pending {
-            continuation.yield(())
-            continuation.finish()
-        }
-    }
-
-    func wait(timeoutMilliseconds: Int) async -> Bool {
-        let changes = stream()
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                for await _ in changes { return true }
-                return true
-            }
-            group.addTask {
-                try? await Task.sleep(for: .milliseconds(timeoutMilliseconds))
-                return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
-    }
-
-    private func stream() -> AsyncStream<Void> {
-        lock.lock()
-        if completed {
-            lock.unlock()
-            return AsyncStream { continuation in
-                continuation.yield(())
-                continuation.finish()
-            }
-        }
-        let subscriberID = UUID()
-        let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        continuations[subscriberID] = pair.continuation
-        pair.continuation.onTermination = { [weak self] _ in
-            self?.remove(subscriberID)
-        }
-        lock.unlock()
-        return pair.stream
-    }
-
-    private func remove(_ subscriberID: UUID) {
-        lock.lock()
-        continuations.removeValue(forKey: subscriberID)
-        lock.unlock()
-    }
-}
-
-/// Keeps pipe readers non-blocking without creating one actor task per output
-/// fragment. Only one delivery task may be outstanding and queued bytes are
-/// bounded, so a command that writes faster than the actor can consume cannot
-/// create an unbounded task/data backlog.
-private final class NativeCoalescingProcessOutput: @unchecked Sendable {
-    private let lock = NSLock()
-    private let maximumBytes: Int
-    private var storage = Data()
-    private var deliveryScheduled = false
-    private var discarded = false
-
-    init(maximumBytes: Int) {
-        self.maximumBytes = max(1, maximumBytes)
-    }
-
-    /// Returns true only when the caller must schedule a delivery task.
-    func append(_ data: Data) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if !data.isEmpty {
-            storage.append(data)
-            if storage.count > maximumBytes {
-                storage = Data(storage.suffix(maximumBytes))
-                discarded = true
-            }
-        }
-        guard !deliveryScheduled, !storage.isEmpty else { return false }
-        deliveryScheduled = true
-        return true
-    }
-
-    func take() -> (data: Data, discarded: Bool)? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard deliveryScheduled else { return nil }
-        let result = (storage, discarded)
-        storage.removeAll(keepingCapacity: true)
-        discarded = false
-        deliveryScheduled = false
-        return result
-    }
-}
-
-private struct TerminalLog: Sendable {
-    let offset: Int
-    let kind: String
-    let content: String
-    let byteCount: Int
-    let createdAt: String
-
-    var jsonValue: NativeJSONValue {
-        .object([
-            "offset": .number(Double(offset)),
-            "kind": .string(kind),
-            "content": .string(content),
-            "created_at": .string(createdAt),
-        ])
-    }
-}
-
-private enum NativeMCPTerminalError: LocalizedError {
-    case unsupportedTool(String)
-    case invalidArguments(String)
-    case launchFailed(String)
-    case processNotFound
-    case processExited
-    case writeFailed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .unsupportedTool(name): "不支持的终端工具：\(name)"
-        case let .invalidArguments(message): message
-        case let .launchFailed(message): "命令启动失败：\(message)"
-        case .processNotFound: "当前项目中没有找到该命令进程"
-        case .processExited: "命令进程已经结束"
-        case let .writeFailed(message): "写入命令进程失败：\(message)"
-        }
-    }
-}
-
-private extension Dictionary where Key == String, Value == NativeJSONValue {
-    func string(_ key: String) -> String? {
-        guard case let .string(value)? = self[key] else { return nil }
-        return value
-    }
-
-    func bool(_ key: String) -> Bool? {
-        guard case let .bool(value)? = self[key] else { return nil }
-        return value
-    }
-
-    func integer(_ key: String) -> Int? {
-        guard case let .number(value)? = self[key] else { return nil }
-        return Int(value)
-    }
-
-    func array(_ key: String) -> [NativeJSONValue] {
-        guard case let .array(value)? = self[key] else { return [] }
-        return value
-    }
-}
-
-private extension NativeJSONValue {
-    var content: String? {
-        guard case let .object(values) = self, case let .string(content)? = values["content"] else { return nil }
-        return content
-    }
 }

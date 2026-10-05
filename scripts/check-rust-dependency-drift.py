@@ -24,7 +24,7 @@ SKIP_DIRS = {
 
 BASELINE: dict[str, dict[str, str]] = {
     "Cargo.toml": {
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
     "clients/local_agent_host/layers/infrastructure/database/Cargo.toml": {
         "sqlx": "workspace",
@@ -49,12 +49,12 @@ BASELINE: dict[str, dict[str, str]] = {
     "local_connector_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
     "memory_engine/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
     "official_website_service/backend/Cargo.toml": {
         "axum": "0.8",
@@ -63,15 +63,15 @@ BASELINE: dict[str, dict[str, str]] = {
     "plugin_management_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
     "tools/postgres-user-migration/Cargo.toml": {
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
     "user_service/backend/Cargo.toml": {
         "axum": "0.8",
         "tower-http": "0.7",
-        "sqlx": "0.8.6",
+        "sqlx": "0.9.0",
     },
 }
 
