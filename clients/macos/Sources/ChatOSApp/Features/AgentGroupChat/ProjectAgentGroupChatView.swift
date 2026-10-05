@@ -146,16 +146,19 @@ struct ProjectAgentGroupChatView: View {
     }
 
     private var roomContent: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
                 Divider()
                 workspaceContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             Divider()
             memberSidebar
                 .frame(width: 264)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(AppPalette.canvas)
     }
 
