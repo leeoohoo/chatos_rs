@@ -1,13 +1,8 @@
 # path	max_lines	expires_on	reason
 # First-party source at or above 800 lines must have a bounded budget and an expiry.
-clients/macos/Tests/ChatOSConnectorTests/SQLiteAgentGroupChatStoreTests.swift	3484	2026-12-31	Split message, member, task, and migration store scenarios
 config_center_service/backend/src/state/tests.rs	2557	2026-12-31	Split state read/write, publish, and recovery scenarios
 config_center_service/backend/src/catalog/tests.rs	2335	2026-12-31	Split catalog parsing, version, and permission scenarios
-clients/macos/Tests/ChatOSConnectorTests/NativePluginRuntimeTests.swift	2254	2026-12-31	Split plugin discovery, installation, runtime, and skill-gate scenarios
 clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	1999	2026-12-31	Split local agent tool-provider tests by tool family
-clients/macos/Tests/ChatOSConnectorTests/LocalAgentGroupChatSchedulerTests.swift	2278	2026-12-31	Split scheduler, recovery, and concurrency scenarios
-clients/macos/Tests/ChatOSAppTests/StoryStudioTests.swift	1558	2026-12-31	Split Story Studio UI state and business action scenarios
 crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
 crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
 mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
-memory_engine/backend/src/repositories/postgres_contract_tests.rs	893	2026-12-31	Split PostgreSQL repository contracts by repository
