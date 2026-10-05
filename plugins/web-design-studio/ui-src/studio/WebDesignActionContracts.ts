@@ -36,15 +36,23 @@ export type WebDesignViewportActionContext =
   ReturnType<typeof import('./WebDesignInsertActions').createWebDesignInsertActions> &
   ReturnType<typeof import('./WebDesignCanvasActions').createWebDesignCanvasActions>;
 
+type WebDesignViewportActions =
+  ReturnType<typeof import('./WebDesignViewportActions').createWebDesignViewportActions>;
+
+interface WebDesignSelectionDerivedValues {
+  selectedSceneLibrary: UiLibraryCatalog | undefined;
+  selectedSceneLibraryDefinition: UiComponentDefinition | undefined;
+  selectedSceneLibraryVariants: readonly UiComponentVariant[];
+}
+
 export type WebDesignSelectionActionContext =
-  WebDesignViewportActionContext & {
-    selectedSceneLibrary: UiLibraryCatalog | undefined;
-    selectedSceneLibraryDefinition: UiComponentDefinition | undefined;
-    selectedSceneLibraryVariants: readonly UiComponentVariant[];
-  };
+  WebDesignViewportActionContext &
+  WebDesignViewportActions &
+  WebDesignSelectionDerivedValues;
 
 export type WebDesignAssetActionContext =
-  WebDesignSelectionActionContext &
+  WebDesignViewportActionContext &
+  WebDesignViewportActions &
   ReturnType<typeof import('./WebDesignSelectionActions').createWebDesignSelectionActions>;
 
 export type WebDesignDocumentActionContext =

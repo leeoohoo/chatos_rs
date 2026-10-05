@@ -57,5 +57,5 @@ test('shadcn/ui variants come from upstream examples, blocks, and declarative of
   }
   assert.doesNotMatch(readFileSync('ui-src/studio/LibraryCanvasComponent.tsx', 'utf8'), /ShadcnCanvasComponent/);
   assert.equal(existsSync('ui-src/studio/ShadcnCanvasComponent.tsx'), false);
-  assert.match(readFileSync('ui-src/studio/WebDesignStudioApp.tsx', 'utf8'), /LazyVariantPreview/);
+  assert.match(readFileSync('ui-src/studio/WebDesignStudioSupport.tsx', 'utf8'), /LazyVariantPreview/);
 });

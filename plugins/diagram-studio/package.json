@@ -54,6 +54,6 @@
     "@vitejs/plugin-react": "5.0.4",
     "esbuild": "0.25.10",
     "typescript": "5.9.2",
-    "vite": "7.1.7"
+    "vite": "7.3.6"
   }
 }
