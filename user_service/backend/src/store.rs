@@ -15,14 +15,18 @@ use crate::auth::{hash_password, normalize_display_name, normalize_username};
 use crate::config::AppConfig;
 use crate::models::{
     AgentAccountListItem, AgentAccountRecord, HarnessProvisioningRecord, InviteCodePublicRecord,
-    InviteCodeRecord, LocalConnectorAuthTicketRecord, RegistrationEmailCodeRecord,
-    UserOptionRecord, UserRecord, UserSummaryPageResponse, UserSummaryRecord,
-    USER_ROLE_SUPER_ADMIN,
+    InviteCodeRecord, LocalConnectorAuthTicketRecord, UserOptionRecord, UserRecord,
+    UserSummaryPageResponse, UserSummaryRecord, USER_ROLE_SUPER_ADMIN,
 };
 use chatos_service_runtime::is_production_environment;
 
 mod model_configs;
+mod registration_email_codes;
 pub(crate) mod wechat_auth;
+
+pub use registration_email_codes::{
+    RegistrationEmailCodeReservation, RegistrationEmailCodeReservationError,
+};
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");
 
@@ -565,36 +569,6 @@ impl AppStore {
             .bind(&record.user_id).bind(&record.status).bind(timestamp(&record.updated_at)?).bind(json(record)?)
             .execute(&self.pool).await.map_err(db_error)?;
         Ok(record.clone())
-    }
-
-    pub async fn find_registration_email_code(
-        &self,
-        email: &str,
-    ) -> Result<Option<RegistrationEmailCodeRecord>, String> {
-        fetch_optional(
-            sqlx::query_scalar("SELECT data FROM registration_email_codes WHERE email=$1")
-                .bind(email),
-            &self.pool,
-        )
-        .await
-    }
-
-    pub async fn save_registration_email_code(
-        &self,
-        record: &RegistrationEmailCodeRecord,
-    ) -> Result<(), String> {
-        sqlx::query(r#"INSERT INTO registration_email_codes (email,expires_at,consumed_at,updated_at,data)
-            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (email) DO UPDATE SET expires_at=EXCLUDED.expires_at,
-            consumed_at=EXCLUDED.consumed_at,updated_at=EXCLUDED.updated_at,data=EXCLUDED.data"#)
-            .bind(&record.email).bind(record.expires_at_unix).bind(optional_timestamp(record.consumed_at.as_deref())?)
-            .bind(timestamp(&record.updated_at)?).bind(json(record)?).execute(&self.pool).await.map(|_| ()).map_err(db_error)
-    }
-
-    pub async fn mark_registration_email_code_consumed(&self, email: &str) -> Result<(), String> {
-        let now = now_rfc3339();
-        sqlx::query(r#"UPDATE registration_email_codes SET consumed_at=$2,updated_at=$2,
-            data=jsonb_set(jsonb_set(data,'{consumed_at}',to_jsonb($3::text)),'{updated_at}',to_jsonb($3::text)) WHERE email=$1"#)
-            .bind(email).bind(timestamp(&now)?).bind(&now).execute(&self.pool).await.map(|_| ()).map_err(db_error)
     }
 
     pub async fn insert_local_connector_auth_ticket(

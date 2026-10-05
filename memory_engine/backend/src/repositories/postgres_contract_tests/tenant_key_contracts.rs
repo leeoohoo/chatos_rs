@@ -108,15 +108,17 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
     )
     .await
     .expect("same thread id is valid in another tenant");
-    let owner_thread = crate::repositories::threads::get_thread_by_id(&pool, &tenant_a, &source_a, &thread_a)
-        .await
-        .expect("load owner thread")
-        .expect("owner thread still exists");
+    let owner_thread =
+        crate::repositories::threads::get_thread_by_id(&pool, &tenant_a, &source_a, &thread_a)
+            .await
+            .expect("load owner thread")
+            .expect("owner thread still exists");
     assert_eq!(owner_thread.title.as_deref(), Some("owner title"));
-    let tenant_b_thread = crate::repositories::threads::get_thread_by_id(&pool, &tenant_b, &source_b, &thread_b)
-        .await
-        .expect("load tenant B thread")
-        .expect("tenant B thread still exists");
+    let tenant_b_thread =
+        crate::repositories::threads::get_thread_by_id(&pool, &tenant_b, &source_b, &thread_b)
+            .await
+            .expect("load tenant B thread")
+            .expect("tenant B thread still exists");
     assert_eq!(tenant_b_thread.title.as_deref(), Some("attacker title"));
 
     let record_id = format!("scope-record-shared-{suffix}");
@@ -157,17 +159,27 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
         .await
         .expect("same record id is valid in another tenant");
     tx.commit().await.expect("commit tenant B record");
-    let stored_record =
-        crate::repositories::records::get_record_by_id(&pool, &record_id, &tenant_a, &source_a, Some(&thread_a))
-            .await
-            .expect("load owner record")
-            .expect("owner record still exists");
+    let stored_record = crate::repositories::records::get_record_by_id(
+        &pool,
+        &record_id,
+        &tenant_a,
+        &source_a,
+        Some(&thread_a),
+    )
+    .await
+    .expect("load owner record")
+    .expect("owner record still exists");
     assert_eq!(stored_record.content, "owner record");
-    let tenant_b_record =
-        crate::repositories::records::get_record_by_id(&pool, &record_id, &tenant_b, &source_b, Some(&thread_b))
-            .await
-            .expect("load tenant B record")
-            .expect("tenant B record still exists");
+    let tenant_b_record = crate::repositories::records::get_record_by_id(
+        &pool,
+        &record_id,
+        &tenant_b,
+        &source_b,
+        Some(&thread_b),
+    )
+    .await
+    .expect("load tenant B record")
+    .expect("tenant B record still exists");
     assert_eq!(tenant_b_record.content, "attacker record");
 
     let summary_id = format!("scope-summary-shared-{suffix}");
@@ -234,11 +246,16 @@ async fn postgres_allows_tenant_scoped_ids_and_keeps_mutations_isolated() {
     )
     .await
     .expect("update tenant A record only");
-    let tenant_b_record =
-        crate::repositories::records::get_record_by_id(&pool, &record_id, &tenant_b, &source_b, Some(&thread_b))
-            .await
-            .expect("reload tenant B record")
-            .expect("tenant B record remains");
+    let tenant_b_record = crate::repositories::records::get_record_by_id(
+        &pool,
+        &record_id,
+        &tenant_b,
+        &source_b,
+        Some(&thread_b),
+    )
+    .await
+    .expect("reload tenant B record")
+    .expect("tenant B record remains");
     assert_eq!(tenant_b_record.summary_status, "pending");
 
     crate::repositories::summaries::mark_summaries_subject_memory_summarized(

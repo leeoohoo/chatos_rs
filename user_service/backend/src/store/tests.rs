@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ensure_empty_database_bootstrap_allowed, AppStore, SuperAdminBootstrapConfig};
+use super::{
+    ensure_empty_database_bootstrap_allowed, now_rfc3339, AppStore,
+    RegistrationEmailCodeReservationError, SuperAdminBootstrapConfig,
+};
 use crate::models::{UserRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER};
 
 const BOOTSTRAP_USERNAME: &str = "bootstrap-admin";
@@ -166,6 +169,128 @@ async fn postgres_super_admin_bootstrap_contract() {
         .await
         .expect("look up absent bootstrap user")
         .is_none());
+
+    pool.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA {quoted_schema} CASCADE"
+    )))
+    .execute(&root_pool)
+    .await
+    .expect("drop isolated contract test schema");
+    root_pool.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires USER_SERVICE_TEST_DATABASE_URL with CREATE SCHEMA privilege"]
+async fn postgres_registration_code_counters_are_atomic() {
+    let database_url = std::env::var("USER_SERVICE_TEST_DATABASE_URL")
+        .expect("USER_SERVICE_TEST_DATABASE_URL must be set");
+    let root_pool = sqlx::PgPool::connect(database_url.as_str())
+        .await
+        .expect("connect contract test database");
+    let schema = format!("registration_code_atomic_{}", uuid::Uuid::new_v4().simple());
+    let quoted_schema = format!("\"{schema}\"");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA {quoted_schema}"
+    )))
+    .execute(&root_pool)
+    .await
+    .expect("create isolated contract test schema");
+    let search_path = format!("SET search_path TO {quoted_schema}");
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(16)
+        .after_connect(move |connection, _metadata| {
+            let search_path = search_path.clone();
+            Box::pin(async move {
+                sqlx::query(sqlx::AssertSqlSafe(search_path))
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(database_url.as_str())
+        .await
+        .expect("connect isolated contract test pool");
+    sqlx::query(
+        r#"CREATE TABLE registration_email_codes (
+            email TEXT PRIMARY KEY, expires_at BIGINT NOT NULL,
+            consumed_at TIMESTAMPTZ NULL, updated_at TIMESTAMPTZ NOT NULL, data JSONB NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create registration code table");
+    let store = AppStore::new(pool.clone());
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(12));
+    let mut sends = Vec::new();
+    for index in 0..12 {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        sends.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .reserve_registration_email_code_send(
+                    "atomic@example.com",
+                    format!("code-{index}"),
+                    "invite".to_string(),
+                    1_000,
+                    "2025-01-01T00:00:00Z".to_string(),
+                    600,
+                    60,
+                    5,
+                )
+                .await
+        }));
+    }
+    let mut reserved = 0;
+    let mut throttled = 0;
+    for task in sends {
+        match task.await.expect("join concurrent reservation") {
+            Ok(_) => reserved += 1,
+            Err(RegistrationEmailCodeReservationError::ResendTooSoon) => throttled += 1,
+            Err(error) => panic!("unexpected reservation result: {error:?}"),
+        }
+    }
+    assert_eq!(reserved, 1);
+    assert_eq!(throttled, 11);
+
+    let record = store
+        .find_registration_email_code("atomic@example.com")
+        .await
+        .expect("read reservation")
+        .expect("reserved record");
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(20));
+    let mut guesses = Vec::new();
+    for _ in 0..20 {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        guesses.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .verify_registration_email_code_attempt(
+                    "atomic@example.com",
+                    "wrong-code",
+                    "invite",
+                    1_001,
+                    now_rfc3339().as_str(),
+                    5,
+                )
+                .await
+        }));
+    }
+    for task in guesses {
+        assert!(!task
+            .await
+            .expect("join concurrent guess")
+            .expect("record guess"));
+    }
+    let exhausted = store
+        .find_registration_email_code("atomic@example.com")
+        .await
+        .expect("read exhausted record")
+        .expect("exhausted record");
+    assert_eq!(exhausted.attempts, 5);
+    assert_ne!(record.code_hash, "wrong-code");
 
     pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(

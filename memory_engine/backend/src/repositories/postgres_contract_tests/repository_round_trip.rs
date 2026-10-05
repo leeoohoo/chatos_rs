@@ -34,10 +34,11 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     )
     .await
     .expect("upsert thread");
-    let listed =
-        crate::repositories::threads::list_threads_by_label(&pool, &tenant, &source, "contract", None, 10, 0)
-            .await
-            .expect("list threads");
+    let listed = crate::repositories::threads::list_threads_by_label(
+        &pool, &tenant, &source, "contract", None, 10, 0,
+    )
+    .await
+    .expect("list threads");
     assert_eq!(listed.len(), 1);
 
     assert!(crate::repositories::threads::try_acquire_summary_slot(
@@ -60,10 +61,18 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     )
     .await
     .expect("reject wrong summary owner"));
-    crate::repositories::threads::release_summary_slot(&pool, &tenant, &source, &thread_id, "summary-job", 0, 0)
-        .await
-        .expect("release summary slot")
-        .expect("owned slot");
+    crate::repositories::threads::release_summary_slot(
+        &pool,
+        &tenant,
+        &source,
+        &thread_id,
+        "summary-job",
+        0,
+        0,
+    )
+    .await
+    .expect("release summary slot")
+    .expect("owned slot");
 
     let record = EngineRecord {
         id: format!("record-{suffix}"),
@@ -113,12 +122,15 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
     )
     .await
     .expect("create summary");
-    assert!(
-        crate::repositories::summaries::get_pending_rollup_dispatch(&pool, &tenant, &source, &summary.id)
-            .await
-            .expect("rollup outbox")
-            .is_some()
-    );
+    assert!(crate::repositories::summaries::get_pending_rollup_dispatch(
+        &pool,
+        &tenant,
+        &source,
+        &summary.id
+    )
+    .await
+    .expect("rollup outbox")
+    .is_some());
     assert_eq!(
         crate::repositories::records::mark_claimed_records_summarized(
             &pool,
@@ -144,12 +156,14 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
             .await
             .expect("consume rollup")
     );
-    assert!(crate::repositories::summaries::rearm_rollup_dispatch_if_eligible(
-        &pool, &tenant, &source, &thread_id, 8,
-    )
-    .await
-    .expect("rearm rollup")
-    .is_some());
+    assert!(
+        crate::repositories::summaries::rearm_rollup_dispatch_if_eligible(
+            &pool, &tenant, &source, &thread_id, 8,
+        )
+        .await
+        .expect("rearm rollup")
+        .is_some()
+    );
 
     let memory = crate::repositories::subject_memories::upsert_subject_memory(
         &pool,
@@ -220,7 +234,8 @@ async fn postgres_repositories_round_trip_memory_and_coordination_state() {
         1
     );
 
-    let cloud_agent_repository = crate::repositories::cloud_agent::CloudAgentPostgresStore::new(pool.clone());
+    let cloud_agent_repository =
+        crate::repositories::cloud_agent::CloudAgentPostgresStore::new(pool.clone());
     let store = CloudAgentStateStore::from_repository(cloud_agent_repository.clone());
     let run_id = format!("memory-run-{suffix}");
     let run = create_cloud_agent_run(

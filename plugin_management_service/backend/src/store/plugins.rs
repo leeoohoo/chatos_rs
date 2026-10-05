@@ -293,6 +293,22 @@ impl AppStore {
         .await
     }
 
+    pub async fn list_plugin_catalog_entries_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<PluginCatalogRecord>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        decode_all(
+            sqlx::query_scalar("SELECT data FROM plugin_catalog_entries WHERE id=ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_error)?,
+        )
+    }
+
     pub async fn find_plugin_catalog_entry(
         &self,
         marketplace_id: &str,
@@ -359,6 +375,43 @@ impl AppStore {
             &self.pool,
         )
         .await
+    }
+
+    pub async fn list_plugin_releases_any_state_by_ids(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<PluginReleaseRecord>, String> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        decode_all(
+            sqlx::query_scalar("SELECT data FROM plugin_releases WHERE id=ANY($1)")
+                .bind(ids)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_error)?,
+        )
+    }
+
+    pub async fn list_plugin_releases_by_versions(
+        &self,
+        plugin_ids: &[String],
+        versions: &[String],
+    ) -> Result<Vec<PluginReleaseRecord>, String> {
+        if plugin_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        decode_all(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_releases WHERE (plugin_id,version) IN \
+                 (SELECT * FROM unnest($1::text[],$2::text[]))",
+            )
+            .bind(plugin_ids)
+            .bind(versions)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error)?,
+        )
     }
 
     pub async fn find_plugin_release_by_version(
@@ -448,6 +501,164 @@ impl AppStore {
         release_id: &str,
     ) -> Result<Vec<PluginComponentSnapshot>, String> {
         decode_all(sqlx::query_scalar("SELECT data FROM plugin_component_snapshots WHERE plugin_id=$1 AND release_id=$2 ORDER BY component_key").bind(plugin_id).bind(release_id).fetch_all(&self.pool).await.map_err(db_error)?)
+    }
+
+    pub async fn list_plugin_component_snapshots_by_release_ids(
+        &self,
+        release_ids: &[String],
+    ) -> Result<Vec<PluginComponentSnapshot>, String> {
+        if release_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        decode_all(
+            sqlx::query_scalar(
+                "SELECT data FROM plugin_component_snapshots WHERE release_id=ANY($1) \
+                 ORDER BY release_id,component_key",
+            )
+            .bind(release_ids)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error)?,
+        )
+    }
+
+    pub async fn apply_plugin_catalog_sync(
+        &self,
+        sync: &PluginCatalogSyncRecord,
+        expected_revision: Option<&str>,
+        marketplace: &PluginMarketplaceRecord,
+        plugins: &[PluginCatalogRecord],
+        releases: &[PluginReleaseRecord],
+        snapshots: &[PluginComponentSnapshot],
+    ) -> Result<bool, String> {
+        let mut tx = self.pool.begin().await.map_err(db_error)?;
+        let sync_data = json(sync)?;
+        let synced_at = timestamp(&sync.synced_at)?;
+        let committed = if let Some(expected) = expected_revision {
+            sqlx::query("UPDATE plugin_catalog_syncs SET synced_at=$1,data=$2 WHERE marketplace_id=$3 AND data->>'revision'=$4")
+                .bind(synced_at).bind(sync_data).bind(&sync.marketplace_id).bind(expected)
+                .execute(&mut *tx).await.map_err(db_error)?.rows_affected() == 1
+        } else {
+            sqlx::query("INSERT INTO plugin_catalog_syncs(marketplace_id,synced_at,data) VALUES($1,$2,$3) ON CONFLICT(marketplace_id) DO NOTHING")
+                .bind(&sync.marketplace_id).bind(synced_at).bind(sync_data)
+                .execute(&mut *tx).await.map_err(db_error)?.rows_affected() == 1
+        };
+        if !committed {
+            tx.rollback().await.map_err(db_error)?;
+            return Ok(false);
+        }
+
+        if !plugins.is_empty() {
+            let rows = plugins
+                .iter()
+                .map(|record| {
+                    Ok(serde_json::json!({
+                        "id": record.id, "plugin_key": record.plugin_key,
+                        "marketplace_id": record.marketplace_id, "owner_user_id": record.owner_user_id,
+                        "name": record.name, "display_name": record.display_name,
+                        "category": record.interface.category, "visibility": record.visibility,
+                        "enabled": record.enabled, "featured": record.featured,
+                        "updated_at": record.updated_at, "data": serde_json::to_value(record).map_err(|error| error.to_string())?
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            sqlx::query(r#"WITH rows AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(
+                    id text,plugin_key text,marketplace_id text,owner_user_id text,name text,
+                    display_name text,category text,visibility text,enabled boolean,featured boolean,
+                    updated_at text,data jsonb))
+                INSERT INTO plugin_catalog_entries(id,plugin_key,marketplace_id,owner_user_id,name,
+                    display_name,category,visibility,enabled,featured,updated_at,data)
+                SELECT id,plugin_key,marketplace_id,owner_user_id,name,display_name,category,visibility,
+                    enabled,featured,updated_at::timestamptz,data FROM rows
+                ON CONFLICT(id) DO UPDATE SET plugin_key=EXCLUDED.plugin_key,
+                    marketplace_id=EXCLUDED.marketplace_id,owner_user_id=EXCLUDED.owner_user_id,
+                    name=EXCLUDED.name,display_name=EXCLUDED.display_name,category=EXCLUDED.category,
+                    visibility=EXCLUDED.visibility,enabled=EXCLUDED.enabled,featured=EXCLUDED.featured,
+                    updated_at=EXCLUDED.updated_at,data=EXCLUDED.data"#)
+                .bind(Json(Value::Array(rows)))
+                .execute(&mut *tx).await.map_err(db_error)?;
+        }
+
+        if !releases.is_empty() {
+            let rows = releases
+                .iter()
+                .map(|record| {
+                    Ok(serde_json::json!({
+                        "id": record.id, "plugin_id": record.plugin_id, "version": record.version,
+                        "release_channel": record.release_channel, "published_at": record.published_at,
+                        "revoked_at": record.revoked_at, "data": serde_json::to_value(record).map_err(|error| error.to_string())?
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            sqlx::query(r#"WITH rows AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(
+                    id text,plugin_id text,version text,release_channel text,published_at text,
+                    revoked_at text,data jsonb))
+                INSERT INTO plugin_releases(id,plugin_id,version,release_channel,published_at,revoked_at,data)
+                SELECT id,plugin_id,version,release_channel,published_at::timestamptz,
+                    revoked_at::timestamptz,data FROM rows
+                ON CONFLICT(id) DO UPDATE SET plugin_id=EXCLUDED.plugin_id,version=EXCLUDED.version,
+                    release_channel=EXCLUDED.release_channel,published_at=EXCLUDED.published_at,
+                    revoked_at=EXCLUDED.revoked_at,data=EXCLUDED.data"#)
+                .bind(Json(Value::Array(rows)))
+                .execute(&mut *tx).await.map_err(db_error)?;
+
+            let state_rows = releases
+                .iter()
+                .map(|release| {
+                    let state = PluginReleasePublicationState {
+                        release_id: release.id.clone(),
+                        ready: true,
+                        updated_at: sync.synced_at.clone(),
+                    };
+                    serde_json::to_value(&state).map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            sqlx::query(
+                r#"WITH rows AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(
+                    release_id text,ready boolean,updated_at text))
+                INSERT INTO plugin_release_publication_states(release_id,ready,updated_at,data)
+                SELECT release_id,ready,updated_at::timestamptz,to_jsonb(rows) FROM rows
+                ON CONFLICT(release_id) DO UPDATE SET ready=EXCLUDED.ready,
+                    updated_at=EXCLUDED.updated_at,data=EXCLUDED.data"#,
+            )
+            .bind(Json(Value::Array(state_rows)))
+            .execute(&mut *tx)
+            .await
+            .map_err(db_error)?;
+        }
+
+        let release_ids = releases.iter().map(|record| &record.id).collect::<Vec<_>>();
+        if !release_ids.is_empty() {
+            sqlx::query("DELETE FROM plugin_component_snapshots WHERE release_id=ANY($1)")
+                .bind(&release_ids)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_error)?;
+        }
+        if !snapshots.is_empty() {
+            let rows = snapshots
+                .iter()
+                .map(|record| {
+                    let kind = serde_json::to_value(record.component.kind)
+                        .map_err(|error| error.to_string())?;
+                    Ok(serde_json::json!({
+                        "plugin_id": record.plugin_id, "release_id": record.release_id,
+                        "component_key": record.component.component_key,
+                        "component_kind": kind.as_str().ok_or_else(|| "Plugin component kind is not text".to_string())?,
+                        "data": serde_json::to_value(record).map_err(|error| error.to_string())?
+                    }))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            sqlx::query(r#"WITH rows AS (SELECT * FROM jsonb_to_recordset($1::jsonb) AS r(
+                    plugin_id text,release_id text,component_key text,component_kind text,data jsonb))
+                INSERT INTO plugin_component_snapshots(plugin_id,release_id,component_key,component_kind,data)
+                SELECT plugin_id,release_id,component_key,component_kind,data FROM rows"#)
+                .bind(Json(Value::Array(rows)))
+                .execute(&mut *tx).await.map_err(db_error)?;
+        }
+        marketplace::write_marketplace(&mut *tx, marketplace).await?;
+        tx.commit().await.map_err(db_error)?;
+        Ok(true)
     }
 }
 

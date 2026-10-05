@@ -404,7 +404,7 @@ pub fn error(status: StatusCode, message: impl Into<String>) -> (StatusCode, Jso
 }
 
 pub fn require_super_admin(principal: &CurrentPrincipal) -> Result<(), (StatusCode, Json<Value>)> {
-    if principal.is_super_admin() {
+    if principal.principal_type == PRINCIPAL_TYPE_HUMAN_USER && principal.is_super_admin() {
         Ok(())
     } else {
         Err(forbidden("super_admin permission required"))

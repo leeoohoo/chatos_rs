@@ -2,10 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 use crate::error_policy::{handle_transient_retry, is_transient_transport_or_parse_error};
 use crate::{
-    AiRequestHandler, AiResponse, ModelRuntimeConfig, StreamCallbacks,
+    AiRequestHandler, AiRequestOptions, AiResponse, ModelRuntimeConfig, StreamCallbacks,
     DEFAULT_MODEL_REQUEST_MAX_RETRIES,
 };
 
@@ -19,6 +20,7 @@ pub struct SimplePromptOptions {
     /// value is the number of retries after the initial request.
     pub max_attempts: Option<usize>,
     pub callbacks: StreamCallbacks,
+    pub abort_token: Option<CancellationToken>,
 }
 
 pub async fn run_compatible_prompt_with<F>(
@@ -60,7 +62,7 @@ where
         let input = build_input(wrapped_user_prompt.as_str(), input_as_list);
 
         match handler
-            .handle_request(
+            .handle_request_with_options(
                 config.base_url.as_str(),
                 config.api_key.as_str(),
                 input,
@@ -74,6 +76,10 @@ where
                 Some(config.provider.clone()),
                 config.thinking_level.clone(),
                 None,
+                AiRequestOptions {
+                    abort_token: options.abort_token.clone(),
+                    ..Default::default()
+                },
             )
             .await
         {

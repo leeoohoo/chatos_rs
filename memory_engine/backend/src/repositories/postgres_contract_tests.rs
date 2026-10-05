@@ -24,7 +24,6 @@ async fn pool() -> Option<crate::db::Db> {
         .ok()
 }
 
-
 mod cursor_contracts;
 mod repository_round_trip;
 mod summary_cursor_contracts;

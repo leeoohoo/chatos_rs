@@ -3,13 +3,67 @@ async fn validate_catalog_against_store(
     document: &PluginCatalogDocument,
     allow_committed_snapshot_repair: bool,
 ) -> Result<(), ApiError> {
-    for plugin in &document.plugins {
-        if let Some(existing) = state
+    let plugin_ids = document
+        .plugins
+        .iter()
+        .map(|plugin| plugin.id.clone())
+        .collect::<Vec<_>>();
+    let release_ids = document
+        .releases
+        .iter()
+        .map(|release| release.id.clone())
+        .collect::<Vec<_>>();
+    let release_plugin_ids = document
+        .releases
+        .iter()
+        .map(|release| release.plugin_id.clone())
+        .collect::<Vec<_>>();
+    let release_versions = document
+        .releases
+        .iter()
+        .map(|release| release.version.clone())
+        .collect::<Vec<_>>();
+    let (plugins, releases_by_id, releases_by_version, snapshots) = tokio::try_join!(
+        state.store.list_plugin_catalog_entries_by_ids(&plugin_ids),
+        state.store.list_plugin_releases_any_state_by_ids(&release_ids),
+        state
             .store
-            .get_plugin_catalog_entry(plugin.id.as_str())
-            .await
-            .map_err(ApiError::internal)?
-        {
+            .list_plugin_releases_by_versions(&release_plugin_ids, &release_versions),
+        state
+            .store
+            .list_plugin_component_snapshots_by_release_ids(&release_ids),
+    )
+    .map_err(ApiError::internal)?;
+    let plugins = plugins
+        .into_iter()
+        .map(|plugin| (plugin.id.clone(), plugin))
+        .collect::<HashMap<_, _>>();
+    let releases_by_id = releases_by_id
+        .into_iter()
+        .map(|release| (release.id.clone(), release))
+        .collect::<HashMap<_, _>>();
+    let releases_by_version = releases_by_version
+        .into_iter()
+        .map(|release| ((release.plugin_id.clone(), release.version.clone()), release))
+        .collect::<HashMap<_, _>>();
+    let mut snapshots_by_release: HashMap<String, Vec<PluginComponentSnapshot>> = HashMap::new();
+    for snapshot in snapshots {
+        snapshots_by_release
+            .entry(snapshot.release_id.clone())
+            .or_default()
+            .push(snapshot);
+    }
+    let mut incoming_snapshots_by_release: HashMap<String, Vec<PluginComponentSnapshot>> =
+        HashMap::new();
+    for snapshot in &document.component_snapshots {
+        incoming_snapshots_by_release
+            .entry(snapshot.release_id.clone())
+            .or_default()
+            .push(snapshot.clone());
+    }
+
+    for plugin in &document.plugins {
+        if let Some(existing) = plugins.get(&plugin.id) {
             if existing.marketplace_id != document.marketplace_id
                 || existing.name != plugin.name
                 || existing.plugin_key != plugin.plugin_key
@@ -24,19 +78,11 @@ async fn validate_catalog_against_store(
         }
     }
     for release in &document.releases {
-        if let Some(existing) = state
-            .store
-            .get_plugin_release(release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?
-        {
-            validate_release_progression(&existing, release)?;
+        if let Some(existing) = releases_by_id.get(&release.id) {
+            validate_release_progression(existing, release)?;
         }
-        if let Some(existing) = state
-            .store
-            .find_plugin_release_by_version(release.plugin_id.as_str(), release.version.as_str())
-            .await
-            .map_err(ApiError::internal)?
+        if let Some(existing) =
+            releases_by_version.get(&(release.plugin_id.clone(), release.version.clone()))
         {
             if existing.id != release.id {
                 return Err(ApiError::conflict(format!(
@@ -44,26 +90,19 @@ async fn validate_catalog_against_store(
                     release.plugin_id, release.version
                 )));
             }
-            validate_release_progression(&existing, release)?;
+            validate_release_progression(existing, release)?;
         }
-        let mut incoming_snapshots = document
-            .component_snapshots
-            .iter()
-            .filter(|snapshot| {
-                snapshot.plugin_id == release.plugin_id && snapshot.release_id == release.id
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut incoming_snapshots = incoming_snapshots_by_release
+            .remove(&release.id)
+            .unwrap_or_default();
         incoming_snapshots.sort_by(|left, right| {
             left.component
                 .component_key
                 .cmp(&right.component.component_key)
         });
-        let mut existing_snapshots = state
-            .store
-            .list_plugin_component_snapshots(release.plugin_id.as_str(), release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?;
+        let mut existing_snapshots = snapshots_by_release
+            .remove(&release.id)
+            .unwrap_or_default();
         existing_snapshots.sort_by(|left, right| {
             left.component
                 .component_key
@@ -78,87 +117,6 @@ async fn validate_catalog_against_store(
                 release.id
             )));
         }
-    }
-    Ok(())
-}
-
-async fn materialize_catalog(
-    state: &AppState,
-    marketplace: &PluginMarketplaceRecord,
-    document: &PluginCatalogDocument,
-) -> Result<(), ApiError> {
-    let mut staged_release_ids = Vec::new();
-    for release in &document.releases {
-        let ready = state
-            .store
-            .get_plugin_release(release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?
-            .is_some();
-        if !ready {
-            staged_release_ids.push(release.id.clone());
-        }
-        match state
-            .store
-            .get_plugin_release_any_state(release.id.as_str())
-            .await
-            .map_err(ApiError::internal)?
-        {
-            Some(existing) => {
-                if !ready {
-                    state
-                        .store
-                        .set_plugin_release_publication_ready(release.id.as_str(), false)
-                        .await
-                        .map_err(ApiError::internal)?;
-                }
-                if existing != *release {
-                    state
-                        .store
-                        .replace_plugin_release(release)
-                        .await
-                        .map_err(ApiError::internal)?;
-                }
-            }
-            None => state
-                .store
-                .insert_plugin_release_pending(release)
-                .await
-                .map_err(ApiError::internal)?,
-        }
-        let snapshots = document
-            .component_snapshots
-            .iter()
-            .filter(|snapshot| {
-                snapshot.plugin_id == release.plugin_id && snapshot.release_id == release.id
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        state
-            .store
-            .replace_plugin_component_snapshots(
-                release.plugin_id.as_str(),
-                release.id.as_str(),
-                snapshots.as_slice(),
-            )
-            .await
-            .map_err(ApiError::internal)?;
-    }
-    for release_id in staged_release_ids {
-        state
-            .store
-            .set_plugin_release_publication_ready(release_id.as_str(), true)
-            .await
-            .map_err(ApiError::internal)?;
-    }
-    for plugin in &document.plugins {
-        let mut plugin = plugin.clone();
-        apply_marketplace_catalog_scope(marketplace, &mut plugin);
-        state
-            .store
-            .replace_plugin_catalog_entry(&plugin)
-            .await
-            .map_err(ApiError::internal)?;
     }
     Ok(())
 }

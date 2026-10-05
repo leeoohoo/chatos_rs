@@ -8,7 +8,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use crate::models::{
     RunPendingRollupsResponse, RunPendingSummariesResponse, RunSubjectMemoryScopesResponse,
 };
-use crate::services::{control_plane as cp_service, subject_memory};
+use crate::services::job_execution::{self, PendingRollupOptions};
 use crate::state::AppState;
 
 use super::auth::SdkAuthContext;
@@ -23,26 +23,10 @@ pub async fn run_pending_summaries_once(
     Json(req): Json<SdkRunPendingSummariesRequest>,
 ) -> Result<Json<RunPendingSummariesResponse>, (StatusCode, String)> {
     let tenant_id = auth.require_optional_tenant(req.tenant_id.as_deref())?;
-    let policy =
-        crate::repositories::control_plane::get_effective_job_policy(&state.pool, "summary")
-            .await
-            .map_err(internal_error)?;
-    let limit = req
-        .max_threads
-        .unwrap_or(state.config.worker_max_threads_per_tick)
-        .max(1);
-    crate::jobs::summary_jobs::run_pending_thread_summaries_with_limit(
-        &state.pool,
-        &state.config,
-        tenant_id,
-        Some(auth.source_id()),
-        crate::services::summary::required_thread_summary_token_limit(policy.token_limit)
-            .map_err(internal_error)?,
-        limit,
-    )
-    .await
-    .map(Json)
-    .map_err(internal_error)
+    job_execution::run_pending_summaries(&state, tenant_id, Some(auth.source_id()), req.max_threads)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }
 
 pub async fn run_pending_rollups_once(
@@ -51,35 +35,18 @@ pub async fn run_pending_rollups_once(
     Json(req): Json<SdkRunPendingRollupsRequest>,
 ) -> Result<Json<RunPendingRollupsResponse>, (StatusCode, String)> {
     let tenant_id = auth.require_optional_tenant(req.tenant_id.as_deref())?;
-    let policy =
-        crate::repositories::control_plane::get_effective_job_policy(&state.pool, "rollup")
-            .await
-            .map_err(internal_error)?;
-    let limit = req
-        .max_threads
-        .unwrap_or(
-            policy
-                .max_threads_per_tick
-                .unwrap_or(state.config.worker_max_threads_per_tick),
-        )
-        .max(1);
-    let mut settings = cp_service::build_rollup_settings_from_policy(&policy);
-    cp_service::apply_rollup_setting_overrides(
-        &mut settings,
-        req.token_limit,
-        req.target_summary_tokens,
-        req.count_limit,
-        req.keep_level0_count,
-        req.max_level,
-    );
-
-    crate::jobs::summary_jobs::run_pending_thread_rollups(
-        &state.pool,
-        &state.config,
+    job_execution::run_pending_rollups(
+        &state,
         tenant_id,
         Some(auth.source_id()),
-        limit,
-        &settings,
+        PendingRollupOptions {
+            max_threads: req.max_threads,
+            token_limit: req.token_limit,
+            target_summary_tokens: req.target_summary_tokens,
+            count_limit: req.count_limit,
+            keep_level0_count: req.keep_level0_count,
+            max_level: req.max_level,
+        },
     )
     .await
     .map(Json)
@@ -92,16 +59,8 @@ pub async fn run_subject_memory_scopes_once(
     Json(req): Json<SdkRunSubjectMemoryScopesRequest>,
 ) -> Result<Json<RunSubjectMemoryScopesResponse>, (StatusCode, String)> {
     let tenant_id = auth.require_optional_tenant(req.tenant_id.as_deref())?;
-    subject_memory::run_registered_subject_memory_scopes(
-        &state.config,
-        &state.pool,
-        tenant_id,
-        Some(auth.source_id()),
-        req.limit
-            .unwrap_or(state.config.worker_max_threads_per_tick)
-            .max(1),
-    )
-    .await
-    .map(Json)
-    .map_err(internal_error)
+    job_execution::run_subject_memory_scopes(&state, tenant_id, Some(auth.source_id()), req.limit)
+        .await
+        .map(Json)
+        .map_err(internal_error)
 }

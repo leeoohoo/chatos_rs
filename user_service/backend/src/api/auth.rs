@@ -21,11 +21,12 @@ use crate::integrations::{
 use crate::models::{
     CurrentUserResponse, ExchangeLocalConnectorTicketRequest, IssueLocalConnectorTicketResponse,
     LocalConnectorAuthTicketRecord, LoginRequest, LoginResponse, RegisterRequest,
-    RegistrationEmailCodeRecord, SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse,
-    TokenVerifyResponse, UserRecord, VerifiedPrincipal, USER_ROLE_USER,
+    SendRegisterEmailCodeRequest, SendRegisterEmailCodeResponse, TokenVerifyResponse, UserRecord,
+    VerifiedPrincipal, USER_ROLE_USER,
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
+use crate::store::RegistrationEmailCodeReservationError;
 
 use super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
 
@@ -143,52 +144,47 @@ pub async fn send_register_email_code(
     validate_invite_code(&invite).map_err(bad_request)?;
 
     let now_unix = Utc::now().timestamp();
-    let existing = state
-        .store
-        .find_registration_email_code(email.as_str())
-        .await
-        .map_err(internal_error)?;
-    if let Some(existing) = existing.as_ref() {
-        if existing.consumed_at.is_none() && existing.resend_after_unix > now_unix {
-            return Err(bad_request(
-                "verification code was sent recently; retry later",
-            ));
-        }
-    }
-    let (window_start_unix, send_count) = next_send_window(
-        existing.as_ref(),
-        now_unix,
-        state.config.registration_code_hourly_limit,
-    )
-    .map_err(bad_request)?;
     let code = format!("{:06}", rand::random_range(0..1_000_000));
-    let record = RegistrationEmailCodeRecord {
-        email: email.clone(),
-        code_hash: registration_code_hash(
-            email.as_str(),
-            code.as_str(),
-            state.config.jwt_secret.as_str(),
-        ),
-        invite_code_hash,
-        expires_at_unix: now_unix + state.config.registration_code_ttl_seconds,
-        resend_after_unix: now_unix + state.config.registration_code_resend_seconds,
-        attempts: 0,
-        send_count,
-        window_start_unix,
-        consumed_at: None,
-        created_at: existing
-            .map(|value| value.created_at)
-            .unwrap_or_else(now_rfc3339),
-        updated_at: now_rfc3339(),
-    };
-    send_registration_code(&state.config, email.as_str(), code.as_str())
-        .await
-        .map_err(internal_error)?;
-    state
+    let reservation = state
         .store
-        .save_registration_email_code(&record)
+        .reserve_registration_email_code_send(
+            email.as_str(),
+            registration_code_hash(
+                email.as_str(),
+                code.as_str(),
+                state.config.jwt_secret.as_str(),
+            ),
+            invite_code_hash,
+            now_unix,
+            now_rfc3339(),
+            state.config.registration_code_ttl_seconds,
+            state.config.registration_code_resend_seconds,
+            state.config.registration_code_hourly_limit,
+        )
         .await
-        .map_err(internal_error)?;
+        .map_err(|error| match error {
+            RegistrationEmailCodeReservationError::ResendTooSoon => {
+                bad_request("verification code was sent recently; retry later")
+            }
+            RegistrationEmailCodeReservationError::HourlyLimitReached => {
+                bad_request("too many verification emails; retry later")
+            }
+            RegistrationEmailCodeReservationError::Store(error) => internal_error(error),
+        })?;
+    if let Err(error) = send_registration_code(&state.config, email.as_str(), code.as_str()).await {
+        if let Err(restore_error) = state
+            .store
+            .restore_registration_email_code_reservation(&reservation)
+            .await
+        {
+            tracing::error!(
+                email = email.as_str(),
+                error = restore_error.as_str(),
+                "restore registration email quota after delivery failure failed"
+            );
+        }
+        return Err(internal_error(error));
+    }
     Ok(Json(SendRegisterEmailCodeResponse {
         ok: true,
         expires_in_seconds: state.config.registration_code_ttl_seconds,
@@ -424,54 +420,27 @@ fn normalize_email(value: &str) -> Result<String, String> {
     Ok(email)
 }
 
-fn next_send_window(
-    existing: Option<&RegistrationEmailCodeRecord>,
-    now_unix: i64,
-    hourly_limit: i64,
-) -> Result<(i64, i64), String> {
-    let Some(existing) = existing else {
-        return Ok((now_unix, 1));
-    };
-    if now_unix - existing.window_start_unix >= 3600 {
-        return Ok((now_unix, 1));
-    }
-    if existing.send_count >= hourly_limit {
-        return Err("too many verification emails; retry later".to_string());
-    }
-    Ok((existing.window_start_unix, existing.send_count + 1))
-}
-
 async fn verify_registration_email_code(
     state: &AppState,
     email: &str,
     code: &str,
     invite_code_hash: &str,
 ) -> ApiStatusResult {
-    let mut record = state
-        .store
-        .find_registration_email_code(email)
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(|| bad_request("verification code is invalid or expired"))?;
     let now_unix = Utc::now().timestamp();
-    if record.consumed_at.is_some()
-        || record.expires_at_unix < now_unix
-        || record.invite_code_hash != invite_code_hash
-    {
-        return Err(bad_request("verification code is invalid or expired"));
-    }
-    if record.attempts >= state.config.registration_code_max_attempts {
-        return Err(bad_request("verification code is invalid or expired"));
-    }
     let expected = registration_code_hash(email, code, state.config.jwt_secret.as_str());
-    if record.code_hash != expected {
-        record.attempts += 1;
-        record.updated_at = now_rfc3339();
-        state
-            .store
-            .save_registration_email_code(&record)
-            .await
-            .map_err(internal_error)?;
+    let verified = state
+        .store
+        .verify_registration_email_code_attempt(
+            email,
+            expected.as_str(),
+            invite_code_hash,
+            now_unix,
+            now_rfc3339().as_str(),
+            state.config.registration_code_max_attempts,
+        )
+        .await
+        .map_err(internal_error)?;
+    if !verified {
         return Err(bad_request("verification code is invalid or expired"));
     }
     Ok(axum::http::StatusCode::NO_CONTENT)
@@ -618,25 +587,6 @@ fn current_auth_user(
 mod tests {
     use super::*;
 
-    fn registration_code_record(
-        window_start_unix: i64,
-        send_count: i64,
-    ) -> RegistrationEmailCodeRecord {
-        RegistrationEmailCodeRecord {
-            email: "user@example.com".to_string(),
-            code_hash: "hash".to_string(),
-            invite_code_hash: "invite".to_string(),
-            expires_at_unix: window_start_unix + 600,
-            resend_after_unix: window_start_unix + 60,
-            attempts: 0,
-            send_count,
-            window_start_unix,
-            consumed_at: None,
-            created_at: now_rfc3339(),
-            updated_at: now_rfc3339(),
-        }
-    }
-
     #[test]
     fn invite_code_normalization_trims_and_uppercases() {
         let normalized = normalize_invite_code("  chatos-abcd-ef12  ").unwrap();
@@ -646,19 +596,5 @@ mod tests {
     #[test]
     fn invite_code_normalization_rejects_whitespace_inside_code() {
         assert!(normalize_invite_code("CHATOS ABCD EF12").is_err());
-    }
-
-    #[test]
-    fn next_send_window_enforces_hourly_limit() {
-        let record = registration_code_record(1_000, 5);
-        let err = next_send_window(Some(&record), 1_100, 5).unwrap_err();
-        assert_eq!(err, "too many verification emails; retry later");
-    }
-
-    #[test]
-    fn next_send_window_resets_after_hour_window() {
-        let record = registration_code_record(1_000, 5);
-        let next = next_send_window(Some(&record), 4_700, 5).unwrap();
-        assert_eq!(next, (4_700, 1));
     }
 }

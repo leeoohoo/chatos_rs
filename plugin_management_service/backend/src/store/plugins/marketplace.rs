@@ -14,7 +14,7 @@ fn outbox_event(row: OutboxRow) -> PluginCatalogSyncOutboxEvent {
     }
 }
 
-async fn write_marketplace<'e, E>(
+pub(super) async fn write_marketplace<'e, E>(
     executor: E,
     record: &PluginMarketplaceRecord,
 ) -> Result<(), String>

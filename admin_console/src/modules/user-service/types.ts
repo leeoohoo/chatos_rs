@@ -288,6 +288,9 @@ export interface SystemConfigResponse {
   service: string;
   issuer: string;
   user_service_audience: string;
-  database_url: string;
+  database: {
+    kind: string;
+    configured: boolean;
+  };
   user_access_ttl_seconds: number;
 }

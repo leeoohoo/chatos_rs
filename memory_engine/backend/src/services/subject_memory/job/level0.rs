@@ -3,19 +3,18 @@
 
 use crate::config::AppConfig;
 use crate::db::Db;
-use crate::models::{now_rfc3339, RunSubjectMemoryJobRequest, UpsertSubjectMemoryRequest};
+use crate::models::RunSubjectMemoryJobRequest;
 use crate::repositories::subject_memories;
 
 use super::super::builders::build_subject_memory_from_summaries;
 use super::super::render::{
-    build_memory_metadata, decorate_generated_text, digest_from_ids,
-    summary_to_subject_memory_block,
+    decorate_generated_text, digest_from_ids, summary_to_subject_memory_block,
 };
 use super::super::selectors::mark_summary_sources_subject_memory_summarized;
 use super::super::{PendingSourceSummary, SubjectMemoryJobSettings};
 use super::common::{
-    build_failed_job_run, finish_subject_memory_job_run, tombstone_generated_subject_memory,
-    SubjectMemoryJobProgress,
+    finish_subject_memory_build, generated_subject_memory_request,
+    rollback_generated_subject_memory_after_mark_failure, SubjectMemoryJobProgress,
 };
 
 pub(crate) async fn process_level0_selection(
@@ -67,45 +66,36 @@ pub(crate) async fn process_level0_selection(
         .iter()
         .map(summary_to_subject_memory_block)
         .collect::<Vec<_>>();
-    let build = match build_subject_memory_from_summaries(
-        config,
+    let build = finish_subject_memory_build(
         db,
-        req.tenant_id.as_str(),
-        settings.prompt_title.as_str(),
-        selected_texts.as_slice(),
-        settings.token_limit,
-        settings.target_summary_tokens,
+        req,
+        settings,
+        from_scope_runner,
+        input_count,
+        progress,
+        selected.len(),
         job_run_id,
-        serde_json::json!({
-            "resume_kind": "subject_memory_job",
-            "job_run_id": job_run_id,
-            "request": req,
-            "from_scope_runner": from_scope_runner,
-            "scope_lock_owner": scope_lock_owner,
-            "scope_key": req.scope_key,
-        }),
+        build_subject_memory_from_summaries(
+            config,
+            db,
+            req.tenant_id.as_str(),
+            settings.prompt_title.as_str(),
+            selected_texts.as_slice(),
+            settings.token_limit,
+            settings.target_summary_tokens,
+            job_run_id,
+            serde_json::json!({
+                "resume_kind": "subject_memory_job",
+                "job_run_id": job_run_id,
+                "request": req,
+                "from_scope_runner": from_scope_runner,
+                "scope_lock_owner": scope_lock_owner,
+                "scope_key": req.scope_key,
+            }),
+        )
+        .await,
     )
-    .await
-    {
-        Ok(build) => build,
-        Err(err) => {
-            finish_subject_memory_job_run(
-                db,
-                job_run_id,
-                build_failed_job_run(
-                    req,
-                    settings.relation_subject_id.as_str(),
-                    from_scope_runner,
-                    input_count,
-                    progress,
-                    selected.len(),
-                    err.clone(),
-                ),
-            )
-            .await;
-            return Err(err);
-        }
-    };
+    .await?;
     let recall_text = decorate_generated_text(
         build,
         None,
@@ -113,28 +103,8 @@ pub(crate) async fn process_level0_selection(
         settings.keep_level0_count,
     );
     let memory_key = format!("{}:l0:{}", req.memory_type, source_digest);
-    let memory_req = UpsertSubjectMemoryRequest {
-        id: None,
-        tenant_id: req.tenant_id.clone(),
-        source_id: req.source_id.clone(),
-        memory_type: req.memory_type.clone(),
-        text: recall_text,
-        level: Some(0),
-        source_digest: Some(source_digest.clone()),
-        confidence: None,
-        last_seen_at: Some(now_rfc3339()),
-        metadata: build_memory_metadata(
-            settings.memory_metadata.clone(),
-            settings.relation_subject_id.as_str(),
-            req.source_thread_label.as_str(),
-        ),
-        rollup_status: Some("pending".to_string()),
-        rollup_memory_key: None,
-        rolled_up_at: None,
-        status: Some("active".to_string()),
-        created_at: None,
-        updated_at: None,
-    };
+    let memory_req =
+        generated_subject_memory_request(req, settings, recall_text, 0, source_digest.as_str());
     subject_memories::upsert_generated_subject_memory(
         db,
         req.subject_id.as_str(),
@@ -154,28 +124,21 @@ pub(crate) async fn process_level0_selection(
     {
         Ok(marked) => marked,
         Err(err) => {
-            tombstone_generated_subject_memory(
+            rollback_generated_subject_memory_after_mark_failure(
                 db,
                 req,
+                settings,
+                from_scope_runner,
+                input_count,
+                progress,
+                selected.len(),
+                job_run_id,
                 memory_key.as_str(),
                 source_digest.as_str(),
                 0,
-            )
-            .await;
-            finish_subject_memory_job_run(
-                db,
-                job_run_id,
-                build_failed_job_run(
-                    req,
-                    settings.relation_subject_id.as_str(),
-                    from_scope_runner,
-                    input_count,
-                    progress,
-                    selected.len(),
-                    format!(
-                        "mark source summaries subject-memory summarized failed: {}",
-                        err
-                    ),
+                format!(
+                    "mark source summaries subject-memory summarized failed: {}",
+                    err
                 ),
             )
             .await;

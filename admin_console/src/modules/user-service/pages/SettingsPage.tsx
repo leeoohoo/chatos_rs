@@ -52,8 +52,9 @@ export function SettingsPage() {
             <Descriptions.Item label="User Audience">
               {systemConfigQuery.data.user_service_audience}
             </Descriptions.Item>
-            <Descriptions.Item label="Database URL">
-              {systemConfigQuery.data.database_url}
+            <Descriptions.Item label="Database">
+              {systemConfigQuery.data.database.kind} ·{' '}
+              {systemConfigQuery.data.database.configured ? 'configured' : 'not configured'}
             </Descriptions.Item>
             <Descriptions.Item label="User Access TTL">
               {systemConfigQuery.data.user_access_ttl_seconds}s

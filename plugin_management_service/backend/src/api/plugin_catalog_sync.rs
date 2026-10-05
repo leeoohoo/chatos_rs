@@ -303,16 +303,29 @@ async fn sync_plugin_marketplace_inner(
     }
     validate_catalog_against_store(state, &document, unchanged).await?;
 
+    let component_snapshots = document
+        .component_snapshots
+        .iter()
+        .map(|snapshot| {
+            (
+                (
+                    snapshot.plugin_id.as_str(),
+                    snapshot.release_id.as_str(),
+                    snapshot.component.component_key.as_str(),
+                ),
+                snapshot,
+            )
+        })
+        .collect::<HashMap<_, _>>();
     for release in &document.releases {
         for component in &release.components {
-            let snapshot = document
-                .component_snapshots
-                .iter()
-                .find(|snapshot| {
-                    snapshot.plugin_id == release.plugin_id
-                        && snapshot.release_id == release.id
-                        && snapshot.component == *component
-                })
+            let snapshot = component_snapshots
+                .get(&(
+                    release.plugin_id.as_str(),
+                    release.id.as_str(),
+                    component.component_key.as_str(),
+                ))
+                .filter(|snapshot| snapshot.component == *component)
                 .ok_or_else(|| {
                     ApiError::conflict(format!(
                         "Catalog is missing npm MCP component snapshot {}/{}/{}",
@@ -338,11 +351,22 @@ async fn sync_plugin_marketplace_inner(
         document: document.clone(),
         synced_at: synced_at.clone(),
     };
+    let mut materialized_plugins = document.plugins.clone();
+    for plugin in &mut materialized_plugins {
+        apply_marketplace_catalog_scope(&marketplace, plugin);
+    }
+    marketplace.trusted_signing_keys = document.signing_keys.clone();
+    marketplace.last_catalog_revision = Some(document.revision.clone());
+    marketplace.last_synced_at = Some(synced_at.clone());
     let committed = state
         .store
-        .commit_plugin_catalog_sync(
+        .apply_plugin_catalog_sync(
             &sync_record,
             previous.as_ref().map(|record| record.revision.as_str()),
+            &marketplace,
+            materialized_plugins.as_slice(),
+            document.releases.as_slice(),
+            document.component_snapshots.as_slice(),
         )
         .await
         .map_err(ApiError::internal)?;
@@ -351,17 +375,6 @@ async fn sync_plugin_marketplace_inner(
             "Plugin Catalog changed concurrently; retry the sync",
         ));
     }
-    materialize_catalog(state, &marketplace, &document).await?;
-
-    marketplace.trusted_signing_keys = document.signing_keys.clone();
-    marketplace.last_catalog_revision = Some(document.revision.clone());
-    marketplace.last_synced_at = Some(synced_at.clone());
-    state
-        .store
-        .replace_plugin_marketplace(&marketplace)
-        .await
-        .map_err(ApiError::internal)?;
-
     Ok(PluginCatalogSyncResponse {
         marketplace_id: marketplace.id,
         revision: document.revision,

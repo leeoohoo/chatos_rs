@@ -741,8 +741,14 @@ pub struct SystemConfigResponse {
     pub service: String,
     pub issuer: String,
     pub user_service_audience: String,
-    pub database_url: String,
+    pub database: SystemDatabaseStatus,
     pub user_access_ttl_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemDatabaseStatus {
+    pub kind: String,
+    pub configured: bool,
 }
 
 mod harness_credentials;

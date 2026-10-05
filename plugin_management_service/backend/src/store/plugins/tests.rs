@@ -50,6 +50,47 @@ fn catalog_record(
     .expect("valid contract Plugin Catalog record")
 }
 
+fn release_record(plugin_id: &str, release_id: &str) -> PluginReleaseRecord {
+    serde_json::from_value(json!({
+        "id": release_id,
+        "plugin_id": plugin_id,
+        "version": "1.0.0",
+        "manifest_schema_version": 3,
+        "normalized_manifest": {
+            "schemaVersion": 3, "name": "atomic-plugin", "version": "1.0.0",
+            "description": "atomic sync contract", "author": {"name": "Contract"},
+            "keywords": [], "skills": [], "mcpServers": [], "apps": [], "commands": [],
+            "agents": [], "hooks": [], "ui": [],
+            "interface": {
+                "displayName": "Atomic Plugin", "shortDescription": "Atomic",
+                "longDescription": "Atomic sync contract", "developerName": "Contract",
+                "category": "productivity", "capabilities": [], "defaultPrompt": [],
+                "screenshots": []
+            },
+            "dependencies": {"plugins": [], "executables": [], "supportedPlatforms": []},
+            "permissions": []
+        },
+        "npm_package": {"name": "atomic-plugin", "version": "1.0.0", "integrity": "sha512-dGVzdA=="},
+        "artifact_ref": "https://example.com/atomic-plugin.tgz",
+        "artifact_sha256": "a".repeat(64),
+        "signature": {
+            "key_id": "key", "publisher_id": "contract", "marketplace_id": "marketplace",
+            "algorithm": "ed25519", "signature_base64": "signature",
+            "signed_at": "2026-09-18T00:00:00Z", "manifest_sha256": "b".repeat(64)
+        },
+        "supported_platforms": [],
+        "components": [{
+            "component_key": "skills/main", "kind": "skill_collection",
+            "display_name": "Main Skill", "runtime_kind": "skill",
+            "entrypoint": null, "required": false, "permissions": [], "metadata": {}
+        }],
+        "dependencies": {"plugins": [], "executables": [], "supportedPlatforms": []},
+        "permissions": [], "release_channel": "stable",
+        "published_at": "2026-09-18T00:00:00Z", "revoked_at": null
+    }))
+    .expect("valid release record")
+}
+
 #[test]
 fn plugin_catalog_cursor_requires_all_fields() {
     let partial = PluginCatalogQuery {
@@ -207,4 +248,170 @@ async fn plugin_catalog_cursor_and_search_preserve_contracts() {
         .execute(&store.pool)
         .await
         .expect("delete contract marketplace");
+}
+
+#[tokio::test]
+#[ignore = "requires PLUGIN_MANAGEMENT_TEST_DATABASE_URL and migrated PostgreSQL"]
+async fn plugin_catalog_sync_rolls_back_snapshot_when_materialization_fails() {
+    let store = test_store().await;
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let marketplace_id = format!("catalog-atomic-marketplace-{suffix}");
+    let marketplace: PluginMarketplaceRecord = serde_json::from_value(json!({
+        "id": marketplace_id,
+        "name": format!("catalog-atomic-marketplace-name-{suffix}"),
+        "visibility": "public",
+        "source_kind": "admin_registry",
+        "catalog_url": "https://example.com/catalog.json",
+        "enabled": true,
+        "trust_level": "trusted",
+        "trusted_signing_keys": [],
+        "last_catalog_revision": "revision-1",
+        "last_synced_at": "2026-09-18T00:00:00Z"
+    }))
+    .expect("valid marketplace record");
+    store
+        .replace_plugin_marketplace(&marketplace)
+        .await
+        .expect("insert atomic marketplace");
+
+    let mut plugin = catalog_record(
+        format!("catalog-atomic-plugin-{suffix}"),
+        &marketplace_id,
+        false,
+        "productivity",
+        "atomic sync contract",
+        vec!["atomic"],
+    );
+    plugin.updated_at = "not-a-timestamp".to_string();
+    let document: PluginCatalogDocument = serde_json::from_value(json!({
+        "schema_version": 1,
+        "marketplace_id": marketplace_id,
+        "revision": "revision-1",
+        "issued_at": "2026-09-18T00:00:00Z",
+        "signing_keys": [],
+        "plugins": [plugin],
+        "releases": [],
+        "component_snapshots": [],
+        "revoked_release_ids": [],
+        "signature": {
+            "key_id": "test", "marketplace_id": marketplace_id,
+            "algorithm": "ed25519", "signature_base64": "test",
+            "signed_at": "2026-09-18T00:00:00Z", "catalog_sha256": "test"
+        }
+    }))
+    .expect("valid catalog document shape");
+    let mut sync = PluginCatalogSyncRecord {
+        marketplace_id: marketplace_id.clone(),
+        revision: "revision-1".to_string(),
+        issued_at: "2026-09-18T00:00:00Z".to_string(),
+        catalog_sha256: "test".to_string(),
+        catalog_authority_publisher_id: "test".to_string(),
+        document,
+        synced_at: "2026-09-18T00:00:00Z".to_string(),
+    };
+    let error = store
+        .apply_plugin_catalog_sync(
+            &sync,
+            None,
+            &marketplace,
+            sync.document.plugins.as_slice(),
+            &[],
+            &[],
+        )
+        .await
+        .expect_err("invalid materialized timestamp must abort sync");
+    assert!(error.contains("timestamp") || error.contains("date/time"));
+    assert!(store
+        .get_plugin_catalog_sync(&marketplace_id)
+        .await
+        .expect("read rolled back snapshot")
+        .is_none());
+    assert!(store
+        .get_plugin_catalog_entry(&sync.document.plugins[0].id)
+        .await
+        .expect("read rolled back plugin")
+        .is_none());
+
+    sync.document.plugins[0].updated_at = "2026-09-18T00:00:00Z".to_string();
+    let release = release_record(
+        sync.document.plugins[0].id.as_str(),
+        format!("catalog-atomic-release-{suffix}").as_str(),
+    );
+    let snapshot = PluginComponentSnapshot {
+        plugin_id: release.plugin_id.clone(),
+        release_id: release.id.clone(),
+        component: release.components[0].clone(),
+        content_sha256: release.artifact_sha256.clone(),
+        skill: None,
+    };
+    sync.document.releases = vec![release.clone()];
+    sync.document.component_snapshots = vec![snapshot.clone()];
+    assert!(store
+        .apply_plugin_catalog_sync(
+            &sync,
+            None,
+            &marketplace,
+            sync.document.plugins.as_slice(),
+            sync.document.releases.as_slice(),
+            sync.document.component_snapshots.as_slice(),
+        )
+        .await
+        .expect("commit valid atomic catalog sync"));
+    assert_eq!(
+        store
+            .get_plugin_catalog_sync(&marketplace_id)
+            .await
+            .expect("read committed snapshot")
+            .expect("committed snapshot")
+            .revision,
+        "revision-1"
+    );
+    assert!(store
+        .get_plugin_catalog_entry(&sync.document.plugins[0].id)
+        .await
+        .expect("read committed plugin")
+        .is_some());
+    assert!(store
+        .get_plugin_release(&release.id)
+        .await
+        .expect("read committed release")
+        .is_some());
+    assert_eq!(
+        store
+            .list_plugin_component_snapshots(&release.plugin_id, &release.id)
+            .await
+            .expect("read committed component snapshots"),
+        vec![snapshot]
+    );
+
+    sqlx::query("DELETE FROM plugin_component_snapshots WHERE plugin_id=$1")
+        .bind(&release.plugin_id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic snapshots");
+    sqlx::query("DELETE FROM plugin_release_publication_states WHERE release_id=$1")
+        .bind(&release.id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic release state");
+    sqlx::query("DELETE FROM plugin_releases WHERE id=$1")
+        .bind(&release.id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic release");
+    sqlx::query("DELETE FROM plugin_catalog_entries WHERE marketplace_id=$1")
+        .bind(&marketplace_id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic plugin");
+    sqlx::query("DELETE FROM plugin_catalog_syncs WHERE marketplace_id=$1")
+        .bind(&marketplace_id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic snapshot");
+    sqlx::query("DELETE FROM plugin_marketplaces WHERE id=$1")
+        .bind(&marketplace_id)
+        .execute(&store.pool)
+        .await
+        .expect("delete atomic marketplace");
 }

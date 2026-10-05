@@ -64,9 +64,6 @@ mod tests {
 
     #[test]
     fn missing_mtls_material_is_rejected() {
-        assert_missing_material_rejected(
-            "memory-engine",
-            load_internal_mtls_config_from_paths,
-        );
+        assert_missing_material_rejected("memory-engine", load_internal_mtls_config_from_paths);
     }
 }

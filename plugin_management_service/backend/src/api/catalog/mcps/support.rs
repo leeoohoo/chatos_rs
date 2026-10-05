@@ -135,6 +135,7 @@ pub(in crate::api) async fn load_admin_model_runtime(
 pub(super) async fn execute_provider_skill_optimization(
     prepared: &PreparedProviderSkillOptimization,
     callbacks: StreamCallbacks,
+    abort_token: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<String, ApiError> {
     let client = http_client_builder(
         HttpClientTimeouts::new(Duration::from_secs(600))
@@ -153,6 +154,7 @@ pub(super) async fn execute_provider_skill_optimization(
             temperature: Some(0.2),
             max_output_tokens: Some(6000),
             callbacks,
+            abort_token,
             ..Default::default()
         },
         build_responses_text_input,

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::tool_catalog::live_mcp_descriptor;
 
@@ -92,6 +93,19 @@ struct PreparedProviderSkillOptimization {
     runtime: ModelRuntimeConfig,
     system_prompt: String,
     user_prompt: String,
+}
+
+const OPTIMIZE_STREAM_QUEUE_CAPACITY: usize = 64;
+
+struct CancellableStreamReceiver {
+    receiver: tokio::sync::mpsc::Receiver<OptimizeProviderSkillStreamMessage>,
+    cancellation: CancellationToken,
+}
+
+impl Drop for CancellableStreamReceiver {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 
 pub(super) struct AdminModelRuntime {
@@ -259,7 +273,7 @@ pub(super) async fn optimize_mcp_provider_skill(
     )
     .await?;
     let optimized_instructions =
-        execute_provider_skill_optimization(&prepared, StreamCallbacks::default()).await?;
+        execute_provider_skill_optimization(&prepared, StreamCallbacks::default(), None).await?;
     Ok(Json(OptimizeProviderSkillResponse {
         mcp_id: prepared.mcp_id,
         skill_id: prepared.skill_id,
@@ -285,14 +299,17 @@ pub(super) async fn optimize_mcp_provider_skill_stream(
         input,
     )
     .await?;
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, receiver) = tokio::sync::mpsc::channel(OPTIMIZE_STREAM_QUEUE_CAPACITY);
+    let cancellation = CancellationToken::new();
     let started = OptimizeProviderSkillStreamMessage::Started {
         provider: prepared.provider.clone(),
         model: prepared.model.clone(),
     };
-    let _ = sender.send(started);
+    let _ = sender.try_send(started);
     let chunk_sender = sender.clone();
     let thinking_sender = sender.clone();
+    let chunk_cancellation = cancellation.clone();
+    let thinking_cancellation = cancellation.clone();
     let streamed_content = Arc::new(Mutex::new(String::new()));
     let streamed_content_for_chunks = streamed_content.clone();
     let callbacks = StreamCallbacks {
@@ -300,14 +317,31 @@ pub(super) async fn optimize_mcp_provider_skill_stream(
             if let Ok(mut content) = streamed_content_for_chunks.lock() {
                 content.push_str(delta.as_str());
             }
-            let _ = chunk_sender.send(OptimizeProviderSkillStreamMessage::Chunk { delta });
+            if chunk_sender
+                .try_send(OptimizeProviderSkillStreamMessage::Chunk { delta })
+                .is_err()
+            {
+                chunk_cancellation.cancel();
+            }
         })),
         on_thinking: Some(Arc::new(move |delta| {
-            let _ = thinking_sender.send(OptimizeProviderSkillStreamMessage::Thinking { delta });
+            if thinking_sender
+                .try_send(OptimizeProviderSkillStreamMessage::Thinking { delta })
+                .is_err()
+            {
+                thinking_cancellation.cancel();
+            }
         })),
     };
+    let request_cancellation = cancellation.clone();
     tokio::spawn(async move {
-        match execute_provider_skill_optimization(&prepared, callbacks).await {
+        match execute_provider_skill_optimization(
+            &prepared,
+            callbacks,
+            Some(request_cancellation.clone()),
+        )
+        .await
+        {
             Ok(optimized_instructions) => {
                 let streamed_instructions = streamed_content
                     .lock()
@@ -315,24 +349,28 @@ pub(super) async fn optimize_mcp_provider_skill_stream(
                     .unwrap_or_default();
                 let optimized_instructions =
                     more_complete_stream_text(optimized_instructions, streamed_instructions);
-                let _ = sender.send(OptimizeProviderSkillStreamMessage::Done {
+                let _ = sender.try_send(OptimizeProviderSkillStreamMessage::Done {
                     optimized_instructions,
                 });
             }
             Err(err) => {
-                let _ = sender.send(OptimizeProviderSkillStreamMessage::Error {
+                let _ = sender.try_send(OptimizeProviderSkillStreamMessage::Error {
                     message: err.message,
                 });
             }
         }
     });
-    let event_stream = stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|message| {
+    let receiver = CancellableStreamReceiver {
+        receiver,
+        cancellation,
+    };
+    let event_stream = stream::unfold(receiver, |mut state| async move {
+        state.receiver.recv().await.map(|message| {
             let data = serde_json::to_string(&message).unwrap_or_else(|_| {
                 r#"{"type":"error","message":"serialize stream event failed"}"#.to_string()
             });
             let event = Event::default().event(message.event_name()).data(data);
-            (Ok::<Event, Infallible>(event), receiver)
+            (Ok::<Event, Infallible>(event), state)
         })
     });
     let mut response = Sse::new(event_stream)
@@ -567,4 +605,35 @@ pub(super) async fn check_mcp(
             .map_err(ApiError::internal)?;
     }
     Ok(Json(check))
+}
+
+#[cfg(test)]
+mod stream_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn optimize_stream_queue_is_bounded_and_drop_cancels_request() {
+        let (sender, receiver) = tokio::sync::mpsc::channel(OPTIMIZE_STREAM_QUEUE_CAPACITY);
+        for index in 0..OPTIMIZE_STREAM_QUEUE_CAPACITY {
+            sender
+                .try_send(OptimizeProviderSkillStreamMessage::Thinking {
+                    delta: index.to_string(),
+                })
+                .expect("fill bounded stream queue");
+        }
+        assert!(sender
+            .try_send(OptimizeProviderSkillStreamMessage::Thinking {
+                delta: "overflow".to_string(),
+            })
+            .is_err());
+
+        let cancellation = CancellationToken::new();
+        let state = CancellableStreamReceiver {
+            receiver,
+            cancellation: cancellation.clone(),
+        };
+        assert!(!cancellation.is_cancelled());
+        drop(state);
+        assert!(cancellation.is_cancelled());
+    }
 }
