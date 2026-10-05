@@ -26,6 +26,8 @@ internal sealed record PreparedPluginLaunch(
     string VisualSessionPath,
     string ArtifactPath,
     string DisplayName,
+    string? WorkspaceRoot = null,
+    IReadOnlySet<string>? PermissionSnapshot = null,
     string Transport = "stdio",
     Uri? HttpEndpoint = null,
     IReadOnlyDictionary<string, PluginCredentialTemplate>? DeclaredHttpHeaderTemplates = null,

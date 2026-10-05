@@ -26,7 +26,7 @@ use crate::models::{
 };
 use crate::state::AppState;
 use crate::store::now_rfc3339;
-use crate::store::RegistrationEmailCodeReservationError;
+use crate::store::{RegistrationEmailCodeReservationError, RegistrationTransactionError};
 
 use super::{bad_request, internal_error, not_found, ApiResult, ApiStatusResult};
 
@@ -123,15 +123,6 @@ pub async fn send_register_email_code(
     Json(input): Json<SendRegisterEmailCodeRequest>,
 ) -> ApiResult<SendRegisterEmailCodeResponse> {
     let email = normalize_email(input.email.as_str()).map_err(bad_request)?;
-    if state
-        .store
-        .find_user_by_username(email.as_str())
-        .await
-        .map_err(internal_error)?
-        .is_some()
-    {
-        return Err(bad_request("email already registered"));
-    }
     let invite_code_hash =
         invite_code_hash(input.invite_code.as_str(), state.config.jwt_secret.as_str())
             .map_err(bad_request)?;
@@ -223,34 +214,6 @@ pub async fn register(
         .ok_or_else(|| bad_request("verification_code is required"))?;
     let invite_hash =
         invite_code_hash(invite_code, state.config.jwt_secret.as_str()).map_err(bad_request)?;
-    let invite = state
-        .store
-        .find_invite_code_by_hash(invite_hash.as_str())
-        .await
-        .map_err(internal_error)?
-        .ok_or_else(|| bad_request("invite code is invalid"))?;
-    validate_invite_code(&invite).map_err(bad_request)?;
-    verify_registration_email_code(
-        &state,
-        email.as_str(),
-        verification_code,
-        invite_hash.as_str(),
-    )
-    .await?;
-    let invite_used_at = now_rfc3339();
-    let invite_consumed = state
-        .store
-        .consume_invite_code(
-            invite.id.as_str(),
-            Utc::now().timestamp(),
-            invite_used_at.as_str(),
-        )
-        .await
-        .map_err(internal_error)?;
-    if !invite_consumed {
-        return Err(bad_request("invite code is invalid or no longer available"));
-    }
-
     let now = now_rfc3339();
     let user = UserRecord {
         id: uuid::Uuid::new_v4().to_string(),
@@ -261,19 +224,37 @@ pub async fn register(
         role: USER_ROLE_USER.to_string(),
         enabled: true,
         created_at: now.clone(),
-        updated_at: now,
+        updated_at: now.clone(),
         last_login_at: None,
     };
+    let expected_code_hash = registration_code_hash(
+        email.as_str(),
+        verification_code,
+        state.config.jwt_secret.as_str(),
+    );
     state
         .store
-        .insert_user_record(&user)
+        .register_user_with_invite_and_email_code(
+            &user,
+            invite_hash.as_str(),
+            expected_code_hash.as_str(),
+            Utc::now().timestamp(),
+            now.as_str(),
+            state.config.registration_code_max_attempts,
+        )
         .await
-        .map_err(internal_error)?;
-    state
-        .store
-        .mark_registration_email_code_consumed(email.as_str())
-        .await
-        .map_err(internal_error)?;
+        .map_err(|error| match error {
+            RegistrationTransactionError::InvalidVerificationCode => {
+                bad_request("verification code is invalid or expired")
+            }
+            RegistrationTransactionError::InvalidInvite => {
+                bad_request("invite code is invalid or no longer available")
+            }
+            RegistrationTransactionError::EmailAlreadyRegistered => {
+                bad_request("email already registered")
+            }
+            RegistrationTransactionError::Store(error) => internal_error(error),
+        })?;
     let _ = provision_harness_user_public_register(&state, &user).await;
     state
         .store
@@ -418,32 +399,6 @@ fn normalize_email(value: &str) -> Result<String, String> {
         return Err("email format is invalid".to_string());
     }
     Ok(email)
-}
-
-async fn verify_registration_email_code(
-    state: &AppState,
-    email: &str,
-    code: &str,
-    invite_code_hash: &str,
-) -> ApiStatusResult {
-    let now_unix = Utc::now().timestamp();
-    let expected = registration_code_hash(email, code, state.config.jwt_secret.as_str());
-    let verified = state
-        .store
-        .verify_registration_email_code_attempt(
-            email,
-            expected.as_str(),
-            invite_code_hash,
-            now_unix,
-            now_rfc3339().as_str(),
-            state.config.registration_code_max_attempts,
-        )
-        .await
-        .map_err(internal_error)?;
-    if !verified {
-        return Err(bad_request("verification code is invalid or expired"));
-    }
-    Ok(axum::http::StatusCode::NO_CONTENT)
 }
 
 pub(crate) fn invite_code_hash(code: &str, secret: &str) -> Result<String, String> {

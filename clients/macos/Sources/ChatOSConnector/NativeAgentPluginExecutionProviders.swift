@@ -242,7 +242,7 @@ extension NativeLocalConnectorService {
             projectRoot: projectRoot,
             source: "local-agent-builtin-mcp",
             risk: risk,
-            approvalScopeKey: "agent-project-terminal",
+            approvalScopeKey: "agent-project-terminal:\(resolvedProject.workspace.id)",
             workspaceID: resolvedProject.workspace.id
         )
         guard case .approve = decision else {

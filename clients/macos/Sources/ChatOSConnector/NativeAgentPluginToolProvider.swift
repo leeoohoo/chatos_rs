@@ -249,7 +249,7 @@ extension NativeLocalConnectorService {
                 toolName: toolName,
                 requiredPermissions: requiredPermissions
             ),
-            approvalScopeKey: "agent-plugin:\(componentKey)",
+            approvalScopeKey: "agent-plugin:\(componentKey):\(toolName):\(requiredPermissions.sorted().joined(separator: ","))",
             workspaceID: workspaceID
         )
         if case .approve = decision { return true }

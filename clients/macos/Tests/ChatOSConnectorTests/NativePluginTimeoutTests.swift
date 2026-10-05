@@ -15,7 +15,7 @@ extension NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let script = root.appendingPathComponent("fixture.zsh")
-        let screenshotCalls = root.appendingPathComponent("screenshot-calls.log")
+        let screenshotCalls = artifacts.appendingPathComponent("screenshot-calls.log")
         try """
         while IFS= read -r line; do
           if [[ "$line" == *'tools/list'* ]]; then
@@ -46,7 +46,10 @@ extension NativePluginRuntimeTests {
             server: manifest.mcpServers["browser-cdp"]!,
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
             arguments: [script.path],
-            environment: [:],
+            environment: [
+                "CHATOS_PLUGIN_VISUAL_SESSION_DIR": visual.path,
+                "CHATOS_PLUGIN_ARTIFACT_DIR": artifacts.path,
+            ],
             installationURL: root,
             visualSessionURL: visual,
             artifactURL: artifacts,

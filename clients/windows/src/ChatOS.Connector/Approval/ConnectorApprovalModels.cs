@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+
 namespace ChatOS.Connector.Approval;
 
 public enum ConnectorApprovalMode
@@ -45,13 +48,23 @@ public sealed record CommandApprovalRequest(
     string Source,
     string ScopeKey)
 {
+    public string CommandDigest => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+        CanonicalCommandPayload()))).ToLowerInvariant();
+
     public string StableIdentity => string.Join('\0',
         OwnerUserId,
         DeviceId,
         WorkspaceId,
-        RequestId);
+        RequestId,
+        CommandDigest);
 
     public string DisplayCommand => CommandDisplay.Format(Command, Arguments);
+
+    private string CanonicalCommandPayload()
+    {
+        var values = new[] { Command, WorkingDirectory, Source, ScopeKey }.Concat(Arguments);
+        return string.Concat(values.Select(value => $"{value.Length}:{value}"));
+    }
 }
 
 public sealed record ConnectorPendingApproval(

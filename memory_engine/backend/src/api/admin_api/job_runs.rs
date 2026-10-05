@@ -136,11 +136,7 @@ pub async fn dashboard_overview(
 ) -> Result<Json<DashboardOverviewResponse>, (axum::http::StatusCode, String)> {
     let tenant_id = auth.resolve_tenant_scope(None)?;
     let source_count = match tenant_id.as_deref() {
-        Some(tenant_id) => {
-            sources::list_sources(&state.pool, Some(tenant_id), None, None, None, 10_000, 0)
-                .await
-                .map(|items| items.len() as i64)
-        }
+        Some(tenant_id) => sources::count_sources_for_tenant(&state.pool, tenant_id).await,
         None => sources::count_sources(&state.pool).await,
     }
     .map_err(internal_error)?;

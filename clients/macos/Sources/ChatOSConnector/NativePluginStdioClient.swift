@@ -103,12 +103,14 @@ actor NativePluginStdioClient {
             }
         }
         let environment = NativePluginProcessEnvironment.make(overrides: launch.environment)
-        let arguments = [launch.executableURL.path] + launch.arguments
+        let sandboxArguments = try NativePluginSandboxProfile.arguments(for: launch)
+        let sandboxExecutable = NativePluginSandboxProfile.executableURL.path
+        let arguments = [sandboxExecutable] + sandboxArguments
         var spawnedPID: pid_t = 0
         let spawnResult = Self.withCStringArray(arguments) { argv in
             Self.withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
                 chatos_spawn_process_group(
-                    launch.executableURL.path,
+                    sandboxExecutable,
                     argv,
                     envp,
                     launch.installationURL.path,

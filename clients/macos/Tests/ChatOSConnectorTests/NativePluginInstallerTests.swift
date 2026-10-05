@@ -4,6 +4,39 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativePluginInstallerTests {
+    @Test("installed plugin files are revalidated before every launch")
+    func installedFileTamperingIsRejected() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativePluginIntegrity-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("bin/plugin")
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("original".utf8).write(to: executable)
+        let checksums = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: root,
+            maximumFiles: 10,
+            maximumBytes: 1_024
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-10-06T00:00:00Z",
+            packageFileSHA256: checksums
+        )
+        try NativePluginInstallationIntegrity.verify(record: record, installationURL: root)
+        try Data("tampered".utf8).write(to: executable)
+        #expect(throws: NativePluginRuntimeError.self) {
+            try NativePluginInstallationIntegrity.verify(record: record, installationURL: root)
+        }
+    }
+
     @Test("tar output larger than a pipe buffer does not deadlock plugin validation")
     func largeArchiveListingCompletes() throws {
         let root = FileManager.default.temporaryDirectory

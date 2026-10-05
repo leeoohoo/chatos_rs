@@ -3,9 +3,9 @@
 
 use super::{
     ensure_empty_database_bootstrap_allowed, now_rfc3339, AppStore,
-    RegistrationEmailCodeReservationError, SuperAdminBootstrapConfig,
+    RegistrationEmailCodeReservationError, RegistrationTransactionError, SuperAdminBootstrapConfig,
 };
-use crate::models::{UserRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER};
+use crate::models::{InviteCodeRecord, UserRecord, USER_ROLE_SUPER_ADMIN, USER_ROLE_USER};
 
 const BOOTSTRAP_USERNAME: &str = "bootstrap-admin";
 const BOOTSTRAP_PASSWORD: &str = "local-bootstrap-password";
@@ -220,6 +220,28 @@ async fn postgres_registration_code_counters_are_atomic() {
     .execute(&pool)
     .await
     .expect("create registration code table");
+    sqlx::query(
+        r#"CREATE TABLE users (
+            id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,display_name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,credential_version BIGINT NOT NULL DEFAULT 0,
+            role TEXT NOT NULL,enabled BOOLEAN NOT NULL,created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,last_login_at TIMESTAMPTZ NULL,data JSONB NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create users table");
+    sqlx::query(
+        r#"CREATE TABLE invite_codes (
+            id TEXT PRIMARY KEY,code_hash TEXT NOT NULL UNIQUE,created_by_user_id TEXT NOT NULL,
+            max_uses BIGINT NOT NULL,used_count BIGINT NOT NULL,expires_at BIGINT NULL,
+            revoked_at TIMESTAMPTZ NULL,created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,data JSONB NOT NULL
+        )"#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create invite table");
     let store = AppStore::new(pool.clone());
     let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(12));
     let mut sends = Vec::new();
@@ -291,6 +313,75 @@ async fn postgres_registration_code_counters_are_atomic() {
         .expect("exhausted record");
     assert_eq!(exhausted.attempts, 5);
     assert_ne!(record.code_hash, "wrong-code");
+
+    let registration_time = "2026-10-06T00:00:00+00:00";
+    store
+        .reserve_registration_email_code_send(
+            "register@example.com",
+            "correct-code".to_string(),
+            "invite-transaction".to_string(),
+            2_000,
+            registration_time.to_string(),
+            600,
+            60,
+            5,
+        )
+        .await
+        .expect("reserve transactional registration code");
+    store
+        .insert_invite_code(&InviteCodeRecord {
+            id: "invite-transaction-id".to_string(),
+            code_hash: "invite-transaction".to_string(),
+            label: None,
+            created_by_user_id: "bootstrap".to_string(),
+            max_uses: 2,
+            used_count: 0,
+            expires_at_unix: None,
+            revoked_at: None,
+            last_used_at: None,
+            created_at: registration_time.to_string(),
+            updated_at: registration_time.to_string(),
+        })
+        .await
+        .expect("insert transactional invite");
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let mut registrations = Vec::new();
+    for suffix in ["first", "second"] {
+        let store = store.clone();
+        let barrier = barrier.clone();
+        let mut user = existing_user("register@example.com", "password-hash");
+        user.id = format!("user-{suffix}");
+        user.enabled = true;
+        registrations.push(tokio::spawn(async move {
+            barrier.wait().await;
+            store
+                .register_user_with_invite_and_email_code(
+                    &user,
+                    "invite-transaction",
+                    "correct-code",
+                    2_001,
+                    "2026-10-06T00:00:01+00:00",
+                    5,
+                )
+                .await
+        }));
+    }
+    let mut succeeded = 0;
+    for registration in registrations {
+        match registration.await.expect("join concurrent registration") {
+            Ok(()) => succeeded += 1,
+            Err(RegistrationTransactionError::InvalidVerificationCode) => {}
+            Err(error) => panic!("unexpected transactional registration result: {error:?}"),
+        }
+    }
+    assert_eq!(succeeded, 1);
+    assert_eq!(user_count(&pool).await, 1);
+    let invite = store
+        .find_invite_code_by_id("invite-transaction-id")
+        .await
+        .expect("read transactional invite")
+        .expect("transactional invite");
+    assert_eq!(invite.used_count, 1);
 
     pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(

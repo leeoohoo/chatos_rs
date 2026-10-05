@@ -8,12 +8,20 @@ using System.Text.Json;
 
 namespace ChatOS.Connector.Sandbox;
 
+internal interface IWindowsAppContainerProfileLease : IAsyncDisposable
+{
+    Task RegisterAdditionalPathAsync(
+        string path,
+        string sid,
+        CancellationToken cancellationToken);
+}
+
 internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisposable
 {
     private readonly IntPtr _appContainerSid;
     private readonly List<IntPtr> _capabilitySids;
     private readonly IntPtr _capabilityArray;
-    private IAsyncDisposable? _profileLease;
+    private IWindowsAppContainerProfileLease? _profileLease;
     private int _disposed;
 
     public WindowsAppContainerLaunchContext(
@@ -22,7 +30,9 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
         IReadOnlyList<IntPtr> capabilitySids,
         string temporaryDirectory,
         SandboxExecutionPolicy policy,
-        IAsyncDisposable? profileLease = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        bool minimalEnvironment = false,
+        IWindowsAppContainerProfileLease? profileLease = null)
     {
         _appContainerSid = appContainerSid;
         _capabilitySids = [.. capabilitySids];
@@ -45,7 +55,11 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
             _capabilityArray,
             checked((uint)capabilitySids.Count),
             0), SecurityCapabilities, fDeleteOld: false);
-        EnvironmentBlock = BuildEnvironmentBlock(temporaryDirectory, policy);
+        EnvironmentBlock = BuildEnvironmentBlock(
+            temporaryDirectory,
+            policy,
+            environment,
+            minimalEnvironment);
         AppContainerSid = appContainerSidText;
         _profileLease = profileLease;
     }
@@ -58,6 +72,25 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
 
     internal IAsyncDisposable? DetachProfileLease() =>
         Interlocked.Exchange(ref _profileLease, null);
+
+    internal async Task GrantPathAccessAsync(
+        string path,
+        ConnectorSandboxPermissionProfile profile,
+        CancellationToken cancellationToken)
+    {
+        if (_profileLease is not null)
+        {
+            await _profileLease.RegisterAdditionalPathAsync(
+                path,
+                AppContainerSid,
+                cancellationToken).ConfigureAwait(false);
+        }
+        await WindowsAppContainerSandbox.GrantPathAccessAsync(
+            path,
+            AppContainerSid,
+            profile,
+            cancellationToken).ConfigureAwait(false);
+    }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
@@ -96,11 +129,68 @@ internal sealed class WindowsAppContainerLaunchContext : IDisposable, IAsyncDisp
 
     private static IntPtr BuildEnvironmentBlock(
         string temporaryDirectory,
-        SandboxExecutionPolicy policy)
+        SandboxExecutionPolicy policy,
+        IReadOnlyDictionary<string, string>? additions,
+        bool minimalEnvironment)
     {
-        var variables = BuildEnvironmentVariables(temporaryDirectory, policy);
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var baseline = minimalEnvironment
+            ? BuildPluginEnvironmentVariables(temporaryDirectory, policy)
+            : BuildEnvironmentVariables(temporaryDirectory, policy);
+        foreach (var pair in baseline)
+        {
+            variables[pair.Key] = pair.Value;
+        }
+        if (additions is not null)
+        {
+            foreach (var pair in additions)
+            {
+                if (pair.Key.Equals("PATH", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("SystemRoot", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("WINDIR", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("TEMP", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("TMP", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                variables[pair.Key] = pair.Value;
+            }
+        }
+        if (additions?.TryGetValue("CHATOS_PLUGIN_DATA_DIR", out var dataDirectory) == true)
+        {
+            variables["HOME"] = dataDirectory;
+            variables["USERPROFILE"] = dataDirectory;
+        }
         var block = string.Join('\0', variables.Select(pair => $"{pair.Key}={pair.Value}")) + "\0\0";
         return Marshal.StringToHGlobalUni(block);
+    }
+
+    private static IReadOnlyDictionary<string, string> BuildPluginEnvironmentVariables(
+        string temporaryDirectory,
+        SandboxExecutionPolicy policy)
+    {
+        var systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var systemDirectory = Environment.SystemDirectory;
+        return new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CHATOS_SANDBOX"] = "1",
+            ["CHATOS_SANDBOX_NETWORK"] = policy.NetworkAccess.ToString(),
+            ["CHATOS_SANDBOX_PROFILE"] = policy.PermissionProfile.ToString(),
+            ["ComSpec"] = Path.Combine(systemDirectory, "cmd.exe"),
+            ["LOCALAPPDATA"] = temporaryDirectory,
+            ["PATH"] = string.Join(Path.PathSeparator, new[]
+            {
+                systemDirectory,
+                systemRoot,
+                Path.Combine(systemDirectory, "Wbem"),
+            }.Where(path => !string.IsNullOrWhiteSpace(path))),
+            ["PATHEXT"] = ".COM;.EXE;.BAT;.CMD",
+            ["SystemDrive"] = Path.GetPathRoot(systemRoot)?.TrimEnd(Path.DirectorySeparatorChar) ?? "C:\\",
+            ["SystemRoot"] = systemRoot,
+            ["TEMP"] = temporaryDirectory,
+            ["TMP"] = temporaryDirectory,
+            ["WINDIR"] = systemRoot,
+        };
     }
 
     internal static IReadOnlyDictionary<string, string> BuildEnvironmentVariables(

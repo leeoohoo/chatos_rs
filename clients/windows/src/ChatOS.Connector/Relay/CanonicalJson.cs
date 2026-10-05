@@ -8,7 +8,7 @@ internal static class CanonicalJson
     {
         try
         {
-            return NetworkGuard.Contracts.CanonicalJson.Serialize(value);
+            return global::ChatOS.NetworkGuard.Contracts.CanonicalJson.Serialize(value);
         }
         catch (InvalidDataException exception)
         {

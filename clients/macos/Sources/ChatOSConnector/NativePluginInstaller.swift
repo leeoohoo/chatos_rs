@@ -57,6 +57,11 @@ struct NativePluginInstaller: Sendable {
             expectedName: npmPackage.name,
             expectedVersion: version
         )
+        let packageFileSHA256 = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: packageRoot,
+            maximumFiles: maximumFiles,
+            maximumBytes: maximumUnpackedBytes
+        )
 
         let pluginDirectory = rootURL
             .appendingPathComponent(pluginDirectoryName(source.catalog.id), isDirectory: true)
@@ -94,7 +99,8 @@ struct NativePluginInstaller: Sendable {
             artifactSHA256: artifactSHA256.lowercased(),
             installationPath: finalURL.path,
             installedAt: ISO8601DateFormatter().string(from: Date()),
-            pluginKey: source.catalog.pluginKey
+            pluginKey: source.catalog.pluginKey,
+            packageFileSHA256: packageFileSHA256
         )
     }
 

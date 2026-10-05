@@ -16,6 +16,8 @@
              Link="Desktop\ModelSettingsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\SandboxSettingsViewModel.cs"
              Link="Desktop\SandboxSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\SettingsOperationRunner.cs"
+             Link="Desktop\SettingsOperationRunner.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\AppShell\ShellResourceViewModel.cs"
              Link="Desktop\ShellResourceViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\AppShell\MainWindowViewModel.cs"

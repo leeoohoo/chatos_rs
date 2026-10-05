@@ -420,6 +420,8 @@ internal sealed partial class PluginManifestLoader
             string.IsNullOrWhiteSpace(manifest.Interface?.DisplayName)
                 ? manifest.Name
                 : manifest.Interface.DisplayName.Trim(),
+            WorkspaceRoot: workspaceRoot,
+            PermissionSnapshot: permissionSnapshot,
             Transport: "stdio",
             CredentialBinding: credentialBinding);
     }

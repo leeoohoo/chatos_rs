@@ -36,7 +36,9 @@ internal static partial class WindowsAppContainerSandbox
         string workspaceRoot,
         SandboxExecutionPolicy policy,
         string? isolationKey,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? environment = null,
+        bool minimalEnvironment = false)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -102,6 +104,8 @@ internal static partial class WindowsAppContainerSandbox
                 capabilitySids,
                 temporaryDirectory,
                 policy,
+                environment,
+                minimalEnvironment,
                 profileLease);
             appContainerSid = IntPtr.Zero;
             capabilitySids.Clear();
@@ -292,44 +296,6 @@ internal static partial class WindowsAppContainerSandbox
         }
     }
 
-    private static async Task RegisterEphemeralProfileAsync(
-        string profileName,
-        EphemeralProfileState state,
-        string workspaceRoot,
-        string sid,
-        string temporaryDirectory,
-        CancellationToken cancellationToken)
-    {
-        await state.Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var metadata = new EphemeralProfileMetadata(
-                profileName,
-                workspaceRoot,
-                sid,
-                null,
-                temporaryDirectory,
-                DateTimeOffset.UtcNow);
-            if (state.Metadata is not null &&
-                (!string.Equals(state.Metadata.WorkspaceRoot, workspaceRoot, StringComparison.OrdinalIgnoreCase) ||
-                 !string.Equals(state.Metadata.Sid, sid, StringComparison.Ordinal) ||
-                 !string.Equals(
-                     state.Metadata.TemporaryDirectory,
-                     temporaryDirectory,
-                     StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new InvalidOperationException(
-                    "Controlled AppContainer profile identity changed while it was active.");
-            }
-            state.Metadata ??= metadata;
-            await SaveProfileMetadataAsync(state.Metadata, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            state.Gate.Release();
-        }
-    }
-
     private static async ValueTask ReleaseEphemeralProfileAsync(
         string profileName,
         EphemeralProfileState state)
@@ -392,6 +358,27 @@ internal static partial class WindowsAppContainerSandbox
                     aclSid,
                     ProfilePermission(metadata.ProfileName)),
                 out _);
+            foreach (var additionalRoot in metadata.AdditionalRoots ?? Array.Empty<string>())
+            {
+                await RemovePathAclAsync(additionalRoot, aclSid, CancellationToken.None)
+                    .ConfigureAwait(false);
+                await RemoveAncestorTraverseAclsAsync(
+                    additionalRoot,
+                    aclSid,
+                    CancellationToken.None).ConfigureAwait(false);
+                PreparedWorkspaceAcls.TryRemove(
+                    WorkspaceAclKey(
+                        additionalRoot,
+                        aclSid,
+                        ConnectorSandboxPermissionProfile.ReadOnly),
+                    out _);
+                PreparedWorkspaceAcls.TryRemove(
+                    WorkspaceAclKey(
+                        additionalRoot,
+                        aclSid,
+                        ConnectorSandboxPermissionProfile.WorkspaceWrite),
+                    out _);
+            }
             await DeleteDirectoryWithRetriesAsync(metadata.TemporaryDirectory).ConfigureAwait(false);
             return true;
         }
@@ -755,7 +742,7 @@ internal static partial class WindowsAppContainerSandbox
 
     private sealed class EphemeralProfileLease(
         string profileName,
-        EphemeralProfileState state) : IAsyncDisposable
+        EphemeralProfileState state) : IWindowsAppContainerProfileLease
     {
         private int _disposed;
 
@@ -770,6 +757,17 @@ internal static partial class WindowsAppContainerSandbox
                 workspaceRoot,
                 sid,
                 temporaryDirectory,
+                cancellationToken);
+
+        public Task RegisterAdditionalPathAsync(
+            string path,
+            string sid,
+            CancellationToken cancellationToken) =>
+            RegisterEphemeralAdditionalPathAsync(
+                profileName,
+                state,
+                path,
+                sid,
                 cancellationToken);
 
         public async ValueTask DisposeAsync()
@@ -787,5 +785,6 @@ internal static partial class WindowsAppContainerSandbox
         string Sid,
         string? AclSid,
         string TemporaryDirectory,
-        DateTimeOffset CreatedAt);
+        DateTimeOffset CreatedAt,
+        IReadOnlyList<string>? AdditionalRoots = null);
 }

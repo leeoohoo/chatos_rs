@@ -5,6 +5,18 @@ namespace ChatOS.Connector.Tests;
 public sealed class CommandApprovalCoordinatorTests
 {
     [Fact]
+    public void StableIdentityBindsCommandArgumentsAndWorkingDirectory()
+    {
+        var baseline = Request("request-1", "scope-a");
+        var changedArguments = baseline with { Arguments = ["reset", "--hard"] };
+        var changedDirectory = baseline with { WorkingDirectory = "C:\\other" };
+
+        Assert.NotEqual(baseline.CommandDigest, changedArguments.CommandDigest);
+        Assert.NotEqual(baseline.StableIdentity, changedArguments.StableIdentity);
+        Assert.NotEqual(baseline.StableIdentity, changedDirectory.StableIdentity);
+    }
+
+    [Fact]
     public async Task RequestApprovalSupportsAcceptForSessionAndDoesNotReuseOtherScope()
     {
         var store = new MemoryApprovalStore();

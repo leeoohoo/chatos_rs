@@ -26,6 +26,7 @@ pub(crate) mod wechat_auth;
 
 pub use registration_email_codes::{
     RegistrationEmailCodeReservation, RegistrationEmailCodeReservationError,
+    RegistrationTransactionError,
 };
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations/postgres");

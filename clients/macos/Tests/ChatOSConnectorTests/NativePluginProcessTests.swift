@@ -127,15 +127,27 @@ extension NativePluginRuntimeTests {
         #expect(!processExists(childPID))
     }
 
-    @Test("plugin processes restore tool paths missing from GUI app launches")
-    func pluginProcessEnvironmentRestoresToolPaths() {
+    @Test("plugin processes receive a minimal environment without host secrets")
+    func pluginProcessEnvironmentDropsHostSecrets() {
         let environment = NativePluginProcessEnvironment.make(
-            base: ["PATH": "/usr/bin:/bin", "EXAMPLE": "base"],
-            overrides: ["EXAMPLE": "plugin"]
+            base: [
+                "PATH": "/private/bin:/usr/bin",
+                "LANG": "zh_CN.UTF-8",
+                "AWS_SECRET_ACCESS_KEY": "host-secret",
+                "EXAMPLE": "host-value",
+            ],
+            overrides: [
+                "EXAMPLE": "plugin",
+                "PATH": "/attacker/bin",
+                "CHATOS_PLUGIN_DATA_DIR": "/plugin/data",
+            ]
         )
 
         #expect(environment["EXAMPLE"] == "plugin")
         #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        #expect(environment["LANG"] == "zh_CN.UTF-8")
+        #expect(environment["HOME"] == "/plugin/data")
+        #expect(environment["AWS_SECRET_ACCESS_KEY"] == nil)
     }
 
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")
@@ -239,7 +251,7 @@ extension NativePluginRuntimeTests {
         let directory = root.appendingPathComponent(label, isDirectory: true)
         let visual = directory.appendingPathComponent("visual", isDirectory: true)
         let artifacts = directory.appendingPathComponent("artifacts", isDirectory: true)
-        let log = directory.appendingPathComponent("calls.log")
+        let log = artifacts.appendingPathComponent("calls.log")
         try FileManager.default.createDirectory(at: visual, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
         let script = directory.appendingPathComponent("fixture.zsh")
@@ -277,7 +289,10 @@ extension NativePluginRuntimeTests {
             server: manifest.mcpServers["computer-use"]!,
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
             arguments: [script.path],
-            environment: [:],
+            environment: [
+                "CHATOS_PLUGIN_VISUAL_SESSION_DIR": visual.path,
+                "CHATOS_PLUGIN_ARTIFACT_DIR": artifacts.path,
+            ],
             installationURL: directory,
             visualSessionURL: visual,
             artifactURL: artifacts,

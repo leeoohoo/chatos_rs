@@ -16,6 +16,8 @@ struct NativePreparedPluginLaunch: Sendable {
     var visualSessionURL: URL
     var artifactURL: URL
     var displayName: String
+    var permissionSnapshot: Set<String> = []
+    var workspaceRoot: URL? = nil
 }
 
 enum NativePluginManifestLoader {
@@ -86,6 +88,10 @@ enum NativePluginManifestLoader {
     ) throws -> NativePreparedPluginLaunch {
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
+        try NativePluginInstallationIntegrity.verify(
+            record: record,
+            installationURL: installationURL
+        )
         guard manifest.schemaVersion == 3,
               manifest.version == record.version else {
             throw NativePluginRuntimeError.invalidManifest("Plugin manifest 与已安装 Release 不一致")
@@ -208,7 +214,9 @@ enum NativePluginManifestLoader {
             installationURL: installationURL,
             visualSessionURL: visualSessionURL,
             artifactURL: artifactURL,
-            displayName: manifest.interface?.displayName?.nonEmptyTrimmed ?? manifest.name
+            displayName: manifest.interface?.displayName?.nonEmptyTrimmed ?? manifest.name,
+            permissionSnapshot: permissionSnapshot,
+            workspaceRoot: workspaceRoot
         )
     }
 

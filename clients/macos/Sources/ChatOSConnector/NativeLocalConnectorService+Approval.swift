@@ -1,5 +1,6 @@
 import ChatOSAgentRuntime
 import ChatOSCore
+import CryptoKit
 import Foundation
 
 extension NativeLocalConnectorService {
@@ -15,7 +16,18 @@ extension NativeLocalConnectorService {
         approvalScopeKey: String? = nil,
         workspaceID: String? = nil
     ) async -> NativeApprovalDecision {
-        if let approvalScopeKey, sessionApprovalAllowlist.contains(approvalScopeKey) {
+        let scopedApprovalKey = approvalScopeKey.map {
+            approvalSessionScope(
+                base: $0,
+                command: command,
+                arguments: arguments,
+                cwd: cwd,
+                projectRoot: projectRoot,
+                workspaceID: workspaceID,
+                requestedPermissionsDescription: requestedPermissionsDescription
+            )
+        }
+        if let scopedApprovalKey, sessionApprovalAllowlist.contains(scopedApprovalKey) {
             let reason = "用户已允许当前本机会话执行此类操作。"
             publishApprovalEvent(.init(
                 requestID: requestID,
@@ -54,7 +66,7 @@ extension NativeLocalConnectorService {
                 source: source,
                 risk: risk,
                 reason: risk.reason,
-                approvalScopeKey: approvalScopeKey
+                approvalScopeKey: scopedApprovalKey
             )
         case .autoApproval:
             guard let modelID = state.commandApprovalModelConfigID else {
@@ -66,7 +78,7 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 尚未配置模型。",
-                    approvalScopeKey: approvalScopeKey
+                    approvalScopeKey: scopedApprovalKey
                 )
             }
             do {
@@ -121,11 +133,8 @@ extension NativeLocalConnectorService {
                         source: source,
                         risk: risk,
                         reason: reason,
-                        approvalScopeKey: approvalScopeKey
+                        approvalScopeKey: scopedApprovalKey
                     )
-                }
-                if case .approve(_, true) = decision, let approvalScopeKey {
-                    sessionApprovalAllowlist.insert(approvalScopeKey)
                 }
                 switch decision {
                 case let .approve(reason, _):
@@ -155,6 +164,9 @@ extension NativeLocalConnectorService {
                 case .askUser:
                     break
                 }
+                if case let .approve(reason, _) = decision {
+                    return .approve(reason: reason, rememberAllow: false)
+                }
                 return decision
             } catch {
                 return await requestUserApproval(
@@ -165,10 +177,36 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 不可用：\(error.localizedDescription)",
-                    approvalScopeKey: approvalScopeKey
+                    approvalScopeKey: scopedApprovalKey
                 )
             }
         }
+    }
+
+    private func approvalSessionScope(
+        base: String,
+        command: String,
+        arguments: [String],
+        cwd: URL,
+        projectRoot: URL,
+        workspaceID: String?,
+        requestedPermissionsDescription: String?
+    ) -> String {
+        let values = [
+            state.user?.id ?? "",
+            state.deviceID ?? "",
+            workspaceID ?? "",
+            projectRoot.standardizedFileURL.resolvingSymlinksInPath().path,
+            cwd.standardizedFileURL.resolvingSymlinksInPath().path,
+            base,
+            command,
+            requestedPermissionsDescription ?? "",
+        ] + arguments
+        let canonical = values.map { "\($0.utf8.count):\($0)" }.joined()
+        let digest = SHA256.hash(data: Data(canonical.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return "v2:\(digest)"
     }
 
     private func requestUserApproval(

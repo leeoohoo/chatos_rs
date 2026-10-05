@@ -123,6 +123,7 @@ fn truncate_text(value: &str, max_chars: usize) -> String {
 pub struct ApiError {
     status: StatusCode,
     message: String,
+    error_id: Option<Uuid>,
 }
 
 impl ApiError {
@@ -130,6 +131,7 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             message: message.into(),
+            error_id: None,
         }
     }
 
@@ -137,6 +139,7 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: message.into(),
+            error_id: None,
         }
     }
 
@@ -144,6 +147,7 @@ impl ApiError {
         Self {
             status: StatusCode::FORBIDDEN,
             message: message.into(),
+            error_id: None,
         }
     }
 
@@ -151,6 +155,7 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: message.into(),
+            error_id: None,
         }
     }
 
@@ -158,13 +163,18 @@ impl ApiError {
         Self {
             status: StatusCode::CONFLICT,
             message: message.into(),
+            error_id: None,
         }
     }
 
     pub fn internal(message: impl Into<String>) -> Self {
+        let error_id = Uuid::new_v4();
+        let error = message.into();
+        tracing::error!(%error_id, error = %error, "plugin management internal error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: message.into(),
+            message: "internal server error".to_string(),
+            error_id: Some(error_id),
         }
     }
 
@@ -172,19 +182,18 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_GATEWAY,
             message: message.into(),
+            error_id: None,
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (
-            self.status,
-            Json(json!({
-                "error": self.message,
-            })),
-        )
-            .into_response()
+        let mut body = json!({ "error": self.message });
+        if let Some(error_id) = self.error_id {
+            body["error_id"] = json!(error_id);
+        }
+        (self.status, Json(body)).into_response()
     }
 }
 

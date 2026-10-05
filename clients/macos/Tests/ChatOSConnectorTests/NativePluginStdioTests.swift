@@ -5,6 +5,64 @@ import Foundation
 import Testing
 
 extension NativePluginRuntimeTests {
+    @Test("stdio plugin sandbox blocks undeclared user file reads")
+    func stdioSandboxBlocksUndeclaredFileRead() async throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = parent.appendingPathComponent("plugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let secret = parent.appendingPathComponent("host-secret.txt")
+        try Data("must-not-be-readable".utf8).write(to: secret)
+        let script = installation.appendingPathComponent("fixture.zsh")
+        try """
+        while IFS= read -r line; do
+          if [[ "$line" == *'tools/list'* ]]; then
+            echo '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"probe","inputSchema":{"type":"object"}}]}}'
+          elif [[ "$line" == *'tools/call'* ]]; then
+            if /bin/cat '(secret.path)' >/dev/null 2>&1; then
+              echo '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"accessible"}]}}'
+            else
+              echo '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"blocked"}]}}'
+            fi
+          elif [[ "$line" == *'initialize'* ]]; then
+            echo '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}}}}'
+          fi
+        done
+        """.write(to: script, atomically: true, encoding: .utf8)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","bin":"fixture","args":[]}}}
+            """.utf8)
+        )
+        let launch = NativePreparedPluginLaunch(
+            manifest: manifest,
+            componentKey: "fixture",
+            server: manifest.mcpServers["fixture"]!,
+            executableURL: URL(fileURLWithPath: "/bin/zsh"),
+            arguments: [script.path],
+            environment: [:],
+            installationURL: installation,
+            visualSessionURL: installation.appendingPathComponent("visual"),
+            artifactURL: installation.appendingPathComponent("artifacts"),
+            displayName: "Sandbox fixture"
+        )
+        let client = NativePluginStdioClient(launch: launch)
+        try await client.start()
+        _ = try await client.initialize()
+        let result = try await client.callTool(
+            name: "probe",
+            arguments: .object([:]),
+            timeout: .seconds(2)
+        )
+        #expect(
+            result.jsonObject?["content"]?.jsonArray?.first?
+                .jsonObject?["text"]?.jsonString == "blocked"
+        )
+        await client.terminate()
+    }
+
     @Test("stdio client initializes, lists tools and calls a tool")
     func stdioRoundTrip() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -61,8 +119,10 @@ extension NativePluginRuntimeTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let grandchildPIDFile = root.appendingPathComponent("grandchild.pid")
-        let pluginPIDFile = root.appendingPathComponent("plugin.pid")
+        let runtime = root.appendingPathComponent("runtime", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+        let grandchildPIDFile = runtime.appendingPathComponent("grandchild.pid")
+        let pluginPIDFile = runtime.appendingPathComponent("plugin.pid")
         let script = root.appendingPathComponent("fixture.zsh")
         try """
         echo $$ > '\(pluginPIDFile.path)'
@@ -90,7 +150,7 @@ extension NativePluginRuntimeTests {
             server: manifest.mcpServers["fixture"]!,
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
             arguments: [script.path],
-            environment: [:],
+            environment: ["CHATOS_PLUGIN_DATA_DIR": runtime.path],
             installationURL: root,
             visualSessionURL: root.appendingPathComponent("visual"),
             artifactURL: root.appendingPathComponent("artifacts"),

@@ -56,6 +56,14 @@ pub async fn count_sources(db: &Db) -> Result<i64, String> {
         .map_err(|error| error.to_string())
 }
 
+pub async fn count_sources_for_tenant(db: &Db, tenant_id: &str) -> Result<i64, String> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM engine_sources WHERE tenant_id = $1")
+        .bind(tenant_id.trim())
+        .fetch_one(db)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 pub async fn verify_source_secret(
     db: &Db,
     source_id: &str,

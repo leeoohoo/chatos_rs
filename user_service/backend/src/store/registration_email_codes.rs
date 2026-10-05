@@ -5,7 +5,7 @@ use serde_json::Value;
 use sqlx::types::Json;
 
 use super::{db_error, fetch_optional, json, optional_timestamp, timestamp, AppStore};
-use crate::models::RegistrationEmailCodeRecord;
+use crate::models::{InviteCodeRecord, RegistrationEmailCodeRecord, UserRecord};
 
 #[derive(Debug, Clone)]
 pub struct RegistrationEmailCodeReservation {
@@ -20,7 +20,146 @@ pub enum RegistrationEmailCodeReservationError {
     Store(String),
 }
 
+#[derive(Debug)]
+pub enum RegistrationTransactionError {
+    InvalidVerificationCode,
+    InvalidInvite,
+    EmailAlreadyRegistered,
+    Store(String),
+}
+
 impl AppStore {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_user_with_invite_and_email_code(
+        &self,
+        user: &UserRecord,
+        invite_code_hash: &str,
+        expected_code_hash: &str,
+        now_unix: i64,
+        now: &str,
+        max_attempts: i64,
+    ) -> Result<(), RegistrationTransactionError> {
+        let store_error = |error| RegistrationTransactionError::Store(db_error(error));
+        let mut tx = self.pool.begin().await.map_err(store_error)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(&user.username)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error)?;
+
+        let verification = sqlx::query_scalar::<_, Json<Value>>(
+            "SELECT data FROM registration_email_codes WHERE email=$1 FOR UPDATE",
+        )
+        .bind(&user.username)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(store_error)?
+        .map(|Json(value)| serde_json::from_value::<RegistrationEmailCodeRecord>(value))
+        .transpose()
+        .map_err(|error| RegistrationTransactionError::Store(error.to_string()))?;
+        let Some(mut verification) = verification else {
+            return Err(RegistrationTransactionError::InvalidVerificationCode);
+        };
+        let verification_valid = verification.consumed_at.is_none()
+            && verification.expires_at_unix >= now_unix
+            && verification.invite_code_hash == invite_code_hash
+            && verification.attempts < max_attempts
+            && verification.code_hash == expected_code_hash;
+        if !verification_valid {
+            if verification.consumed_at.is_none()
+                && verification.expires_at_unix >= now_unix
+                && verification.invite_code_hash == invite_code_hash
+                && verification.attempts < max_attempts
+            {
+                verification.attempts += 1;
+                verification.updated_at = now.to_string();
+                sqlx::query(
+                    r#"UPDATE registration_email_codes SET updated_at=$2,data=$3 WHERE email=$1"#,
+                )
+                .bind(&verification.email)
+                .bind(timestamp(now).map_err(RegistrationTransactionError::Store)?)
+                .bind(json(&verification).map_err(RegistrationTransactionError::Store)?)
+                .execute(&mut *tx)
+                .await
+                .map_err(store_error)?;
+                tx.commit().await.map_err(store_error)?;
+            }
+            return Err(RegistrationTransactionError::InvalidVerificationCode);
+        }
+
+        let invite = sqlx::query_scalar::<_, Json<Value>>(
+            "SELECT data FROM invite_codes WHERE code_hash=$1 FOR UPDATE",
+        )
+        .bind(invite_code_hash)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(store_error)?
+        .map(|Json(value)| serde_json::from_value::<InviteCodeRecord>(value))
+        .transpose()
+        .map_err(|error| RegistrationTransactionError::Store(error.to_string()))?;
+        let Some(mut invite) = invite else {
+            return Err(RegistrationTransactionError::InvalidInvite);
+        };
+        if invite.revoked_at.is_some()
+            || invite
+                .expires_at_unix
+                .is_some_and(|expires_at| expires_at < now_unix)
+            || invite.used_count >= invite.max_uses
+        {
+            return Err(RegistrationTransactionError::InvalidInvite);
+        }
+
+        let insert_result = sqlx::query(
+            r#"INSERT INTO users
+            (id,username,display_name,password_hash,credential_version,role,enabled,created_at,updated_at,last_login_at,data)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)"#,
+        )
+        .bind(&user.id)
+        .bind(&user.username)
+        .bind(&user.display_name)
+        .bind(&user.password_hash)
+        .bind(user.credential_version)
+        .bind(&user.role)
+        .bind(user.enabled)
+        .bind(timestamp(&user.created_at).map_err(RegistrationTransactionError::Store)?)
+        .bind(timestamp(&user.updated_at).map_err(RegistrationTransactionError::Store)?)
+        .bind(optional_timestamp(user.last_login_at.as_deref()).map_err(RegistrationTransactionError::Store)?)
+        .bind(json(user).map_err(RegistrationTransactionError::Store)?)
+        .execute(&mut *tx)
+        .await;
+        if let Err(sqlx::Error::Database(error)) = &insert_result {
+            if error.is_unique_violation() {
+                return Err(RegistrationTransactionError::EmailAlreadyRegistered);
+            }
+        }
+        insert_result.map_err(store_error)?;
+
+        invite.used_count += 1;
+        invite.last_used_at = Some(now.to_string());
+        invite.updated_at = now.to_string();
+        sqlx::query(r#"UPDATE invite_codes SET used_count=$2,updated_at=$3,data=$4 WHERE id=$1"#)
+            .bind(&invite.id)
+            .bind(invite.used_count)
+            .bind(timestamp(now).map_err(RegistrationTransactionError::Store)?)
+            .bind(json(&invite).map_err(RegistrationTransactionError::Store)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(store_error)?;
+
+        verification.consumed_at = Some(now.to_string());
+        verification.updated_at = now.to_string();
+        sqlx::query(
+            r#"UPDATE registration_email_codes SET consumed_at=$2,updated_at=$2,data=$3 WHERE email=$1"#,
+        )
+        .bind(&verification.email)
+        .bind(timestamp(now).map_err(RegistrationTransactionError::Store)?)
+        .bind(json(&verification).map_err(RegistrationTransactionError::Store)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(store_error)?;
+        tx.commit().await.map_err(store_error)
+    }
+
     pub async fn find_registration_email_code(
         &self,
         email: &str,

@@ -322,7 +322,12 @@ extension NativePluginRuntimeTests {
                 version: "0.3.42",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: installation.path,
-                installedAt: "2026-08-26T00:00:00Z"
+                installedAt: "2026-08-26T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: installation,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             componentKey: "computer-use",
             serverKey: nil,
@@ -340,7 +345,12 @@ extension NativePluginRuntimeTests {
                 version: "0.3.42",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: installation.path,
-                installedAt: "2026-08-26T00:00:00Z"
+                installedAt: "2026-08-26T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: installation,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             componentKey: "computer-use",
             serverKey: nil,
@@ -402,7 +412,12 @@ extension NativePluginRuntimeTests {
                 version: "1.0.0",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: installation.path,
-                installedAt: "2026-08-29T00:00:00Z"
+                installedAt: "2026-08-29T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: installation,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             componentKey: "fixture",
             serverKey: nil,
@@ -417,8 +432,8 @@ extension NativePluginRuntimeTests {
         #expect(launch.environment["CHATOS_WORKSPACE"] == nil)
     }
 
-    @Test("preloaded manifest launch preparation does not decode the installed file again")
-    func preloadedManifestLaunchPreparationAvoidsRepeatedRead() throws {
+    @Test("preloaded manifest launch still fails closed when an installed file disappears")
+    func preloadedManifestLaunchRevalidatesInstallationIntegrity() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let installation = root.appendingPathComponent("plugin", isDirectory: true)
@@ -438,29 +453,34 @@ extension NativePluginRuntimeTests {
         """.utf8).write(to: manifestURL)
 
         let manifest = try NativePluginManifestLoader.loadManifest(from: manifestURL)
+        let checksums = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: installation,
+            maximumFiles: 100,
+            maximumBytes: 1_024 * 1_024
+        )
         try FileManager.default.removeItem(at: manifestURL)
-        let launch = try NativePluginManifestLoader.prepare(
-            record: .init(
+        #expect(throws: NativePluginRuntimeError.self) {
+            _ = try NativePluginManifestLoader.prepare(
+                record: .init(
                 pluginID: "plugin-1",
                 releaseID: "release-1",
                 version: "1.0.0",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: installation.path,
-                installedAt: "2026-10-03T00:00:00Z"
-            ),
-            manifest: manifest,
-            componentKey: "fixture",
-            serverKey: nil,
-            adapterSessionID: "adapter-preloaded",
-            ownerUserID: "user-1",
-            deviceID: "device-1",
-            workspaceRoot: nil,
-            permissionSnapshot: ["process.spawn"],
-            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
-        )
-
-        #expect(launch.manifest.name == "fixture")
-        #expect(launch.executableURL == launcher.standardizedFileURL)
+                installedAt: "2026-10-03T00:00:00Z",
+                packageFileSHA256: checksums
+                ),
+                manifest: manifest,
+                componentKey: "fixture",
+                serverKey: nil,
+                adapterSessionID: "adapter-preloaded",
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                workspaceRoot: nil,
+                permissionSnapshot: ["process.spawn"],
+                runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+            )
+        }
     }
 
 }
