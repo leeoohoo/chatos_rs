@@ -165,11 +165,15 @@
                                         <Grid>
                                             <StackPanel Spacing="2">
                                                 <TextBlock Text="参考图（最多 8 张）" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                                <TextBlock Text="可从创作记录或本机选择" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <TextBlock Text="可从创作记录或本机选择" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind ViewModel.ReferenceImageCountLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </StackPanel>
                                             </StackPanel>
                                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
-                                                <Button Click="OnAddGeneratedReferenceClick" Content="从记录" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.AddReference" Click="OnAddReferenceClick" Content="本机" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnAddGeneratedReferenceClick" Content="从记录" IsEnabled="{x:Bind ViewModel.CanAddReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.AddReference" Click="OnAddReferenceClick" Content="本机" IsEnabled="{x:Bind ViewModel.CanAddReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnClearReferencesClick" Content="清空" IsEnabled="{x:Bind ViewModel.HasReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
                                         </Grid>
                                         <ItemsControl ItemsSource="{x:Bind ViewModel.ReferenceImages}">
@@ -292,7 +296,8 @@
                                         <Grid>
                                             <TextBlock Text="首帧（可选）" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
-                                                <Button Click="OnPickVideoFrameClick" Content="选择" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnPickGeneratedVideoFrameClick" Content="从记录" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnPickVideoFrameClick" Content="本机" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <Button Click="OnRemoveVideoFrameClick" Content="清除" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
                                         </Grid>
@@ -330,7 +335,7 @@
                                     </StackPanel>
                                     <Grid ColumnSpacing="8">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <Button Click="OnGenerateVideoClick" Content="生成视频" IsEnabled="{x:Bind ViewModel.CanGenerateVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" HorizontalAlignment="Stretch" />
+                                        <Button Click="OnGenerateVideoClick" Content="{x:Bind ViewModel.GenerateVideoActionLabel, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanGenerateVideo, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" HorizontalAlignment="Stretch" />
                                         <Button Grid.Column="1" Click="OnCancelVideoClick" Content="停止等待" IsEnabled="{x:Bind ViewModel.IsGeneratingVideo, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                     </Grid>
                                 </StackPanel>

@@ -75,6 +75,9 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("x:Name=\"HistoryLoadingState\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"StoryLandingLoadingState\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Value=\"{x:Bind CompletionRatio}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnPickGeneratedVideoFrameClick\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnClearReferencesClick\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{x:Bind ViewModel.GenerateVideoActionLabel, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
 
         var document = System.Xml.Linq.XDocument.Parse(xaml);
         var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>

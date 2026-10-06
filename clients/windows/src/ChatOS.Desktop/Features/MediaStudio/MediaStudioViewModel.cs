@@ -26,6 +26,12 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     {
         _service = service;
         _historyStore = historyStore;
+        ReferenceImages.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasReferenceImages));
+            OnPropertyChanged(nameof(CanAddReferenceImages));
+            OnPropertyChanged(nameof(ReferenceImageCountLabel));
+        };
     }
 
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
@@ -57,6 +63,16 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public bool CanGenerateVideo => !IsGeneratingVideo && SelectedVideoModel is not null &&
         !string.IsNullOrWhiteSpace(VideoPrompt) && _ownerUserId is not null;
+
+    public bool HasReferenceImages => ReferenceImages.Count > 0;
+
+    public bool CanAddReferenceImages => !IsBusy && ReferenceImages.Count < 8;
+
+    public string ReferenceImageCountLabel => $"{ReferenceImages.Count} / 8";
+
+    public string GenerateVideoActionLabel => VideoFirstFrame is null
+        ? "生成视频"
+        : "基于首帧生成视频";
 
     public string VideoProgressLabel => VideoProgress switch
     {
@@ -114,6 +130,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(VideoFirstFrameLabel))]
     [NotifyPropertyChangedFor(nameof(CanChooseVideoRatio))]
     [NotifyPropertyChangedFor(nameof(VideoRatioHint))]
+    [NotifyPropertyChangedFor(nameof(GenerateVideoActionLabel))]
     private ImageGenerationInput? _videoFirstFrame;
 
     [ObservableProperty]
@@ -136,6 +153,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
+    [NotifyPropertyChangedFor(nameof(CanAddReferenceImages))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -365,6 +383,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     }
 
     public void RemoveReferenceImage(ImageGenerationInput image) => ReferenceImages.Remove(image);
+
+    public void ClearReferenceImages() => ReferenceImages.Clear();
 
     public async Task SetVideoFirstFrameAsync(
         string path,

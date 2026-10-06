@@ -505,6 +505,9 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.RemoveReferenceImage(image);
     }
 
+    private void OnClearReferencesClick(object sender, RoutedEventArgs e) =>
+        ViewModel.ClearReferenceImages();
+
     private void OnImageHistoryCardClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: MediaStudioHistoryItem item })
@@ -568,6 +571,48 @@ public sealed partial class MediaStudioPage : Page
             WinRT.Interop.WindowNative.GetWindowHandle(window));
         var file = await picker.PickSingleFileAsync();
         if (file is not null) await ViewModel.SetVideoFirstFrameAsync(file.Path);
+    }
+
+    private async void OnPickGeneratedVideoFrameClick(object sender, RoutedEventArgs e)
+    {
+        var images = ViewModel.History
+            .SelectMany(item => item.Images)
+            .Where(item => File.Exists(item.FilePath))
+            .ToArray();
+        if (images.Length == 0)
+        {
+            var emptyDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = "没有可用的图片记录",
+                Content = "请先生成图片，或从本机选择首帧参考图。",
+                CloseButtonText = "知道了",
+            };
+            await emptyDialog.ShowAsync();
+            return;
+        }
+
+        var list = new ListView
+        {
+            ItemsSource = images,
+            DisplayMemberPath = nameof(MediaStudioImageItem.Name),
+            SelectionMode = ListViewSelectionMode.Single,
+            MaxHeight = 420,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "从创作记录选择视频首帧",
+            Content = list,
+            PrimaryButtonText = "使用",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary &&
+            list.SelectedItem is MediaStudioImageItem selected)
+        {
+            await ViewModel.SetVideoFirstFrameAsync(selected.FilePath);
+        }
     }
 
     private void OnRemoveVideoFrameClick(object sender, RoutedEventArgs e) =>
