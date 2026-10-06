@@ -32,6 +32,18 @@ public sealed partial class MediaStudioViewModel : ObservableObject
             OnPropertyChanged(nameof(CanAddReferenceImages));
             OnPropertyChanged(nameof(ReferenceImageCountLabel));
         };
+        Models.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasImageModels));
+            OnPropertyChanged(nameof(ShowImageModelLoading));
+            OnPropertyChanged(nameof(ShowImageModelEmpty));
+        };
+        VideoModels.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(HasVideoModels));
+            OnPropertyChanged(nameof(ShowVideoModelLoading));
+            OnPropertyChanged(nameof(ShowVideoModelEmpty));
+        };
     }
 
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
@@ -64,6 +76,18 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     public bool CanGenerateVideo => !IsGeneratingVideo && SelectedVideoModel is not null &&
         !string.IsNullOrWhiteSpace(VideoPrompt) && _ownerUserId is not null;
 
+    public bool HasImageModels => Models.Count > 0;
+
+    public bool HasVideoModels => VideoModels.Count > 0;
+
+    public bool ShowImageModelLoading => IsLoadingModels && !HasImageModels;
+
+    public bool ShowVideoModelLoading => IsLoadingModels && !HasVideoModels;
+
+    public bool ShowImageModelEmpty => !IsLoadingModels && !HasImageModels;
+
+    public bool ShowVideoModelEmpty => !IsLoadingModels && !HasVideoModels;
+
     public bool HasReferenceImages => ReferenceImages.Count > 0;
 
     public bool CanAddReferenceImages => !IsBusy && ReferenceImages.Count < 8;
@@ -73,6 +97,28 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     public string GenerateVideoActionLabel => VideoFirstFrame is null
         ? "生成视频"
         : "基于首帧生成视频";
+
+    public string ImageCanvasSubtitle => IsGeneratingImage
+        ? "正在生成，完成后会自动保存到本机"
+        : LatestImageBatch is { } latest
+            ? $"{latest.ModelName} · {latest.Images.Count} 张图片"
+            : "结果会显示在这里，不会进入聊天记录";
+
+    public string ImageCanvasStatusLabel => IsGeneratingImage
+        ? "正在生成"
+        : LatestImageBatch is not null
+            ? "已完成"
+            : string.Empty;
+
+    public bool HasImageCanvasStatus => IsGeneratingImage || LatestImageBatch is not null;
+
+    public string VideoCanvasSubtitle => IsGeneratingVideo
+        ? VideoProgressLabel
+        : LatestVideo is { } latest
+            ? $"{latest.ModelName} · 已保存到本机"
+            : VideoProgress?.Status is "failed"
+                ? "生成失败"
+                : "视频结果不会进入聊天记录";
 
     public string VideoProgressLabel => VideoProgress switch
     {
@@ -84,6 +130,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public string VideoFirstFrameLabel => VideoFirstFrame?.Name ?? "未选择";
 
+    public bool HasVideoFirstFrame => VideoFirstFrame is not null;
+
     public bool CanChooseVideoRatio => VideoFirstFrame is null;
 
     public string VideoRatioHint => VideoFirstFrame is null
@@ -91,6 +139,14 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         : "已跟随首帧图片比例";
 
     public string VideoReferenceAudioLabel => VideoReferenceAudio?.Name ?? "未选择";
+
+    public bool HasVideoReferenceAudio => VideoReferenceAudio is not null;
+
+    public string VideoReferenceAudioHint => !CanUseVideoReferenceAudio
+        ? "当前视频模型不支持参考音频"
+        : HasVideoReferenceAudio
+            ? "生成时将使用这段音频作为动作与节奏参考"
+            : "支持 MP3、WAV、M4A 或 AAC，最大 20 MB";
 
     private VideoGenerationProfile VideoProfile =>
         VideoGenerationProfile.ForModel(SelectedVideoModel?.ModelName ?? string.Empty);
@@ -128,6 +184,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoFirstFrameLabel))]
+    [NotifyPropertyChangedFor(nameof(HasVideoFirstFrame))]
     [NotifyPropertyChangedFor(nameof(CanChooseVideoRatio))]
     [NotifyPropertyChangedFor(nameof(VideoRatioHint))]
     [NotifyPropertyChangedFor(nameof(GenerateVideoActionLabel))]
@@ -135,21 +192,36 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoReferenceAudioLabel))]
+    [NotifyPropertyChangedFor(nameof(HasVideoReferenceAudio))]
+    [NotifyPropertyChangedFor(nameof(VideoReferenceAudioHint))]
     private VideoGenerationInputAudio? _videoReferenceAudio;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    [NotifyPropertyChangedFor(nameof(VideoCanvasSubtitle))]
     private bool _isGeneratingVideo;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoProgressLabel))]
+    [NotifyPropertyChangedFor(nameof(VideoCanvasSubtitle))]
     private VideoGenerationProgress? _videoProgress;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ImageCanvasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(ImageCanvasStatusLabel))]
+    [NotifyPropertyChangedFor(nameof(HasImageCanvasStatus))]
     private MediaStudioHistoryItem? _latestImageBatch;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VideoCanvasSubtitle))]
     private MediaStudioVideoHistoryItem? _latestVideo;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerate))]
+    [NotifyPropertyChangedFor(nameof(ImageCanvasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(ImageCanvasStatusLabel))]
+    [NotifyPropertyChangedFor(nameof(HasImageCanvasStatus))]
+    private bool _isGeneratingImage;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
@@ -158,6 +230,13 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isInitialLoading;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowImageModelLoading))]
+    [NotifyPropertyChangedFor(nameof(ShowVideoModelLoading))]
+    [NotifyPropertyChangedFor(nameof(ShowImageModelEmpty))]
+    [NotifyPropertyChangedFor(nameof(ShowVideoModelEmpty))]
+    private bool _isLoadingModels;
 
     [ObservableProperty]
     private string? _errorMessage;
@@ -196,6 +275,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         var session = _session;
         _initialized = true;
         IsInitialLoading = true;
+        IsLoadingModels = true;
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -230,6 +310,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
             if (session == _session)
             {
                 IsInitialLoading = false;
+                IsLoadingModels = false;
                 IsBusy = false;
             }
         }
@@ -289,6 +370,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public async Task ReloadModelsAsync(CancellationToken cancellationToken = default)
     {
+        IsLoadingModels = true;
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -304,6 +386,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
         finally
         {
+            IsLoadingModels = false;
             IsBusy = false;
         }
     }
@@ -313,6 +396,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         var owner = _ownerUserId;
         if (!CanGenerate || SelectedModel is null || owner is null) return;
         var submittedPrompt = Prompt.Trim();
+        IsGeneratingImage = true;
         IsBusy = true;
         ErrorMessage = null;
         StatusMessage = "正在生成图片…";
@@ -342,6 +426,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
         finally
         {
+            IsGeneratingImage = false;
             IsBusy = false;
         }
     }
@@ -511,6 +596,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         HasMoreHistory = false;
         HasMoreVideoHistory = false;
         IsInitialLoading = false;
+        IsLoadingModels = false;
+        IsGeneratingImage = false;
         IsLoadingMoreHistory = false;
         IsLoadingMoreVideoHistory = false;
         Models.Clear();
@@ -564,6 +651,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         OnPropertyChanged(nameof(VideoSizes));
         OnPropertyChanged(nameof(VideoDurations));
         OnPropertyChanged(nameof(CanUseVideoReferenceAudio));
+        OnPropertyChanged(nameof(VideoReferenceAudioHint));
     }
 
     private static async Task<ImageGenerationInput> LoadImageInputAsync(

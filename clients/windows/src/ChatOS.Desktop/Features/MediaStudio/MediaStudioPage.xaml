@@ -80,8 +80,15 @@
                                 <Grid Padding="18,0">
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="图片画布" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBlock Text="最新一批生成结果" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.ImageCanvasSubtitle, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
+                                    <Border HorizontalAlignment="Right" VerticalAlignment="Center" Padding="10,6" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="14"
+                                            Visibility="{x:Bind ViewModel.HasImageCanvasStatus, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <StackPanel Orientation="Horizontal" Spacing="7">
+                                            <ProgressRing Width="14" Height="14" IsActive="{x:Bind ViewModel.IsGeneratingImage, Mode=OneWay}" />
+                                            <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.ImageCanvasStatusLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
                                 <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
 
@@ -149,7 +156,22 @@
 
                                     <StackPanel Spacing="7">
                                         <TextBlock Text="图片模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <ComboBox AutomationProperties.AutomationId="ChatOS.MediaStudio.Model" HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.Models}" SelectedItem="{x:Bind ViewModel.SelectedModel, Mode=TwoWay}">
+                                        <Border Padding="12" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"
+                                                Visibility="{x:Bind ViewModel.ShowImageModelLoading, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <StackPanel Orientation="Horizontal" Spacing="9">
+                                                <ProgressRing Width="18" Height="18" IsActive="True" />
+                                                <TextBlock VerticalAlignment="Center" Text="正在读取图片模型…" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Padding="12" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"
+                                                Visibility="{x:Bind ViewModel.ShowImageModelEmpty, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="没有可用的图片模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="请先配置一个全局启用且具有 API 密钥的图片模型，然后刷新。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <ComboBox AutomationProperties.AutomationId="ChatOS.MediaStudio.Model" HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.Models}" SelectedItem="{x:Bind ViewModel.SelectedModel, Mode=TwoWay}"
+                                                  Visibility="{x:Bind ViewModel.HasImageModels, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <ComboBox.ItemTemplate>
                                                 <DataTemplate x:DataType="core:MediaGenerationModel">
                                                     <StackPanel Spacing="2">
@@ -234,7 +256,7 @@
                                 <Grid Padding="18,0">
                                     <StackPanel VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="视频画布" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBlock Text="生成完成后自动保存到本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.VideoCanvasSubtitle, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
                                     <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
                                         <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
@@ -281,7 +303,22 @@
                                     <TextBlock Text="视频设置" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                     <StackPanel Spacing="7">
                                         <TextBlock Text="视频模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.VideoModels}" SelectedItem="{x:Bind ViewModel.SelectedVideoModel, Mode=TwoWay}">
+                                        <Border Padding="12" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"
+                                                Visibility="{x:Bind ViewModel.ShowVideoModelLoading, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <StackPanel Orientation="Horizontal" Spacing="9">
+                                                <ProgressRing Width="18" Height="18" IsActive="True" />
+                                                <TextBlock VerticalAlignment="Center" Text="正在读取视频模型…" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Padding="12" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"
+                                                Visibility="{x:Bind ViewModel.ShowVideoModelEmpty, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <StackPanel Spacing="4">
+                                                <TextBlock Text="当前没有兼容的视频模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="添加 Seedance、MiniMax H3 或其他兼容视频模型后刷新。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.VideoModels}" SelectedItem="{x:Bind ViewModel.SelectedVideoModel, Mode=TwoWay}"
+                                                  Visibility="{x:Bind ViewModel.HasVideoModels, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <ComboBox.ItemTemplate>
                                                 <DataTemplate x:DataType="core:MediaGenerationModel">
                                                     <StackPanel Spacing="2">
@@ -298,20 +335,48 @@
                                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
                                                 <Button Click="OnPickGeneratedVideoFrameClick" Content="从记录" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <Button Click="OnPickVideoFrameClick" Content="本机" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnRemoveVideoFrameClick" Content="清除" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnRemoveVideoFrameClick" Content="清除" IsEnabled="{x:Bind ViewModel.HasVideoFirstFrame, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
                                         </Grid>
-                                        <TextBlock Text="{x:Bind ViewModel.VideoFirstFrameLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <Border Padding="9" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="11"
+                                                Visibility="{x:Bind ViewModel.HasVideoFirstFrame, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Border Width="44" Height="38" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="8"><FontIcon Glyph="&#xEB9F;" Foreground="{StaticResource ChatOSPurpleBrush}" /></Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="已选择首帧" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind ViewModel.VideoFirstFrameLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        <Border Padding="12" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="11"
+                                                Visibility="{x:Bind ViewModel.HasVideoFirstFrame, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                            <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                                <FontIcon Glyph="&#xE91B;" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                                                <TextBlock Text="未选择首帧，可从创作记录或本机添加" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                        </Border>
                                     </StackPanel>
                                     <StackPanel Spacing="7">
                                         <Grid>
                                             <TextBlock Text="参考音频（可选）" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
                                                 <Button Click="OnPickVideoAudioClick" Content="选择" IsEnabled="{x:Bind ViewModel.CanUseVideoReferenceAudio, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnRemoveVideoAudioClick" Content="清除" IsEnabled="{x:Bind ViewModel.CanUseVideoReferenceAudio, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnRemoveVideoAudioClick" Content="清除" IsEnabled="{x:Bind ViewModel.HasVideoReferenceAudio, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
                                         </Grid>
-                                        <TextBlock Text="{x:Bind ViewModel.VideoReferenceAudioLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <Border Padding="9" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="11"
+                                                Visibility="{x:Bind ViewModel.HasVideoReferenceAudio, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Border Width="44" Height="38" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="8"><FontIcon Glyph="&#xE8D6;" Foreground="{StaticResource ChatOSPurpleBrush}" /></Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="已选择参考音频" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind ViewModel.VideoReferenceAudioLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        <TextBlock Text="{x:Bind ViewModel.VideoReferenceAudioHint, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
                                     <StackPanel Spacing="7">
                                         <TextBlock Text="提示词" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
@@ -982,19 +1047,37 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="media:MediaStudioVideoHistoryItem">
                                             <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
-                                                <Grid ColumnSpacing="16">
-                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                    <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
-                                                        <FontIcon Glyph="&#xE714;" Foreground="{StaticResource ChatOSPurpleBrush}" />
-                                                    </Border>
-                                                    <Button Grid.Column="1" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnVideoHistoryCardClick">
-                                                        <StackPanel Spacing="5">
-                                                            <TextBlock Text="{x:Bind Prompt}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                            <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                <Grid ColumnSpacing="14">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="144" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <Button Width="144" Height="88" Padding="0" Background="Transparent" BorderThickness="0" Click="OnVideoHistoryCardClick" ToolTipService.ToolTip="播放视频">
+                                                        <Border Width="144" Height="88" CornerRadius="10">
+                                                            <Border.Background>
+                                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                                    <GradientStop Color="#267657E8" Offset="0" />
+                                                                    <GradientStop Color="#260A7AFF" Offset="1" />
+                                                                </LinearGradientBrush>
+                                                            </Border.Background>
+                                                            <Grid>
+                                                                <Border Width="38" Height="38" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="19">
+                                                                    <FontIcon Glyph="&#xE768;" FontSize="17" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                                                </Border>
+                                                                <TextBlock Margin="9,0,9,7" HorizontalAlignment="Center" VerticalAlignment="Bottom" Text="{x:Bind FileName}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            </Grid>
+                                                        </Border>
+                                                    </Button>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="7">
+                                                        <TextBlock Text="{x:Bind Prompt}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                        <StackPanel Orientation="Horizontal" Spacing="7">
+                                                            <TextBlock Text="{x:Bind ModelName}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            <TextBlock Text="·" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                             <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         </StackPanel>
-                                                    </Button>
-                                                    <Button Grid.Column="2" Click="OnSaveVideoClick" Content="另存为" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                        <TextBlock Text="已保存到本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="7">
+                                                        <Button Click="OnVideoHistoryCardClick" Content="播放" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                        <Button Click="OnSaveVideoClick" Content="另存为" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    </StackPanel>
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>

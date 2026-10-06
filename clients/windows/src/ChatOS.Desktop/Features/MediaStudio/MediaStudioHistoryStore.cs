@@ -388,4 +388,6 @@ public sealed record MediaStudioVideoHistoryItem(
     string MimeType)
 {
     public string CreatedAtLabel => CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    public string FileName => Path.GetFileName(FilePath);
 }

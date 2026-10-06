@@ -78,6 +78,14 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("Click=\"OnPickGeneratedVideoFrameClick\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"OnClearReferencesClick\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{x:Bind ViewModel.GenerateVideoActionLabel, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{x:Bind ViewModel.ImageCanvasSubtitle, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{x:Bind ViewModel.VideoCanvasSubtitle, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("没有可用的图片模型", xaml, StringComparison.Ordinal);
+        Assert.Contains("当前没有兼容的视频模型", xaml, StringComparison.Ordinal);
+        Assert.Contains("已选择首帧", xaml, StringComparison.Ordinal);
+        Assert.Contains("已选择参考音频", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{x:Bind FileName}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnVideoHistoryCardClick\" Content=\"播放\"", xaml, StringComparison.Ordinal);
 
         var document = System.Xml.Linq.XDocument.Parse(xaml);
         var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>
