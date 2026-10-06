@@ -90,6 +90,62 @@ public enum LocalAgentJSONValue: Codable, Sendable, Equatable {
     }
 }
 
+extension LocalAgentJSONValue {
+    var conversationDisplayText: String {
+        Self.displayText(from: self)
+    }
+
+    private static func displayText(from value: LocalAgentJSONValue) -> String {
+        switch value {
+        case .null:
+            return ""
+        case let .bool(value):
+            return String(value)
+        case let .number(value):
+            return String(value)
+        case let .string(value):
+            return value
+        case let .array(values):
+            return values.map(displayText).filter { !$0.isEmpty }.joined(separator: "\n")
+        case let .object(values):
+            if case .string("task_graph_terminal")? = values["type"],
+               case let .array(tasks)? = values["tasks"] {
+                return taskGraphText(tasks)
+            }
+            return firstNonemptyText(in: values)
+        }
+    }
+
+    private static func firstNonemptyText(
+        in values: [String: LocalAgentJSONValue]
+    ) -> String {
+        for key in ["text", "content", "report", "answer", "error", "message"] {
+            guard let value = values[key] else { continue }
+            let text = displayText(from: value)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { return text }
+        }
+        return ""
+    }
+
+    private static func taskGraphText(_ tasks: [LocalAgentJSONValue]) -> String {
+        let rendered = tasks.compactMap { task -> (title: String, body: String)? in
+            guard case let .object(values) = task else { return nil }
+            let title = values["title"].map(displayText) ?? ""
+            let status = values["status"].map(displayText) ?? ""
+            let body = values["terminal_outcome"].map(displayText) ?? ""
+            let fallback = [title, status].filter { !$0.isEmpty }.joined(separator: ": ")
+            return (title, body.isEmpty ? fallback : body)
+        }
+        if rendered.count == 1 { return rendered[0].body }
+        return rendered.map { item in
+            item.title.isEmpty ? item.body : "### \(item.title)\n\n\(item.body)"
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
+    }
+}
+
 public struct LocalAgentConversationMessageRecord: Decodable, Sendable, Equatable {
     public let messageID: String
     public let conversationID: String

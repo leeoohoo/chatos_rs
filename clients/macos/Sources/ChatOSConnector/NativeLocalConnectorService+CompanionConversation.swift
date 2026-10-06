@@ -251,17 +251,7 @@ extension NativeLocalConnectorService {
     }
 
     nonisolated static func conversationText(_ value: LocalAgentJSONValue) -> String {
-        switch value {
-        case .null: ""
-        case let .bool(value): String(value)
-        case let .number(value): String(value)
-        case let .string(value): value
-        case let .array(values): values.map(conversationText).joined(separator: "\n")
-        case let .object(values):
-            values["text"].map(conversationText)
-                ?? values["content"].map(conversationText)
-                ?? ""
-        }
+        value.conversationDisplayText
     }
 
     nonisolated static func iso8601(_ unixMilliseconds: Int64) -> String {

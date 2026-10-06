@@ -412,7 +412,7 @@ public actor NativeLocalAgentConversationService:
         ChatMessage(
             id: message?.messageID ?? fallbackID,
             role: message?.role == "assistant" ? .assistant : .user,
-            text: message.map { text(from: $0.content) } ?? "",
+            text: message?.content.conversationDisplayText ?? "",
             createdAt: Date(
                 timeIntervalSince1970: Double(message?.createdAtUnixMs ?? 0) / 1_000
             ),
@@ -432,20 +432,6 @@ public actor NativeLocalAgentConversationService:
                 )
             }
         )
-    }
-
-    private func text(from value: LocalAgentJSONValue) -> String {
-        switch value {
-        case .null: ""
-        case let .string(value): value
-        case let .bool(value): String(value)
-        case let .number(value): String(value)
-        case let .array(values): values.map(text).joined(separator: "\n")
-        case let .object(values):
-            values["text"].map(text)
-                ?? values["content"].map(text)
-                ?? ""
-        }
     }
 
     private func mapStatus(_ value: String) -> TurnStatus {

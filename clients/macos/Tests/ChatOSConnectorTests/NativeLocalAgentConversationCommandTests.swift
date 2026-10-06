@@ -113,6 +113,52 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             knownRunIDs: ["run-1"]
         ))
     }
+
+    func testTaskGraphTerminalDisplaysTheTaskExecutionFinalContent() {
+        let value = LocalAgentJSONValue.object([
+            "type": .string("task_graph_terminal"),
+            "status": .string("succeeded"),
+            "tasks": .array([
+                .object([
+                    "title": .string("Inspect project"),
+                    "status": .string("succeeded"),
+                    "terminal_outcome": .object([
+                        "content": .string("This is a local finance management application."),
+                        "reasoning": .string("internal details must not be displayed"),
+                    ]),
+                ]),
+            ]),
+        ])
+
+        XCTAssertEqual(
+            value.conversationDisplayText,
+            "This is a local finance management application."
+        )
+        XCTAssertFalse(value.conversationDisplayText.contains("internal details"))
+    }
+
+    func testTaskGraphTerminalFormatsMultipleTaskResultsWithTitles() {
+        let value = LocalAgentJSONValue.object([
+            "type": .string("task_graph_terminal"),
+            "tasks": .array([
+                .object([
+                    "title": .string("Research"),
+                    "status": .string("succeeded"),
+                    "terminal_outcome": .object(["content": .string("Found the cause.")]),
+                ]),
+                .object([
+                    "title": .string("Review"),
+                    "status": .string("failed"),
+                    "terminal_outcome": .object(["error": .string("Build failed.")]),
+                ]),
+            ]),
+        ])
+
+        XCTAssertEqual(
+            value.conversationDisplayText,
+            "### Research\n\nFound the cause.\n\n### Review\n\nBuild failed."
+        )
+    }
 }
 
 private actor ConversationCommandHostStub: LocalAgentHostClientServicing {
