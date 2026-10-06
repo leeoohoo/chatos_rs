@@ -26,14 +26,18 @@ extension AppModel {
                 let registry = try await localProjectsService.registry()
                 try Task.checkCancellation()
                 let loader = try ClientOwnedWorkspaceLoader(registry: registry, remote: workspaceService, ownerUserID: ownerUserID)
-                let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
-                try Task.checkCancellation()
-                var local = try await loader.loadLocal(deviceID: deviceID)
+                // Publish the SQLite registry before asking the Connector actor for pairing
+                // metadata. Its network connection or reconnect work must never block the
+                // client-owned project list.
+                var local = try await loader.loadLocal(deviceID: nil)
                 try Task.checkCancellation()
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
                 local.contacts = workspaceContacts
                 local.conversations = workspaceConversations
                 await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
+                try Task.checkCancellation()
+                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
                 try Task.checkCancellation()
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
                 // Never hide durable local projects behind filesystem/grant repair. A stale or
