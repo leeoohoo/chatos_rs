@@ -47,4 +47,14 @@ internal sealed class SqlitePetWindowPlacementStore(LocalStateDatabase database)
         command.Parameters.AddWithValue("$updated_at", DateTimeOffset.UtcNow.ToString("O"));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    public async Task ClearAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = await database.OpenConnectionAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM pet_preferences WHERE key = $key;";
+        command.Parameters.AddWithValue("$key", PlacementKey);
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+    }
 }

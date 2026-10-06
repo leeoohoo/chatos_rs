@@ -1,6 +1,7 @@
 using ChatOS.Core.Domain;
 using ChatOS.Connector.Approval;
 using ChatOS.Connector.Sandbox;
+using ChatOS.Desktop.Features.Pet;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -13,6 +14,7 @@ public sealed partial class SettingsPage : UserControl
 {
     private bool _controlsInitialized;
     private bool _syncing;
+    private readonly PetWindowController _petWindowController;
 
     public SettingsPage(
         AppSettingsViewModel viewModel,
@@ -21,7 +23,8 @@ public sealed partial class SettingsPage : UserControl
         ApprovalSettingsViewModel approvalSettings,
         ModelSettingsViewModel modelSettings,
         SandboxSettingsViewModel sandboxSettings,
-        LocalizationViewModel localization)
+        LocalizationViewModel localization,
+        PetWindowController petWindowController)
     {
         ViewModel = viewModel;
         Connector = connector;
@@ -30,6 +33,7 @@ public sealed partial class SettingsPage : UserControl
         ModelSettings = modelSettings;
         SandboxSettings = sandboxSettings;
         Localization = localization;
+        _petWindowController = petWindowController;
         InitializeComponent();
         _controlsInitialized = true;
         Loaded += OnLoaded;
@@ -170,6 +174,18 @@ public sealed partial class SettingsPage : UserControl
         if (!_syncing)
         {
             await ViewModel.SetPetSizeAsync(e.NewValue);
+        }
+    }
+
+    private async void OnPetResetPositionClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _petWindowController.ResetPositionAsync();
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled("pet position reset", exception);
         }
     }
 

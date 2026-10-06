@@ -54,4 +54,17 @@ public sealed class SqlitePetWindowPlacementStoreTests : IAsyncLifetime
 
         Assert.Null(await store.LoadAsync());
     }
+
+    [Fact]
+    public async Task Clear_removes_saved_placement()
+    {
+        var database = new LocalStateDatabase(Path.Combine(_directory, "clear.db"));
+        await database.InitializeAsync();
+        var store = new SqlitePetWindowPlacementStore(database);
+        await store.SaveAsync(new PetWindowPlacement(1920, 1080));
+
+        await store.ClearAsync();
+
+        Assert.Null(await store.LoadAsync());
+    }
 }

@@ -280,6 +280,7 @@ try {
         @{ Id = "ChatOS.Settings.FontScale"; Type = [System.Windows.Automation.ControlType]::Slider; RequireName = $true },
         @{ Id = "ChatOS.Settings.PetEnabled"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
         @{ Id = "ChatOS.Settings.PetSize"; Type = [System.Windows.Automation.ControlType]::Slider; RequireName = $true },
+        @{ Id = "ChatOS.Settings.PetResetPosition"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
         @{ Id = "ChatOS.Settings.SandboxEnabled"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
         @{ Id = "ChatOS.Settings.SandboxProfile"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },
         @{ Id = "ChatOS.Settings.SandboxNetwork"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },

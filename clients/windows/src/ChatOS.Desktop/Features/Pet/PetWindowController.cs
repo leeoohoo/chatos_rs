@@ -31,6 +31,23 @@ public sealed class PetWindowController : IDisposable
         await ApplyVisibilitySerializedAsync(_preferences.Current, cancellationToken);
     }
 
+    public async Task ResetPositionAsync(CancellationToken cancellationToken = default)
+    {
+        await _visibilityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Task resetTask = Task.CompletedTask;
+            await _dispatcher.InvokeAsync(
+                () => resetTask = _window.ResetPositionAsync(cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            await resetTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            _visibilityGate.Release();
+        }
+    }
+
     public void Dispose()
     {
         _preferences.Changed -= OnPreferencesChanged;

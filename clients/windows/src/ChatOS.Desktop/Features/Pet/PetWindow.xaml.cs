@@ -141,6 +141,12 @@ public sealed partial class PetWindow : Window
         _isVisible = false;
     }
 
+    public async Task ResetPositionAsync(CancellationToken cancellationToken = default)
+    {
+        await _placementStore.ClearAsync(cancellationToken);
+        PositionInitially();
+    }
+
     private void ConfigureNativeWindow()
     {
         AppWindow.Title = "ChatOS Pet";

@@ -7,4 +7,6 @@ public interface IPetWindowPlacementStore
     Task<PetWindowPlacement?> LoadAsync(CancellationToken cancellationToken = default);
 
     Task SaveAsync(PetWindowPlacement placement, CancellationToken cancellationToken = default);
+
+    Task ClearAsync(CancellationToken cancellationToken = default);
 }

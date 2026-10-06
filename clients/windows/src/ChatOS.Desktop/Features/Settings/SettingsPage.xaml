@@ -51,6 +51,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
@@ -122,6 +123,16 @@
                                 ValueChanged="OnPetSizeChanged" />
                             <TextBlock x:Name="PetSizeValueLabel" MinWidth="52" VerticalAlignment="Center" Style="{StaticResource ChatOSCaptionTextStyle}" />
                         </StackPanel>
+
+                        <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <Button
+                            AutomationProperties.AutomationId="ChatOS.Settings.PetResetPosition"
+                            AutomationProperties.Name="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}"
+                            Click="OnPetResetPositionClicked"
+                            Content="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}"
+                            Grid.Row="5"
+                            Grid.Column="1"
+                            HorizontalAlignment="Left" />
                     </Grid>
                 </Border>
 
