@@ -9,25 +9,54 @@
 
     <Page.Resources>
         <media:FilePathToImageSourceConverter x:Key="FilePathToImageSourceConverter" />
+        <Style x:Key="MediaStudioCardStyle" TargetType="Border" BasedOn="{StaticResource ChatOSSectionCardStyle}">
+            <Setter Property="CornerRadius" Value="16" />
+        </Style>
+        <Style x:Key="MediaStudioEmptyIconStyle" TargetType="Border" BasedOn="{StaticResource ChatOSEmptyStateIconStyle}">
+            <Setter Property="Width" Value="84" />
+            <Setter Property="Height" Value="84" />
+            <Setter Property="CornerRadius" Value="24" />
+        </Style>
     </Page.Resources>
 
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
-        <Grid Padding="28,22,28,26" RowSpacing="12">
-            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Rectangle IsHitTestVisible="False" Opacity="0.08">
+            <Rectangle.Fill>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                    <GradientStop Offset="0" Color="#7057D8" />
+                    <GradientStop Offset="0.48" Color="Transparent" />
+                    <GradientStop Offset="1" Color="#0A7AFF" />
+                </LinearGradientBrush>
+            </Rectangle.Fill>
+        </Rectangle>
+        <Grid RowSpacing="0">
+            <Grid.RowDefinitions><RowDefinition Height="68" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
 
-            <Grid ColumnSpacing="14">
+            <Grid Padding="20,0" ColumnSpacing="14" Background="{StaticResource ChatOSTitleBarBackgroundBrush}">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel Orientation="Horizontal" Spacing="11">
-                    <Border Width="38" Height="38" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="11">
-                        <FontIcon Glyph="&#xE735;" FontSize="19" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <Border Width="38" Height="38" CornerRadius="11">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#7657E8" Offset="0" />
+                                <GradientStop Color="#E45AA7" Offset="1" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <FontIcon Glyph="&#xE735;" FontSize="18" Foreground="White" />
                     </Border>
                     <StackPanel VerticalAlignment="Center" Spacing="2">
                         <TextBlock Text="AI 创作" Style="{StaticResource ChatOSPageTitleTextStyle}" />
-                        <TextBlock Text="使用已配置的模型生成图片，结果只保存在本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        <TextBlock Text="独立于聊天的图片与视频工作台" Style="{StaticResource ChatOSCaptionTextStyle}" />
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
-                    <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                    <SelectorBar x:Name="StudioSectionBar" Width="430" SelectionChanged="OnStudioSectionChanged">
+                        <SelectorBarItem x:Name="ImageSectionItem" Text="图片" IsSelected="True" />
+                        <SelectorBarItem x:Name="VideoSectionItem" Text="视频" />
+                        <SelectorBarItem x:Name="StorySectionItem" Text="剧情模式" />
+                        <SelectorBarItem x:Name="HistorySectionItem" Text="记录" />
+                    </SelectorBar>
+                    <TextBlock MaxWidth="160" VerticalAlignment="Center" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                     <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
                     <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.Refresh" AutomationProperties.Name="刷新模型" Click="OnReloadModelsClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="刷新模型">
                         <FontIcon Glyph="&#xE72C;" />
@@ -35,14 +64,17 @@
                 </StackPanel>
             </Grid>
 
-            <InfoBar x:Name="ErrorInfoBar" Grid.Row="1" IsClosable="False" Severity="Error" />
+            <InfoBar x:Name="ErrorInfoBar" Grid.Row="1" Margin="20,10,20,0" IsClosable="False" Severity="Error" />
 
-            <Pivot x:Name="StudioPivot" Grid.Row="2">
+            <Pivot x:Name="StudioPivot" Grid.Row="2" Margin="20,18,20,20" SelectionChanged="OnStudioPivotSelectionChanged">
+                <Pivot.Resources>
+                    <Style TargetType="PivotHeaderItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
+                </Pivot.Resources>
                 <PivotItem Header="图片创作">
-                    <Grid Margin="0,10,0,0" ColumnSpacing="14">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="360" /></Grid.ColumnDefinitions>
+                    <Grid ColumnSpacing="18">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="356" /></Grid.ColumnDefinitions>
 
-                        <Border Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <Grid>
                                 <Grid.RowDefinitions><RowDefinition Height="62" /><RowDefinition Height="1" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                                 <Grid Padding="18,0">
@@ -66,7 +98,7 @@
                                         </GridView.ItemsPanel>
                                         <GridView.ItemTemplate>
                                             <DataTemplate x:DataType="media:MediaStudioImageItem">
-                                                <Border Width="360" Margin="0,0,12,12" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="13">
+                                                <Border Width="340" Margin="0,0,12,12" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="13">
                                                     <Grid>
                                                         <Image Height="300" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" />
                                                         <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal" Spacing="5">
@@ -79,18 +111,29 @@
                                         </GridView.ItemTemplate>
                                     </GridView>
 
-                                    <StackPanel x:Name="CanvasEmptyState" MaxWidth="480" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                                        <Border Style="{StaticResource ChatOSEmptyStateIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}">
-                                            <FontIcon Glyph="&#xEB9F;" FontSize="24" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                    <StackPanel x:Name="CanvasEmptyState" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                        <Border Style="{StaticResource MediaStudioEmptyIconStyle}">
+                                            <Border.Background>
+                                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                    <GradientStop Color="#7657E8" Offset="0" />
+                                                    <GradientStop Color="#E45AA7" Offset="1" />
+                                                </LinearGradientBrush>
+                                            </Border.Background>
+                                            <FontIcon Glyph="&#xEB9F;" FontSize="34" Foreground="White" />
                                         </Border>
                                         <TextBlock HorizontalAlignment="Center" Text="描述想象中的画面" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                         <TextBlock Text="选择图片模型、填写提示词并生成；图片不会进入聊天记录。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                            <Button Click="OnPromptSuggestionClick" Content="电影感人像" Tag="电影感人像，柔和轮廓光，浅景深，精致肤质，电影级调色" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                            <Button Click="OnPromptSuggestionClick" Content="未来城市" Tag="雨夜中的未来城市，霓虹灯光，广角构图，电影感，细节丰富" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                            <Button Click="OnPromptSuggestionClick" Content="治愈插画" Tag="温暖治愈的手绘插画，柔和色彩，自然光，细腻笔触" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                        </StackPanel>
                                     </StackPanel>
                                 </Grid>
                             </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Grid.Column="1" Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Padding="18" Spacing="17">
                                     <TextBlock Text="生成设置" Style="{StaticResource ChatOSHeadlineTextStyle}" />
@@ -147,13 +190,13 @@
                 </PivotItem>
 
                 <PivotItem Header="视频创作">
-                    <Grid Margin="0,10,0,0" ColumnSpacing="14">
+                    <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="360" />
+                            <ColumnDefinition Width="356" />
                         </Grid.ColumnDefinitions>
 
-                        <Border Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="62" />
@@ -171,7 +214,7 @@
                                 <Grid Grid.Row="2" Padding="18">
                                     <MediaPlayerElement x:Name="VideoPlayer" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />
                                     <StackPanel x:Name="VideoEmptyState" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                                        <Border Style="{StaticResource ChatOSEmptyStateIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}">
+                                        <Border Style="{StaticResource MediaStudioEmptyIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}">
                                             <FontIcon Glyph="&#xE714;" FontSize="24" Foreground="{StaticResource ChatOSPurpleBrush}" />
                                         </Border>
                                         <TextBlock HorizontalAlignment="Center" Text="把镜头描述变成视频" Style="{StaticResource ChatOSHeadlineTextStyle}" />
@@ -188,7 +231,7 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Grid.Column="1" Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <StackPanel Padding="18" Spacing="17">
                                     <TextBlock Text="视频设置" Style="{StaticResource ChatOSHeadlineTextStyle}" />
@@ -247,13 +290,13 @@
                 </PivotItem>
 
                 <PivotItem Header="剧情模式">
-                    <Grid Margin="0,10,0,0" ColumnSpacing="14">
+                    <Grid ColumnSpacing="18">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="300" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
-                        <Border Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -301,7 +344,7 @@
                             </Grid>
                         </Border>
 
-                        <Border Grid.Column="1" Style="{StaticResource ChatOSSectionCardStyle}" Padding="0">
+                        <Border Grid.Column="1" Style="{StaticResource MediaStudioCardStyle}" Padding="0">
                             <Grid>
                                 <ScrollViewer x:Name="StoryCreatePanel" VerticalScrollBarVisibility="Auto">
                                     <StackPanel MaxWidth="660" Padding="30" HorizontalAlignment="Center" Spacing="18">
@@ -612,7 +655,7 @@
                                             <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
                                                 <StackPanel Spacing="12">
                                                     <StackPanel x:Name="StorySegmentEmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="9">
-                                                        <Border Style="{StaticResource ChatOSEmptyStateIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}"><FontIcon Glyph="&#xE8FD;" Foreground="{StaticResource ChatOSPurpleBrush}" /></Border>
+                                                        <Border Style="{StaticResource MediaStudioEmptyIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}"><FontIcon Glyph="&#xE8FD;" FontSize="30" Foreground="{StaticResource ChatOSPurpleBrush}" /></Border>
                                                         <TextBlock Text="选择或添加一个分段" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                                     </StackPanel>
                                                     <StackPanel x:Name="StorySegmentEditorPanel" DataContext="{x:Bind StoryViewModel.SelectedSegment, Mode=OneWay}" Spacing="12">
@@ -715,9 +758,25 @@
                     </Grid>
                 </PivotItem>
 
-                <PivotItem Header="图片记录">
+                <PivotItem Header="记录">
+                    <Grid RowSpacing="12">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <Grid>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="创作记录" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="统一查看图片与视频生成结果" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <SelectorBar x:Name="HistorySectionBar" HorizontalAlignment="Right" SelectionChanged="OnHistorySectionChanged">
+                                <SelectorBarItem x:Name="ImageHistorySectionItem" Text="图片" IsSelected="True" />
+                                <SelectorBarItem x:Name="VideoHistorySectionItem" Text="视频" />
+                            </SelectorBar>
+                        </Grid>
+                        <Pivot x:Name="HistoryPivot" Grid.Row="1">
+                            <Pivot.Resources>
+                                <Style TargetType="PivotHeaderItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
+                            </Pivot.Resources>
+                            <PivotItem Header="图片记录">
                     <ListView
-                        Margin="0,10,0,0"
                         AutomationProperties.AutomationId="ChatOS.MediaStudio.History"
                         Background="Transparent"
                         BorderThickness="0"
@@ -727,7 +786,7 @@
                         SelectionMode="None">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="media:MediaStudioHistoryItem">
-                                <Border Margin="0,0,0,10" Style="{StaticResource ChatOSSectionCardStyle}">
+                                <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
                                     <Grid ColumnSpacing="16">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <ItemsControl ItemsSource="{x:Bind Images}">
@@ -756,9 +815,8 @@
                     </ListView>
                 </PivotItem>
 
-                <PivotItem Header="视频记录">
+                            <PivotItem Header="视频记录">
                     <ListView
-                        Margin="0,10,0,0"
                         Background="Transparent"
                         BorderThickness="0"
                         IsItemClickEnabled="True"
@@ -767,7 +825,7 @@
                         SelectionMode="None">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="media:MediaStudioVideoHistoryItem">
-                                <Border Margin="0,0,0,10" Style="{StaticResource ChatOSSectionCardStyle}">
+                                <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
                                     <Grid ColumnSpacing="16">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
@@ -790,6 +848,9 @@
                                     Visibility="{x:Bind ViewModel.HasMoreVideoHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         </ListView.Footer>
                     </ListView>
+                            </PivotItem>
+                        </Pivot>
+                    </Grid>
                 </PivotItem>
             </Pivot>
         </Grid>

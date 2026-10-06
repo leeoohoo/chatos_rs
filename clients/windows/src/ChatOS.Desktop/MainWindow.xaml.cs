@@ -223,7 +223,9 @@ public sealed partial class MainWindow : Window
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.MediaStudio)
                 {
+                    StartupDiagnostics.RecordLifecycle("media studio selection received");
                     ShowContent(MediaStudioPage);
+                    StartupDiagnostics.RecordLifecycle("media studio content attached");
                 }
                 else if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection)
                 {

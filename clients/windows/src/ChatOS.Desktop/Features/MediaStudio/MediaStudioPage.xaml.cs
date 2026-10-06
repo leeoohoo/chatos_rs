@@ -38,11 +38,43 @@ public sealed partial class MediaStudioPage : Page
 
     public StoryStudioViewModel StoryViewModel { get; }
 
+    private void OnStudioSectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (StudioPivot is null || sender.SelectedItem is null) return;
+        StudioPivot.SelectedIndex = ReferenceEquals(sender.SelectedItem, ImageSectionItem) ? 0
+            : ReferenceEquals(sender.SelectedItem, VideoSectionItem) ? 1
+            : ReferenceEquals(sender.SelectedItem, StorySectionItem) ? 2
+            : 3;
+    }
+
+    private void OnStudioPivotSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StudioSectionBar is null) return;
+        StudioSectionBar.SelectedItem = StudioPivot.SelectedIndex switch
+        {
+            0 => ImageSectionItem,
+            1 => VideoSectionItem,
+            2 => StorySectionItem,
+            _ => HistorySectionItem,
+        };
+    }
+
+    private void OnHistorySectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    {
+        if (HistoryPivot is null || sender.SelectedItem is null) return;
+        HistoryPivot.SelectedIndex = ReferenceEquals(sender.SelectedItem, VideoHistorySectionItem) ? 1 : 0;
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        StartupDiagnostics.RecordLifecycle("media studio loaded event entered");
         if (_shell.CurrentOwnerUserId is not { Length: > 0 } owner) return;
-        await Task.WhenAll(ViewModel.OpenAsync(owner), StoryViewModel.OpenAsync(owner));
+        await ViewModel.OpenAsync(owner);
+        StartupDiagnostics.RecordLifecycle("media studio image workspace loaded");
+        await StoryViewModel.OpenAsync(owner);
+        StartupDiagnostics.RecordLifecycle("media studio story workspace loaded");
         RefreshState();
+        StartupDiagnostics.RecordLifecycle("media studio loaded event completed");
     }
 
     private void OnStoryProjectClick(object sender, ItemClickEventArgs e)
@@ -359,6 +391,11 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateClick(object sender, RoutedEventArgs e) =>
         await ViewModel.GenerateAsync();
 
+    private void OnPromptSuggestionClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string prompt }) ViewModel.Prompt = prompt;
+    }
+
     private async void OnAddReferenceClick(object sender, RoutedEventArgs e)
     {
         var window = (Application.Current as App)?.MainWindow;
@@ -507,7 +544,6 @@ public sealed partial class MediaStudioPage : Page
 
     private void RefreshState()
     {
-        Bindings.Update();
         var hasImages = ViewModel.LatestImages.Count > 0;
         LatestImageGrid.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
         CanvasEmptyState.Visibility = hasImages ? Visibility.Collapsed : Visibility.Visible;

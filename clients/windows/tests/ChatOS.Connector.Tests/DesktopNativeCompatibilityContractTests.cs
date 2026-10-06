@@ -33,6 +33,20 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.True(version >= new Version(1, 8), $"Unsupported Windows App SDK: {rawVersion}");
     }
 
+    [Fact]
+    public void MediaStudioDoesNotForceBindingsForUnrealizedPivotContent()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindWindowsRoot(),
+            "src",
+            "ChatOS.Desktop",
+            "Features",
+            "MediaStudio",
+            "MediaStudioPage.xaml.cs"));
+
+        Assert.DoesNotContain("Bindings.Update();", source, StringComparison.Ordinal);
+    }
+
     private static string FindWindowsRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
