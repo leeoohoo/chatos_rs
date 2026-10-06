@@ -52,6 +52,8 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
@@ -133,6 +135,26 @@
                             Grid.Row="5"
                             Grid.Column="1"
                             HorizontalAlignment="Left" />
+
+                        <TextBlock Grid.Row="6" VerticalAlignment="Center" Text="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ToggleSwitch
+                            x:Name="PetShowProcessSwitch"
+                            AutomationProperties.AutomationId="ChatOS.Settings.PetShowProcess"
+                            AutomationProperties.Name="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}"
+                            Grid.Row="6"
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            Toggled="OnPetShowProcessToggled" />
+
+                        <TextBlock Grid.Row="7" VerticalAlignment="Center" Text="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <ToggleSwitch
+                            x:Name="PetShowCompletionsSwitch"
+                            AutomationProperties.AutomationId="ChatOS.Settings.PetShowCompletions"
+                            AutomationProperties.Name="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}"
+                            Grid.Row="7"
+                            Grid.Column="1"
+                            HorizontalAlignment="Left"
+                            Toggled="OnPetShowCompletionsToggled" />
                     </Grid>
                 </Border>
 

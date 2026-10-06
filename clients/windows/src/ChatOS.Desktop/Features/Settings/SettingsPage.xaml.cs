@@ -94,6 +94,8 @@ public sealed partial class SettingsPage : UserControl
             PetEnabledSwitch.IsOn = ViewModel.PetEnabled;
             PetSizeSlider.Value = ViewModel.PetSize;
             PetSizeValueLabel.Text = $"{ViewModel.PetSize:F0} px";
+            PetShowProcessSwitch.IsOn = ViewModel.PetShowProcess;
+            PetShowCompletionsSwitch.IsOn = ViewModel.PetShowCompletions;
             ApprovalModePicker.SelectedIndex = ApprovalSettings.Mode switch
             {
                 ConnectorApprovalMode.AutoApproval => 1,
@@ -186,6 +188,22 @@ public sealed partial class SettingsPage : UserControl
         catch (Exception exception)
         {
             StartupDiagnostics.RecordUnhandled("pet position reset", exception);
+        }
+    }
+
+    private async void OnPetShowProcessToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_syncing)
+        {
+            await ViewModel.SetPetShowProcessAsync(PetShowProcessSwitch.IsOn);
+        }
+    }
+
+    private async void OnPetShowCompletionsToggled(object sender, RoutedEventArgs e)
+    {
+        if (!_syncing)
+        {
+            await ViewModel.SetPetShowCompletionsAsync(PetShowCompletionsSwitch.IsOn);
         }
     }
 

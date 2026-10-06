@@ -301,6 +301,8 @@ public sealed class LocalizationViewModel : ObservableObject
     public string PetEnabledLabel => Text("显示全局宠物", "Show global pet");
     public string PetSizeLabel => Text("宠物大小", "Pet size");
     public string PetResetPositionLabel => Text("恢复默认位置", "Reset position");
+    public string PetShowProcessLabel => Text("展示 AI 执行过程", "Show AI execution progress");
+    public string PetShowCompletionsLabel => Text("展示任务完成反馈", "Show task completion feedback");
     public string SystemTheme => Text("跟随系统", "System");
     public string LightTheme => Text("浅色", "Light");
     public string DarkTheme => Text("深色", "Dark");

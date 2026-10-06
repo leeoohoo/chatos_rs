@@ -18,6 +18,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
     private readonly IAskUserPromptService _askUser;
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
+    private readonly AppPreferencesManager _preferences;
     private readonly PetStateReducer _reducer = new();
     private readonly SemaphoreSlim _stateGate = new(1, 1);
     private CancellationTokenSource? _sessionCancellation;
@@ -31,7 +32,8 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         IMessageTaskGraphService taskGraph,
         IAskUserPromptService askUser,
         LocalizationViewModel localization,
-        IUiDispatcher dispatcher)
+        IUiDispatcher dispatcher,
+        AppPreferencesManager preferences)
     {
         _coordinator = coordinator;
         _realtime = realtime;
@@ -40,7 +42,9 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
         _askUser = askUser;
         _localization = localization;
         _dispatcher = dispatcher;
+        _preferences = preferences;
         _localization.PropertyChanged += OnLocalizationChanged;
+        _preferences.Changed += OnPreferencesChanged;
     }
 
     public ObservableCollection<PetActivityItemViewModel> Activities { get; } = [];
@@ -279,6 +283,7 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _preferences.Changed -= OnPreferencesChanged;
         Stop();
         _localization.PropertyChanged -= OnLocalizationChanged;
         _stateGate.Dispose();
@@ -363,8 +368,18 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
 
     private Task PublishAsync(CancellationToken cancellationToken)
     {
-        var visible = _reducer.VisibleActivities();
-        var presentation = _reducer.Presentation();
+        var preferences = _preferences.Current;
+        var visible = _reducer.VisibleActivities()
+            .Where(activity => ShouldShow(activity, preferences))
+            .ToArray();
+        var primary = visible.FirstOrDefault();
+        var presentation = primary is null
+            ? PetPresentation.Idle
+            : new PetPresentation(
+                primary.AnimationState,
+                primary,
+                visible.Count(activity => activity.Kind is PetActivityKind.Working or PetActivityKind.Reviewing),
+                visible.Count(activity => activity.RequiresAttention));
         var selectedId = SelectedActivity?.Activity.Id;
         return _dispatcher.InvokeAsync(() =>
         {
@@ -388,6 +403,44 @@ public sealed partial class PetOverlayViewModel : ObservableObject, IDisposable
             AttentionCount = presentation.AttentionCount;
             OnPropertyChanged(nameof(HasActivities));
         }, cancellationToken);
+    }
+
+    private static bool ShouldShow(PetActivity activity, AppPreferences preferences)
+    {
+        if (!preferences.PetShowProcess &&
+            activity.Kind is PetActivityKind.Working or PetActivityKind.Reviewing)
+        {
+            return false;
+        }
+
+        return preferences.PetShowCompletions || activity.Kind is not PetActivityKind.Succeeded;
+    }
+
+    private void OnPreferencesChanged(object? sender, AppPreferences preferences) =>
+        _ = RepublishForPreferencesAsync();
+
+    private async Task RepublishForPreferencesAsync()
+    {
+        try
+        {
+            await _stateGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await PublishAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _stateGate.Release();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception exception)
+        {
+            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
+                .ConfigureAwait(false);
+        }
     }
 
     private async Task RunBusyAsync(

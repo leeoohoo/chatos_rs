@@ -37,7 +37,9 @@ public sealed class SqliteAppPreferencesStoreTests : IAsyncLifetime
             InterfaceTheme.Dark,
             1.15,
             false,
-            132);
+            132,
+            false,
+            false);
 
         await store.SaveAsync(expected);
         var loaded = await store.LoadAsync();
@@ -67,6 +69,8 @@ public sealed class SqliteAppPreferencesStoreTests : IAsyncLifetime
 
         Assert.NotNull(loaded);
         Assert.Equal(AppPreferences.DefaultPetSize, loaded.PetSize);
+        Assert.True(loaded.PetShowProcess);
+        Assert.True(loaded.PetShowCompletions);
     }
 
     [Fact]

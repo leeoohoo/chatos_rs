@@ -18,7 +18,9 @@ public sealed record AppPreferences(
     InterfaceTheme Theme,
     double FontScale,
     bool PetEnabled,
-    double PetSize = 104)
+    double PetSize = 104,
+    bool PetShowProcess = true,
+    bool PetShowCompletions = true)
 {
     public const double MinimumFontScale = 0.85;
     public const double MaximumFontScale = 1.30;

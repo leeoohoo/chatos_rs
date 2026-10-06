@@ -137,16 +137,60 @@ public sealed class PetOverlayViewModelTests
         viewModel.Stop();
     }
 
+    [Fact]
+    public async Task Notification_preferences_hide_process_and_success_but_keep_failures()
+    {
+        var preferences = new AppPreferencesManager(new MemoryPreferencesStore());
+        var viewModel = Create(
+            new FakeInboxService(
+                Activity("working", PetActivityKind.Working, "Working"),
+                Activity("reviewing", PetActivityKind.Reviewing, "Reviewing"),
+                Activity("complete", PetActivityKind.Succeeded, "Complete"),
+                Activity("failed", PetActivityKind.Failed, "Failed")),
+            preferences: preferences);
+        await preferences.UpdateAsync(value => value with
+        {
+            PetShowProcess = false,
+            PetShowCompletions = false,
+        });
+
+        await viewModel.RefreshAsync();
+
+        var activity = Assert.Single(viewModel.Activities);
+        Assert.Equal("failed", activity.Id);
+        Assert.Equal(PetAnimationState.Failed, viewModel.AnimationState);
+        Assert.Equal(0, viewModel.ActiveWorkCount);
+        Assert.Equal(1, viewModel.AttentionCount);
+    }
+
+    [Fact]
+    public async Task Notification_preference_changes_republish_existing_activities()
+    {
+        var preferences = new AppPreferencesManager(new MemoryPreferencesStore());
+        var viewModel = Create(
+            new FakeInboxService(Activity("working", PetActivityKind.Working, "Working")),
+            preferences: preferences);
+        await viewModel.RefreshAsync();
+        Assert.Single(viewModel.Activities);
+
+        await preferences.UpdateAsync(value => value with { PetShowProcess = false });
+        await WaitUntilAsync(() => viewModel.Activities.Count == 0);
+
+        Assert.Equal(PetAnimationState.Idle, viewModel.AnimationState);
+        Assert.Equal(0, viewModel.ActiveWorkCount);
+    }
+
     private static PetOverlayViewModel Create(
         FakeInboxService inbox,
         FakeSuppressionStore? suppression = null,
         FakeRealtimeClient? realtime = null,
         FakeConversationCommandService? commands = null,
         FakeTaskGraphService? tasks = null,
-        FakeAskUserPromptService? ask = null)
+        FakeAskUserPromptService? ask = null,
+        AppPreferencesManager? preferences = null)
     {
         var dispatcher = new ImmediateUiDispatcher();
-        var preferences = new AppPreferencesManager(new MemoryPreferencesStore());
+        preferences ??= new AppPreferencesManager(new MemoryPreferencesStore());
         return new PetOverlayViewModel(
             new PetActivityCoordinator(inbox, suppression ?? new FakeSuppressionStore()),
             realtime ?? new FakeRealtimeClient(),
@@ -154,7 +198,8 @@ public sealed class PetOverlayViewModelTests
             tasks ?? new FakeTaskGraphService(),
             ask ?? new FakeAskUserPromptService(),
             new LocalizationViewModel(preferences, dispatcher),
-            dispatcher);
+            dispatcher,
+            preferences);
     }
 
     private static PetActivity Activity(
