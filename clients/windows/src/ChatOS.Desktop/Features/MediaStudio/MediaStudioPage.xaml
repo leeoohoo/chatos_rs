@@ -11,7 +11,7 @@
         <media:FilePathToImageSourceConverter x:Key="FilePathToImageSourceConverter" />
         <media:VideoPathToThumbnailSourceConverter x:Key="VideoPathToThumbnailSourceConverter" />
         <DataTemplate x:Key="GeneratedImagePickerItemTemplate" x:DataType="media:GeneratedImagePickerItem">
-            <Border MinWidth="520" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
+            <Border MinWidth="340" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="96" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                     <Image Width="96" Height="68" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
@@ -44,7 +44,41 @@
         </Style>
     </Page.Resources>
 
-    <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+    <Grid x:Name="StudioRoot" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="WindowWidthStates">
+                <VisualState x:Name="WideWindowState">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="1180" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="StudioHeaderTitleStack.Visibility" Value="Visible" />
+                        <Setter Target="StudioStatusText.Visibility" Value="Visible" />
+                        <Setter Target="StudioSectionBar.Width" Value="460" />
+                        <Setter Target="StorySectionItem.Text" Value="剧情模式" />
+                        <Setter Target="StoryWorkspaceStatusText.Visibility" Value="Visible" />
+                        <Setter Target="StorySourceSectionItem.Text" Value="原文与规划" />
+                        <Setter Target="StoryStyleSectionItem.Text" Value="风格与模型" />
+                        <Setter Target="StoryPortraitsSectionItem.Text" Value="角色与场景" />
+                        <Setter Target="StorySegmentsSectionItem.Text" Value="分段制作" />
+                        <Setter Target="StoryGraphSectionItem.Text" Value="关系与作品" />
+                    </VisualState.Setters>
+                </VisualState>
+                <VisualState x:Name="CompactWindowState">
+                    <VisualState.StateTriggers><AdaptiveTrigger MinWindowWidth="0" /></VisualState.StateTriggers>
+                    <VisualState.Setters>
+                        <Setter Target="StudioHeaderTitleStack.Visibility" Value="Collapsed" />
+                        <Setter Target="StudioStatusText.Visibility" Value="Collapsed" />
+                        <Setter Target="StudioSectionBar.Width" Value="405" />
+                        <Setter Target="StorySectionItem.Text" Value="剧情" />
+                        <Setter Target="StoryWorkspaceStatusText.Visibility" Value="Collapsed" />
+                        <Setter Target="StorySourceSectionItem.Text" Value="原文" />
+                        <Setter Target="StoryStyleSectionItem.Text" Value="风格" />
+                        <Setter Target="StoryPortraitsSectionItem.Text" Value="素材" />
+                        <Setter Target="StorySegmentsSectionItem.Text" Value="分段" />
+                        <Setter Target="StoryGraphSectionItem.Text" Value="作品" />
+                    </VisualState.Setters>
+                </VisualState>
+            </VisualStateGroup>
+        </VisualStateManager.VisualStateGroups>
         <Rectangle IsHitTestVisible="False" Opacity="0.08">
             <Rectangle.Fill>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -69,19 +103,27 @@
                         </Border.Background>
                         <FontIcon Glyph="&#xE735;" FontSize="18" Foreground="White" />
                     </Border>
-                    <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <StackPanel x:Name="StudioHeaderTitleStack" VerticalAlignment="Center" Spacing="2">
                         <TextBlock Text="AI 创作" Style="{StaticResource ChatOSPageTitleTextStyle}" />
                         <TextBlock Text="独立于聊天的图片与视频工作台" Style="{StaticResource ChatOSCaptionTextStyle}" />
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
-                    <SelectorBar x:Name="StudioSectionBar" Width="430" SelectionChanged="OnStudioSectionChanged">
-                        <SelectorBarItem x:Name="ImageSectionItem" Text="图片" IsSelected="True" />
-                        <SelectorBarItem x:Name="VideoSectionItem" Text="视频" />
-                        <SelectorBarItem x:Name="StorySectionItem" Text="剧情模式" />
-                        <SelectorBarItem x:Name="HistorySectionItem" Text="记录" />
+                    <SelectorBar x:Name="StudioSectionBar" Width="460" SelectionChanged="OnStudioSectionChanged">
+                        <SelectorBarItem x:Name="ImageSectionItem" Text="图片" IsSelected="True">
+                            <SelectorBarItem.Icon><FontIcon Glyph="&#xEB9F;" /></SelectorBarItem.Icon>
+                        </SelectorBarItem>
+                        <SelectorBarItem x:Name="VideoSectionItem" Text="视频">
+                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE714;" /></SelectorBarItem.Icon>
+                        </SelectorBarItem>
+                        <SelectorBarItem x:Name="StorySectionItem" Text="剧情模式">
+                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE8B2;" /></SelectorBarItem.Icon>
+                        </SelectorBarItem>
+                        <SelectorBarItem x:Name="HistorySectionItem" Text="记录">
+                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE81C;" /></SelectorBarItem.Icon>
+                        </SelectorBarItem>
                     </SelectorBar>
-                    <TextBlock MaxWidth="160" VerticalAlignment="Center" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock x:Name="StudioStatusText" MaxWidth="160" VerticalAlignment="Center" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                     <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
                     <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.Refresh" AutomationProperties.Name="刷新模型" Click="OnReloadModelsClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="刷新模型">
                         <FontIcon Glyph="&#xE72C;" />
@@ -609,7 +651,7 @@
                                             </StackPanel>
                                         </StackPanel>
                                         <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
-                                            <TextBlock VerticalAlignment="Center" Text="{x:Bind StoryViewModel.StatusMessage, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock x:Name="StoryWorkspaceStatusText" MaxWidth="180" VerticalAlignment="Center" Text="{x:Bind StoryViewModel.StatusMessage, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                             <Button Click="OnOpenStoryPromptCenterClick" Content="提示词中心" Style="{StaticResource ChatOSSecondaryButtonStyle}" ToolTipService.ToolTip="查看剧情模式实际使用的提示词" />
                                             <Button Click="OnSaveStoryProjectClick" Content="保存" IsEnabled="{x:Bind StoryViewModel.CanSave, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                         </StackPanel>
@@ -617,11 +659,21 @@
                                     <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
 
                                     <SelectorBar x:Name="StoryWorkspaceSectionBar" Grid.Row="2" Margin="16,8" SelectionChanged="OnStoryWorkspaceSectionChanged">
-                                        <SelectorBarItem x:Name="StorySourceSectionItem" Text="原文与规划" IsSelected="True" />
-                                        <SelectorBarItem x:Name="StoryStyleSectionItem" Text="风格与模型" />
-                                        <SelectorBarItem x:Name="StoryPortraitsSectionItem" Text="角色与场景" />
-                                        <SelectorBarItem x:Name="StorySegmentsSectionItem" Text="分段制作" />
-                                        <SelectorBarItem x:Name="StoryGraphSectionItem" Text="关系与作品" />
+                                        <SelectorBarItem x:Name="StorySourceSectionItem" Text="原文与规划" IsSelected="True">
+                                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE8A5;" /></SelectorBarItem.Icon>
+                                        </SelectorBarItem>
+                                        <SelectorBarItem x:Name="StoryStyleSectionItem" Text="风格与模型">
+                                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE790;" /></SelectorBarItem.Icon>
+                                        </SelectorBarItem>
+                                        <SelectorBarItem x:Name="StoryPortraitsSectionItem" Text="角色与场景">
+                                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE716;" /></SelectorBarItem.Icon>
+                                        </SelectorBarItem>
+                                        <SelectorBarItem x:Name="StorySegmentsSectionItem" Text="分段制作">
+                                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE8EF;" /></SelectorBarItem.Icon>
+                                        </SelectorBarItem>
+                                        <SelectorBarItem x:Name="StoryGraphSectionItem" Text="关系与作品">
+                                            <SelectorBarItem.Icon><FontIcon Glyph="&#xE8F1;" /></SelectorBarItem.Icon>
+                                        </SelectorBarItem>
                                     </SelectorBar>
 
                                     <Grid Grid.Row="3" Padding="16" ColumnSpacing="14">

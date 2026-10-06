@@ -7,8 +7,8 @@ namespace ChatOS.Desktop.Features.MediaStudio;
 
 internal sealed class MediaStudioImagePreviewDialog
 {
-    private const double ViewportWidth = 820;
-    private const double ViewportHeight = 500;
+    private readonly double _viewportWidth;
+    private readonly double _viewportHeight;
     private readonly IReadOnlyList<MediaStudioImageItem> _images;
     private readonly Image _image;
     private readonly Grid _canvas;
@@ -29,6 +29,12 @@ internal sealed class MediaStudioImagePreviewDialog
     {
         _images = images;
         _index = Math.Clamp(selectedIndex, 0, Math.Max(0, images.Count - 1));
+        _viewportWidth = xamlRoot.Size.Width > 0
+            ? Math.Clamp(xamlRoot.Size.Width - 96, 360, 820)
+            : 820;
+        _viewportHeight = xamlRoot.Size.Height > 0
+            ? Math.Clamp(xamlRoot.Size.Height - 240, 260, 500)
+            : 500;
         _image = new Image
         {
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -39,8 +45,8 @@ internal sealed class MediaStudioImagePreviewDialog
         _image.ImageFailed += OnImageFailed;
         _canvas = new Grid
         {
-            Width = ViewportWidth,
-            Height = ViewportHeight,
+            Width = _viewportWidth,
+            Height = _viewportHeight,
             Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 20, 20, 22)),
         };
         _canvas.Children.Add(_image);
@@ -48,6 +54,8 @@ internal sealed class MediaStudioImagePreviewDialog
         _counter = new TextBlock { VerticalAlignment = VerticalAlignment.Center };
         _details = new TextBlock
         {
+            MaxWidth = 340,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = 0.72,
         };
@@ -62,8 +70,8 @@ internal sealed class MediaStudioImagePreviewDialog
 
         var viewer = new ScrollViewer
         {
-            Width = ViewportWidth,
-            Height = ViewportHeight,
+            Width = _viewportWidth,
+            Height = _viewportHeight,
             Content = _canvas,
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -206,19 +214,19 @@ internal sealed class MediaStudioImagePreviewDialog
     private double CalculateFitScale()
     {
         if (_bitmap is not { PixelWidth: > 0, PixelHeight: > 0 }) return 1;
-        return Math.Min(1, Math.Min(ViewportWidth / _bitmap.PixelWidth, ViewportHeight / _bitmap.PixelHeight));
+        return Math.Min(1, Math.Min(_viewportWidth / _bitmap.PixelWidth, _viewportHeight / _bitmap.PixelHeight));
     }
 
     private void ApplyZoom()
     {
         if (_fitToWindow || _bitmap is not { PixelWidth: > 0, PixelHeight: > 0 })
         {
-            _canvas.Width = ViewportWidth;
-            _canvas.Height = ViewportHeight;
+            _canvas.Width = _viewportWidth;
+            _canvas.Height = _viewportHeight;
             _image.Width = double.NaN;
             _image.Height = double.NaN;
-            _image.MaxWidth = ViewportWidth;
-            _image.MaxHeight = ViewportHeight;
+            _image.MaxWidth = _viewportWidth;
+            _image.MaxHeight = _viewportHeight;
             _image.Stretch = Stretch.Uniform;
             _zoomLabel.Text = "适应";
             return;
@@ -226,8 +234,8 @@ internal sealed class MediaStudioImagePreviewDialog
 
         var width = _bitmap.PixelWidth * _scale;
         var height = _bitmap.PixelHeight * _scale;
-        _canvas.Width = Math.Max(ViewportWidth, width);
-        _canvas.Height = Math.Max(ViewportHeight, height);
+        _canvas.Width = Math.Max(_viewportWidth, width);
+        _canvas.Height = Math.Max(_viewportHeight, height);
         _image.MaxWidth = double.PositiveInfinity;
         _image.MaxHeight = double.PositiveInfinity;
         _image.Width = width;

@@ -681,7 +681,10 @@ public sealed partial class MediaStudioPage : Page
             ItemTemplate = (DataTemplate)Resources["GeneratedImagePickerItemTemplate"],
             SelectionMode = selectionMode,
             MaxHeight = 460,
-            MinWidth = 560,
+            Width = XamlRoot.Size.Width > 0
+                ? Math.Clamp(XamlRoot.Size.Width - 180, 360, 620)
+                : 560,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
         list.GroupStyle.Add(new GroupStyle
         {
@@ -961,6 +964,7 @@ public sealed class FilePathToImageSourceConverter : IValueConverter
 
 public sealed class VideoPathToThumbnailSourceConverter : IValueConverter
 {
+    private static readonly SemaphoreSlim ThumbnailGate = new(2, 2);
     private readonly ConcurrentDictionary<string, Task<byte[]?>> _cache =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -1000,13 +1004,19 @@ public sealed class VideoPathToThumbnailSourceConverter : IValueConverter
 
     private static async Task<byte[]?> LoadAsync(string path)
     {
+        await ThumbnailGate.WaitAsync();
         try
         {
-            return await StoryVideoFrameExtractor.ExtractPreviewFrameAsync(path);
+            var bytes = await StoryVideoFrameExtractor.ExtractPreviewFrameAsync(path);
+            return bytes.Length is > 0 and <= 4 * 1024 * 1024 ? bytes : null;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            ThumbnailGate.Release();
         }
     }
 }
