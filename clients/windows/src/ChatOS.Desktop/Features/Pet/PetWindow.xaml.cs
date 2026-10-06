@@ -9,8 +9,10 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Foundation;
 using Windows.Graphics;
+using Windows.UI.ViewManagement;
 
 namespace ChatOS.Desktop.Features.Pet;
 
@@ -30,6 +32,7 @@ public sealed partial class PetWindow : Window
     private const uint LwaColorKey = 0x00000001;
     private readonly CommandApprovalCoordinator _approvals;
     private readonly IPetWindowPlacementStore _placementStore;
+    private readonly UISettings _uiSettings = new();
     private readonly DispatcherTimer _animationTimer = new() { Interval = TimeSpan.FromMilliseconds(90) };
     private readonly DispatcherTimer _decisionTimer = new() { Interval = TimeSpan.FromSeconds(5) };
     private ConnectorPendingApproval? _activeApproval;
@@ -37,9 +40,14 @@ public sealed partial class PetWindow : Window
     private bool _isVisible;
     private bool _isDragging;
     private bool _dragMoved;
+    private bool _isDraggingRight = true;
     private PointInt32 _dragStartCursor;
     private PointInt32 _dragStartWindow;
     private bool _animationPhase;
+    private IReadOnlyList<BitmapImage>? _spriteFrames;
+    private PetSpriteSequence? _spriteSequence;
+    private int _spriteFrameIndex;
+    private bool _isLoadingSprite;
 
     public PetWindow(
         PetOverlayViewModel viewModel,
@@ -76,6 +84,7 @@ public sealed partial class PetWindow : Window
         if (_isVisible) return;
         Activate();
         _isVisible = true;
+        _ = EnsurePetSpriteAsync(cancellationToken);
         try
         {
             await RestorePositionAsync(cancellationToken);
@@ -94,6 +103,7 @@ public sealed partial class PetWindow : Window
     public async Task HidePetAsync()
     {
         ViewModel.Stop();
+        _animationTimer.Stop();
         await QuickChat.CloseAsync();
         if (!_isVisible) return;
         AppWindow.Hide();
@@ -295,10 +305,18 @@ public sealed partial class PetWindow : Window
             approvalVisible ? ApprovalWidth : expanded || quickChatVisible ? ExpandedWidth : decisionVisible || summaryVisible ? SummaryWidth : CollapsedWidth,
             approvalVisible ? ApprovalHeight : expanded || quickChatVisible ? ExpandedHeight : decisionVisible || summaryVisible ? SummaryHeight : CollapsedHeight);
 
-        var shouldAnimate = _isDragging || ViewModel.AnimationState is PetAnimationState.Running or
+        if (_spriteFrames is not null)
+        {
+            UpdatePetSpriteAnimation();
+            return;
+        }
+
+        PetSpriteImage.Visibility = Visibility.Collapsed;
+        PetCanvas.Visibility = Visibility.Visible;
+        var shouldAnimateFallback = _isDragging || ViewModel.AnimationState is PetAnimationState.Running or
             PetAnimationState.Review or PetAnimationState.Waiting;
-        if (shouldAnimate && !_animationTimer.IsEnabled) _animationTimer.Start();
-        if (!shouldAnimate && _animationTimer.IsEnabled)
+        if (shouldAnimateFallback && !_animationTimer.IsEnabled) _animationTimer.Start();
+        if (!shouldAnimateFallback && _animationTimer.IsEnabled)
         {
             _animationTimer.Stop();
             ResetPetPose();
@@ -333,7 +351,16 @@ public sealed partial class PetWindow : Window
         var deltaX = cursor.X - _dragStartCursor.X;
         var deltaY = cursor.Y - _dragStartCursor.Y;
         if (Math.Abs(deltaX) + Math.Abs(deltaY) >= 6) _dragMoved = true;
-        if (deltaX != 0) PetDirectionTransform.ScaleX = deltaX < 0 ? -1 : 1;
+        if (deltaX != 0)
+        {
+            var isMovingRight = deltaX > 0;
+            PetDirectionTransform.ScaleX = isMovingRight ? 1 : -1;
+            if (_isDraggingRight != isMovingRight)
+            {
+                _isDraggingRight = isMovingRight;
+                if (_spriteFrames is not null) UpdatePetSpriteAnimation();
+            }
+        }
 
         var proposed = new PointInt32(_dragStartWindow.X + deltaX, _dragStartWindow.Y + deltaY);
         var display = DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Nearest);
@@ -388,6 +415,12 @@ public sealed partial class PetWindow : Window
 
     private void OnAnimationTick(object? sender, object e)
     {
+        if (_spriteFrames is not null && _spriteSequence is { } sequence)
+        {
+            _spriteFrameIndex = (_spriteFrameIndex + 1) % sequence.FrameCount;
+            ShowPetSpriteFrame(sequence.Row, _spriteFrameIndex);
+            return;
+        }
         _animationPhase = !_animationPhase;
         PetBodyTransform.Y = _animationPhase ? -4 : 1;
         LeftPawTransform.Angle = _animationPhase ? -13 : 11;
@@ -399,6 +432,67 @@ public sealed partial class PetWindow : Window
         PetBodyTransform.Y = 0;
         LeftPawTransform.Angle = 0;
         RightPawTransform.Angle = 0;
+    }
+
+    private async Task EnsurePetSpriteAsync(CancellationToken cancellationToken)
+    {
+        if (_spriteFrames is not null || _isLoadingSprite) return;
+        _isLoadingSprite = true;
+        try
+        {
+            var frames = await PetSpriteAtlas.LoadAsync(cancellationToken);
+            if (frames is null)
+            {
+                StartupDiagnostics.RecordLifecycle("pet sprite atlas unavailable; using vector fallback");
+                return;
+            }
+            _spriteFrames = frames;
+            _spriteSequence = null;
+            StartupDiagnostics.RecordLifecycle($"pet sprite atlas loaded; frames={frames.Count}");
+            UpdateVisualState();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _isLoadingSprite = false;
+        }
+    }
+
+    private void UpdatePetSpriteAnimation()
+    {
+        if (_spriteFrames is null) return;
+        PetCanvas.Visibility = Visibility.Collapsed;
+        PetSpriteImage.Visibility = Visibility.Visible;
+        PetSpriteDirectionTransform.ScaleX = 1;
+        var sequence = PetSpriteSequence.For(
+            ViewModel.AnimationState,
+            _isDragging,
+            _isDraggingRight);
+        if (_spriteSequence != sequence)
+        {
+            _animationTimer.Stop();
+            _spriteSequence = sequence;
+            _spriteFrameIndex = 0;
+            _animationTimer.Interval = sequence.FrameDuration;
+            ShowPetSpriteFrame(sequence.Row, 0);
+        }
+        if (_isVisible && _uiSettings.AnimationsEnabled && sequence.FrameCount > 1 && !_animationTimer.IsEnabled)
+            _animationTimer.Start();
+        else if ((!_isVisible || !_uiSettings.AnimationsEnabled) && _animationTimer.IsEnabled)
+            _animationTimer.Stop();
+    }
+
+    private void ShowPetSpriteFrame(int row, int column)
+    {
+        if (_spriteFrames is null ||
+            row < 0 || row >= PetSpriteAtlas.Rows ||
+            column < 0 || column >= PetSpriteAtlas.Columns)
+        {
+            return;
+        }
+        PetSpriteImage.Source = _spriteFrames[row * PetSpriteAtlas.Columns + column];
     }
 
     private async void OnCompactActivityTapped(object sender, TappedRoutedEventArgs e)

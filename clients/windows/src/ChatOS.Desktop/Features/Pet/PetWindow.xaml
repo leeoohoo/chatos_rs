@@ -478,34 +478,51 @@
                 PointerMoved="OnPetPointerMoved"
                 PointerReleased="OnPetPointerReleased"
                 PointerCanceled="OnPetPointerCanceled">
-                <Canvas x:Name="PetCanvas" Width="150" Height="150" RenderTransformOrigin="0.5,0.5">
-                    <Canvas.RenderTransform>
-                        <TransformGroup>
-                            <ScaleTransform x:Name="PetDirectionTransform" ScaleX="1" />
-                            <TranslateTransform x:Name="PetBodyTransform" />
-                        </TransformGroup>
-                    </Canvas.RenderTransform>
-                    <Ellipse Canvas.Left="22" Canvas.Top="112" Width="108" Height="18" Fill="#22000000" />
-                    <Path Data="M35,72 C12,64 8,91 29,105 C14,105 10,117 28,120 C50,123 59,105 57,91 Z" Fill="#D9703A" Stroke="#A84E2D" StrokeThickness="2" />
-                    <Path Data="M55,45 L42,13 L73,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
-                    <Path Data="M95,45 L108,13 L78,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
-                    <Path Data="M50,41 C57,22 94,22 101,43 C111,62 106,94 88,105 C78,112 64,110 55,102 C40,89 39,59 50,41 Z" Fill="#ED8A4F" Stroke="#A84E2D" StrokeThickness="2" />
-                    <Path Data="M54,77 C59,59 90,59 97,77 C101,92 91,105 76,106 C60,105 50,92 54,77 Z" Fill="#FFF4E5" />
-                    <Ellipse Canvas.Left="60" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
-                    <Ellipse Canvas.Left="85" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
-                    <Path Data="M72,73 Q76,77 80,73 Q79,84 72,73 Z" Fill="#4A3028" />
-                    <Path Data="M72,84 Q77,89 83,84" Stroke="#A84E2D" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
-                    <Path Data="M61,101 C54,111 55,125 66,128 C74,129 76,116 73,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
-                        <Path.RenderTransform><RotateTransform x:Name="LeftPawTransform" CenterX="66" CenterY="108" /></Path.RenderTransform>
-                    </Path>
-                    <Path Data="M91,101 C99,111 98,125 87,128 C79,129 77,116 80,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
-                        <Path.RenderTransform><RotateTransform x:Name="RightPawTransform" CenterX="86" CenterY="108" /></Path.RenderTransform>
-                    </Path>
-                    <Path Data="M66,91 C57,78 52,94 64,104 C72,111 83,111 91,103 C101,92 94,78 86,91 C81,83 71,83 66,91 Z" Fill="#C94332" />
-                    <Path Data="M76,87 L78,108" Stroke="#8F2F26" StrokeThickness="2" />
-                    <Ellipse x:Name="AttentionBadge" Canvas.Left="108" Canvas.Top="24" Width="28" Height="28" Fill="{StaticResource ChatOSFailureBrush}" />
-                    <TextBlock x:Name="AttentionBadgeText" Canvas.Left="108" Canvas.Top="28" Width="28" TextAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold" />
-                </Canvas>
+                <Grid Width="150" Height="150">
+                    <Image
+                        x:Name="PetSpriteImage"
+                        Width="138"
+                        Height="149"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Bottom"
+                        AutomationProperties.Name="枫团"
+                        IsHitTestVisible="False"
+                        Stretch="Uniform"
+                        Visibility="Collapsed"
+                        RenderTransformOrigin="0.5,0.5">
+                        <Image.RenderTransform><ScaleTransform x:Name="PetSpriteDirectionTransform" ScaleX="1" /></Image.RenderTransform>
+                    </Image>
+                    <Canvas x:Name="PetCanvas" Width="150" Height="150" RenderTransformOrigin="0.5,0.5">
+                        <Canvas.RenderTransform>
+                            <TransformGroup>
+                                <ScaleTransform x:Name="PetDirectionTransform" ScaleX="1" />
+                                <TranslateTransform x:Name="PetBodyTransform" />
+                            </TransformGroup>
+                        </Canvas.RenderTransform>
+                        <Ellipse Canvas.Left="22" Canvas.Top="112" Width="108" Height="18" Fill="#22000000" />
+                        <Path Data="M35,72 C12,64 8,91 29,105 C14,105 10,117 28,120 C50,123 59,105 57,91 Z" Fill="#D9703A" Stroke="#A84E2D" StrokeThickness="2" />
+                        <Path Data="M55,45 L42,13 L73,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
+                        <Path Data="M95,45 L108,13 L78,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
+                        <Path Data="M50,41 C57,22 94,22 101,43 C111,62 106,94 88,105 C78,112 64,110 55,102 C40,89 39,59 50,41 Z" Fill="#ED8A4F" Stroke="#A84E2D" StrokeThickness="2" />
+                        <Path Data="M54,77 C59,59 90,59 97,77 C101,92 91,105 76,106 C60,105 50,92 54,77 Z" Fill="#FFF4E5" />
+                        <Ellipse Canvas.Left="60" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
+                        <Ellipse Canvas.Left="85" Canvas.Top="57" Width="8" Height="10" Fill="#35251F" />
+                        <Path Data="M72,73 Q76,77 80,73 Q79,84 72,73 Z" Fill="#4A3028" />
+                        <Path Data="M72,84 Q77,89 83,84" Stroke="#A84E2D" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                        <Path Data="M61,101 C54,111 55,125 66,128 C74,129 76,116 73,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
+                            <Path.RenderTransform><RotateTransform x:Name="LeftPawTransform" CenterX="66" CenterY="108" /></Path.RenderTransform>
+                        </Path>
+                        <Path Data="M91,101 C99,111 98,125 87,128 C79,129 77,116 80,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2">
+                            <Path.RenderTransform><RotateTransform x:Name="RightPawTransform" CenterX="86" CenterY="108" /></Path.RenderTransform>
+                        </Path>
+                        <Path Data="M66,91 C57,78 52,94 64,104 C72,111 83,111 91,103 C101,92 94,78 86,91 C81,83 71,83 66,91 Z" Fill="#C94332" />
+                        <Path Data="M76,87 L78,108" Stroke="#8F2F26" StrokeThickness="2" />
+                    </Canvas>
+                    <Canvas Width="150" Height="150" IsHitTestVisible="False">
+                        <Ellipse x:Name="AttentionBadge" Canvas.Left="108" Canvas.Top="24" Width="28" Height="28" Fill="{StaticResource ChatOSFailureBrush}" />
+                        <TextBlock x:Name="AttentionBadgeText" Canvas.Left="108" Canvas.Top="28" Width="28" TextAlignment="Center" Foreground="White" FontSize="12" FontWeight="SemiBold" />
+                    </Canvas>
+                </Grid>
             </Border>
         </Grid>
     </Grid>

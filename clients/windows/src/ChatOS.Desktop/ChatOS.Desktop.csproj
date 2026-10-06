@@ -27,6 +27,10 @@
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
     <Content Include="Assets\**\*.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\..\macos\Support\Pets\fengtuan\spritesheet.webp"
+             Link="Assets\Pets\fengtuan\spritesheet.webp"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LocalAgentHostExecutable)"
              Condition="'$(LocalAgentHostExecutable)' != '' and Exists('$(LocalAgentHostExecutable)')"
              Link="chatos_local_agent_host.exe"
