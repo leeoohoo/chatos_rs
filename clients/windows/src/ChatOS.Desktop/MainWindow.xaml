@@ -46,8 +46,16 @@
                         <StackPanel.RenderTransform>
                             <TranslateTransform Y="-44" />
                         </StackPanel.RenderTransform>
-                        <Viewbox Width="132" Height="143" HorizontalAlignment="Left" Stretch="Uniform">
-                            <Canvas Width="150" Height="150">
+                        <Grid Width="132" Height="143" HorizontalAlignment="Left">
+                            <Image
+                                x:Name="LoginPetSpriteImage"
+                                AutomationProperties.AutomationId="ChatOS.Login.PetSprite"
+                                AutomationProperties.Name="枫团"
+                                IsHitTestVisible="False"
+                                Stretch="Uniform"
+                                Visibility="Collapsed" />
+                            <Viewbox x:Name="LoginPetFallback" Stretch="Uniform">
+                                <Canvas Width="150" Height="150">
                                 <Ellipse Canvas.Left="22" Canvas.Top="112" Width="108" Height="18" Fill="#22000000" />
                                 <Path Data="M35,72 C12,64 8,91 29,105 C14,105 10,117 28,120 C50,123 59,105 57,91 Z" Fill="#D9703A" Stroke="#A84E2D" StrokeThickness="2" />
                                 <Path Data="M55,45 L42,13 L73,31 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
@@ -62,8 +70,9 @@
                                 <Path Data="M91,101 C99,111 98,125 87,128 C79,129 77,116 80,105 Z" Fill="#E88246" Stroke="#A84E2D" StrokeThickness="2" />
                                 <Path Data="M66,91 C57,78 52,94 64,104 C72,111 83,111 91,103 C101,92 94,78 86,91 C81,83 71,83 66,91 Z" Fill="#C94332" />
                                 <Path Data="M76,87 L78,108" Stroke="#8F2F26" StrokeThickness="2" />
-                            </Canvas>
-                        </Viewbox>
+                                </Canvas>
+                            </Viewbox>
+                        </Grid>
                         <StackPanel Spacing="4">
                             <TextBlock FontFamily="{StaticResource ChatOSInterfaceFontFamily}" FontSize="38" FontWeight="Bold" Text="{x:Bind ViewModel.Localization.LoginBrandHeadline, Mode=OneWay}" TextWrapping="Wrap" />
                             <TextBlock FontFamily="{StaticResource ChatOSInterfaceFontFamily}" FontSize="38" FontWeight="Bold" Foreground="{StaticResource ChatOSWarningBrush}" Text="{x:Bind ViewModel.Localization.LoginBrandMemory, Mode=OneWay}" TextWrapping="Wrap" />

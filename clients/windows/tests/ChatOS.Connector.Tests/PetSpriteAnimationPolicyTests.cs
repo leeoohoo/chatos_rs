@@ -6,12 +6,27 @@ namespace ChatOS.Connector.Tests;
 public sealed class PetSpriteAnimationPolicyTests
 {
     [Fact]
-    public void AtlasPolicyAcceptsOnlyProductionDimensions()
+    public void PngAtlasContainsEveryProductionFrame()
     {
-        Assert.True(PetSpriteAtlasPolicy.HasExpectedDimensions(1536, 2288));
-        Assert.False(PetSpriteAtlasPolicy.HasExpectedDimensions(3072, 4576));
         Assert.Equal(88, PetSpriteAtlasPolicy.FrameCount);
-        Assert.Equal(20L * 1024 * 1024, PetSpriteAtlasPolicy.MaximumBytes);
+        Assert.Equal("frame-00-00.png", PetSpriteAtlasPolicy.FrameFileName(0, 0));
+        Assert.Equal("frame-10-07.png", PetSpriteAtlasPolicy.FrameFileName(10, 7));
+
+        var framesDirectory = Path.Combine(
+            FindWindowsRoot(),
+            "src",
+            "ChatOS.Desktop",
+            "Assets",
+            "Pets",
+            "fengtuan",
+            "frames");
+        var frames = Directory.GetFiles(framesDirectory, "frame-??-??.png");
+
+        Assert.Equal(PetSpriteAtlasPolicy.FrameCount, frames.Length);
+        Assert.All(frames, path => Assert.InRange(
+            new FileInfo(path).Length,
+            1,
+            PetSpriteAtlasPolicy.MaximumFrameBytes));
     }
 
     [Theory]
@@ -47,5 +62,18 @@ public sealed class PetSpriteAnimationPolicyTests
         Assert.Equal(expectedRow, sequence.Row);
         Assert.Equal(8, sequence.FrameCount);
         Assert.Equal(TimeSpan.FromMilliseconds(100), sequence.FrameDuration);
+    }
+
+    private static string FindWindowsRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "ChatOS.Win.sln")))
+                return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate the ChatOS Windows repository root.");
     }
 }

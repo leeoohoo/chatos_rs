@@ -11,10 +11,10 @@ internal static class PetSpriteAtlasPolicy
     public const int RenderWidth = 180;
     public const int RenderHeight = 195;
     public const int FrameCount = Columns * Rows;
-    public const long MaximumBytes = 20L * 1024 * 1024;
+    public const long MaximumFrameBytes = 1024L * 1024L;
 
-    public static bool HasExpectedDimensions(int width, int height) =>
-        width == Columns * CellWidth && height == Rows * CellHeight;
+    public static string FrameFileName(int row, int column) =>
+        $"frame-{row:D2}-{column:D2}.png";
 }
 
 internal readonly record struct PetSpriteSequence(

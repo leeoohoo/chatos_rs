@@ -141,6 +141,8 @@ public sealed partial class MainWindow : Window
             ApplyAppearance(Preferences.Current);
             UpdateVisualState();
             StartupDiagnostics.RecordStage("initial visual state applied");
+            await LoadLoginPetSpriteAsync();
+            StartupDiagnostics.RecordStage("login pet sprite synchronized");
             await ViewModel.InitializeAsync();
             StartupDiagnostics.RecordStage("account session restoration completed");
             await PetWindowController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
@@ -167,6 +169,21 @@ public sealed partial class MainWindow : Window
             StartupDiagnostics.ReportFatal("main window post-activation initialization", exception);
             Application.Current.Exit();
         }
+    }
+
+    private async Task LoadLoginPetSpriteAsync()
+    {
+        var frames = await PetSpriteAtlas.LoadAsync();
+        if (frames is not { Count: > 0 })
+        {
+            StartupDiagnostics.RecordLifecycle("login pet sprite atlas unavailable; using vector fallback");
+            return;
+        }
+
+        LoginPetSpriteImage.Source = frames[0];
+        LoginPetSpriteImage.Visibility = Visibility.Visible;
+        LoginPetFallback.Visibility = Visibility.Collapsed;
+        StartupDiagnostics.RecordLifecycle("login pet sprite loaded from fengtuan idle frame");
     }
 
     private void OnPasswordChanged(object sender, RoutedEventArgs e)

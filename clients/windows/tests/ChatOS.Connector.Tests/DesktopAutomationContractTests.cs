@@ -10,6 +10,7 @@ public sealed class DesktopAutomationContractTests
         "ChatOS.Login.Username",
         "ChatOS.Login.Password",
         "ChatOS.Login.Submit",
+        "ChatOS.Login.PetSprite",
         "ChatOS.Shell.Root",
         "ChatOS.Shell.Notepad",
         "ChatOS.Shell.Artifacts",

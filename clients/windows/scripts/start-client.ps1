@@ -34,8 +34,11 @@ if (-not $dotnetCommand) {
 }
 
 $sdkVersions = @(dotnet --list-sdks)
-if (-not ($sdkVersions | Where-Object { $_ -match '^8\.' })) {
-    throw ".NET 8 SDK is required. Installed SDKs: $($sdkVersions -join ', ')"
+$supportedSdk = $sdkVersions | Where-Object {
+    $_ -match '^(?<major>\d+)\.' -and [int]$Matches.major -ge 8
+}
+if (-not $supportedSdk) {
+    throw ".NET 8 or later SDK is required. Installed SDKs: $($sdkVersions -join ', ')"
 }
 
 $normalizedApiBaseUrl = $ApiBaseUrl.TrimEnd('/')

@@ -27,8 +27,7 @@
   <ItemGroup>
     <Content Include="Assets\**\*.png" />
     <Content Include="Assets\**\*.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="..\..\..\macos\Support\Pets\fengtuan\spritesheet.webp"
-             Link="Assets\Pets\fengtuan\spritesheet.webp"
+    <Content Update="Assets\Pets\fengtuan\frames\*.png"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LocalAgentHostExecutable)"

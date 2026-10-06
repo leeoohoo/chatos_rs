@@ -207,7 +207,8 @@ try {
         @{ Id = "ChatOS.Login.Root"; Type = $null; RequireName = $true },
         @{ Id = "ChatOS.Login.Username"; Type = [System.Windows.Automation.ControlType]::Edit; RequireName = $true },
         @{ Id = "ChatOS.Login.Password"; Type = [System.Windows.Automation.ControlType]::Edit; RequireName = $true },
-        @{ Id = "ChatOS.Login.Submit"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true }
+        @{ Id = "ChatOS.Login.Submit"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
+        @{ Id = "ChatOS.Login.PetSprite"; Type = [System.Windows.Automation.ControlType]::Image; RequireName = $true }
     )
     $shellExpected = @(
         @{ Id = "ChatOS.Shell.Root"; Type = $null; RequireName = $true },
