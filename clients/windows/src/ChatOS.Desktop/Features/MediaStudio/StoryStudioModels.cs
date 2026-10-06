@@ -187,11 +187,24 @@ public static class StoryStudioOptions
     public static IReadOnlyList<string> Ratios { get; } = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
 }
 
-public sealed record StoryProjectCard(StoryProjectDocument Project)
+public sealed record StoryProjectThumbnail(string FilePath);
+
+public sealed record StoryProjectCard(
+    StoryProjectDocument Project,
+    IReadOnlyList<StoryProjectThumbnail> PreviewImages,
+    int ImageCount)
 {
     public Guid Id => Project.Id;
     public string Title => Project.Title;
     public string Description => string.IsNullOrWhiteSpace(Project.Description) ? "暂无描述" : Project.Description;
+    public int CurrentVideoCount => Project.CompletedCount;
+    public int VideoVersionCount => Project.Segments.Sum(segment =>
+        (string.IsNullOrWhiteSpace(segment.VideoAsset) ? 0 : 1) + segment.ArchivedVideos.Count);
+    public bool CanPlay => CurrentVideoCount > 0;
+    public string PlayActionLabel => CurrentVideoCount == Project.Segments.Count && Project.Segments.Count > 0
+        ? "全剧连播"
+        : "连续播放已完成分段";
+    public string MediaSummary => $"{ImageCount} 张图片 · {CurrentVideoCount}/{Project.Segments.Count} 段当前成片 · {VideoVersionCount} 个版本";
     public string ProgressLabel => Project.Segments.Count == 0
         ? "待分段"
         : $"{Project.CompletedCount}/{Project.Segments.Count} 段完成 · {Project.TotalSeconds} 秒";

@@ -483,6 +483,7 @@
                                         </StackPanel>
                                         <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
                                             <TextBlock VerticalAlignment="Center" Text="{x:Bind StoryViewModel.StatusMessage, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <Button Click="OnOpenStoryPromptCenterClick" Content="提示词中心" Style="{StaticResource ChatOSSecondaryButtonStyle}" ToolTipService.ToolTip="查看剧情模式实际使用的提示词" />
                                             <Button Click="OnSaveStoryProjectClick" Content="保存" IsEnabled="{x:Bind StoryViewModel.CanSave, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                         </StackPanel>
                                     </Grid>
@@ -588,7 +589,7 @@
                                                         <TextBlock Text="{x:Bind StoryViewModel.BatchProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     </StackPanel>
                                                 </Border>
-                                                <Expander Header="提示词审计（只读）">
+                                                <Expander x:Name="StoryPromptAuditExpander" Header="提示词审计（只读）">
                                                     <StackPanel Padding="0,8,0,0" Spacing="8">
                                                         <TextBlock Text="这里展示生产代码当前实际使用的稳定提示词，不会调用模型。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         <ItemsControl ItemsSource="{x:Bind StoryViewModel.PromptAuditItems}">
@@ -892,13 +893,10 @@
                                     <TextBlock Text="按项目查看剧情分段进度，打开后可播放和继续制作。" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                 </StackPanel>
                                 <ItemsControl ItemsSource="{x:Bind StoryViewModel.Projects}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="2" /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="media:StoryProjectCard">
-                                            <Button Width="500" Margin="0,0,14,14" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnStoryHistoryProjectClick">
-                                                <Border Style="{StaticResource MediaStudioCardStyle}">
+                                            <Border Margin="0,0,0,14" Style="{StaticResource MediaStudioCardStyle}">
+                                                <StackPanel Spacing="14">
                                                     <Grid ColumnSpacing="14">
                                                         <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                                         <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
@@ -906,13 +904,31 @@
                                                         </Border>
                                                         <StackPanel Grid.Column="1" Spacing="4">
                                                             <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="{x:Bind MediaSummary}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                             <TextBlock Text="{x:Bind Description}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                                            <TextBlock Text="{x:Bind ProgressLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         </StackPanel>
-                                                        <TextBlock Grid.Column="2" Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="7">
+                                                            <TextBlock HorizontalAlignment="Right" Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                                                <Button Click="OnStoryHistoryProjectClick" Content="打开项目" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                <Button Click="OnStoryHistoryPlayClick" Content="{x:Bind PlayActionLabel}" IsEnabled="{x:Bind CanPlay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                            </StackPanel>
+                                                        </StackPanel>
                                                     </Grid>
-                                                </Border>
-                                            </Button>
+                                                    <ItemsControl ItemsSource="{x:Bind PreviewImages}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="1" /></ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate x:DataType="media:StoryProjectThumbnail">
+                                                                <Border Width="132" Height="92" Margin="0,0,11,0" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9">
+                                                                    <Image Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Border>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>

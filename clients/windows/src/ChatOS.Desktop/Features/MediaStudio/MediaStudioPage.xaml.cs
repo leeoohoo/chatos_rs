@@ -117,6 +117,14 @@ public sealed partial class MediaStudioPage : Page
     private async void OnSaveStoryProjectClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.SaveCurrentAsync();
 
+    private void OnOpenStoryPromptCenterClick(object sender, RoutedEventArgs e)
+    {
+        if (StoryWorkspaceSectionBar is not null)
+            StoryWorkspaceSectionBar.SelectedItem = StorySourceSectionItem;
+        StoryPromptAuditExpander.IsExpanded = true;
+        DispatcherQueue.TryEnqueue(() => StoryPromptAuditExpander.StartBringIntoView());
+    }
+
     private void OnQuickSplitStoryClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.QuickSplit();
 
@@ -512,6 +520,20 @@ public sealed partial class MediaStudioPage : Page
         StoryViewModel.OpenProject(card.Project);
         SelectStorySourceSection();
         StudioPivot.SelectedIndex = 2;
+    }
+
+    private void OnStoryHistoryPlayClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StoryProjectCard card } || !card.CanPlay) return;
+        StoryViewModel.OpenProject(card.Project);
+        StudioPivot.SelectedIndex = 2;
+        if (StoryWorkspaceSectionBar is not null)
+            StoryWorkspaceSectionBar.SelectedItem = StoryGraphSectionItem;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            RefreshStoryState();
+            OnPlayStoryPlaylistClick(sender, e);
+        });
     }
 
     private void SelectStorySourceSection()

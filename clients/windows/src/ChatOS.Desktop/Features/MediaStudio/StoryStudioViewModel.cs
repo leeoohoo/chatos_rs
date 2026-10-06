@@ -252,7 +252,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             if (session != _session) return;
             ApplyModels(modelsTask.Result);
             foreach (var project in projectsTask.Result.Items)
-                Projects.Add(new StoryProjectCard(project));
+                Projects.Add(CreateProjectCard(project));
             _projectCursor = projectsTask.Result.NextCursor;
             HasMoreProjects = _projectCursor is not null;
             StatusMessage = Projects.Count == 0 ? "创建第一个剧情项目" : $"已加载 {Projects.Count} 个剧情项目";
@@ -279,7 +279,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             var page = await _store.LoadPageAsync(
                 owner, cursor, cancellationToken: cancellationToken);
             if (session != _session || _ownerUserId != owner) return;
-            foreach (var project in page.Items) Projects.Add(new StoryProjectCard(project));
+            foreach (var project in page.Items) Projects.Add(CreateProjectCard(project));
             _projectCursor = page.NextCursor;
             HasMoreProjects = _projectCursor is not null;
         }
@@ -308,7 +308,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         try
         {
             await _store.SaveAsync(owner, project, cancellationToken);
-            Projects.Insert(0, new StoryProjectCard(project));
+            Projects.Insert(0, CreateProjectCard(project));
             NewTitle = string.Empty;
             NewDescription = string.Empty;
             OpenProject(project);
@@ -510,7 +510,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
             _current = project;
             var index = Projects.ToList().FindIndex(card => card.Id == project.Id);
             if (index >= 0) Projects.RemoveAt(index);
-            Projects.Insert(0, new StoryProjectCard(project));
+            Projects.Insert(0, CreateProjectCard(project));
             OnWorkspaceChanged();
         }
         finally
@@ -622,6 +622,32 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         {
             Segments[index].SetNumberLabel($"{index + 1:00}");
         }
+    }
+
+    private StoryProjectCard CreateProjectCard(StoryProjectDocument project)
+    {
+        if (_ownerUserId is not { Length: > 0 } owner)
+            return new StoryProjectCard(project, [], 0);
+
+        var relativeAssets = project.Resources
+            .Select(resource => resource.ImageAsset)
+            .Concat(project.Segments.SelectMany(segment => new[]
+            {
+                segment.FirstFrameAsset,
+                segment.LastFrameAsset,
+                segment.ActualVideoLastFrameAsset,
+            }));
+        var imagePaths = relativeAssets
+            .Select(asset => _store.ResolveAssetPath(owner, project.Id, asset))
+            .Where(path => path is { Length: > 0 } && File.Exists(path))
+            .Select(path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var previews = imagePaths
+            .Take(4)
+            .Select(path => new StoryProjectThumbnail(path))
+            .ToArray();
+        return new StoryProjectCard(project, previews, imagePaths.Length);
     }
 
     partial void OnSelectedSegmentChanged(StorySegmentEditor? oldValue, StorySegmentEditor? newValue)
