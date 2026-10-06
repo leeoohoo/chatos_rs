@@ -9,6 +9,7 @@ public sealed class PetWindowController : IDisposable
     private readonly PetWindow _window;
     private readonly AppPreferencesManager _preferences;
     private readonly IUiDispatcher _dispatcher;
+    private readonly SemaphoreSlim _visibilityGate = new(1, 1);
     private bool _authenticated;
 
     public PetWindowController(
@@ -27,20 +28,53 @@ public sealed class PetWindowController : IDisposable
         CancellationToken cancellationToken = default)
     {
         _authenticated = authenticated;
-        await ApplyVisibilityAsync(_preferences.Current, cancellationToken);
+        await ApplyVisibilitySerializedAsync(_preferences.Current, cancellationToken);
     }
 
     public void Dispose()
     {
         _preferences.Changed -= OnPreferencesChanged;
-        _ = _window.HidePetAsync();
+        _authenticated = false;
+        ObserveVisibilityChange(_preferences.Current, "pet window disposal");
     }
 
     private void OnPreferencesChanged(object? sender, AppPreferences preferences) =>
-        _ = _dispatcher.InvokeAsync(() =>
+        ObserveVisibilityChange(preferences, "pet preference change");
+
+    private void ObserveVisibilityChange(AppPreferences preferences, string phase) =>
+        _ = ApplyObservedVisibilityAsync(preferences, phase);
+
+    private async Task ApplyObservedVisibilityAsync(AppPreferences preferences, string phase)
+    {
+        try
         {
-            _ = ApplyVisibilityAsync(preferences, CancellationToken.None);
-        });
+            await ApplyVisibilitySerializedAsync(preferences, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled(phase, exception);
+        }
+    }
+
+    private async Task ApplyVisibilitySerializedAsync(
+        AppPreferences preferences,
+        CancellationToken cancellationToken)
+    {
+        await _visibilityGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Task visibilityTask = Task.CompletedTask;
+            await _dispatcher.InvokeAsync(
+                () => visibilityTask = ApplyVisibilityAsync(preferences, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+            await visibilityTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            _visibilityGate.Release();
+        }
+    }
 
     private async Task ApplyVisibilityAsync(
         AppPreferences preferences,
