@@ -3,8 +3,22 @@ import Foundation
 
 public enum NativeLocalAgentPlatformToolCatalog {
     public static let attachmentReadToolName = "local_attachment_read"
+    public static let listTasksToolName = "list_tasks"
+    public static let getTaskToolName = "get_task"
     public static let createTaskToolName = "create_task"
     public static let createTasksToolName = "create_tasks_with_prerequisites"
+    public static let cancelTaskToolName = "cancel_task"
+    public static let waitForTaskCompletionToolName = "wait_for_task_completion"
+    public static let getTaskDependencyGraphToolName = "get_task_dependency_graph"
+    public static let mainChatTaskToolNames = [
+        listTasksToolName,
+        getTaskToolName,
+        createTaskToolName,
+        createTasksToolName,
+        cancelTaskToolName,
+        waitForTaskCompletionToolName,
+        getTaskDependencyGraphToolName,
+    ]
     private static let projectReadOnlyToolNames = [
         "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
         "search_files",
@@ -27,37 +41,149 @@ public enum NativeLocalAgentPlatformToolCatalog {
     ]
 
     public static let capabilityTools: [LocalAgentJSONValue] = [
+        taskTool(
+            name: listTasksToolName,
+            description: "List durable local tasks created from the current conversation/project. Use keyword when the user refers to earlier work.",
+            properties: [
+                "status": .object([
+                    "type": .string("string"),
+                    "enum": .array([
+                        "pending", "ready", "running", "succeeded", "failed",
+                        "cancelled", "blocked",
+                    ].map(LocalAgentJSONValue.string)),
+                ]),
+                "keyword": .object(["type": .string("string"), "maxLength": .number(500)]),
+                "limit": .object([
+                    "type": .string("integer"), "minimum": .number(1),
+                    "maximum": .number(100), "default": .number(50),
+                ]),
+                "offset": .object([
+                    "type": .string("integer"), "minimum": .number(0),
+                    "maximum": .number(10_000), "default": .number(0),
+                ]),
+            ]
+        ),
+        taskIDTool(
+            name: getTaskToolName,
+            description: "Get one durable local task created from the current conversation/project."
+        ),
+        taskTool(
+            name: createTaskToolName,
+            description: "Create one durable local task for the current conversation/project. Use this whenever answering requires inspecting project files, using execution tools, or doing tracked work; never ask the user to re-upload an already bound project.",
+            properties: [
+                "title": .object(["type": .string("string"), "minLength": .number(1)]),
+                "objective": .object(["type": .string("string"), "minLength": .number(1)]),
+                "description": .object(["type": .string("string")]),
+                "input_payload": .object(["type": .string("object")]),
+            ],
+            required: ["title", "objective"]
+        ),
         .object([
             "type": .string("function"),
-            "name": .string(attachmentReadToolName),
+            "name": .string(createTasksToolName),
             "description": .string(
-                "Read a bounded segment of a local conversation attachment using its opaque authorized_local_ref. The client verifies account, conversation, byte size, and SHA-256 before returning content; local filesystem paths are never exposed."
+                "Create a durable local task graph for the current conversation/project. Use investigation, implementation and review stages when prerequisites are needed instead of asking the user to provide the bound project again."
             ),
             "parameters": .object([
                 "type": .string("object"),
                 "properties": .object([
-                    "authorized_local_ref": .object([
-                        "type": .string("string"),
-                        "minLength": .number(1),
-                        "maxLength": .number(160),
-                    ]),
-                    "offset": .object([
-                        "type": .string("integer"),
-                        "minimum": .number(0),
-                        "default": .number(0),
-                    ]),
-                    "limit": .object([
-                        "type": .string("integer"),
-                        "minimum": .number(1),
-                        "maximum": .number(Double(NativeLocalAgentAttachmentVault.maximumReadBytes)),
-                        "default": .number(16_384),
+                    "tasks": .object([
+                        "type": .string("array"),
+                        "minItems": .number(1),
+                        "maxItems": .number(50),
+                        "items": .object([
+                            "type": .string("object"),
+                            "properties": .object([
+                                "client_ref": .object([
+                                    "type": .string("string"), "minLength": .number(1),
+                                ]),
+                                "title": .object([
+                                    "type": .string("string"), "minLength": .number(1),
+                                ]),
+                                "objective": .object([
+                                    "type": .string("string"), "minLength": .number(1),
+                                ]),
+                                "description": .object(["type": .string("string")]),
+                                "input_payload": .object(["type": .string("object")]),
+                                "prerequisite_refs": .object([
+                                    "type": .string("array"),
+                                    "items": .object([
+                                        "type": .string("string"), "minLength": .number(1),
+                                    ]),
+                                    "uniqueItems": .bool(true),
+                                ]),
+                            ]),
+                            "required": .array([
+                                .string("client_ref"), .string("title"), .string("objective"),
+                            ]),
+                            "additionalProperties": .bool(false),
+                        ]),
                     ]),
                 ]),
-                "required": .array([.string("authorized_local_ref")]),
+                "required": .array([.string("tasks")]),
                 "additionalProperties": .bool(false),
             ]),
         ]),
+        taskTool(
+            name: cancelTaskToolName,
+            description: "Cancel a pending or running local task from the current conversation/project because it conflicts with the user's latest intent.",
+            properties: [
+                "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
+                "reason": .object([
+                    "type": .string("string"), "minLength": .number(1),
+                    "maxLength": .number(4_000),
+                ]),
+                "expected_version": .object([
+                    "type": .string("integer"), "minimum": .number(1),
+                ]),
+            ],
+            required: ["task_id", "reason"]
+        ),
+        taskTool(
+            name: waitForTaskCompletionToolName,
+            description: "Use exactly once after tasks have been created or adjusted. This is a background handoff signal, not polling; the final result is written back to this conversation."
+        ),
+        taskIDTool(
+            name: getTaskDependencyGraphToolName,
+            description: "Get the complete dependency graph containing one task from the current conversation/project."
+        ),
     ]
+
+    private static func taskIDTool(
+        name: String,
+        description: String
+    ) -> LocalAgentJSONValue {
+        taskTool(
+            name: name,
+            description: description,
+            properties: [
+                "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
+            ],
+            required: ["task_id"]
+        )
+    }
+
+    private static func taskTool(
+        name: String,
+        description: String,
+        properties: [String: LocalAgentJSONValue] = [:],
+        required: [String] = []
+    ) -> LocalAgentJSONValue {
+        var parameters: [String: LocalAgentJSONValue] = [
+            "type": .string("object"),
+            "properties": .object(properties),
+            "additionalProperties": .bool(false),
+        ]
+        if !required.isEmpty {
+            parameters["required"] = .array(required.map(LocalAgentJSONValue.string))
+        }
+        return .object([
+            "type": .string("function"),
+            "name": .string(name),
+            "description": .string(description),
+            "parameters": .object(parameters),
+        ])
+    }
 
     public static let taskExecutionCapabilityTools: [LocalAgentJSONValue] =
         NativeMCPCodeReadTools.toolDefinitions.compactMap { value in

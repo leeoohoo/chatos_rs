@@ -10,8 +10,8 @@ use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
     LocalAgentHostCoordinator, LocalAgentScheduler, LocalCapabilityResolver, LocalMemorySyncWorker,
     LocalModelRuntimeResolver, LocalTaskToolExecutor, LocalToolExecutor, LocalToolRegistry,
-    LocalToolScheduler, NamedReadOnlyTools, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
-    MAIN_CHAT_PROFILE_KEY, TASK_EXECUTION_PROFILE_KEY,
+    LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS,
+    TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::sync::Arc;
@@ -135,22 +135,21 @@ impl LocalAgentHostAssembly {
             read_only_tools
                 .into_iter()
                 .map(Into::into)
+                .chain(TASK_READ_ONLY_TOOLS.map(str::to_string))
                 .chain(NOTEPAD_READ_ONLY_TOOLS.map(str::to_string)),
         )
         .with_approval_exempt(
             approval_exempt_tools
                 .into_iter()
-                .chain([CREATE_TASK_TOOL.to_string(), CREATE_TASKS_TOOL.to_string()])
+                .chain(TASK_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
                 .chain([REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
         );
-        let mut main_tools = notepad_model_tools();
-        main_tools.extend(task_model_tools());
+        let main_tools = task_model_tools();
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
-        .with_local_tools(main_tools)?
-        .with_local_tool_prefixes(["notepad_"])?;
+        .with_local_tools(main_tools)?;
         let mut task_tools = notepad_model_tools();
         task_tools.extend(requirement_survey_model_tools());
         let mut task_execution_planner = ControlPlaneLocalAiStepPlanner::task_execution(
@@ -190,8 +189,9 @@ impl LocalAgentHostAssembly {
             Arc::clone(&runtime),
             owner_user_id.clone(),
         )?);
-        tools.register_shared(CREATE_TASK_TOOL, Arc::clone(&task_tools))?;
-        tools.register_shared(CREATE_TASKS_TOOL, task_tools)?;
+        for tool_name in TASK_TOOL_NAMES {
+            tools.register_shared(tool_name, Arc::clone(&task_tools))?;
+        }
         LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
         LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
@@ -203,7 +203,7 @@ impl LocalAgentHostAssembly {
             "local-tool-worker",
         )?;
         if external_tool_worker {
-            let internal_tools = [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
+            let internal_tools = TASK_TOOL_NAMES
                 .into_iter()
                 .chain(NOTEPAD_TOOL_NAMES)
                 .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
@@ -218,7 +218,7 @@ impl LocalAgentHostAssembly {
             Some(tool_scheduler),
         )?
         .with_reserved_ipc_tools(
-            [CREATE_TASK_TOOL, CREATE_TASKS_TOOL]
+            TASK_TOOL_NAMES
                 .into_iter()
                 .chain(NOTEPAD_TOOL_NAMES)
                 .chain(REQUIREMENT_SURVEY_TOOL_NAMES),

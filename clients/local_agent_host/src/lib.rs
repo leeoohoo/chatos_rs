@@ -13,9 +13,11 @@ pub use application::{
     LocalMemoryOutboxWriter, LocalMemorySyncError, LocalMemorySyncWorker, LocalNotepadToolExecutor,
     LocalRequirementSurveyToolExecutor, LocalTaskToolExecutor, LocalToolExecutor,
     LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError, MemorySyncTick, SchedulerTick,
-    ToolSchedulerTick, CREATE_TASKS_TOOL, CREATE_TASK_TOOL, NOTEPAD_CREATE_NOTE_TOOL,
+    ToolSchedulerTick, CANCEL_TASK_TOOL, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+    GET_TASK_DEPENDENCY_GRAPH_TOOL, GET_TASK_TOOL, LIST_TASKS_TOOL, NOTEPAD_CREATE_NOTE_TOOL,
     NOTEPAD_LIST_FOLDERS_TOOL, NOTEPAD_LIST_NOTES_TOOL, NOTEPAD_READ_NOTE_TOOL,
-    NOTEPAD_UPDATE_NOTE_TOOL, REQUIREMENT_SURVEY_CREATE_TOOL,
+    NOTEPAD_UPDATE_NOTE_TOOL, REQUIREMENT_SURVEY_CREATE_TOOL, TASK_APPROVAL_EXEMPT_TOOLS,
+    TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES, WAIT_FOR_TASK_COMPLETION_TOOL,
 };
 pub use chatos_agent_profiles::{
     ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy, ControlPlaneLocalAiStepPlanner,

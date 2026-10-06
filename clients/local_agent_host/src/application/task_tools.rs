@@ -1,75 +1,19 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::task_tool_definitions::*;
 use crate::LocalToolExecutor;
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, HostCommand, HostRequestEnvelope, HostResult, LocalAgentRunRecord,
-    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalTaskDependency, LocalTaskSpec,
+    CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, HostCommand,
+    HostRequestEnvelope, HostResult, LocalAgentRunRecord, LocalAgentToolInvocationRecord,
+    LocalAgentToolOutcome, LocalTaskDependency, LocalTaskSpec, LocalTaskStatus,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{collections::HashMap, sync::Arc};
-
-pub const CREATE_TASK_TOOL: &str = "create_task";
-pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
-
-pub fn task_model_tools() -> Vec<Value> {
-    vec![
-        json!({
-            "type": "function",
-            "name": CREATE_TASK_TOOL,
-            "description": "Create one durable local task derived from the current conversation. Use it only for user-requested tracked work. The Rust Local Agent Host persists and schedules it locally.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "minLength": 1},
-                    "objective": {"type": "string", "minLength": 1},
-                    "description": {"type": "string"},
-                    "input_payload": {"type": "object"}
-                },
-                "required": ["title", "objective"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "type": "function",
-            "name": CREATE_TASKS_TOOL,
-            "description": "Create a durable local task graph. Each task uses a unique client_ref and prerequisite_refs may only reference tasks in this call. The Rust Local Agent Host persists and schedules the DAG locally.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tasks": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 50,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "client_ref": {"type": "string", "minLength": 1},
-                                "title": {"type": "string", "minLength": 1},
-                                "objective": {"type": "string", "minLength": 1},
-                                "description": {"type": "string"},
-                                "input_payload": {"type": "object"},
-                                "prerequisite_refs": {
-                                    "type": "array",
-                                    "items": {"type": "string", "minLength": 1},
-                                    "uniqueItems": true
-                                }
-                            },
-                            "required": ["client_ref", "title", "objective"],
-                            "additionalProperties": false
-                        }
-                    }
-                },
-                "required": ["tasks"],
-                "additionalProperties": false
-            }
-        }),
-    ]
-}
 
 #[derive(Clone)]
 pub struct LocalTaskToolExecutor {
@@ -120,6 +64,52 @@ impl LocalTaskToolExecutor {
             result => Err(format!("unexpected Task Graph response: {result:?}")),
         }
     }
+
+    async fn task_graph(&self, graph_id: &str) -> Result<Value, String> {
+        match self
+            .runtime
+            .try_handle(envelope(
+                format!("task-tool-get-graph-{graph_id}"),
+                HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                    owner_user_id: self.owner_user_id.clone(),
+                    graph_id: graph_id.to_string(),
+                }),
+            ))
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            HostResult::TaskGraph { graph } => {
+                serde_json::to_value(graph).map_err(|error| error.to_string())
+            }
+            result => Err(format!("unexpected Task Graph response: {result:?}")),
+        }
+    }
+
+    async fn cancel_task(
+        &self,
+        invocation: &LocalAgentToolInvocationRecord,
+        args: CancelTaskArgs,
+    ) -> Result<Value, String> {
+        match self
+            .runtime
+            .try_handle(envelope(
+                format!("task-tool-cancel-{}", invocation.invocation_id),
+                HostCommand::CancelTask(CancelTaskCommand {
+                    owner_user_id: self.owner_user_id.clone(),
+                    task_id: args.task_id,
+                    expected_version: args.expected_version,
+                    reason: args.reason,
+                }),
+            ))
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            HostResult::TaskGraph { graph } => {
+                serde_json::to_value(graph).map_err(|error| error.to_string())
+            }
+            result => Err(format!("unexpected Task Graph response: {result:?}")),
+        }
+    }
 }
 
 #[async_trait]
@@ -130,27 +120,139 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
     ) -> Result<LocalAgentToolOutcome, String> {
         let parent = self.parent_run(&invocation.run_id).await?;
         if parent.owner_user_id != self.owner_user_id || parent.profile_key != "main_chat" {
-            return Err("Tasks can only be created by the active local Main Chat".to_string());
+            return Err("Task tools are available only to the active local Main Chat".to_string());
         }
-        let graph = match invocation.tool_name.as_str() {
+        let source_context = source_conversation_context(&parent);
+        let conversation_id = source_context
+            .conversation_id
+            .as_deref()
+            .ok_or_else(|| "Task tools require an active conversation context".to_string())?;
+        let output = match invocation.tool_name.as_str() {
+            LIST_TASKS_TOOL => {
+                let args: ListTasksArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid list_tasks input: {error}"))?;
+                let tasks = self
+                    .runtime
+                    .list_tasks_for_conversation(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        args.status,
+                        args.keyword.as_deref(),
+                        args.limit.unwrap_or(50),
+                        args.offset.unwrap_or(0),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                serde_json::to_value(tasks).map_err(|error| error.to_string())?
+            }
+            GET_TASK_TOOL => {
+                let args: TaskIdArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid get_task input: {error}"))?;
+                let task = self
+                    .runtime
+                    .get_task_for_conversation(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        &args.task_id,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
+                serde_json::to_value(task).map_err(|error| error.to_string())?
+            }
             CREATE_TASK_TOOL => {
                 let args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid create_task input: {error}"))?;
-                create_single_graph(invocation, &parent, args)?
+                let graph = create_single_graph(invocation, &parent, args)?;
+                self.create_graph(&invocation.invocation_id, graph).await?
             }
             CREATE_TASKS_TOOL => {
                 let args: CreateTasksArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| {
                         format!("invalid create_tasks_with_prerequisites input: {error}")
                     })?;
-                create_batch_graph(invocation, &parent, args)?
+                let graph = create_batch_graph(invocation, &parent, args)?;
+                self.create_graph(&invocation.invocation_id, graph).await?
+            }
+            CANCEL_TASK_TOOL => {
+                let args: CancelTaskArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid cancel_task input: {error}"))?;
+                let task = self
+                    .runtime
+                    .get_task_for_conversation(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        &args.task_id,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if task.is_none() {
+                    return Err(format!("task not found: {}", args.task_id));
+                }
+                self.cancel_task(invocation, args).await?
+            }
+            WAIT_FOR_TASK_COMPLETION_TOOL => {
+                let _: EmptyArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid wait_for_task_completion input: {error}"))?;
+                json!({
+                    "accepted": true,
+                    "mode": "background",
+                    "message": "The local task system accepted the arranged tasks for background execution.",
+                    "message_zh": "本地任务系统已接收安排好的任务，并会在完成后回写当前会话。"
+                })
+            }
+            GET_TASK_DEPENDENCY_GRAPH_TOOL => {
+                let args: TaskIdArgs = serde_json::from_value(invocation.arguments.clone())
+                    .map_err(|error| format!("invalid get_task_dependency_graph input: {error}"))?;
+                let task = self
+                    .runtime
+                    .get_task_for_conversation(
+                        &parent.owner_user_id,
+                        conversation_id,
+                        &args.task_id,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("task not found: {}", args.task_id))?;
+                self.task_graph(&task.graph_id).await?
             }
             tool_name => return Err(format!("unsupported local Task tool: {tool_name}")),
         };
-        let output = self.create_graph(&invocation.invocation_id, graph).await?;
         Ok(LocalAgentToolOutcome::Succeeded { output })
     }
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListTasksArgs {
+    #[serde(default)]
+    status: Option<LocalTaskStatus>,
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TaskIdArgs {
+    task_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelTaskArgs {
+    task_id: String,
+    reason: String,
+    #[serde(default)]
+    expected_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyArgs {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CreateTaskArgs {
@@ -507,18 +609,27 @@ mod tests {
     #[test]
     fn task_model_definitions_are_host_owned_and_closed() {
         let tools = task_model_tools();
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0]["name"], CREATE_TASK_TOOL);
-        assert_eq!(tools[1]["name"], CREATE_TASKS_TOOL);
-        assert_eq!(tools[0]["parameters"]["additionalProperties"], false);
+        let names = tools
+            .iter()
+            .map(|tool| tool["name"].as_str().expect("tool name"))
+            .collect::<Vec<_>>();
+        assert_eq!(names, TASK_TOOL_NAMES);
+        assert!(tools
+            .iter()
+            .all(|tool| tool["parameters"]["additionalProperties"] == false));
         assert_eq!(
-            tools[1]["parameters"]["properties"]["tasks"]["maxItems"],
+            tools[3]["parameters"]["properties"]["tasks"]["maxItems"],
             50
         );
         assert_eq!(
-            tools[1]["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
+            tools[3]["parameters"]["properties"]["tasks"]["items"]["additionalProperties"],
             false
         );
+        assert!(tools[2]["description"]
+            .as_str()
+            .expect("create task description")
+            .contains("inspecting project files"));
+        assert!(names.iter().all(|name| !name.starts_with("notepad_")));
     }
 
     #[tokio::test]

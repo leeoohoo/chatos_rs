@@ -122,6 +122,118 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .collect()
     }
 
+    async fn list_tasks_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        status: Option<LocalTaskStatus>,
+        keyword: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<LocalTaskRecord>, ClientStorageError> {
+        validate_task_query(owner_user_id, conversation_id, keyword, limit, offset)?;
+        let normalized_keyword = keyword
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(escaped_like_pattern);
+        let status = status.map(LocalTaskStatus::as_str);
+        let rows = sqlx::query(
+            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+             t.model_config_revision, t.capability_policy_revision, t.input_json, \
+             t.max_iterations, t.status, t.active_run_id, t.version, \
+             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
+             g.source_entity_type, g.source_entity_id FROM local_tasks t \
+             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+             JOIN local_conversation_turns source_turn \
+               ON g.source_entity_type = 'conversation_turn' \
+              AND source_turn.turn_id = g.source_entity_id \
+             JOIN local_conversations source_conversation \
+               ON source_conversation.conversation_id = source_turn.conversation_id \
+             JOIN local_conversations current_conversation \
+               ON current_conversation.conversation_id = ? \
+             WHERE g.owner_user_id = ? \
+             AND source_conversation.owner_user_id = ? \
+             AND current_conversation.owner_user_id = ? \
+             AND ((current_conversation.resource_kind = 'project' \
+                   AND current_conversation.resource_id IS NOT NULL \
+                   AND source_conversation.resource_kind = 'project' \
+                   AND source_conversation.resource_id = current_conversation.resource_id) \
+                  OR ((current_conversation.resource_kind IS NULL \
+                       OR current_conversation.resource_kind <> 'project') \
+                      AND source_conversation.conversation_id = \
+                          current_conversation.conversation_id)) \
+             AND (? IS NULL OR t.status = ?) \
+             AND (? IS NULL OR LOWER(t.task_id || ' ' || t.title || ' ' || t.input_json) \
+                  LIKE ? ESCAPE '\\') \
+             ORDER BY t.updated_at_unix_ms DESC, t.task_id DESC LIMIT ? OFFSET ?",
+        )
+        .bind(conversation_id)
+        .bind(owner_user_id)
+        .bind(owner_user_id)
+        .bind(owner_user_id)
+        .bind(status)
+        .bind(status)
+        .bind(normalized_keyword.as_deref())
+        .bind(normalized_keyword.as_deref())
+        .bind(i64::from(limit))
+        .bind(i64::from(offset))
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        rows.into_iter().map(decode_scoped_task).collect()
+    }
+
+    async fn get_task_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        task_id: &str,
+    ) -> Result<Option<LocalTaskRecord>, ClientStorageError> {
+        validate_task_query(owner_user_id, conversation_id, None, 1, 0)?;
+        if task_id.trim().is_empty() || task_id.len() > 256 || task_id.chars().any(char::is_control)
+        {
+            return Err(ClientStorageError::InvalidState(
+                "invalid task id".to_string(),
+            ));
+        }
+        let row = sqlx::query(
+            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+             t.model_config_revision, t.capability_policy_revision, t.input_json, \
+             t.max_iterations, t.status, t.active_run_id, t.version, \
+             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
+             g.source_entity_type, g.source_entity_id FROM local_tasks t \
+             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+             JOIN local_conversation_turns source_turn \
+               ON g.source_entity_type = 'conversation_turn' \
+              AND source_turn.turn_id = g.source_entity_id \
+             JOIN local_conversations source_conversation \
+               ON source_conversation.conversation_id = source_turn.conversation_id \
+             JOIN local_conversations current_conversation \
+               ON current_conversation.conversation_id = ? \
+             WHERE g.owner_user_id = ? \
+             AND source_conversation.owner_user_id = ? \
+             AND current_conversation.owner_user_id = ? \
+             AND ((current_conversation.resource_kind = 'project' \
+                   AND current_conversation.resource_id IS NOT NULL \
+                   AND source_conversation.resource_kind = 'project' \
+                   AND source_conversation.resource_id = current_conversation.resource_id) \
+                  OR ((current_conversation.resource_kind IS NULL \
+                       OR current_conversation.resource_kind <> 'project') \
+                      AND source_conversation.conversation_id = \
+                          current_conversation.conversation_id)) \
+             AND t.task_id = ?",
+        )
+        .bind(conversation_id)
+        .bind(owner_user_id)
+        .bind(owner_user_id)
+        .bind(owner_user_id)
+        .bind(task_id)
+        .fetch_optional(&self.pool)
+        .await
+        .db()?;
+        row.map(decode_scoped_task).transpose()
+    }
+
     async fn start_next_task_run(
         &self,
         owner_user_id: &str,
@@ -422,6 +534,64 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
+}
+
+fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
+    let input: String = row.try_get("input_json").db()?;
+    let status: String = row.try_get("status").db()?;
+    Ok(LocalTaskRecord {
+        graph_id: row.try_get("graph_id").db()?,
+        owner_user_id: row.try_get("owner_user_id").db()?,
+        source_entity_type: row.try_get("source_entity_type").db()?,
+        source_entity_id: row.try_get("source_entity_id").db()?,
+        task_id: row.try_get("task_id").db()?,
+        title: row.try_get("title").db()?,
+        profile_key: row.try_get("profile_key").db()?,
+        model_config_ref: row.try_get("model_config_ref").db()?,
+        model_config_revision: row.try_get("model_config_revision").db()?,
+        capability_policy_revision: row.try_get("capability_policy_revision").db()?,
+        input: serde_json::from_str(&input)?,
+        max_iterations: u32::try_from(row.try_get::<i64, _>("max_iterations").db()?)
+            .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
+        status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
+        active_run_id: row.try_get("active_run_id").db()?,
+        version: u64::try_from(row.try_get::<i64, _>("version").db()?)
+            .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
+        created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
+        updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
+    })
+}
+
+fn validate_task_query(
+    owner_user_id: &str,
+    conversation_id: &str,
+    keyword: Option<&str>,
+    limit: u32,
+    offset: u32,
+) -> Result<(), ClientStorageError> {
+    let valid_identifier = |value: &str| {
+        !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+    };
+    if !valid_identifier(owner_user_id)
+        || !valid_identifier(conversation_id)
+        || !(1..=100).contains(&limit)
+        || offset > 10_000
+        || keyword.is_some_and(|value| value.len() > 500 || value.chars().any(char::is_control))
+    {
+        return Err(ClientStorageError::InvalidState(
+            "invalid task query".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn escaped_like_pattern(value: &str) -> String {
+    let value = value
+        .to_lowercase()
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{value}%")
 }
 
 #[cfg(test)]

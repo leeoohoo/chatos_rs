@@ -71,7 +71,12 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                   case let .string(name)? = tool["name"] else { return nil as String? }
             return name
         }
-        XCTAssertEqual(names, ["local_attachment_read"])
+        XCTAssertEqual(
+            names,
+            NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames
+        )
+        XCTAssertFalse(names.contains("local_attachment_read"))
+        XCTAssertTrue(names.allSatisfy { !NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0) })
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
             [
@@ -237,8 +242,13 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         }
         XCTAssertEqual(Set(names), Set([
             "another_reserved_tool",
+            "list_tasks",
+            "get_task",
             "create_task",
             "create_tasks_with_prerequisites",
+            "cancel_task",
+            "wait_for_task_completion",
+            "get_task_dependency_graph",
         ]))
     }
 

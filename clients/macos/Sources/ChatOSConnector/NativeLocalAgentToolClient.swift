@@ -93,8 +93,13 @@ public struct LocalAgentToolApprovalResult: Decodable, Sendable, Equatable {
 
 public struct NativeLocalAgentToolClient: Sendable {
     public static let reservedRustToolNames = [
+        "list_tasks",
+        "get_task",
         "create_task",
         "create_tasks_with_prerequisites",
+        "cancel_task",
+        "wait_for_task_completion",
+        "get_task_dependency_graph",
     ]
 
     private let host: any LocalAgentHostClientServicing

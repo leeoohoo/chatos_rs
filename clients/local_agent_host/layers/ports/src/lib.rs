@@ -16,7 +16,7 @@ use chatos_local_agent_protocol::{
     LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
     LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
     LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
-    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
@@ -284,6 +284,23 @@ pub trait LocalAgentTaskStore: Send + Sync {
         task_id: &str,
         limit: u32,
     ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
+
+    async fn list_tasks_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        status: Option<LocalTaskStatus>,
+        keyword: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<LocalTaskRecord>, ClientStorageError>;
+
+    async fn get_task_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        task_id: &str,
+    ) -> Result<Option<LocalTaskRecord>, ClientStorageError>;
 
     async fn start_next_task_run(
         &self,

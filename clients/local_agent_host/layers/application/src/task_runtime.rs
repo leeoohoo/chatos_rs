@@ -6,7 +6,7 @@ use chatos_local_agent_ports::{ClientStorageError, IdempotentCommand};
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetTaskRunsCommand, HostCommand, HostResult,
     ListTaskGraphsCommand, LocalAgentRunRecord, LocalTaskGraph, LocalTaskGraphPage,
-    RestartTaskCommand, RetryTaskCommand,
+    LocalTaskRecord, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
 use uuid::Uuid;
 
@@ -59,6 +59,40 @@ impl LocalAgentRuntime {
                 &format!("task-run-event-{}", Uuid::new_v4()),
                 now,
             )
+            .await?)
+    }
+
+    pub async fn list_tasks_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        status: Option<LocalTaskStatus>,
+        keyword: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<LocalTaskRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .list_tasks_for_conversation(
+                owner_user_id,
+                conversation_id,
+                status,
+                keyword,
+                limit,
+                offset,
+            )
+            .await?)
+    }
+
+    pub async fn get_task_for_conversation(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        task_id: &str,
+    ) -> Result<Option<LocalTaskRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_task_for_conversation(owner_user_id, conversation_id, task_id)
             .await?)
     }
 

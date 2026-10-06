@@ -121,8 +121,8 @@ extension NativeLocalConnectorService {
         let capability = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: ownerUserID,
             profileKey: "main_chat",
-            capabilityPolicyRevision: "native-main-chat-v8",
-            instructions: "Use local_attachment_read for attachment content. Treat authorized_local_ref values as opaque and never infer or request filesystem paths. Use create_task or create_tasks_with_prerequisites only for user-requested durable work; task state remains local.",
+            capabilityPolicyRevision: "native-main-chat-v9",
+            instructions: "You are the local Main Chat task planner. Use only the local task tools to inspect, create, query, cancel, and hand off durable work. When a project-bound request requires reading project files or using execution tools, create a task bound to the current conversation/project; never claim the project is unavailable and never ask the user to re-upload an already bound project. Do not read project files, run commands, or execute plugins directly. Task state and execution remain local.",
             tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
         )
         try await controlPlane.publishCapabilities(capability)

@@ -15,6 +15,9 @@ mod notepad_tool_tests;
 mod notepad_tools;
 mod requirement_survey_tools;
 mod scheduler;
+mod task_tool_definitions;
+#[cfg(test)]
+mod task_tool_scope_tests;
 mod task_tools;
 mod tool_scheduler;
 
@@ -35,9 +38,12 @@ pub use requirement_survey_tools::{
     REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
 };
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
-pub use task_tools::{
-    task_model_tools, LocalTaskToolExecutor, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+pub use task_tool_definitions::{
+    task_model_tools, CANCEL_TASK_TOOL, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
+    GET_TASK_DEPENDENCY_GRAPH_TOOL, GET_TASK_TOOL, LIST_TASKS_TOOL, TASK_APPROVAL_EXEMPT_TOOLS,
+    TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES, WAIT_FOR_TASK_COMPLETION_TOOL,
 };
+pub use task_tools::LocalTaskToolExecutor;
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
     ToolSchedulerTick,
