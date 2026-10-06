@@ -393,6 +393,11 @@ public actor NativeLocalAgentConversationService:
                 )],
                 finalAssistantMessage: replies.last?.message,
                 assistantReplies: replies,
+                messageTaskLookup: MessageTaskLookup(
+                    sessionID: turn.conversationID,
+                    turnID: turn.turnID,
+                    sourceUserMessageID: userMessage.id
+                ),
                 isTaskGraphAvailable: true,
                 status: status,
                 startedAt: Date(timeIntervalSince1970: Double(turn.createdAtUnixMs) / 1_000),
