@@ -47,6 +47,28 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.DoesNotContain("Bindings.Update();", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void MediaStudioKeepsHistoryUnifiedAndStoryWorkspaceSectioned()
+    {
+        var xaml = File.ReadAllText(Path.Combine(
+            FindWindowsRoot(),
+            "src",
+            "ChatOS.Desktop",
+            "Features",
+            "MediaStudio",
+            "MediaStudioPage.xaml"));
+
+        Assert.DoesNotContain("x:Name=\"HistoryPivot\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryHistorySection\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"VideoHistorySection\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"ImageHistorySection\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StorySourceSectionItem\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryStyleSectionItem\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryPortraitsSectionItem\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StorySegmentsSectionItem\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryGraphSectionItem\"", xaml, StringComparison.Ordinal);
+    }
+
     private static string FindWindowsRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

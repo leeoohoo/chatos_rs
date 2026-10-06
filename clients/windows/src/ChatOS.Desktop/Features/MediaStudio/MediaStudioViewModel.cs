@@ -121,6 +121,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private VideoGenerationProgress? _videoProgress;
 
     [ObservableProperty]
+    private MediaStudioHistoryItem? _latestImageBatch;
+
+    [ObservableProperty]
     private MediaStudioVideoHistoryItem? _latestVideo;
 
     [ObservableProperty]
@@ -478,6 +481,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         History.Clear();
         VideoHistory.Clear();
         LatestImages.Clear();
+        LatestImageBatch = null;
         ReferenceImages.Clear();
         SelectedModel = null;
         SelectedVideoModel = null;
@@ -508,6 +512,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     private void ShowLatest(MediaStudioHistoryItem? item)
     {
+        LatestImageBatch = item;
         LatestImages.Clear();
         if (item is null) return;
         foreach (var image in item.Images) LatestImages.Add(image);

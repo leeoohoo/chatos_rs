@@ -27,6 +27,8 @@ public sealed partial class MediaStudioPage : Page
         InitializeComponent();
         ViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshState);
         ViewModel.LatestImages.CollectionChanged += (_, _) => RefreshState();
+        ViewModel.History.CollectionChanged += (_, _) => RefreshState();
+        ViewModel.VideoHistory.CollectionChanged += (_, _) => RefreshState();
         StoryViewModel.PropertyChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshState);
         StoryViewModel.Projects.CollectionChanged += (_, _) => RefreshState();
         StoryViewModel.Segments.CollectionChanged += (_, _) => RefreshState();
@@ -59,10 +61,22 @@ public sealed partial class MediaStudioPage : Page
         };
     }
 
-    private void OnHistorySectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
+    private void OnStoryWorkspaceSectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
-        if (HistoryPivot is null || sender.SelectedItem is null) return;
-        HistoryPivot.SelectedIndex = ReferenceEquals(sender.SelectedItem, VideoHistorySectionItem) ? 1 : 0;
+        if (StoryOverviewScroll is null || StorySegmentsSection is null || sender.SelectedItem is null) return;
+        var showSegments = ReferenceEquals(sender.SelectedItem, StorySegmentsSectionItem);
+        StoryOverviewScroll.Visibility = showSegments ? Visibility.Collapsed : Visibility.Visible;
+        StorySegmentsSection.Visibility = showSegments ? Visibility.Visible : Visibility.Collapsed;
+        if (showSegments) return;
+
+        var target = ReferenceEquals(sender.SelectedItem, StoryStyleSectionItem)
+            ? StoryStyleSectionAnchor
+            : ReferenceEquals(sender.SelectedItem, StoryPortraitsSectionItem)
+                ? StoryPortraitsSectionAnchor
+                : ReferenceEquals(sender.SelectedItem, StoryGraphSectionItem)
+                    ? StoryGraphSectionAnchor
+                    : StorySourceSectionAnchor;
+        DispatcherQueue.TryEnqueue(() => target.StartBringIntoView());
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -79,7 +93,9 @@ public sealed partial class MediaStudioPage : Page
 
     private void OnStoryProjectClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is StoryProjectCard card) StoryViewModel.OpenProject(card.Project);
+        if (e.ClickedItem is not StoryProjectCard card) return;
+        StoryViewModel.OpenProject(card.Project);
+        SelectStorySourceSection();
     }
 
     private async void OnLoadMoreStoryProjectsClick(object sender, RoutedEventArgs e) =>
@@ -419,10 +435,27 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.RemoveReferenceImage(image);
     }
 
-    private void OnHistoryItemClick(object sender, ItemClickEventArgs e)
+    private void OnImageHistoryCardClick(object sender, RoutedEventArgs e)
     {
-        if (e.ClickedItem is MediaStudioHistoryItem item)
+        if (sender is Button { DataContext: MediaStudioHistoryItem item })
+        {
             ViewModel.SelectHistoryItem(item);
+            StudioPivot.SelectedIndex = 0;
+        }
+    }
+
+    private void OnStoryHistoryProjectClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StoryProjectCard card }) return;
+        StoryViewModel.OpenProject(card.Project);
+        SelectStorySourceSection();
+        StudioPivot.SelectedIndex = 2;
+    }
+
+    private void SelectStorySourceSection()
+    {
+        if (StoryWorkspaceSectionBar is not null)
+            StoryWorkspaceSectionBar.SelectedItem = StorySourceSectionItem;
     }
 
     private async void OnLoadMoreHistoryClick(object sender, RoutedEventArgs e) =>
@@ -481,10 +514,13 @@ public sealed partial class MediaStudioPage : Page
     private void OnCancelVideoClick(object sender, RoutedEventArgs e) =>
         ViewModel.CancelVideoGeneration();
 
-    private void OnVideoHistoryItemClick(object sender, ItemClickEventArgs e)
+    private void OnVideoHistoryCardClick(object sender, RoutedEventArgs e)
     {
-        if (e.ClickedItem is MediaStudioVideoHistoryItem item)
+        if (sender is Button { DataContext: MediaStudioVideoHistoryItem item })
+        {
             ViewModel.SelectVideoHistoryItem(item);
+            StudioPivot.SelectedIndex = 1;
+        }
     }
 
     private async void OnLoadMoreVideoHistoryClick(object sender, RoutedEventArgs e) =>
@@ -546,18 +582,35 @@ public sealed partial class MediaStudioPage : Page
     {
         var hasImages = ViewModel.LatestImages.Count > 0;
         LatestImageGrid.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
+        LatestImagePromptPanel.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
         CanvasEmptyState.Visibility = hasImages ? Visibility.Collapsed : Visibility.Visible;
         var error = StoryViewModel.ErrorMessage ?? ViewModel.ErrorMessage;
         ErrorInfoBar.IsOpen = !string.IsNullOrWhiteSpace(error);
         ErrorInfoBar.Message = error ?? string.Empty;
+        RefreshHistoryState();
         RefreshVideoState();
         RefreshStoryState();
+    }
+
+    private void RefreshHistoryState()
+    {
+        if (HistoryEmptyState is null) return;
+        var hasStories = StoryViewModel.Projects.Count > 0 || StoryViewModel.HasMoreProjects;
+        var hasVideos = ViewModel.VideoHistory.Count > 0 || ViewModel.HasMoreVideoHistory;
+        var hasImages = ViewModel.History.Count > 0 || ViewModel.HasMoreHistory;
+        HistoryEmptyState.Visibility = hasStories || hasVideos || hasImages
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        StoryHistorySection.Visibility = hasStories ? Visibility.Visible : Visibility.Collapsed;
+        VideoHistorySection.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
+        ImageHistorySection.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RefreshVideoState()
     {
         var videoPath = ViewModel.LatestVideo?.FilePath;
         var hasVideo = videoPath is { Length: > 0 } && File.Exists(videoPath);
+        var hasFailed = string.Equals(ViewModel.VideoProgress?.Status, "failed", StringComparison.OrdinalIgnoreCase);
         if (hasVideo && !string.Equals(_activeVideoPath, videoPath, StringComparison.OrdinalIgnoreCase))
         {
             _activeVideoPath = videoPath;
@@ -568,13 +621,17 @@ public sealed partial class MediaStudioPage : Page
             _activeVideoPath = null;
             VideoPlayer.Source = null;
         }
-        VideoPlayer.Visibility = hasVideo && !ViewModel.IsGeneratingVideo
+        VideoResultPanel.Visibility = hasVideo && !ViewModel.IsGeneratingVideo
             ? Visibility.Visible
             : Visibility.Collapsed;
-        VideoEmptyState.Visibility = !hasVideo && !ViewModel.IsGeneratingVideo
+        VideoEmptyState.Visibility = !hasVideo && !ViewModel.IsGeneratingVideo && !hasFailed
             ? Visibility.Visible
             : Visibility.Collapsed;
+        VideoFailedState.Visibility = hasFailed ? Visibility.Visible : Visibility.Collapsed;
         VideoProgressPanel.Visibility = ViewModel.IsGeneratingVideo
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        VideoCancelButton.Visibility = ViewModel.IsGeneratingVideo
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (ViewModel.VideoProgress?.Percent is { } percent)

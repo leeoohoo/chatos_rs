@@ -86,6 +86,7 @@
                                 <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
 
                                 <Grid Grid.Row="2">
+                                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                     <GridView
                                         x:Name="LatestImageGrid"
                                         Padding="16"
@@ -111,7 +112,14 @@
                                         </GridView.ItemTemplate>
                                     </GridView>
 
-                                    <StackPanel x:Name="CanvasEmptyState" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                    <Border x:Name="LatestImagePromptPanel" Grid.Row="1" Margin="18,0,18,18" Padding="13" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="11" DataContext="{x:Bind ViewModel.LatestImageBatch, Mode=OneWay}">
+                                        <StackPanel Spacing="5">
+                                            <TextBlock Text="提示词" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="{Binding Prompt}" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <StackPanel x:Name="CanvasEmptyState" Grid.RowSpan="2" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
                                         <Border Style="{StaticResource MediaStudioEmptyIconStyle}">
                                             <Border.Background>
                                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -140,7 +148,16 @@
 
                                     <StackPanel Spacing="7">
                                         <TextBlock Text="图片模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <ComboBox AutomationProperties.AutomationId="ChatOS.MediaStudio.Model" HorizontalAlignment="Stretch" DisplayMemberPath="Name" ItemsSource="{x:Bind ViewModel.Models}" SelectedItem="{x:Bind ViewModel.SelectedModel, Mode=TwoWay}" />
+                                        <ComboBox AutomationProperties.AutomationId="ChatOS.MediaStudio.Model" HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.Models}" SelectedItem="{x:Bind ViewModel.SelectedModel, Mode=TwoWay}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="core:MediaGenerationModel">
+                                                    <StackPanel Spacing="2">
+                                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind Provider}" /><Run Text=" · " /><Run Text="{x:Bind ModelName}" /></TextBlock>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
                                     </StackPanel>
 
                                     <StackPanel Spacing="7">
@@ -208,17 +225,33 @@
                                         <TextBlock Text="视频画布" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                         <TextBlock Text="生成完成后自动保存到本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
-                                    <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Text="{x:Bind ViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <StackPanel HorizontalAlignment="Right" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
+                                        <TextBlock VerticalAlignment="Center" Text="{x:Bind ViewModel.VideoProgressLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <Button x:Name="VideoCancelButton" Click="OnCancelVideoClick" Content="停止等待" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                    </StackPanel>
                                 </Grid>
                                 <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
                                 <Grid Grid.Row="2" Padding="18">
-                                    <MediaPlayerElement x:Name="VideoPlayer" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />
+                                    <Grid x:Name="VideoResultPanel" RowSpacing="14">
+                                        <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                        <MediaPlayerElement x:Name="VideoPlayer" MinHeight="360" AreTransportControlsEnabled="True" AutoPlay="False" Stretch="Uniform" />
+                                        <Border Grid.Row="1" Padding="13" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="11" DataContext="{x:Bind ViewModel.LatestVideo, Mode=OneWay}">
+                                            <TextBlock Text="{Binding Prompt}" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </Border>
+                                    </Grid>
                                     <StackPanel x:Name="VideoEmptyState" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
                                         <Border Style="{StaticResource MediaStudioEmptyIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}">
                                             <FontIcon Glyph="&#xE714;" FontSize="24" Foreground="{StaticResource ChatOSPurpleBrush}" />
                                         </Border>
                                         <TextBlock HorizontalAlignment="Center" Text="把镜头描述变成视频" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                         <TextBlock Text="可选择首帧、画面比例、清晰度和时长。任务会自动轮询并下载结果。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="VideoFailedState" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                                        <Border Style="{StaticResource MediaStudioEmptyIconStyle}" Background="{StaticResource ChatOSWarningSoftBrush}">
+                                            <FontIcon Glyph="&#xE7BA;" FontSize="28" Foreground="{StaticResource ChatOSWarningBrush}" />
+                                        </Border>
+                                        <TextBlock HorizontalAlignment="Center" Text="视频生成失败" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                        <TextBlock Text="请检查错误提示或模型配置后重试；以前的视频仍保留在创作记录中。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                     </StackPanel>
                                     <Border x:Name="VideoProgressPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="22" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="14">
                                         <StackPanel Width="300" Spacing="12">
@@ -237,7 +270,16 @@
                                     <TextBlock Text="视频设置" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                     <StackPanel Spacing="7">
                                         <TextBlock Text="视频模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                        <ComboBox HorizontalAlignment="Stretch" DisplayMemberPath="Name" ItemsSource="{x:Bind ViewModel.VideoModels}" SelectedItem="{x:Bind ViewModel.SelectedVideoModel, Mode=TwoWay}" />
+                                        <ComboBox HorizontalAlignment="Stretch" ItemsSource="{x:Bind ViewModel.VideoModels}" SelectedItem="{x:Bind ViewModel.SelectedVideoModel, Mode=TwoWay}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate x:DataType="core:MediaGenerationModel">
+                                                    <StackPanel Spacing="2">
+                                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                        <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind Provider}" /><Run Text=" · " /><Run Text="{x:Bind ModelName}" /></TextBlock>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
                                     </StackPanel>
                                     <StackPanel Spacing="7">
                                         <Grid>
@@ -371,6 +413,7 @@
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="1" />
+                                        <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
                                     <Grid Padding="16,12" ColumnSpacing="10">
@@ -388,16 +431,26 @@
                                     </Grid>
                                     <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
 
-                                    <Grid Grid.Row="2" Padding="16" ColumnSpacing="14">
+                                    <SelectorBar x:Name="StoryWorkspaceSectionBar" Grid.Row="2" Margin="16,8" SelectionChanged="OnStoryWorkspaceSectionChanged">
+                                        <SelectorBarItem x:Name="StorySourceSectionItem" Text="原文与规划" IsSelected="True" />
+                                        <SelectorBarItem x:Name="StoryStyleSectionItem" Text="风格与模型" />
+                                        <SelectorBarItem x:Name="StoryPortraitsSectionItem" Text="角色与场景" />
+                                        <SelectorBarItem x:Name="StorySegmentsSectionItem" Text="分段制作" />
+                                        <SelectorBarItem x:Name="StoryGraphSectionItem" Text="关系与作品" />
+                                    </SelectorBar>
+
+                                    <Grid Grid.Row="3" Padding="16" ColumnSpacing="14">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="340" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                        <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                            <StackPanel Spacing="13">
+                                        <ScrollViewer x:Name="StoryOverviewScroll" Grid.ColumnSpan="2" VerticalScrollBarVisibility="Auto">
+                                            <StackPanel MaxWidth="980" HorizontalAlignment="Center" Spacing="13">
+                                                <Border x:Name="StorySourceSectionAnchor" Height="1" />
                                                 <TextBox Header="项目标题" MaxLength="120" Text="{x:Bind StoryViewModel.ProjectTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                                 <TextBox Header="项目描述" AcceptsReturn="True" MaxLength="4000" MinHeight="60" Text="{x:Bind StoryViewModel.ProjectDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <TextBox Header="附加创作要求（规划、画面和视频全程遵守）" AcceptsReturn="True" MaxLength="2000" MinHeight="70" PlaceholderText="例如：整体更温暖、减少快速运镜、突出主角；随项目保存，可随时修改。" Text="{x:Bind StoryViewModel.CreativeRequirements, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <TextBox Header="剧情原文" AcceptsReturn="True" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" MaxLength="80000" MinHeight="210" PlaceholderText="粘贴完整剧情；快速分段只生成可编辑草稿，不会调用模型。" Text="{x:Bind StoryViewModel.ProjectSource, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <Button Click="OnOptimizeStorySourceClick" Content="AI 优化剧情原文（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeStorySource, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <TextBox Header="全剧摘要" AcceptsReturn="True" MaxLength="16000" MinHeight="80" PlaceholderText="AI 规划完成后会保存在这里，也可以手动编辑。" Text="{x:Bind StoryViewModel.ProjectSummary, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
+                                                <Border x:Name="StoryStyleSectionAnchor" Height="1" />
                                                 <TextBox Header="画面风格" AcceptsReturn="True" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" MaxLength="2000" MinHeight="90" Text="{x:Bind StoryViewModel.VisualStyle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
                                                 <Button Click="OnOptimizeVisualStyleClick" Content="AI 优化画面风格（先生成候选）" IsEnabled="{x:Bind StoryViewModel.CanOptimizeVisualStyle, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <ComboBox Header="画面比例" IsEnabled="{x:Bind StoryViewModel.CanEditPlanningInputs, Mode=OneWay}" ItemsSource="{x:Bind StoryViewModel.Ratios}" SelectedItem="{x:Bind StoryViewModel.ProjectRatio, Mode=TwoWay}" />
@@ -498,6 +551,7 @@
                                                     </StackPanel>
                                                 </Expander>
                                                 <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
+                                                <Border x:Name="StoryPortraitsSectionAnchor" Height="1" />
                                                 <Grid>
                                                     <StackPanel><TextBlock Text="角色 · 场景 · 道具" Style="{StaticResource ChatOSHeadlineTextStyle}" /><TextBlock Text="分段通过稳定素材 ID 复用一致性参考" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
                                                     <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="5">
@@ -528,6 +582,7 @@
                                                     <Border Height="150" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10"><Image Source="{Binding ImagePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" /></Border>
                                                     <TextBlock Text="素材 ID" Style="{StaticResource ChatOSCaptionTextStyle}" /><TextBlock IsTextSelectionEnabled="True" Text="{Binding Id}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                 </StackPanel>
+                                                <Border x:Name="StoryGraphSectionAnchor" Height="1" />
                                                 <Expander Header="{x:Bind StoryViewModel.RelationSummary, Mode=OneWay}">
                                                     <StackPanel Padding="0,8,0,0" Spacing="8">
                                                         <TextBlock Text="点击素材或分段即可定位；不存在的素材 ID 和未关联分段也会显示。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
@@ -615,7 +670,7 @@
                                             </StackPanel>
                                         </ScrollViewer>
 
-                                        <Grid Grid.Column="1" ColumnSpacing="12">
+                                        <Grid x:Name="StorySegmentsSection" Grid.ColumnSpan="2" ColumnSpacing="12" Visibility="Collapsed">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="250" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                             <Grid>
                                                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
@@ -759,98 +814,131 @@
                 </PivotItem>
 
                 <PivotItem Header="记录">
-                    <Grid RowSpacing="12">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                        <Grid>
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="创作记录" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                <TextBlock Text="统一查看图片与视频生成结果" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <ScrollViewer AutomationProperties.AutomationId="ChatOS.MediaStudio.History" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="1180" HorizontalAlignment="Center" Spacing="22">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="创作记录" FontSize="24" FontWeight="SemiBold" />
+                                <TextBlock Text="图片、视频和剧情作品均已自动保存到本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
                             </StackPanel>
-                            <SelectorBar x:Name="HistorySectionBar" HorizontalAlignment="Right" SelectionChanged="OnHistorySectionChanged">
-                                <SelectorBarItem x:Name="ImageHistorySectionItem" Text="图片" IsSelected="True" />
-                                <SelectorBarItem x:Name="VideoHistorySectionItem" Text="视频" />
-                            </SelectorBar>
-                        </Grid>
-                        <Pivot x:Name="HistoryPivot" Grid.Row="1">
-                            <Pivot.Resources>
-                                <Style TargetType="PivotHeaderItem"><Setter Property="Visibility" Value="Collapsed" /></Style>
-                            </Pivot.Resources>
-                            <PivotItem Header="图片记录">
-                    <ListView
-                        AutomationProperties.AutomationId="ChatOS.MediaStudio.History"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        IsItemClickEnabled="True"
-                        ItemClick="OnHistoryItemClick"
-                        ItemsSource="{x:Bind ViewModel.History}"
-                        SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="media:MediaStudioHistoryItem">
-                                <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
-                                    <Grid ColumnSpacing="16">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <ItemsControl ItemsSource="{x:Bind Images}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="media:MediaStudioImageItem">
-                                                    <Image Width="170" Height="110" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="5">
-                                            <TextBlock Text="{x:Bind Prompt}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                            <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                            <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                        </StackPanel>
-                                        <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                        <ListView.Footer>
-                            <Button HorizontalAlignment="Center" Click="OnLoadMoreHistoryClick"
-                                    Content="加载更早记录" Style="{StaticResource ChatOSSecondaryButtonStyle}"
-                                    IsEnabled="{x:Bind ViewModel.CanLoadMoreHistory, Mode=OneWay}"
-                                    Visibility="{x:Bind ViewModel.HasMoreHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </ListView.Footer>
-                    </ListView>
-                </PivotItem>
 
-                            <PivotItem Header="视频记录">
-                    <ListView
-                        Background="Transparent"
-                        BorderThickness="0"
-                        IsItemClickEnabled="True"
-                        ItemClick="OnVideoHistoryItemClick"
-                        ItemsSource="{x:Bind ViewModel.VideoHistory}"
-                        SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="media:MediaStudioVideoHistoryItem">
-                                <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
-                                    <Grid ColumnSpacing="16">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
-                                            <FontIcon Glyph="&#xE714;" Foreground="{StaticResource ChatOSPurpleBrush}" />
-                                        </Border>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="5">
-                                            <TextBlock Text="{x:Bind Prompt}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                            <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                            <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                        </StackPanel>
-                                        <Button Grid.Column="2" Click="OnSaveVideoClick" Content="另存为" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                    </Grid>
+                            <StackPanel x:Name="HistoryEmptyState" MinHeight="420" HorizontalAlignment="Stretch" VerticalAlignment="Center" Spacing="14">
+                                <Border Style="{StaticResource MediaStudioEmptyIconStyle}" Background="{StaticResource ChatOSPurpleSoftBrush}">
+                                    <FontIcon Glyph="&#xE823;" FontSize="30" Foreground="{StaticResource ChatOSPurpleBrush}" />
                                 </Border>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                        <ListView.Footer>
-                            <Button HorizontalAlignment="Center" Click="OnLoadMoreVideoHistoryClick"
-                                    Content="加载更早记录" Style="{StaticResource ChatOSSecondaryButtonStyle}"
-                                    IsEnabled="{x:Bind ViewModel.CanLoadMoreVideoHistory, Mode=OneWay}"
-                                    Visibility="{x:Bind ViewModel.HasMoreVideoHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        </ListView.Footer>
-                    </ListView>
-                            </PivotItem>
-                        </Pivot>
-                    </Grid>
+                                <TextBlock HorizontalAlignment="Center" Text="还没有创作记录" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock HorizontalAlignment="Center" Text="生成图片、视频或剧情作品后，会统一显示在这里。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="StoryHistorySection" Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="剧情作品" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock Text="按项目查看剧情分段进度，打开后可播放和继续制作。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{x:Bind StoryViewModel.Projects}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="2" /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="media:StoryProjectCard">
+                                            <Button Width="500" Margin="0,0,14,14" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnStoryHistoryProjectClick">
+                                                <Border Style="{StaticResource MediaStudioCardStyle}">
+                                                    <Grid ColumnSpacing="14">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
+                                                            <FontIcon Glyph="&#xE714;" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" Spacing="4">
+                                                            <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="{x:Bind Description}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            <TextBlock Text="{x:Bind ProgressLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="2" Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </Grid>
+                                                </Border>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button HorizontalAlignment="Center" Click="OnLoadMoreStoryProjectsClick" Content="加载更早剧情"
+                                        Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                        IsEnabled="{x:Bind StoryViewModel.CanLoadMoreProjects, Mode=OneWay}"
+                                        Visibility="{x:Bind StoryViewModel.HasMoreProjects, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="VideoHistorySection" Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="视频" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock Text="独立视频创作结果" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.VideoHistory}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="media:MediaStudioVideoHistoryItem">
+                                            <Border Margin="0,0,0,10" Style="{StaticResource MediaStudioCardStyle}">
+                                                <Grid ColumnSpacing="16">
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                    <Border Width="44" Height="44" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
+                                                        <FontIcon Glyph="&#xE714;" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                                    </Border>
+                                                    <Button Grid.Column="1" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnVideoHistoryCardClick">
+                                                        <StackPanel Spacing="5">
+                                                            <TextBlock Text="{x:Bind Prompt}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Grid.Column="2" Click="OnSaveVideoClick" Content="另存为" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button HorizontalAlignment="Center" Click="OnLoadMoreVideoHistoryClick" Content="加载更早视频"
+                                        Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                        IsEnabled="{x:Bind ViewModel.CanLoadMoreVideoHistory, Mode=OneWay}"
+                                        Visibility="{x:Bind ViewModel.HasMoreVideoHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="ImageHistorySection" Spacing="12">
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="图片" FontSize="17" FontWeight="SemiBold" />
+                                    <TextBlock Text="独立图片创作结果" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <ItemsControl ItemsSource="{x:Bind ViewModel.History}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="media:MediaStudioHistoryItem">
+                                            <Button Margin="0,0,0,10" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnImageHistoryCardClick">
+                                                <Border Style="{StaticResource MediaStudioCardStyle}">
+                                                    <Grid ColumnSpacing="16">
+                                                        <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                        <ItemsControl ItemsSource="{x:Bind Images}">
+                                                            <ItemsControl.ItemsPanel>
+                                                                <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="1" /></ItemsPanelTemplate>
+                                                            </ItemsControl.ItemsPanel>
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate x:DataType="media:MediaStudioImageItem">
+                                                                    <Image Width="76" Height="76" Margin="0,0,6,0" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="5">
+                                                            <TextBlock Text="{x:Bind Prompt}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                        <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                    </Grid>
+                                                </Border>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Button HorizontalAlignment="Center" Click="OnLoadMoreHistoryClick" Content="加载更早图片"
+                                        Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                                        IsEnabled="{x:Bind ViewModel.CanLoadMoreHistory, Mode=OneWay}"
+                                        Visibility="{x:Bind ViewModel.HasMoreHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
                 </PivotItem>
             </Pivot>
         </Grid>
