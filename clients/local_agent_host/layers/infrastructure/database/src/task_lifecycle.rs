@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
+use super::{
+    task_conversation_writeback, ClientStorageError, SqliteClientStorage, SqliteResultExt,
+};
 use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 use sqlx::{Row, SqliteConnection};
 
@@ -92,7 +94,12 @@ pub(super) async fn start_next_task_run(
     )
     .await
     .db()?;
-    SqliteClientStorage::fetch_run_on(connection, run_id).await
+    let run = SqliteClientStorage::fetch_run_on(connection, run_id).await?;
+    if let Some(run) = run.as_ref() {
+        task_conversation_writeback::write_back_task_run_started(connection, run, now_unix_ms)
+            .await?;
+    }
+    Ok(run)
 }
 
 pub(super) async fn reconcile_task_after_run(

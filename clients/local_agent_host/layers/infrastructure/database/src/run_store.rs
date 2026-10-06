@@ -303,7 +303,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .await
             .db()?;
-            task_conversation_writeback::write_back_terminal_graph(
+            task_conversation_writeback::write_back_terminal_task_run(
                 &mut connection,
                 &run,
                 transition.occurred_at_unix_ms,

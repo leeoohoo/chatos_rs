@@ -159,6 +159,88 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             "### Research\n\nFound the cause.\n\n### Review\n\nBuild failed."
         )
     }
+
+    func testTaskExecutionCallbackMetadataRestoresTaskReplyActions() throws {
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task_runner_callback::message-1::task-1::run-1",
+            conversationID: "conversation-1",
+            turnID: "turn-1",
+            ordinal: 2,
+            role: "assistant",
+            content: .string("我已经处理完了。"),
+            metadata: .object([
+                "kind": .string("task_execution_callback"),
+                "task_runner_async": .object([
+                    "message_kind": .string("task_lifecycle_update"),
+                    "event": .string("task.completed"),
+                    "task_id": .string("task-1"),
+                    "run_id": .string("run-1"),
+                    "status": .string("succeeded"),
+                    "source_session_id": .string("conversation-1"),
+                    "source_turn_id": .string("turn-1"),
+                    "source_user_message_id": .string("message-1"),
+                ]),
+            ]),
+            createdAtUnixMs: 2
+        )
+
+        let reply = try XCTUnwrap(message.replyProjections(sourceUserMessageID: "message-1").first)
+        XCTAssertEqual(reply.messageID, message.messageID)
+        XCTAssertEqual(reply.text, "我已经处理完了。")
+        XCTAssertEqual(reply.taskCallback?.taskID, "task-1")
+        XCTAssertEqual(reply.taskCallback?.runID, "run-1")
+        XCTAssertEqual(reply.taskCallback?.event, "task.completed")
+        XCTAssertEqual(reply.taskCallback?.status, "completed")
+        XCTAssertEqual(reply.taskCallback?.sourceSessionID, "conversation-1")
+        XCTAssertEqual(reply.taskCallback?.sourceTurnID, "turn-1")
+        XCTAssertEqual(reply.taskCallback?.sourceUserMessageID, "message-1")
+    }
+
+    func testLegacyTaskGraphTerminalExpandsIntoIndependentTaskCallbacks() {
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task-graph:graph-1:1",
+            conversationID: "conversation-1",
+            turnID: "turn-1",
+            ordinal: 2,
+            role: "assistant",
+            content: .object([
+                "type": .string("task_graph_terminal"),
+                "tasks": .array([
+                    .object([
+                        "task_id": .string("task-1"),
+                        "title": .string("Research"),
+                        "status": .string("succeeded"),
+                        "terminal_outcome": .object([
+                            "content": .string("Found the cause."),
+                            "reasoning": .string("must stay hidden"),
+                        ]),
+                    ]),
+                    .object([
+                        "task_id": .string("task-2"),
+                        "title": .string("Review"),
+                        "status": .string("failed"),
+                        "terminal_outcome": .object([
+                            "error": .string("Build failed."),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            metadata: .object(["kind": .string("task_graph_terminal")]),
+            createdAtUnixMs: 2
+        )
+
+        let replies = message.replyProjections(sourceUserMessageID: "message-1")
+        XCTAssertEqual(replies.count, 2)
+        XCTAssertEqual(replies.map(\.text), ["Found the cause.", "Build failed."])
+        XCTAssertEqual(replies.map(\.taskCallback?.taskID), ["task-1", "task-2"])
+        XCTAssertEqual(replies.map(\.taskCallback?.event), ["task.completed", "task.failed"])
+        XCTAssertEqual(replies.map(\.taskCallback?.status), ["completed", "failed"])
+        XCTAssertTrue(replies.allSatisfy { !$0.text.contains("must stay hidden") })
+        XCTAssertTrue(replies.allSatisfy {
+            $0.taskCallback?.sourceUserMessageID == "message-1"
+                && $0.taskCallback?.sourceTurnID == "turn-1"
+        })
+    }
 }
 
 private actor ConversationCommandHostStub: LocalAgentHostClientServicing {

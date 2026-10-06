@@ -370,14 +370,20 @@ public actor NativeLocalAgentConversationService:
                 ownerUserID: page.conversation.ownerUserID,
                 conversationID: turn.conversationID
             )
-            let replies = assistants.map { message in
-                ConversationAssistantReply(message: mapMessage(
-                    message,
-                    fallbackID: message.messageID,
-                    attachments: attachmentsByMessage[message.messageID] ?? [],
-                    ownerUserID: page.conversation.ownerUserID,
-                    conversationID: turn.conversationID
-                ))
+            let replies = assistants.flatMap { message in
+                message.replyProjections(sourceUserMessageID: turn.userMessageID).map { projection in
+                    ConversationAssistantReply(
+                        message: mapMessage(
+                            message,
+                            fallbackID: projection.messageID,
+                            attachments: attachmentsByMessage[message.messageID] ?? [],
+                            ownerUserID: page.conversation.ownerUserID,
+                            conversationID: turn.conversationID,
+                            projectedText: projection.text
+                        ),
+                        taskCallback: projection.taskCallback
+                    )
+                }
             }
             let status = mapStatus(turn.status)
             return ConversationTurn(
@@ -412,12 +418,13 @@ public actor NativeLocalAgentConversationService:
         fallbackID: String,
         attachments: [LocalAgentConversationAttachmentRecord],
         ownerUserID: String,
-        conversationID: String
+        conversationID: String,
+        projectedText: String? = nil
     ) -> ChatMessage {
         ChatMessage(
-            id: message?.messageID ?? fallbackID,
+            id: projectedText == nil ? (message?.messageID ?? fallbackID) : fallbackID,
             role: message?.role == "assistant" ? .assistant : .user,
-            text: message?.content.conversationDisplayText ?? "",
+            text: projectedText ?? message?.content.conversationDisplayText ?? "",
             createdAt: Date(
                 timeIntervalSince1970: Double(message?.createdAtUnixMs ?? 0) / 1_000
             ),

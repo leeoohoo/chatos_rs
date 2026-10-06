@@ -165,6 +165,132 @@ public struct LocalAgentConversationMessageRecord: Decodable, Sendable, Equatabl
     }
 }
 
+struct LocalAgentConversationReplyProjection: Sendable, Equatable {
+    let messageID: String
+    let text: String
+    let taskCallback: TaskExecutionCallbackReference?
+}
+
+extension LocalAgentConversationMessageRecord {
+    func replyProjections(sourceUserMessageID: String) -> [LocalAgentConversationReplyProjection] {
+        if let callback = taskCallbackReference(sourceUserMessageID: sourceUserMessageID) {
+            return [LocalAgentConversationReplyProjection(
+                messageID: messageID,
+                text: content.conversationDisplayText,
+                taskCallback: callback
+            )]
+        }
+        guard let contentObject = content.objectValue,
+              contentObject["type"]?.stringValue == "task_graph_terminal",
+              let tasks = contentObject["tasks"]?.arrayValue else {
+            return [LocalAgentConversationReplyProjection(
+                messageID: messageID,
+                text: content.conversationDisplayText,
+                taskCallback: nil
+            )]
+        }
+        let callbacks = tasks.compactMap { task -> LocalAgentConversationReplyProjection? in
+            guard let values = task.objectValue,
+                  let taskID = values["task_id"]?.trimmedString else { return nil }
+            let status = values["status"]?.trimmedString
+            let text = values["terminal_outcome"]?.conversationDisplayText
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let fallback = values["title"]?.trimmedString ?? taskID
+            return LocalAgentConversationReplyProjection(
+                messageID: "\(messageID)::\(taskID)",
+                text: text.isEmpty ? fallback : text,
+                taskCallback: TaskExecutionCallbackReference(
+                    taskID: taskID,
+                    event: Self.terminalEvent(status),
+                    status: Self.callbackStatus(status),
+                    sourceSessionID: conversationID,
+                    sourceTurnID: turnID,
+                    sourceUserMessageID: sourceUserMessageID
+                )
+            )
+        }
+        return callbacks.isEmpty
+            ? [LocalAgentConversationReplyProjection(
+                messageID: messageID,
+                text: content.conversationDisplayText,
+                taskCallback: nil
+            )]
+            : callbacks
+    }
+
+    private func taskCallbackReference(
+        sourceUserMessageID: String
+    ) -> TaskExecutionCallbackReference? {
+        guard let metadataObject = metadata.objectValue,
+              let taskRunner = metadataObject["task_runner_async"]?.objectValue,
+              let taskID = taskRunner["task_id"]?.trimmedString else { return nil }
+        let event = taskRunner["event"]?.trimmedString
+        let status = taskRunner["status"]?.trimmedString
+        return TaskExecutionCallbackReference(
+            taskID: taskID,
+            runID: taskRunner["run_id"]?.trimmedString,
+            event: event,
+            status: Self.callbackStatus(status, event: event),
+            sourceSessionID: taskRunner["source_session_id"]?.trimmedString ?? conversationID,
+            sourceTurnID: taskRunner["source_turn_id"]?.trimmedString ?? turnID,
+            sourceUserMessageID: taskRunner["source_user_message_id"]?.trimmedString
+                ?? sourceUserMessageID
+        )
+    }
+
+    private static func callbackStatus(_ status: String?, event: String? = nil) -> String? {
+        switch status?.lowercased() {
+        case "completed", "succeeded", "success", "done": return "completed"
+        case "failed", "error": return "failed"
+        case "blocked": return "blocked"
+        case "cancelled", "canceled", "stopped": return "cancelled"
+        case "running", "processing", "in_progress": return "running"
+        default: break
+        }
+        switch event?.lowercased() {
+        case "task.completed": return "completed"
+        case "task.failed": return "failed"
+        case "task.blocked": return "blocked"
+        case "task.cancelled", "task.canceled": return "cancelled"
+        case "task.run.started", "task.started": return "running"
+        default: return status
+        }
+    }
+
+    private static func terminalEvent(_ status: String?) -> String? {
+        switch status?.lowercased() {
+        case "completed", "succeeded", "success", "done": "task.completed"
+        case "failed", "error": "task.failed"
+        case "blocked": "task.blocked"
+        case "cancelled", "canceled", "stopped": "task.cancelled"
+        default: nil
+        }
+    }
+}
+
+private extension LocalAgentJSONValue {
+    var objectValue: [String: LocalAgentJSONValue]? {
+        guard case let .object(value) = self else { return nil }
+        return value
+    }
+
+    var arrayValue: [LocalAgentJSONValue]? {
+        guard case let .array(value) = self else { return nil }
+        return value
+    }
+
+    var stringValue: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+
+    var trimmedString: String? {
+        guard let stringValue else { return nil }
+        let value = stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}
+
 public struct LocalAgentConversationAttachmentRecord: Decodable, Sendable, Equatable {
     public let attachmentID: String
     public let conversationID: String

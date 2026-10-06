@@ -67,7 +67,8 @@ pub(crate) async fn cancel_run_on(
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
     task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
-    task_conversation_writeback::write_back_terminal_graph(connection, &run, now_unix_ms).await?;
+    task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+        .await?;
     conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms).await?;
     Ok(run)
 }
