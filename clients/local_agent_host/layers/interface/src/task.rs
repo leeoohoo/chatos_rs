@@ -162,6 +162,15 @@ pub struct GetTaskGraphCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetMessageTaskGraphCommand {
+    pub owner_user_id: String,
+    pub source_conversation_id: String,
+    pub source_turn_id: String,
+    #[serde(default)]
+    pub source_user_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetTaskRunsCommand {
     pub owner_user_id: String,
     pub task_id: String,
@@ -234,6 +243,8 @@ pub struct CancelTaskCommand {
     pub task_id: String,
     pub expected_version: Option<u64>,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replacement_task_ids: Vec<String>,
 }
 
 impl CancelTaskCommand {
@@ -243,7 +254,23 @@ impl CancelTaskCommand {
         if self.expected_version == Some(0) {
             return Err("expected_version must be greater than zero".to_string());
         }
-        validate_text("reason", &self.reason, 4_000)
+        validate_text("reason", &self.reason, 4_000)?;
+        if self.replacement_task_ids.len() > LOCAL_TASK_GRAPH_MAX_TASKS {
+            return Err(format!(
+                "replacement_task_ids must contain at most {LOCAL_TASK_GRAPH_MAX_TASKS} items"
+            ));
+        }
+        let mut unique = HashSet::new();
+        for replacement_task_id in &self.replacement_task_ids {
+            validate_identifier("replacement_task_id", replacement_task_id)?;
+            if replacement_task_id == &self.task_id {
+                return Err("a cancelled task cannot replace itself".to_string());
+            }
+            if !unique.insert(replacement_task_id) {
+                return Err("replacement_task_ids contains a duplicate".to_string());
+            }
+        }
+        Ok(())
     }
 }
 
@@ -293,6 +320,18 @@ impl GetTaskGraphCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
         validate_identifier("graph_id", &self.graph_id)
+    }
+}
+
+impl GetMessageTaskGraphCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("source_conversation_id", &self.source_conversation_id)?;
+        validate_identifier("source_turn_id", &self.source_turn_id)?;
+        if let Some(message_id) = self.source_user_message_id.as_deref() {
+            validate_identifier("source_user_message_id", message_id)?;
+        }
+        Ok(())
     }
 }
 
@@ -355,10 +394,11 @@ impl LocalTaskGraphStatus {
         });
         if has_active {
             let has_progress = tasks.iter().any(|task| {
-                !matches!(
-                    task.status,
-                    LocalTaskStatus::Pending | LocalTaskStatus::Ready
-                )
+                task.active_run_id.is_some()
+                    || !matches!(
+                        task.status,
+                        LocalTaskStatus::Pending | LocalTaskStatus::Ready
+                    )
             });
             return if has_progress {
                 Self::Running
@@ -479,6 +519,31 @@ pub struct LocalTaskGraphPage {
     pub graphs: Vec<LocalTaskGraphSummary>,
     pub next_before_updated_at_unix_ms: Option<i64>,
     pub next_before_graph_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalMessageTaskGraphNode {
+    pub task: LocalTaskRecord,
+    pub depth: u32,
+    pub is_root: bool,
+    pub is_current_message: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalMessageTaskGraphEdge {
+    pub source_task_id: String,
+    pub target_task_id: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocalMessageTaskGraph {
+    pub root_task_ids: Vec<String>,
+    pub nodes: Vec<LocalMessageTaskGraphNode>,
+    pub edges: Vec<LocalMessageTaskGraphEdge>,
+    pub source_conversation_id: String,
+    pub source_turn_id: String,
+    pub source_user_message_id: Option<String>,
 }
 
 #[cfg(test)]

@@ -2,9 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    notepad_model_tools, requirement_survey_model_tools, task_model_tools,
-    LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor, NOTEPAD_READ_ONLY_TOOLS,
-    NOTEPAD_TOOL_NAMES, REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
+    ask_user_model_tools, notepad_model_tools, requirement_survey_model_tools, task_model_tools,
+    task_process_model_tools, task_process_prompt_item, LocalAskUserToolExecutor,
+    LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor, LocalTaskProcessToolExecutor,
+    ASK_USER_TOOL_NAMES, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
+    REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES, TASK_PROCESS_TOOL_NAMES,
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
@@ -142,6 +144,8 @@ impl LocalAgentHostAssembly {
             approval_exempt_tools
                 .into_iter()
                 .chain(TASK_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
+                .chain(ASK_USER_TOOL_NAMES.map(str::to_string))
+                .chain(TASK_PROCESS_TOOL_NAMES.map(str::to_string))
                 .chain([REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
         );
         let main_tools = task_model_tools();
@@ -151,13 +155,21 @@ impl LocalAgentHostAssembly {
         )
         .with_local_tools(main_tools)?;
         let mut task_tools = notepad_model_tools();
+        task_tools.extend(ask_user_model_tools());
         task_tools.extend(requirement_survey_model_tools());
+        task_tools.extend(task_process_model_tools());
         let mut task_execution_planner = ControlPlaneLocalAiStepPlanner::task_execution(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
         )
         .with_local_tools(task_tools)?
-        .with_local_tool_prefixes(["notepad_", "requirement_survey_"])?;
+        .with_local_tool_prefixes([
+            "ask_user_",
+            "notepad_",
+            "requirement_survey_",
+            "task_run_process_",
+        ])?
+        .with_local_prefixed_input_items(vec![task_process_prompt_item()]);
         if let Some(source_id) = memory_source_id {
             main_chat_planner = main_chat_planner.with_memory_source_id(source_id.clone())?;
             task_execution_planner = task_execution_planner.with_memory_source_id(source_id)?;
@@ -194,8 +206,16 @@ impl LocalAgentHostAssembly {
         }
         LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
+        LocalAskUserToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
+            .register_into(&mut tools)?;
         LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
+        let task_process_tools: Arc<dyn LocalToolExecutor> = Arc::new(
+            LocalTaskProcessToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?,
+        );
+        for tool_name in TASK_PROCESS_TOOL_NAMES {
+            tools.register_shared(tool_name, Arc::clone(&task_process_tools))?;
+        }
         let mut tool_scheduler = LocalToolScheduler::new(
             Arc::clone(&runtime),
             tools,
@@ -205,8 +225,10 @@ impl LocalAgentHostAssembly {
         if external_tool_worker {
             let internal_tools = TASK_TOOL_NAMES
                 .into_iter()
+                .chain(ASK_USER_TOOL_NAMES)
                 .chain(NOTEPAD_TOOL_NAMES)
                 .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
+                .chain(TASK_PROCESS_TOOL_NAMES)
                 .map(str::to_string)
                 .collect();
             tool_scheduler = tool_scheduler.with_tool_filter(Some(internal_tools), Vec::new())?;
@@ -220,8 +242,10 @@ impl LocalAgentHostAssembly {
         .with_reserved_ipc_tools(
             TASK_TOOL_NAMES
                 .into_iter()
+                .chain(ASK_USER_TOOL_NAMES)
                 .chain(NOTEPAD_TOOL_NAMES)
-                .chain(REQUIREMENT_SURVEY_TOOL_NAMES),
+                .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
+                .chain(TASK_PROCESS_TOOL_NAMES),
         )?;
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;

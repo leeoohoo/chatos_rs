@@ -45,6 +45,7 @@ mod run_record;
 mod run_recovery_store;
 mod run_store;
 mod schema;
+mod task_callback_display;
 mod task_commands;
 mod task_conversation_writeback;
 mod task_lifecycle;

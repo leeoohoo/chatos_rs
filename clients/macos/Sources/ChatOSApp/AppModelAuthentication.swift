@@ -35,7 +35,14 @@ extension AppModel {
                 projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
-            startLocalAgentHost(ownerUserID: session.user.id)
+            // Authentication and Local Connector pairing can be restored in either order.
+            // Always bootstrap the local control plane after the Host starts so a connector
+            // status value emitted before `authenticatedUserID` was installed cannot leave
+            // conversation settings permanently unconfigured.
+            startLocalAgentHost(
+                ownerUserID: session.user.id,
+                refreshControlPlaneAfterStart: true
+            )
             restartAgentHeartbeatCoordinator()
             restartAgentArtifactStorageCoordinator()
             mediaStudio.activate(userID: session.user.id)
@@ -378,7 +385,10 @@ extension AppModel {
                     await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
                     await askUserPromptService?.configure(ownerUserID: ownerUserID)
                     await turnProcessService?.configure(ownerUserID: ownerUserID)
-                    await platformToolWorker?.configure(ownerUserID: ownerUserID)
+                    try await platformToolWorker?.configure(
+                        ownerUserID: ownerUserID,
+                        externalMCPConfigs: bootstrap.externalMCPConfigs
+                    )
                     conversationCache.values.forEach {
                         $0.localAgentRuntimeDidBecomeReady()
                     }

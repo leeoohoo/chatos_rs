@@ -130,7 +130,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?;
             let candidate = sqlx::query(
-                "SELECT run_id FROM local_agent_runs \
+                "SELECT run_id, status FROM local_agent_runs \
                  WHERE owner_user_id = ? AND iteration < max_iterations AND (\
                     status IN ('queued', 'model_ready', 'continuation_ready') OR \
                     (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)\
@@ -145,6 +145,7 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 return Ok(None);
             };
             let run_id: String = candidate.try_get("run_id").db()?;
+            let candidate_status: String = candidate.try_get("status").db()?;
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'model_running', iteration = iteration + 1, \
                  version = version + 1, claim_token = ?, claim_until_unix_ms = ?, \
@@ -190,6 +191,39 @@ impl LocalAgentRunStore for SqliteClientStorage {
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+            if candidate_status == "queued" && run.owner_entity_type == "task" {
+                let task_started = sqlx::query(
+                    "UPDATE local_tasks SET status = 'running', version = version + 1, \
+                     updated_at_unix_ms = ? WHERE task_id = ? AND status = 'ready' \
+                     AND active_run_id = ?",
+                )
+                .bind(now_unix_ms)
+                .bind(&run.owner_entity_id)
+                .bind(&run.run_id)
+                .execute(&mut *connection)
+                .await
+                .db()?;
+                if task_started.rows_affected() != 1 {
+                    let task_exists: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM local_tasks WHERE task_id = ?")
+                            .bind(&run.owner_entity_id)
+                            .fetch_one(&mut *connection)
+                            .await
+                            .db()?;
+                    if task_exists != 0 {
+                        return Err(ClientStorageError::Conflict(format!(
+                            "queued Task changed before model claim: {}",
+                            run.owner_entity_id
+                        )));
+                    }
+                }
+                task_conversation_writeback::write_back_task_run_started(
+                    &mut connection,
+                    &run,
+                    now_unix_ms,
+                )
+                .await?;
+            }
             let response = Some(LocalAgentRunClaim {
                 worker_id: worker_id.to_string(),
                 claim_token: claim_token.to_string(),

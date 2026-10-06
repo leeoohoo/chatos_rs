@@ -6,6 +6,7 @@
 mod ai_step;
 mod memory;
 mod planner;
+mod planner_tools;
 
 pub use ai_step::{
     reduce_ai_step_outcome, ChatosAiRuntimeStepExecutor, ConservativeToolSafetyPolicy,

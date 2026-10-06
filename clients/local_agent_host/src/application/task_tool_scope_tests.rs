@@ -11,8 +11,7 @@ use chatos_local_agent_protocol::{
     CreateConversationCommand, HostCommand, HostRequestEnvelope, HostResult,
     LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
     LocalAgentToolStatus, LocalConversationResourceBinding, LocalConversationResourceKind,
-    LocalTaskGraph, LocalTaskRecord, LocalTaskStatus, StartConversationTurnCommand,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    StartConversationTurnCommand, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -146,71 +145,65 @@ async fn main_chat_task_tools_query_and_mutate_only_the_current_project_scope() 
     let runtime = runtime_with_project_conversations().await;
     let executor = LocalTaskToolExecutor::new(Arc::clone(&runtime), "user-1").expect("executor");
 
-    let current: LocalTaskGraph = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "create-current",
-                "parent-run",
-                CREATE_TASK_TOOL,
-                json!({
-                    "title": "Inspect README",
-                    "objective": "Read the bound project's README and explain the project"
-                }),
-            ),
-        )
-        .await,
+    let current = succeeded_output(
+        &executor,
+        invocation(
+            "create-current",
+            "parent-run",
+            CREATE_TASK_TOOL,
+            json!({
+                "title": "Inspect README",
+                "objective": "Read the bound project's README and explain the project",
+                "requires_execution": false,
+                "enabled_builtin_kinds": ["CodeMaintainerRead"]
+            }),
+        ),
     )
-    .expect("current Task Graph");
-    let current_task_id = current.tasks[0].task_id.clone();
-    let other: LocalTaskGraph = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "create-other",
-                "other-parent-run",
-                CREATE_TASK_TOOL,
-                json!({
-                    "title": "Other project",
-                    "objective": "Inspect a different bound project"
-                }),
-            ),
-        )
-        .await,
+    .await;
+    let current_task_id = current["id"].as_str().expect("current Task id").to_string();
+    let other = succeeded_output(
+        &executor,
+        invocation(
+            "create-other",
+            "other-parent-run",
+            CREATE_TASK_TOOL,
+            json!({
+                "title": "Other project",
+                "objective": "Inspect a different bound project",
+                "requires_execution": false,
+                "enabled_builtin_kinds": ["CodeMaintainerRead"]
+            }),
+        ),
     )
-    .expect("other Task Graph");
-    let other_task_id = other.tasks[0].task_id.clone();
+    .await;
+    let other_task_id = other["id"].as_str().expect("other Task id").to_string();
 
-    let listed: Vec<LocalTaskRecord> = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "list-current",
-                "parent-run",
-                LIST_TASKS_TOOL,
-                json!({"status": "ready", "keyword": "README"}),
-            ),
-        )
-        .await,
+    let listed = succeeded_output(
+        &executor,
+        invocation(
+            "list-current",
+            "parent-run",
+            LIST_TASKS_TOOL,
+            json!({"status": "queued", "keyword": "README"}),
+        ),
     )
-    .expect("Task list");
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].task_id, current_task_id);
+    .await;
+    assert_eq!(listed.as_array().map(Vec::len), Some(1));
+    assert_eq!(listed[0]["id"], current_task_id);
 
-    let loaded: LocalTaskRecord = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "get-current",
-                "parent-run",
-                GET_TASK_TOOL,
-                json!({"task_id": current_task_id}),
-            ),
-        )
-        .await,
+    let loaded = succeeded_output(
+        &executor,
+        invocation(
+            "get-current",
+            "parent-run",
+            GET_TASK_TOOL,
+            json!({"task_id": current_task_id}),
+        ),
     )
-    .expect("Task record");
-    assert_eq!(loaded.title, "Inspect README");
+    .await;
+    assert_eq!(loaded["title"], "Inspect README");
+    assert!(loaded.get("owner_user_id").is_none());
+    assert!(loaded.get("model_config_revision").is_none());
 
     let cross_project_error = executor
         .execute_tool(&invocation(
@@ -223,20 +216,20 @@ async fn main_chat_task_tools_query_and_mutate_only_the_current_project_scope() 
         .expect_err("another project's Task must stay hidden");
     assert!(cross_project_error.contains("task not found"));
 
-    let dependency_graph: LocalTaskGraph = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "graph-current",
-                "parent-run",
-                GET_TASK_DEPENDENCY_GRAPH_TOOL,
-                json!({"task_id": current_task_id}),
-            ),
-        )
-        .await,
+    let dependency_graph = succeeded_output(
+        &executor,
+        invocation(
+            "graph-current",
+            "parent-run",
+            GET_TASK_DEPENDENCY_GRAPH_TOOL,
+            json!({"task_id": current_task_id}),
+        ),
     )
-    .expect("dependency graph");
-    assert_eq!(dependency_graph.graph_id, current.graph_id);
+    .await;
+    assert_eq!(dependency_graph["task_id"], current_task_id);
+    assert_eq!(dependency_graph["prerequisites"], json!([]));
+    assert_eq!(dependency_graph["transitive_prerequisites"], json!([]));
+    assert_eq!(dependency_graph["ready"], true);
 
     let wait = succeeded_output(
         &executor,
@@ -250,24 +243,21 @@ async fn main_chat_task_tools_query_and_mutate_only_the_current_project_scope() 
     .await;
     assert_eq!(wait["mode"], "background");
 
-    let cancelled: LocalTaskGraph = serde_json::from_value(
-        succeeded_output(
-            &executor,
-            invocation(
-                "cancel-current",
-                "parent-run",
-                CANCEL_TASK_TOOL,
-                json!({
-                    "task_id": current_task_id,
-                    "reason": "The user changed the request",
-                    "expected_version": loaded.version
-                }),
-            ),
-        )
-        .await,
+    let cancelled = succeeded_output(
+        &executor,
+        invocation(
+            "cancel-current",
+            "parent-run",
+            CANCEL_TASK_TOOL,
+            json!({
+                "task_id": current_task_id,
+                "reason": "The user changed the request"
+            }),
+        ),
     )
-    .expect("cancelled graph");
-    assert_eq!(cancelled.tasks[0].status, LocalTaskStatus::Cancelled);
+    .await;
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["task"]["id"], current_task_id);
 }
 
 #[tokio::test]
@@ -279,7 +269,7 @@ async fn task_query_rejects_invalid_paging_before_touching_storage() {
             "bad-list",
             "parent-run",
             LIST_TASKS_TOOL,
-            json!({"limit": 101}),
+            json!({"limit": 501}),
         ))
         .await
         .expect_err("oversized Task page must be rejected");

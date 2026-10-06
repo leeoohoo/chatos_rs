@@ -2,13 +2,141 @@ using System.Text.Json;
 
 namespace ChatOS.Connector.LocalAgent;
 
+internal sealed record WindowsLocalAgentPluginChoice(
+    string PluginKey,
+    string DisplayName,
+    string Description);
+
+internal sealed record WindowsLocalAgentMcpChoice(string Value, string Title);
+
 internal static class WindowsLocalAgentCapabilityCatalog
 {
     public const string Revision = "native-windows-main-chat-v3";
 
-    public static IReadOnlyList<JsonElement> MainChatTools { get; } =
-    [
-        Parse("""
+    public static IReadOnlyList<JsonElement> MainChatTools { get; } = MainChatToolsFor([]);
+
+    public static IReadOnlyList<JsonElement> MainChatToolsFor(
+        IReadOnlyList<WindowsLocalAgentPluginChoice> pluginChoices,
+        IReadOnlyList<WindowsLocalAgentMcpChoice>? builtinChoices = null,
+        IReadOnlyList<WindowsLocalAgentMcpChoice>? externalChoices = null)
+    {
+        builtinChoices ??= [];
+        externalChoices ??= [];
+        var pluginKeys = pluginChoices
+            .OrderBy(choice => choice.PluginKey, StringComparer.Ordinal)
+            .Select(choice => choice.PluginKey)
+            .ToArray();
+        var pluginTitles = pluginChoices
+            .OrderBy(choice => choice.PluginKey, StringComparer.Ordinal)
+            .Select(choice => $"{choice.DisplayName} — {choice.Description}")
+            .ToArray();
+        var maxItems = pluginKeys.Length == 0 ? 0 : 16;
+        return
+        [
+            Parse(JsonSerializer.Serialize(new
+            {
+                type = "function",
+                name = "create_task",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        enabled_builtin_kinds = McpSelection(builtinChoices),
+                        external_mcp_config_ids = McpSelection(externalChoices),
+                        plugin_hints = PluginHints(pluginKeys, pluginTitles, maxItems),
+                    },
+                },
+            })),
+            Parse(JsonSerializer.Serialize(new
+            {
+                type = "function",
+                name = "create_tasks_with_prerequisites",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        tasks = new
+                        {
+                            type = "array",
+                            items = new
+                            {
+                                type = "object",
+                                properties = new
+                                {
+                                    enabled_builtin_kinds = McpSelection(builtinChoices),
+                                    external_mcp_config_ids = McpSelection(externalChoices),
+                                    plugin_hints = PluginHints(pluginKeys, pluginTitles, maxItems),
+                                },
+                            },
+                        },
+                    },
+                },
+            })),
+        ];
+    }
+
+    private static object McpSelection(IReadOnlyList<WindowsLocalAgentMcpChoice> choices)
+    {
+        var ordered = choices
+            .DistinctBy(choice => choice.Value, StringComparer.Ordinal)
+            .OrderBy(choice => choice.Value, StringComparer.Ordinal)
+            .ToArray();
+        return new
+        {
+            type = "array",
+            maxItems = ordered.Length == 0 ? 0 : (int?)null,
+            uniqueItems = true,
+            items = new
+            {
+                type = "string",
+                minLength = 1,
+                @enum = ordered.Select(choice => choice.Value).ToArray(),
+                oneOf = ordered.Select(choice => new
+                {
+                    @const = choice.Value,
+                    title = choice.Title,
+                }).ToArray(),
+            },
+        };
+    }
+
+    private static object PluginHints(
+        IReadOnlyList<string> pluginKeys,
+        IReadOnlyList<string> pluginTitles,
+        int maxItems) => new
+    {
+        type = "array",
+        maxItems,
+        uniqueItems = true,
+        description = pluginKeys.Count == 0
+            ? "No installed Plugin is selectable for this request. Send an empty plugin_hints array."
+            : "Suggest only the minimum installed Plugins required by this Task.",
+        items = new
+        {
+            type = "object",
+            properties = new
+            {
+                plugin_key = new
+                {
+                    type = "string",
+                    minLength = 1,
+                    @enum = pluginKeys,
+                    oneOf = pluginKeys.Zip(pluginTitles, (key, title) => new
+                    {
+                        @const = key,
+                        title,
+                    }).ToArray(),
+                },
+                reason = new { type = "string", maxLength = 1000 },
+            },
+            required = new[] { "plugin_key" },
+            additionalProperties = false,
+        },
+    };
+
+    private static JsonElement AttachmentReadTool { get; } = Parse("""
         {
           "type": "function",
           "name": "local_attachment_read",
@@ -24,11 +152,11 @@ internal static class WindowsLocalAgentCapabilityCatalog
             "additionalProperties": false
           }
         }
-        """),
-    ];
+        """);
 
-    public static IReadOnlyList<JsonElement> TaskExecutionTools { get; } =
+    private static IReadOnlyList<JsonElement> BaseTaskExecutionTools { get; } =
     [
+        AttachmentReadTool,
         Parse("""
         {
           "type": "function",
@@ -200,8 +328,122 @@ internal static class WindowsLocalAgentCapabilityCatalog
         """),
     ];
 
+    public const string RemoteConnectionToolPrefix = "remote_connection_controller_";
+
+    private static IReadOnlyList<JsonElement> RemoteConnectionTools { get; } =
+    [
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_test_connection",
+          "description": "Test the remote connection selected by the user for this conversation.",
+          "parameters": { "type": "object", "properties": {}, "additionalProperties": false }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_run_command",
+          "description": "Run one SSH command on the remote connection selected by the user. Host approval is required.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "working_directory": { "type": "string" },
+              "allow_dangerous": { "type": "boolean" },
+              "max_output_chars": { "type": "integer", "minimum": 1, "maximum": 20000 }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_list_directory",
+          "description": "List entries under a directory on the remote connection selected by the user.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string" },
+              "limit": { "type": "integer", "minimum": 1, "maximum": 1000 }
+            },
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_read_file",
+          "description": "Read a bounded UTF-8 text file from the remote connection selected by the user.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_download_file",
+          "description": "Download bounded file content from the remote connection selected by the user.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "encoding": { "type": "string", "enum": ["text", "base64"] },
+              "max_bytes": { "type": "integer", "minimum": 1, "maximum": 262144 }
+            },
+            "required": ["path"],
+            "additionalProperties": false
+          }
+        }
+        """),
+        Parse("""
+        {
+          "type": "function",
+          "name": "remote_connection_controller_upload_file",
+          "description": "Upload bounded content to the remote connection selected by the user. Host approval is required.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "content": { "type": "string" },
+              "encoding": { "type": "string", "enum": ["text", "base64"] },
+              "create_parent_dirs": { "type": "boolean" },
+              "overwrite": { "type": "boolean" }
+            },
+            "required": ["path", "content"],
+            "additionalProperties": false
+          }
+        }
+        """),
+    ];
+
+    public static IReadOnlyList<JsonElement> TaskExecutionTools { get; } =
+        BaseTaskExecutionTools.Concat(RemoteConnectionTools).ToArray();
+
+    public static IReadOnlyList<JsonElement> TaskExecutionToolsFor(
+        IReadOnlyList<WindowsLocalAgentExternalMcpTool> externalTools) =>
+        TaskExecutionTools.Concat(externalTools.Select(value => value.ModelTool())).ToArray();
+
     public static IReadOnlySet<string> ProjectToolNames { get; } = new HashSet<string>(
-        ["project_list", "project_read", "project_search", "project_write", "terminal_exec"],
+        [
+            "project_list", "project_read", "project_search", "project_write", "terminal_exec",
+            "remote_connection_controller_test_connection",
+            "remote_connection_controller_run_command",
+            "remote_connection_controller_list_directory",
+            "remote_connection_controller_read_file",
+            "remote_connection_controller_download_file",
+            "remote_connection_controller_upload_file",
+        ],
         StringComparer.Ordinal);
 
     public static IReadOnlySet<string> PluginToolNames { get; } = new HashSet<string>(

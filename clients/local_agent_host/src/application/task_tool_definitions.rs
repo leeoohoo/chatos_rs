@@ -10,6 +10,25 @@ pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 pub const CANCEL_TASK_TOOL: &str = "cancel_task";
 pub const WAIT_FOR_TASK_COMPLETION_TOOL: &str = "wait_for_task_completion";
 pub const GET_TASK_DEPENDENCY_GRAPH_TOOL: &str = "get_task_dependency_graph";
+pub const TASK_BUILTIN_KIND_VALUES: [&str; 8] = [
+    "AskUser",
+    "CodeMaintainerRead",
+    "CodeMaintainerWrite",
+    "TerminalController",
+    "RemoteConnectionController",
+    "RequirementSurveyRead",
+    "RequirementSurveyWrite",
+    "Notepad",
+];
+const TASK_SELECTABLE_BUILTIN_KIND_VALUES: [&str; 7] = [
+    "CodeMaintainerRead",
+    "CodeMaintainerWrite",
+    "TerminalController",
+    "RemoteConnectionController",
+    "RequirementSurveyRead",
+    "RequirementSurveyWrite",
+    "Notepad",
+];
 pub const TASK_TOOL_NAMES: [&str; 7] = [
     LIST_TASKS_TOOL,
     GET_TASK_TOOL,
@@ -39,11 +58,15 @@ pub fn task_model_tools() -> Vec<Value> {
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["pending", "ready", "running", "succeeded", "failed", "cancelled", "blocked"]
+                        "enum": ["draft", "ready", "queued", "running", "succeeded", "failed", "blocked", "cancelled", "archived"]
                     },
                     "keyword": {"type": "string", "maxLength": 500},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50},
-                    "offset": {"type": "integer", "minimum": 0, "maximum": 10000, "default": 0}
+                    "tag": {"type": "string", "maxLength": 256},
+                    "scheduled_only": {"type": "boolean"},
+                    "parent_task_id": {"type": "string", "maxLength": 256},
+                    "source_run_id": {"type": "string", "maxLength": 256},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 50},
+                    "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 0}
                 },
                 "additionalProperties": false
             }
@@ -69,9 +92,34 @@ pub fn task_model_tools() -> Vec<Value> {
                     "title": {"type": "string", "minLength": 1},
                     "objective": {"type": "string", "minLength": 1},
                     "description": {"type": "string"},
-                    "input_payload": {"type": "object"}
+                    "input_payload": {},
+                    "priority": {"type": "integer"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "uniqueItems": true
+                    },
+                    "default_model_config_id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
+                    },
+                    "requires_execution": {
+                        "type": "boolean",
+                        "description": "Whether this Task needs command execution, tests, builds, Git operations, or file mutation. Project reads remain available without an execution workspace."
+                    },
+                    "enabled_builtin_kinds": builtin_kind_selection_schema(),
+                    "external_mcp_config_ids": {
+                        "type": "array",
+                        "maxItems": 0,
+                        "items": {"type": "string"},
+                        "description": "External MCP configurations are not locally selectable yet; send an empty array."
+                    },
+                    "plugin_hints": plugin_hints_schema(),
+                    "prerequisite_task_ids": prerequisite_task_ids_schema(),
+                    "schedule": task_schedule_schema()
                 },
-                "required": ["title", "objective"],
+                "required": ["title", "objective", "requires_execution", "enabled_builtin_kinds"],
                 "additionalProperties": false
             }
         }),
@@ -93,14 +141,47 @@ pub fn task_model_tools() -> Vec<Value> {
                                 "title": {"type": "string", "minLength": 1},
                                 "objective": {"type": "string", "minLength": 1},
                                 "description": {"type": "string"},
-                                "input_payload": {"type": "object"},
+                                "input_payload": {},
+                                "priority": {"type": "integer"},
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "uniqueItems": true
+                                },
+                                "default_model_config_id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
+                                },
+                                "requires_execution": {"type": "boolean"},
+                                "enabled_builtin_kinds": builtin_kind_selection_schema(),
+                                "external_mcp_config_ids": {
+                                    "type": "array",
+                                    "maxItems": 0,
+                                    "items": {"type": "string"}
+                                },
+                                "plugin_hints": plugin_hints_schema(),
+                                "owned_paths": {
+                                    "type": "array",
+                                    "maxItems": 200,
+                                    "items": {"type": "string", "minLength": 1},
+                                    "uniqueItems": true
+                                },
                                 "prerequisite_refs": {
                                     "type": "array",
                                     "items": {"type": "string", "minLength": 1},
                                     "uniqueItems": true
-                                }
+                                },
+                                "context_refs": {
+                                    "type": "array",
+                                    "items": {"type": "string", "minLength": 1},
+                                    "uniqueItems": true,
+                                    "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling."
+                                },
+                                "prerequisite_task_ids": prerequisite_task_ids_schema(),
+                                "schedule": task_schedule_schema()
                             },
-                            "required": ["client_ref", "title", "objective"],
+                            "required": ["client_ref", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
                             "additionalProperties": false
                         }
                     }
@@ -117,8 +198,13 @@ pub fn task_model_tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "string", "minLength": 1},
-                    "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-                    "expected_version": {"type": "integer", "minimum": 1}
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "replacement_task_ids": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "uniqueItems": true,
+                        "description": "New Task ids that supersede this Task. Replacement cancellations are internal plan maintenance and do not publish a user-facing cancellation callback."
+                    }
                 },
                 "required": ["task_id", "reason"],
                 "additionalProperties": false
@@ -142,4 +228,51 @@ pub fn task_model_tools() -> Vec<Value> {
             }
         }),
     ]
+}
+
+fn builtin_kind_selection_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string", "enum": TASK_SELECTABLE_BUILTIN_KIND_VALUES},
+        "uniqueItems": true,
+        "description": "Select only the minimum local capabilities required by this Task. AskUser is added automatically when required by policy; CodeMaintainerWrite implies CodeMaintainerRead; RequirementSurveyWrite implies RequirementSurveyRead."
+    })
+}
+
+fn plugin_hints_schema() -> Value {
+    json!({
+        "type": "array",
+        "maxItems": 16,
+        "items": {
+            "type": "object",
+            "properties": {
+                "plugin_key": {"type": "string", "minLength": 1},
+                "reason": {"type": "string", "maxLength": 1000}
+            },
+            "required": ["plugin_key"],
+            "additionalProperties": false
+        }
+    })
+}
+
+fn prerequisite_task_ids_schema() -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+        "uniqueItems": true,
+        "description": "Existing local Task ids that must complete successfully before this Task runs. Use only ids returned by Task tools for the current user and project."
+    })
+}
+
+fn task_schedule_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": ["manual", "once", "interval", "contact_async"]},
+            "run_at": {"type": "string", "description": "Optional RFC 3339 time at which this Task may start."},
+            "interval_seconds": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": false,
+        "description": "Optional scheduling request. Main Chat Tasks retain contact_async behavior; a supplied run_at delays local execution."
+    })
 }

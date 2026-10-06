@@ -24,7 +24,7 @@ public sealed class WindowsLocalAgentHostLifecycleTests
         Assert.Same(fast, await Task.WhenAny(slow, fast));
         Assert.Equal("fast", (await fast).Value);
         Assert.Equal("slow", (await slow).Value);
-        Assert.All(process.ProtocolVersions, value => Assert.Equal(39, value));
+        Assert.All(process.ProtocolVersions, value => Assert.Equal(40, value));
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public sealed class WindowsLocalAgentHostLifecycleTests
                 await Task.Delay(delayMilliseconds, _lifetime.Token).ConfigureAwait(false);
             var payload = JsonSerializer.SerializeToUtf8Bytes(new
             {
-                protocol_version = 39,
+                protocol_version = 40,
                 command_id = commandId,
                 ok = true,
                 result,

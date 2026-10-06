@@ -5,6 +5,7 @@ namespace ChatOS.Connector.Plugins;
 
 public sealed record LocalConnectorPlugin(
     string PluginId,
+    string PluginKey,
     string DisplayName,
     string Description,
     string Category,
@@ -61,6 +62,9 @@ internal sealed class LocalPluginManagementService(
             var version = source.Release.Version ?? source.Release.Id;
             return new LocalConnectorPlugin(
                 source.Catalog.Id,
+                string.IsNullOrWhiteSpace(source.Catalog.PluginKey)
+                    ? source.Catalog.Id
+                    : source.Catalog.PluginKey.Trim(),
                 source.Catalog.DisplayName ?? source.Catalog.Name ?? source.Catalog.Id,
                 source.Catalog.Description ?? string.Empty,
                 source.Catalog.Category ?? "Plugin",

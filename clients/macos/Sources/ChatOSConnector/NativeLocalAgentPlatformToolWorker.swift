@@ -1,733 +1,556 @@
 import ChatOSCore
 import Foundation
 
-public enum NativeLocalAgentPlatformToolCatalog {
-    public static let attachmentReadToolName = "local_attachment_read"
-    public static let listTasksToolName = "list_tasks"
-    public static let getTaskToolName = "get_task"
-    public static let createTaskToolName = "create_task"
-    public static let createTasksToolName = "create_tasks_with_prerequisites"
-    public static let cancelTaskToolName = "cancel_task"
-    public static let waitForTaskCompletionToolName = "wait_for_task_completion"
-    public static let getTaskDependencyGraphToolName = "get_task_dependency_graph"
-    public static let mainChatTaskToolNames = [
-        listTasksToolName,
-        getTaskToolName,
-        createTaskToolName,
-        createTasksToolName,
-        cancelTaskToolName,
-        waitForTaskCompletionToolName,
-        getTaskDependencyGraphToolName,
-    ]
-    private static let projectReadOnlyToolNames = [
-        "read_file_raw", "read_file_range", "list_dir", "search_text", "read_file",
-        "search_files",
-    ]
-    private static let terminalReadOnlyToolNames = [
-        "process_poll", "process_log", "process_wait",
-    ]
-    private static let pluginReadOnlyToolNames =
-        NativeAgentCapabilityBrokerToolCatalog.readOnlyToolNames.sorted()
-    static let taskExecutionTerminalToolNames: Set<String> = [
-        "execute_command", "process_poll", "process_log", "process_wait", "process_write",
-        "process_kill",
-    ]
-    public static let readOnlyToolNames = [attachmentReadToolName]
-        + projectReadOnlyToolNames + terminalReadOnlyToolNames
-        + pluginReadOnlyToolNames
-    public static let approvalExemptToolNames = [
-        "open_edit_session", "stage_edit_batch", "abort_edit_session",
-        NativeAgentCapabilityBrokerToolCatalog.invokeToolName,
-    ]
-
-    public static let capabilityTools: [LocalAgentJSONValue] = [
-        taskTool(
-            name: listTasksToolName,
-            description: "List durable local tasks created from the current conversation/project. Use keyword when the user refers to earlier work.",
-            properties: [
-                "status": .object([
-                    "type": .string("string"),
-                    "enum": .array([
-                        "pending", "ready", "running", "succeeded", "failed",
-                        "cancelled", "blocked",
-                    ].map(LocalAgentJSONValue.string)),
-                ]),
-                "keyword": .object(["type": .string("string"), "maxLength": .number(500)]),
-                "limit": .object([
-                    "type": .string("integer"), "minimum": .number(1),
-                    "maximum": .number(100), "default": .number(50),
-                ]),
-                "offset": .object([
-                    "type": .string("integer"), "minimum": .number(0),
-                    "maximum": .number(10_000), "default": .number(0),
-                ]),
-            ]
-        ),
-        taskIDTool(
-            name: getTaskToolName,
-            description: "Get one durable local task created from the current conversation/project."
-        ),
-        taskTool(
-            name: createTaskToolName,
-            description: "Create one durable local task for the current conversation/project. Use this whenever answering requires inspecting project files, using execution tools, or doing tracked work; never ask the user to re-upload an already bound project.",
-            properties: [
-                "title": .object(["type": .string("string"), "minLength": .number(1)]),
-                "objective": .object(["type": .string("string"), "minLength": .number(1)]),
-                "description": .object(["type": .string("string")]),
-                "input_payload": .object(["type": .string("object")]),
-            ],
-            required: ["title", "objective"]
-        ),
-        .object([
-            "type": .string("function"),
-            "name": .string(createTasksToolName),
-            "description": .string(
-                "Create a durable local task graph for the current conversation/project. Use investigation, implementation and review stages when prerequisites are needed instead of asking the user to provide the bound project again."
-            ),
-            "parameters": .object([
-                "type": .string("object"),
-                "properties": .object([
-                    "tasks": .object([
-                        "type": .string("array"),
-                        "minItems": .number(1),
-                        "maxItems": .number(50),
-                        "items": .object([
-                            "type": .string("object"),
-                            "properties": .object([
-                                "client_ref": .object([
-                                    "type": .string("string"), "minLength": .number(1),
-                                ]),
-                                "title": .object([
-                                    "type": .string("string"), "minLength": .number(1),
-                                ]),
-                                "objective": .object([
-                                    "type": .string("string"), "minLength": .number(1),
-                                ]),
-                                "description": .object(["type": .string("string")]),
-                                "input_payload": .object(["type": .string("object")]),
-                                "prerequisite_refs": .object([
-                                    "type": .string("array"),
-                                    "items": .object([
-                                        "type": .string("string"), "minLength": .number(1),
-                                    ]),
-                                    "uniqueItems": .bool(true),
-                                ]),
-                            ]),
-                            "required": .array([
-                                .string("client_ref"), .string("title"), .string("objective"),
-                            ]),
-                            "additionalProperties": .bool(false),
-                        ]),
-                    ]),
-                ]),
-                "required": .array([.string("tasks")]),
-                "additionalProperties": .bool(false),
-            ]),
-        ]),
-        taskTool(
-            name: cancelTaskToolName,
-            description: "Cancel a pending or running local task from the current conversation/project because it conflicts with the user's latest intent.",
-            properties: [
-                "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
-                "reason": .object([
-                    "type": .string("string"), "minLength": .number(1),
-                    "maxLength": .number(4_000),
-                ]),
-                "expected_version": .object([
-                    "type": .string("integer"), "minimum": .number(1),
-                ]),
-            ],
-            required: ["task_id", "reason"]
-        ),
-        taskTool(
-            name: waitForTaskCompletionToolName,
-            description: "Use exactly once after tasks have been created or adjusted. This is a background handoff signal, not polling; the final result is written back to this conversation."
-        ),
-        taskIDTool(
-            name: getTaskDependencyGraphToolName,
-            description: "Get the complete dependency graph containing one task from the current conversation/project."
-        ),
-    ]
-
-    private static func taskIDTool(
-        name: String,
-        description: String
-    ) -> LocalAgentJSONValue {
-        taskTool(
-            name: name,
-            description: description,
-            properties: [
-                "task_id": .object(["type": .string("string"), "minLength": .number(1)]),
-            ],
-            required: ["task_id"]
-        )
-    }
-
-    private static func taskTool(
-        name: String,
-        description: String,
-        properties: [String: LocalAgentJSONValue] = [:],
-        required: [String] = []
-    ) -> LocalAgentJSONValue {
-        var parameters: [String: LocalAgentJSONValue] = [
-            "type": .string("object"),
-            "properties": .object(properties),
-            "additionalProperties": .bool(false),
-        ]
-        if !required.isEmpty {
-            parameters["required"] = .array(required.map(LocalAgentJSONValue.string))
-        }
-        return .object([
-            "type": .string("function"),
-            "name": .string(name),
-            "description": .string(description),
-            "parameters": .object(parameters),
-        ])
-    }
-
-    public static let taskExecutionCapabilityTools: [LocalAgentJSONValue] =
-        NativeMCPCodeReadTools.toolDefinitions.compactMap { value in
-            guard case let .object(tool) = value,
-                  case let .string(name)? = tool["name"],
-                  projectReadOnlyToolNames.contains(name) else { return nil }
-            return capabilityTool(value)
-        }
-        + NativeMCPCodeWriteStore.toolDefinitions.map(capabilityTool)
-        + NativeMCPTerminalStore.toolDefinitions.compactMap { value in
-            guard case let .object(tool) = value,
-                  case let .string(name)? = tool["name"],
-                  taskExecutionTerminalToolNames.contains(name) else { return nil }
-            return capabilityTool(value)
-        }
-        + NativeAgentCapabilityBrokerToolCatalog.localAgentCapabilityTools
-
-    static var taskExecutionToolNames: Set<String> {
-        Set(taskExecutionCapabilityTools.compactMap { value in
-            guard case let .object(tool) = value,
-                  case let .string(name)? = tool["name"] else { return nil }
-            return name
-        })
-    }
-
-    private static func capabilityTool(_ value: NativeJSONValue) -> LocalAgentJSONValue {
-        guard case let .object(tool) = value,
-              case let .string(name)? = tool["name"],
-              case let .object(schema)? = tool["inputSchema"] else {
-            preconditionFailure("Native project-read tool definition is invalid")
-        }
-        let description: String
-        if case let .string(value)? = tool["description"] { description = value }
-        else { description = "" }
-        return .object([
-            "type": .string("function"),
-            "name": .string(name),
-            "description": .string(description),
-            "parameters": .object(schema.mapValues(LocalAgentJSONValue.init(native:))),
-        ])
-    }
-}
-
 protocol NativeLocalAgentPlatformToolExecuting: Sendable {
-    func execute(
-        ownerUserID: String,
-        invocation: LocalAgentToolInvocationRecord
-    ) async throws -> LocalAgentJSONValue
-    func reset() async
+  func execute(
+    ownerUserID: String,
+    invocation: LocalAgentToolInvocationRecord
+  ) async throws -> LocalAgentJSONValue
+  func configureExternalMCPs(
+    _ configs: [NativeLocalAgentExternalMCPConfig]
+  ) async throws
+  func reset() async
 }
 
 extension NativeLocalAgentPlatformToolExecuting {
-    func reset() async {}
+  func configureExternalMCPs(
+    _: [NativeLocalAgentExternalMCPConfig]
+  ) async throws {}
+  func reset() async {}
 }
 
 struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting, Sendable {
-    private let runtime: NativeLocalAgentRuntimeClient
-    private let conversations: NativeLocalAgentConversationClient
-    private let attachmentVault: NativeLocalAgentAttachmentVault
-    private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
+  private let runtime: NativeLocalAgentRuntimeClient
+  private let conversations: NativeLocalAgentConversationClient
+  private let attachmentVault: NativeLocalAgentAttachmentVault
+  private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
+  private let externalMCPs: NativeLocalAgentExternalMCPExecutor
 
-    init(
-        host: any LocalAgentHostClientServicing,
-        attachmentRootURL: URL,
-        projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil
-    ) {
-        runtime = .init(host: host)
-        conversations = .init(host: host)
-        attachmentVault = .init(rootURL: attachmentRootURL)
-        self.projectTools = projectTools
-    }
+  init(
+    host: any LocalAgentHostClientServicing,
+    attachmentRootURL: URL,
+    projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil
+  ) {
+    runtime = .init(host: host)
+    conversations = .init(host: host)
+    attachmentVault = .init(rootURL: attachmentRootURL)
+    self.projectTools = projectTools
+    externalMCPs = .init(host: host)
+  }
 
-    func execute(
-        ownerUserID: String,
-        invocation: LocalAgentToolInvocationRecord
-    ) async throws -> LocalAgentJSONValue {
-        if NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains(invocation.toolName) {
-            guard let projectTools else {
-                throw NativeLocalAgentPlatformToolError.projectUnavailable
-            }
-            return try await projectTools.execute(
-                ownerUserID: ownerUserID,
-                invocation: invocation
-            )
-        }
-        guard invocation.toolName == NativeLocalAgentPlatformToolCatalog.attachmentReadToolName else {
-            throw NativeLocalAgentPlatformToolError.unsupportedTool
-        }
-        let arguments = try Self.object(invocation.arguments)
-        let authorizedLocalRef = try Self.string(
-            arguments["authorized_local_ref"],
-            field: "authorized_local_ref"
-        )
-        let offset = try Self.integer(arguments["offset"] ?? .number(0), field: "offset")
-        let limit = try Self.integer(
-            arguments["limit"] ?? .number(16_384),
-            field: "limit"
-        )
-        guard offset >= 0, limit > 0, limit <= NativeLocalAgentAttachmentVault.maximumReadBytes else {
-            throw NativeLocalAgentPlatformToolError.invalidArguments
-        }
-        let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
-        guard run.ownerUserID == ownerUserID,
-              case let .object(input) = run.input,
-              case let .string(conversationID)? = input["conversation_id"] else {
-            throw NativeLocalAgentPlatformToolError.invalidRunContext
-        }
-        let conversation = try await conversations.get(
-            ownerUserID: ownerUserID,
-            conversationID: conversationID
-        )
-        guard let attachment = conversation.attachments.first(where: {
-            $0.authorizedLocalRef == authorizedLocalRef
-        }) else {
-            throw NativeLocalAgentPlatformToolError.attachmentNotAuthorized
-        }
-        do {
-            return try await attachmentVault.resolve(
-                attachment,
-                ownerUserID: ownerUserID,
-                conversationID: conversationID,
-                offset: UInt64(offset),
-                limit: limit
-            ).jsonValue
-        } catch let error as NativeLocalAgentAttachmentVaultError {
-            throw error
-        } catch {
-            // Filesystem errors can contain a real local path. Collapse them
-            // before the outcome crosses IPC and becomes model-visible.
-            throw NativeLocalAgentAttachmentVaultError.invalidAttachment
-        }
+  func execute(
+    ownerUserID: String,
+    invocation: LocalAgentToolInvocationRecord
+  ) async throws -> LocalAgentJSONValue {
+    if await externalMCPs.contains(invocation.toolName) {
+      return try await externalMCPs.execute(
+        ownerUserID: ownerUserID,
+        invocation: invocation
+      )
     }
+    if NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains(invocation.toolName) {
+      guard let projectTools else {
+        throw NativeLocalAgentPlatformToolError.projectUnavailable
+      }
+      return try await projectTools.execute(
+        ownerUserID: ownerUserID,
+        invocation: invocation
+      )
+    }
+    guard invocation.toolName == NativeLocalAgentPlatformToolCatalog.attachmentReadToolName else {
+      throw NativeLocalAgentPlatformToolError.unsupportedTool
+    }
+    let arguments = try Self.object(invocation.arguments)
+    let authorizedLocalRef = try Self.string(
+      arguments["authorized_local_ref"],
+      field: "authorized_local_ref"
+    )
+    let offset = try Self.integer(arguments["offset"] ?? .number(0), field: "offset")
+    let limit = try Self.integer(
+      arguments["limit"] ?? .number(16_384),
+      field: "limit"
+    )
+    guard offset >= 0, limit > 0, limit <= NativeLocalAgentAttachmentVault.maximumReadBytes else {
+      throw NativeLocalAgentPlatformToolError.invalidArguments
+    }
+    let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
+    guard run.ownerUserID == ownerUserID,
+      case .object(let input) = run.input,
+      case .string(let conversationID)? =
+        input["source_conversation_id"] ?? input["conversation_id"]
+    else {
+      throw NativeLocalAgentPlatformToolError.invalidRunContext
+    }
+    let conversation = try await conversations.get(
+      ownerUserID: ownerUserID,
+      conversationID: conversationID
+    )
+    guard
+      let attachment = conversation.attachments.first(where: {
+        $0.authorizedLocalRef == authorizedLocalRef
+      })
+    else {
+      throw NativeLocalAgentPlatformToolError.attachmentNotAuthorized
+    }
+    do {
+      return try await attachmentVault.resolve(
+        attachment,
+        ownerUserID: ownerUserID,
+        conversationID: conversationID,
+        offset: UInt64(offset),
+        limit: limit
+      ).jsonValue
+    } catch let error as NativeLocalAgentAttachmentVaultError {
+      throw error
+    } catch {
+      // Filesystem errors can contain a real local path. Collapse them
+      // before the outcome crosses IPC and becomes model-visible.
+      throw NativeLocalAgentAttachmentVaultError.invalidAttachment
+    }
+  }
 
-    func reset() async {
-        await projectTools?.reset()
-    }
+  func reset() async {
+    await externalMCPs.reset()
+    await projectTools?.reset()
+  }
 
-    private static func object(
-        _ value: LocalAgentJSONValue
-    ) throws -> [String: LocalAgentJSONValue] {
-        guard case let .object(object) = value else {
-            throw NativeLocalAgentPlatformToolError.invalidArguments
-        }
-        return object
-    }
+  func configureExternalMCPs(
+    _ configs: [NativeLocalAgentExternalMCPConfig]
+  ) async throws {
+    try await externalMCPs.configure(configs)
+  }
 
-    private static func string(
-        _ value: LocalAgentJSONValue?,
-        field: String
-    ) throws -> String {
-        guard case let .string(result)? = value, !result.isEmpty else {
-            throw NativeLocalAgentPlatformToolError.invalidField(field)
-        }
-        return result
+  private static func object(
+    _ value: LocalAgentJSONValue
+  ) throws -> [String: LocalAgentJSONValue] {
+    guard case .object(let object) = value else {
+      throw NativeLocalAgentPlatformToolError.invalidArguments
     }
+    return object
+  }
 
-    private static func integer(
-        _ value: LocalAgentJSONValue,
-        field: String
-    ) throws -> Int {
-        guard case let .number(number) = value,
-              number.isFinite,
-              number.rounded() == number,
-              let result = Int(exactly: number) else {
-            throw NativeLocalAgentPlatformToolError.invalidField(field)
-        }
-        return result
+  private static func string(
+    _ value: LocalAgentJSONValue?,
+    field: String
+  ) throws -> String {
+    guard case .string(let result)? = value, !result.isEmpty else {
+      throw NativeLocalAgentPlatformToolError.invalidField(field)
     }
+    return result
+  }
+
+  private static func integer(
+    _ value: LocalAgentJSONValue,
+    field: String
+  ) throws -> Int {
+    guard case .number(let number) = value,
+      number.isFinite,
+      number.rounded() == number,
+      let result = Int(exactly: number)
+    else {
+      throw NativeLocalAgentPlatformToolError.invalidField(field)
+    }
+    return result
+  }
 }
 
 enum NativeLocalAgentPlatformToolPollingPolicy {
-    static let activityWindow = Duration.seconds(15)
-    static let eventMonitoringWindow = Duration.seconds(300)
+  static let activityWindow = Duration.seconds(15)
+  static let eventMonitoringWindow = Duration.seconds(300)
 
-    static func shouldWake(forEventTypes eventTypes: [String]) -> Bool {
-        eventTypes.contains { eventType in
-            eventType == "tool_batch_requested"
-                || eventType == "tool_invocation_approved"
-                || eventType == "tool_claim_expired_requeued"
-        }
+  static func shouldWake(forEventTypes eventTypes: [String]) -> Bool {
+    eventTypes.contains { eventType in
+      eventType == "tool_batch_requested"
+        || eventType == "tool_invocation_approved"
+        || eventType == "tool_claim_expired_requeued"
     }
+  }
 }
 
 public actor NativeLocalAgentPlatformToolWorker {
-    private enum ClaimExecutionResult: Sendable {
-        case outcome(LocalAgentToolOutcome)
-        case leaseLost
+  private enum ClaimExecutionResult: Sendable {
+    case outcome(LocalAgentToolOutcome)
+    case leaseLost
+  }
+
+  private let client: NativeLocalAgentToolClient
+  private let executor: any NativeLocalAgentPlatformToolExecuting
+  private let approvalHandler: (any NativeLocalAgentToolApprovalHandling)?
+  private let eventHub: NativeLocalAgentEventHub?
+  private let workerID: String
+  private let claimLeaseDurationMilliseconds: UInt64
+  private let claimHeartbeatInterval: Duration
+  private let activityWindow: Duration
+  private var ownerUserID: String?
+  private var generation = UUID()
+  private var pollingTask: Task<Void, Never>?
+  private var eventWakeTask: Task<Void, Never>?
+  private var eventWakeTimeoutTask: Task<Void, Never>?
+  private var pendingWake = false
+
+  public init(
+    host: any LocalAgentHostClientServicing,
+    attachmentRootURL: URL,
+    projects: NativeLocalProjectsService,
+    connector: NativeLocalConnectorService,
+    remoteConnectionProvider: (any NativeRemoteConnectionRuntimeProviding)? = nil,
+    eventHub: NativeLocalAgentEventHub? = nil,
+    workerID: String = "macos-platform-tool-worker"
+  ) {
+    client = .init(host: host)
+    let writeStore = NativeMCPCodeWriteStore()
+    let terminalStore = NativeLocalAgentTerminalStore()
+    executor = NativeLocalAgentPlatformToolExecutor(
+      host: host,
+      attachmentRootURL: attachmentRootURL,
+      projectTools: NativeLocalAgentProjectToolExecutor(
+        host: host,
+        projects: projects,
+        connector: connector,
+        remoteConnectionProvider: remoteConnectionProvider,
+        writeStore: writeStore,
+        terminalStore: terminalStore
+      )
+    )
+    approvalHandler = NativeLocalAgentToolApprovalHandler(
+      host: host,
+      projects: projects,
+      connector: connector
+    )
+    self.eventHub = eventHub
+    self.workerID = workerID
+    claimLeaseDurationMilliseconds = 30_000
+    claimHeartbeatInterval = .seconds(10)
+    activityWindow = NativeLocalAgentPlatformToolPollingPolicy.activityWindow
+  }
+
+  init(
+    client: NativeLocalAgentToolClient,
+    executor: any NativeLocalAgentPlatformToolExecuting,
+    approvalHandler: (any NativeLocalAgentToolApprovalHandling)? = nil,
+    eventHub: NativeLocalAgentEventHub? = nil,
+    workerID: String = "macos-platform-tool-worker",
+    claimLeaseDurationMilliseconds: UInt64 = 30_000,
+    claimHeartbeatInterval: Duration = .seconds(10),
+    activityWindow: Duration = NativeLocalAgentPlatformToolPollingPolicy.activityWindow
+  ) {
+    self.client = client
+    self.executor = executor
+    self.approvalHandler = approvalHandler
+    self.eventHub = eventHub
+    self.workerID = workerID
+    self.claimLeaseDurationMilliseconds = claimLeaseDurationMilliseconds
+    self.claimHeartbeatInterval = claimHeartbeatInterval
+    self.activityWindow = activityWindow
+  }
+
+  public func configure(ownerUserID: String) async {
+    try? await configure(ownerUserID: ownerUserID, externalMCPConfigs: [])
+  }
+
+  public func configure(
+    ownerUserID: String,
+    externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
+  ) async throws {
+    resetLocked()
+    await executor.reset()
+    try await executor.configureExternalMCPs(externalMCPConfigs)
+    self.ownerUserID = ownerUserID
+    schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: .zero)
+  }
+
+  public func reset() async {
+    resetLocked()
+    await executor.reset()
+    ownerUserID = nil
+  }
+
+  /// Starts one short compatibility window. Durable tool-request and approval
+  /// events wake the worker again, so model think time no longer requires a
+  /// five-minute claim loop.
+  public func wake() {
+    guard let ownerUserID else { return }
+    startEventMonitoring(ownerUserID: ownerUserID)
+    guard pollingTask == nil else {
+      pendingWake = true
+      return
     }
+    schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: activityWindow)
+  }
 
-    private let client: NativeLocalAgentToolClient
-    private let executor: any NativeLocalAgentPlatformToolExecuting
-    private let approvalHandler: (any NativeLocalAgentToolApprovalHandling)?
-    private let eventHub: NativeLocalAgentEventHub?
-    private let workerID: String
-    private let claimLeaseDurationMilliseconds: UInt64
-    private let claimHeartbeatInterval: Duration
-    private let activityWindow: Duration
-    private var ownerUserID: String?
-    private var generation = UUID()
-    private var pollingTask: Task<Void, Never>?
-    private var eventWakeTask: Task<Void, Never>?
-    private var eventWakeTimeoutTask: Task<Void, Never>?
-    private var pendingWake = false
-
-    public init(
-        host: any LocalAgentHostClientServicing,
-        attachmentRootURL: URL,
-        projects: NativeLocalProjectsService,
-        connector: NativeLocalConnectorService,
-        eventHub: NativeLocalAgentEventHub? = nil,
-        workerID: String = "macos-platform-tool-worker"
-    ) {
-        client = .init(host: host)
-        let writeStore = NativeMCPCodeWriteStore()
-        let terminalStore = NativeLocalAgentTerminalStore()
-        executor = NativeLocalAgentPlatformToolExecutor(
-            host: host,
-            attachmentRootURL: attachmentRootURL,
-            projectTools: NativeLocalAgentProjectToolExecutor(
-                host: host,
-                projects: projects,
-                connector: connector,
-                writeStore: writeStore,
-                terminalStore: terminalStore
+  private func startEventMonitoring(ownerUserID: String) {
+    guard let eventHub else { return }
+    let expectedGeneration = generation
+    if eventWakeTask == nil {
+      eventWakeTask = Task { [weak self, eventHub] in
+        await eventHub.configure(ownerUserID: ownerUserID)
+        let updates = await eventHub.updates()
+        for await update in updates {
+          guard !Task.isCancelled,
+            update.ownerUserID == ownerUserID
+          else { continue }
+          guard case .events(let events) = update.kind,
+            NativeLocalAgentPlatformToolPollingPolicy.shouldWake(
+              forEventTypes: events.map(\.eventType)
             )
+          else { continue }
+          await self?.wakeFromEvent(
+            ownerUserID: ownerUserID,
+            generation: expectedGeneration
+          )
+        }
+      }
+    }
+    eventWakeTimeoutTask?.cancel()
+    eventWakeTimeoutTask = Task { [weak self] in
+      do {
+        try await Task.sleep(
+          for: NativeLocalAgentPlatformToolPollingPolicy.eventMonitoringWindow
         )
-        approvalHandler = NativeLocalAgentToolApprovalHandler(
-            host: host,
-            projects: projects,
-            connector: connector
-        )
-        self.eventHub = eventHub
-        self.workerID = workerID
-        claimLeaseDurationMilliseconds = 30_000
-        claimHeartbeatInterval = .seconds(10)
-        activityWindow = NativeLocalAgentPlatformToolPollingPolicy.activityWindow
+      } catch {
+        return
+      }
+      guard !Task.isCancelled else { return }
+      await self?.stopEventMonitoring(
+        ownerUserID: ownerUserID,
+        generation: expectedGeneration
+      )
     }
+  }
 
-    init(
-        client: NativeLocalAgentToolClient,
-        executor: any NativeLocalAgentPlatformToolExecuting,
-        approvalHandler: (any NativeLocalAgentToolApprovalHandling)? = nil,
-        eventHub: NativeLocalAgentEventHub? = nil,
-        workerID: String = "macos-platform-tool-worker",
-        claimLeaseDurationMilliseconds: UInt64 = 30_000,
-        claimHeartbeatInterval: Duration = .seconds(10),
-        activityWindow: Duration = NativeLocalAgentPlatformToolPollingPolicy.activityWindow
-    ) {
-        self.client = client
-        self.executor = executor
-        self.approvalHandler = approvalHandler
-        self.eventHub = eventHub
-        self.workerID = workerID
-        self.claimLeaseDurationMilliseconds = claimLeaseDurationMilliseconds
-        self.claimHeartbeatInterval = claimHeartbeatInterval
-        self.activityWindow = activityWindow
+  private func wakeFromEvent(ownerUserID: String, generation: UUID) {
+    guard self.ownerUserID == ownerUserID,
+      self.generation == generation
+    else { return }
+    wake()
+  }
+
+  private func stopEventMonitoring(ownerUserID: String, generation: UUID) {
+    guard self.ownerUserID == ownerUserID,
+      self.generation == generation
+    else { return }
+    eventWakeTask?.cancel()
+    eventWakeTask = nil
+    eventWakeTimeoutTask?.cancel()
+    eventWakeTimeoutTask = nil
+  }
+
+  private func schedulePolling(ownerUserID: String, maximumIdleDuration: Duration) {
+    let token = generation
+    pollingTask = Task { [weak self] in
+      await self?.poll(
+        ownerUserID: ownerUserID,
+        generation: token,
+        maximumIdleDuration: maximumIdleDuration
+      )
     }
+  }
 
-    public func configure(ownerUserID: String) async {
-        resetLocked()
-        await executor.reset()
-        self.ownerUserID = ownerUserID
-        schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: .zero)
-    }
-
-    public func reset() async {
-        resetLocked()
-        await executor.reset()
-        ownerUserID = nil
-    }
-
-    /// Starts one short compatibility window. Durable tool-request and approval
-    /// events wake the worker again, so model think time no longer requires a
-    /// five-minute claim loop.
-    public func wake() {
-        guard let ownerUserID else { return }
-        startEventMonitoring(ownerUserID: ownerUserID)
-        guard pollingTask == nil else {
-            pendingWake = true
-            return
-        }
-        schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: activityWindow)
-    }
-
-    private func startEventMonitoring(ownerUserID: String) {
-        guard let eventHub else { return }
-        let expectedGeneration = generation
-        if eventWakeTask == nil {
-            eventWakeTask = Task { [weak self, eventHub] in
-                await eventHub.configure(ownerUserID: ownerUserID)
-                let updates = await eventHub.updates()
-                for await update in updates {
-                    guard !Task.isCancelled,
-                          update.ownerUserID == ownerUserID else { continue }
-                    guard case let .events(events) = update.kind,
-                          NativeLocalAgentPlatformToolPollingPolicy.shouldWake(
-                              forEventTypes: events.map(\.eventType)
-                          ) else { continue }
-                    await self?.wakeFromEvent(
-                        ownerUserID: ownerUserID,
-                        generation: expectedGeneration
-                    )
-                }
-            }
-        }
-        eventWakeTimeoutTask?.cancel()
-        eventWakeTimeoutTask = Task { [weak self] in
-            do {
-                try await Task.sleep(
-                    for: NativeLocalAgentPlatformToolPollingPolicy.eventMonitoringWindow
-                )
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            await self?.stopEventMonitoring(
-                ownerUserID: ownerUserID,
-                generation: expectedGeneration
-            )
-        }
-    }
-
-    private func wakeFromEvent(ownerUserID: String, generation: UUID) {
-        guard self.ownerUserID == ownerUserID,
-              self.generation == generation else { return }
-        wake()
-    }
-
-    private func stopEventMonitoring(ownerUserID: String, generation: UUID) {
-        guard self.ownerUserID == ownerUserID,
-              self.generation == generation else { return }
-        eventWakeTask?.cancel()
-        eventWakeTask = nil
-        eventWakeTimeoutTask?.cancel()
-        eventWakeTimeoutTask = nil
-    }
-
-    private func schedulePolling(ownerUserID: String, maximumIdleDuration: Duration) {
-        let token = generation
-        pollingTask = Task { [weak self] in
-            await self?.poll(
-                ownerUserID: ownerUserID,
-                generation: token,
-                maximumIdleDuration: maximumIdleDuration
-            )
-        }
-    }
-
-    private func poll(
-        ownerUserID: String,
-        generation expectedGeneration: UUID,
-        maximumIdleDuration: Duration
-    ) async {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: maximumIdleDuration)
-        var idleDelay = Duration.milliseconds(250)
-        defer {
-            if generation == expectedGeneration {
-                pollingTask = nil
-                if pendingWake, let ownerUserID = self.ownerUserID {
-                    pendingWake = false
-                    schedulePolling(
-                        ownerUserID: ownerUserID,
-                        maximumIdleDuration: activityWindow
-                    )
-                }
-            }
-        }
-        while !Task.isCancelled,
-              generation == expectedGeneration,
-              self.ownerUserID == ownerUserID {
-            do {
-                if try await approvalHandler?.resolveNextPending(
-                    ownerUserID: ownerUserID
-                ) == true {
-                    idleDelay = .milliseconds(250)
-                    continue
-                }
-                if let claim = try await client.claimNext(
-                    ownerUserID: ownerUserID,
-                    workerID: workerID,
-                    leaseDurationMilliseconds: claimLeaseDurationMilliseconds
-                ) {
-                    guard let outcome = await executeWhileRenewing(
-                        ownerUserID: ownerUserID,
-                        claim: claim
-                    ) else {
-                        return
-                    }
-                    guard !Task.isCancelled,
-                          generation == expectedGeneration,
-                          self.ownerUserID == ownerUserID else {
-                        return
-                    }
-                    _ = try await client.commit(
-                        ownerUserID: ownerUserID,
-                        claim: claim,
-                        outcome: outcome
-                    )
-                    idleDelay = .milliseconds(250)
-                    continue
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                if maximumIdleDuration == .zero { return }
-            }
-            guard maximumIdleDuration != .zero, clock.now < deadline else { return }
-            do {
-                try await Task.sleep(for: idleDelay)
-            } catch {
-                return
-            }
-            idleDelay = min(idleDelay * 2, .seconds(2))
-        }
-    }
-
-    private func executeWhileRenewing(
-        ownerUserID: String,
-        claim: LocalAgentToolClaim
-    ) async -> LocalAgentToolOutcome? {
-        let client = self.client
-        let executor = self.executor
-        let leaseDurationMilliseconds = claimLeaseDurationMilliseconds
-        let heartbeatInterval = claimHeartbeatInterval
-        return await withTaskGroup(
-            of: ClaimExecutionResult.self,
-            returning: LocalAgentToolOutcome?.self
-        ) { group in
-            group.addTask {
-                .outcome(await Self.execute(
-                    executor: executor,
-                    ownerUserID: ownerUserID,
-                    claim: claim
-                ))
-            }
-            group.addTask {
-                do {
-                    while !Task.isCancelled {
-                        try await Task.sleep(for: heartbeatInterval)
-                        try Task.checkCancellation()
-                        guard try await client.renew(
-                            ownerUserID: ownerUserID,
-                            claim: claim,
-                            leaseDurationMilliseconds: leaseDurationMilliseconds
-                        ) else {
-                            return .leaseLost
-                        }
-                    }
-                } catch is CancellationError {
-                    return .leaseLost
-                } catch {
-                    return .leaseLost
-                }
-                return .leaseLost
-            }
-
-            guard let first = await group.next() else {
-                group.cancelAll()
-                return nil
-            }
-            group.cancelAll()
-            switch first {
-            case let .outcome(outcome): return outcome
-            case .leaseLost: return nil
-            }
-        }
-    }
-
-    private static func execute(
-        executor: any NativeLocalAgentPlatformToolExecuting,
-        ownerUserID: String,
-        claim: LocalAgentToolClaim
-    ) async -> LocalAgentToolOutcome {
-        do {
-            let output = try await executor.execute(
-                ownerUserID: ownerUserID,
-                invocation: claim.invocation
-            )
-            return .succeeded(output)
-        } catch {
-            let summary = Self.safeErrorSummary(error)
-            let detail: LocalAgentJSONValue = .object([
-                "tool_name": .string(claim.invocation.toolName),
-                "phase": .string("native_platform_execution"),
-            ])
-            return claim.invocation.sideEffecting
-                ? .needsReview(reason: summary, detail: detail)
-                : .failed(error: summary, detail: detail)
-        }
-    }
-
-    private func resetLocked() {
-        generation = UUID()
-        pollingTask?.cancel()
+  private func poll(
+    ownerUserID: String,
+    generation expectedGeneration: UUID,
+    maximumIdleDuration: Duration
+  ) async {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: maximumIdleDuration)
+    var idleDelay = Duration.milliseconds(250)
+    defer {
+      if generation == expectedGeneration {
         pollingTask = nil
-        eventWakeTask?.cancel()
-        eventWakeTask = nil
-        eventWakeTimeoutTask?.cancel()
-        eventWakeTimeoutTask = nil
-        pendingWake = false
+        if pendingWake, let ownerUserID = self.ownerUserID {
+          pendingWake = false
+          schedulePolling(
+            ownerUserID: ownerUserID,
+            maximumIdleDuration: activityWindow
+          )
+        }
+      }
     }
+    while !Task.isCancelled,
+      generation == expectedGeneration,
+      self.ownerUserID == ownerUserID
+    {
+      do {
+        if try await approvalHandler?.resolveNextPending(
+          ownerUserID: ownerUserID
+        ) == true {
+          idleDelay = .milliseconds(250)
+          continue
+        }
+        if let claim = try await client.claimNext(
+          ownerUserID: ownerUserID,
+          workerID: workerID,
+          leaseDurationMilliseconds: claimLeaseDurationMilliseconds
+        ) {
+          guard
+            let outcome = await executeWhileRenewing(
+              ownerUserID: ownerUserID,
+              claim: claim
+            )
+          else {
+            return
+          }
+          guard !Task.isCancelled,
+            generation == expectedGeneration,
+            self.ownerUserID == ownerUserID
+          else {
+            return
+          }
+          _ = try await client.commit(
+            ownerUserID: ownerUserID,
+            claim: claim,
+            outcome: outcome
+          )
+          idleDelay = .milliseconds(250)
+          continue
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        if maximumIdleDuration == .zero { return }
+      }
+      guard maximumIdleDuration != .zero, clock.now < deadline else { return }
+      do {
+        try await Task.sleep(for: idleDelay)
+      } catch {
+        return
+      }
+      idleDelay = min(idleDelay * 2, .seconds(2))
+    }
+  }
 
-    private static func safeErrorSummary(_ error: Error) -> String {
-        let raw: String
-        switch error {
-        case let error as NativeLocalAgentPlatformToolError:
-            raw = error.errorDescription ?? "Local platform tool failed."
-        case let error as NativeLocalAgentAttachmentVaultError:
-            raw = error.errorDescription ?? "Local attachment access failed."
-        default:
-            // Do not forward arbitrary native error descriptions. They can
-            // contain filesystem paths, process arguments, or credentials.
-            raw = "Local platform tool failed."
+  private func executeWhileRenewing(
+    ownerUserID: String,
+    claim: LocalAgentToolClaim
+  ) async -> LocalAgentToolOutcome? {
+    let client = self.client
+    let executor = self.executor
+    let leaseDurationMilliseconds = claimLeaseDurationMilliseconds
+    let heartbeatInterval = claimHeartbeatInterval
+    return await withTaskGroup(
+      of: ClaimExecutionResult.self,
+      returning: LocalAgentToolOutcome?.self
+    ) { group in
+      group.addTask {
+        .outcome(
+          await Self.execute(
+            executor: executor,
+            ownerUserID: ownerUserID,
+            claim: claim
+          ))
+      }
+      group.addTask {
+        do {
+          while !Task.isCancelled {
+            try await Task.sleep(for: heartbeatInterval)
+            try Task.checkCancellation()
+            guard
+              try await client.renew(
+                ownerUserID: ownerUserID,
+                claim: claim,
+                leaseDurationMilliseconds: leaseDurationMilliseconds
+              )
+            else {
+              return .leaseLost
+            }
+          }
+        } catch is CancellationError {
+          return .leaseLost
+        } catch {
+          return .leaseLost
         }
-        let lowered = raw.lowercased()
-        let sensitive = ["authorization", "api_key", "apikey", "access_token", "password"]
-        guard !sensitive.contains(where: lowered.contains) else {
-            return "Local platform tool failed; sensitive details were hidden."
-        }
-        return String(raw.prefix(1_000))
+        return .leaseLost
+      }
+
+      guard let first = await group.next() else {
+        group.cancelAll()
+        return nil
+      }
+      group.cancelAll()
+      switch first {
+      case .outcome(let outcome): return outcome
+      case .leaseLost: return nil
+      }
     }
+  }
+
+  private static func execute(
+    executor: any NativeLocalAgentPlatformToolExecuting,
+    ownerUserID: String,
+    claim: LocalAgentToolClaim
+  ) async -> LocalAgentToolOutcome {
+    do {
+      let output = try await executor.execute(
+        ownerUserID: ownerUserID,
+        invocation: claim.invocation
+      )
+      return .succeeded(output)
+    } catch {
+      let summary = Self.safeErrorSummary(error)
+      let detail: LocalAgentJSONValue = .object([
+        "tool_name": .string(claim.invocation.toolName),
+        "phase": .string("native_platform_execution"),
+      ])
+      return claim.invocation.sideEffecting
+        ? .needsReview(reason: summary, detail: detail)
+        : .failed(error: summary, detail: detail)
+    }
+  }
+
+  private func resetLocked() {
+    generation = UUID()
+    pollingTask?.cancel()
+    pollingTask = nil
+    eventWakeTask?.cancel()
+    eventWakeTask = nil
+    eventWakeTimeoutTask?.cancel()
+    eventWakeTimeoutTask = nil
+    pendingWake = false
+  }
+
+  private static func safeErrorSummary(_ error: Error) -> String {
+    let raw: String
+    switch error {
+    case let error as NativeLocalAgentPlatformToolError:
+      raw = error.errorDescription ?? "Local platform tool failed."
+    case let error as NativeLocalAgentAttachmentVaultError:
+      raw = error.errorDescription ?? "Local attachment access failed."
+    default:
+      // Do not forward arbitrary native error descriptions. They can
+      // contain filesystem paths, process arguments, or credentials.
+      raw = "Local platform tool failed."
+    }
+    let lowered = raw.lowercased()
+    let sensitive = ["authorization", "api_key", "apikey", "access_token", "password"]
+    guard !sensitive.contains(where: lowered.contains) else {
+      return "Local platform tool failed; sensitive details were hidden."
+    }
+    return String(raw.prefix(1_000))
+  }
 }
 
 enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
-    case unsupportedTool
-    case invalidArguments
-    case invalidField(String)
-    case invalidRunContext
-    case attachmentNotAuthorized
-    case projectUnavailable
-    case projectToolFailed
-    case approvalRequired
+  case unsupportedTool
+  case invalidArguments
+  case invalidField(String)
+  case invalidRunContext
+  case attachmentNotAuthorized
+  case projectUnavailable
+  case projectToolFailed
+  case approvalRequired
+  case capabilityNotSelected
 
-    var errorDescription: String? {
-        switch self {
-        case .unsupportedTool: "The requested local platform tool is unavailable."
-        case .invalidArguments: "The local platform tool arguments are invalid."
-        case let .invalidField(field): "The local platform tool field is invalid: \(field)."
-        case .invalidRunContext: "The local platform tool Run context is invalid."
-        case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
-        case .projectUnavailable: "The local project is unavailable for this conversation."
-        case .projectToolFailed: "The local project tool arguments or state are invalid."
-        case .approvalRequired: "The local project change requires approval before execution."
-        }
+  var errorDescription: String? {
+    switch self {
+    case .unsupportedTool: "The requested local platform tool is unavailable."
+    case .invalidArguments: "The local platform tool arguments are invalid."
+    case .invalidField(let field): "The local platform tool field is invalid: \(field)."
+    case .invalidRunContext: "The local platform tool Run context is invalid."
+    case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
+    case .projectUnavailable: "The local project is unavailable for this conversation."
+    case .projectToolFailed: "The local project tool arguments or state are invalid."
+    case .approvalRequired: "The local project change requires approval before execution."
+    case .capabilityNotSelected: "This Task did not select the requested local capability."
     }
+  }
 }

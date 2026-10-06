@@ -261,7 +261,7 @@ struct NativeMCPRemoteConnectionController: Sendable {
     }
 
     private static func integer(minimum: Int, maximum: Int) -> NativeJSONValue {
-        .object([
+        return .object([
             "type": .string("integer"),
             "minimum": .number(Double(minimum)),
             "maximum": .number(Double(maximum)),
@@ -274,7 +274,7 @@ struct NativeMCPRemoteConnectionController: Sendable {
         properties: [String: NativeJSONValue],
         required: [String]
     ) -> NativeJSONValue {
-        .object([
+        return .object([
             "name": .string(name),
             "description": .string(description),
             "inputSchema": .object([

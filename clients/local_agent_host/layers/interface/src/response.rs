@@ -7,10 +7,11 @@ use crate::{
     LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalCapabilityPolicySnapshot,
     LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
     LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalMemorySyncStatus, LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote,
-    LocalNotepadNoteDetail, LocalPluginInstallationPage, LocalPluginInstallationRecord,
-    LocalRemoteConnection, LocalRequirementSurvey, LocalRequirementSurveyResolution,
-    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalMemorySyncStatus, LocalMessageTaskGraph, LocalModelConfigSnapshot, LocalNotepadImage,
+    LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalRemoteConnection, LocalRequirementSurvey,
+    LocalRequirementSurveyResolution, LocalTaskGraph, LocalTaskGraphPage,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +101,9 @@ pub enum HostResult {
     },
     TaskGraphs {
         page: LocalTaskGraphPage,
+    },
+    MessageTaskGraph {
+        graph: LocalMessageTaskGraph,
     },
     TaskRuns {
         task_id: String,

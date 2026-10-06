@@ -1,8 +1,11 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChatOS.Api.Http;
+using ChatOS.Connector.Gateway;
+using ChatOS.Connector.Runtime;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 
@@ -33,6 +36,8 @@ public sealed class WindowsLocalAgentBootstrapService
     private readonly WindowsLocalAgentRemoteConnectionMetadataService _remoteConnections;
     private readonly ChatOSApiClient _api;
     private readonly IAuthTokenStore _authTokens;
+    private readonly ConnectorRuntimeContext _connectorRuntime;
+    private readonly IConnectorGatewayClient _gateway;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _recoveryGate = new();
     private readonly object _configurationStateGate = new();
@@ -56,7 +61,9 @@ public sealed class WindowsLocalAgentBootstrapService
         WindowsLocalAgentNotepadService notepad,
         WindowsLocalAgentRemoteConnectionMetadataService remoteConnections,
         ChatOSApiClient api,
-        IAuthTokenStore authTokens)
+        IAuthTokenStore authTokens,
+        ConnectorRuntimeContext connectorRuntime,
+        IConnectorGatewayClient gateway)
     {
         _host = host;
         _controlPlane = controlPlane;
@@ -75,6 +82,8 @@ public sealed class WindowsLocalAgentBootstrapService
         _remoteConnections = remoteConnections;
         _api = api;
         _authTokens = authTokens;
+        _connectorRuntime = connectorRuntime;
+        _gateway = gateway;
         if (host is WindowsLocalAgentHostLifecycle lifecycle)
             lifecycle.UnexpectedExit += OnUnexpectedHostExit;
     }
@@ -100,6 +109,21 @@ public sealed class WindowsLocalAgentBootstrapService
                 !string.Equals(activeOwner, ownerUserId, StringComparison.Ordinal))
             {
                 await _host.StopAsync(cancellationToken).ConfigureAwait(false);
+            }
+            var connectorSession = await _connectorRuntime
+                .SessionConfigurationAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The local connector is not paired.");
+            var agentCapability = await _gateway.GetAgentCapabilityAsync(
+                connectorSession.GatewayBaseUri,
+                connectorSession.AccessToken,
+                "local_agent_execution_agent",
+                cancellationToken).ConfigureAwait(false);
+            if (!agentCapability.AgentEnabled ||
+                agentCapability.AgentKey != "local_agent_execution_agent" ||
+                agentCapability.OwnerUserId != ownerUserId)
+            {
+                throw new InvalidOperationException(
+                    "The Local Agent execution capability is unavailable for this account.");
             }
             var configured = await _api.GetUserServiceAsync<IReadOnlyList<WindowsModelConfigDto>>(
                 "model-configs",
@@ -179,15 +203,97 @@ public sealed class WindowsLocalAgentBootstrapService
                 _ = await _controlPlane.PublishModelAsync(snapshot, cancellationToken)
                     .ConfigureAwait(false);
             }
+            var installedPluginChoices = await _toolWorker.ListPluginChoicesAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if ((agentCapability.Mcps ?? []).Any(value =>
+                    value.Binding.Required && !value.Available) ||
+                (agentCapability.Plugins ?? []).Any(value => value.Binding.Required &&
+                    !value.Available && value.Status != "partially_available"))
+                throw new InvalidOperationException(
+                    "A required Local Agent capability is unavailable.");
+            var requiredPluginKeys = (agentCapability.Plugins ?? [])
+                .Where(value => value.Binding.Required &&
+                    (value.Available || value.Status == "partially_available"))
+                .Select(value => value.Catalog.PluginKey)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var installedPluginKeys = installedPluginChoices.Select(value => value.PluginKey)
+                .ToHashSet(StringComparer.Ordinal);
+            if (requiredPluginKeys.Any(value => !installedPluginKeys.Contains(value)))
+                throw new InvalidOperationException(
+                    "A required Local Agent Plugin is not installed and enabled.");
+            var selectablePluginKeys = (agentCapability.Plugins ?? [])
+                .Where(value => !value.Binding.Required &&
+                    (value.Available || value.Status == "partially_available"))
+                .Select(value => value.Catalog.PluginKey)
+                .ToHashSet(StringComparer.Ordinal);
+            var pluginChoices = installedPluginChoices
+                .Where(value => selectablePluginKeys.Contains(value.PluginKey))
+                .ToArray();
+            var builtinChoices = SelectableBuiltinChoices(agentCapability.Mcps ?? []);
+            var externalChoices = SelectableExternalChoices(agentCapability.Mcps ?? []);
+            var requiredBuiltinKinds = (agentCapability.Mcps ?? [])
+                .Where(value => value.Binding.Required && value.Available)
+                .Select(value => NonEmpty(value.Resource.Runtime.BuiltinKind))
+                .Where(value => value is not null)
+                .Select(value => value!)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var requiredExternalIds = (agentCapability.Mcps ?? [])
+                .Where(value => value.Binding.Required && value.Available &&
+                    NonEmpty(value.Resource.Runtime.BuiltinKind) is null &&
+                    !value.Resource.Id.StartsWith("system_mcp_", StringComparison.Ordinal))
+                .Select(value => value.Resource.Id)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            var requiredExternalResources = (agentCapability.Mcps ?? [])
+                .Where(value => requiredExternalIds.Contains(value.Resource.Id, StringComparer.Ordinal))
+                .ToArray();
+            if (requiredExternalResources.Any(value =>
+                    !value.Resource.Runtime.Kind.Equals("http", StringComparison.OrdinalIgnoreCase) ||
+                    NonEmpty(value.Resource.Runtime.Url) is null))
+                throw new InvalidOperationException(
+                    "A required external MCP cannot execute on this client.");
+            var externalIds = externalChoices.Select(value => value.Value)
+                .Concat(requiredExternalIds)
+                .ToHashSet(StringComparer.Ordinal);
+            var externalTools = _toolWorker.Configure(
+                ownerUserId,
+                agentCapability.Mcps ?? [],
+                externalIds);
             var mainCapabilities = new WindowsLocalAgentCapabilitySnapshot(
                 ownerUserId,
                 "main_chat",
-                WindowsLocalAgentCapabilityCatalog.Revision,
-                "Use local_attachment_read for attachment content and treat authorized_local_ref values as opaque. Use create_task or create_tasks_with_prerequisites only for user-requested durable work. Conversation, task, and execution state remain local.",
+                CapabilityRevision(
+                    agentCapability.PolicyRevision,
+                    pluginChoices,
+                    builtinChoices,
+                    externalChoices),
+                "Use only the local Task tools to inspect, create, query, cancel, and hand off durable work. Do not read attachments or project files directly in Main Chat. Conversation, task, and execution state remain local.",
                 [],
-                WindowsLocalAgentCapabilityCatalog.MainChatTools);
+                WindowsLocalAgentCapabilityCatalog.MainChatToolsFor(
+                    pluginChoices,
+                    builtinChoices,
+                    externalChoices));
             _ = await _controlPlane.PublishCapabilitiesAsync(
                 mainCapabilities,
+                cancellationToken).ConfigureAwait(false);
+            _ = await _controlPlane.PublishCapabilitiesAsync(
+                new WindowsLocalAgentCapabilitySnapshot(
+                    ownerUserId,
+                    "task_policy_internal",
+                    mainCapabilities.CapabilityPolicyRevision,
+                    JsonSerializer.Serialize(new
+                    {
+                        enabled_builtin_kinds = requiredBuiltinKinds,
+                        external_mcp_config_ids = requiredExternalIds,
+                        plugin_keys = requiredPluginKeys,
+                    }),
+                    [],
+                    []),
                 cancellationToken).ConfigureAwait(false);
             _ = await _controlPlane.PublishCapabilitiesAsync(
                 new WindowsLocalAgentCapabilitySnapshot(
@@ -196,7 +302,7 @@ public sealed class WindowsLocalAgentBootstrapService
                     mainCapabilities.CapabilityPolicyRevision,
                     "Complete the durable local task objective using only the project bound to its source conversation and enabled local Plugins. Project writes and terminal commands require Host approval; Plugin permissions and per-call approval are enforced by the native client. Do not create nested tasks.",
                     [],
-                    WindowsLocalAgentCapabilityCatalog.TaskExecutionTools),
+                    WindowsLocalAgentCapabilityCatalog.TaskExecutionToolsFor(externalTools)),
                 cancellationToken).ConfigureAwait(false);
 
             var result = new WindowsLocalAgentBootstrapSnapshot(
@@ -215,7 +321,6 @@ public sealed class WindowsLocalAgentBootstrapService
                 _runtimeSettings.Configure(ownerUserId, result);
                 _conversationCommands.Configure(ownerUserId, result);
                 _conversationHistory.Configure(ownerUserId);
-                _toolWorker.Configure(ownerUserId);
                 _realtime.Configure(ownerUserId);
                 _petActivities.Configure(ownerUserId);
                 _askUser.Configure(ownerUserId);
@@ -321,6 +426,70 @@ public sealed class WindowsLocalAgentBootstrapService
             }
             source.Dispose();
         }
+    }
+
+    private static IReadOnlyList<WindowsLocalAgentMcpChoice> SelectableBuiltinChoices(
+        IReadOnlyList<ConnectorResolvedMcp> mcps)
+    {
+        var candidates = mcps.Where(value =>
+            !value.Binding.Required && value.Binding.Enabled && value.Resource.Enabled &&
+            NonEmpty(value.Resource.Runtime.BuiltinKind) is not null).ToArray();
+        var available = candidates.Select(value => value.Resource.Runtime.BuiltinKind!.Trim())
+            .ToHashSet(StringComparer.Ordinal);
+        return candidates
+            .Where(value => value.Resource.Runtime.BuiltinKind != "CodeMaintainerWrite" ||
+                available.Contains("CodeMaintainerRead"))
+            .Select(value => new WindowsLocalAgentMcpChoice(
+                value.Resource.Runtime.BuiltinKind!.Trim(),
+                McpChoiceTitle(value, value.Resource.Runtime.BuiltinKind!.Trim())))
+            .DistinctBy(value => value.Value, StringComparer.Ordinal)
+            .OrderBy(value => value.Value, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<WindowsLocalAgentMcpChoice> SelectableExternalChoices(
+        IReadOnlyList<ConnectorResolvedMcp> mcps) => mcps
+            .Where(value => !value.Binding.Required && value.Binding.Enabled &&
+                value.Resource.Enabled && NonEmpty(value.Resource.Runtime.BuiltinKind) is null &&
+                !value.Resource.Id.StartsWith("system_mcp_", StringComparison.Ordinal) &&
+                value.Resource.Runtime.Kind.Equals("http", StringComparison.OrdinalIgnoreCase) &&
+                NonEmpty(value.Resource.Runtime.Url) is not null)
+            .Select(value => new WindowsLocalAgentMcpChoice(
+                value.Resource.Id,
+                McpChoiceTitle(value, value.Resource.Id)))
+            .DistinctBy(value => value.Value, StringComparer.Ordinal)
+            .OrderBy(value => value.Value, StringComparer.Ordinal)
+            .ToArray();
+
+    private static string McpChoiceTitle(ConnectorResolvedMcp item, string value)
+    {
+        var display = NonEmpty(item.Resource.DisplayName) ?? NonEmpty(item.Resource.Name) ?? value;
+        var title = display == value ? value : $"{display} ({value})";
+        if (NonEmpty(item.Resource.Description) is { } description) title += $" - {description}";
+        var names = item.ToolSnapshot
+            .Where(tool => tool.ValueKind == JsonValueKind.Object &&
+                tool.TryGetProperty("name", out var name) &&
+                name.ValueKind == JsonValueKind.String)
+            .Select(tool => tool.GetProperty("name").GetString())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Take(12)
+            .ToArray();
+        if (names.Length > 0) title += $" [tools: {string.Join(", ", names)}]";
+        return title;
+    }
+
+    private static string CapabilityRevision(
+        string policyRevision,
+        IReadOnlyList<WindowsLocalAgentPluginChoice> plugins,
+        IReadOnlyList<WindowsLocalAgentMcpChoice> builtinChoices,
+        IReadOnlyList<WindowsLocalAgentMcpChoice> externalChoices)
+    {
+        var fields = new[] { policyRevision }
+            .Concat(plugins.Select(value => value.PluginKey).Order(StringComparer.Ordinal))
+            .Concat(builtinChoices.Select(value => value.Value).Order(StringComparer.Ordinal))
+            .Concat(externalChoices.Select(value => value.Value).Order(StringComparer.Ordinal));
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0', fields)));
+        return $"local-agent-{Convert.ToHexString(digest).ToLowerInvariant()}";
     }
 
     private static bool TryValidateModel(

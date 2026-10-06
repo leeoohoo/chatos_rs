@@ -7,6 +7,9 @@ namespace ChatOS.Connector.LocalAgent;
 
 public interface IWindowsLocalAgentPluginToolExecutor
 {
+    Task<IReadOnlyList<WindowsLocalAgentPluginChoice>> ListChoicesAsync(
+        CancellationToken cancellationToken);
+
     Task<JsonElement> ExecuteAsync(
         string ownerUserId,
         string runId,
@@ -35,6 +38,23 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
     private readonly object _gate = new();
     private readonly Dictionary<string, RunSession> _runs = new(StringComparer.Ordinal);
 
+    public async Task<IReadOnlyList<WindowsLocalAgentPluginChoice>> ListChoicesAsync(
+        CancellationToken cancellationToken)
+    {
+        var installed = (await installedPlugins.ListAsync(cancellationToken).ConfigureAwait(false))
+            .Select(record => record.PluginId)
+            .ToHashSet(StringComparer.Ordinal);
+        return (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(plugin => plugin.Installed && plugin.Enabled && installed.Contains(plugin.PluginId))
+            .OrderBy(plugin => plugin.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(plugin => plugin.PluginId, StringComparer.Ordinal)
+            .Select(plugin => new WindowsLocalAgentPluginChoice(
+                plugin.PluginKey,
+                plugin.DisplayName,
+                plugin.Description))
+            .ToArray();
+    }
+
     public async Task<JsonElement> ExecuteAsync(
         string ownerUserId,
         string runId,
@@ -50,6 +70,11 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         }
         var context = await projectTools.ResolveContextAsync(
             ownerUserId, runId, cancellationToken).ConfigureAwait(false);
+        if (!context.Authorization.Allows(toolName))
+        {
+            throw new InvalidOperationException(
+                "The Local Agent Task Plugin capability was not selected.");
+        }
         var session = await SessionAsync(
             ownerUserId, runId, context, cancellationToken).ConfigureAwait(false);
         RefreshExpiration(session);
@@ -101,8 +126,11 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
             .Where(value => value.Installed && value.Enabled)
             .ToDictionary(value => value.PluginId, StringComparer.Ordinal);
         var records = await installedPlugins.ListAsync(cancellationToken).ConfigureAwait(false);
+        var selectedPluginKeys = context.Authorization.PluginKeys;
         var options = records
             .Where(record => enabled.ContainsKey(record.PluginId))
+            .Where(record => context.Authorization.IsLegacyUnrestricted ||
+                selectedPluginKeys.Contains(enabled[record.PluginId].PluginKey))
             .OrderBy(record => record.PluginId, StringComparer.Ordinal)
             .Take(MaximumPlugins)
             .Select((record, index) => new PluginOption(

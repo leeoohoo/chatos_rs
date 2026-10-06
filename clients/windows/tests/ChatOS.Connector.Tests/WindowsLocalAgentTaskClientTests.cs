@@ -42,6 +42,23 @@ public sealed class WindowsLocalAgentTaskClientTests
         Assert.Equal("turn-1", command.SourceEntityId);
     }
 
+    [Fact]
+    public async Task MessageGraphUsesConversationAndTurnScope()
+    {
+        var host = new TaskHost();
+        var client = new WindowsLocalAgentTaskClient(host);
+
+        var graph = await client.MessageGraphAsync(
+            "owner-1", "conversation-1", "turn-1", "message-1", CancellationToken.None);
+
+        Assert.Empty(graph.Nodes);
+        var command = Assert.IsType<GetLocalMessageTaskGraphCommand>(host.Command);
+        Assert.Equal("get_message_task_graph", command.Type);
+        Assert.Equal("conversation-1", command.SourceConversationId);
+        Assert.Equal("turn-1", command.SourceTurnId);
+        Assert.Equal("message-1", command.SourceUserMessageId);
+    }
+
     private sealed class TaskHost : ILocalAgentHostClient
     {
         public object? Command { get; private set; }
@@ -69,6 +86,13 @@ public sealed class WindowsLocalAgentTaskClientTests
                 object list = new LocalTaskGraphsResult(
                     "task_graphs", new WindowsLocalTaskGraphPage([], null, null));
                 return Task.FromResult((TResponse)list);
+            }
+            if (command is GetLocalMessageTaskGraphCommand)
+            {
+                object messageGraph = new LocalMessageTaskGraphTypedResult(
+                    "message_task_graph", new WindowsLocalMessageTaskGraph(
+                        [], [], [], "conversation-1", "turn-1", "message-1"));
+                return Task.FromResult((TResponse)messageGraph);
             }
             object response = new LocalTaskGraphTypedResult("task_graph", new WindowsLocalTaskGraph(
                 "graph-1", "owner-1", "conversation_turn", "turn-1", "running", [], [], 1));

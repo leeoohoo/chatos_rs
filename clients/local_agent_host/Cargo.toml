@@ -14,6 +14,7 @@ chatos_agent_profiles = { path = "layers/profiles" }
 chatos_local_agent_ports = { path = "layers/ports" }
 chatos_local_agent_protocol = { path = "layers/interface" }
 chatos_local_agent_runtime = { path = "layers/application" }
+chrono = { version = "0.4", features = ["serde"] }
 memory_engine_sdk = { path = "../../crates/memory_engine_sdk" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }

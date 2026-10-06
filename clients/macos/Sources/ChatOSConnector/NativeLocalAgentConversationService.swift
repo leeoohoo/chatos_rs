@@ -370,7 +370,7 @@ public actor NativeLocalAgentConversationService:
                 ownerUserID: page.conversation.ownerUserID,
                 conversationID: turn.conversationID
             )
-            let replies = assistants.flatMap { message in
+            let projectedReplies = assistants.flatMap { message in
                 message.replyProjections(sourceUserMessageID: turn.userMessageID).map { projection in
                     ConversationAssistantReply(
                         message: mapMessage(
@@ -385,6 +385,11 @@ public actor NativeLocalAgentConversationService:
                     )
                 }
             }
+            // Preserve the original Task Runner presentation contract: the Main Chat
+            // handoff reply is rendered first, then each Task/Run callback. Storage
+            // ordinals can interleave because local scheduling starts immediately.
+            let replies = Self.orderedConversationReplies(projectedReplies)
+            let finalReplies = replies.filter { $0.taskCallback == nil }
             let status = mapStatus(turn.status)
             return ConversationTurn(
                 id: turn.turnID,
@@ -397,7 +402,7 @@ public actor NativeLocalAgentConversationService:
                     title: processTitle(status),
                     status: status
                 )],
-                finalAssistantMessage: replies.last?.message,
+                finalAssistantMessage: finalReplies.last?.message,
                 assistantReplies: replies,
                 messageTaskLookup: MessageTaskLookup(
                     sessionID: turn.conversationID,
@@ -411,6 +416,14 @@ public actor NativeLocalAgentConversationService:
                     : Date(timeIntervalSince1970: Double(turn.updatedAtUnixMs) / 1_000)
             )
         }
+    }
+
+    static func orderedConversationReplies(
+        _ replies: [ConversationAssistantReply]
+    ) -> [ConversationAssistantReply] {
+        let mainChat = replies.filter { $0.taskCallback == nil }
+        let callbacks = replies.filter { $0.taskCallback != nil }
+        return mainChat + callbacks
     }
 
     private func mapMessage(

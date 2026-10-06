@@ -461,7 +461,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 projectID: "project-1",
                 projectName: "Test",
                 projectRoot: project.path
-            )
+            ),
+            pluginIDs: ["plugin-1"]
         )
         let taskSearch = try await taskBroker.execute(.init(
             id: "task-search-1",
@@ -515,7 +516,13 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                     projectName: "Test",
                     projectRoot: project.path
                 ),
-                resolvedPath: try await service.resolveProjectPath(project.path)
+                resolvedPath: try await service.resolveProjectPath(project.path),
+                toolAuthorization: .init(
+                    requiresExecution: true,
+                    enabledBuiltinKinds: [],
+                    pluginKeys: ["plugin-1"],
+                    isLegacyUnrestricted: true
+                )
             ),
             arguments: ["query": .string("test")]
         )

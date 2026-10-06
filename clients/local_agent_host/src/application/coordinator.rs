@@ -475,6 +475,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::WaitEvents(_)
         | HostCommand::ListTaskGraphs(_)
         | HostCommand::GetTaskGraph(_)
+        | HostCommand::GetMessageTaskGraph(_)
         | HostCommand::GetTaskRuns(_)
         | HostCommand::PutPluginInstallation(_)
         | HostCommand::GetPluginInstallation(_)

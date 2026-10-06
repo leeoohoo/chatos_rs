@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChatOS.Connector.Relay;
 
@@ -68,6 +69,7 @@ public sealed record ConnectorPluginSource(
 
 public sealed record ConnectorPluginCatalog(
     string Id,
+    string? PluginKey,
     string? DisplayName,
     string? Name,
     string? Description,
@@ -121,7 +123,45 @@ public sealed record ConnectorAgentCapability(
     string AgentKey,
     string OwnerUserId,
     string PolicyRevision,
-    bool AgentEnabled);
+    bool AgentEnabled,
+    IReadOnlyList<ConnectorResolvedMcp>? Mcps = null,
+    IReadOnlyList<ConnectorResolvedPlugin>? Plugins = null);
+
+public sealed record ConnectorCapabilityBinding(bool Enabled, bool Required);
+
+public sealed record ConnectorMcpRuntime(
+    string Kind,
+    string? BuiltinKind,
+    string? ServerName,
+    string? Url,
+    IReadOnlyDictionary<string, string> Headers);
+
+public sealed record ConnectorMcpResource(
+    string Id,
+    string Name,
+    string DisplayName,
+    string? Description,
+    bool Enabled,
+    ConnectorMcpRuntime Runtime);
+
+public sealed record ConnectorResolvedMcp(
+    ConnectorMcpResource Resource,
+    ConnectorCapabilityBinding Binding,
+    bool Available,
+    string Status,
+    IReadOnlyList<JsonElement> ToolSnapshot);
+
+public sealed record ConnectorPluginCapabilityCatalog(
+    string Id,
+    string PluginKey,
+    string DisplayName,
+    string Description);
+
+public sealed record ConnectorResolvedPlugin(
+    ConnectorPluginCapabilityCatalog Catalog,
+    ConnectorCapabilityBinding Binding,
+    bool Available,
+    string Status);
 
 public interface IConnectorGatewayClient
 {

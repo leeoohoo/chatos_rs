@@ -1,40 +1,36 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
-
 //! Persistence interfaces owned by the Local Agent application layer.
-
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     CancelConversationTurnCommand, CreateConversationCommand, CreateTaskGraphCommand,
     GuideConversationTurnCommand, LocalAgentArtifact, LocalAgentArtifactPage,
     LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope,
     LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
-    LocalAgentToolApprovalResult, LocalAgentToolBatch, LocalAgentToolClaim,
-    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
-    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
-    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
-    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
-    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    LocalAgentToolApprovalResult, LocalAgentToolClaim, LocalAgentToolCommitResult,
+    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalConversationDetail,
+    LocalConversationHistoryPage, LocalConversationPage, LocalConversationRuntimeSettings,
+    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote,
+    LocalNotepadNoteDetail, LocalPluginInstallationPage, LocalPluginInstallationRecord,
+    LocalPluginInstallationSpec, LocalRemoteConnection, LocalRequirementSurvey,
+    LocalRequirementSurveyResolution, LocalRequirementSurveyStatus, LocalTaskGraph,
+    LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
-
+mod command;
 mod memory_cache;
 mod memory_outbox;
-
-pub use memory_cache::LocalMemoryContextCacheStore;
-pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
-
 pub use chatos_local_agent_protocol::{
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalMemorySyncStatus,
     LocalModelConfigSnapshot, MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS,
     MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
 };
+pub use command::{IdempotentCommand, LocalAgentArtifactWrite, RunTransition};
+pub use memory_cache::LocalMemoryContextCacheStore;
+pub use memory_outbox::{LocalMemoryOutboxRecord, LocalMemoryOutboxStatus, LocalMemoryOutboxStore};
 
 #[derive(Debug, Error)]
 pub enum ClientStorageError {
@@ -72,42 +68,6 @@ impl ClientStorageError {
     pub fn retryable(&self) -> bool {
         matches!(self, Self::Database(_))
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct IdempotentCommand {
-    pub command_id: String,
-    pub request_fingerprint: String,
-    /// Durable IPC commands keep a replay receipt. Trusted in-process schedulers
-    /// generate one-shot command IDs and can skip that permanent storage cost.
-    pub persist_receipt: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalAgentArtifactWrite {
-    pub artifact: LocalAgentArtifact,
-    pub idempotency_key: String,
-    pub data: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RunTransition {
-    pub run_id: String,
-    pub claim_token: String,
-    pub expected_version: u64,
-    pub expected_status: LocalAgentRunStatus,
-    pub next_status: LocalAgentRunStatus,
-    pub next_model_attempt: u32,
-    pub next_attempt_at_unix_ms: Option<i64>,
-    pub pending_tool_batch: Option<Value>,
-    pub tool_batch: Option<LocalAgentToolBatch>,
-    pub checkpoint: Option<Value>,
-    pub clear_continuation_input: bool,
-    pub terminal_outcome: Option<Value>,
-    pub event_id: String,
-    pub event_type: String,
-    pub event_payload: Value,
-    pub occurred_at_unix_ms: i64,
 }
 
 #[async_trait]
@@ -291,6 +251,10 @@ pub trait LocalAgentTaskStore: Send + Sync {
         conversation_id: &str,
         status: Option<LocalTaskStatus>,
         keyword: Option<&str>,
+        tag: Option<&str>,
+        scheduled_only: Option<bool>,
+        parent_task_id: Option<&str>,
+        source_run_id: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<LocalTaskRecord>, ClientStorageError>;
@@ -310,6 +274,15 @@ pub trait LocalAgentTaskStore: Send + Sync {
         now_unix_ms: i64,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
 
+    async fn start_next_task_run_for_graph(
+        &self,
+        owner_user_id: &str,
+        graph_id: &str,
+        run_id: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
+
     #[allow(clippy::too_many_arguments)]
     async fn cancel_task(
         &self,
@@ -318,6 +291,7 @@ pub trait LocalAgentTaskStore: Send + Sync {
         task_id: &str,
         expected_version: Option<u64>,
         reason: &str,
+        replacement_task_ids: &[String],
         run_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError>;
@@ -351,6 +325,12 @@ pub trait LocalAgentToolStore: Send + Sync {
         &self,
         invocation_id: &str,
     ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
+    async fn successful_tool_invocation_count(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<u64, ClientStorageError>;
 
     async fn recover_expired_tool_claims(
         &self,
@@ -488,6 +468,15 @@ pub trait LocalModelConfigSnapshotStore: Send + Sync {
         owner_user_id: &str,
         model_config_ref: &str,
         model_config_revision: &str,
+    ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError>;
+
+    /// Resolves the most recently published immutable revision for a model id.
+    /// Task creation uses this to preserve the former Task Runner model override
+    /// contract without guessing or copying credentials into a Task record.
+    async fn get_latest_model_config_snapshot(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
     ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError>;
 }
 

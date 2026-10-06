@@ -58,6 +58,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentProjectToolExecutor>();
             services.AddSingleton<IWindowsLocalAgentPluginToolExecutor,
                 WindowsLocalAgentPluginToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentExternalMcpExecutor>();
             services.AddSingleton<WindowsLocalAgentToolApprovalHandler>();
             services.AddSingleton<WindowsLocalAgentPlatformToolWorker>();
             services.AddSingleton<WindowsLocalAgentConversationCommandService>();
@@ -183,6 +184,15 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient(ConnectorGatewayHttpClient.HttpClientName, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(120);
+        });
+        services.AddHttpClient(WindowsLocalAgentExternalMcpExecutor.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(2);
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            UseCookies = false,
         });
         services.AddHttpClient(OpenAiCompatibleCommandApprovalReviewer.HttpClientName, client =>
         {

@@ -6,13 +6,21 @@ use super::{
     SqliteResultExt,
 };
 use chatos_local_agent_protocol::LocalAgentRunRecord;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::{Row, SqliteConnection};
+
+#[cfg(test)]
+use super::task_callback_display::sanitize_visible_detail;
+use super::task_callback_display::{
+    callback_content, contains_cjk, truncate_chars, user_visible_callback_detail,
+};
 
 struct CallbackSource {
     graph_id: String,
     task_id: String,
     task_title: String,
+    task_objective: String,
     task_status: String,
     task_version: u64,
     task_updated_at_unix_ms: i64,
@@ -21,6 +29,10 @@ struct CallbackSource {
     source_user_message_id: String,
     source_run_id: String,
     prefers_english: bool,
+    cancel_reason: Option<String>,
+    replacement_task_ids: Vec<String>,
+    cancelled_because_task_id: Option<String>,
+    schedule_mode: String,
 }
 
 pub(super) async fn write_back_task_run_started(
@@ -58,13 +70,26 @@ pub(super) async fn write_back_terminal_task_run(
         return Ok(false);
     };
     let (event, status) = terminal_event_and_status(&source.task_status)?;
+    let reported_outcome =
+        super::task_lifecycle::reported_task_outcome(connection, &run.run_id).await?;
+    let reported_detail = reported_outcome.as_ref().map(|outcome| {
+        json!({
+            "status": outcome.status,
+            "reason": outcome.reason,
+        })
+    });
+    let terminal_outcome = if matches!(event, "task.failed" | "task.blocked") {
+        reported_detail.as_ref().or(run.terminal_outcome.as_ref())
+    } else {
+        run.terminal_outcome.as_ref()
+    };
     let changed = write_callback(
         connection,
         &source,
         Some(run),
         event,
         status,
-        run.terminal_outcome.as_ref(),
+        terminal_outcome,
         now_unix_ms,
     )
     .await?;
@@ -105,13 +130,31 @@ pub(super) async fn write_back_graph(
             continue;
         };
         let (event, status) = terminal_event_and_status(&source.task_status)?;
+        let reported_outcome = if let Some(run) = run.as_ref() {
+            super::task_lifecycle::reported_task_outcome(connection, &run.run_id).await?
+        } else {
+            None
+        };
+        let reported_detail = reported_outcome.as_ref().map(|outcome| {
+            json!({
+                "status": outcome.status,
+                "reason": outcome.reason,
+            })
+        });
+        let terminal_outcome = if matches!(event, "task.failed" | "task.blocked") {
+            reported_detail
+                .as_ref()
+                .or_else(|| run.as_ref().and_then(|run| run.terminal_outcome.as_ref()))
+        } else {
+            run.as_ref().and_then(|run| run.terminal_outcome.as_ref())
+        };
         changed |= write_callback(
             connection,
             &source,
             run.as_ref(),
             event,
             status,
-            run.as_ref().and_then(|run| run.terminal_outcome.as_ref()),
+            terminal_outcome,
             now_unix_ms,
         )
         .await?;
@@ -124,8 +167,9 @@ async fn callback_source(
     task_id: &str,
 ) -> Result<Option<CallbackSource>, ClientStorageError> {
     let row = sqlx::query(
-        "SELECT g.graph_id, t.task_id, t.title, t.status, t.version, \
+        "SELECT g.graph_id, t.task_id, t.title, t.input_json, t.status, t.version, \
          t.updated_at_unix_ms AS task_updated_at_unix_ms, \
+         t.cancel_reason, t.replacement_task_ids_json, t.cancelled_because_task_id, \
          turn.conversation_id, turn.turn_id, turn.user_message_id, turn.run_id AS source_run_id, \
          message.content_json AS source_message_content \
          FROM local_tasks t \
@@ -147,10 +191,19 @@ async fn callback_source(
     row.map(|row| {
         let source_message_content: String = row.try_get("source_message_content").db()?;
         let source_message_content: Value = serde_json::from_str(&source_message_content)?;
+        let task_input_json: String = row.try_get("input_json").db()?;
+        let task_input: Value = serde_json::from_str(&task_input_json)?;
+        let replacement_task_ids_json: String = row.try_get("replacement_task_ids_json").db()?;
         Ok(CallbackSource {
             graph_id: row.try_get("graph_id").db()?,
             task_id: row.try_get("task_id").db()?,
             task_title: row.try_get("title").db()?,
+            task_objective: task_input
+                .get("objective")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             task_status: row.try_get("status").db()?,
             task_version: u64::try_from(row.try_get::<i64, _>("version").db()?).map_err(|_| {
                 ClientStorageError::InvalidState("invalid Task version".to_string())
@@ -161,6 +214,15 @@ async fn callback_source(
             source_user_message_id: row.try_get("user_message_id").db()?,
             source_run_id: row.try_get("source_run_id").db()?,
             prefers_english: !contains_cjk(&source_message_content),
+            cancel_reason: row.try_get("cancel_reason").db()?,
+            replacement_task_ids: serde_json::from_str(&replacement_task_ids_json)?,
+            cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
+            schedule_mode: task_input
+                .pointer("/schedule/mode")
+                .and_then(Value::as_str)
+                .unwrap_or("contact_async")
+                .trim()
+                .to_string(),
         })
     })
     .transpose()
@@ -176,6 +238,9 @@ async fn write_callback(
     terminal_outcome: Option<&Value>,
     now_unix_ms: i64,
 ) -> Result<bool, ClientStorageError> {
+    if event == "task.cancelled" && !task_cancellation_is_user_visible(source) {
+        return Ok(false);
+    }
     let run_scope = run.map(|run| run.run_id.as_str()).unwrap_or(status);
     let message_id = format!(
         "task_runner_callback::{}::{}::{}",
@@ -183,6 +248,7 @@ async fn write_callback(
     );
     let content = callback_content(
         &source.task_title,
+        &source.task_objective,
         event,
         terminal_outcome,
         source.prefers_english,
@@ -197,17 +263,46 @@ async fn write_callback(
         "task_id": source.task_id,
         "run_id": run.map(|run| run.run_id.as_str()),
         "status": status,
+        "task_status": source.task_status,
         "task_title": source.task_title,
+        "task_objective": source.task_objective,
+        "fallback_locale": if source.prefers_english { "en-US" } else { "zh-CN" },
         "source_session_id": source.conversation_id,
         "source_turn_id": source.turn_id,
         "source_user_message_id": source.source_user_message_id,
         "source_run_id": source.source_run_id,
+        "schedule_mode": source.schedule_mode,
         "callback_at_unix_ms": callback_at_unix_ms,
+        "callback_at": unix_ms_rfc3339(callback_at_unix_ms),
     });
+    if let Some((detail_source, detail)) = user_visible_callback_detail(
+        &source.task_objective,
+        event,
+        terminal_outcome,
+        source.prefers_english,
+    ) {
+        let preview = truncate_chars(&detail, 420);
+        task_runner_async["detail_source"] = json!(detail_source);
+        task_runner_async["detail_preview"] = json!(preview);
+        match event {
+            "task.completed" => {
+                task_runner_async["result_summary"] = json!(detail);
+                if detail_source == "report" {
+                    task_runner_async["report_excerpt"] = json!(preview);
+                }
+            }
+            "task.failed" | "task.blocked" => {
+                task_runner_async["error_message"] = json!(preview);
+            }
+            _ => {}
+        }
+    }
     if event == "task.run.started" {
         task_runner_async["started_at_unix_ms"] = json!(callback_at_unix_ms);
+        task_runner_async["started_at"] = unix_ms_rfc3339(callback_at_unix_ms);
     } else {
         task_runner_async["finished_at_unix_ms"] = json!(callback_at_unix_ms);
+        task_runner_async["finished_at"] = unix_ms_rfc3339(callback_at_unix_ms);
     }
     let mut metadata = json!({
         "kind": "task_execution_callback",
@@ -235,6 +330,14 @@ async fn write_callback(
             })
         {
             metadata["task_runner_async"]["started_at_unix_ms"] = started_at;
+        }
+        if let Some(started_at) = existing
+            .as_ref()
+            .and_then(|row| row.try_get::<String, _>("metadata_json").ok())
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .and_then(|value| value.pointer("/task_runner_async/started_at").cloned())
+        {
+            metadata["task_runner_async"]["started_at"] = started_at;
         }
     }
     let content_json = serde_json::to_string(&Value::String(content))?;
@@ -314,6 +417,35 @@ async fn write_callback(
     Ok(true)
 }
 
+fn unix_ms_rfc3339(value: i64) -> Value {
+    DateTime::<Utc>::from_timestamp_millis(value)
+        .map(|value| Value::String(value.to_rfc3339()))
+        .unwrap_or(Value::Null)
+}
+
+fn task_cancellation_is_user_visible(source: &CallbackSource) -> bool {
+    if source.cancelled_because_task_id.is_some() || !source.replacement_task_ids.is_empty() {
+        return false;
+    }
+    let Some(reason) = source
+        .cancel_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+    else {
+        return true;
+    };
+    !(reason.contains("重新执行前")
+        || reason.contains("重新规划前")
+        || reason.contains("替换旧")
+        || reason.contains("旧执行计划")
+        || reason.contains("replacement")
+        || reason.contains("replan")
+        || reason.contains("rerun")
+        || reason.contains("supersed"))
+}
+
 fn terminal_event_and_status(
     status: &str,
 ) -> Result<(&'static str, &'static str), ClientStorageError> {
@@ -328,395 +460,6 @@ fn terminal_event_and_status(
     }
 }
 
-fn callback_content(
-    _title: &str,
-    event: &str,
-    terminal_outcome: Option<&Value>,
-    english: bool,
-) -> String {
-    let detail = terminal_outcome.and_then(visible_detail);
-    if event == "task.completed" {
-        return detail.unwrap_or_else(|| {
-            if english {
-                "I've finished working on it.".to_string()
-            } else {
-                "我已经处理完了。".to_string()
-            }
-        });
-    }
-    let headline = if english {
-        match event {
-            "task.run.started" => "I've started working on it.".to_string(),
-            "task.failed" => "I couldn't complete this.".to_string(),
-            "task.blocked" => "I can't continue yet.".to_string(),
-            "task.cancelled" => "I've stopped working on it.".to_string(),
-            _ => "I'm continuing to work on it.".to_string(),
-        }
-    } else {
-        match event {
-            "task.run.started" => "我已经开始处理了。".to_string(),
-            "task.failed" => "我这次没有处理完成。".to_string(),
-            "task.blocked" => "我暂时还无法继续处理。".to_string(),
-            "task.cancelled" => "我已经停下来了。".to_string(),
-            _ => "我还在继续处理。".to_string(),
-        }
-    };
-    let Some(detail) = detail else {
-        return headline;
-    };
-    format!("{headline}\n\n{detail}")
-}
-
-fn visible_detail(value: &Value) -> Option<String> {
-    let object = value.as_object()?;
-    ["content", "report", "answer", "error", "message", "reason"]
-        .iter()
-        .find_map(|key| object.get(*key)?.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-fn contains_cjk(value: &Value) -> bool {
-    match value {
-        Value::String(value) => value.chars().any(|character| {
-            ('\u{3400}'..='\u{4dbf}').contains(&character)
-                || ('\u{4e00}'..='\u{9fff}').contains(&character)
-        }),
-        Value::Array(values) => values.iter().any(contains_cjk),
-        Value::Object(values) => values.values().any(contains_cjk),
-        _ => false,
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use crate::{
-        IdempotentCommand, LocalAgentRunStore, LocalAgentTaskStore, LocalConversationStore,
-        RunTransition, SqliteClientStorage,
-    };
-    use chatos_local_agent_protocol::{
-        CreateConversationCommand, CreateTaskGraphCommand, LocalAgentRunRecord,
-        LocalAgentRunStatus, LocalConversationTurnStatus, LocalTaskSpec,
-        StartConversationTurnCommand,
-    };
-    use serde_json::{json, Value};
-
-    fn command(command_id: &str) -> IdempotentCommand {
-        IdempotentCommand {
-            command_id: command_id.to_string(),
-            request_fingerprint: command_id.to_string(),
-            persist_receipt: true,
-        }
-    }
-
-    fn conversation_run(turn: &StartConversationTurnCommand) -> LocalAgentRunRecord {
-        LocalAgentRunRecord {
-            run_id: turn.run_id.clone(),
-            owner_user_id: "user-1".to_string(),
-            owner_entity_type: "conversation_turn".to_string(),
-            owner_entity_id: turn.turn_id.clone(),
-            profile_key: "main_chat".to_string(),
-            model_config_ref: turn.model_config_ref.clone(),
-            model_config_revision: turn.model_config_revision.clone(),
-            capability_policy_revision: turn.capability_policy_revision.clone(),
-            input: json!({"message": turn.message, "attachments": []}),
-            status: LocalAgentRunStatus::Queued,
-            iteration: 0,
-            model_attempt: 1,
-            max_iterations: turn.max_iterations,
-            version: 1,
-            claim_token: None,
-            claim_until_unix_ms: None,
-            next_attempt_at_unix_ms: None,
-            pending_tool_batch: None,
-            checkpoint: Value::Null,
-            continuation_input: None,
-            terminal_outcome: None,
-            created_at_unix_ms: 2_000,
-            updated_at_unix_ms: 2_000,
-        }
-    }
-
-    async fn finish_task_run(
-        storage: &SqliteClientStorage,
-        run_id: &str,
-        status: LocalAgentRunStatus,
-        now_unix_ms: i64,
-    ) {
-        storage
-            .start_next_task_run("user-1", run_id, &format!("start-{run_id}"), now_unix_ms)
-            .await
-            .expect("start Task Run")
-            .expect("runnable Task");
-        let claim = storage
-            .claim_next_run(
-                &command(&format!("claim-{run_id}")),
-                "user-1",
-                "worker-1",
-                &format!("token-{run_id}"),
-                now_unix_ms + 1,
-                now_unix_ms + 10_000,
-                &format!("claim-event-{run_id}"),
-            )
-            .await
-            .expect("claim Task Run")
-            .expect("Task Run claim");
-        storage
-            .apply_transition(
-                &command(&format!("finish-{run_id}")),
-                &RunTransition {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
-                    expected_status: LocalAgentRunStatus::ModelRunning,
-                    next_status: status,
-                    next_model_attempt: 1,
-                    next_attempt_at_unix_ms: None,
-                    pending_tool_batch: None,
-                    tool_batch: None,
-                    checkpoint: None,
-                    clear_continuation_input: true,
-                    terminal_outcome: Some(json!({
-                        "content": format!("Result from {run_id}"),
-                        "reasoning": "internal reasoning must not be displayed",
-                    })),
-                    event_id: format!("finish-event-{run_id}"),
-                    event_type: format!("run_{}", status.as_str()),
-                    event_payload: json!({"status": status}),
-                    occurred_at_unix_ms: now_unix_ms + 2,
-                },
-            )
-            .await
-            .expect("finish Task Run");
-    }
-
-    #[tokio::test]
-    async fn task_runs_write_back_original_task_callback_protocol() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        storage
-            .create_conversation(
-                &command("create-conversation"),
-                &CreateConversationCommand {
-                    conversation_id: "conversation-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    title: "Local conversation".to_string(),
-                    resource: None,
-                },
-                1_000,
-            )
-            .await
-            .expect("create Conversation");
-        let turn = StartConversationTurnCommand {
-            owner_user_id: "user-1".to_string(),
-            conversation_id: "conversation-1".to_string(),
-            expected_conversation_version: 1,
-            turn_id: "turn-1".to_string(),
-            message_id: "message-1".to_string(),
-            run_id: "conversation-run-1".to_string(),
-            message: "Do the task".to_string(),
-            message_metadata: json!({}),
-            attachments: Vec::new(),
-            model_config_ref: "model-1".to_string(),
-            model_config_revision: "revision-1".to_string(),
-            capability_policy_revision: "policy-1".to_string(),
-            max_iterations: 8,
-        };
-        storage
-            .start_conversation_turn(
-                &command("start-turn"),
-                &turn,
-                &conversation_run(&turn),
-                "start-turn-event",
-                2_000,
-            )
-            .await
-            .expect("start Turn");
-        storage
-            .cancel_run(
-                &command("cancel-conversation-run"),
-                &turn.run_id,
-                Some(1),
-                "main response completed elsewhere",
-                "cancel-conversation-event",
-                3_000,
-            )
-            .await
-            .expect("close source Turn");
-        storage
-            .create_task_graph(
-                &command("create-graph"),
-                &CreateTaskGraphCommand {
-                    graph_id: "graph-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    source_entity_type: "conversation_turn".to_string(),
-                    source_entity_id: "turn-1".to_string(),
-                    tasks: vec![LocalTaskSpec {
-                        task_id: "task-1".to_string(),
-                        title: "Inspect project".to_string(),
-                        profile_key: "task_execution".to_string(),
-                        model_config_ref: "model-1".to_string(),
-                        model_config_revision: "revision-1".to_string(),
-                        capability_policy_revision: "policy-1".to_string(),
-                        input: json!({"prompt": "inspect"}),
-                        max_iterations: 8,
-                    }],
-                    dependencies: Vec::new(),
-                },
-                4_000,
-            )
-            .await
-            .expect("create Task Graph");
-
-        finish_task_run(
-            &storage,
-            "task-run-failed",
-            LocalAgentRunStatus::Failed,
-            5_000,
-        )
-        .await;
-        storage
-            .retry_task(&command("retry-task"), "user-1", "task-1", 3, None, 6_000)
-            .await
-            .expect("retry Task");
-        finish_task_run(
-            &storage,
-            "task-run-succeeded",
-            LocalAgentRunStatus::Succeeded,
-            7_000,
-        )
-        .await;
-
-        storage
-            .create_task_graph(
-                &command("create-cancelled-graph"),
-                &CreateTaskGraphCommand {
-                    graph_id: "graph-cancelled".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    source_entity_type: "conversation_turn".to_string(),
-                    source_entity_id: "turn-1".to_string(),
-                    tasks: vec![LocalTaskSpec {
-                        task_id: "task-cancelled".to_string(),
-                        title: "Cancelled task".to_string(),
-                        profile_key: "task_execution".to_string(),
-                        model_config_ref: "model-1".to_string(),
-                        model_config_revision: "revision-1".to_string(),
-                        capability_policy_revision: "policy-1".to_string(),
-                        input: json!({"prompt": "cancel"}),
-                        max_iterations: 8,
-                    }],
-                    dependencies: Vec::new(),
-                },
-                8_000,
-            )
-            .await
-            .expect("create cancellable Task Graph");
-        storage
-            .cancel_task(
-                &command("cancel-task"),
-                "user-1",
-                "task-cancelled",
-                Some(1),
-                "no longer needed",
-                "unused-run-event",
-                9_000,
-            )
-            .await
-            .expect("cancel pending Task");
-
-        let conversation = storage
-            .get_conversation("user-1", "conversation-1")
-            .await
-            .expect("load Conversation")
-            .expect("Conversation");
-        assert_eq!(conversation.conversation.version, 8);
-        assert_eq!(
-            conversation.turns[0].status,
-            LocalConversationTurnStatus::Cancelled
-        );
-        assert_eq!(conversation.messages.len(), 4);
-        assert_eq!(
-            conversation.messages[1].message_id,
-            "task_runner_callback::message-1::task-1::task-run-failed"
-        );
-        assert_eq!(
-            conversation.messages[1].metadata["task_runner_async"]["event"],
-            "task.failed"
-        );
-        assert_eq!(
-            conversation.messages[1].metadata["task_runner_async"]["run_id"],
-            "task-run-failed"
-        );
-        assert_eq!(
-            conversation.messages[1].metadata["task_runner_async"]["started_at_unix_ms"],
-            5_000
-        );
-        assert_eq!(
-            conversation.messages[1].metadata["task_runner_async"]["finished_at_unix_ms"],
-            5_002
-        );
-        assert_eq!(
-            conversation.messages[1].content,
-            "I couldn't complete this.\n\nResult from task-run-failed"
-        );
-        assert!(!conversation.messages[1]
-            .content
-            .as_str()
-            .expect("callback text")
-            .contains("internal reasoning"));
-        assert_eq!(
-            conversation.messages[2].message_id,
-            "task_runner_callback::message-1::task-1::task-run-succeeded"
-        );
-        assert_eq!(
-            conversation.messages[2].metadata["task_runner_async"]["event"],
-            "task.completed"
-        );
-        assert_eq!(
-            conversation.messages[2].content,
-            "Result from task-run-succeeded"
-        );
-        assert_eq!(
-            conversation.messages[3].message_id,
-            "task_runner_callback::message-1::task-cancelled::cancelled"
-        );
-        assert_eq!(
-            conversation.messages[3].metadata["task_runner_async"]["event"],
-            "task.cancelled"
-        );
-        assert!(conversation.messages.iter().skip(1).all(|message| {
-            message.metadata["kind"] == "task_execution_callback"
-                && message.metadata["task_runner_async"]["source_session_id"] == "conversation-1"
-                && message.metadata["task_runner_async"]["source_turn_id"] == "turn-1"
-                && message.metadata["task_runner_async"]["source_user_message_id"] == "message-1"
-        }));
-        let writebacks: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM local_task_graph_writebacks WHERE graph_id = 'graph-1'",
-        )
-        .fetch_one(&storage.pool)
-        .await
-        .expect("count writebacks");
-        assert_eq!(writebacks, 0);
-        let cancelled_writebacks: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM local_task_graph_writebacks \
-             WHERE graph_id = 'graph-cancelled'",
-        )
-        .fetch_one(&storage.pool)
-        .await
-        .expect("count cancelled writebacks");
-        assert_eq!(cancelled_writebacks, 0);
-        let events = storage
-            .list_events(0, 100, None)
-            .await
-            .expect("list callback events");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event.event_type == "task_callback_written_back")
-                .count(),
-            5
-        );
-    }
-}
+#[path = "task_conversation_writeback_tests.rs"]
+mod tests;

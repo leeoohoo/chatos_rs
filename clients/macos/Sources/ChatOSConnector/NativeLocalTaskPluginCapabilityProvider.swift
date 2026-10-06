@@ -24,7 +24,8 @@ extension NativeLocalConnectorService {
         ownerUserID: String,
         runID: String,
         conversationID: String,
-        projectContext: LocalConnectorPluginApplicationContext
+        projectContext: LocalConnectorPluginApplicationContext,
+        pluginIDs: [String]?
     ) throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID,
               let projectID = projectContext.projectID,
@@ -45,6 +46,23 @@ extension NativeLocalConnectorService {
             hopCount: 0,
             lane: .executor
         )
+        let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let selectedPlugins: [NativeInstalledAgentPlugin]
+        if let pluginIDs {
+            let installedByKey = Dictionary(
+                uniqueKeysWithValues: installedPlugins.map { ($0.pluginKey, $0) }
+            )
+            selectedPlugins = try Array(Set(pluginIDs)).sorted().map { pluginKey in
+                guard let plugin = installedByKey[pluginKey] else {
+                    throw NativePluginRuntimeError.invalidRequest(
+                        "本地任务选择的 Plugin 未安装或已停用：\(pluginKey)"
+                    )
+                }
+                return plugin
+            }
+        } else {
+            selectedPlugins = installedPlugins
+        }
         return NativeAgentCapabilityToolProvider(
             service: self,
             ownerUserID: ownerUserID,
@@ -52,7 +70,7 @@ extension NativeLocalConnectorService {
             projectContext: projectContext,
             resolvedProject: try resolveProjectPath(projectRoot),
             builtinCapabilities: [],
-            installedPlugins: try installedAgentPlugins(ownerUserID: ownerUserID),
+            installedPlugins: selectedPlugins,
             executionPresentation: .localTaskExecution
         )
     }

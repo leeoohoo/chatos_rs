@@ -88,6 +88,10 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         foreach (var name in new[]
         {
             "local_attachment_read", "project_list", "project_read", "project_search",
+            "remote_connection_controller_test_connection",
+            "remote_connection_controller_list_directory",
+            "remote_connection_controller_read_file",
+            "remote_connection_controller_download_file",
             "capability_search", "capability_describe", "capability_skill_activate",
             "capability_skill_read_resource",
         })

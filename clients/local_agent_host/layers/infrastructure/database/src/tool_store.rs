@@ -83,6 +83,27 @@ impl LocalAgentToolStore for SqliteClientStorage {
         fetch_invocation(&mut connection, invocation_id).await
     }
 
+    async fn successful_tool_invocation_count(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<u64, ClientStorageError> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_agent_tool_invocations \
+             WHERE run_id = ? AND tool_name = ? AND status = 'succeeded'",
+        )
+        .bind(run_id)
+        .bind(tool_name)
+        .fetch_one(&self.pool)
+        .await
+        .db()?;
+        u64::try_from(count).map_err(|_| {
+            ClientStorageError::InvalidState(
+                "successful tool invocation count cannot be negative".to_string(),
+            )
+        })
+    }
+
     async fn recover_expired_tool_claims(
         &self,
         owner_user_id: &str,
@@ -472,6 +493,63 @@ pub(super) async fn advance_run_after_tool(
     .await
     .db()?;
     if remaining > 0 {
+        return Ok(());
+    }
+    let waiting_prompt = sqlx::query(
+        "SELECT invocation_id, call_id, result_json FROM local_agent_tool_invocations \
+         WHERE run_id = ? AND batch_id = ? AND status = 'succeeded' \
+         AND tool_name IN ('ask_user_prompt_key_values','ask_user_prompt_choices',\
+                           'ask_user_prompt_mixed_form') \
+         ORDER BY invocation_id LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(batch_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    if let Some(prompt_row) = waiting_prompt {
+        let invocation_id: String = prompt_row.try_get("invocation_id").db()?;
+        let call_id: String = prompt_row.try_get("call_id").db()?;
+        let result_json: String = prompt_row.try_get("result_json").db()?;
+        let result: Value = serde_json::from_str(&result_json)?;
+        let mut prompt = result
+            .get("prompt")
+            .and_then(Value::as_object)
+            .cloned()
+            .ok_or_else(|| {
+                ClientStorageError::InvalidState(
+                    "Ask User tool result is missing prompt".to_string(),
+                )
+            })?;
+        prompt.insert("tool_call_id".to_string(), Value::String(call_id));
+        let payload = json!({
+            "prompt": Value::Object(prompt),
+            "invocation_id": invocation_id,
+            "batch_id": batch_id
+        });
+        let updated = sqlx::query(
+            "UPDATE local_agent_runs SET status = 'waiting_user', version = version + 1, \
+             pending_tool_batch_json = NULL, continuation_input_json = NULL, \
+             claim_token = NULL, claim_until_unix_ms = NULL, updated_at_unix_ms = ? \
+             WHERE run_id = ? AND status = 'waiting_tool_result'",
+        )
+        .bind(now_unix_ms)
+        .bind(run_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        if updated.rows_affected() == 1 {
+            SqliteClientStorage::insert_event(
+                connection,
+                event_id,
+                run_id,
+                "user_input_requested",
+                &payload,
+                now_unix_ms,
+            )
+            .await
+            .db()?;
+        }
         return Ok(());
     }
     let waiting_survey = sqlx::query(

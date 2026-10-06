@@ -33,6 +33,7 @@ impl HostCommand {
             Self::CreateTaskGraph(command) => Some(&command.owner_user_id),
             Self::ListTaskGraphs(command) => Some(&command.owner_user_id),
             Self::GetTaskGraph(command) => Some(&command.owner_user_id),
+            Self::GetMessageTaskGraph(command) => Some(&command.owner_user_id),
             Self::GetTaskRuns(command) => Some(&command.owner_user_id),
             Self::CancelTask(command) => Some(&command.owner_user_id),
             Self::RetryTask(command) => Some(&command.owner_user_id),

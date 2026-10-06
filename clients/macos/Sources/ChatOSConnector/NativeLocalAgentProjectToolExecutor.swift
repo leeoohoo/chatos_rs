@@ -14,6 +14,101 @@ struct NativeLocalAgentProjectContext: Sendable {
     let projectID: String
     let applicationContext: LocalConnectorPluginApplicationContext
     let resolvedPath: NativeResolvedProjectPath
+    let toolAuthorization: NativeLocalAgentTaskToolAuthorization
+    let remoteConnectionID: String?
+
+    init(
+        conversationID: String,
+        projectID: String,
+        applicationContext: LocalConnectorPluginApplicationContext,
+        resolvedPath: NativeResolvedProjectPath,
+        toolAuthorization: NativeLocalAgentTaskToolAuthorization,
+        remoteConnectionID: String? = nil
+    ) {
+        self.conversationID = conversationID
+        self.projectID = projectID
+        self.applicationContext = applicationContext
+        self.resolvedPath = resolvedPath
+        self.toolAuthorization = toolAuthorization
+        self.remoteConnectionID = remoteConnectionID
+    }
+}
+
+struct NativeLocalAgentTaskToolAuthorization: Sendable {
+    let requiresExecution: Bool
+    let enabledBuiltinKinds: Set<String>
+    let pluginKeys: Set<String>
+    let isLegacyUnrestricted: Bool
+
+    var pluginsEnabled: Bool { isLegacyUnrestricted || !pluginKeys.isEmpty }
+
+    static func resolve(_ input: [String: LocalAgentJSONValue]) throws -> Self {
+        guard case let .object(options)? = input["tool_options"] else {
+            return .init(
+                requiresExecution: true,
+                enabledBuiltinKinds: [],
+                pluginKeys: [],
+                isLegacyUnrestricted: true
+            )
+        }
+        guard case let .bool(requiresExecution)? = options["requires_execution"],
+              case let .array(rawKinds)? = options["enabled_builtin_kinds"] else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let kinds = try rawKinds.map { value -> String in
+            guard case let .string(kind) = value else {
+                throw NativeLocalAgentPlatformToolError.invalidRunContext
+            }
+            return kind
+        }
+        let pluginKeys: Set<String>
+        if case let .array(hints)? = options["plugin_hints"] {
+            let keys = try hints.map { hint -> String in
+                guard case let .object(values) = hint,
+                      case let .string(rawKey)? = values["plugin_key"] else {
+                    throw NativeLocalAgentPlatformToolError.invalidRunContext
+                }
+                let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.isEmpty else {
+                    throw NativeLocalAgentPlatformToolError.invalidRunContext
+                }
+                return key
+            }
+            pluginKeys = Set(keys)
+            guard pluginKeys.count == keys.count else {
+                throw NativeLocalAgentPlatformToolError.invalidRunContext
+            }
+        } else {
+            pluginKeys = []
+        }
+        return .init(
+            requiresExecution: requiresExecution,
+            enabledBuiltinKinds: Set(kinds),
+            pluginKeys: pluginKeys,
+            isLegacyUnrestricted: false
+        )
+    }
+
+    func allows(_ toolName: String) -> Bool {
+        if isLegacyUnrestricted { return true }
+        if ["read_file_raw", "read_file_range", "list_dir", "search_text", "read_file", "search_files"]
+            .contains(toolName) {
+            return enabledBuiltinKinds.contains("CodeMaintainerRead")
+        }
+        if NativeMCPCodeWriteStore.toolNames.contains(toolName) {
+            return requiresExecution && enabledBuiltinKinds.contains("CodeMaintainerWrite")
+        }
+        if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(toolName) {
+            return requiresExecution && enabledBuiltinKinds.contains("TerminalController")
+        }
+        if NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(toolName) {
+            return pluginsEnabled
+        }
+        if NativeLocalAgentPlatformToolCatalog.taskExecutionRemoteToolNames.contains(toolName) {
+            return enabledBuiltinKinds.contains("RemoteConnectionController")
+        }
+        return false
+    }
 }
 
 struct NativeLocalAgentProjectContextResolver: Sendable {
@@ -64,7 +159,9 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
             conversationID: conversationID,
             projectID: resource.resourceID,
             applicationContext: context,
-            resolvedPath: resolvedPath
+            resolvedPath: resolvedPath,
+            toolAuthorization: try NativeLocalAgentTaskToolAuthorization.resolve(input),
+            remoteConnectionID: Self.string("remote_connection_id", in: input)
         )
     }
 
@@ -76,6 +173,15 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
         }
         return nil
     }
+
+    private static func string(
+        _ key: String,
+        in input: [String: LocalAgentJSONValue]
+    ) -> String? {
+        guard case let .string(value)? = input[key] else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting, Sendable {
@@ -83,11 +189,13 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     private let writeStore: NativeMCPCodeWriteStore
     private let terminalStore: NativeLocalAgentTerminalStore
     private let pluginTools: NativeLocalAgentPluginToolExecutor
+    private let remoteConnections: NativeMCPRemoteConnectionController?
 
     init(
         host: any LocalAgentHostClientServicing,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
+        remoteConnectionProvider: (any NativeRemoteConnectionRuntimeProviding)? = nil,
         writeStore: NativeMCPCodeWriteStore = .init(),
         terminalStore: NativeLocalAgentTerminalStore = .init()
     ) {
@@ -95,6 +203,9 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         self.writeStore = writeStore
         self.terminalStore = terminalStore
         pluginTools = .init(connector: connector)
+        remoteConnections = remoteConnectionProvider.map {
+            NativeMCPRemoteConnectionController(provider: $0)
+        }
     }
 
     func execute(
@@ -116,6 +227,9 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             throw error
         } catch {
             throw NativeLocalAgentPlatformToolError.projectUnavailable
+        }
+        guard context.toolAuthorization.allows(invocation.toolName) else {
+            throw NativeLocalAgentPlatformToolError.capabilityNotSelected
         }
         do {
             let tool = NativeMCPCodeReadTools(
@@ -159,6 +273,28 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     invocation: invocation,
                     context: context,
                     arguments: nativeArguments
+                )
+            } else if NativeLocalAgentPlatformToolCatalog.taskExecutionRemoteToolNames.contains(
+                invocation.toolName
+            ) {
+                guard let remoteConnections,
+                      let remoteConnectionID = context.remoteConnectionID else {
+                    throw NativeLocalAgentPlatformToolError.projectToolFailed
+                }
+                let upstreamName = String(invocation.toolName.dropFirst(
+                    NativeLocalAgentPlatformToolCatalog.remoteConnectionToolPrefix.count
+                ))
+                if ["run_command", "upload_file"].contains(upstreamName) {
+                    guard invocation.requiresApproval,
+                          invocation.approvalStatus == "approved" else {
+                        throw NativeLocalAgentPlatformToolError.approvalRequired
+                    }
+                }
+                var boundArguments = nativeArguments
+                boundArguments["connection_id"] = .string(remoteConnectionID)
+                result = try await remoteConnections.call(
+                    name: upstreamName,
+                    arguments: boundArguments
                 )
             } else {
                 result = try await Task.detached {

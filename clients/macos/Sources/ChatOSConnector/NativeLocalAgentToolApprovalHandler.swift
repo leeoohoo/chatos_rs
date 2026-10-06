@@ -30,6 +30,10 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 || NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                     $0.toolName
                 )
+                || [
+                    "remote_connection_controller_run_command",
+                    "remote_connection_controller_upload_file",
+                ].contains($0.toolName)
         }) else { return false }
         let context = try await contextResolver.resolve(
             ownerUserID: ownerUserID,
@@ -110,6 +114,36 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 .init(level: "medium", reason: "本地任务请求终止运行中的命令。"),
                 "终止当前任务启动的本地命令",
                 "local-agent-terminal"
+            )
+        }
+        if invocation.toolName == "remote_connection_controller_run_command" {
+            let command: String
+            if case .object(let arguments) = invocation.arguments {
+                command = string(arguments["command"]) ?? ""
+            } else {
+                command = ""
+            }
+            return (
+                "remote SSH command",
+                [String(command.prefix(500))],
+                .init(level: "high", reason: "本地任务请求在已保存的远程连接上执行命令。"),
+                "在选定的远程连接上执行命令",
+                "local-agent-remote-command"
+            )
+        }
+        if invocation.toolName == "remote_connection_controller_upload_file" {
+            let path: String
+            if case .object(let arguments) = invocation.arguments {
+                path = string(arguments["path"]) ?? ""
+            } else {
+                path = ""
+            }
+            return (
+                "remote file upload",
+                [String(path.prefix(500))],
+                .init(level: "high", reason: "本地任务请求向已保存的远程连接写入文件。"),
+                "向选定的远程连接上传文件",
+                "local-agent-remote-upload"
             )
         }
         return (

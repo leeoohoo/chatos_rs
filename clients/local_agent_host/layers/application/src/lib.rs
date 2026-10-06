@@ -29,6 +29,9 @@ mod conversation_query_tests;
 mod conversation_runtime;
 mod conversation_settings_runtime;
 mod host_worker;
+mod message_task_graph;
+#[cfg(test)]
+mod message_task_graph_tests;
 mod notepad_runtime;
 #[cfg(test)]
 mod plugin_query_tests;
@@ -302,6 +305,23 @@ impl LocalAgentRuntime {
                     .get_run_for_owner(&command.owner_user_id, &command.run_id)
                     .await?
                     .ok_or_else(|| ClientStorageError::NotFound(command.run_id.clone()))?;
+                if current.owner_entity_type == "task"
+                    && current.profile_key == "task_execution"
+                    && matches!(&command.outcome, LocalAgentStepOutcome::Succeed { .. })
+                    && self
+                        .store
+                        .successful_tool_invocation_count(
+                            &current.run_id,
+                            "task_run_process_report_outcome",
+                        )
+                        .await?
+                        == 0
+                {
+                    return Err(LocalAgentRuntimeError::InvalidRequest(
+                        "Task execution must report its outcome before the final response"
+                            .to_string(),
+                    ));
+                }
                 let now = self.now()?;
                 let transition = transition_for_outcome(
                     &current,
@@ -490,6 +510,7 @@ impl LocalAgentRuntime {
             command @ (HostCommand::CreateTaskGraph(_)
             | HostCommand::ListTaskGraphs(_)
             | HostCommand::GetTaskGraph(_)
+            | HostCommand::GetMessageTaskGraph(_)
             | HostCommand::GetTaskRuns(_)
             | HostCommand::CancelTask(_)
             | HostCommand::RetryTask(_)

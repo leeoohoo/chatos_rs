@@ -15,16 +15,22 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         )
 
         let graph = try await service.fetchGraph(messageID: "message-1", lookup: lookup)
-        XCTAssertEqual(graph.rootTaskIDs, ["task-1"])
-        XCTAssertEqual(graph.nodes.map(\.task.id), ["task-1", "task-2"])
-        XCTAssertEqual(graph.nodes.map(\.depth), [0, 1])
+        XCTAssertEqual(graph.rootTaskIDs, ["task-1", "task-2", "task-3"])
+        XCTAssertEqual(graph.nodes.map(\.task.id), ["task-1", "task-2", "task-3"])
+        XCTAssertEqual(graph.nodes.map(\.depth), [0, 0, 0])
         XCTAssertEqual(graph.edges.first?.sourceID, "task-1")
         XCTAssertEqual(graph.edges.first?.targetID, "task-2")
+        XCTAssertEqual(graph.edges.first?.kind, "prerequisite")
+        XCTAssertEqual(graph.edges.last?.sourceID, "task-1")
+        XCTAssertEqual(graph.edges.last?.targetID, "task-3")
+        XCTAssertEqual(graph.edges.last?.kind, "context")
+        XCTAssertEqual(graph.nodes[0].task.executionClientRef, "research")
+        XCTAssertEqual(graph.nodes[2].task.dependencyContextRefs, ["research"])
         let recordedCommands = try await host.recordedCommands()
         let listCommand = try XCTUnwrap(recordedCommands.first)
-        XCTAssertEqual(listCommand["type"], .string("list_task_graphs"))
-        XCTAssertEqual(listCommand["source_entity_type"], .string("conversation_turn"))
-        XCTAssertEqual(listCommand["source_entity_id"], .string("turn-1"))
+        XCTAssertEqual(listCommand["type"], .string("get_message_task_graph"))
+        XCTAssertEqual(listCommand["source_conversation_id"], .string("conversation-1"))
+        XCTAssertEqual(listCommand["source_turn_id"], .string("turn-1"))
 
         let task = try await service.fetchTask(
             messageID: "message-1",
@@ -33,6 +39,11 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         )
         XCTAssertEqual(task.objective, "Ship locally")
         XCTAssertEqual(task.prerequisiteTaskIDs, ["task-1"])
+        XCTAssertEqual(task.lastRun?.resultSummary, "Completed locally")
+        XCTAssertTrue(task.processLog?.contains("检查项目结构") == true)
+        XCTAssertTrue(task.processLog?.contains("已确认入口和运行方式。") == true)
+        XCTAssertFalse(task.processLog?.contains("list_dir") == true)
+        XCTAssertFalse(task.processLog?.contains("private model output") == true)
 
         try await service.cancelTask(
             messageID: "message-1",
@@ -81,6 +92,56 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["expected_version"], .number(2))
         XCTAssertEqual(command["reason"], .string("restart from the beginning"))
     }
+
+    func testProcessLogHonorsReplaceClearAndSuccessfulInvocationsOnly() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                processEvent(cursor: 1, operation: "append", content: "first"),
+                processEvent(cursor: 2, operation: "replace", content: "replacement"),
+                processEvent(
+                    cursor: 3,
+                    operation: "append",
+                    content: "failed entry",
+                    status: "failed"
+                ),
+                processEvent(cursor: 4, operation: "clear", content: NSNull()),
+                processEvent(cursor: 5, operation: "append", content: "final milestone"),
+            ])
+        )
+
+        let log = NativeLocalAgentMessageTaskGraphService.processLog(from: events)
+
+        XCTAssertTrue(log?.contains("final milestone") == true)
+        XCTAssertFalse(log?.contains("first") == true)
+        XCTAssertFalse(log?.contains("replacement") == true)
+        XCTAssertFalse(log?.contains("failed entry") == true)
+    }
+
+    private func processEvent(
+        cursor: Int,
+        operation: String,
+        content: Any,
+        status: String = "succeeded"
+    ) -> [String: Any] {
+        [
+            "cursor": cursor,
+            "event_id": "event-\(cursor)",
+            "run_id": "run-task-2",
+            "event_type": "tool_batch_completed",
+            "payload": [
+                "invocations": [[
+                    "tool_name": "task_run_process_record_process",
+                    "status": status,
+                    "arguments": [
+                        "operation": operation,
+                        "content": content,
+                    ],
+                ]],
+            ],
+            "created_at_unix_ms": cursor,
+        ]
+    }
 }
 
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {
@@ -93,6 +154,8 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
+        case "get_message_task_graph":
+            return try json(["type": "message_task_graph", "graph": messageGraph()])
         case "list_task_graphs":
             return try json([
                 "type": "task_graphs",
@@ -114,24 +177,44 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         case "get_run":
             return try json([
                 "type": "run",
-                "run": [
-                    "run_id": "run-task-2",
-                    "owner_user_id": "user-1",
-                    "owner_entity_type": "task",
-                    "owner_entity_id": "task-2",
-                    "profile_key": "task_execution",
-                    "input": [:],
-                    "status": "failed",
-                    "version": 3,
-                    "created_at_unix_ms": 1,
-                    "updated_at_unix_ms": 2,
-                ],
+                "run": run(),
             ])
         case "get_task_runs":
+            let taskID = object?["task_id"] as? String ?? "task-1"
             return try json([
                 "type": "task_runs",
-                "task_id": object?["task_id"] ?? "task-1",
-                "runs": [],
+                "task_id": taskID,
+                "runs": taskID == "task-2" ? [run()] : [],
+            ])
+        case "list_events":
+            return try json([
+                "type": "events",
+                "events": [
+                    event(
+                        cursor: 1,
+                        type: "tool_batch_completed",
+                        payload: [
+                            "type": "tool_results",
+                            "invocations": [
+                                [
+                                    "tool_name": "list_dir",
+                                    "status": "succeeded",
+                                    "arguments": ["path": "."],
+                                ],
+                                [
+                                    "tool_name": "task_run_process_record_process",
+                                    "status": "succeeded",
+                                    "arguments": [
+                                        "operation": "append",
+                                        "heading": "检查项目结构",
+                                        "content": "已确认入口和运行方式。",
+                                    ],
+                                ],
+                            ],
+                        ]
+                    ),
+                ],
+                "next_cursor": 1,
             ])
         default:
             throw CocoaError(.featureUnsupported)
@@ -162,7 +245,16 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "source_entity_type": "conversation_turn",
             "source_entity_id": "turn-1",
             "status": "running",
-            "tasks": [task("task-1", version: 1), task("task-2", version: 2)],
+            "tasks": [
+                task("task-1", version: 1, clientRef: "research"),
+                task("task-2", version: 2, clientRef: "implement"),
+                task(
+                    "task-3",
+                    version: 1,
+                    clientRef: "review",
+                    contextRefs: ["research"]
+                ),
+            ],
             "dependencies": [[
                 "task_id": "task-2",
                 "prerequisite_task_id": "task-1",
@@ -171,7 +263,51 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         ]
     }
 
-    private func task(_ id: String, version: Int) -> [String: Any] {
+    private func messageGraph() -> [String: Any] {
+        let tasks = [
+            task("task-1", version: 1, clientRef: "research"),
+            task("task-2", version: 2, clientRef: "implement"),
+            task(
+                "task-3",
+                version: 1,
+                clientRef: "review",
+                contextRefs: ["research"]
+            ),
+        ]
+        return [
+            "root_task_ids": ["task-1", "task-2", "task-3"],
+            "nodes": tasks.map { task in
+                [
+                    "task": task,
+                    "depth": 0,
+                    "is_root": true,
+                    "is_current_message": true,
+                ]
+            },
+            "edges": [
+                [
+                    "source_task_id": "task-1",
+                    "target_task_id": "task-2",
+                    "kind": "prerequisite",
+                ],
+                [
+                    "source_task_id": "task-1",
+                    "target_task_id": "task-3",
+                    "kind": "context",
+                ],
+            ],
+            "source_conversation_id": "conversation-1",
+            "source_turn_id": "turn-1",
+            "source_user_message_id": "message-1",
+        ]
+    }
+
+    private func task(
+        _ id: String,
+        version: Int,
+        clientRef: String,
+        contextRefs: [String] = []
+    ) -> [String: Any] {
         [
             "graph_id": "graph-1",
             "owner_user_id": "user-1",
@@ -180,12 +316,48 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "task_id": id,
             "title": id,
             "model_config_ref": "model-1",
-            "input": ["objective": "Ship locally"],
+            "input": [
+                "objective": "Ship locally",
+                "input_payload": [
+                    "execution_client_ref": clientRef,
+                    "dependency_context_refs": contextRefs,
+                ],
+            ],
             "status": id == "task-1" ? "succeeded" : "running",
             "active_run_id": NSNull(),
             "version": version,
             "created_at_unix_ms": 1,
             "updated_at_unix_ms": 2,
+        ]
+    }
+
+    private func run() -> [String: Any] {
+        [
+            "run_id": "run-task-2",
+            "owner_user_id": "user-1",
+            "owner_entity_type": "task",
+            "owner_entity_id": "task-2",
+            "profile_key": "task_execution",
+            "input": [:],
+            "status": "succeeded",
+            "version": 3,
+            "terminal_outcome": [
+                "content": "Completed locally",
+                "reasoning": "private model output",
+            ],
+            "created_at_unix_ms": 1,
+            "updated_at_unix_ms": 2,
+        ]
+    }
+
+    private func event(cursor: Int, type: String, payload: [String: Any]) -> [String: Any] {
+        [
+            "cursor": cursor,
+            "event_id": "event-\(cursor)",
+            "run_id": "run-task-2",
+            "event_type": type,
+            "payload": payload,
+            "created_at_unix_ms": cursor,
         ]
     }
 

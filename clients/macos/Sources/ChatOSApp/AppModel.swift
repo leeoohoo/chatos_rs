@@ -271,6 +271,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 attachmentRootURL: attachmentRootURL,
                 projects: localProjectsService,
                 connector: localConnectorService,
+                remoteConnectionProvider: remoteConnectionService,
                 eventHub: eventHub
             )
             localAgentRuntimeSettingsService = settings

@@ -241,6 +241,37 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
                 && $0.taskCallback?.sourceTurnID == "turn-1"
         })
     }
+
+    func testMainChatReplyPrecedesCallbacksAndUserCancellationRemainsVisible() {
+        let date = Date(timeIntervalSince1970: 1)
+        let callback: (String, String) -> ConversationAssistantReply = { id, status in
+            ConversationAssistantReply(
+                message: .init(id: id, role: .assistant, text: id, createdAt: date),
+                taskCallback: .init(taskID: id, status: status)
+            )
+        }
+        let handoff = ConversationAssistantReply(
+            message: .init(
+                id: "handoff",
+                role: .assistant,
+                text: "我已经安排任务，完成后会回复。",
+                createdAt: date
+            )
+        )
+
+        let ordered = NativeLocalAgentConversationService.orderedConversationReplies([
+            callback("task-running", "running"),
+            callback("task-cancelled", "cancelled"),
+            handoff,
+            callback("task-completed", "completed"),
+        ])
+
+        XCTAssertEqual(
+            ordered.map(\.id),
+            ["handoff", "task-running", "task-cancelled", "task-completed"]
+        )
+        XCTAssertNil(ordered.first?.taskCallback)
+    }
 }
 
 private actor ConversationCommandHostStub: LocalAgentHostClientServicing {

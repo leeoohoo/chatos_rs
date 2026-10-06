@@ -369,7 +369,33 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
             capability.AgentKey,
             capability.OwnerUserId,
             capability.PolicyRevision,
-            capability.AgentEnabled);
+            capability.AgentEnabled,
+            capability.Mcps.Select(value => new ConnectorResolvedMcp(
+                new ConnectorMcpResource(
+                    value.Resource.Id,
+                    value.Resource.Name,
+                    value.Resource.DisplayName,
+                    value.Resource.Description,
+                    value.Resource.Enabled,
+                    new ConnectorMcpRuntime(
+                        value.Resource.Runtime.Kind,
+                        value.Resource.Runtime.BuiltinKind,
+                        value.Resource.Runtime.ServerName,
+                        value.Resource.Runtime.Url,
+                        value.Resource.Runtime.Headers)),
+                new ConnectorCapabilityBinding(value.Binding.Enabled, value.Binding.Required),
+                value.Available,
+                value.Status,
+                value.ToolSnapshot)).ToArray(),
+            capability.Plugins.Select(value => new ConnectorResolvedPlugin(
+                new ConnectorPluginCapabilityCatalog(
+                    value.Catalog.Id,
+                    value.Catalog.PluginKey,
+                    value.Catalog.DisplayName,
+                    value.Catalog.Description),
+                new ConnectorCapabilityBinding(value.Binding.Enabled, value.Binding.Required),
+                value.Available,
+                value.Status)).ToArray());
     }
 
     private async Task<T> SendAsync<T>(
@@ -478,6 +504,7 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
     private static ConnectorPluginSource Map(GatewayPluginSourceDto value) => new(
         new ConnectorPluginCatalog(
             value.Catalog.Id,
+            value.Catalog.PluginKey,
             value.Catalog.DisplayName,
             value.Catalog.Name,
             value.Catalog.Description,
@@ -607,6 +634,9 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
         [JsonPropertyName("id")]
         public required string Id { get; init; }
 
+        [JsonPropertyName("plugin_key")]
+        public string? PluginKey { get; init; }
+
         [JsonPropertyName("display_name")]
         public string? DisplayName { get; init; }
 
@@ -704,43 +734,6 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
         public int? MaxOutputTokens { get; init; }
     }
 
-    private sealed record GatewayAgentPromptBundleDto
-    {
-        [JsonPropertyName("bundle_version")]
-        public long BundleVersion { get; init; }
-        [JsonPropertyName("updated_at")]
-        public DateTimeOffset UpdatedAt { get; init; }
-        [JsonPropertyName("prompts")]
-        public IReadOnlyList<GatewayAgentPromptDto> Prompts { get; init; } = [];
-    }
-
-    private sealed record GatewayAgentPromptDto
-    {
-        [JsonPropertyName("agent_key")]
-        public required string AgentKey { get; init; }
-        [JsonPropertyName("vendor")]
-        public required string Vendor { get; init; }
-        [JsonPropertyName("content")]
-        public required string Content { get; init; }
-        [JsonPropertyName("revision")]
-        public long Revision { get; init; }
-        [JsonPropertyName("checksum")]
-        public required string Checksum { get; init; }
-        [JsonPropertyName("published_at")]
-        public DateTimeOffset PublishedAt { get; init; }
-    }
-
-    private sealed record GatewayAgentCapabilityDto
-    {
-        [JsonPropertyName("agent_key")]
-        public required string AgentKey { get; init; }
-        [JsonPropertyName("owner_user_id")]
-        public required string OwnerUserId { get; init; }
-        [JsonPropertyName("policy_revision")]
-        public required string PolicyRevision { get; init; }
-        [JsonPropertyName("agent_enabled")]
-        public bool AgentEnabled { get; init; } = true;
-    }
 }
 
 public sealed class ConnectorGatewayException : Exception

@@ -6,15 +6,18 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
     public let modelOptions: [ConversationModelOption]
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
+    public let externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
 
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
         modelOptions: [ConversationModelOption],
-        capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
+        capabilitySnapshot: LocalAgentCapabilityPolicySnapshot,
+        externalMCPConfigs: [NativeLocalAgentExternalMCPConfig] = []
     ) {
         self.modelSnapshots = modelSnapshots
         self.modelOptions = modelOptions
         self.capabilitySnapshot = capabilitySnapshot
+        self.externalMCPConfigs = externalMCPConfigs
     }
 }
 
@@ -34,6 +37,15 @@ extension NativeLocalConnectorService {
         let settings = catalog.optional
         let token = try requireAccessToken()
         let gateway = gateway
+        let agentCapability = try await gateway.agentCapability(
+            token: token,
+            agentKey: "local_agent_execution_agent"
+        )
+        guard agentCapability.agentEnabled,
+              agentCapability.ownerUserID == ownerUserID,
+              agentCapability.agentKey == "local_agent_execution_agent" else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
         var snapshots: [LocalAgentModelConfigSnapshot] = []
@@ -118,26 +130,213 @@ extension NativeLocalConnectorService {
         for snapshot in snapshots {
             try await controlPlane.publishModel(snapshot)
         }
+        let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
+        guard !agentCapability.mcps.contains(where: {
+            $0.binding.required && !$0.available
+        }), !agentCapability.plugins.contains(where: {
+            $0.binding.required
+              && !$0.available && $0.status != "partially_available"
+        }) else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
+        let installedPluginKeys = Set(installedPlugins.map(\.pluginKey))
+        let requiredPluginKeys = agentCapability.plugins.compactMap { plugin -> String? in
+            guard plugin.binding.required,
+                  plugin.available || plugin.status == "partially_available" else { return nil }
+            return plugin.catalog.pluginKey
+        }
+        guard requiredPluginKeys.allSatisfy(installedPluginKeys.contains) else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
+        let selectablePluginKeys = Set<String>(agentCapability.plugins.compactMap { plugin in
+            guard !plugin.binding.required,
+                  plugin.available || plugin.status == "partially_available" else { return nil }
+            return plugin.catalog.pluginKey
+        })
+        let pluginChoices = installedPlugins.filter {
+            selectablePluginKeys.contains($0.pluginKey)
+        }
+        let builtinChoices = Self.selectableBuiltinChoices(agentCapability.mcps)
+        let externalChoices = Self.selectableExternalChoices(agentCapability.mcps)
+        let requiredBuiltinKinds = agentCapability.mcps.compactMap { item -> String? in
+            guard item.binding.required, item.available else { return nil }
+            return item.resource.runtime.builtinKind?.trimmedNonEmpty
+        }
+        let requiredExternalIDs = agentCapability.mcps.compactMap { item -> String? in
+            guard item.binding.required,
+                  item.available,
+                  item.resource.runtime.builtinKind?.trimmedNonEmpty == nil,
+                  !item.resource.id.hasPrefix("system_mcp_") else { return nil }
+            return item.resource.id
+        }
+        let effectiveExternalIDs = Set(externalChoices.map(\.value) + requiredExternalIDs)
+        let externalMCPConfigs = Self.externalMCPConfigs(
+            agentCapability.mcps,
+            selectedIDs: effectiveExternalIDs
+        )
+        guard Set(externalMCPConfigs.map(\.resourceID)).isSuperset(of: Set(requiredExternalIDs))
+        else { throw NativeLocalAgentBootstrapError.executionAgentUnavailable }
+        let capabilityRevision = Self.capabilityRevision(
+            agentCapability,
+            plugins: pluginChoices,
+            builtinChoices: builtinChoices,
+            externalChoices: externalChoices
+        )
         let capability = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: ownerUserID,
             profileKey: "main_chat",
-            capabilityPolicyRevision: "native-main-chat-v9",
+            capabilityPolicyRevision: capabilityRevision,
             instructions: "You are the local Main Chat task planner. Use only the local task tools to inspect, create, query, cancel, and hand off durable work. When a project-bound request requires reading project files or using execution tools, create a task bound to the current conversation/project; never claim the project is unavailable and never ask the user to re-upload an already bound project. Do not read project files, run commands, or execute plugins directly. Task state and execution remain local.",
-            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
+            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools(
+                pluginChoices: pluginChoices,
+                builtinChoices: builtinChoices,
+                externalChoices: externalChoices
+            )
         )
         try await controlPlane.publishCapabilities(capability)
+        let requiredPolicy = LocalAgentJSONValue.object([
+            "enabled_builtin_kinds": .array(requiredBuiltinKinds.map(LocalAgentJSONValue.string)),
+            "external_mcp_config_ids": .array(requiredExternalIDs.map(LocalAgentJSONValue.string)),
+            "plugin_keys": .array(requiredPluginKeys.map(LocalAgentJSONValue.string)),
+        ])
+        let requiredPolicyData = try JSONEncoder().encode(requiredPolicy)
+        guard let requiredPolicyJSON = String(data: requiredPolicyData, encoding: .utf8) else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
+        try await controlPlane.publishCapabilities(.init(
+            ownerUserID: ownerUserID,
+            profileKey: "task_policy_internal",
+            capabilityPolicyRevision: capability.capabilityPolicyRevision,
+            instructions: requiredPolicyJSON
+        ))
         try await controlPlane.publishCapabilities(.init(
             ownerUserID: ownerUserID,
             profileKey: "task_execution",
             capabilityPolicyRevision: capability.capabilityPolicyRevision,
             instructions: "Complete the durable local task objective and return a concrete result. Use the local project tools to inspect the bound project. For changes, open an edit session, stage a bounded batch with the read SHA-256 (or null only for a proven-new file), and commit it; the client requests approval before the commit reaches disk. Use execute_command only when project inspection or verification requires it; commands run locally inside the bound project and require approval. For background commands, wait for completion or terminate them before finishing. Requirement surveys are project-bound local records: inspect existing surveys before creating or resolving one, and activate/read the survey skill resources when their detailed contract is needed. Use capability_search only when the task needs an installed Plugin, then describe its opaque option, activate every required Skill, and invoke only a returned tool option. Plugin discovery and execution are account-, project-, and Run-scoped on this client. Do not create nested tasks.",
-            tools: NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools
+            tools: NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools(
+                externalMCPConfigs: externalMCPConfigs
+            )
         ))
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
-            capabilitySnapshot: capability
+            capabilitySnapshot: capability,
+            externalMCPConfigs: externalMCPConfigs
         )
+    }
+
+    private static func externalMCPConfigs(
+        _ mcps: [GatewayResolvedMCPDTO],
+        selectedIDs: Set<String>
+    ) -> [NativeLocalAgentExternalMCPConfig] {
+        var usedToolNames = Set<String>()
+        return mcps.sorted { $0.resource.id < $1.resource.id }.compactMap { item in
+            guard selectedIDs.contains(item.resource.id),
+                  let rawURL = item.resource.runtime.url?.trimmedNonEmpty,
+                  let url = URL(string: rawURL) else { return nil }
+            let serverName = item.resource.runtime.serverName?.trimmedNonEmpty
+                ?? item.resource.name.trimmedNonEmpty
+                ?? item.resource.id
+            let tools = item.toolSnapshot.compactMap { raw -> NativeLocalAgentExternalMCPTool? in
+                guard case .object(let object) = raw,
+                      case .string(let upstreamName)? = object["name"],
+                      let upstreamName = upstreamName.trimmedNonEmpty else { return nil }
+                let description: String
+                if case .string(let value)? = object["description"] { description = value }
+                else { description = "" }
+                let schema = object["inputSchema"] ?? object["input_schema"]
+                    ?? .object(["type": .string("object")])
+                return .init(
+                    publicName: NativeLocalAgentExternalMCPNaming.disambiguatedToolName(
+                        server: serverName,
+                        tool: upstreamName,
+                        resourceID: item.resource.id,
+                        used: &usedToolNames
+                    ),
+                    upstreamName: upstreamName,
+                    description: description,
+                    inputSchema: schema
+                )
+            }
+            return .init(
+                resourceID: item.resource.id,
+                serverName: serverName,
+                url: url,
+                headers: item.resource.runtime.headers,
+                tools: tools
+            )
+        }
+    }
+
+    private static func selectableBuiltinChoices(
+        _ mcps: [GatewayResolvedMCPDTO]
+    ) -> [NativeLocalAgentMCPChoice] {
+        let candidates = mcps.filter {
+            !$0.binding.required && $0.binding.enabled && $0.resource.enabled
+              && $0.resource.runtime.builtinKind?.trimmedNonEmpty != nil
+        }
+        let available = Set(candidates.compactMap { $0.resource.runtime.builtinKind?.trimmedNonEmpty })
+        return candidates.compactMap { item in
+            guard let kind = item.resource.runtime.builtinKind?.trimmedNonEmpty else { return nil }
+            if kind == "CodeMaintainerWrite", !available.contains("CodeMaintainerRead") {
+                return nil
+            }
+            return .init(value: kind, title: Self.mcpChoiceTitle(item, value: kind))
+        }
+    }
+
+    private static func selectableExternalChoices(
+        _ mcps: [GatewayResolvedMCPDTO]
+    ) -> [NativeLocalAgentMCPChoice] {
+        mcps.compactMap { item in
+            guard !item.binding.required,
+                  item.binding.enabled,
+                  item.resource.enabled,
+                  item.resource.runtime.builtinKind?.trimmedNonEmpty == nil,
+                  !item.resource.id.hasPrefix("system_mcp_"),
+                  item.resource.runtime.kind.lowercased() == "http",
+                  item.resource.runtime.url?.trimmedNonEmpty != nil else { return nil }
+            return .init(
+                value: item.resource.id,
+                title: Self.mcpChoiceTitle(item, value: item.resource.id)
+            )
+        }
+    }
+
+    private static func mcpChoiceTitle(
+        _ item: GatewayResolvedMCPDTO,
+        value: String
+    ) -> String {
+        let display = item.resource.displayName.trimmedNonEmpty
+            ?? item.resource.name.trimmedNonEmpty
+            ?? value
+        var title = display == value ? value : "\(display) (\(value))"
+        if let description = item.resource.description?.trimmedNonEmpty {
+            title += " - \(description)"
+        }
+        let names = item.toolSnapshot.compactMap { tool -> String? in
+            guard case .object(let object) = tool,
+                  case .string(let name)? = object["name"] else { return nil }
+            return name.trimmedNonEmpty
+        }.prefix(12)
+        if !names.isEmpty { title += " [tools: \(names.joined(separator: ", "))]" }
+        return title
+    }
+
+    private static func capabilityRevision(
+        _ capability: GatewayAgentCapabilityDTO,
+        plugins: [NativeInstalledAgentPlugin],
+        builtinChoices: [NativeLocalAgentMCPChoice],
+        externalChoices: [NativeLocalAgentMCPChoice]
+    ) -> String {
+        let fields = [capability.policyRevision]
+          + plugins.map(\.pluginKey).sorted()
+          + builtinChoices.map(\.value).sorted()
+          + externalChoices.map(\.value).sorted()
+        let digest = SHA256.hash(data: Data(fields.joined(separator: "\u{0}").utf8))
+          .map { String(format: "%02x", $0) }.joined()
+        return "local-agent-\(digest)"
     }
 
     private func modelRevision(_ model: GatewayModelConfigDTO) -> String {
@@ -177,6 +376,7 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
     case noEnabledModel
     case credentialVariableCollision
     case credentialStoreReadFailed
+    case executionAgentUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -186,6 +386,8 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
             "Local Agent model identifiers produce the same credential variable."
         case .credentialStoreReadFailed:
             "Local Agent model credential could not be reloaded from Keychain."
+        case .executionAgentUnavailable:
+            "The Local Agent execution capability is unavailable for this account."
         }
     }
 }

@@ -80,8 +80,9 @@ pub use run_query::{
 };
 
 pub use task::{
-    CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
-    ListTaskGraphsCommand, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    CancelTaskCommand, CreateTaskGraphCommand, GetMessageTaskGraphCommand, GetTaskGraphCommand,
+    GetTaskRunsCommand, ListTaskGraphsCommand, LocalMessageTaskGraph, LocalMessageTaskGraphEdge,
+    LocalMessageTaskGraphNode, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
     LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
     LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
@@ -93,7 +94,7 @@ pub use tool::{
     LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 39;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 40;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -145,6 +146,7 @@ pub enum HostCommand {
     CreateTaskGraph(CreateTaskGraphCommand),
     ListTaskGraphs(ListTaskGraphsCommand),
     GetTaskGraph(GetTaskGraphCommand),
+    GetMessageTaskGraph(GetMessageTaskGraphCommand),
     GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
     RetryTask(RetryTaskCommand),
@@ -216,6 +218,7 @@ impl HostCommand {
             Self::CreateTaskGraph(command) => command.validate(),
             Self::ListTaskGraphs(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
+            Self::GetMessageTaskGraph(command) => command.validate(),
             Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),

@@ -17,10 +17,22 @@ internal sealed record WindowsLocalTaskGraphSummary(
 internal sealed record WindowsLocalTaskGraphPage(
     IReadOnlyList<WindowsLocalTaskGraphSummary> Graphs,
     long? NextBeforeUpdatedAtUnixMs, string? NextBeforeGraphId);
+internal sealed record WindowsLocalMessageTaskGraphNode(
+    WindowsLocalTask Task, uint Depth, bool IsRoot, bool IsCurrentMessage);
+internal sealed record WindowsLocalMessageTaskGraphEdge(
+    string SourceTaskId, string TargetTaskId, string Kind);
+internal sealed record WindowsLocalMessageTaskGraph(
+    IReadOnlyList<string> RootTaskIds,
+    IReadOnlyList<WindowsLocalMessageTaskGraphNode> Nodes,
+    IReadOnlyList<WindowsLocalMessageTaskGraphEdge> Edges,
+    string SourceConversationId, string SourceTurnId, string? SourceUserMessageId);
 internal sealed record ListLocalTaskGraphsCommand(
     string Type, string OwnerUserId, string Scope, string? SourceEntityType,
     string? SourceEntityId, long? BeforeUpdatedAtUnixMs, string? BeforeGraphId, uint Limit);
 internal sealed record GetLocalTaskGraphCommand(string Type, string OwnerUserId, string GraphId);
+internal sealed record GetLocalMessageTaskGraphCommand(
+    string Type, string OwnerUserId, string SourceConversationId,
+    string SourceTurnId, string? SourceUserMessageId);
 internal sealed record GetLocalTaskRunsCommand(string Type, string OwnerUserId, string TaskId, uint Limit);
 internal sealed record RetryLocalTaskCommand(
     string Type, string OwnerUserId, string TaskId, ulong ExpectedVersion,
@@ -30,11 +42,25 @@ internal sealed record RestartLocalTaskCommand(
     string Reason);
 internal sealed record LocalTaskGraphsResult(string Type, WindowsLocalTaskGraphPage Page);
 internal sealed record LocalTaskGraphTypedResult(string Type, WindowsLocalTaskGraph Graph);
+internal sealed record LocalMessageTaskGraphTypedResult(
+    string Type, WindowsLocalMessageTaskGraph Graph);
 internal sealed record LocalTaskRunsResult(
     string Type, string TaskId, IReadOnlyList<WindowsLocalAgentRun> Runs);
 
 public sealed class WindowsLocalAgentTaskClient(ILocalAgentHostClient host)
 {
+    internal async Task<WindowsLocalMessageTaskGraph> MessageGraphAsync(
+        string owner, string conversationId, string turnId, string? sourceUserMessageId,
+        CancellationToken cancellationToken)
+    {
+        var result = await host.SendAsync<
+            GetLocalMessageTaskGraphCommand, LocalMessageTaskGraphTypedResult>(new(
+                "get_message_task_graph", owner, conversationId, turnId, sourceUserMessageId),
+                cancellationToken).ConfigureAwait(false);
+        return result.Type == "message_task_graph" ? result.Graph
+            : throw new InvalidDataException("Invalid message Task Graph result.");
+    }
+
     internal async Task<IReadOnlyList<WindowsLocalTaskGraph>> MatchingGraphsAsync(
         string owner, string? turnId, string? requiredTaskId,
         CancellationToken cancellationToken)

@@ -36,6 +36,10 @@ public sealed class LocalAgentHostProcessTests
         AssertReadOnly(arguments, "project_list");
         AssertReadOnly(arguments, "project_read");
         AssertReadOnly(arguments, "project_search");
+        AssertReadOnly(arguments, "remote_connection_controller_test_connection");
+        AssertReadOnly(arguments, "remote_connection_controller_list_directory");
+        AssertReadOnly(arguments, "remote_connection_controller_read_file");
+        AssertReadOnly(arguments, "remote_connection_controller_download_file");
         AssertReadOnly(arguments, "capability_search");
         AssertReadOnly(arguments, "capability_describe");
         AssertReadOnly(arguments, "capability_skill_activate");

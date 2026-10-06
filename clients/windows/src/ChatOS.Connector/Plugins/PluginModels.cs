@@ -11,7 +11,8 @@ public sealed record InstalledPluginRecord(
     string InstallationPath,
     DateTimeOffset InstalledAt,
     IReadOnlyList<string> DeclaredPermissions,
-    IReadOnlyDictionary<string, string>? PackageFileSha256 = null);
+    IReadOnlyDictionary<string, string>? PackageFileSha256 = null,
+    string? PluginKey = null);
 
 public interface IInstalledPluginStore
 {

@@ -6,7 +6,7 @@ namespace ChatOS.Connector.LocalAgent;
 
 public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsyncDisposable
 {
-    private const int ProtocolVersion = 39;
+    private const int ProtocolVersion = 40;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,

@@ -28,6 +28,9 @@ impl LocalAgentRuntime {
                     .get_task_graph(&command.owner_user_id, &command.graph_id)
                     .await?,
             }),
+            HostCommand::GetMessageTaskGraph(command) => Ok(HostResult::MessageTaskGraph {
+                graph: self.message_task_graph(command).await?,
+            }),
             HostCommand::GetTaskRuns(command) => {
                 let task_id = command.task_id.clone();
                 let runs = self.get_task_runs(command).await?;
@@ -62,12 +65,45 @@ impl LocalAgentRuntime {
             .await?)
     }
 
+    /// Materializes every currently-ready Task in one graph without touching
+    /// unrelated graphs owned by the same account. This preserves the former
+    /// Task Runner create-and-dispatch contract used by Main Chat tools.
+    pub async fn start_ready_task_runs_for_graph(
+        &self,
+        owner_user_id: &str,
+        graph_id: &str,
+    ) -> Result<Vec<LocalAgentRunRecord>, LocalAgentRuntimeError> {
+        let mut runs = Vec::new();
+        loop {
+            let now = self.now()?;
+            let run = self
+                .store
+                .start_next_task_run_for_graph(
+                    owner_user_id,
+                    graph_id,
+                    &format!("task-run-{}", Uuid::new_v4()),
+                    &format!("task-run-event-{}", Uuid::new_v4()),
+                    now,
+                )
+                .await?;
+            let Some(run) = run else {
+                break;
+            };
+            runs.push(run);
+        }
+        Ok(runs)
+    }
+
     pub async fn list_tasks_for_conversation(
         &self,
         owner_user_id: &str,
         conversation_id: &str,
         status: Option<LocalTaskStatus>,
         keyword: Option<&str>,
+        tag: Option<&str>,
+        scheduled_only: Option<bool>,
+        parent_task_id: Option<&str>,
+        source_run_id: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<LocalTaskRecord>, LocalAgentRuntimeError> {
@@ -78,6 +114,10 @@ impl LocalAgentRuntime {
                 conversation_id,
                 status,
                 keyword,
+                tag,
+                scheduled_only,
+                parent_task_id,
+                source_run_id,
                 limit,
                 offset,
             )
@@ -93,6 +133,59 @@ impl LocalAgentRuntime {
         Ok(self
             .store
             .get_task_for_conversation(owner_user_id, conversation_id, task_id)
+            .await?)
+    }
+
+    /// Returns the active Task Graph already created for one source turn.
+    ///
+    /// The server Task Runner treated the source user message as the durable
+    /// idempotency boundary. Keep that behavior after moving execution on
+    /// device so a retried model/tool call cannot create a second plan for the
+    /// same user turn merely because it received a new tool invocation id.
+    pub async fn active_task_graph_for_source(
+        &self,
+        owner_user_id: &str,
+        source_entity_type: &str,
+        source_entity_id: &str,
+    ) -> Result<Option<LocalTaskGraph>, LocalAgentRuntimeError> {
+        let page = self
+            .store
+            .list_task_graphs(
+                owner_user_id,
+                chatos_local_agent_protocol::LocalTaskGraphListScope::Active,
+                Some(source_entity_type),
+                Some(source_entity_id),
+                None,
+                None,
+                1,
+            )
+            .await?;
+        let Some(summary) = page.graphs.into_iter().next() else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .get_task_graph(owner_user_id, &summary.graph_id)
+            .await?)
+    }
+
+    pub async fn task_graph_by_id(
+        &self,
+        owner_user_id: &str,
+        graph_id: &str,
+    ) -> Result<Option<LocalTaskGraph>, LocalAgentRuntimeError> {
+        Ok(self.store.get_task_graph(owner_user_id, graph_id).await?)
+    }
+
+    pub async fn latest_model_config_for_task(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
+    ) -> Result<Option<chatos_local_agent_protocol::LocalModelConfigSnapshot>, LocalAgentRuntimeError>
+    {
+        Ok(self
+            .store
+            .get_latest_model_config_snapshot(owner_user_id, model_config_ref)
             .await?)
     }
 
@@ -160,6 +253,7 @@ impl LocalAgentRuntime {
                 &command.task_id,
                 command.expected_version,
                 &command.reason,
+                &command.replacement_task_ids,
                 &format!("task-cancel-event-{}", Uuid::new_v4()),
                 self.now()?,
             )
@@ -323,6 +417,7 @@ mod tests {
                 task_id: "task-1".to_string(),
                 expected_version: Some(1),
                 reason: "stop".to_string(),
+                replacement_task_ids: Vec::new(),
             }),
         );
         let cancelled = runtime.handle(cancel.clone()).await;
@@ -332,7 +427,7 @@ mod tests {
             result => panic!("unexpected result: {result:?}"),
         };
         assert_eq!(graph.tasks[0].status, LocalTaskStatus::Cancelled);
-        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Blocked);
+        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Cancelled);
 
         let retried = runtime
             .handle(request(
@@ -350,7 +445,7 @@ mod tests {
             result => panic!("unexpected result: {result:?}"),
         };
         assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
-        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
+        assert_eq!(graph.tasks[1].status, LocalTaskStatus::Cancelled);
 
         runtime
             .start_next_task_run("user-1")

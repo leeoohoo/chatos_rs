@@ -75,7 +75,10 @@ actor NativeLocalAgentPluginToolExecutor {
             ownerUserID: ownerUserID,
             runID: runID,
             conversationID: context.conversationID,
-            projectContext: context.applicationContext
+            projectContext: context.applicationContext,
+            pluginIDs: context.toolAuthorization.isLegacyUnrestricted
+                ? nil
+                : context.toolAuthorization.pluginKeys.sorted()
         )
         sessions[runID] = .init(
             ownerUserID: ownerUserID,
