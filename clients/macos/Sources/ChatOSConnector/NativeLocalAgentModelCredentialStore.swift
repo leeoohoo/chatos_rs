@@ -1,20 +1,27 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 struct NativeLocalAgentModelCredentialStore: Sendable {
     private static let service = "com.chatos.swift.local-agent-model"
 
-    func load(ownerUserID: String, modelConfigRef: String) throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    func loadWithoutUserInteraction(
+        ownerUserID: String,
+        modelConfigRef: String
+    ) throws -> String? {
+        let query = Self.loadQuery(
+            ownerUserID: ownerUserID,
+            modelConfigRef: modelConfigRef,
+            allowUserInteraction: false
+        )
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
+        if status == errSecItemNotFound
+            || status == errSecInteractionNotAllowed
+            || status == errSecAuthFailed
+            || status == errSecUserCanceled {
+            return nil
+        }
         guard status == errSecSuccess,
               let data = result as? Data,
               let value = String(data: data, encoding: .utf8) else {
@@ -23,7 +30,12 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         return value
     }
 
-    func save(_ credential: String, ownerUserID: String, modelConfigRef: String) throws {
+    @discardableResult
+    func saveWithoutUserInteraction(
+        _ credential: String,
+        ownerUserID: String,
+        modelConfigRef: String
+    ) throws -> Bool {
         guard !credential.isEmpty,
               credential.lengthOfBytes(using: .utf8) <= 64 * 1_024,
               !credential.contains("\0") else {
@@ -35,12 +47,19 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: account,
         ]
+        var updateSelector = selector
+        updateSelector[kSecUseAuthenticationContext as String] = Self.nonInteractiveContext()
         let data = Data(credential.utf8)
         let update = SecItemUpdate(
-            selector as CFDictionary,
+            updateSelector as CFDictionary,
             [kSecValueData as String: data] as CFDictionary
         )
-        if update == errSecSuccess { return }
+        if update == errSecSuccess { return true }
+        if update == errSecInteractionNotAllowed
+            || update == errSecAuthFailed
+            || update == errSecUserCanceled {
+            return false
+        }
         guard update == errSecItemNotFound else {
             throw NativeLocalAgentModelCredentialError.keychain(update)
         }
@@ -48,9 +67,29 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         insert[kSecValueData as String] = data
         insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         let status = SecItemAdd(insert as CFDictionary, nil)
+        if status == errSecDuplicateItem { return false }
         guard status == errSecSuccess else {
             throw NativeLocalAgentModelCredentialError.keychain(status)
         }
+        return true
+    }
+
+    static func loadQuery(
+        ownerUserID: String,
+        modelConfigRef: String,
+        allowUserInteraction: Bool
+    ) -> [String: Any] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: Self.service,
+            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        if !allowUserInteraction {
+            query[kSecUseAuthenticationContext as String] = nonInteractiveContext()
+        }
+        return query
     }
 
     func delete(ownerUserID: String, modelConfigRef: String) throws {
@@ -73,8 +112,18 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         return "CHATOS_LOCAL_AGENT_MODEL_\(normalized.prefix(96))"
     }
 
-    private func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
+    private static func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
         "v1:\(ownerUserID):\(modelConfigRef)"
+    }
+
+    private static func nonInteractiveContext() -> LAContext {
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        return context
+    }
+
+    private func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
+        Self.account(ownerUserID, modelConfigRef)
     }
 }
 

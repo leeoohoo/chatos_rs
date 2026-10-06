@@ -46,7 +46,7 @@ extension NativeLocalConnectorService {
             )
             guard snapshot.credentialRef == "env:\(variable)",
                   environment[variable] == nil,
-                  let credential = try credentialStore.load(
+                  let credential = try credentialStore.loadWithoutUserInteraction(
                     ownerUserID: ownerUserID,
                     modelConfigRef: snapshot.modelConfigRef
                   )?.trimmedNonEmpty else {
@@ -131,7 +131,7 @@ extension NativeLocalConnectorService {
                   !resolved.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue
             }
-            try credentialStore.save(
+            try credentialStore.saveWithoutUserInteraction(
                 credential,
                 ownerUserID: ownerUserID,
                 modelConfigRef: resolved.id
@@ -140,13 +140,9 @@ extension NativeLocalConnectorService {
             guard environment[variable] == nil else {
                 throw NativeLocalAgentBootstrapError.credentialVariableCollision
             }
-            guard let storedCredential = try credentialStore.load(
-                ownerUserID: ownerUserID,
-                modelConfigRef: resolved.id
-            ) else {
-                throw NativeLocalAgentBootstrapError.credentialStoreReadFailed
-            }
-            environment[variable] = storedCredential
+            // The gateway response is already the authoritative credential. Reading the value
+            // back from Keychain can prompt after an app signature change and adds no validation.
+            environment[variable] = credential
             let snapshot = LocalAgentModelConfigSnapshot(
                 ownerUserID: ownerUserID,
                 modelConfigRef: resolved.id,
@@ -438,7 +434,6 @@ extension NativeLocalConnectorService {
 public enum NativeLocalAgentBootstrapError: LocalizedError {
     case noEnabledModel
     case credentialVariableCollision
-    case credentialStoreReadFailed
     case executionAgentUnavailable
 
     public var errorDescription: String? {
@@ -447,8 +442,6 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
             "No enabled Local Agent model with a credential is configured."
         case .credentialVariableCollision:
             "Local Agent model identifiers produce the same credential variable."
-        case .credentialStoreReadFailed:
-            "Local Agent model credential could not be reloaded from Keychain."
         case .executionAgentUnavailable:
             "The Local Agent execution capability is unavailable for this account."
         }
