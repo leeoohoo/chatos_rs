@@ -435,6 +435,37 @@ public sealed partial class MediaStudioPage : Page
         if (sender is Button { Tag: string prompt }) ViewModel.Prompt = prompt;
     }
 
+    private async void OnPreviewImageClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: MediaStudioImageItem image }) return;
+        var preview = new Image
+        {
+            Source = new FilePathToImageSourceConverter().Convert(
+                image.FilePath,
+                typeof(BitmapImage),
+                null!,
+                string.Empty) as BitmapImage,
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            MaxWidth = 980,
+            MaxHeight = 700,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = image.Name,
+            Content = new ScrollViewer
+            {
+                Content = preview,
+                MinWidth = 680,
+                MinHeight = 420,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            },
+            CloseButtonText = "关闭",
+        };
+        await dialog.ShowAsync();
+    }
+
     private async void OnAddReferenceClick(object sender, RoutedEventArgs e)
     {
         var window = (Application.Current as App)?.MainWindow;
@@ -474,18 +505,19 @@ public sealed partial class MediaStudioPage : Page
             return;
         }
 
-        var list = new ListView
+        var list = CreateGeneratedImagePicker(images, ListViewSelectionMode.Multiple);
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
         {
-            ItemsSource = images,
-            DisplayMemberPath = nameof(MediaStudioImageItem.Name),
-            SelectionMode = ListViewSelectionMode.Multiple,
-            MaxHeight = 420,
-        };
+            Text = "按生成顺序选择，可一次添加多张图片。",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(list);
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = $"从创作记录选择参考图（最多 {remaining} 张）",
-            Content = list,
+            Content = content,
             PrimaryButtonText = "添加",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
@@ -592,18 +624,19 @@ public sealed partial class MediaStudioPage : Page
             return;
         }
 
-        var list = new ListView
+        var list = CreateGeneratedImagePicker(images, ListViewSelectionMode.Single);
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
         {
-            ItemsSource = images,
-            DisplayMemberPath = nameof(MediaStudioImageItem.Name),
-            SelectionMode = ListViewSelectionMode.Single,
-            MaxHeight = 420,
-        };
+            Text = "选择一张已生成图片作为视频首帧；选择后不会自动开始生成。",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(list);
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "从创作记录选择视频首帧",
-            Content = list,
+            Content = content,
             PrimaryButtonText = "使用",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
@@ -614,6 +647,18 @@ public sealed partial class MediaStudioPage : Page
             await ViewModel.SetVideoFirstFrameAsync(selected.FilePath);
         }
     }
+
+    private ListView CreateGeneratedImagePicker(
+        IReadOnlyList<MediaStudioImageItem> images,
+        ListViewSelectionMode selectionMode) =>
+        new()
+        {
+            ItemsSource = images,
+            ItemTemplate = (DataTemplate)Resources["GeneratedImagePickerItemTemplate"],
+            SelectionMode = selectionMode,
+            MaxHeight = 460,
+            MinWidth = 560,
+        };
 
     private void OnRemoveVideoFrameClick(object sender, RoutedEventArgs e) =>
         ViewModel.RemoveVideoFirstFrame();

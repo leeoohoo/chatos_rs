@@ -90,6 +90,11 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("ViewModel.VideoFirstFramePreviewPath", xaml, StringComparison.Ordinal);
         Assert.Contains("Content=\"{x:Bind ViewModel.GenerateImageActionLabel, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{x:Bind ViewModel.ImageEmptyDescription, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"GeneratedImagePickerItemTemplate\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Source=\"{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnPreviewImageClick\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{x:Bind PreviewImages}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{x:Bind ImageCountLabel}\"", xaml, StringComparison.Ordinal);
 
         var document = System.Xml.Linq.XDocument.Parse(xaml);
         var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>

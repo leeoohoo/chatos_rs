@@ -9,6 +9,18 @@
 
     <Page.Resources>
         <media:FilePathToImageSourceConverter x:Key="FilePathToImageSourceConverter" />
+        <DataTemplate x:Key="GeneratedImagePickerItemTemplate" x:DataType="media:MediaStudioImageItem">
+            <Border MinWidth="520" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="96" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Image Width="96" Height="68" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                        <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock Text="{x:Bind RevisedPrompt}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
         <Style x:Key="MediaStudioCardStyle" TargetType="Border" BasedOn="{StaticResource ChatOSSectionCardStyle}">
             <Setter Property="CornerRadius" Value="16" />
         </Style>
@@ -109,7 +121,9 @@
                                             <DataTemplate x:DataType="media:MediaStudioImageItem">
                                                 <Border MinWidth="280" Margin="0,0,12,12" Padding="8" HorizontalAlignment="Stretch" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="13">
                                                     <Grid>
-                                                        <Image Height="300" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" />
+                                                        <Button Padding="0" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnPreviewImageClick" ToolTipService.ToolTip="放大查看">
+                                                            <Image Height="300" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="Uniform" />
+                                                        </Button>
                                                         <StackPanel HorizontalAlignment="Right" VerticalAlignment="Top" Orientation="Horizontal" Spacing="5">
                                                             <Button Click="OnUseImageForVideoClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="用作视频首帧"><FontIcon Glyph="&#xE714;" /></Button>
                                                             <Button Click="OnSaveImageClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="另存为"><FontIcon Glyph="&#xE74E;" /></Button>
@@ -1106,7 +1120,7 @@
                                                 <Border Style="{StaticResource MediaStudioCardStyle}">
                                                     <Grid ColumnSpacing="16">
                                                         <Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                        <ItemsControl ItemsSource="{x:Bind Images}">
+                                                        <ItemsControl ItemsSource="{x:Bind PreviewImages}">
                                                             <ItemsControl.ItemsPanel>
                                                                 <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" MaximumRowsOrColumns="1" /></ItemsPanelTemplate>
                                                             </ItemsControl.ItemsPanel>
@@ -1121,7 +1135,12 @@
                                                             <TextBlock Text="{x:Bind ModelName}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                             <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                         </StackPanel>
-                                                        <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                        <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="8">
+                                                            <Border Padding="8,5" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
+                                                                <TextBlock Text="{x:Bind ImageCountLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                            </Border>
+                                                            <FontIcon HorizontalAlignment="Center" Glyph="&#xE76C;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                        </StackPanel>
                                                     </Grid>
                                                 </Border>
                                             </Button>

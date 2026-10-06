@@ -368,6 +368,10 @@ public sealed record MediaStudioHistoryItem(
     IReadOnlyList<MediaStudioImageItem> Images)
 {
     public string CreatedAtLabel => CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    public IReadOnlyList<MediaStudioImageItem> PreviewImages => Images.Take(2).ToArray();
+
+    public string ImageCountLabel => $"{Images.Count} 张";
 }
 
 public sealed record MediaStudioImageItem(
