@@ -36,12 +36,37 @@ public sealed class SqliteAppPreferencesStoreTests : IAsyncLifetime
             InterfaceLanguage.English,
             InterfaceTheme.Dark,
             1.15,
-            false);
+            false,
+            132);
 
         await store.SaveAsync(expected);
         var loaded = await store.LoadAsync();
 
         Assert.Equal(expected, loaded);
+    }
+
+    [Fact]
+    public async Task LegacyPreferencesWithoutPetSizeUseMacOsDefault()
+    {
+        var database = new LocalStateDatabase(Path.Combine(_directory, "legacy.db"));
+        await database.InitializeAsync();
+        await using (var connection = await database.OpenConnectionAsync())
+        {
+            var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO ui_state(key, value, updated_at)
+                VALUES ('app_preferences_v1',
+                        '{"language":0,"theme":0,"fontScale":1.0,"petEnabled":true}',
+                        'now');
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var store = new SqliteAppPreferencesStore(database);
+        var loaded = await store.LoadAsync();
+
+        Assert.NotNull(loaded);
+        Assert.Equal(AppPreferences.DefaultPetSize, loaded.PetSize);
     }
 
     [Fact]

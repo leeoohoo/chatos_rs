@@ -80,6 +80,7 @@ public sealed class PetWindowController : IDisposable
         AppPreferences preferences,
         CancellationToken cancellationToken)
     {
+        _window.SetPetSize(preferences.PetSize);
         if (_authenticated && preferences.PetEnabled)
         {
             await _window.ShowAsync(cancellationToken);

@@ -108,6 +108,20 @@
                             Grid.Column="1"
                             HorizontalAlignment="Left"
                             Toggled="OnPetEnabledToggled" />
+
+                        <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="{x:Bind Localization.PetSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                            <Slider
+                                x:Name="PetSizeSlider"
+                                AutomationProperties.AutomationId="ChatOS.Settings.PetSize"
+                                AutomationProperties.Name="{x:Bind Localization.PetSizeLabel, Mode=OneWay}"
+                                Width="300"
+                                Minimum="72"
+                                Maximum="180"
+                                StepFrequency="4"
+                                ValueChanged="OnPetSizeChanged" />
+                            <TextBlock x:Name="PetSizeValueLabel" MinWidth="52" VerticalAlignment="Center" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </StackPanel>
                     </Grid>
                 </Border>
 

@@ -88,6 +88,8 @@ public sealed partial class SettingsPage : UserControl
             FontScaleSlider.Value = ViewModel.FontScale;
             FontScaleLabel.Text = $"{ViewModel.FontScale:P0}";
             PetEnabledSwitch.IsOn = ViewModel.PetEnabled;
+            PetSizeSlider.Value = ViewModel.PetSize;
+            PetSizeValueLabel.Text = $"{ViewModel.PetSize:F0} px";
             ApprovalModePicker.SelectedIndex = ApprovalSettings.Mode switch
             {
                 ConnectorApprovalMode.AutoApproval => 1,
@@ -157,6 +159,17 @@ public sealed partial class SettingsPage : UserControl
         if (!_syncing)
         {
             await ViewModel.SetPetEnabledAsync(PetEnabledSwitch.IsOn);
+        }
+    }
+
+    private async void OnPetSizeChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (!_controlsInitialized || PetSizeValueLabel is null) return;
+
+        PetSizeValueLabel.Text = $"{e.NewValue:F0} px";
+        if (!_syncing)
+        {
+            await ViewModel.SetPetSizeAsync(e.NewValue);
         }
     }
 

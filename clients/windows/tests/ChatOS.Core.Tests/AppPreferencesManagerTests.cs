@@ -13,7 +13,8 @@ public sealed class AppPreferencesManagerTests
             InterfaceLanguage.English,
             InterfaceTheme.Dark,
             9,
-            false));
+            false,
+            900));
         var manager = new AppPreferencesManager(store);
 
         await manager.InitializeAsync();
@@ -22,6 +23,7 @@ public sealed class AppPreferencesManagerTests
         Assert.Equal(InterfaceTheme.Dark, manager.Current.Theme);
         Assert.Equal(AppPreferences.MaximumFontScale, manager.Current.FontScale);
         Assert.False(manager.Current.PetEnabled);
+        Assert.Equal(AppPreferences.MaximumPetSize, manager.Current.PetSize);
     }
 
     [Fact]

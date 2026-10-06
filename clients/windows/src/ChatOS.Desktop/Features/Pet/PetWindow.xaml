@@ -14,7 +14,7 @@
         Background="Black">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
-            <RowDefinition Height="120" />
+            <RowDefinition x:Name="PetRowDefinition" Height="120" />
         </Grid.RowDefinitions>
 
         <Border
@@ -478,7 +478,7 @@
                 PointerMoved="OnPetPointerMoved"
                 PointerReleased="OnPetPointerReleased"
                 PointerCanceled="OnPetPointerCanceled">
-                <Viewbox Width="104" Height="104" Stretch="Uniform">
+                <Viewbox x:Name="PetVisualViewbox" Width="104" Height="104" Stretch="Uniform">
                     <Grid Width="150" Height="150">
                         <Image
                             x:Name="PetSpriteImage"

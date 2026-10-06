@@ -299,6 +299,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string ThemeLabel => Text("外观", "Appearance");
     public string FontSizeLabel => Text("字体大小", "Font size");
     public string PetEnabledLabel => Text("显示全局宠物", "Show global pet");
+    public string PetSizeLabel => Text("宠物大小", "Pet size");
     public string SystemTheme => Text("跟随系统", "System");
     public string LightTheme => Text("浅色", "Light");
     public string DarkTheme => Text("深色", "Dark");

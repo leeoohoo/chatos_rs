@@ -18,14 +18,14 @@ namespace ChatOS.Desktop.Features.Pet;
 
 public sealed partial class PetWindow : Window
 {
-    private const int CollapsedWidth = 140;
-    private const int CollapsedHeight = 140;
+    private const int CollapsedPadding = 36;
+    private const int PetRowPadding = 16;
     private const int SummaryWidth = 360;
-    private const int SummaryHeight = 265;
+    private const int SummaryContentHeight = 145;
     private const int ApprovalWidth = 430;
-    private const int ApprovalHeight = 470;
+    private const int ApprovalContentHeight = 350;
     private const int ExpandedWidth = 430;
-    private const int ExpandedHeight = 600;
+    private const int ExpandedContentHeight = 480;
     private const int GwlExStyle = -20;
     private const long WsExLayered = 0x00080000L;
     private const long WsExToolWindow = 0x00000080L;
@@ -48,6 +48,13 @@ public sealed partial class PetWindow : Window
     private PetSpriteSequence? _spriteSequence;
     private int _spriteFrameIndex;
     private bool _isLoadingSprite;
+    private int _petSize = (int)AppPreferences.DefaultPetSize;
+
+    private int CollapsedWidth => _petSize + CollapsedPadding;
+    private int CollapsedHeight => _petSize + CollapsedPadding;
+    private int SummaryHeight => SummaryContentHeight + _petSize + PetRowPadding;
+    private int ApprovalHeight => ApprovalContentHeight + _petSize + PetRowPadding;
+    private int ExpandedHeight => ExpandedContentHeight + _petSize + PetRowPadding;
 
     public PetWindow(
         PetOverlayViewModel viewModel,
@@ -78,6 +85,30 @@ public sealed partial class PetWindow : Window
     public PetOverlayViewModel ViewModel { get; }
 
     public PetQuickChatViewModel QuickChat { get; }
+
+    public void SetPetSize(double size)
+    {
+        var normalized = (int)Math.Round(Math.Clamp(
+            size,
+            AppPreferences.MinimumPetSize,
+            AppPreferences.MaximumPetSize));
+        if (_petSize == normalized) return;
+
+        _petSize = normalized;
+        PetVisualViewbox.Width = normalized;
+        PetVisualViewbox.Height = normalized;
+        PetHitTarget.Width = normalized + 4;
+        PetHitTarget.Height = normalized + 4;
+        PetRowDefinition.Height = new GridLength(normalized + PetRowPadding);
+        if (_isVisible)
+        {
+            UpdateVisualState();
+        }
+        else
+        {
+            AppWindow.Resize(new SizeInt32(CollapsedWidth, CollapsedHeight));
+        }
+    }
 
     public async Task ShowAsync(CancellationToken cancellationToken = default)
     {

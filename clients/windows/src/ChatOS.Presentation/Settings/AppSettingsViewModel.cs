@@ -30,6 +30,9 @@ public sealed partial class AppSettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _petEnabled = true;
 
+    [ObservableProperty]
+    private double _petSize = AppPreferences.DefaultPetSize;
+
     public Task SetLanguageAsync(InterfaceLanguage language, CancellationToken cancellationToken = default) =>
         _preferences.UpdateAsync(value => value with { Language = language }, cancellationToken);
 
@@ -42,6 +45,9 @@ public sealed partial class AppSettingsViewModel : ObservableObject
     public Task SetPetEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
         _preferences.UpdateAsync(value => value with { PetEnabled = enabled }, cancellationToken);
 
+    public Task SetPetSizeAsync(double size, CancellationToken cancellationToken = default) =>
+        _preferences.UpdateAsync(value => value with { PetSize = size }, cancellationToken);
+
     private async void OnPreferencesChanged(object? sender, AppPreferences preferences) =>
         await _dispatcher.InvokeAsync(() => Apply(preferences));
 
@@ -51,5 +57,6 @@ public sealed partial class AppSettingsViewModel : ObservableObject
         Theme = preferences.Theme;
         FontScale = preferences.FontScale;
         PetEnabled = preferences.PetEnabled;
+        PetSize = preferences.PetSize;
     }
 }
