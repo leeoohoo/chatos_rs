@@ -62,6 +62,9 @@ pub enum HostResult {
     ModelConfigSnapshot {
         snapshot: LocalModelConfigSnapshot,
     },
+    ModelConfigSnapshots {
+        snapshots: Vec<LocalModelConfigSnapshot>,
+    },
     CapabilityPolicySnapshot {
         snapshot: LocalCapabilityPolicySnapshot,
     },

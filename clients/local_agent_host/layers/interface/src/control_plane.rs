@@ -135,6 +135,17 @@ pub struct GetModelConfigSnapshotCommand {
     pub model_config_revision: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListLatestModelConfigSnapshotsCommand {
+    pub owner_user_id: String,
+}
+
+impl ListLatestModelConfigSnapshotsCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)
+    }
+}
+
 impl GetModelConfigSnapshotCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;
@@ -159,6 +170,19 @@ pub struct GetCapabilityPolicySnapshotCommand {
     pub owner_user_id: String,
     pub profile_key: String,
     pub capability_policy_revision: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetLatestCapabilityPolicySnapshotCommand {
+    pub owner_user_id: String,
+    pub profile_key: String,
+}
+
+impl GetLatestCapabilityPolicySnapshotCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("profile_key", &self.profile_key)
+    }
 }
 
 impl GetCapabilityPolicySnapshotCommand {

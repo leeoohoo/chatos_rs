@@ -238,8 +238,10 @@ impl LocalAgentRuntime {
             }
             command @ (HostCommand::PutModelConfigSnapshot(_)
             | HostCommand::GetModelConfigSnapshot(_)
+            | HostCommand::ListLatestModelConfigSnapshots(_)
             | HostCommand::PutCapabilityPolicySnapshot(_)
-            | HostCommand::GetCapabilityPolicySnapshot(_)) => {
+            | HostCommand::GetCapabilityPolicySnapshot(_)
+            | HostCommand::GetLatestCapabilityPolicySnapshot(_)) => {
                 self.handle_control_plane_command(&idempotency, command)
                     .await
             }

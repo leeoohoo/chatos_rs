@@ -9,7 +9,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 40
+    static let version = 41
 }
 
 public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {

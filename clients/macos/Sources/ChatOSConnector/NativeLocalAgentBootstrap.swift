@@ -22,6 +22,69 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
 }
 
 extension NativeLocalConnectorService {
+    /// Restores the non-secret control plane and Keychain-backed model credentials before
+    /// the network catalog refresh completes. This keeps existing local conversations usable
+    /// across launch, wake, and temporary gateway outages.
+    public func restoreLocalAgentHost(
+        _ host: NativeLocalAgentHostLifecycle,
+        ownerUserID: String,
+        memoryAccessToken: String?
+    ) async throws -> NativeLocalAgentBootstrapResult? {
+        let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
+        let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
+        let capability = try await controlPlane.latestCapabilities(
+            ownerUserID: ownerUserID,
+            profileKey: "main_chat"
+        )
+        let credentialStore = NativeLocalAgentModelCredentialStore()
+        var environment: [String: String] = [:]
+        var snapshots: [LocalAgentModelConfigSnapshot] = []
+        var modelOptions: [ConversationModelOption] = []
+        for snapshot in persisted where snapshot.ownerUserID == ownerUserID {
+            let variable = credentialStore.environmentVariable(
+                modelConfigRef: snapshot.modelConfigRef
+            )
+            guard snapshot.credentialRef == "env:\(variable)",
+                  environment[variable] == nil,
+                  let credential = try credentialStore.load(
+                    ownerUserID: ownerUserID,
+                    modelConfigRef: snapshot.modelConfigRef
+                  )?.trimmedNonEmpty else {
+                continue
+            }
+            environment[variable] = credential
+            snapshots.append(snapshot)
+            let supportsReasoning = snapshot.thinkingLevel?.trimmedNonEmpty != nil
+            modelOptions.append(.init(
+                id: snapshot.modelConfigRef,
+                displayName: snapshot.model,
+                modelName: snapshot.model,
+                provider: snapshot.provider,
+                thinkingLevel: snapshot.thinkingLevel?.trimmedNonEmpty,
+                supportsReasoning: supportsReasoning,
+                thinkingLevels: supportsReasoning
+                    ? Self.thinkingLevels(provider: snapshot.provider)
+                    : []
+            ))
+        }
+        guard !snapshots.isEmpty,
+              capability.ownerUserID == ownerUserID,
+              capability.profileKey == "main_chat" else { return nil }
+        if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
+            environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
+        }
+        try await host.restart(
+            ownerUserID: ownerUserID,
+            credentialEnvironment: environment
+        )
+        environment.removeAll(keepingCapacity: false)
+        return .init(
+            modelSnapshots: snapshots,
+            modelOptions: modelOptions,
+            capabilitySnapshot: capability
+        )
+    }
+
     public func bootstrapLocalAgentHost(
         _ host: NativeLocalAgentHostLifecycle,
         ownerUserID: String,

@@ -450,6 +450,12 @@ pub trait LocalCapabilitySnapshotStore: Send + Sync {
         profile_key: &str,
         capability_policy_revision: &str,
     ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError>;
+
+    async fn get_latest_capability_snapshot(
+        &self,
+        owner_user_id: &str,
+        profile_key: &str,
+    ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError>;
 }
 
 #[async_trait]
@@ -478,6 +484,11 @@ pub trait LocalModelConfigSnapshotStore: Send + Sync {
         owner_user_id: &str,
         model_config_ref: &str,
     ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError>;
+
+    async fn list_latest_model_config_snapshots(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalModelConfigSnapshot>, ClientStorageError>;
 }
 
 #[async_trait]

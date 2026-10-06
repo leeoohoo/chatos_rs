@@ -108,6 +108,26 @@ impl LocalCapabilitySnapshotStore for SqliteClientStorage {
         )
         .await
     }
+
+    async fn get_latest_capability_snapshot(
+        &self,
+        owner_user_id: &str,
+        profile_key: &str,
+    ) -> Result<Option<LocalCapabilityPolicySnapshot>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        let row = sqlx::query(
+            "SELECT owner_user_id, profile_key, capability_policy_revision, instructions, \
+             prefixed_input_items_json, tools_json FROM local_capability_policy_snapshots \
+             WHERE owner_user_id = ? AND profile_key = ? \
+             ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1",
+        )
+        .bind(owner_user_id)
+        .bind(profile_key)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?;
+        row.map(|row| decode_snapshot(&row)).transpose()
+    }
 }
 
 async fn fetch_snapshot(
@@ -123,23 +143,26 @@ async fn fetch_snapshot(
         .fetch_optional(&mut *connection)
         .await
         .db()?;
-    row.map(|row| {
-        let prefixed_input_items: String = row.try_get("prefixed_input_items_json").db()?;
-        let tools: String = row.try_get("tools_json").db()?;
-        let snapshot = LocalCapabilityPolicySnapshot {
-            owner_user_id: row.try_get("owner_user_id").db()?,
-            profile_key: row.try_get("profile_key").db()?,
-            capability_policy_revision: row.try_get("capability_policy_revision").db()?,
-            instructions: row.try_get("instructions").db()?,
-            prefixed_input_items: serde_json::from_str(&prefixed_input_items)?,
-            tools: serde_json::from_str(&tools)?,
-        };
-        snapshot
-            .validate()
-            .map_err(ClientStorageError::InvalidState)?;
-        Ok(snapshot)
-    })
-    .transpose()
+    row.map(|row| decode_snapshot(&row)).transpose()
+}
+
+fn decode_snapshot(
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<LocalCapabilityPolicySnapshot, ClientStorageError> {
+    let prefixed_input_items: String = row.try_get("prefixed_input_items_json").db()?;
+    let tools: String = row.try_get("tools_json").db()?;
+    let snapshot = LocalCapabilityPolicySnapshot {
+        owner_user_id: row.try_get("owner_user_id").db()?,
+        profile_key: row.try_get("profile_key").db()?,
+        capability_policy_revision: row.try_get("capability_policy_revision").db()?,
+        instructions: row.try_get("instructions").db()?,
+        prefixed_input_items: serde_json::from_str(&prefixed_input_items)?,
+        tools: serde_json::from_str(&tools)?,
+    };
+    snapshot
+        .validate()
+        .map_err(ClientStorageError::InvalidState)?;
+    Ok(snapshot)
 }
 
 #[cfg(test)]
@@ -205,6 +228,55 @@ mod tests {
             .await
             .expect("cross-owner read")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn latest_capability_snapshot_is_isolated_by_owner_and_profile() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let first = snapshot("user-1", "old policy");
+        storage
+            .put_capability_snapshot(&command("put-old", "old"), &first, 1_000)
+            .await
+            .expect("put old policy");
+        let mut latest = snapshot("user-1", "new policy");
+        latest.capability_policy_revision = "policy-2".to_string();
+        storage
+            .put_capability_snapshot(&command("put-new", "new"), &latest, 2_000)
+            .await
+            .expect("put new policy");
+        storage
+            .put_capability_snapshot(
+                &command("put-other-owner", "other-owner"),
+                &snapshot("user-2", "other policy"),
+                3_000,
+            )
+            .await
+            .expect("put other owner policy");
+
+        let restored = storage
+            .get_latest_capability_snapshot("user-1", "main_chat")
+            .await
+            .expect("get latest policy")
+            .expect("latest policy");
+        assert_eq!(restored.capability_policy_revision, "policy-2");
+        assert_eq!(restored.instructions.as_deref(), Some("new policy"));
+        assert!(storage
+            .get_latest_capability_snapshot("user-1", "task_execution")
+            .await
+            .expect("other profile lookup")
+            .is_none());
+        assert_eq!(
+            storage
+                .get_latest_capability_snapshot("user-2", "main_chat")
+                .await
+                .expect("other owner lookup")
+                .expect("other owner policy")
+                .instructions
+                .as_deref(),
+            Some("other policy")
+        );
     }
 
     #[tokio::test]

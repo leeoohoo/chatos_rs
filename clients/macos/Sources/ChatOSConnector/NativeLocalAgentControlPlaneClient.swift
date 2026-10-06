@@ -162,6 +162,17 @@ public struct NativeLocalAgentControlPlaneClient: Sendable {
         return response.snapshot
     }
 
+    public func latestModels(
+        ownerUserID: String
+    ) async throws -> [LocalAgentModelConfigSnapshot] {
+        let response: ModelsResult = try await host.request(ListModelsCommand(
+            type: "list_latest_model_config_snapshots",
+            ownerUserID: ownerUserID
+        ))
+        try require(response.type, expected: "model_config_snapshots")
+        return response.snapshots
+    }
+
     @discardableResult
     public func publishCapabilities(
         _ snapshot: LocalAgentCapabilityPolicySnapshot
@@ -184,6 +195,19 @@ public struct NativeLocalAgentControlPlaneClient: Sendable {
             ownerUserID: ownerUserID,
             profileKey: profileKey,
             capabilityPolicyRevision: capabilityPolicyRevision
+        ))
+        try require(response.type, expected: "capability_policy_snapshot")
+        return response.snapshot
+    }
+
+    public func latestCapabilities(
+        ownerUserID: String,
+        profileKey: String
+    ) async throws -> LocalAgentCapabilityPolicySnapshot {
+        let response: CapabilityResult = try await host.request(GetLatestCapabilityCommand(
+            type: "get_latest_capability_policy_snapshot",
+            ownerUserID: ownerUserID,
+            profileKey: profileKey
         ))
         try require(response.type, expected: "capability_policy_snapshot")
         return response.snapshot
@@ -213,6 +237,16 @@ private struct GetModelCommand: Encodable, Sendable {
     }
 }
 
+private struct ListModelsCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+    }
+}
+
 private struct PutCapabilityCommand: Encodable, Sendable {
     let type: String
     let snapshot: LocalAgentCapabilityPolicySnapshot
@@ -232,9 +266,26 @@ private struct GetCapabilityCommand: Encodable, Sendable {
     }
 }
 
+private struct GetLatestCapabilityCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let profileKey: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case profileKey = "profile_key"
+    }
+}
+
 private struct ModelResult: Decodable, Sendable {
     let type: String
     let snapshot: LocalAgentModelConfigSnapshot
+}
+
+private struct ModelsResult: Decodable, Sendable {
+    let type: String
+    let snapshots: [LocalAgentModelConfigSnapshot]
 }
 
 private struct CapabilityResult: Decodable, Sendable {
