@@ -35,4 +35,20 @@ internal static class StoryVideoFrameExtractor
             : "image/jpeg";
         return new ExtractedVideoFrame(output.ToArray(), mimeType);
     }
+
+    public static async Task<byte[]> ExtractPreviewFrameAsync(string videoPath)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(videoPath);
+        var clip = await MediaClip.CreateFromFileAsync(file);
+        if (clip.OriginalDuration <= TimeSpan.Zero)
+            throw new InvalidDataException("视频时长无效，无法读取预览画面。");
+        var composition = new MediaComposition();
+        composition.Clips.Add(clip);
+        using var thumbnail = await composition.GetThumbnailAsync(
+            TimeSpan.Zero, 384, 216, VideoFramePrecision.NearestFrame);
+        await using var input = thumbnail.AsStreamForRead();
+        using var output = new MemoryStream();
+        await input.CopyToAsync(output);
+        return output.ToArray();
+    }
 }

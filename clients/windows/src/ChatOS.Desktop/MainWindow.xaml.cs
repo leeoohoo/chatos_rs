@@ -245,7 +245,7 @@ public sealed partial class MainWindow : Window
             {
                 _ = LocalTerminalPage.CloseSessionAsync();
                 _ = PluginApplicationsPage.ResetAsync();
-                MediaStudioPage.ViewModel.Reset();
+                MediaStudioPage.ResetSession();
             }
             UpdateVisualState();
             if (authenticationChanged && _postActivationInitializationComplete)

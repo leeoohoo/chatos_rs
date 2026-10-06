@@ -3,9 +3,11 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
+using System.Collections.Concurrent;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 
 namespace ChatOS.Desktop.Features.MediaStudio;
 
@@ -15,6 +17,7 @@ public sealed partial class MediaStudioPage : Page
     private string? _activeVideoPath;
     private string? _activeStoryVideoPath;
     private MediaPlaybackList? _storyPlaylist;
+    private ContentDialog? _activeDialog;
 
     public MediaStudioPage(
         MediaStudioViewModel viewModel,
@@ -33,12 +36,29 @@ public sealed partial class MediaStudioPage : Page
         StoryViewModel.Projects.CollectionChanged += (_, _) => RefreshState();
         StoryViewModel.Segments.CollectionChanged += (_, _) => RefreshState();
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
         RefreshState();
     }
 
     public MediaStudioViewModel ViewModel { get; }
 
     public StoryStudioViewModel StoryViewModel { get; }
+
+    public void ResetSession()
+    {
+        CloseActiveDialog();
+        ReleaseStoryPlaylist();
+        VideoPlayer.Source = null;
+        StoryVideoPlayer.Source = null;
+        _activeVideoPath = null;
+        _activeStoryVideoPath = null;
+        if (Resources["VideoPathToThumbnailSourceConverter"] is VideoPathToThumbnailSourceConverter converter)
+            converter.Clear();
+        ViewModel.Reset();
+        StoryViewModel.Reset();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) => CloseActiveDialog();
 
     private void OnStudioSectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
@@ -321,7 +341,7 @@ public sealed partial class MediaStudioPage : Page
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
             };
-            var guidanceResult = await guidanceDialog.ShowAsync();
+            var guidanceResult = await ShowDialogAsync(guidanceDialog);
             if (guidanceResult == ContentDialogResult.Primary)
                 await StoryViewModel.GenerateVideoFromPreviousAsync(segment.Id);
             else if (guidanceResult == ContentDialogResult.Secondary)
@@ -344,7 +364,7 @@ public sealed partial class MediaStudioPage : Page
             CloseButtonText = "保留当前视频",
             DefaultButton = ContentDialogButton.Close,
         };
-        var result = await dialog.ShowAsync();
+        var result = await ShowDialogAsync(dialog);
         if (result == ContentDialogResult.Primary)
             await StoryViewModel.RegenerateSelectedVideoAsync(segment.Id, canUseReference);
         else if (result == ContentDialogResult.Secondary)
@@ -365,7 +385,7 @@ public sealed partial class MediaStudioPage : Page
             CloseButtonText = "保留并返回",
             DefaultButton = ContentDialogButton.Close,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary)
             await StoryViewModel.AbandonSelectedVideoJobAsync();
     }
 
@@ -438,32 +458,18 @@ public sealed partial class MediaStudioPage : Page
     private async void OnPreviewImageClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: MediaStudioImageItem image }) return;
-        var preview = new Image
+        var images = ViewModel.LatestImages.ToArray();
+        var selectedIndex = Array.IndexOf(images, image);
+        var preview = new MediaStudioImagePreviewDialog(
+            XamlRoot,
+            images.Length == 0 ? [image] : images,
+            selectedIndex < 0 ? 0 : selectedIndex);
+        if (await ShowDialogAsync(preview.Dialog) == ContentDialogResult.Primary &&
+            preview.CurrentImage is { } selected)
         {
-            Source = new FilePathToImageSourceConverter().Convert(
-                image.FilePath,
-                typeof(BitmapImage),
-                null!,
-                string.Empty) as BitmapImage,
-            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
-            MaxWidth = 980,
-            MaxHeight = 700,
-        };
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = image.Name,
-            Content = new ScrollViewer
-            {
-                Content = preview,
-                MinWidth = 680,
-                MinHeight = 420,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            },
-            CloseButtonText = "关闭",
-        };
-        await dialog.ShowAsync();
+            await ViewModel.SetVideoFirstFrameAsync(selected.FilePath);
+            StudioPivot.SelectedIndex = 1;
+        }
     }
 
     private async void OnAddReferenceClick(object sender, RoutedEventArgs e)
@@ -486,11 +492,14 @@ public sealed partial class MediaStudioPage : Page
     private async void OnAddGeneratedReferenceClick(object sender, RoutedEventArgs e)
     {
         var remaining = Math.Max(0, 8 - ViewModel.ReferenceImages.Count);
-        var images = ViewModel.History
-            .SelectMany(item => item.Images)
-            .Where(item => File.Exists(item.FilePath))
+        var records = ViewModel.History
+            .Select(item => item with
+            {
+                Images = item.Images.Where(image => File.Exists(image.FilePath)).ToArray(),
+            })
+            .Where(item => item.Images.Count > 0)
             .ToArray();
-        if (remaining == 0 || images.Length == 0)
+        if (remaining == 0 || records.Length == 0)
         {
             var emptyDialog = new ContentDialog
             {
@@ -501,11 +510,11 @@ public sealed partial class MediaStudioPage : Page
                     : "请先生成图片，或从本机添加参考图。",
                 CloseButtonText = "知道了",
             };
-            await emptyDialog.ShowAsync();
+            await ShowDialogAsync(emptyDialog);
             return;
         }
 
-        var list = CreateGeneratedImagePicker(images, ListViewSelectionMode.Multiple);
+        var list = CreateGeneratedImagePicker(records, ListViewSelectionMode.Multiple);
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
@@ -522,9 +531,9 @@ public sealed partial class MediaStudioPage : Page
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
         var paths = list.SelectedItems
-            .OfType<MediaStudioImageItem>()
+            .OfType<GeneratedImagePickerItem>()
             .Take(remaining)
             .Select(item => item.FilePath)
             .ToArray();
@@ -607,11 +616,14 @@ public sealed partial class MediaStudioPage : Page
 
     private async void OnPickGeneratedVideoFrameClick(object sender, RoutedEventArgs e)
     {
-        var images = ViewModel.History
-            .SelectMany(item => item.Images)
-            .Where(item => File.Exists(item.FilePath))
+        var records = ViewModel.History
+            .Select(item => item with
+            {
+                Images = item.Images.Where(image => File.Exists(image.FilePath)).ToArray(),
+            })
+            .Where(item => item.Images.Count > 0)
             .ToArray();
-        if (images.Length == 0)
+        if (records.Length == 0)
         {
             var emptyDialog = new ContentDialog
             {
@@ -620,11 +632,11 @@ public sealed partial class MediaStudioPage : Page
                 Content = "请先生成图片，或从本机选择首帧参考图。",
                 CloseButtonText = "知道了",
             };
-            await emptyDialog.ShowAsync();
+            await ShowDialogAsync(emptyDialog);
             return;
         }
 
-        var list = CreateGeneratedImagePicker(images, ListViewSelectionMode.Single);
+        var list = CreateGeneratedImagePicker(records, ListViewSelectionMode.Single);
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
@@ -641,24 +653,42 @@ public sealed partial class MediaStudioPage : Page
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary &&
-            list.SelectedItem is MediaStudioImageItem selected)
+        if (await ShowDialogAsync(dialog) == ContentDialogResult.Primary &&
+            list.SelectedItem is GeneratedImagePickerItem selected)
         {
             await ViewModel.SetVideoFirstFrameAsync(selected.FilePath);
         }
     }
 
     private ListView CreateGeneratedImagePicker(
-        IReadOnlyList<MediaStudioImageItem> images,
-        ListViewSelectionMode selectionMode) =>
-        new()
+        IReadOnlyList<MediaStudioHistoryItem> records,
+        ListViewSelectionMode selectionMode)
+    {
+        var groups = records.Select(record => new GeneratedImagePickerGroup(
+            record.Prompt,
+            record.ModelName,
+            record.CreatedAtLabel,
+            record.Images.Select(image => new GeneratedImagePickerItem(image)).ToArray())).ToArray();
+        var source = new CollectionViewSource
         {
-            ItemsSource = images,
+            IsSourceGrouped = true,
+            Source = groups,
+            ItemsPath = new PropertyPath(nameof(GeneratedImagePickerGroup.Items)),
+        };
+        var list = new ListView
+        {
+            ItemsSource = source.View,
             ItemTemplate = (DataTemplate)Resources["GeneratedImagePickerItemTemplate"],
             SelectionMode = selectionMode,
             MaxHeight = 460,
             MinWidth = 560,
         };
+        list.GroupStyle.Add(new GroupStyle
+        {
+            HeaderTemplate = (DataTemplate)Resources["GeneratedImagePickerGroupTemplate"],
+        });
+        return list;
+    }
 
     private void OnRemoveVideoFrameClick(object sender, RoutedEventArgs e) =>
         ViewModel.RemoveVideoFirstFrame();
@@ -867,6 +897,54 @@ public sealed partial class MediaStudioPage : Page
         }
         StoryVideoPlayer.Visibility = hasVideo ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+    {
+        if (_activeDialog is not null) return ContentDialogResult.None;
+        _activeDialog = dialog;
+        try
+        {
+            return await dialog.ShowAsync();
+        }
+        finally
+        {
+            if (ReferenceEquals(_activeDialog, dialog)) _activeDialog = null;
+        }
+    }
+
+    private void CloseActiveDialog()
+    {
+        var dialog = _activeDialog;
+        _activeDialog = null;
+        if (dialog is null) return;
+        try
+        {
+            dialog.Hide();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+}
+
+public sealed record GeneratedImagePickerItem(MediaStudioImageItem Image)
+{
+    public string FilePath => Image.FilePath;
+
+    public string Name => Image.Name;
+
+    public string RevisedPrompt => string.IsNullOrWhiteSpace(Image.RevisedPrompt)
+        ? "生成结果"
+        : Image.RevisedPrompt!;
+}
+
+public sealed record GeneratedImagePickerGroup(
+    string Prompt,
+    string ModelName,
+    string CreatedAtLabel,
+    IReadOnlyList<GeneratedImagePickerItem> Items)
+{
+    public string ImageCountLabel => $"{Items.Count} 张";
 }
 
 public sealed class FilePathToImageSourceConverter : IValueConverter
@@ -879,4 +957,56 @@ public sealed class FilePathToImageSourceConverter : IValueConverter
 
     public object ConvertBack(object value, Type targetType, object parameter, string language) =>
         throw new NotSupportedException();
+}
+
+public sealed class VideoPathToThumbnailSourceConverter : IValueConverter
+{
+    private readonly ConcurrentDictionary<string, Task<byte[]?>> _cache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public object? Convert(object value, Type targetType, object parameter, string language)
+    {
+        if (value is not string { Length: > 0 } path || !File.Exists(path)) return null;
+        var bitmap = new BitmapImage();
+        _ = PopulateAsync(bitmap, path);
+        return bitmap;
+    }
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language) =>
+        throw new NotSupportedException();
+
+    public void Clear() => _cache.Clear();
+
+    private async Task PopulateAsync(BitmapImage bitmap, string path)
+    {
+        try
+        {
+            var bytes = await _cache.GetOrAdd(path, LoadAsync);
+            if (bytes is not { Length: > 0 }) return;
+            using var stream = new InMemoryRandomAccessStream();
+            using (var writer = new DataWriter(stream))
+            {
+                writer.WriteBytes(bytes);
+                await writer.StoreAsync();
+                writer.DetachStream();
+            }
+            stream.Seek(0);
+            await bitmap.SetSourceAsync(stream);
+        }
+        catch
+        {
+        }
+    }
+
+    private static async Task<byte[]?> LoadAsync(string path)
+    {
+        try
+        {
+            return await StoryVideoFrameExtractor.ExtractPreviewFrameAsync(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

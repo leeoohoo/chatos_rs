@@ -9,7 +9,8 @@
 
     <Page.Resources>
         <media:FilePathToImageSourceConverter x:Key="FilePathToImageSourceConverter" />
-        <DataTemplate x:Key="GeneratedImagePickerItemTemplate" x:DataType="media:MediaStudioImageItem">
+        <media:VideoPathToThumbnailSourceConverter x:Key="VideoPathToThumbnailSourceConverter" />
+        <DataTemplate x:Key="GeneratedImagePickerItemTemplate" x:DataType="media:GeneratedImagePickerItem">
             <Border MinWidth="520" Padding="8" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
                 <Grid ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="96" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
@@ -20,6 +21,18 @@
                     </StackPanel>
                 </Grid>
             </Border>
+        </DataTemplate>
+        <DataTemplate x:Key="GeneratedImagePickerGroupTemplate" x:DataType="media:GeneratedImagePickerGroup">
+            <StackPanel MaxWidth="620" Margin="2,14,2,8" Spacing="4">
+                <TextBlock Text="{x:Bind Prompt}" MaxLines="2" TextTrimming="CharacterEllipsis" TextWrapping="Wrap" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="{x:Bind ModelName}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Text="·" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Text="{x:Bind CreatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Text="·" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Text="{x:Bind ImageCountLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
+            </StackPanel>
         </DataTemplate>
         <Style x:Key="MediaStudioCardStyle" TargetType="Border" BasedOn="{StaticResource ChatOSSectionCardStyle}">
             <Setter Property="CornerRadius" Value="16" />
@@ -1077,6 +1090,8 @@
                                                                 </LinearGradientBrush>
                                                             </Border.Background>
                                                             <Grid>
+                                                                <Image Source="{Binding FilePath, Converter={StaticResource VideoPathToThumbnailSourceConverter}}" Stretch="UniformToFill" />
+                                                                <Rectangle Fill="#66000000" />
                                                                 <Border Width="38" Height="38" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="19">
                                                                     <FontIcon Glyph="&#xE768;" FontSize="17" Foreground="{StaticResource ChatOSPurpleBrush}" />
                                                                 </Border>

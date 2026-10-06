@@ -541,7 +541,9 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         NewVideoModel = VideoModels.FirstOrDefault();
     }
 
-    private void Reset(string ownerUserId)
+    public void Reset() => Reset(null);
+
+    private void Reset(string? ownerUserId)
     {
         CancelPlanningForWorkspaceChange();
         _generationCancellation?.Cancel();
