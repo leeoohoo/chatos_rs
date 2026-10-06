@@ -61,6 +61,7 @@
     <SolidColorBrush x:Key="ChatOSSidebarBackgroundBrush" Color="{ThemeResource ChatOSSidebarBackgroundColor}" />
     <SolidColorBrush x:Key="ChatOSTitleBarBackgroundBrush" Color="{ThemeResource ChatOSTitleBarBackgroundColor}" />
     <SolidColorBrush x:Key="ChatOSContentBackgroundBrush" Color="{ThemeResource ChatOSContentBackgroundColor}" />
+    <SolidColorBrush x:Key="ChatOSSurfaceBrush" Color="{ThemeResource ChatOSContentBackgroundColor}" />
     <SolidColorBrush x:Key="ChatOSSurfaceSubtleBrush" Color="{ThemeResource ChatOSSurfaceSubtleColor}" />
     <SolidColorBrush x:Key="ChatOSInputBackgroundBrush" Color="{ThemeResource ChatOSInputBackgroundColor}" />
     <SolidColorBrush x:Key="ChatOSPrimaryTextBrush" Color="{ThemeResource ChatOSPrimaryTextColor}" />

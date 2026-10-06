@@ -91,6 +91,58 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<ILocalAgentHostClient>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentHostLifecycle>());
         }
+        else
+        {
+            // The remote shell service is always registered below, but its metadata
+            // backend is optional until the local-agent host is installed.
+            services.AddSingleton<IRemoteConnectionMetadataService,
+                UnavailableRemoteConnectionMetadataService>();
+            services.AddSingleton<IWorkspaceRelationsService,
+                UnavailableWorkspaceRelationsService>();
+            services.AddSingleton<IProjectConversationService,
+                UnavailableProjectConversationService>();
+            services.AddSingleton<ILocalAgentHostClient, UnavailableLocalAgentHostClient>();
+            services.AddSingleton<WindowsLocalAgentControlPlaneClient>();
+            services.AddSingleton<WindowsLocalAgentConversationRuntimeSettingsClient>();
+            services.AddSingleton<WindowsLocalAgentConversationRuntimeSettingsService>();
+            services.AddSingleton<IConversationRuntimeSettingsService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentConversationRuntimeSettingsService>());
+            services.AddSingleton<WindowsLocalAgentConversationClient>();
+            services.AddSingleton<WindowsLocalAgentNotepadClient>();
+            services.AddSingleton<WindowsLocalAgentNotepadService>();
+            services.AddSingleton<INotepadService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentNotepadService>());
+            services.AddSingleton<WindowsLocalAgentAttachmentVault>();
+            services.AddSingleton<WindowsLocalAgentProjectToolExecutor>();
+            services.AddSingleton<IWindowsLocalAgentPluginToolExecutor,
+                WindowsLocalAgentPluginToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentToolApprovalHandler>();
+            services.AddSingleton<WindowsLocalAgentPlatformToolWorker>();
+            services.AddSingleton<WindowsLocalAgentConversationCommandService>();
+            services.AddSingleton<IConversationCommandService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentConversationCommandService>());
+            services.AddSingleton<WindowsLocalAgentConversationHistoryService>();
+            services.AddSingleton<IConversationHistoryService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentConversationHistoryService>());
+            services.AddSingleton<WindowsLocalAgentRuntimeClient>();
+            services.AddSingleton<WindowsLocalAgentEventHub>();
+            services.AddSingleton<WindowsLocalAgentRealtimeClient>();
+            services.AddSingleton<IRealtimeClient>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentRealtimeClient>());
+            services.AddSingleton<WindowsLocalAgentPetActivityService>();
+            services.AddSingleton<IPetActivityInboxService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentPetActivityService>());
+            services.AddSingleton<WindowsLocalAgentAskUserPromptService>();
+            services.AddSingleton<IAskUserPromptService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentAskUserPromptService>());
+            services.AddSingleton<WindowsLocalAgentTaskClient>();
+            services.AddSingleton<WindowsLocalAgentRequirementSurveyService>();
+            services.AddSingleton<IProjectRequirementSurveyService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentRequirementSurveyService>());
+            services.AddSingleton<WindowsLocalAgentMessageTaskGraphService>();
+            services.AddSingleton<IMessageTaskGraphService>(provider =>
+                provider.GetRequiredService<WindowsLocalAgentMessageTaskGraphService>());
+        }
         services.AddSingleton<IAuthTokenStore, WindowsCredentialTokenStore>();
         services.AddSingleton<IConnectorAccessTokenStore, WindowsCredentialConnectorTokenStore>();
         services.AddSingleton<IConnectorSecretStore, WindowsCredentialConnectorSecretStore>();
