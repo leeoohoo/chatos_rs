@@ -39,7 +39,12 @@ extension NativePluginRuntimeTests {
             version: "0.8.1",
             artifactSHA256: String(repeating: "a", count: 64),
             installationPath: root.path,
-            installedAt: "2026-08-27T00:00:00Z"
+            installedAt: "2026-08-27T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
 
         let clock = ContinuousClock()
@@ -65,13 +70,17 @@ extension NativePluginRuntimeTests {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let launcher = bin.appendingPathComponent("open-computer-use")
+        let diagnostic = root.deletingLastPathComponent()
+            .appendingPathComponent("diagnostic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: diagnostic, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: diagnostic) }
         try Data("""
         #!/bin/sh
         # check-permissions
         trap '' TERM
-        printf '%s' "$$" > "$PWD/launcher.pid"
+        printf '%s' "$$" > "$CHATOS_PLUGIN_DATA_DIR/launcher.pid"
         sleep 60 &
-        printf '%s' "$!" > "$PWD/child.pid"
+        printf '%s' "$!" > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
         wait
         """.utf8).write(to: launcher)
         try FileManager.default.setAttributes(
@@ -81,14 +90,24 @@ extension NativePluginRuntimeTests {
 
         let clock = ContinuousClock()
         let startedAt = clock.now
-        let launcherPIDURL = root.appendingPathComponent("launcher.pid")
-        let childPIDURL = root.appendingPathComponent("child.pid")
+        let launcherPIDURL = diagnostic.appendingPathComponent("launcher.pid")
+        let childPIDURL = diagnostic.appendingPathComponent("child.pid")
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(#"{"schemaVersion":3,"name":"open-computer-use","version":"1.0.0"}"#.utf8)
+        )
+        let record = try nativePluginTestRecord(
+            installationURL: root,
+            pluginID: "plugin-timeout"
+        )
         do {
             _ = try await Task.detached {
                 try NativePluginPermissionInspector.runLauncherBlocking(
-                    installationPath: root.path,
+                    record: record,
+                    manifest: manifest,
                     command: "check-permissions",
                     timeout: 2,
+                    diagnosticDirectory: diagnostic,
                     spawnObserver: { _ in
                         // The timeout intentionally tests a running process group. Under the
                         // full parallel suite, wait for the tiny launcher to create its child
@@ -177,7 +196,12 @@ extension NativePluginRuntimeTests {
             version: "0.1.4",
             artifactSHA256: String(repeating: "a", count: 64),
             installationPath: root.path,
-            installedAt: "2026-08-27T00:00:00Z"
+            installedAt: "2026-08-27T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
 
         let permissions = await NativePluginPermissionInspector.permissions(
@@ -226,7 +250,12 @@ extension NativePluginRuntimeTests {
             version: "0.8.1",
             artifactSHA256: String(repeating: "a", count: 64),
             installationPath: root.path,
-            installedAt: "2026-08-27T00:00:00Z"
+            installedAt: "2026-08-27T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
 
         let permission = try #require(
@@ -284,6 +313,7 @@ extension NativePluginRuntimeTests {
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: directory),
             manifest: manifest,
             componentKey: "computer-use",
             server: manifest.mcpServers["computer-use"]!,

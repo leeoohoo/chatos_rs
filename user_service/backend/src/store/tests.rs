@@ -243,6 +243,31 @@ async fn postgres_registration_code_counters_are_atomic() {
     .await
     .expect("create invite table");
     let store = AppStore::new(pool.clone());
+    let mut registered = existing_user("registered@example.com", "password-hash");
+    registered.enabled = true;
+    store
+        .insert_user_record(&registered)
+        .await
+        .expect("insert existing registration email");
+    let suppressed = store
+        .reserve_registration_email_code_send(
+            "registered@example.com",
+            "unused-code".to_string(),
+            "invite".to_string(),
+            999,
+            "2024-12-31T23:59:59Z".to_string(),
+            600,
+            60,
+            5,
+        )
+        .await
+        .expect("existing email response remains successful");
+    assert!(suppressed.is_none());
+    assert!(store
+        .find_registration_email_code("registered@example.com")
+        .await
+        .expect("read suppressed reservation")
+        .is_none());
     let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(12));
     let mut sends = Vec::new();
     for index in 0..12 {
@@ -327,7 +352,8 @@ async fn postgres_registration_code_counters_are_atomic() {
             5,
         )
         .await
-        .expect("reserve transactional registration code");
+        .expect("reserve transactional registration code")
+        .expect("new transactional registration email");
     store
         .insert_invite_code(&InviteCodeRecord {
             id: "invite-transaction-id".to_string(),
@@ -375,7 +401,7 @@ async fn postgres_registration_code_counters_are_atomic() {
         }
     }
     assert_eq!(succeeded, 1);
-    assert_eq!(user_count(&pool).await, 1);
+    assert_eq!(user_count(&pool).await, 2);
     let invite = store
         .find_invite_code_by_id("invite-transaction-id")
         .await

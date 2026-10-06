@@ -459,8 +459,7 @@ extension NativePluginRuntimeTests {
             maximumBytes: 1_024 * 1_024
         )
         try FileManager.default.removeItem(at: manifestURL)
-        #expect(throws: NativePluginRuntimeError.self) {
-            _ = try NativePluginManifestLoader.prepare(
+        let prepared = try NativePluginManifestLoader.prepare(
                 record: .init(
                 pluginID: "plugin-1",
                 releaseID: "release-1",
@@ -480,6 +479,8 @@ extension NativePluginRuntimeTests {
                 permissionSnapshot: ["process.spawn"],
                 runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
             )
+        #expect(throws: NativePluginRuntimeError.self) {
+            _ = try NativePluginProcessLauncher.prepare(.init(stdio: prepared))
         }
     }
 

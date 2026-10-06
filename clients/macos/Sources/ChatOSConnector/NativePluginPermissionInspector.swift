@@ -4,6 +4,15 @@ import Darwin
 import Foundation
 
 enum NativePluginPermissionInspector {
+    static func diagnosticDirectory(record: NativeInstalledPluginRecord) -> URL {
+        let identity = NativePluginHash.sha256(Data(
+            "\(record.pluginID):\(record.releaseID):\(record.artifactSHA256)".utf8
+        ))
+        return FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatOSPluginDiagnostics", isDirectory: true)
+            .appendingPathComponent(identity, isDirectory: true)
+    }
+
     static func permissions(
         record: NativeInstalledPluginRecord,
         manifest: NativePluginManifest
@@ -28,7 +37,12 @@ enum NativePluginPermissionInspector {
     ) async throws -> Bool {
         guard isSystemPermission(permissionID) else { return false }
         guard manifest.name == "open-computer-use" else { return false }
-        _ = try await runLauncher(record: record, command: "doctor", timeout: 35)
+        _ = try await runLauncher(
+            record: record,
+            manifest: manifest,
+            command: "doctor",
+            timeout: 35
+        )
         return true
     }
 
@@ -40,6 +54,7 @@ enum NativePluginPermissionInspector {
               launcherSupportsPermissionCheck(record: record),
               let data = try? await runLauncher(
                 record: record,
+                manifest: manifest,
                 command: "check-permissions",
                 timeout: 15
               ),
@@ -115,13 +130,14 @@ enum NativePluginPermissionInspector {
 
     private static func runLauncher(
         record: NativeInstalledPluginRecord,
+        manifest: NativePluginManifest,
         command: String,
         timeout: TimeInterval
     ) async throws -> Data {
-        let installationPath = record.installationPath
         return try await Task.detached(priority: .userInitiated) {
             try runLauncherBlocking(
-                installationPath: installationPath,
+                record: record,
+                manifest: manifest,
                 command: command,
                 timeout: timeout
             )
@@ -129,11 +145,14 @@ enum NativePluginPermissionInspector {
     }
 
     static func runLauncherBlocking(
-        installationPath: String,
+        record: NativeInstalledPluginRecord,
+        manifest: NativePluginManifest,
         command: String,
         timeout: TimeInterval,
+        diagnosticDirectory: URL? = nil,
         spawnObserver: ((pid_t) -> Void)? = nil
     ) throws -> Data {
+        let installationPath = record.installationPath
         let launcher = URL(fileURLWithPath: installationPath, isDirectory: true)
             .appendingPathComponent("bin/open-computer-use")
         let values = try launcher.resourceValues(forKeys: [
@@ -161,13 +180,35 @@ enum NativePluginPermissionInspector {
             throw NativeConnectorError.pluginInstallation("Plugin 权限检测无法打开标准输入")
         }
         defer { close(nullInput) }
-        let arguments = [launcher.path, command]
-        let environment = NativePluginProcessEnvironment.make()
+        let diagnosticURL = diagnosticDirectory ?? Self.diagnosticDirectory(record: record)
+        try FileManager.default.createDirectory(at: diagnosticURL, withIntermediateDirectories: true)
+        let process = try NativePluginProcessLauncher.prepare(.init(
+            record: record,
+            executableURL: launcher,
+            arguments: [command],
+            environment: [
+                "CHATOS_PLUGIN_DATA_DIR": diagnosticURL.path,
+                "TMPDIR": diagnosticURL.path,
+                "VISUAL_COMPUTER_USE_MANAGED_APP_ROOT": diagnosticURL
+                    .appendingPathComponent("managed-app", isDirectory: true).path,
+                "OPEN_COMPUTER_USE_MANAGED_APP_ROOT": diagnosticURL
+                    .appendingPathComponent("managed-app", isDirectory: true).path,
+            ],
+            installationURL: URL(fileURLWithPath: installationPath, isDirectory: true),
+            writableDirectories: [diagnosticURL],
+            executableDirectories: [diagnosticURL.appendingPathComponent(
+                "managed-app",
+                isDirectory: true
+            )],
+            workspaceRoot: nil,
+            permissionSnapshot: Set(manifest.permissions.map(\.permission)),
+            networkAccess: .disabled
+        ))
         var processID: pid_t = 0
-        let spawnResult = withCStringArray(arguments) { argv in
-            withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+        let spawnResult = withCStringArray(process.arguments) { argv in
+            withCStringArray(process.environment.map { "\($0.key)=\($0.value)" }) { envp in
                 chatos_spawn_process_group(
-                    launcher.path,
+                    process.executableURL.path,
                     argv,
                     envp,
                     installationPath,

@@ -41,6 +41,7 @@ extension NativePluginRuntimeTests {
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
             manifest: manifest,
             componentKey: "browser-cdp",
             server: manifest.mcpServers["browser-cdp"]!,
@@ -187,6 +188,7 @@ extension NativePluginRuntimeTests {
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
             manifest: manifest,
             componentKey: "browser-cdp",
             server: manifest.mcpServers["browser-cdp"]!,
@@ -272,6 +274,7 @@ extension NativePluginRuntimeTests {
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
             manifest: manifest,
             componentKey: "fixture",
             server: manifest.mcpServers["fixture"]!,

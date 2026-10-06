@@ -147,7 +147,7 @@ internal sealed class LocalPluginApplicationService(
 internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
 {
     private sealed record RunningApplication(
-        Process Process,
+        IPluginProcess Process,
         Uri BaseUri,
         string HealthPath,
         string ReleaseId,
@@ -157,6 +157,17 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, RunningApplication> _running = new(StringComparer.Ordinal);
+    private readonly IPluginProcessLauncher _launcher;
+
+    public WindowsPluginApplicationRuntime()
+        : this(new WindowsPluginProcessLauncher())
+    {
+    }
+
+    internal WindowsPluginApplicationRuntime(IPluginProcessLauncher launcher)
+    {
+        _launcher = launcher;
+    }
 
     public async Task<LocalPluginApplicationLaunch> LaunchAsync(
         PreparedPluginApplication prepared,
@@ -184,35 +195,26 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
             {
                 return LaunchResult(prepared, current.BaseUri);
             }
-            Stop(key);
+            await StopAsync(key).ConfigureAwait(false);
 
             var port = AvailableLoopbackPort();
             var baseUri = new Uri($"http://127.0.0.1:{port}/", UriKind.Absolute);
-            var start = new ProcessStartInfo
+            var environment = new Dictionary<string, string>(
+                prepared.Environment,
+                StringComparer.OrdinalIgnoreCase)
             {
-                FileName = prepared.ExecutablePath,
-                WorkingDirectory = prepared.InstallationPath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                ["CHATOS_PLUGIN_APP_HOST"] = "127.0.0.1",
+                ["CHATOS_PLUGIN_APP_PORT"] = port.ToString(),
             };
-            foreach (var argument in prepared.Arguments) start.ArgumentList.Add(argument);
-            foreach (var pair in prepared.Environment) start.Environment[pair.Key] = pair.Value;
-            start.Environment["CHATOS_PLUGIN_APP_HOST"] = "127.0.0.1";
-            start.Environment["CHATOS_PLUGIN_APP_PORT"] = port.ToString();
-            var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+            var process = await _launcher.LaunchAsync(
+                PluginProcessLaunchRequest.From(prepared with { Environment = environment }),
+                cancellationToken).ConfigureAwait(false);
             try
             {
-                if (!process.Start())
-                {
-                    throw new PluginRuntimeException("Plugin application process could not be started.");
-                }
                 // Drain for the whole process lifetime. The launch token only controls startup;
                 // cancelling a page launch must not stop pipe consumption and deadlock a reused runtime.
-                var outputDrain = process.StandardOutput.ReadToEndAsync();
-                var errorDrain = process.StandardError.ReadToEndAsync();
+                var outputDrain = DrainAsync(process.StandardOutput);
+                var errorDrain = DrainAsync(process.StandardError);
                 var running = new RunningApplication(
                     process,
                     baseUri,
@@ -228,8 +230,8 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
             }
             catch
             {
-                if (_running.ContainsKey(key)) Stop(key);
-                else process.Dispose();
+                if (_running.ContainsKey(key)) await StopAsync(key).ConfigureAwait(false);
+                else await process.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
         }
@@ -248,7 +250,7 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
                          .Where(value => value.StartsWith($"{pluginId}:", StringComparison.Ordinal))
                          .ToArray())
             {
-                Stop(key);
+                await StopAsync(key).ConfigureAwait(false);
             }
         }
         finally
@@ -262,7 +264,10 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
         await _gate.WaitAsync().ConfigureAwait(false);
         try
         {
-            foreach (var key in _running.Keys.ToArray()) Stop(key);
+            foreach (var key in _running.Keys.ToArray())
+            {
+                await StopAsync(key).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -317,16 +322,17 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
         }
     }
 
-    private void Stop(string key)
+    private static async Task DrainAsync(Stream stream)
+    {
+        using var reader = new StreamReader(stream);
+        _ = await reader.ReadToEndAsync().ConfigureAwait(false);
+    }
+
+    private async Task StopAsync(string key)
     {
         if (!_running.Remove(key, out var running)) return;
-        try
-        {
-            if (!running.Process.HasExited) running.Process.Kill(entireProcessTree: true);
-        }
-        catch (InvalidOperationException) { }
-        catch (System.ComponentModel.Win32Exception) { }
-        running.Process.Dispose();
+        await running.Process.TerminateAsync().ConfigureAwait(false);
+        await running.Process.DisposeAsync().ConfigureAwait(false);
     }
 
     private static int AvailableLoopbackPort()

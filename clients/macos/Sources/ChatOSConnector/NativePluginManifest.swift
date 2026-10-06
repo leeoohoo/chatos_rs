@@ -6,6 +6,7 @@ enum NativeBrowserPluginIdentity {
 }
 
 struct NativePreparedPluginLaunch: Sendable {
+    var record: NativeInstalledPluginRecord
     var manifest: NativePluginManifest
     var componentKey: String
     var server: NativePluginManifest.MCPServer
@@ -88,10 +89,6 @@ enum NativePluginManifestLoader {
     ) throws -> NativePreparedPluginLaunch {
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
-        try NativePluginInstallationIntegrity.verify(
-            record: record,
-            installationURL: installationURL
-        )
         guard manifest.schemaVersion == 3,
               manifest.version == record.version else {
             throw NativePluginRuntimeError.invalidManifest("Plugin manifest 与已安装 Release 不一致")
@@ -205,6 +202,7 @@ enum NativePluginManifestLoader {
         }
 #endif
         return .init(
+            record: record,
             manifest: manifest,
             componentKey: componentKey,
             server: server,

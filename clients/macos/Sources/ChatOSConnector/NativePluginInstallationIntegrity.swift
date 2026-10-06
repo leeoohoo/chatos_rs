@@ -66,19 +66,50 @@ enum NativePluginInstallationIntegrity {
             guard result.count < maximumFiles, totalBytes <= maximumBytes else {
                 throw NativePluginRuntimeError.invalidManifest("Plugin 安装目录超过完整性校验限制")
             }
-            result[relativePath] = try sha256(fileURL)
+            result[relativePath] = try sha256(fileURL, expected: info)
         }
         return result
     }
 
-    private static func sha256(_ fileURL: URL) throws -> String {
-        var hash = SHA256()
-        let handle = try FileHandle(forReadingFrom: fileURL)
+    private static func sha256(_ fileURL: URL, expected: stat) throws -> String {
+        let descriptor = open(fileURL.path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else {
+            throw NativePluginRuntimeError.invalidManifest(
+                "Plugin 安装文件在校验期间发生变化"
+            )
+        }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         defer { try? handle.close() }
+        var before = stat()
+        guard fstat(descriptor, &before) == 0,
+              sameFile(before, expected),
+              before.st_nlink == 1 else {
+            throw NativePluginRuntimeError.invalidManifest(
+                "Plugin 安装文件在校验期间发生变化"
+            )
+        }
+        var hash = SHA256()
         while let data = try handle.read(upToCount: 1_024 * 1_024), !data.isEmpty {
             hash.update(data: data)
         }
+        var after = stat()
+        guard fstat(descriptor, &after) == 0, sameFile(after, before) else {
+            throw NativePluginRuntimeError.invalidManifest(
+                "Plugin 安装文件在校验期间发生变化"
+            )
+        }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sameFile(_ lhs: stat, _ rhs: stat) -> Bool {
+        (lhs.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
+            && lhs.st_dev == rhs.st_dev
+            && lhs.st_ino == rhs.st_ino
+            && lhs.st_size == rhs.st_size
+            && lhs.st_mtimespec.tv_sec == rhs.st_mtimespec.tv_sec
+            && lhs.st_mtimespec.tv_nsec == rhs.st_mtimespec.tv_nsec
+            && lhs.st_ctimespec.tv_sec == rhs.st_ctimespec.tv_sec
+            && lhs.st_ctimespec.tv_nsec == rhs.st_ctimespec.tv_nsec
     }
 
     private static func canonicalPath(_ path: String) -> String {

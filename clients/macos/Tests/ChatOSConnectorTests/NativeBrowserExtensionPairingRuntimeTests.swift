@@ -51,6 +51,7 @@ struct NativeBrowserExtensionPairingRuntimeTests {
             """.utf8)
         )
         let launch = NativePreparedPluginLaunch(
+            record: try nativePluginTestRecord(installationURL: root),
             manifest: manifest,
             componentKey: NativeBrowserPluginIdentity.componentKey,
             server: manifest.mcpServers[NativeBrowserPluginIdentity.componentKey]!,

@@ -12,6 +12,7 @@ public enum ConnectorSandboxPermissionProfile
 public enum ConnectorSandboxNetworkAccess
 {
     Disabled,
+    Loopback,
     Controlled,
     Host,
 }

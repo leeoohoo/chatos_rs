@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChatOS.Connector.Sandbox;
 
 namespace ChatOS.Connector.Plugins;
 
@@ -37,6 +38,40 @@ internal sealed record PreparedPluginLaunch(
     public IReadOnlyDictionary<string, PluginCredentialTemplate> HttpHeaderTemplates { get; } =
         DeclaredHttpHeaderTemplates ??
         new Dictionary<string, PluginCredentialTemplate>(StringComparer.OrdinalIgnoreCase);
+}
+
+internal sealed record PluginProcessLaunchRequest(
+    InstalledPluginRecord Record,
+    string ComponentKey,
+    string ExecutablePath,
+    IReadOnlyList<string> Arguments,
+    IReadOnlyDictionary<string, string> Environment,
+    string InstallationPath,
+    string? WorkspaceRoot,
+    IReadOnlySet<string> PermissionSnapshot,
+    ConnectorSandboxNetworkAccess NetworkAccess)
+{
+    public static PluginProcessLaunchRequest From(PreparedPluginLaunch launch) => new(
+        launch.Record,
+        launch.ComponentKey,
+        launch.ExecutablePath,
+        launch.Arguments,
+        launch.Environment,
+        launch.InstallationPath,
+        launch.WorkspaceRoot,
+        launch.PermissionSnapshot ?? new HashSet<string>(StringComparer.Ordinal),
+        ConnectorSandboxNetworkAccess.Disabled);
+
+    public static PluginProcessLaunchRequest From(PreparedPluginApplication launch) => new(
+        launch.Record,
+        launch.Application.ComponentKey,
+        launch.ExecutablePath ?? throw new PluginRuntimeException("Plugin application has no executable."),
+        launch.Arguments,
+        launch.Environment,
+        launch.InstallationPath,
+        launch.WorkspaceRoot,
+        launch.PermissionSnapshot ?? new HashSet<string>(StringComparer.Ordinal),
+        ConnectorSandboxNetworkAccess.Loopback);
 }
 
 public sealed record PluginMcpInitialization(
@@ -86,4 +121,6 @@ internal sealed record PreparedPluginApplication(
     IReadOnlyList<string> Arguments,
     IReadOnlyDictionary<string, string> Environment,
     string HealthPath,
-    int LaunchTimeoutMilliseconds);
+    int LaunchTimeoutMilliseconds,
+    string? WorkspaceRoot = null,
+    IReadOnlySet<string>? PermissionSnapshot = null);

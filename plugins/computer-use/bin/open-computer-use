@@ -225,14 +225,7 @@ function readDiagnostics(executablePath) {
     os.tmpdir(),
     `visual-computer-use-doctor-${process.pid}-${Date.now()}.json`,
   );
-  const result = spawnSync("/usr/bin/open", [
-    "-W",
-    "-n",
-    managedApp,
-    "--args",
-    "--doctor-output",
-    outputPath,
-  ], {
+  const result = spawnSync(executablePath, ["--doctor-output", outputPath], {
     encoding: "utf8",
   });
   if (result.stderr) process.stderr.write(result.stderr);
@@ -255,13 +248,7 @@ function readDiagnostics(executablePath) {
 function runDoctor(executablePath) {
   const diagnostics = readDiagnostics(executablePath);
   if (!diagnostics.allGranted) {
-    const managedApp = path.resolve(executablePath, "..", "..", "..");
-    const onboarding = spawn("/usr/bin/open", [
-      "-n",
-      managedApp,
-      "--args",
-      "--onboarding",
-    ], {
+    const onboarding = spawn(executablePath, ["--onboarding"], {
       detached: true,
       stdio: "ignore",
     });

@@ -77,7 +77,9 @@ public sealed class PluginStdioClient : IPluginMcpClient
             return;
         }
 
-        var process = await _launcher.LaunchAsync(_launch, cancellationToken).ConfigureAwait(false);
+        var process = await _launcher.LaunchAsync(
+            PluginProcessLaunchRequest.From(_launch),
+            cancellationToken).ConfigureAwait(false);
         _process = process;
         _lifetime = new CancellationTokenSource();
         _outputReader = ReadOutputAsync(process.StandardOutput, _lifetime.Token);

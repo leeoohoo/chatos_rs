@@ -60,10 +60,22 @@ internal static partial class WindowsAppContainerSandbox
         }
         IntPtr appContainerSid = IntPtr.Zero;
         var capabilitySids = new List<IntPtr>();
+        var loopbackExempt = false;
         try
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
             var sidText = SidToString(appContainerSid);
+            if (policy.NetworkAccess is ConnectorSandboxNetworkAccess.Loopback)
+            {
+                if (profileLease is null)
+                {
+                    throw new InvalidOperationException(
+                        "Loopback-only AppContainer access requires a controlled profile.");
+                }
+                await SetLoopbackExemptionAsync(profileName, enabled: true, cancellationToken)
+                    .ConfigureAwait(false);
+                loopbackExempt = true;
+            }
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
                 sidText,
@@ -91,6 +103,7 @@ internal static partial class WindowsAppContainerSandbox
                     Path.GetFullPath(workspaceRoot),
                     sidText,
                     temporaryDirectory,
+                    loopbackExempt,
                     cancellationToken).ConfigureAwait(false);
             }
             if (policy.GrantInternetCapabilities)
@@ -126,6 +139,19 @@ internal static partial class WindowsAppContainerSandbox
             {
                 await profileLease.DisposeAsync().ConfigureAwait(false);
             }
+            if (loopbackExempt)
+            {
+                try
+                {
+                    await SetLoopbackExemptionAsync(
+                        profileName,
+                        enabled: false,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+            }
             throw;
         }
     }
@@ -158,105 +184,6 @@ internal static partial class WindowsAppContainerSandbox
 
     internal static bool HasPendingProfileCleanup(string profileName) =>
         EphemeralProfiles.ContainsKey(profileName) || File.Exists(ProfileMetadataPath(profileName));
-
-    private static async Task EnsureWorkspaceAclAsync(
-        string workspaceRoot,
-        string sid,
-        ConnectorSandboxPermissionProfile profile,
-        CancellationToken cancellationToken)
-    {
-        var root = Path.GetFullPath(workspaceRoot);
-        if (!Directory.Exists(root))
-        {
-            throw new DirectoryNotFoundException("Sandbox workspace root was not found.");
-        }
-
-        var key = string.Join('\0', root, sid, profile);
-        var preparation = PreparedWorkspaceAcls.GetOrAdd(
-            key,
-            _ => new Lazy<Task>(
-                () => EnsurePathAclAsync(
-                    root,
-                    sid,
-                    profile is ConnectorSandboxPermissionProfile.ReadOnly ? "(OI)(CI)RX" : "(OI)(CI)M",
-                    cancellationToken),
-                LazyThreadSafetyMode.ExecutionAndPublication));
-        try
-        {
-            await preparation.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            PreparedWorkspaceAcls.TryRemove(new KeyValuePair<string, Lazy<Task>>(key, preparation));
-            throw;
-        }
-    }
-
-    private static async Task EnsurePathAclAsync(
-        string root,
-        string sid,
-        string access,
-        CancellationToken cancellationToken,
-        bool recursive = true)
-    {
-        var systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var icacls = Path.Combine(systemDirectory, "icacls.exe");
-        if (!File.Exists(icacls))
-        {
-            throw new FileNotFoundException("Windows ACL utility was not found.", icacls);
-        }
-
-        var start = new ProcessStartInfo
-        {
-            FileName = icacls,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        start.ArgumentList.Add(root);
-        start.ArgumentList.Add("/grant:r");
-        start.ArgumentList.Add($"*{sid}:{access}");
-        if (recursive)
-        {
-            start.ArgumentList.Add("/T");
-        }
-        start.ArgumentList.Add("/C");
-        if (recursive)
-        {
-            start.ArgumentList.Add("/L");
-        }
-        start.ArgumentList.Add("/Q");
-        using var process = Process.Start(start)
-            ?? throw new InvalidOperationException("Unable to start Windows ACL preparation.");
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = new CancellationTokenSource(
-            recursive ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(10));
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            timeout.Token);
-        try
-        {
-            await process.WaitForExitAsync(linked.Token).ConfigureAwait(false);
-        }
-        catch
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            throw;
-        }
-
-        var output = await stdout.ConfigureAwait(false);
-        var error = await stderr.ConfigureAwait(false);
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"Windows could not prepare the workspace sandbox ACL (icacls {process.ExitCode}): {SafeAclError(error, output)}");
-        }
-    }
 
     private static Task EnsureAncestorTraverseAclsAsync(
         string path,
@@ -335,6 +262,20 @@ internal static partial class WindowsAppContainerSandbox
             return false;
         }
 
+        if (metadata.LoopbackExempt)
+        {
+            try
+            {
+                await SetLoopbackExemptionAsync(
+                    metadata.ProfileName,
+                    enabled: false,
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                return false;
+            }
+        }
         var deleteResult = DeleteAppContainerProfile(metadata.ProfileName);
         if (deleteResult != 0 &&
             deleteResult != unchecked((int)0x80070490) &&
@@ -346,7 +287,11 @@ internal static partial class WindowsAppContainerSandbox
         try
         {
             var aclSid = metadata.AclSid ?? metadata.Sid;
-            await RemovePathAclAsync(metadata.WorkspaceRoot, aclSid, CancellationToken.None)
+            await RemovePathAclAsync(
+                metadata.WorkspaceRoot,
+                aclSid,
+                CancellationToken.None,
+                recursive: metadata.RecursiveAclMaterialization)
                 .ConfigureAwait(false);
             await RemoveAncestorTraverseAclsAsync(
                 metadata.WorkspaceRoot,
@@ -360,7 +305,11 @@ internal static partial class WindowsAppContainerSandbox
                 out _);
             foreach (var additionalRoot in metadata.AdditionalRoots ?? Array.Empty<string>())
             {
-                await RemovePathAclAsync(additionalRoot, aclSid, CancellationToken.None)
+                await RemovePathAclAsync(
+                    additionalRoot,
+                    aclSid,
+                    CancellationToken.None,
+                    recursive: metadata.RecursiveAclMaterialization)
                     .ConfigureAwait(false);
                 await RemoveAncestorTraverseAclsAsync(
                     additionalRoot,
@@ -392,7 +341,7 @@ internal static partial class WindowsAppContainerSandbox
         string root,
         string sid,
         CancellationToken cancellationToken,
-        bool recursive = true)
+        bool recursive = false)
     {
         if (!Directory.Exists(root))
         {
@@ -750,6 +699,7 @@ internal static partial class WindowsAppContainerSandbox
             string workspaceRoot,
             string sid,
             string temporaryDirectory,
+            bool loopbackExempt,
             CancellationToken cancellationToken) =>
             RegisterEphemeralProfileAsync(
                 profileName,
@@ -757,6 +707,7 @@ internal static partial class WindowsAppContainerSandbox
                 workspaceRoot,
                 sid,
                 temporaryDirectory,
+                loopbackExempt,
                 cancellationToken);
 
         public Task RegisterAdditionalPathAsync(
@@ -786,5 +737,7 @@ internal static partial class WindowsAppContainerSandbox
         string? AclSid,
         string TemporaryDirectory,
         DateTimeOffset CreatedAt,
-        IReadOnlyList<string>? AdditionalRoots = null);
+        IReadOnlyList<string>? AdditionalRoots = null,
+        bool LoopbackExempt = false,
+        bool RecursiveAclMaterialization = true);
 }

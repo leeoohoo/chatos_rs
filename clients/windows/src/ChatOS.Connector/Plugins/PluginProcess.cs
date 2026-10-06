@@ -26,14 +26,14 @@ internal interface IPluginProcess : IAsyncDisposable
 internal interface IPluginProcessLauncher
 {
     Task<IPluginProcess> LaunchAsync(
-        PreparedPluginLaunch launch,
+        PluginProcessLaunchRequest launch,
         CancellationToken cancellationToken = default);
 }
 
 internal sealed class WindowsPluginProcessLauncher : IPluginProcessLauncher
 {
     public async Task<IPluginProcess> LaunchAsync(
-        PreparedPluginLaunch launch,
+        PluginProcessLaunchRequest launch,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -114,17 +114,12 @@ internal sealed class WindowsPluginProcessLauncher : IPluginProcessLauncher
     }
 
     private static async Task<IPluginProcess> LaunchAppContainerAsync(
-        PreparedPluginLaunch launch,
+        PluginProcessLaunchRequest launch,
         CancellationToken cancellationToken)
     {
-        var permissions = launch.PermissionSnapshot ?? new HashSet<string>(StringComparer.Ordinal);
-        var workspaceProfile = permissions.Contains("workspace.write")
-            ? ConnectorSandboxPermissionProfile.WorkspaceWrite
-            : ConnectorSandboxPermissionProfile.ReadOnly;
-        var policy = new SandboxExecutionPolicy(
-            UseAppContainer: true,
-            PermissionProfile: workspaceProfile,
-            NetworkAccess: ConnectorSandboxNetworkAccess.Disabled);
+        var permissions = launch.PermissionSnapshot;
+        var workspaceProfile = WorkspacePermissionProfile(permissions);
+        var policy = InstallationPolicy(launch);
         WindowsAppContainerLaunchContext? sandbox = null;
         SafeFileHandle? inputRead = null;
         SafeFileHandle? inputWrite = null;
@@ -254,7 +249,19 @@ internal sealed class WindowsPluginProcessLauncher : IPluginProcessLauncher
         }
     }
 
-    private static IEnumerable<string> WritableRuntimePaths(PreparedPluginLaunch launch)
+    internal static SandboxExecutionPolicy InstallationPolicy(PluginProcessLaunchRequest launch) =>
+        new(
+            UseAppContainer: true,
+            PermissionProfile: ConnectorSandboxPermissionProfile.ReadOnly,
+            NetworkAccess: launch.NetworkAccess);
+
+    internal static ConnectorSandboxPermissionProfile WorkspacePermissionProfile(
+        IReadOnlySet<string> permissions) =>
+        permissions.Contains("workspace.write")
+            ? ConnectorSandboxPermissionProfile.WorkspaceWrite
+            : ConnectorSandboxPermissionProfile.ReadOnly;
+
+    private static IEnumerable<string> WritableRuntimePaths(PluginProcessLaunchRequest launch)
     {
         var keys = new[]
         {

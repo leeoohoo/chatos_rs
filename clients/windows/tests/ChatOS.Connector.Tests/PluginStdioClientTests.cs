@@ -129,7 +129,7 @@ public sealed class PluginStdioClientTests
     private sealed class FakeLauncher(FakePluginProcess process) : IPluginProcessLauncher
     {
         public Task<IPluginProcess> LaunchAsync(
-            PreparedPluginLaunch launch,
+            PluginProcessLaunchRequest launch,
             CancellationToken cancellationToken = default) =>
             Task.FromResult<IPluginProcess>(process);
     }

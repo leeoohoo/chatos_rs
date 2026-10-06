@@ -64,7 +64,12 @@ struct NativePluginRuntimeTests {
             version: "1.0.0",
             artifactSHA256: String(repeating: "a", count: 64),
             installationPath: installation.path,
-            installedAt: "2026-09-02T00:00:00Z"
+            installedAt: "2026-09-02T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
         let application = LocalConnectorPluginApplication(
             pluginID: record.pluginID,

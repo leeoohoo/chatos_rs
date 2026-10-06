@@ -162,6 +162,13 @@ pub async fn send_register_email_code(
             }
             RegistrationEmailCodeReservationError::Store(error) => internal_error(error),
         })?;
+    let Some(reservation) = reservation else {
+        return Ok(Json(SendRegisterEmailCodeResponse {
+            ok: true,
+            expires_in_seconds: state.config.registration_code_ttl_seconds,
+            resend_after_seconds: state.config.registration_code_resend_seconds,
+        }));
+    };
     if let Err(error) = send_registration_code(&state.config, email.as_str(), code.as_str()).await {
         if let Err(restore_error) = state
             .store

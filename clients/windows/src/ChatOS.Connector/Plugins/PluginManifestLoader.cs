@@ -130,7 +130,8 @@ internal sealed partial class PluginManifestLoader
         {
             return new PreparedPluginApplication(
                 application, record, contextKey, installationPath, sourcePath, null,
-                Array.Empty<string>(), environment, "/api/health", 15_000);
+                Array.Empty<string>(), environment, "/api/health", 15_000,
+                workspaceRoot, permissionSnapshot);
         }
         if (!permissionSnapshot.Contains("process.spawn"))
         {
@@ -161,7 +162,9 @@ internal sealed partial class PluginManifestLoader
             prefixArguments.Concat(runtime.Arguments).ToArray(),
             environment,
             healthPath,
-            Math.Clamp(runtime.LaunchTimeoutMilliseconds ?? 15_000, 100, 120_000));
+            Math.Clamp(runtime.LaunchTimeoutMilliseconds ?? 15_000, 100, 120_000),
+            workspaceRoot,
+            permissionSnapshot);
     }
 
     internal async Task<IReadOnlyList<LocalPluginApplication>> ListApplicationsAsync(

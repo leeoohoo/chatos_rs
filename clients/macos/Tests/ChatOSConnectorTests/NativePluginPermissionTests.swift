@@ -268,7 +268,12 @@ extension NativePluginRuntimeTests {
             version: "0.8.1",
             artifactSHA256: String(repeating: "a", count: 64),
             installationPath: root.path,
-            installedAt: "2026-08-27T00:00:00Z"
+            installedAt: "2026-08-27T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
 
         let permissions = await NativePluginPermissionInspector.permissions(
@@ -303,7 +308,7 @@ extension NativePluginRuntimeTests {
         try Data("""
         #!/bin/sh
         # check-permissions
-        printf 'x\\n' >> "$PWD/invocations.log"
+        printf 'x\\n' >> "$CHATOS_PLUGIN_DATA_DIR/invocations.log"
         sleep 0.2
         printf '%s\\n' '{"permissions":[{"kind":"accessibility","title":"辅助功能","granted":true,"purpose":"发送输入","systemSettingsTitle":"隐私与安全性 > 辅助功能"},{"kind":"screenRecording","title":"屏幕与系统音频录制","granted":false,"purpose":"读取画面","systemSettingsTitle":"隐私与安全性 > 屏幕与系统音频录制"}]}'
         """.utf8).write(to: launcher)
@@ -328,8 +333,16 @@ extension NativePluginRuntimeTests {
             version: "0.8.1",
             artifactSHA256: String(repeating: "c", count: 64),
             installationPath: root.path,
-            installedAt: "2026-08-27T00:00:00Z"
+            installedAt: "2026-08-27T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
         )
+        let diagnostic = NativePluginPermissionInspector.diagnosticDirectory(record: record)
+        try? FileManager.default.removeItem(at: diagnostic)
+        defer { try? FileManager.default.removeItem(at: diagnostic) }
         let cache = NativePluginPermissionSnapshotCache()
 
         async let first = cache.permissions(record: record, manifest: manifest)
@@ -337,11 +350,11 @@ extension NativePluginRuntimeTests {
         let (firstPermissions, secondPermissions) = try await (first, second)
 
         #expect(firstPermissions == secondPermissions)
-        #expect(try permissionInvocationCount(at: root) == 1)
+        #expect(try permissionInvocationCount(at: diagnostic) == 1)
 
         let cached = try await cache.permissions(record: record, manifest: manifest)
         #expect(cached == firstPermissions)
-        #expect(try permissionInvocationCount(at: root) == 1)
+        #expect(try permissionInvocationCount(at: diagnostic) == 1)
 
         let refreshed = try await cache.permissions(
             record: record,
@@ -349,7 +362,7 @@ extension NativePluginRuntimeTests {
             forceRefresh: true
         )
         #expect(refreshed == firstPermissions)
-        #expect(try permissionInvocationCount(at: root) == 2)
+        #expect(try permissionInvocationCount(at: diagnostic) == 2)
     }
 
     func permissionInvocationCount(at root: URL) throws -> Int {

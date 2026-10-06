@@ -183,7 +183,8 @@ impl AppStore {
         ttl_seconds: i64,
         resend_seconds: i64,
         hourly_limit: i64,
-    ) -> Result<RegistrationEmailCodeReservation, RegistrationEmailCodeReservationError> {
+    ) -> Result<Option<RegistrationEmailCodeReservation>, RegistrationEmailCodeReservationError>
+    {
         let mut tx = self
             .pool
             .begin()
@@ -194,6 +195,18 @@ impl AppStore {
             .execute(&mut *tx)
             .await
             .map_err(|error| RegistrationEmailCodeReservationError::Store(db_error(error)))?;
+        let already_registered =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1)")
+                .bind(email)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|error| RegistrationEmailCodeReservationError::Store(db_error(error)))?;
+        if already_registered {
+            tx.commit()
+                .await
+                .map_err(|error| RegistrationEmailCodeReservationError::Store(db_error(error)))?;
+            return Ok(None);
+        }
         let previous: Option<RegistrationEmailCodeRecord> = sqlx::query_scalar::<_, Json<Value>>(
             "SELECT data FROM registration_email_codes WHERE email=$1 FOR UPDATE",
         )
@@ -247,7 +260,7 @@ impl AppStore {
         tx.commit()
             .await
             .map_err(|error| RegistrationEmailCodeReservationError::Store(db_error(error)))?;
-        Ok(RegistrationEmailCodeReservation { record, previous })
+        Ok(Some(RegistrationEmailCodeReservation { record, previous }))
     }
 
     pub async fn restore_registration_email_code_reservation(

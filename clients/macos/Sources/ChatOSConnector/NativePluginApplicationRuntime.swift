@@ -74,6 +74,10 @@ actor NativePluginApplicationRuntime {
         }
 
         guard let runtime = contribution.runtime else {
+            try NativePluginInstallationIntegrity.verify(
+                record: record,
+                installationURL: installationURL
+            )
             let sourceURL = try safeInstalledFile(
                 contribution.source.path,
                 installationURL: installationURL,
@@ -130,18 +134,27 @@ actor NativePluginApplicationRuntime {
             "CHATOS_PLUGIN_ARTIFACT_SHA256": record.artifactSHA256,
         ]
         overrides.merge(resolvedContext.environment, uniquingKeysWith: { _, runtime in runtime })
-        let environment = NativePluginProcessEnvironment.make(overrides: overrides)
-        let arguments = [executableURL.path] + runtime.args
+        let process = try NativePluginProcessLauncher.prepare(.init(
+            record: record,
+            executableURL: executableURL,
+            arguments: runtime.args,
+            environment: overrides,
+            installationURL: installationURL,
+            writableDirectories: [dataURL, cacheURL],
+            workspaceRoot: hostContext.workspaceRoot,
+            permissionSnapshot: Set(manifest.permissions.map(\.permission)),
+            networkAccess: .loopbackServer
+        ))
         let nullInput = open("/dev/null", O_RDONLY)
         guard nullInput >= 0 else {
             throw NativeConnectorError.pluginInstallation("Plugin 应用后端启动失败：无法打开标准输入")
         }
         defer { close(nullInput) }
         var processID: pid_t = 0
-        let spawnResult = Self.withCStringArray(arguments) { argv in
-            Self.withCStringArray(environment.map { "\($0.key)=\($0.value)" }) { envp in
+        let spawnResult = Self.withCStringArray(process.arguments) { argv in
+            Self.withCStringArray(process.environment.map { "\($0.key)=\($0.value)" }) { envp in
                 chatos_spawn_process_group(
-                    executableURL.path,
+                    process.executableURL.path,
                     argv,
                     envp,
                     installationURL.path,
