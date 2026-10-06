@@ -67,6 +67,14 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("x:Name=\"StoryPortraitsSectionItem\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"StorySegmentsSectionItem\"", xaml, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"StoryGraphSectionItem\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryLandingProjects\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Click=\"OnAddGeneratedReferenceClick\"", xaml, StringComparison.Ordinal);
+
+        var document = System.Xml.Linq.XDocument.Parse(xaml);
+        var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>
+            attribute.Name.LocalName == "Name" && attribute.Value == "StoryProjectSidebar"));
+        var storyPivot = storySidebar.Ancestors().First(element => element.Name.LocalName == "PivotItem");
+        Assert.Equal("剧情模式", storyPivot.Attribute("Header")?.Value);
     }
 
     private static string FindWindowsRoot()

@@ -98,6 +98,13 @@ public sealed partial class MediaStudioPage : Page
         SelectStorySourceSection();
     }
 
+    private void OnStoryLandingProjectClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StoryProjectCard card }) return;
+        StoryViewModel.OpenProject(card.Project);
+        SelectStorySourceSection();
+    }
+
     private async void OnLoadMoreStoryProjectsClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.LoadMoreProjectsAsync();
 
@@ -407,6 +414,14 @@ public sealed partial class MediaStudioPage : Page
     private async void OnGenerateClick(object sender, RoutedEventArgs e) =>
         await ViewModel.GenerateAsync();
 
+    private void OnLatestImageGridSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not GridView { ItemsPanelRoot: ItemsWrapGrid panel } grid) return;
+        var available = Math.Max(280, grid.ActualWidth - 32);
+        var columns = available >= 620 ? 2 : 1;
+        panel.ItemWidth = Math.Max(280, Math.Floor((available - (columns - 1) * 12) / columns));
+    }
+
     private void OnPromptSuggestionClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string prompt }) ViewModel.Prompt = prompt;
@@ -427,6 +442,53 @@ public sealed partial class MediaStudioPage : Page
         var files = await picker.PickMultipleFilesAsync();
         if (files.Count > 0)
             await ViewModel.AddReferenceImagesAsync(files.Select(file => file.Path).ToArray());
+    }
+
+    private async void OnAddGeneratedReferenceClick(object sender, RoutedEventArgs e)
+    {
+        var remaining = Math.Max(0, 8 - ViewModel.ReferenceImages.Count);
+        var images = ViewModel.History
+            .SelectMany(item => item.Images)
+            .Where(item => File.Exists(item.FilePath))
+            .ToArray();
+        if (remaining == 0 || images.Length == 0)
+        {
+            var emptyDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = remaining == 0 ? "参考图已达上限" : "没有可用的图片记录",
+                Content = remaining == 0
+                    ? "最多可以添加 8 张参考图。"
+                    : "请先生成图片，或从本机添加参考图。",
+                CloseButtonText = "知道了",
+            };
+            await emptyDialog.ShowAsync();
+            return;
+        }
+
+        var list = new ListView
+        {
+            ItemsSource = images,
+            DisplayMemberPath = nameof(MediaStudioImageItem.Name),
+            SelectionMode = ListViewSelectionMode.Multiple,
+            MaxHeight = 420,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"从创作记录选择参考图（最多 {remaining} 张）",
+            Content = list,
+            PrimaryButtonText = "添加",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var paths = list.SelectedItems
+            .OfType<MediaStudioImageItem>()
+            .Take(remaining)
+            .Select(item => item.FilePath)
+            .ToArray();
+        if (paths.Length > 0) await ViewModel.AddReferenceImagesAsync(paths);
     }
 
     private void OnRemoveReferenceClick(object sender, RoutedEventArgs e)
@@ -647,12 +709,19 @@ public sealed partial class MediaStudioPage : Page
 
     private void RefreshStoryState()
     {
-        StoryCreatePanel.Visibility = StoryViewModel.IsWorkspaceOpen
+        var workspaceOpen = StoryViewModel.IsWorkspaceOpen;
+        StoryCreatePanel.Visibility = workspaceOpen
             ? Visibility.Collapsed
             : Visibility.Visible;
-        StoryWorkspacePanel.Visibility = StoryViewModel.IsWorkspaceOpen
+        StoryWorkspacePanel.Visibility = workspaceOpen
             ? Visibility.Visible
             : Visibility.Collapsed;
+        StoryProjectSidebar.Visibility = workspaceOpen ? Visibility.Visible : Visibility.Collapsed;
+        Grid.SetColumn(StoryMainPanel, workspaceOpen ? 1 : 0);
+        Grid.SetColumnSpan(StoryMainPanel, workspaceOpen ? 1 : 2);
+        var hasProjects = StoryViewModel.Projects.Count > 0;
+        StoryLandingEmptyState.Visibility = hasProjects ? Visibility.Collapsed : Visibility.Visible;
+        StoryLandingProjects.Visibility = hasProjects ? Visibility.Visible : Visibility.Collapsed;
         var hasSegment = StoryViewModel.SelectedSegment is not null;
         StorySegmentEmptyState.Visibility = hasSegment ? Visibility.Collapsed : Visibility.Visible;
         StorySegmentEditorPanel.Visibility = hasSegment ? Visibility.Visible : Visibility.Collapsed;

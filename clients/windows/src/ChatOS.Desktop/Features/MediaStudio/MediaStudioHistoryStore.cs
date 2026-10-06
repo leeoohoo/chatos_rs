@@ -374,7 +374,10 @@ public sealed record MediaStudioImageItem(
     string Id,
     string FilePath,
     string MimeType,
-    string? RevisedPrompt);
+    string? RevisedPrompt)
+{
+    public string Name => Path.GetFileName(FilePath);
+}
 
 public sealed record MediaStudioVideoHistoryItem(
     string Id,

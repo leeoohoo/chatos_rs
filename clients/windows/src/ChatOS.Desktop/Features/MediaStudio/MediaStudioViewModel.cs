@@ -68,6 +68,12 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public string VideoFirstFrameLabel => VideoFirstFrame?.Name ?? "未选择";
 
+    public bool CanChooseVideoRatio => VideoFirstFrame is null;
+
+    public string VideoRatioHint => VideoFirstFrame is null
+        ? "未选择首帧时使用此比例"
+        : "已跟随首帧图片比例";
+
     public string VideoReferenceAudioLabel => VideoReferenceAudio?.Name ?? "未选择";
 
     private VideoGenerationProfile VideoProfile =>
@@ -106,6 +112,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoFirstFrameLabel))]
+    [NotifyPropertyChangedFor(nameof(CanChooseVideoRatio))]
+    [NotifyPropertyChangedFor(nameof(VideoRatioHint))]
     private ImageGenerationInput? _videoFirstFrame;
 
     [ObservableProperty]
