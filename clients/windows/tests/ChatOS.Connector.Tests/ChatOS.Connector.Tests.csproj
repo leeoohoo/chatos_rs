@@ -28,6 +28,8 @@
              Link="Desktop\MainWindowViewModel.Resources.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Pet\PetQuickChatViewModel.cs"
              Link="Desktop\PetQuickChatViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Pet\PetSpriteAnimationPolicy.cs"
+             Link="Desktop\PetSpriteAnimationPolicy.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginVisualSessionsViewModel.cs"
              Link="Desktop\PluginVisualSessionsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginArtifactsViewModel.cs"

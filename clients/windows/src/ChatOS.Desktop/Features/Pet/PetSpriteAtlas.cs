@@ -7,13 +7,6 @@ namespace ChatOS.Desktop.Features.Pet;
 
 internal static class PetSpriteAtlas
 {
-    public const int Columns = 8;
-    public const int Rows = 11;
-    private const int CellWidth = 192;
-    private const int CellHeight = 208;
-    private const int RenderWidth = 180;
-    private const int RenderHeight = 195;
-    private const long MaximumBytes = 20L * 1024 * 1024;
     private static readonly object Sync = new();
     private static Task<IReadOnlyList<BitmapImage>?>? _loadingTask;
 
@@ -39,33 +32,35 @@ internal static class PetSpriteAtlas
                 "fengtuan",
                 "spritesheet.webp");
             var info = new FileInfo(path);
-            if (!info.Exists || info.Length is <= 0 or > MaximumBytes) return null;
+            if (!info.Exists || info.Length is <= 0 or > PetSpriteAtlasPolicy.MaximumBytes)
+                return null;
 
             var file = await StorageFile.GetFileFromPathAsync(path);
             using var input = await file.OpenReadAsync();
             var decoder = await BitmapDecoder.CreateAsync(input);
-            if (decoder.PixelWidth != Columns * CellWidth ||
-                decoder.PixelHeight != Rows * CellHeight)
+            if (!PetSpriteAtlasPolicy.HasExpectedDimensions(
+                    checked((int)decoder.PixelWidth),
+                    checked((int)decoder.PixelHeight)))
             {
                 return null;
             }
 
-            var frames = new List<BitmapImage>(Columns * Rows);
-            for (var row = 0; row < Rows; row++)
+            var frames = new List<BitmapImage>(PetSpriteAtlasPolicy.FrameCount);
+            for (var row = 0; row < PetSpriteAtlasPolicy.Rows; row++)
             {
-                for (var column = 0; column < Columns; column++)
+                for (var column = 0; column < PetSpriteAtlasPolicy.Columns; column++)
                 {
                     var transform = new BitmapTransform
                     {
                         Bounds = new BitmapBounds
                         {
-                            X = (uint)(column * CellWidth),
-                            Y = (uint)(row * CellHeight),
-                            Width = CellWidth,
-                            Height = CellHeight,
+                            X = (uint)(column * PetSpriteAtlasPolicy.CellWidth),
+                            Y = (uint)(row * PetSpriteAtlasPolicy.CellHeight),
+                            Width = PetSpriteAtlasPolicy.CellWidth,
+                            Height = PetSpriteAtlasPolicy.CellHeight,
                         },
-                        ScaledWidth = RenderWidth,
-                        ScaledHeight = RenderHeight,
+                        ScaledWidth = PetSpriteAtlasPolicy.RenderWidth,
+                        ScaledHeight = PetSpriteAtlasPolicy.RenderHeight,
                         InterpolationMode = BitmapInterpolationMode.Fant,
                     };
                     var pixels = await decoder.GetPixelDataAsync(
@@ -81,8 +76,8 @@ internal static class PetSpriteAtlas
                     encoder.SetPixelData(
                         BitmapPixelFormat.Bgra8,
                         BitmapAlphaMode.Premultiplied,
-                        RenderWidth,
-                        RenderHeight,
+                        PetSpriteAtlasPolicy.RenderWidth,
+                        PetSpriteAtlasPolicy.RenderHeight,
                         96,
                         96,
                         pixels.DetachPixelData());
@@ -93,38 +88,11 @@ internal static class PetSpriteAtlas
                     frames.Add(frame);
                 }
             }
-            return frames.Count == Columns * Rows ? frames : null;
+            return frames.Count == PetSpriteAtlasPolicy.FrameCount ? frames : null;
         }
         catch
         {
             return null;
         }
     }
-}
-
-internal readonly record struct PetSpriteSequence(
-    int Row,
-    int FrameCount,
-    TimeSpan FrameDuration)
-{
-    public static PetSpriteSequence For(
-        ChatOS.Core.Domain.PetAnimationState state,
-        bool isDragging,
-        bool isDraggingRight) =>
-        isDragging
-            ? new PetSpriteSequence(isDraggingRight ? 1 : 2, 8, TimeSpan.FromMilliseconds(100))
-            : state switch
-            {
-                ChatOS.Core.Domain.PetAnimationState.Succeeded =>
-                    new PetSpriteSequence(4, 5, TimeSpan.FromMilliseconds(500)),
-                ChatOS.Core.Domain.PetAnimationState.Failed =>
-                    new PetSpriteSequence(5, 8, TimeSpan.FromMilliseconds(500)),
-                ChatOS.Core.Domain.PetAnimationState.Waiting =>
-                    new PetSpriteSequence(6, 6, TimeSpan.FromMilliseconds(500)),
-                ChatOS.Core.Domain.PetAnimationState.Running =>
-                    new PetSpriteSequence(7, 6, TimeSpan.FromMilliseconds(200)),
-                ChatOS.Core.Domain.PetAnimationState.Review =>
-                    new PetSpriteSequence(8, 6, TimeSpan.FromMilliseconds(250)),
-                _ => new PetSpriteSequence(0, 7, TimeSpan.FromSeconds(1)),
-            };
 }

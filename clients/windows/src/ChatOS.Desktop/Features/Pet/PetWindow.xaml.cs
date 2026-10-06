@@ -487,12 +487,12 @@ public sealed partial class PetWindow : Window
     private void ShowPetSpriteFrame(int row, int column)
     {
         if (_spriteFrames is null ||
-            row < 0 || row >= PetSpriteAtlas.Rows ||
-            column < 0 || column >= PetSpriteAtlas.Columns)
+            row < 0 || row >= PetSpriteAtlasPolicy.Rows ||
+            column < 0 || column >= PetSpriteAtlasPolicy.Columns)
         {
             return;
         }
-        PetSpriteImage.Source = _spriteFrames[row * PetSpriteAtlas.Columns + column];
+        PetSpriteImage.Source = _spriteFrames[row * PetSpriteAtlasPolicy.Columns + column];
     }
 
     private async void OnCompactActivityTapped(object sender, TappedRoutedEventArgs e)
