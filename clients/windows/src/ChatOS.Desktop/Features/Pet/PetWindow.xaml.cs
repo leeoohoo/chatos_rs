@@ -18,14 +18,14 @@ namespace ChatOS.Desktop.Features.Pet;
 
 public sealed partial class PetWindow : Window
 {
-    private const int CollapsedWidth = 230;
-    private const int CollapsedHeight = 190;
+    private const int CollapsedWidth = 140;
+    private const int CollapsedHeight = 140;
     private const int SummaryWidth = 360;
-    private const int SummaryHeight = 315;
+    private const int SummaryHeight = 265;
     private const int ApprovalWidth = 430;
-    private const int ApprovalHeight = 520;
+    private const int ApprovalHeight = 470;
     private const int ExpandedWidth = 430;
-    private const int ExpandedHeight = 650;
+    private const int ExpandedHeight = 600;
     private const int GwlExStyle = -20;
     private const long WsExLayered = 0x00080000L;
     private const long WsExToolWindow = 0x00000080L;
