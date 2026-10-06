@@ -15,8 +15,8 @@
 
     <Style x:Key="ChatOSSidebarItemStyle" TargetType="ListViewItem">
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="MinHeight" Value="48" />
-        <Setter Property="Padding" Value="4,2" />
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="Padding" Value="4,0" />
         <Setter Property="Margin" Value="0,1" />
         <Setter Property="CornerRadius" Value="9" />
         <Setter Property="Background" Value="Transparent" />
@@ -47,6 +47,16 @@
         <Setter Property="Foreground" Value="{StaticResource ChatOSPrimaryTextBrush}" />
         <Setter Property="BorderBrush" Value="{StaticResource ChatOSBorderBrush}" />
         <Setter Property="BorderThickness" Value="1" />
+    </Style>
+
+    <Style x:Key="ChatOSLinkButtonStyle" TargetType="Button">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{StaticResource ChatOSAccentBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
     <Style x:Key="ChatOSCardStyle" TargetType="Border">

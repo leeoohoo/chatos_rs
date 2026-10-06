@@ -204,6 +204,35 @@ public sealed class DesktopAutomationContractTests
         });
     }
 
+    [Fact]
+    public void AuthenticationVisualTransitionKeepsTheActiveTitleBarVisibleUntilReplacement()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "ChatOS.Desktop", "MainWindow.xaml.cs"));
+
+        AssertAppearsInOrder(
+            source,
+            "ShellRoot.Visibility = Visibility.Visible;",
+            "SetTitleBar(AppTitleBar);",
+            "LoginRoot.Visibility = Visibility.Collapsed;");
+        AssertAppearsInOrder(
+            source,
+            "LoginRoot.Visibility = Visibility.Visible;",
+            "SetTitleBar(LoginTitleBar);",
+            "ShellRoot.Visibility = Visibility.Collapsed;");
+    }
+
+    private static void AssertAppearsInOrder(string source, params string[] fragments)
+    {
+        var position = -1;
+        foreach (var fragment in fragments)
+        {
+            var next = source.IndexOf(fragment, position + 1, StringComparison.Ordinal);
+            Assert.True(next > position, $"Expected '{fragment}' after position {position}.");
+            position = next;
+        }
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

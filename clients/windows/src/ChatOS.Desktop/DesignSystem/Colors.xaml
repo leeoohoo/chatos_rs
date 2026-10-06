@@ -53,6 +53,7 @@
     <Color x:Key="ChatOSFailureColor">#D64545</Color>
 
     <SolidColorBrush x:Key="ChatOSAccentBrush" Color="{StaticResource ChatOSAccentColor}" />
+    <SolidColorBrush x:Key="ChatOSAccentWashBrush" Color="{StaticResource ChatOSAccentColor}" Opacity="0.055" />
     <SolidColorBrush x:Key="ChatOSPurpleBrush" Color="{StaticResource ChatOSPurpleColor}" />
     <SolidColorBrush x:Key="ChatOSSuccessBrush" Color="{StaticResource ChatOSSuccessColor}" />
     <SolidColorBrush x:Key="ChatOSWarningBrush" Color="{StaticResource ChatOSWarningColor}" />

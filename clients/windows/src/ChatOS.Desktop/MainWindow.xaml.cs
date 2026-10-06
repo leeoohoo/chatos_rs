@@ -24,6 +24,8 @@ namespace ChatOS.Desktop;
 public sealed partial class MainWindow : Window
 {
     private ShellResourceViewModel? _lastWorkspaceResource;
+    private bool _postActivationInitializationComplete;
+    private bool? _renderedAuthenticationState;
 
     public MainWindow(
         MainWindowViewModel viewModel,
@@ -66,7 +68,10 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
-        SetTitleBar(AppTitleBar);
+        // The login view is the first visible root. Registering a title-bar element from the
+        // collapsed workspace can leave WinUI's non-client input source pointing at a hidden
+        // visual and has caused CoreMessagingXP failures during the first sign-in transition.
+        SetTitleBar(LoginTitleBar);
         AppWindow.Resize(new SizeInt32(1440, 900));
         AppWindow.Title = "ChatOS";
         ShowContent(WorkspaceHost);
@@ -154,6 +159,7 @@ public sealed partial class MainWindow : Window
                     $"Unable to load local approval state: {exception.Message}");
             }
             UpdateVisualState();
+            _postActivationInitializationComplete = true;
             StartupDiagnostics.RecordStage("main window post-activation initialization complete");
         }
         catch (Exception exception)
@@ -185,6 +191,7 @@ public sealed partial class MainWindow : Window
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedResource) && ViewModel.IsPublishingWorkspace) return;
+        var authenticationChanged = e.PropertyName == nameof(MainWindowViewModel.IsAuthenticated);
         if (e.PropertyName is nameof(MainWindowViewModel.IsAuthenticated) or
             nameof(MainWindowViewModel.IsBusy) or
             nameof(MainWindowViewModel.ErrorMessage) or
@@ -232,18 +239,42 @@ public sealed partial class MainWindow : Window
                     ShowWorkspace();
                 }
             }
-            if (e.PropertyName == nameof(MainWindowViewModel.IsAuthenticated))
+            if (authenticationChanged && !ViewModel.IsAuthenticated)
             {
-                _ = PetWindowController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
-                _ = VisualSessionController.SetAuthenticatedAsync(ViewModel.IsAuthenticated);
-                if (!ViewModel.IsAuthenticated)
-                {
-                    _ = LocalTerminalPage.CloseSessionAsync();
-                    _ = PluginApplicationsPage.ResetAsync();
-                    MediaStudioPage.ViewModel.Reset();
-                }
+                _ = LocalTerminalPage.CloseSessionAsync();
+                _ = PluginApplicationsPage.ResetAsync();
+                MediaStudioPage.ViewModel.Reset();
             }
             UpdateVisualState();
+            if (authenticationChanged && _postActivationInitializationComplete)
+            {
+                // Defer secondary-window activation until the main window has completed its
+                // title-bar/root transition. Activating the pet window re-entrantly from the
+                // property notification can destabilize WinUI's CoreMessaging input source.
+                _ = DispatcherQueue.TryEnqueue(() =>
+                    _ = SynchronizeAuthenticatedWindowsAsync(ViewModel.IsAuthenticated));
+            }
+        }
+    }
+
+    private async Task SynchronizeAuthenticatedWindowsAsync(bool authenticated)
+    {
+        try
+        {
+            await PetWindowController.SetAuthenticatedAsync(authenticated);
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled("pet window authentication synchronization", exception);
+        }
+
+        try
+        {
+            await VisualSessionController.SetAuthenticatedAsync(authenticated);
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled("visual session authentication synchronization", exception);
         }
     }
 
@@ -566,9 +597,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateVisualState()
     {
-        LoginRoot.Visibility = ViewModel.IsAuthenticated ? Visibility.Collapsed : Visibility.Visible;
-        ShellRoot.Visibility = ViewModel.IsAuthenticated ? Visibility.Visible : Visibility.Collapsed;
-        SetTitleBar(ViewModel.IsAuthenticated ? AppTitleBar : LoginTitleBar);
+        ApplyAuthenticationVisualState(ViewModel.IsAuthenticated);
         LoginForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Collapsed : Visibility.Visible;
         RegistrationForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Visible : Visibility.Collapsed;
         LoginButton.IsEnabled = !ViewModel.IsBusy;
@@ -599,6 +628,37 @@ public sealed partial class MainWindow : Window
         RefreshSidebarState();
         RefreshWorkspaceEmptyState();
         RefreshApprovalOverlay();
+    }
+
+    private void ApplyAuthenticationVisualState(bool authenticated)
+    {
+        if (_renderedAuthenticationState == authenticated)
+        {
+            return;
+        }
+
+        StartupDiagnostics.RecordLifecycle(
+            $"applying {(authenticated ? "authenticated" : "signed-out")} window state");
+
+        // A custom title-bar element must stay visible until its replacement is registered.
+        // Make the incoming root visible, switch the title bar, and only then collapse the
+        // outgoing root. The previous order temporarily hid the active title bar and could
+        // terminate the process inside CoreMessagingXP when login completed.
+        if (authenticated)
+        {
+            ShellRoot.Visibility = Visibility.Visible;
+            SetTitleBar(AppTitleBar);
+            LoginRoot.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            LoginRoot.Visibility = Visibility.Visible;
+            SetTitleBar(LoginTitleBar);
+            ShellRoot.Visibility = Visibility.Collapsed;
+        }
+
+        _renderedAuthenticationState = authenticated;
+        StartupDiagnostics.RecordLifecycle("window authentication state applied");
     }
 
     private void OnPendingApprovalsChanged(object? sender, EventArgs e)
