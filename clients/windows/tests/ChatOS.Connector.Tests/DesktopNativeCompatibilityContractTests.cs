@@ -86,6 +86,10 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("已选择参考音频", xaml, StringComparison.Ordinal);
         Assert.Contains("Text=\"{x:Bind FileName}\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"OnVideoHistoryCardClick\" Content=\"播放\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:DataType=\"media:MediaStudioReferenceImage\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("ViewModel.VideoFirstFramePreviewPath", xaml, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{x:Bind ViewModel.GenerateImageActionLabel, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{x:Bind ViewModel.ImageEmptyDescription, Mode=OneWay}\"", xaml, StringComparison.Ordinal);
 
         var document = System.Xml.Linq.XDocument.Parse(xaml);
         var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>

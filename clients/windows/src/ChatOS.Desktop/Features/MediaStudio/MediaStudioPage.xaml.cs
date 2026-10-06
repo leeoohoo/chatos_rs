@@ -501,7 +501,7 @@ public sealed partial class MediaStudioPage : Page
 
     private void OnRemoveReferenceClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: ImageGenerationInput image })
+        if (sender is Button { DataContext: MediaStudioReferenceImage image })
             ViewModel.RemoveReferenceImage(image);
     }
 

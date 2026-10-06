@@ -30,7 +30,10 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(HasReferenceImages));
             OnPropertyChanged(nameof(CanAddReferenceImages));
+            OnPropertyChanged(nameof(CanClearReferenceImages));
             OnPropertyChanged(nameof(ReferenceImageCountLabel));
+            OnPropertyChanged(nameof(GenerateImageActionLabel));
+            OnPropertyChanged(nameof(ImageEmptyDescription));
         };
         Models.CollectionChanged += (_, _) =>
         {
@@ -56,7 +59,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public ObservableCollection<MediaStudioImageItem> LatestImages { get; } = [];
 
-    public ObservableCollection<ImageGenerationInput> ReferenceImages { get; } = [];
+    public ObservableCollection<MediaStudioReferenceImage> ReferenceImages { get; } = [];
 
     public IReadOnlyList<string> Sizes => AvailableSizes;
 
@@ -92,7 +95,19 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public bool CanAddReferenceImages => !IsBusy && ReferenceImages.Count < 8;
 
+    public bool CanClearReferenceImages => !IsBusy && HasReferenceImages;
+
     public string ReferenceImageCountLabel => $"{ReferenceImages.Count} / 8";
+
+    public string GenerateImageActionLabel => IsGeneratingImage
+        ? "正在生成…"
+        : HasReferenceImages
+            ? "基于参考图生成"
+            : "生成图片";
+
+    public string ImageEmptyDescription => HasReferenceImages
+        ? "参考图已经添加。请在右侧描述希望保留、修改或重新设计的内容。"
+        : "选择图片模型、填写提示词并生成；也可以添加参考图进行图生图。";
 
     public string GenerateVideoActionLabel => VideoFirstFrame is null
         ? "生成视频"
@@ -191,6 +206,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private ImageGenerationInput? _videoFirstFrame;
 
     [ObservableProperty]
+    private string? _videoFirstFramePreviewPath;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VideoReferenceAudioLabel))]
     [NotifyPropertyChangedFor(nameof(HasVideoReferenceAudio))]
     [NotifyPropertyChangedFor(nameof(VideoReferenceAudioHint))]
@@ -221,11 +239,13 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ImageCanvasSubtitle))]
     [NotifyPropertyChangedFor(nameof(ImageCanvasStatusLabel))]
     [NotifyPropertyChangedFor(nameof(HasImageCanvasStatus))]
+    [NotifyPropertyChangedFor(nameof(GenerateImageActionLabel))]
     private bool _isGeneratingImage;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
     [NotifyPropertyChangedFor(nameof(CanAddReferenceImages))]
+    [NotifyPropertyChangedFor(nameof(CanClearReferenceImages))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -408,7 +428,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     submittedPrompt,
                     SelectedSize == "auto" ? null : SelectedSize,
                     SelectedCount,
-                    ReferenceImages.ToArray()),
+                    ReferenceImages.Select(image => image.Input).ToArray()),
                 cancellationToken);
             var item = await _historyStore.SaveAsync(
                 owner,
@@ -455,10 +475,12 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                 var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
                 if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
                     throw new InvalidDataException("参考图为空或超过 20 MB。");
-                ReferenceImages.Add(new ImageGenerationInput(
-                    Path.GetFileName(path),
-                    mimeType,
-                    Convert.ToBase64String(bytes)));
+                ReferenceImages.Add(new MediaStudioReferenceImage(
+                    new ImageGenerationInput(
+                        Path.GetFileName(path),
+                        mimeType,
+                        Convert.ToBase64String(bytes)),
+                    path));
             }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -467,7 +489,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
     }
 
-    public void RemoveReferenceImage(ImageGenerationInput image) => ReferenceImages.Remove(image);
+    public void RemoveReferenceImage(MediaStudioReferenceImage image) => ReferenceImages.Remove(image);
 
     public void ClearReferenceImages() => ReferenceImages.Clear();
 
@@ -478,7 +500,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            VideoFirstFrame = await LoadImageInputAsync(path, cancellationToken);
+            var input = await LoadImageInputAsync(path, cancellationToken);
+            VideoFirstFramePreviewPath = path;
+            VideoFirstFrame = input;
             VideoReferenceAudio = null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -487,7 +511,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
     }
 
-    public void RemoveVideoFirstFrame() => VideoFirstFrame = null;
+    public void RemoveVideoFirstFrame()
+    {
+        VideoFirstFrame = null;
+        VideoFirstFramePreviewPath = null;
+    }
 
     public async Task SetVideoReferenceAudioAsync(
         string path,
@@ -512,6 +540,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                 mimeType,
                 Convert.ToBase64String(bytes));
             VideoFirstFrame = null;
+            VideoFirstFramePreviewPath = null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -611,6 +640,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         SelectedVideoModel = null;
         LatestVideo = null;
         VideoFirstFrame = null;
+        VideoFirstFramePreviewPath = null;
         VideoReferenceAudio = null;
         VideoProgress = null;
         Prompt = string.Empty;
@@ -673,4 +703,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
             mimeType,
             Convert.ToBase64String(bytes));
     }
+}
+
+public sealed record MediaStudioReferenceImage(ImageGenerationInput Input, string FilePath)
+{
+    public string Name => Input.Name;
 }

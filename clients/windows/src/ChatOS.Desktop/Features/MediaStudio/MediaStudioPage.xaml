@@ -138,7 +138,7 @@
                                             <FontIcon Glyph="&#xEB9F;" FontSize="34" Foreground="White" />
                                         </Border>
                                         <TextBlock HorizontalAlignment="Center" Text="描述想象中的画面" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBlock Text="选择图片模型、填写提示词并生成；图片不会进入聊天记录。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <TextBlock Text="{x:Bind ViewModel.ImageEmptyDescription, Mode=OneWay}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                                         <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="8">
                                             <Button Click="OnPromptSuggestionClick" Content="电影感人像" Tag="电影感人像，柔和轮廓光，浅景深，精致肤质，电影级调色" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             <Button Click="OnPromptSuggestionClick" Content="未来城市" Tag="雨夜中的未来城市，霓虹灯光，广角构图，电影感，细节丰富" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
@@ -195,20 +195,25 @@
                                             <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
                                                 <Button Click="OnAddGeneratedReferenceClick" Content="从记录" IsEnabled="{x:Bind ViewModel.CanAddReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                                 <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.AddReference" Click="OnAddReferenceClick" Content="本机" IsEnabled="{x:Bind ViewModel.CanAddReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnClearReferencesClick" Content="清空" IsEnabled="{x:Bind ViewModel.HasReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                <Button Click="OnClearReferencesClick" Content="清空" IsEnabled="{x:Bind ViewModel.CanClearReferenceImages, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                                             </StackPanel>
                                         </Grid>
                                         <ItemsControl ItemsSource="{x:Bind ViewModel.ReferenceImages}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" /></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
-                                                <DataTemplate x:DataType="core:ImageGenerationInput">
-                                                    <Border Margin="0,0,0,5" Padding="9,6" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
-                                                        <Grid ColumnSpacing="8">
-                                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                            <TextBlock VerticalAlignment="Center" Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                                            <Button Grid.Column="1" Click="OnRemoveReferenceClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="移除">
-                                                                <FontIcon Glyph="&#xE711;" FontSize="11" />
-                                                            </Button>
-                                                        </Grid>
+                                                <DataTemplate x:DataType="media:MediaStudioReferenceImage">
+                                                    <Border Width="96" Margin="0,0,8,8" Padding="5" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                                        <StackPanel Spacing="5">
+                                                            <Grid>
+                                                                <Image Width="86" Height="66" Source="{Binding FilePath, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
+                                                                <Button HorizontalAlignment="Right" VerticalAlignment="Top" Margin="3" Click="OnRemoveReferenceClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="移除">
+                                                                    <FontIcon Glyph="&#xE711;" FontSize="10" />
+                                                                </Button>
+                                                            </Grid>
+                                                            <TextBlock Text="{x:Bind Name}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
                                                     </Border>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
@@ -232,7 +237,7 @@
                                         </StackPanel>
                                     </Grid>
 
-                                    <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.Generate" AutomationProperties.Name="生成图片" Click="OnGenerateClick" Content="生成图片" IsEnabled="{x:Bind ViewModel.CanGenerate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" HorizontalAlignment="Stretch" />
+                                    <Button AutomationProperties.AutomationId="ChatOS.MediaStudio.Generate" AutomationProperties.Name="生成图片" Click="OnGenerateClick" Content="{x:Bind ViewModel.GenerateImageActionLabel, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanGenerate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" HorizontalAlignment="Stretch" />
                                 </StackPanel>
                             </ScrollViewer>
                         </Border>
@@ -341,8 +346,8 @@
                                         <Border Padding="9" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="11"
                                                 Visibility="{x:Bind ViewModel.HasVideoFirstFrame, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid ColumnSpacing="10">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                <Border Width="44" Height="38" Background="{StaticResource ChatOSSurfaceBrush}" CornerRadius="8"><FontIcon Glyph="&#xEB9F;" Foreground="{StaticResource ChatOSPurpleBrush}" /></Border>
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Image Width="72" Height="56" Source="{x:Bind ViewModel.VideoFirstFramePreviewPath, Mode=OneWay, Converter={StaticResource FilePathToImageSourceConverter}}" Stretch="UniformToFill" />
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                                     <TextBlock Text="已选择首帧" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     <TextBlock Text="{x:Bind ViewModel.VideoFirstFrameLabel, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
