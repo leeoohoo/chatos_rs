@@ -28,6 +28,21 @@ public sealed class AuthenticationServiceTests
     }
 
     [Fact]
+    public async Task LoginAcceptsGatewayTokenField()
+    {
+        var store = new MemoryTokenStore();
+        var client = ApiTestClient.Create(store, _ =>
+            StubHttpMessageHandler.Json("""
+                {"token":"gateway-token","user":{"id":"u1","username":"lilei","display_name":null,"role":"user"}}
+                """));
+        var service = new AuthenticationService(client, store);
+
+        await service.LoginAsync("lilei", "secret");
+
+        Assert.Equal("gateway-token", store.Token);
+    }
+
+    [Fact]
     public async Task RestoreReturnsNullAndClearsExpiredToken()
     {
         var store = new MemoryTokenStore();

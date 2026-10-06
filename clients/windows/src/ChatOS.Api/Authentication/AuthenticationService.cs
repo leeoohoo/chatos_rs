@@ -55,7 +55,7 @@ public sealed class AuthenticationService : IAuthenticationService
             "auth/login",
             new LoginRequestDto(username, password),
             cancellationToken).ConfigureAwait(false);
-        var token = response.AccessToken.Trim();
+        var token = response.ResolvedAccessToken;
         if (token.Length == 0)
         {
             throw new ChatOSApiException("The login response did not include an access token.");
@@ -102,7 +102,7 @@ public sealed class AuthenticationService : IAuthenticationService
             "auth/register",
             new RegisterRequestDto(email, password, inviteCode, verificationCode),
             cancellationToken).ConfigureAwait(false);
-        var token = response.AccessToken.Trim();
+        var token = response.ResolvedAccessToken;
         if (token.Length == 0)
             throw new ChatOSApiException("The registration response did not include an access token.");
 
@@ -119,8 +119,12 @@ internal sealed record LoginRequestDto(
     [property: JsonPropertyName("password")] string Password);
 
 internal sealed record LoginResponseDto(
-    [property: JsonPropertyName("access_token")] string AccessToken,
-    [property: JsonPropertyName("user")] AuthUserDto User);
+    [property: JsonPropertyName("token")] string? Token,
+    [property: JsonPropertyName("access_token")] string? AccessToken,
+    [property: JsonPropertyName("user")] AuthUserDto User)
+{
+    public string ResolvedAccessToken => (Token ?? AccessToken ?? string.Empty).Trim();
+}
 
 internal sealed record SendRegistrationCodeRequestDto(
     [property: JsonPropertyName("email")] string Email,
