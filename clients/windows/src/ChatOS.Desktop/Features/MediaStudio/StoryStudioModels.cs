@@ -197,6 +197,17 @@ public sealed record StoryProjectCard(
     public Guid Id => Project.Id;
     public string Title => Project.Title;
     public string Description => string.IsNullOrWhiteSpace(Project.Description) ? "暂无描述" : Project.Description;
+    public bool HasSegments => Project.Segments.Count > 0;
+    public double CompletionRatio => Project.Segments.Count == 0
+        ? 0
+        : (double)Project.CompletedCount / Project.Segments.Count;
+    public string StatusLabel => Project.Segments.Count == 0
+        ? "待规划"
+        : Project.CompletedCount == Project.Segments.Count
+            ? "已完成"
+            : "制作中";
+    public string SegmentCountLabel => $"{Project.Segments.Count} 段";
+    public string DurationLabel => $"{Project.TotalSeconds} 秒";
     public int CurrentVideoCount => Project.CompletedCount;
     public int VideoVersionCount => Project.Segments.Sum(segment =>
         (string.IsNullOrWhiteSpace(segment.VideoAsset) ? 0 : 1) + segment.ArchivedVideos.Count);

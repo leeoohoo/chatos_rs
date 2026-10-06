@@ -416,6 +416,10 @@
                                             <TextBlock Text="我的剧情" FontSize="20" FontWeight="SemiBold" />
                                             <TextBlock Text="最近更新的剧情项目" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
+                                        <StackPanel x:Name="StoryLandingLoadingState" MinHeight="220" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+                                            <ProgressRing Width="32" Height="32" IsActive="True" />
+                                            <TextBlock Text="正在加载剧情项目" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        </StackPanel>
                                         <StackPanel x:Name="StoryLandingEmptyState" MinHeight="150" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
                                             <TextBlock HorizontalAlignment="Center" Text="从一个故事开始" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                             <TextBlock Text="填写下方信息创建第一个剧情项目。" Style="{StaticResource ChatOSCaptionTextStyle}" />
@@ -427,14 +431,35 @@
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate x:DataType="media:StoryProjectCard">
                                                     <Button Width="340" Margin="0,0,14,14" Padding="0" HorizontalContentAlignment="Stretch" Background="Transparent" BorderThickness="0" Click="OnStoryLandingProjectClick">
-                                                        <Border MinHeight="150" Style="{StaticResource MediaStudioCardStyle}">
-                                                            <StackPanel Spacing="10">
+                                                        <Border MinHeight="214" Style="{StaticResource MediaStudioCardStyle}">
+                                                            <StackPanel Spacing="12">
                                                                 <Grid ColumnSpacing="8">
-                                                                    <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                                    <TextBlock HorizontalAlignment="Right" Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                    <Border Width="38" Height="38" HorizontalAlignment="Left" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                                                        <FontIcon Glyph="&#xE714;" FontSize="17" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                                                    </Border>
+                                                                    <Border HorizontalAlignment="Right" VerticalAlignment="Center" Padding="8,4" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                                                        <TextBlock Text="{x:Bind StatusLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                    </Border>
                                                                 </Grid>
-                                                                <TextBlock Text="{x:Bind Description}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                                                <TextBlock Text="{x:Bind ProgressLabel}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                                <TextBlock MinHeight="36" Text="{x:Bind Description}" MaxLines="2" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                                                <StackPanel Spacing="5" Visibility="{x:Bind HasSegments, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                    <Grid>
+                                                                        <TextBlock Text="制作进度" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        <TextBlock HorizontalAlignment="Right" Text="{x:Bind ProgressLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                    </Grid>
+                                                                    <ProgressBar Height="5" Maximum="1" Value="{x:Bind CompletionRatio}" />
+                                                                </StackPanel>
+                                                                <Grid>
+                                                                    <StackPanel Orientation="Horizontal" Spacing="12">
+                                                                        <TextBlock Text="{x:Bind SegmentCountLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        <TextBlock Text="{x:Bind DurationLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                    </StackPanel>
+                                                                    <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="6">
+                                                                        <TextBlock Text="{x:Bind UpdatedAtLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                        <FontIcon Glyph="&#xE76C;" FontSize="11" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                                    </StackPanel>
+                                                                </Grid>
                                                             </StackPanel>
                                                         </Border>
                                                     </Button>
@@ -446,7 +471,7 @@
                                                 IsEnabled="{x:Bind StoryViewModel.CanLoadMoreProjects, Mode=OneWay}"
                                                 Visibility="{x:Bind StoryViewModel.HasMoreProjects, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
 
-                                        <Border MaxWidth="720" HorizontalAlignment="Stretch" Padding="22" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="16">
+                                        <Border x:Name="StoryCreateForm" MaxWidth="720" HorizontalAlignment="Stretch" Padding="22" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="16">
                                             <StackPanel Spacing="16">
                                                 <StackPanel Spacing="4">
                                                     <TextBlock Text="新建剧情" Style="{StaticResource ChatOSPageTitleTextStyle}" />
@@ -877,6 +902,11 @@
                             <StackPanel Spacing="4">
                                 <TextBlock Text="创作记录" FontSize="24" FontWeight="SemiBold" />
                                 <TextBlock Text="图片、视频和剧情作品均已自动保存到本机" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="HistoryLoadingState" MinHeight="360" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10">
+                                <ProgressRing Width="34" Height="34" IsActive="True" />
+                                <TextBlock Text="正在加载创作记录" Style="{StaticResource ChatOSCaptionTextStyle}" />
                             </StackPanel>
 
                             <StackPanel x:Name="HistoryEmptyState" MinHeight="420" HorizontalAlignment="Stretch" VerticalAlignment="Center" Spacing="14">

@@ -72,6 +72,9 @@ public sealed class DesktopNativeCompatibilityContractTests
         Assert.Contains("x:Name=\"StoryPromptAuditExpander\"", xaml, StringComparison.Ordinal);
         Assert.Contains("Click=\"OnStoryHistoryPlayClick\"", xaml, StringComparison.Ordinal);
         Assert.Contains("ItemsSource=\"{x:Bind PreviewImages}\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"HistoryLoadingState\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("x:Name=\"StoryLandingLoadingState\"", xaml, StringComparison.Ordinal);
+        Assert.Contains("Value=\"{x:Bind CompletionRatio}\"", xaml, StringComparison.Ordinal);
 
         var document = System.Xml.Linq.XDocument.Parse(xaml);
         var storySidebar = document.Descendants().Single(element => element.Attributes().Any(attribute =>

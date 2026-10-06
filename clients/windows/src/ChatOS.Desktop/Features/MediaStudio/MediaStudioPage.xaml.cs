@@ -679,15 +679,17 @@ public sealed partial class MediaStudioPage : Page
     private void RefreshHistoryState()
     {
         if (HistoryEmptyState is null) return;
+        var isLoading = ViewModel.IsInitialLoading || StoryViewModel.IsInitialLoading;
         var hasStories = StoryViewModel.Projects.Count > 0 || StoryViewModel.HasMoreProjects;
         var hasVideos = ViewModel.VideoHistory.Count > 0 || ViewModel.HasMoreVideoHistory;
         var hasImages = ViewModel.History.Count > 0 || ViewModel.HasMoreHistory;
-        HistoryEmptyState.Visibility = hasStories || hasVideos || hasImages
+        HistoryLoadingState.Visibility = isLoading ? Visibility.Visible : Visibility.Collapsed;
+        HistoryEmptyState.Visibility = isLoading || hasStories || hasVideos || hasImages
             ? Visibility.Collapsed
             : Visibility.Visible;
-        StoryHistorySection.Visibility = hasStories ? Visibility.Visible : Visibility.Collapsed;
-        VideoHistorySection.Visibility = hasVideos ? Visibility.Visible : Visibility.Collapsed;
-        ImageHistorySection.Visibility = hasImages ? Visibility.Visible : Visibility.Collapsed;
+        StoryHistorySection.Visibility = !isLoading && hasStories ? Visibility.Visible : Visibility.Collapsed;
+        VideoHistorySection.Visibility = !isLoading && hasVideos ? Visibility.Visible : Visibility.Collapsed;
+        ImageHistorySection.Visibility = !isLoading && hasImages ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void RefreshVideoState()
@@ -742,8 +744,11 @@ public sealed partial class MediaStudioPage : Page
         Grid.SetColumn(StoryMainPanel, workspaceOpen ? 1 : 0);
         Grid.SetColumnSpan(StoryMainPanel, workspaceOpen ? 1 : 2);
         var hasProjects = StoryViewModel.Projects.Count > 0;
-        StoryLandingEmptyState.Visibility = hasProjects ? Visibility.Collapsed : Visibility.Visible;
-        StoryLandingProjects.Visibility = hasProjects ? Visibility.Visible : Visibility.Collapsed;
+        var isStoryLoading = ViewModel.IsInitialLoading || StoryViewModel.IsInitialLoading;
+        StoryLandingLoadingState.Visibility = isStoryLoading ? Visibility.Visible : Visibility.Collapsed;
+        StoryLandingEmptyState.Visibility = !isStoryLoading && !hasProjects ? Visibility.Visible : Visibility.Collapsed;
+        StoryLandingProjects.Visibility = !isStoryLoading && hasProjects ? Visibility.Visible : Visibility.Collapsed;
+        StoryCreateForm.Visibility = isStoryLoading ? Visibility.Collapsed : Visibility.Visible;
         var hasSegment = StoryViewModel.SelectedSegment is not null;
         StorySegmentEmptyState.Visibility = hasSegment ? Visibility.Collapsed : Visibility.Visible;
         StorySegmentEditorPanel.Visibility = hasSegment ? Visibility.Visible : Visibility.Collapsed;

@@ -139,6 +139,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private bool _isBusy;
 
     [ObservableProperty]
+    private bool _isInitialLoading;
+
+    [ObservableProperty]
     private string? _errorMessage;
 
     [ObservableProperty]
@@ -174,6 +177,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         if (_initialized) return;
         var session = _session;
         _initialized = true;
+        IsInitialLoading = true;
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -205,7 +209,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
         finally
         {
-            if (session == _session) IsBusy = false;
+            if (session == _session)
+            {
+                IsInitialLoading = false;
+                IsBusy = false;
+            }
         }
     }
 
@@ -482,6 +490,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         _videoHistoryCursor = null;
         HasMoreHistory = false;
         HasMoreVideoHistory = false;
+        IsInitialLoading = false;
         IsLoadingMoreHistory = false;
         IsLoadingMoreVideoHistory = false;
         Models.Clear();

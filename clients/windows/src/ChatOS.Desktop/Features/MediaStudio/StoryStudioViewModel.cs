@@ -231,6 +231,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRegenerateFromCurrentVideo))]
     [NotifyPropertyChangedFor(nameof(CanGenerateFromPreviousVideo))]
     private bool _isBusy;
+    [ObservableProperty] private bool _isInitialLoading;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty]
@@ -242,6 +243,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         if (string.Equals(_ownerUserId, ownerUserId, StringComparison.Ordinal) && Models.Count > 0) return;
         Reset(ownerUserId);
         var session = _session;
+        IsInitialLoading = true;
         IsBusy = true;
         try
         {
@@ -263,7 +265,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         }
         finally
         {
-            if (session == _session) IsBusy = false;
+            if (session == _session)
+            {
+                IsInitialLoading = false;
+                IsBusy = false;
+            }
         }
     }
 
@@ -552,6 +558,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _planningRunCursor = null;
         HasMoreProjects = false;
         HasMorePlanningRuns = false;
+        IsInitialLoading = false;
         IsLoadingMoreProjects = false;
         IsLoadingMorePlanningRuns = false;
         Projects.Clear();
