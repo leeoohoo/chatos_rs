@@ -287,13 +287,13 @@ extension NativeLocalConnectorService {
         let externalChoices = Self.selectableExternalChoices(agentCapability.mcps)
         let requiredBuiltinKinds = agentCapability.mcps.compactMap { item -> String? in
             guard item.binding.required, item.available else { return nil }
-            return item.resource.runtime.builtinKind?.trimmedNonEmpty
+            return item.resource.runtime.resolvedBuiltinKind
         }
         let requiredExternalIDs = agentCapability.mcps.compactMap { item -> String? in
             guard item.binding.required,
                   item.available,
-                  item.resource.runtime.builtinKind?.trimmedNonEmpty == nil,
-                  !item.resource.id.hasPrefix("system_mcp_") else { return nil }
+                  item.resource.runtime.resolvedBuiltinKind == nil,
+                  item.resource.runtime.isExternalHTTP else { return nil }
             return item.resource.id
         }
         let effectiveExternalIDs = Set(externalChoices.map(\.value) + requiredExternalIDs)
@@ -434,11 +434,11 @@ extension NativeLocalConnectorService {
     ) -> [NativeLocalAgentMCPChoice] {
         let candidates = mcps.filter {
             !$0.binding.required && $0.binding.enabled && $0.resource.enabled
-              && $0.resource.runtime.builtinKind?.trimmedNonEmpty != nil
+              && $0.resource.runtime.resolvedBuiltinKind != nil
         }
-        let available = Set(candidates.compactMap { $0.resource.runtime.builtinKind?.trimmedNonEmpty })
+        let available = Set(candidates.compactMap { $0.resource.runtime.resolvedBuiltinKind })
         return candidates.compactMap { item in
-            guard let kind = item.resource.runtime.builtinKind?.trimmedNonEmpty else { return nil }
+            guard let kind = item.resource.runtime.resolvedBuiltinKind else { return nil }
             if kind == "CodeMaintainerWrite", !available.contains("CodeMaintainerRead") {
                 return nil
             }
@@ -453,10 +453,8 @@ extension NativeLocalConnectorService {
             guard !item.binding.required,
                   item.binding.enabled,
                   item.resource.enabled,
-                  item.resource.runtime.builtinKind?.trimmedNonEmpty == nil,
-                  !item.resource.id.hasPrefix("system_mcp_"),
-                  item.resource.runtime.kind.lowercased() == "http",
-                  item.resource.runtime.url?.trimmedNonEmpty != nil else { return nil }
+                  item.resource.runtime.resolvedBuiltinKind == nil,
+                  item.resource.runtime.isExternalHTTP else { return nil }
             return .init(
                 value: item.resource.id,
                 title: Self.mcpChoiceTitle(item, value: item.resource.id)

@@ -103,6 +103,7 @@ struct GatewayMCPResourceDTO: Decodable, Sendable {
 struct GatewayMCPRuntimeDTO: Decodable, Sendable {
     var kind: String
     var builtinKind: String?
+    var systemKey: String?
     var serverName: String?
     var url: String?
     var headers: [String: String]
@@ -110,7 +111,39 @@ struct GatewayMCPRuntimeDTO: Decodable, Sendable {
     enum CodingKeys: String, CodingKey {
         case kind, url, headers
         case builtinKind = "builtin_kind"
+        case systemKey = "system_key"
         case serverName = "server_name"
+    }
+
+    /// Plugin Management persists unified system MCPs with `system_key` and intentionally
+    /// leaves the legacy `builtin_kind` field empty. Local Agent Host still freezes the
+    /// corresponding capability by its canonical BuiltinMcpKind name.
+    var resolvedBuiltinKind: String? {
+        if let builtinKind = Self.normalized(builtinKind) { return builtinKind }
+        let key = Self.normalized(systemKey) ?? Self.normalized(serverName)
+        switch key?.lowercased() {
+        case "code_maintainer_read": return "CodeMaintainerRead"
+        case "code_maintainer_write": return "CodeMaintainerWrite"
+        case "terminal_controller": return "TerminalController"
+        case "notepad": return "Notepad"
+        case "agent_builder": return "AgentBuilder"
+        case "ask_user": return "AskUser"
+        case "remote_connection_controller": return "RemoteConnectionController"
+        case "memory_skill_reader": return "MemorySkillReader"
+        case "memory_command_reader": return "MemoryCommandReader"
+        case "memory_plugin_reader": return "MemoryPluginReader"
+        default: return nil
+        }
+    }
+
+    var isExternalHTTP: Bool {
+        kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "http"
+            && Self.normalized(url) != nil
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? nil : normalized
     }
 }
 
