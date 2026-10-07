@@ -1,3 +1,4 @@
+import AppKit
 import ChatOSCore
 import Combine
 import Foundation
@@ -19,6 +20,8 @@ final class PetOverlayCoordinator {
     private var realtimeTask: Task<Void, Never>?
     private var recoveryTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var recoveryRequestedWhileRunning = false
+    private var recoveryGeneration: UInt64 = 0
     private var cancellables = Set<AnyCancellable>()
     private var isAuthenticated = false
     private var isMonitoring = false
@@ -140,6 +143,16 @@ final class PetOverlayCoordinator {
             .sink { [weak store] _ in store?.removeCompletionActivities() }
         .store(in: &cancellables)
 
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.recoverCloudState() }
+            .store(in: &cancellables)
+
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.recoverCloudState() }
+            .store(in: &cancellables)
+
         store.$presentation
             .map(\.activeWorkCount)
             .removeDuplicates()
@@ -184,6 +197,8 @@ final class PetOverlayCoordinator {
                 realtimeTask = nil
                 recoveryTask?.cancel()
                 recoveryTask = nil
+                recoveryGeneration &+= 1
+                recoveryRequestedWhileRunning = false
                 refreshTask?.cancel()
                 refreshTask = nil
             }
@@ -265,7 +280,17 @@ final class PetOverlayCoordinator {
 
     private func recoverCloudState() {
         guard isAuthenticated, let model else { return }
-        recoveryTask?.cancel()
+        // Reconcile signals can arrive faster than the local host can answer. Cancelling the
+        // in-flight authoritative read for every signal can starve reconciliation indefinitely,
+        // leaving terminal Runs displayed as active. Coalesce those signals into one guaranteed
+        // follow-up read instead.
+        guard recoveryTask == nil else {
+            recoveryRequestedWhileRunning = true
+            return
+        }
+        recoveryRequestedWhileRunning = false
+        recoveryGeneration &+= 1
+        let generation = recoveryGeneration
         let sources: [PetActivitySource] = [
             .askUserPrompt,
             .chat,
@@ -286,12 +311,19 @@ final class PetOverlayCoordinator {
                     sources: sources,
                     expectedVersions: expectedVersions
                 )
-                self.recoveryTask = nil
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.recoveryTask = nil
             }
+            self?.finishRecovery(generation: generation)
         }
+    }
+
+    private func finishRecovery(generation: UInt64) {
+        guard generation == recoveryGeneration else { return }
+        recoveryTask = nil
+        guard recoveryRequestedWhileRunning, isMonitoring else { return }
+        recoveryRequestedWhileRunning = false
+        recoverCloudState()
     }
 
     private func shouldApply(_ event: PetActivityEvent) -> Bool {

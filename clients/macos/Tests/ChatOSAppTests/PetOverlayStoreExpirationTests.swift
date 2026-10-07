@@ -47,6 +47,29 @@ struct PetOverlayStoreExpirationTests {
         #expect(store.activities.contains(where: { $0.id == later.id }))
     }
 
+    @Test("authoritative reconciliation removes a stale running projection")
+    @MainActor
+    func authoritativeReconciliationRemovesStaleRunningProjection() {
+        let store = PetOverlayStore()
+        store.apply(.upsert(PetActivity(
+            id: "local-run:cancelled",
+            source: .taskExecution,
+            kind: .working,
+            title: "本地任务",
+            activityVersion: "1"
+        )))
+        let versions = store.versions(for: [.taskExecution])
+
+        store.reconcileActivities(
+            [],
+            sources: [.taskExecution],
+            expectedVersions: versions
+        )
+
+        #expect(store.activities.isEmpty)
+        #expect(store.presentation.activeWorkCount == 0)
+    }
+
     private func makeActivity(id: String, expiresAt: Date?) -> PetActivity {
         PetActivity(
             id: id,
