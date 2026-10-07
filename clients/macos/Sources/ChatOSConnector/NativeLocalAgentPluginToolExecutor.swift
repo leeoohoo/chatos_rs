@@ -11,11 +11,16 @@ actor NativeLocalAgentPluginToolExecutor {
     }
 
     private let connector: NativeLocalConnectorService
+    private let idleExpiration: Duration
     private var sessions: [String: Session] = [:]
     private var expirationTasks: [String: Task<Void, Never>] = [:]
 
-    init(connector: NativeLocalConnectorService) {
+    init(
+        connector: NativeLocalConnectorService,
+        idleExpiration: Duration = .seconds(300)
+    ) {
         self.connector = connector
+        self.idleExpiration = idleExpiration
     }
 
     func execute(
@@ -32,7 +37,16 @@ actor NativeLocalAgentPluginToolExecutor {
             runID: invocation.runID,
             context: context
         )
-        refreshExpiration(runID: invocation.runID)
+        // The timeout is an idle-session timeout, not a deadline for an active
+        // plugin call. In particular, browser_session_open can legitimately
+        // wait for the user to approve attaching to Chrome. Starting the idle
+        // timer before execute used to evict the provider while that approval
+        // sheet was open; the approved browser session was then destroyed and
+        // the next navigation ran against a fresh process with no bound
+        // session. Suspend any previous idle timer for the whole call and only
+        // arm a new one once the provider becomes idle again.
+        suspendExpiration(runID: invocation.runID)
+        defer { refreshExpiration(runID: invocation.runID) }
         let outcome = try await provider.execute(.init(
             id: invocation.callID,
             name: invocation.toolName,
@@ -92,15 +106,20 @@ actor NativeLocalAgentPluginToolExecutor {
     }
 
     private func refreshExpiration(runID: String) {
-        expirationTasks.removeValue(forKey: runID)?.cancel()
+        suspendExpiration(runID: runID)
+        let idleExpiration = idleExpiration
         expirationTasks[runID] = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(300))
+                try await Task.sleep(for: idleExpiration)
             } catch {
                 return
             }
             await self?.expire(runID: runID)
         }
+    }
+
+    private func suspendExpiration(runID: String) {
+        expirationTasks.removeValue(forKey: runID)?.cancel()
     }
 
     private func expire(runID: String) {

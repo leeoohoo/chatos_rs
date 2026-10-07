@@ -209,6 +209,10 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 *'"value":"fail"'*)
                   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":${request_id},\"error\":{\"code\":-32602,\"message\":\"requirements.users is invalid at /Users/alice/private.json; api_key=secret-value\"}}"
                   ;;
+                *'"value":"slow"'*)
+                  sleep 0.2
+                  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":${request_id},\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"local-plugin-ok project-1\"}]}}"
+                  ;;
                 *)
                   printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":${request_id},\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"local-plugin-ok project-1\"}]}}"
                   ;;
@@ -636,7 +640,28 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(contactSearch.content.contains("plugin_1"))
         XCTAssertFalse(contactSearch.content.contains("builtin_1"))
 
-        let platformExecutor = NativeLocalAgentPluginToolExecutor(connector: service)
+        let platformExecutor = NativeLocalAgentPluginToolExecutor(
+            connector: service,
+            idleExpiration: .milliseconds(50)
+        )
+        let platformContext = NativeLocalAgentTaskExecutionContext(
+            conversationID: "conversation-2",
+            projectID: "project-1",
+            applicationContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            ),
+            resolvedPath: try await service.resolveProjectPath(project.path),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            toolAuthorization: .init(
+                requiresExecution: true,
+                enabledBuiltinKinds: [],
+                pluginKeys: ["plugin-1"],
+                isLegacyUnrestricted: true
+            )
+        )
         let platformSearch = try await platformExecutor.execute(
             ownerUserID: "alice",
             invocation: platformInvocation(
@@ -644,30 +669,65 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 name: "capability_search",
                 arguments: .object(["query": .string("test")])
             ),
-            context: .init(
-                conversationID: "conversation-2",
-                projectID: "project-1",
-                applicationContext: .init(
-                    projectID: "project-1",
-                    projectName: "Test",
-                    projectRoot: project.path
-                ),
-                resolvedPath: try await service.resolveProjectPath(project.path),
-                executionRootURL: project,
-                workspaceScopeID: "workspace-1",
-                toolAuthorization: .init(
-                    requiresExecution: true,
-                    enabledBuiltinKinds: [],
-                    pluginKeys: ["plugin-1"],
-                    isLegacyUnrestricted: true
-                )
-            ),
+            context: platformContext,
             arguments: ["query": .string("test")]
         )
         XCTAssertEqual(platformSearch.jsonObject?["is_error"]?.jsonBool, false)
         XCTAssertTrue(
             platformSearch.jsonObject?["content"]?.jsonObject?["matches"]?
                 .jsonArray?.first?.jsonObject?["plugin_option"]?.jsonString == "plugin_1"
+        )
+        let platformDescribe = try await platformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-2",
+                name: "capability_describe",
+                arguments: .object(["plugin_option": .string("plugin_1")])
+            ),
+            context: platformContext,
+            arguments: ["plugin_option": .string("plugin_1")]
+        )
+        XCTAssertEqual(platformDescribe.jsonObject?["is_error"]?.jsonBool, false)
+        let platformActivation = try await platformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-2",
+                name: "capability_skill_activate",
+                arguments: .object([
+                    "plugin_option": .string("plugin_1"),
+                    "skill_name": .string("test-agent-plugin"),
+                ])
+            ),
+            context: platformContext,
+            arguments: [
+                "plugin_option": .string("plugin_1"),
+                "skill_name": .string("test-agent-plugin"),
+            ]
+        )
+        XCTAssertEqual(platformActivation.jsonObject?["is_error"]?.jsonBool, false)
+        let slowInvocation = try await platformExecutor.execute(
+            ownerUserID: "alice",
+            invocation: platformInvocation(
+                runID: "task-run-2",
+                name: "capability_invoke",
+                arguments: .object([
+                    "plugin_option": .string("plugin_1"),
+                    "tool_option": .string("tool_1"),
+                    "arguments": .object(["value": .string("slow")]),
+                ])
+            ),
+            context: platformContext,
+            arguments: [
+                "plugin_option": .string("plugin_1"),
+                "tool_option": .string("tool_1"),
+                "arguments": .object(["value": .string("slow")]),
+            ]
+        )
+        XCTAssertEqual(slowInvocation.jsonObject?["is_error"]?.jsonBool, false)
+        XCTAssertTrue(
+            slowInvocation.jsonObject?["content"]?.canonicalJSONString
+                .contains("local-plugin-ok") == true,
+            "An active plugin call must outlive the idle-session timeout"
         )
         await platformExecutor.reset()
 
