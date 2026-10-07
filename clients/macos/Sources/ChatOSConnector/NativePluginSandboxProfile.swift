@@ -19,6 +19,7 @@ struct NativePluginProcessLaunch: Sendable {
     var permissionSnapshot: Set<String>
     var networkAccess: NativePluginNetworkAccess
     var homeDirectory: URL?
+    var managedBrowserAccess: Bool
 
     init(
         record: NativeInstalledPluginRecord,
@@ -32,7 +33,8 @@ struct NativePluginProcessLaunch: Sendable {
         workspaceRoot: URL?,
         permissionSnapshot: Set<String>,
         networkAccess: NativePluginNetworkAccess,
-        homeDirectory: URL? = nil
+        homeDirectory: URL? = nil,
+        managedBrowserAccess: Bool = false
     ) {
         self.record = record
         self.executableURL = executableURL
@@ -46,6 +48,7 @@ struct NativePluginProcessLaunch: Sendable {
         self.permissionSnapshot = permissionSnapshot
         self.networkAccess = networkAccess
         self.homeDirectory = homeDirectory
+        self.managedBrowserAccess = managedBrowserAccess
     }
 
     init(stdio launch: NativePreparedPluginLaunch) {
@@ -104,7 +107,8 @@ struct NativePluginProcessLaunch: Sendable {
             workspaceRoot: launch.workspaceRoot,
             permissionSnapshot: launch.permissionSnapshot,
             networkAccess: requiresLoopbackServer ? .loopbackServer : .disabled,
-            homeDirectory: browserHome
+            homeDirectory: browserHome,
+            managedBrowserAccess: requiresManagedBrowser
         )
     }
 
@@ -167,14 +171,16 @@ enum NativePluginProcessLauncher {
             )
         }
         let sandboxExecutable = NativePluginSandboxProfile.executableURL
+        var environment = NativePluginProcessEnvironment.make(
+            overrides: launch.environment,
+            homeDirectory: launch.homeDirectory?.path
+        )
+        environment["CHATOS_PLUGIN_SANDBOX"] = "macos-seatbelt"
         return .init(
             executableURL: sandboxExecutable,
             arguments: [sandboxExecutable.path]
                 + (try NativePluginSandboxProfile.arguments(for: launch)),
-            environment: NativePluginProcessEnvironment.make(
-                overrides: launch.environment,
-                homeDirectory: launch.homeDirectory?.path
-            )
+            environment: environment
         )
     }
 }
@@ -218,14 +224,39 @@ enum NativePluginSandboxProfile {
         let computerPermissions: Set<String> = [
             "computer.control", "computer.accessibility", "computer.screen-recording",
         ]
-        if !launch.permissionSnapshot.isDisjoint(with: computerPermissions) {
+        let hasComputerPermission = !launch.permissionSnapshot.isDisjoint(
+            with: computerPermissions
+        )
+        if launch.managedBrowserAccess || hasComputerPermission {
             rules.append("(allow user-preference-read)")
             // ScreenCaptureKit returns captured frames as IOSurface-backed
             // objects from replayd. Permit only the IOSurface root client
             // needed to decode that response; do not grant general IOKit or
             // GPU user-client access to the Plugin process.
             rules.append("(allow iokit-open-user-client (iokit-user-client-class \"IOSurfaceRootUserClient\"))")
+        }
+        if hasComputerPermission {
             rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\") (global-name \"com.apple.dock.fullscreen\") (global-name \"com.apple.replayd\") (global-name-regex #\"^com[.]apple[.]pasteboard[.][0-9]+$\") (global-name-regex #\"^com[.]apple[.]distributed_notifications.*$\"))")
+        }
+        if launch.managedBrowserAccess {
+            // Chromium's macOS process singleton always places its Unix socket in
+            // DARWIN_USER_TEMP_DIR, even when TMPDIR and --user-data-dir point at
+            // the Plugin cache. Restrict the exception to Chromium's randomized
+            // singleton directories rather than exposing the user's whole temp root.
+            let temporaryRoot = FileManager.default.temporaryDirectory
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+                .path
+            let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
+            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
+            rules.append("(allow network* (local unix-socket))")
+            // The host Seatbelt profile remains the security boundary. Chromium's
+            // nested sandbox cannot initialize inside it, so its helper rendezvous
+            // ports are explicitly scoped to known browser service names.
+            rules.append("(allow iokit-open)")
+            rules.append("(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\"))")
+            rules.append("(allow mach-register (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.](MachPortRendezvousServer[.][0-9]+|apps[.][A-Fa-f0-9]+)$\"))")
+            rules.append("(allow mach-lookup (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.]MachPortRendezvousServer[.][0-9]+$\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {
             if launch.permissionSnapshot.contains("workspace.write") {
@@ -257,5 +288,10 @@ enum NativePluginSandboxProfile {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "(subpath \"\(escaped)\")"
+    }
+
+    private static func regexLiteral(_ path: String) -> String {
+        NSRegularExpression.escapedPattern(for: path)
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }

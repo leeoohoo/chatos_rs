@@ -415,9 +415,22 @@ extension NativePluginRuntimeTests {
         let process = try NativePluginProcessLauncher.prepare(launch)
         #expect(process.environment["HOME"] == prepared.environment["CHATOS_PLUGIN_DATA_DIR"])
         #expect(process.environment["TMPDIR"] == prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+        #expect(process.environment["CHATOS_PLUGIN_SANDBOX"] == "macos-seatbelt")
+        #expect(launch.managedBrowserAccess)
         let sandboxProfile = try #require(process.arguments.dropFirst(2).first)
         #expect(sandboxProfile.contains(dataDirectory + ".lock"))
         #expect(sandboxProfile.contains(cacheDirectory + ".lock"))
+        #expect(sandboxProfile.contains("(allow iokit-open)"))
+        #expect(sandboxProfile.contains("(allow network* (local unix-socket))"))
+        #expect(sandboxProfile.contains("MachPortRendezvousServer"))
+        #expect(sandboxProfile.contains("com[.]google[.]Chrome"))
+        #expect(!sandboxProfile.contains("com.apple.tccd"))
+        #expect(!sandboxProfile.contains("com.apple.replayd"))
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }
 
     @Test("Document Tools may launch an installed browser for offline visual verification")

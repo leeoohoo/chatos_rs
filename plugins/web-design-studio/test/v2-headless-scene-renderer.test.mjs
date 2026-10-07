@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PNG } from 'pngjs';
-import { ChromiumSceneImageRenderer, resolveHeadlessBrowserExecutable } from '../dist/v2-headless-scene-renderer.test.mjs';
+import { ChromiumSceneImageRenderer, headlessBrowserArguments, resolveHeadlessBrowserExecutable } from '../dist/v2-headless-scene-renderer.test.mjs';
 import { renderSceneDocumentRoot } from '../dist/v2-scene-html-renderer.test.mjs';
 import { createSceneNodeBase } from '../dist/v2-scene-schema.test.mjs';
 import { nestedWebsite } from './helpers/v2-scene-fixture.mjs';
 
 let browser;
 try { browser = resolveHeadlessBrowserExecutable(); } catch { browser = undefined; }
+
+test('Chromium disables its nested sandbox only inside the host Seatbelt sandbox', () => {
+  assert.ok(headlessBrowserArguments('/tmp/profile', 'macos-seatbelt').includes('--no-sandbox'));
+  assert.ok(!headlessBrowserArguments('/tmp/profile', undefined).includes('--no-sandbox'));
+});
 
 test('Chromium renders a real Scene PNG with stable node measurements', { skip: !browser, timeout: 45_000 }, async () => {
   const rendered = renderSceneDocumentRoot(nestedWebsite(), 'section-responsive', 800);
