@@ -176,7 +176,7 @@ private extension View {
         if #available(macOS 15.0, *) {
             self
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.top, for: .alignment)
+                .defaultScrollAnchor(.bottom, for: .alignment)
         } else {
             self
         }
