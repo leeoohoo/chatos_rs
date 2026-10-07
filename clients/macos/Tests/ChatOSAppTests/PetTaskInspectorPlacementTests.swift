@@ -178,4 +178,20 @@ struct PetActivityPanelScopeTests {
         #expect(PetMessageActivityScope.primary.contains(review))
         #expect(!PetMessageActivityScope.primary.contains(running))
     }
+
+    @Test("local task routes do not require a cloud message identifier")
+    @MainActor
+    func localTaskActionsUseDurableLocalIdentifiers() {
+        let activity = PetActivity(
+            id: "local-run:run-1",
+            source: .taskExecution,
+            kind: .reviewing,
+            title: "需要检查",
+            route: .init(taskID: "task-1", runID: "run-1")
+        )
+
+        #expect(PetActivityPresentation.canLoadTask(activity))
+        #expect(PetActivityPresentation.canRetry(activity))
+        #expect(PetActivityPresentation.canCancel(activity))
+    }
 }

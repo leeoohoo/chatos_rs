@@ -376,12 +376,11 @@ extension PetMessageView {
     }
 
     func canRetry(_ activity: PetActivity) -> Bool {
-        PetActivityPresentation.displayText(activity.route.messageID) != nil && PetActivityPresentation.displayText(activity.route.runID) != nil
+        PetActivityPresentation.canRetry(activity)
     }
 
     func canLoadTask(_ activity: PetActivity) -> Bool {
-        PetActivityPresentation.displayText(activity.route.messageID) != nil
-            && PetActivityPresentation.displayText(activity.route.taskID) != nil
+        PetActivityPresentation.canLoadTask(activity)
     }
 
     func showTaskProcess(_ activity: PetActivity) {
@@ -395,16 +394,7 @@ extension PetMessageView {
     }
 
     func canCancel(_ activity: PetActivity) -> Bool {
-        guard activity.kind == .working || activity.kind == .reviewing else { return false }
-        if PetActivityPresentation.displayText(activity.route.messageID) != nil,
-           PetActivityPresentation.displayText(activity.route.taskID) != nil {
-            return true
-        }
-        if activity.source == .chat {
-            return PetActivityPresentation.displayText(activity.route.conversationID) != nil
-                && PetActivityPresentation.displayText(activity.route.turnID) != nil
-        }
-        return false
+        PetActivityPresentation.canCancel(activity)
     }
 
     func runningActivities() -> [PetActivity] {

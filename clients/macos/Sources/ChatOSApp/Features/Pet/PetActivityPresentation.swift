@@ -78,4 +78,22 @@ enum PetActivityPresentation {
         }
         return trimmed
     }
+
+    static func canRetry(_ activity: PetActivity) -> Bool {
+        displayText(activity.route.runID) != nil
+    }
+
+    static func canLoadTask(_ activity: PetActivity) -> Bool {
+        displayText(activity.route.taskID) != nil
+    }
+
+    static func canCancel(_ activity: PetActivity) -> Bool {
+        guard activity.kind == .working || activity.kind == .reviewing else { return false }
+        if canLoadTask(activity) {
+            return true
+        }
+        return activity.source == .chat
+            && displayText(activity.route.conversationID) != nil
+            && displayText(activity.route.turnID) != nil
+    }
 }
