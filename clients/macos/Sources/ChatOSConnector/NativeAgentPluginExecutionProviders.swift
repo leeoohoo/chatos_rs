@@ -545,8 +545,8 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             return "Plugin 安装或声明已失效，请重新安装后重试。"
         case .permissionDenied:
             return "Plugin 工具缺少这次操作所需的本机权限。"
-        case .invalidMCPResponse:
-            return "Plugin 返回了无效响应，请重试或重新启动 Plugin。"
+        case let .invalidMCPResponse(message):
+            return "Plugin 返回了无效响应：\(sanitizePluginMessage(message))"
         case .sessionNotFound, .processUnavailable:
             return "Plugin 本机会话已结束，请重新查看该能力后重试。"
         case let .processExited(code):
