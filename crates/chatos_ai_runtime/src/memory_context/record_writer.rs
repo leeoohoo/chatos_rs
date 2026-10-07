@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use memory_engine_sdk::{MemoryEngineClient, SdkBatchSyncRecordsRequest, UpsertRecordInput};
+use memory_engine_sdk::{
+    MemoryEngineClient, SdkBatchSyncRecordsRequest, SdkUpsertThreadRequest, UpsertRecordInput,
+};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -79,6 +83,7 @@ pub struct MemoryEngineRecordWriter {
     client: MemoryEngineClient,
     scope: MemoryRecordScope,
     source_id: Option<String>,
+    ensured_threads: Arc<Mutex<HashSet<(String, String)>>>,
 }
 
 impl MemoryEngineRecordWriter {
@@ -93,6 +98,7 @@ impl MemoryEngineRecordWriter {
             client: MemoryEngineClient::new_direct(base_url, timeout, source_id.clone())?,
             scope,
             source_id: Some(source_id),
+            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -101,6 +107,7 @@ impl MemoryEngineRecordWriter {
             client,
             scope,
             source_id: None,
+            ensured_threads: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -114,6 +121,8 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
     async fn save_record(&self, input: SaveRecordInput) -> Result<(), String> {
         let tenant_id = self.tenant_id_for_record(&input)?;
         let thread_id = self.thread_id_for_record(&input)?;
+        self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
+            .await?;
         let record = self.upsert_record_input(input)?;
         let records = vec![record];
         let summary = summarize_record_batch(records.as_slice());
@@ -188,6 +197,8 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
         }
 
         for ((tenant_id, thread_id), records) in batches {
+            self.ensure_thread(tenant_id.as_str(), thread_id.as_str())
+                .await?;
             let summary = summarize_record_batch(records.as_slice());
             let source_id = self.source_id.as_deref().unwrap_or("");
             info!(
@@ -249,6 +260,33 @@ impl MemoryRecordWriter for MemoryEngineRecordWriter {
 }
 
 impl MemoryEngineRecordWriter {
+    async fn ensure_thread(&self, tenant_id: &str, thread_id: &str) -> Result<(), String> {
+        let key = (tenant_id.to_string(), thread_id.to_string());
+        if self.ensured_threads.lock().await.contains(&key) {
+            return Ok(());
+        }
+        self.client
+            .upsert_thread(
+                thread_id,
+                &SdkUpsertThreadRequest {
+                    tenant_id: tenant_id.to_string(),
+                    subject_id: tenant_id.to_string(),
+                    thread_type: "conversation".to_string(),
+                    external_thread_id: Some(thread_id.to_string()),
+                    title: None,
+                    labels: None,
+                    metadata: None,
+                    status: Some("active".to_string()),
+                    created_at: None,
+                    updated_at: None,
+                    archived_at: None,
+                },
+            )
+            .await?;
+        self.ensured_threads.lock().await.insert(key);
+        Ok(())
+    }
+
     pub(crate) fn tenant_id_for_record(&self, input: &SaveRecordInput) -> Result<String, String> {
         if let Some(tenant_id) = normalized(self.scope.tenant_id.as_str()) {
             return Ok(tenant_id);
