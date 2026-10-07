@@ -100,14 +100,24 @@ extension NativeLocalConnectorService {
         let settings = catalog.optional
         let token = try requireAccessToken()
         let gateway = gateway
-        let agentCapability = try await gateway.agentCapability(
-            token: token,
-            agentKey: "local_agent_execution_agent"
-        )
-        guard agentCapability.agentEnabled,
-              agentCapability.ownerUserID == ownerUserID,
-              agentCapability.agentKey == "local_agent_execution_agent" else {
-            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        let agentCapability: GatewayAgentCapabilityDTO?
+        do {
+            agentCapability = try await gateway.agentCapability(
+                token: token,
+                agentKey: "local_agent_execution_agent"
+            )
+        } catch where Self.shouldUsePersistedCapability(after: error) {
+            // The Local Agent control plane is durable client state. A deployment that has not
+            // published the optional catalog binding must not disable an already provisioned
+            // local task runtime.
+            agentCapability = nil
+        }
+        if let agentCapability {
+            guard agentCapability.agentEnabled,
+                  agentCapability.ownerUserID == ownerUserID,
+                  agentCapability.agentKey == "local_agent_execution_agent" else {
+                throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+            }
         }
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
@@ -188,6 +198,25 @@ extension NativeLocalConnectorService {
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         for snapshot in snapshots {
             try await controlPlane.publishModel(snapshot)
+        }
+        guard let agentCapability else {
+            let capability = try await controlPlane.latestCapabilities(
+                ownerUserID: ownerUserID,
+                profileKey: "main_chat"
+            )
+            _ = try await controlPlane.latestCapabilities(
+                ownerUserID: ownerUserID,
+                profileKey: "task_execution"
+            )
+            guard capability.ownerUserID == ownerUserID,
+                  capability.profileKey == "main_chat" else {
+                throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+            }
+            return .init(
+                modelSnapshots: snapshots,
+                modelOptions: modelOptions,
+                capabilitySnapshot: capability
+            )
         }
         let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
         guard !agentCapability.mcps.contains(where: {
@@ -396,6 +425,12 @@ extension NativeLocalConnectorService {
         let digest = SHA256.hash(data: Data(fields.joined(separator: "\u{0}").utf8))
           .map { String(format: "%02x", $0) }.joined()
         return "local-agent-\(digest)"
+    }
+
+    static func shouldUsePersistedCapability(after error: Error) -> Bool {
+        guard let connectorError = error as? NativeConnectorError,
+              case let .server(status, _) = connectorError else { return false }
+        return status == 404
     }
 
     private func modelRevision(_ model: GatewayModelConfigDTO) -> String {

@@ -4,6 +4,18 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentControlPlaneClientTests: XCTestCase {
+    func testOnlyMissingRemoteCapabilityUsesPersistedLocalControlPlane() {
+        XCTAssertTrue(NativeLocalConnectorService.shouldUsePersistedCapability(
+            after: NativeConnectorError.server(status: 404, message: "missing")
+        ))
+        XCTAssertFalse(NativeLocalConnectorService.shouldUsePersistedCapability(
+            after: NativeConnectorError.server(status: 500, message: "failed")
+        ))
+        XCTAssertFalse(NativeLocalConnectorService.shouldUsePersistedCapability(
+            after: NativeConnectorError.notPaired
+        ))
+    }
+
     func testLatestSnapshotCommandsAreOwnerScopedAndDecodeResults() async throws {
         let model = LocalAgentModelConfigSnapshot(
             ownerUserID: "user-1",
