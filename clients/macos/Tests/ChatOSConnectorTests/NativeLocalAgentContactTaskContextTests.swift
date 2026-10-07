@@ -25,8 +25,9 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             connector: connector,
             databaseURL: root.appendingPathComponent("projects.sqlite3")
         )
+        let host = ContactTaskContextHostStub()
         let resolver = NativeLocalAgentProjectContextResolver(
-            host: ContactTaskContextHostStub(),
+            host: host,
             projects: projects,
             connector: connector
         )
@@ -44,9 +45,78 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         let approvalScope = NativeLocalAgentToolApprovalHandler.approvalScope(for: first)
         XCTAssertEqual(approvalScope.rootURL, first.executionRootURL)
         XCTAssertEqual(approvalScope.workspaceID, first.workspaceScopeID)
+        XCTAssertEqual(first.executionWorkspace.id, first.workspaceScopeID)
+        XCTAssertEqual(first.executionWorkspace.absoluteRoot, first.executionRootURL.path)
         XCTAssertThrowsError(try first.requireProject()) { error in
             XCTAssertEqual(error as? NativeLocalAgentPlatformToolError, .projectUnavailable)
         }
+
+        let executor = NativeLocalAgentProjectToolExecutor(
+            host: host,
+            projects: projects,
+            connector: connector
+        )
+        let listed = try await executor.execute(
+            ownerUserID: "user-1",
+            invocation: Self.invocation(
+                toolName: "list_dir",
+                arguments: .object(["path": .string(".")])
+            )
+        )
+        guard case let .object(listResult) = listed,
+              case let .array(entries)? = listResult["entries"] else {
+            return XCTFail("contact workspace list_dir returned an invalid result")
+        }
+        XCTAssertTrue(entries.isEmpty)
+
+        let terminal = try await executor.execute(
+            ownerUserID: "user-1",
+            invocation: Self.invocation(
+                toolName: "execute_command",
+                arguments: .object(["command": .string("pwd")]),
+                requiresApproval: true,
+                approvalStatus: "approved"
+            )
+        )
+        guard case let .object(terminalResult) = terminal,
+              case let .string(output)? = terminalResult["output"] else {
+            return XCTFail("contact workspace terminal returned an invalid result")
+        }
+        let terminalPath = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(
+            [first.executionRootURL.path, "/private" + first.executionRootURL.path]
+                .contains(terminalPath)
+        )
+    }
+
+    private static func invocation(
+        toolName: String,
+        arguments: LocalAgentJSONValue,
+        requiresApproval: Bool = false,
+        approvalStatus: String = "not_required"
+    ) -> LocalAgentToolInvocationRecord {
+        .init(
+            invocationID: "invocation-\(toolName)",
+            runID: "run-1",
+            batchID: "batch-1",
+            callID: "call-\(toolName)",
+            toolName: toolName,
+            arguments: arguments,
+            sideEffecting: requiresApproval,
+            requiresApproval: requiresApproval,
+            approvalStatus: approvalStatus,
+            approvalDecidedBy: requiresApproval ? "user" : nil,
+            approvalReason: nil,
+            approvalDecidedAtUnixMs: requiresApproval ? 1 : nil,
+            status: "running",
+            result: nil,
+            error: nil,
+            version: 1,
+            claimToken: "claim-token",
+            claimUntilUnixMs: 2,
+            createdAtUnixMs: 1,
+            updatedAtUnixMs: 1
+        )
     }
 }
 
@@ -74,7 +144,9 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                         "source_conversation_id": "conversation-1",
                         "tool_options": [
                             "requires_execution": true,
-                            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+                            "enabled_builtin_kinds": [
+                                "CodeMaintainerRead", "TerminalController",
+                            ],
                             "plugin_hints": [["plugin_key": "browser-plugin"]],
                         ],
                     ],

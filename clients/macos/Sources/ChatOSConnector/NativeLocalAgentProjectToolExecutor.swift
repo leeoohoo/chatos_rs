@@ -45,6 +45,18 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
         }
         return resolvedPath
     }
+
+    var executionWorkspace: LocalConnectorWorkspace {
+        if let resolvedPath { return resolvedPath.workspace }
+        return .init(
+            id: workspaceScopeID,
+            alias: "Conversation Workspace",
+            absoluteRoot: executionRootURL.path,
+            fingerprint: NativePluginManifestLoader.sha256(
+                workspaceScopeID + "\n" + executionRootURL.path
+            )
+        )
+    }
 }
 
 struct NativeLocalAgentTaskToolAuthorization: Sendable {
@@ -275,10 +287,9 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 )
                 return .init(native: result)
             }
-            let resolvedPath = try context.requireProject()
             let tool = NativeMCPCodeReadTools(
-                workspace: resolvedPath.workspace,
-                projectRoot: resolvedPath.absoluteURL,
+                workspace: context.executionWorkspace,
+                projectRoot: context.executionRootURL,
                 requestCWD: nil,
                 defaultToolRoot: nil
             )
@@ -294,11 +305,11 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     name: invocation.toolName,
                     arguments: nativeArguments,
                     scope: .init(
-                        workspaceID: resolvedPath.workspace.id,
+                        workspaceID: context.workspaceScopeID,
                         sessionID: context.conversationID,
                         runID: invocation.runID
                     ),
-                    projectRoot: resolvedPath.absoluteURL
+                    projectRoot: context.executionRootURL
                 )
             } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                 invocation.toolName
@@ -362,7 +373,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 throw NativeLocalAgentPlatformToolError.approvalRequired
             }
         }
-        let root = try context.requireProject().absoluteURL
+        let root = context.executionRootURL
         guard name == "execute_command" else {
             return try await terminalStore.call(
                 name: name,
