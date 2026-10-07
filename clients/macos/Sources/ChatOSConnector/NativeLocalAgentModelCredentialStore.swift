@@ -1,34 +1,38 @@
+import CryptoKit
 import Foundation
-import LocalAuthentication
-import Security
 
 struct NativeLocalAgentModelCredentialStore: Sendable {
-    // v1 entries were created by locally packaged builds whose designated requirement changed
-    // between releases. Never query or update that namespace: touching those legacy ACLs can
-    // launch SecurityAgent even when the operation requests a non-interactive LAContext.
-    static let service = "com.chatos.swift.local-agent-model.v2"
+    static let maximumCredentialBytes = 64 * 1_024
+    private let rootURL: URL
+
+    init(rootURL: URL? = nil) {
+        if let rootURL {
+            self.rootURL = rootURL
+            return
+        }
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        self.rootURL = support
+            .appendingPathComponent("ChatOSSwift", isDirectory: true)
+            .appendingPathComponent("NativeConnector", isDirectory: true)
+            .appendingPathComponent("Secrets", isDirectory: true)
+            .appendingPathComponent("LocalAgentModels", isDirectory: true)
+    }
 
     func loadWithoutUserInteraction(
         ownerUserID: String,
         modelConfigRef: String
     ) throws -> String? {
-        let query = Self.loadQuery(
-            ownerUserID: ownerUserID,
-            modelConfigRef: modelConfigRef,
-            allowUserInteraction: false
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data = try NativeBoundedFileReader.read(
+            url,
+            maximumBytes: Self.maximumCredentialBytes
         )
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound
-            || status == errSecInteractionNotAllowed
-            || status == errSecAuthFailed
-            || status == errSecUserCanceled {
-            return nil
-        }
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw NativeLocalAgentModelCredentialError.invalidCredential
         }
         return value
     }
@@ -40,71 +44,32 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         modelConfigRef: String
     ) throws -> Bool {
         guard !credential.isEmpty,
-              credential.lengthOfBytes(using: .utf8) <= 64 * 1_024,
+              credential.lengthOfBytes(using: .utf8) <= Self.maximumCredentialBytes,
               !credential.contains("\0") else {
             throw NativeLocalAgentModelCredentialError.invalidCredential
         }
-        let account = account(ownerUserID, modelConfigRef)
-        let selector: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account,
-        ]
-        var updateSelector = selector
-        updateSelector[kSecUseAuthenticationContext as String] = Self.nonInteractiveContext()
-        let data = Data(credential.utf8)
-        let update = SecItemUpdate(
-            updateSelector as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
         )
-        if update == errSecSuccess { return true }
-        if update == errSecInteractionNotAllowed
-            || update == errSecAuthFailed
-            || update == errSecUserCanceled {
-            return false
-        }
-        guard update == errSecItemNotFound else {
-            throw NativeLocalAgentModelCredentialError.keychain(update)
-        }
-        var insert = selector
-        insert[kSecValueData as String] = data
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(insert as CFDictionary, nil)
-        if status == errSecDuplicateItem { return false }
-        guard status == errSecSuccess else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
-        }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: rootURL.path
+        )
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        try Data(credential.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
         return true
     }
 
-    static func loadQuery(
-        ownerUserID: String,
-        modelConfigRef: String,
-        allowUserInteraction: Bool
-    ) -> [String: Any] {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        if !allowUserInteraction {
-            query[kSecUseAuthenticationContext as String] = nonInteractiveContext()
-        }
-        return query
-    }
-
     func delete(ownerUserID: String, modelConfigRef: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
-        }
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     func environmentVariable(modelConfigRef: String) -> String {
@@ -115,31 +80,22 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         return "CHATOS_LOCAL_AGENT_MODEL_\(normalized.prefix(96))"
     }
 
-    private static func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
-        "v2:\(ownerUserID):\(modelConfigRef)"
-    }
-
-    private static func nonInteractiveContext() -> LAContext {
-        let context = LAContext()
-        context.interactionNotAllowed = true
-        return context
-    }
-
-    private func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
-        Self.account(ownerUserID, modelConfigRef)
+    func credentialURL(ownerUserID: String, modelConfigRef: String) -> URL {
+        let identity = Data("\(ownerUserID)\u{0}\(modelConfigRef)".utf8)
+        let digest = SHA256.hash(data: identity)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return rootURL.appendingPathComponent("model-\(digest)", isDirectory: false)
     }
 }
 
 enum NativeLocalAgentModelCredentialError: LocalizedError {
     case invalidCredential
-    case keychain(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .invalidCredential:
             "Local Agent model credential is invalid."
-        case let .keychain(status):
-            "Local Agent model credential Keychain operation failed (\(status))."
         }
     }
 }
