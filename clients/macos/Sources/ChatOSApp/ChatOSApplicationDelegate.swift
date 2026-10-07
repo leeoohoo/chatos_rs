@@ -162,19 +162,27 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             .dynamicTypeSize(model.interfaceDynamicTypeSize)
         let hostingController = NSHostingController(rootView: content)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1_050, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 1_280, height: 840),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = model.localized("设置", english: "Settings")
-        window.minSize = NSSize(width: 900, height: 620)
+        window.minSize = NSSize(width: 1_180, height: 760)
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.setFrameAutosaveName("ChatOSSettingsWindow")
         if !window.setFrameUsingName("ChatOSSettingsWindow") {
             window.center()
+        } else if window.frame.width < window.minSize.width
+            || window.frame.height < window.minSize.height {
+            var frame = window.frame
+            let topEdge = frame.maxY
+            frame.size.width = max(frame.width, window.minSize.width)
+            frame.size.height = max(frame.height, window.minSize.height)
+            frame.origin.y = topEdge - frame.height
+            window.setFrame(frame, display: false)
         }
         return NSWindowController(window: window)
     }
