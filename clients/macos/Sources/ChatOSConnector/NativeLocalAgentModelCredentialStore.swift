@@ -3,7 +3,10 @@ import LocalAuthentication
 import Security
 
 struct NativeLocalAgentModelCredentialStore: Sendable {
-    private static let service = "com.chatos.swift.local-agent-model"
+    // v1 entries were created by locally packaged builds whose designated requirement changed
+    // between releases. Never query or update that namespace: touching those legacy ACLs can
+    // launch SecurityAgent even when the operation requests a non-interactive LAContext.
+    static let service = "com.chatos.swift.local-agent-model.v2"
 
     func loadWithoutUserInteraction(
         ownerUserID: String,
@@ -113,7 +116,7 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
     }
 
     private static func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
-        "v1:\(ownerUserID):\(modelConfigRef)"
+        "v2:\(ownerUserID):\(modelConfigRef)"
     }
 
     private static func nonInteractiveContext() -> LAContext {
