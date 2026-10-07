@@ -21,6 +21,7 @@ struct UserTurnMessageView: View {
                 }
                 if !turn.userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(turn.userMessage.text)
+                        .textSelection(.enabled)
                 }
                 if !turn.userMessage.attachments.isEmpty {
                     MessageAttachmentChips(attachments: turn.userMessage.attachments)
@@ -67,7 +68,7 @@ struct AssistantReplyView: View {
                 replyHeader
                 MarkdownDocumentView(
                     markdown: reply.message.text,
-                    allowsTextSelection: false
+                    allowsTextSelection: true
                 )
                 .environment(\.openURL, petFileOpenAction)
             }
@@ -123,7 +124,7 @@ struct TaskAgentReplyView: View {
                 }
                 MarkdownDocumentView(
                     markdown: reply.message.text,
-                    allowsTextSelection: false
+                    allowsTextSelection: true
                 )
                 .environment(\.openURL, petFileOpenAction)
                 HStack(spacing: 14) {
