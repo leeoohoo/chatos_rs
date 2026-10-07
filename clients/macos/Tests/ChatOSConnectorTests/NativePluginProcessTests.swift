@@ -310,8 +310,10 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains("(allow user-preference-read)"))
         #expect(permittedProfile.contains("com.apple.CARenderServer"))
         #expect(permittedProfile.contains("com.apple.coreservices.launchservicesd"))
-        #expect(permittedProfile.contains("com\\.apple\\.pasteboard"))
-        #expect(permittedProfile.contains("com\\.apple\\.distributed_notifications"))
+        #expect(permittedProfile.contains("com.apple.dock.fullscreen"))
+        #expect(permittedProfile.contains("com.apple.replayd"))
+        #expect(permittedProfile.contains("com[.]apple[.]pasteboard"))
+        #expect(permittedProfile.contains("com[.]apple[.]distributed_notifications"))
 
         var denied = permitted
         denied.permissionSnapshot = ["process.spawn"]
@@ -320,7 +322,8 @@ extension NativePluginRuntimeTests {
         )
         #expect(!deniedProfile.contains("(allow user-preference-read)"))
         #expect(!deniedProfile.contains("com.apple.CARenderServer"))
-        #expect(!deniedProfile.contains("com\\.apple\\.pasteboard"))
+        #expect(!deniedProfile.contains("com.apple.replayd"))
+        #expect(!deniedProfile.contains("com[.]apple[.]pasteboard"))
     }
 
     @Test("Web Design receives isolated temporary storage and managed browser access")
