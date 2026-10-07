@@ -38,6 +38,30 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWorkerStartsEventMonitoringAfterRecoveringPersistedWork() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let eventHub = NativeLocalAgentEventHub(host: host)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: FailingPlatformToolExecutor(),
+            eventHub: eventHub,
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await host.commitCount() > 0,
+               await host.eventListRequestCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let commits = await host.commitCount()
+        let eventListRequests = await host.eventListRequestCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThan(eventListRequests, 0)
+        await worker.reset()
+    }
+
     func testWorkerWakesFromSharedToolBatchEvent() async throws {
         let host = PlatformToolHostStub(mode: .eventDrivenClaim)
         let eventHub = NativeLocalAgentEventHub(host: host)
@@ -584,12 +608,12 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
         case "get_event_cursor":
-            guard case .eventDrivenClaim = mode else {
+            guard supportsEventStream else {
                 throw CocoaError(.featureUnsupported)
             }
             return try json(["type": "event_cursor", "cursor": 0])
         case "wait_events":
-            guard case .eventDrivenClaim = mode else {
+            guard supportsEventStream else {
                 throw CocoaError(.featureUnsupported)
             }
             eventListRequests += 1
@@ -693,6 +717,13 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
     func claimAttemptCount() -> Int { claimAttempts }
 
     func eventListRequestCount() -> Int { eventListRequests }
+
+    private var supportsEventStream: Bool {
+        switch mode {
+        case .eventDrivenClaim, .oneSideEffectingClaim: true
+        default: false
+        }
+    }
 
     private func invocation(status: String, version: Int) -> [String: Any] {
         [

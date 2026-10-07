@@ -374,6 +374,11 @@ public actor NativeLocalAgentPlatformToolWorker {
         if try await approvalHandler?.resolveNextPending(
           ownerUserID: ownerUserID
         ) == true {
+          // A restored approval may be the first visible sign that a run is
+          // still active after app launch. Keep listening before the host
+          // resumes the model so later tool batches do not require another
+          // manual wake or app restart.
+          startEventMonitoring(ownerUserID: ownerUserID)
           idleDelay = .milliseconds(250)
           continue
         }
@@ -382,6 +387,10 @@ public actor NativeLocalAgentPlatformToolWorker {
           workerID: workerID,
           leaseDurationMilliseconds: claimLeaseDurationMilliseconds
         ) {
+          // `configure` intentionally performs only one persisted-state
+          // reconciliation pass while idle. Once that pass recovers real
+          // work, however, the worker must subscribe for the rest of the run.
+          startEventMonitoring(ownerUserID: ownerUserID)
           guard
             let outcome = await executeWhileRenewing(
               ownerUserID: ownerUserID,
@@ -401,6 +410,9 @@ public actor NativeLocalAgentPlatformToolWorker {
             claim: claim,
             outcome: outcome
           )
+          // Long-running commands can outlive the monitoring window. Refresh
+          // it at the commit boundary before the model requests another tool.
+          startEventMonitoring(ownerUserID: ownerUserID)
           idleDelay = .milliseconds(250)
           continue
         }
