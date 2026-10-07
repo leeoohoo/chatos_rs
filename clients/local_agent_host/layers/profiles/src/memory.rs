@@ -163,22 +163,34 @@ fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<ToolResult>, 
                 .get("error")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            let call_id = required("call_id")?.to_string();
+            let tool_name = required("tool_name")?.to_string();
+            let conversation_turn_id = Some(if claim.run.profile_key == MAIN_CHAT_PROFILE_KEY {
+                optional_input_string(&claim.run.input, "turn_id")
+                    .unwrap_or_else(|| claim.run.owner_entity_id.clone())
+            } else {
+                claim.run.run_id.clone()
+            });
+            if success {
+                let result = result.unwrap_or(Value::Null);
+                return Ok(
+                    chatos_mcp_runtime::execution::external_tool_result_from_value(
+                        call_id,
+                        tool_name,
+                        conversation_turn_id,
+                        &result,
+                        None,
+                    ),
+                );
+            }
             Ok(ToolResult {
-                tool_call_id: required("call_id")?.to_string(),
-                name: required("tool_name")?.to_string(),
-                success,
-                is_error: !success,
+                tool_call_id: call_id,
+                name: tool_name,
+                success: false,
+                is_error: true,
                 is_stream: false,
-                conversation_turn_id: Some(if claim.run.profile_key == MAIN_CHAT_PROFILE_KEY {
-                    optional_input_string(&claim.run.input, "turn_id")
-                        .unwrap_or_else(|| claim.run.owner_entity_id.clone())
-                } else {
-                    claim.run.run_id.clone()
-                }),
-                content: result
-                    .as_ref()
-                    .map(Value::to_string)
-                    .unwrap_or_else(|| error.to_string()),
+                conversation_turn_id,
+                content: error.to_string(),
                 result,
                 fatal_error: false,
                 transient_model_input: None,
@@ -304,6 +316,55 @@ mod tests {
         assert_eq!(
             plan.record_options.tool_message_id_prefix.as_deref(),
             Some("run-1:tool:batch-1")
+        );
+    }
+
+    #[test]
+    fn task_memory_restores_wrapped_mcp_images_as_transient_model_input() {
+        let mut claim = claim("task_execution", json!({"task": "observe"}));
+        claim.run.continuation_input = Some(json!({
+            "type": "tool_results",
+            "batch_id": "batch-visual",
+            "invocations": [{
+                "call_id": "call-visual",
+                "tool_name": "capability_invoke",
+                "status": "succeeded",
+                "result": {
+                    "content": {
+                        "content": [
+                            {"type": "text", "text": "Active application: ChatOS"},
+                            {"type": "image", "data": "/9j/AA==", "mimeType": "image/jpeg"}
+                        ],
+                        "structuredContent": {
+                            "activeApplication": {"name": "ChatOS"}
+                        }
+                    },
+                    "is_error": false,
+                    "made_progress": true
+                }
+            }]
+        }));
+
+        let plan = memory_plan(&claim, "local_agent", "task").expect("memory plan");
+        let result = plan.external_tool_results.first().expect("tool result");
+
+        assert_eq!(result.content, "Active application: ChatOS");
+        assert_eq!(
+            result
+                .result
+                .as_ref()
+                .and_then(|value| value.pointer("/activeApplication/name"))
+                .and_then(Value::as_str),
+            Some("ChatOS")
+        );
+        assert_eq!(
+            result
+                .transient_model_input
+                .as_ref()
+                .and_then(|input| input.items().first())
+                .and_then(|value| value.get("image_url"))
+                .and_then(Value::as_str),
+            Some("data:image/jpeg;base64,/9j/AA==")
         );
     }
 }
