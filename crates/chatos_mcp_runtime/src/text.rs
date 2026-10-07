@@ -54,13 +54,23 @@ fn to_text_and_structured_result_inner(
     include_transient: bool,
     max_chars: usize,
 ) -> (String, Option<Value>) {
+    let nested_mcp_result = result.get("content").filter(|value| value.is_object());
     let mut structured_result = result
         .get("_structured_result")
         .map(structured_result_payload)
-        .cloned();
+        .cloned()
+        .or_else(|| {
+            nested_mcp_result
+                .and_then(|value| value.get("structuredContent"))
+                .cloned()
+        });
     if include_transient {
         let model_input = validated_model_input_images(result.get(MODEL_INPUT_FIELD))
             .or_else(|| validated_mcp_content_images(result.get("content")))
+            .or_else(|| {
+                nested_mcp_result
+                    .and_then(|value| validated_mcp_content_images(value.get("content")))
+            })
             .or_else(|| {
                 let payload = structured_result_payload(result);
                 (!std::ptr::eq(payload, result))
@@ -78,18 +88,12 @@ fn to_text_and_structured_result_inner(
     let raw = if let Some(text) = result.as_str() {
         text.to_string()
     } else if let Some(content) = result.get("content").and_then(Value::as_array) {
-        content
-            .iter()
-            .find_map(|item| {
-                if item.get("type").and_then(Value::as_str) != Some("text") {
-                    return None;
-                }
-                item.get("text")
-                    .or_else(|| item.get("value"))
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned)
-            })
-            .unwrap_or_else(|| result.to_string())
+        first_mcp_text(content).unwrap_or_else(|| result.to_string())
+    } else if let Some(content) = nested_mcp_result
+        .and_then(|value| value.get("content"))
+        .and_then(Value::as_array)
+    {
+        first_mcp_text(content).unwrap_or_else(|| result.to_string())
     } else if let Some(text) = result.get("text").and_then(Value::as_str) {
         text.to_string()
     } else if let Some(value) = result.get("value").and_then(Value::as_str) {
@@ -102,6 +106,18 @@ fn to_text_and_structured_result_inner(
         truncate_tool_text(raw.as_str(), max_chars),
         structured_result,
     )
+}
+
+fn first_mcp_text(content: &[Value]) -> Option<String> {
+    content.iter().find_map(|item| {
+        if item.get("type").and_then(Value::as_str) != Some("text") {
+            return None;
+        }
+        item.get("text")
+            .or_else(|| item.get("value"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn validated_model_input_images(value: Option<&Value>) -> Option<Vec<Value>> {
@@ -281,6 +297,40 @@ mod tests {
             .unwrap_or(Value::Null)
             .to_string()
             .contains("iVBORw0KGgo="));
+    }
+
+    #[test]
+    fn wrapped_mcp_result_exposes_text_structured_content_and_transient_image() {
+        let payload = json!({
+            "content": {
+                "content": [
+                    {"type": "text", "text": "Active application: ChatOS"},
+                    {"type": "image", "data": "/9j/AA==", "mimeType": "image/jpeg"}
+                ],
+                "isError": false,
+                "structuredContent": {
+                    "activeApplication": {"name": "ChatOS"}
+                }
+            },
+            "is_error": false,
+            "made_progress": true
+        });
+
+        let (text, mut structured) = to_text_and_structured_result_with_transient(&payload);
+        let transient = take_transient_model_input(&mut structured).expect("transient image");
+
+        assert_eq!(text, "Active application: ChatOS");
+        assert_eq!(
+            structured
+                .as_ref()
+                .and_then(|value| value.pointer("/activeApplication/name"))
+                .and_then(Value::as_str),
+            Some("ChatOS")
+        );
+        assert_eq!(
+            transient.items()[0]["image_url"],
+            "data:image/jpeg;base64,/9j/AA=="
+        );
     }
 
     #[test]
