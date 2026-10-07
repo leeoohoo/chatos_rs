@@ -204,7 +204,15 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
               printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true},"_meta":{"chatos/skillGate":{"allOf":["test-agent-plugin"]}}}]}}'
               ;;
             *'"method":"tools/call"'*)
-              printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"local-plugin-ok project-1"}]}}'
+              request_id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\1/')
+              case "$line" in
+                *'"value":"fail"'*)
+                  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":${request_id},\"error\":{\"code\":-32602,\"message\":\"requirements.users is invalid at /Users/alice/private.json; api_key=secret-value\"}}"
+                  ;;
+                *)
+                  printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":${request_id},\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"local-plugin-ok project-1\"}]}}"
+                  ;;
+              esac
               ;;
           esac
         done
@@ -333,6 +341,23 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertFalse(outcome.isError)
         XCTAssertTrue(outcome.content.contains("local-plugin-ok"))
+        let rejected = try await providers[0].execute(.init(
+            id: "call-rejected",
+            name: "local_echo",
+            arguments: #"{"value":"fail"}"#
+        ))
+        XCTAssertTrue(rejected.isError)
+        XCTAssertFalse(rejected.madeProgress)
+        XCTAssertTrue(rejected.content.contains("requirements.users is invalid"))
+        XCTAssertFalse(rejected.content.contains("/Users/alice"))
+        XCTAssertFalse(rejected.content.contains("secret-value"))
+        let recovered = try await providers[0].execute(.init(
+            id: "call-recovered",
+            name: "local_echo",
+            arguments: #"{"value":"hello again"}"#
+        ))
+        XCTAssertFalse(recovered.isError)
+        XCTAssertTrue(recovered.content.contains("local-plugin-ok"))
 
         let broker = try await service.makeAgentCapabilityToolProvider(
             ownerUserID: "alice",
@@ -436,6 +461,27 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(invoked.content.contains("local-plugin-ok"))
         XCTAssertFalse(invoked.content.contains("project-1"))
         XCTAssertTrue(invoked.content.contains("[internal-project]"))
+        let rejectedInvocation = try await broker.execute(.init(
+            id: "invoke-rejected",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(echoToolOption)","arguments":{"value":"fail"}}
+            """
+        ))
+        XCTAssertTrue(rejectedInvocation.isError)
+        XCTAssertFalse(rejectedInvocation.madeProgress)
+        XCTAssertTrue(rejectedInvocation.content.contains("requirements.users is invalid"))
+        XCTAssertFalse(rejectedInvocation.content.contains("/Users/alice"))
+        XCTAssertFalse(rejectedInvocation.content.contains("secret-value"))
+        let recoveredInvocation = try await broker.execute(.init(
+            id: "invoke-recovered",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(echoToolOption)","arguments":{"value":"hello again"}}
+            """
+        ))
+        XCTAssertFalse(recoveredInvocation.isError)
+        XCTAssertTrue(recoveredInvocation.content.contains("local-plugin-ok"))
 
         let builtinDescription = try await broker.execute(.init(
             id: "describe-builtin",

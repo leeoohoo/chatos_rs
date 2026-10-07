@@ -445,82 +445,145 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        try Task.checkCancellation()
-        guard let definition = nativeToolsByName[call.name],
-              let data = call.arguments.data(using: .utf8) else {
-            return .failure("Plugin 工具不可用：\(call.name)")
-        }
-        var arguments = try JSONDecoder().decode(NativeJSONValue.self, from: data)
-        guard arguments.jsonObject != nil else {
-            return .failure("Plugin 工具参数必须是 JSON 对象。")
-        }
-        if let gate = pluginSkillGatesByName[call.name] {
-            let missing = try await pluginSkillSession.missingSkills(
-                for: gate,
-                arguments: data
+        do {
+            try Task.checkCancellation()
+            guard let definition = nativeToolsByName[call.name],
+                  let data = call.arguments.data(using: .utf8) else {
+                return .failure("Plugin 工具不可用：\(call.name)")
+            }
+            var arguments = try JSONDecoder().decode(NativeJSONValue.self, from: data)
+            guard arguments.jsonObject != nil else {
+                return .failure("Plugin 工具参数必须是 JSON 对象。")
+            }
+            if let gate = pluginSkillGatesByName[call.name] {
+                let missing = try await pluginSkillSession.missingSkills(
+                    for: gate,
+                    arguments: data
+                )
+                guard missing.isEmpty else {
+                    return .failure(
+                        "调用此 Plugin 工具前必须先激活 Skill："
+                            + missing.joined(separator: ", ")
+                    )
+                }
+            }
+            let policy = NativeLocalConnectorService.toolPolicy(
+                definition,
+                componentKey: identity.componentKey,
+                toolName: call.name
             )
-            guard missing.isEmpty else {
-                return .failure(
-                    "调用此 Plugin 工具前必须先激活 Skill："
-                        + missing.joined(separator: ", ")
+            if call.name == "browser_session_open" {
+                let paired = (try? await service.isBrowserExtensionPaired(
+                    pluginID: identity.pluginID
+                )) == true
+                arguments = NativeLocalConnectorService.browserSessionArguments(
+                    arguments: arguments,
+                    contextBody: [:],
+                    browserExtensionPaired: paired
                 )
             }
-        }
-        let policy = NativeLocalConnectorService.toolPolicy(
-            definition,
-            componentKey: identity.componentKey,
-            toolName: call.name
-        )
-        if call.name == "browser_session_open" {
-            let paired = (try? await service.isBrowserExtensionPaired(pluginID: identity.pluginID)) == true
-            arguments = NativeLocalConnectorService.browserSessionArguments(
+            let requiredPermissions = policy.requiredPermissions(for: arguments)
+            guard requiredPermissions.isSubset(of: permissionSnapshot) else {
+                return .failure("Plugin 工具请求了尚未授权的本机权限。")
+            }
+            guard await service.approveAgentPluginTool(
+                callID: call.id,
+                componentKey: identity.componentKey,
+                toolName: call.name,
                 arguments: arguments,
-                contextBody: [:],
-                browserExtensionPaired: paired
+                policy: policy,
+                projectRootURL: projectRootURL,
+                workspaceID: workspaceID,
+                executionPresentation: executionPresentation
+            ) else {
+                return .failure("用户未批准这次 Plugin 操作。")
+            }
+            try Task.checkCancellation()
+            let rawResult = try await runtimeStore.call(
+                adapterSessionID: identity.adapterSessionID,
+                invocationID: call.id,
+                toolName: call.name,
+                arguments: arguments,
+                timeout: .milliseconds(policy.timeoutMilliseconds)
+            )
+            try Task.checkCancellation()
+            let deviceID = try await service.localProjectDeviceID(ownerUserID: ownerUserID)
+            guard let deviceID else { return .failure("Plugin 本机设备身份无效。") }
+            let registered = try await runtimeStore.registerArtifacts(
+                adapterSessionID: identity.adapterSessionID,
+                result: rawResult,
+                ownerUserID: ownerUserID,
+                deviceID: deviceID,
+                workspaceID: workspaceID,
+                toolName: call.name
+            )
+            let normalized = try await NativePluginModelImageNormalizer.normalizeForModel(registered)
+            let isError = normalized.jsonObject?["isError"]?.jsonBool == true
+            return .init(
+                normalized.canonicalJSONString,
+                madeProgress: !isError,
+                isError: isError
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch NativePluginRuntimeError.cancelled {
+            throw CancellationError()
+        } catch let error as NativePluginRuntimeError {
+            return .failure(modelVisibleFailure(for: error))
+        } catch {
+            return .failure("Plugin 工具运行失败，请检查参数后重试。")
+        }
+    }
+
+    private func modelVisibleFailure(for error: NativePluginRuntimeError) -> String {
+        switch error {
+        case let .mcpError(message):
+            return "Plugin 工具拒绝了这次调用：\(sanitizePluginMessage(message))"
+        case .invalidRequest:
+            return "Plugin 工具参数或当前状态无效，请重新查看工具定义后重试。"
+        case .invalidManifest:
+            return "Plugin 安装或声明已失效，请重新安装后重试。"
+        case .permissionDenied:
+            return "Plugin 工具缺少这次操作所需的本机权限。"
+        case .invalidMCPResponse:
+            return "Plugin 返回了无效响应，请重试或重新启动 Plugin。"
+        case .sessionNotFound, .processUnavailable:
+            return "Plugin 本机会话已结束，请重新查看该能力后重试。"
+        case let .processExited(code):
+            return "Plugin 本机进程已退出（\(code)），请重试。"
+        case .timeout:
+            return "Plugin 工具调用超时，请缩小本次操作范围后重试。"
+        case .cancelled:
+            return "Plugin 工具调用已取消。"
+        }
+    }
+
+    private func sanitizePluginMessage(_ message: String) -> String {
+        var value = String(message.prefix(2_000))
+        for path in [projectRootURL.path, NSHomeDirectory()]
+        where !path.isEmpty {
+            value = value.replacingOccurrences(of: path, with: "[local-path]")
+        }
+        let patterns = [
+            #"(?i)(password|passwd|access[_-]?token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+"#,
+            #"(?<![A-Za-z0-9_])(?:file://)?/[A-Za-z0-9_./~%+@-]+"#,
+            #"(?i)(?<![A-Za-z0-9_])[A-Z]:\\[^\s\"'<>]+"#,
+        ]
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(value.startIndex..., in: value)
+            value = expression.stringByReplacingMatches(
+                in: value,
+                range: range,
+                withTemplate: pattern.contains("password") ? "$1=[redacted]" : "[local-path]"
             )
         }
-        let requiredPermissions = policy.requiredPermissions(for: arguments)
-        guard requiredPermissions.isSubset(of: permissionSnapshot) else {
-            return .failure("Plugin 工具请求了尚未授权的本机权限。")
-        }
-        guard await service.approveAgentPluginTool(
-            callID: call.id,
-            componentKey: identity.componentKey,
-            toolName: call.name,
-            arguments: arguments,
-            policy: policy,
-            projectRootURL: projectRootURL,
-            workspaceID: workspaceID,
-            executionPresentation: executionPresentation
-        ) else {
-            return .failure("用户未批准这次 Plugin 操作。")
-        }
-        try Task.checkCancellation()
-        let rawResult = try await runtimeStore.call(
-            adapterSessionID: identity.adapterSessionID,
-            invocationID: call.id,
-            toolName: call.name,
-            arguments: arguments,
-            timeout: .milliseconds(policy.timeoutMilliseconds)
-        )
-        try Task.checkCancellation()
-        let deviceID = try await service.localProjectDeviceID(ownerUserID: ownerUserID)
-        guard let deviceID else { return .failure("Plugin 本机设备身份无效。") }
-        let registered = try await runtimeStore.registerArtifacts(
-            adapterSessionID: identity.adapterSessionID,
-            result: rawResult,
-            ownerUserID: ownerUserID,
-            deviceID: deviceID,
-            workspaceID: workspaceID,
-            toolName: call.name
-        )
-        let normalized = try await NativePluginModelImageNormalizer.normalizeForModel(registered)
-        let isError = normalized.jsonObject?["isError"]?.jsonBool == true
-        return .init(
-            normalized.canonicalJSONString,
-            madeProgress: !isError,
-            isError: isError
-        )
+        let compact = value
+            .split(whereSeparator: \.isNewline)
+            .prefix(8)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return compact.isEmpty ? "Plugin MCP 调用失败" : compact
     }
 
     private static func effect(for tool: NativeJSONValue) -> AgentToolDefinition.Effect {
