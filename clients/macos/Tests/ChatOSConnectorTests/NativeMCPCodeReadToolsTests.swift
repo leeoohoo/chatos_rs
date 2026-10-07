@@ -32,6 +32,14 @@ struct NativeMCPCodeReadToolsTests {
         let entries = try listed.object().array("entries")
         #expect(entries.contains { (try? $0.object().string("name")) == "Sources" })
 
+        let listedFromEmptyPath = try tools.call(
+            name: "list_dir",
+            arguments: ["path": .string("   ")]
+        )
+        #expect(try listedFromEmptyPath.object().array("entries").contains {
+            (try? $0.object().string("name")) == "Sources"
+        })
+
         let read = try tools.call(
             name: "read_file_raw",
             arguments: ["path": .string("README.md")]

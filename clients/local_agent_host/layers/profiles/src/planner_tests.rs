@@ -90,6 +90,40 @@ async fn planner_resolves_control_plane_state_for_the_run_owner() {
     );
 }
 
+#[tokio::test]
+async fn task_execution_keeps_the_bound_workspace_root_authoritative() {
+    let planner = ControlPlaneLocalAiStepPlanner::task_execution(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    );
+    let mut task_claim = claim(Value::Null, None);
+    task_claim.run.profile_key = TASK_EXECUTION_PROFILE_KEY.to_string();
+    task_claim.run.owner_entity_type = "task".to_string();
+    task_claim.run.owner_entity_id = "task-1".to_string();
+    task_claim.run.input = json!({
+        "prompt": "list the project root",
+        "tool_options": {
+            "requires_execution": false,
+            "enabled_builtin_kinds": [],
+            "plugin_hints": []
+        }
+    });
+
+    let prepared = planner
+        .prepare_ai_step(&task_claim)
+        .await
+        .expect("prepare Task execution step");
+    let instructions = prepared
+        .request
+        .model_request
+        .instructions
+        .as_deref()
+        .expect("Task workspace instructions");
+
+    assert!(instructions.contains("path `.` is the authoritative root"));
+    assert!(instructions.contains("Never replace that root with a child directory"));
+}
+
 #[test]
 fn conversation_runtime_settings_override_the_snapshot_thinking_level_per_run() {
     let mut config = ModelRuntimeConfig {

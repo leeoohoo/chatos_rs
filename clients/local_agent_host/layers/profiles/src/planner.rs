@@ -20,6 +20,8 @@ use crate::planner_tools::task_scoped_tools;
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
 
+const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
+
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
 pub struct TransientLocalModelRuntime {
@@ -235,10 +237,18 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         capabilities
             .prefixed_input_items
             .extend(self.local_prefixed_input_items.clone());
-        transient.model_config.instructions = merge_instructions(
+        let configured_instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,
         );
+        transient.model_config.instructions = if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
+            merge_instructions(
+                Some(TASK_EXECUTION_WORKSPACE_INSTRUCTIONS.to_string()),
+                configured_instructions,
+            )
+        } else {
+            configured_instructions
+        };
         let (mut current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
         let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
             && completed_async_task_handoff(claim.run.continuation_input.as_ref());
