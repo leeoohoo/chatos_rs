@@ -337,9 +337,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 ownerRunID: invocation.runID
             )
         }
-        let command = Self.string(arguments["common"])
-            ?? Self.string(arguments["command"])
-            ?? ""
+        let command = NativeLocalAgentTerminalCommandResolver.resolve(arguments) ?? ""
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeLocalAgentPlatformToolError.invalidField("command")
         }

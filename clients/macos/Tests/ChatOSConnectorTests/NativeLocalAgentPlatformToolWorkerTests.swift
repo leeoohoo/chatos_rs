@@ -4,6 +4,23 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
+    func testTerminalCommandResolverSkipsBlankCompatibilityField() {
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": LocalAgentJSONValue.string("  "),
+                "command": .string("command -v godot"),
+            ]),
+            "command -v godot"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": NativeJSONValue.string(""),
+                "command": .string("git status --short"),
+            ]),
+            "git status --short"
+        )
+    }
+
     func testWorkerDoesNotKeepEventHubAliveBeforeWorkStarts() async throws {
         let host = PlatformToolHostStub(mode: .eventDrivenClaim)
         let eventHub = NativeLocalAgentEventHub(host: host)

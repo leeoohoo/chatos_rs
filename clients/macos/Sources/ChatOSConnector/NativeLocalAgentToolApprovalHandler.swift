@@ -83,9 +83,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
     ) {
         if invocation.toolName == "execute_command",
            case let .object(arguments) = invocation.arguments {
-            let command = string(arguments["common"])
-                ?? string(arguments["command"])
-                ?? ""
+            let command = NativeLocalAgentTerminalCommandResolver.resolve(arguments) ?? ""
             let shellArguments = ["-lc", command]
             return (
                 "/bin/zsh",

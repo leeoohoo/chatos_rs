@@ -218,9 +218,7 @@ extension NativeLocalConnectorService {
                 projectRoot: projectRoot
             )
         }
-        let command = arguments["common"]?.jsonString
-            ?? arguments["command"]?.jsonString
-            ?? ""
+        let command = NativeLocalAgentTerminalCommandResolver.resolve(arguments) ?? ""
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativePluginRuntimeError.invalidRequest("终端命令不能为空")
         }
