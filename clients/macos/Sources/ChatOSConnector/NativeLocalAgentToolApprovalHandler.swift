@@ -39,18 +39,19 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
+        let project = try context.requireProject()
         let presentation = Self.presentation(invocation)
         let decision = await connector.approvalDecision(
             requestID: invocation.invocationID,
             command: presentation.command,
             arguments: presentation.arguments,
-            cwd: context.resolvedPath.absoluteURL,
-            projectRoot: context.resolvedPath.absoluteURL,
+            cwd: project.absoluteURL,
+            projectRoot: project.absoluteURL,
             source: "Local Agent Task",
             risk: presentation.risk,
             requestedPermissionsDescription: presentation.permission,
             approvalScopeKey: presentation.scope + ":\(context.conversationID)",
-            workspaceID: context.resolvedPath.workspace.id
+            workspaceID: project.workspace.id
         )
         let approved: Bool
         let reason: String

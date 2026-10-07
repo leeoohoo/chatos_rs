@@ -462,6 +462,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 projectName: "Test",
                 projectRoot: project.path
             ),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
             pluginIDs: ["plugin-1"]
         )
         let taskSearch = try await taskBroker.execute(.init(
@@ -500,6 +502,29 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(taskInvocation.isError)
         XCTAssertTrue(taskInvocation.content.contains("local-plugin-ok"))
 
+        let contactRoot = root.appendingPathComponent("contact-workspace", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: contactRoot,
+            withIntermediateDirectories: true
+        )
+        let contactBroker = try await service.makeTaskExecutionCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "contact-task-run-1",
+            conversationID: "contact-conversation-1",
+            projectContext: .device,
+            executionRootURL: contactRoot,
+            workspaceScopeID: "contact:contact-conversation-1",
+            pluginIDs: ["plugin-1"]
+        )
+        let contactSearch = try await contactBroker.execute(.init(
+            id: "contact-task-search-1",
+            name: "capability_search",
+            arguments: #"{"query":"test"}"#
+        ))
+        XCTAssertFalse(contactSearch.isError)
+        XCTAssertTrue(contactSearch.content.contains("plugin_1"))
+        XCTAssertFalse(contactSearch.content.contains("builtin_1"))
+
         let platformExecutor = NativeLocalAgentPluginToolExecutor(connector: service)
         let platformSearch = try await platformExecutor.execute(
             ownerUserID: "alice",
@@ -517,6 +542,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                     projectRoot: project.path
                 ),
                 resolvedPath: try await service.resolveProjectPath(project.path),
+                executionRootURL: project,
+                workspaceScopeID: "workspace-1",
                 toolAuthorization: .init(
                     requiresExecution: true,
                     enabledBuiltinKinds: [],
@@ -532,6 +559,27 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 .jsonArray?.first?.jsonObject?["plugin_option"]?.jsonString == "plugin_1"
         )
         await platformExecutor.reset()
+
+        let contactContext = NativeLocalAgentTaskExecutionContext(
+            conversationID: "contact-conversation-1",
+            projectID: nil,
+            applicationContext: .device,
+            resolvedPath: nil,
+            executionRootURL: contactRoot,
+            workspaceScopeID: "contact:contact-conversation-1",
+            toolAuthorization: .init(
+                requiresExecution: true,
+                enabledBuiltinKinds: [],
+                pluginKeys: ["plugin-1"],
+                isLegacyUnrestricted: false
+            )
+        )
+        XCTAssertThrowsError(try contactContext.requireProject()) { error in
+            XCTAssertEqual(
+                error as? NativeLocalAgentPlatformToolError,
+                .projectUnavailable
+            )
+        }
     }
 
     private func platformInvocation(

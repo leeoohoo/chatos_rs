@@ -5,7 +5,7 @@ import Foundation
 actor NativeLocalAgentPluginToolExecutor {
     private struct Session {
         let ownerUserID: String
-        let projectID: String
+        let workspaceScopeID: String
         let conversationID: String
         let provider: any AgentToolProvider
     }
@@ -21,7 +21,7 @@ actor NativeLocalAgentPluginToolExecutor {
     func execute(
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord,
-        context: NativeLocalAgentProjectContext,
+        context: NativeLocalAgentTaskExecutionContext,
         arguments: [String: NativeJSONValue]
     ) async throws -> NativeJSONValue {
         guard NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(invocation.toolName) else {
@@ -61,11 +61,11 @@ actor NativeLocalAgentPluginToolExecutor {
     private func provider(
         ownerUserID: String,
         runID: String,
-        context: NativeLocalAgentProjectContext
+        context: NativeLocalAgentTaskExecutionContext
     ) async throws -> any AgentToolProvider {
         if let session = sessions[runID] {
             guard session.ownerUserID == ownerUserID,
-                  session.projectID == context.projectID,
+                  session.workspaceScopeID == context.workspaceScopeID,
                   session.conversationID == context.conversationID else {
                 throw NativeLocalAgentPlatformToolError.invalidRunContext
             }
@@ -76,13 +76,15 @@ actor NativeLocalAgentPluginToolExecutor {
             runID: runID,
             conversationID: context.conversationID,
             projectContext: context.applicationContext,
+            executionRootURL: context.executionRootURL,
+            workspaceScopeID: context.workspaceScopeID,
             pluginIDs: context.toolAuthorization.isLegacyUnrestricted
                 ? nil
                 : context.toolAuthorization.pluginKeys.sorted()
         )
         sessions[runID] = .init(
             ownerUserID: ownerUserID,
-            projectID: context.projectID,
+            workspaceScopeID: context.workspaceScopeID,
             conversationID: context.conversationID,
             provider: provider
         )
