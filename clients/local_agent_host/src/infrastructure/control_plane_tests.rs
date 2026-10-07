@@ -190,6 +190,7 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
     assert!(Arc::ptr_eq(&runtime.runner, &runner));
     assert_eq!(runtime.model_config.api_key, "resolved-secret");
     assert_eq!(runtime.model_config.model, "model-a");
+    assert_eq!(runtime.model_config.max_output_tokens, Some(4096));
     assert_eq!(
         runtime.model_config.request_body_limit_bytes,
         Some(1_048_576)
@@ -199,6 +200,34 @@ async fn model_config_rehydrates_from_sqlite_and_resolves_secret_only_on_demand(
     assert!(runtime.model_config.previous_response_id.is_none());
     assert!(runtime.model_config.request_cwd.is_none());
     assert_eq!(credentials.resolutions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn model_config_without_an_output_limit_uses_the_local_agent_safety_default() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runner = Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None));
+    let credentials = Arc::new(Credentials {
+        resolutions: AtomicUsize::new(0),
+    });
+    let control_plane =
+        LocalControlPlaneSnapshot::new().with_model_store(storage, runner, credentials);
+    let mut snapshot = model_snapshot();
+    snapshot.max_output_tokens = None;
+    control_plane
+        .publish_model_config(&snapshot)
+        .await
+        .expect("publish model config");
+
+    let runtime = control_plane
+        .resolve_model_runtime(OWNER, "default", "revision-1")
+        .await
+        .expect("resolve runtime");
+
+    assert_eq!(runtime.model_config.max_output_tokens, Some(16_384));
 }
 
 fn model_snapshot() -> LocalModelConfigSnapshot {
