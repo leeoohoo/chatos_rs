@@ -70,9 +70,13 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
     }
     const runTool = listed.tools.find((candidate) => candidate.name === 'web_design_execute_step');
     assert.match(JSON.stringify(runTool.inputSchema), /operations/);
-    assert.match(JSON.stringify(runTool.inputSchema), /operationsJson/);
+    assert.equal(JSON.stringify(runTool.inputSchema).includes('operationsJson'), false);
     assert.equal(JSON.stringify(runTool.inputSchema).includes('insert-simple-tree'), true);
     assert.equal(JSON.stringify(runTool.inputSchema).includes('visualInputs'), false);
+    assert.ok(
+      JSON.stringify(listed.tools).length < 20_000,
+      'the lazy capability description must stay below the local model tool-output truncation budget'
+    );
     const queryTool = listed.tools.find((candidate) => candidate.name === 'web_design_query_scene');
     assert.equal(JSON.stringify(queryTool.inputSchema).includes('pageIds'), false);
 

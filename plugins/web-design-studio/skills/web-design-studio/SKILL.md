@@ -14,6 +14,8 @@ Use this Skill as the entry point for website, landing-page, product-interface, 
 
 Every planning and generation response includes `deliveryGate`. It is authoritative.
 
+There is no standalone `web_design_validate` tool in the Scene v3 surface. Do not invent a tool option for validation. Validation is the real Candidate render/review loop plus the final Design Gate and handoff Steps reported by `deliveryGate`; use `web_design_control_plan` to accept or reject the Candidate returned by `web_design_execute_step`.
+
 - If `visibleSceneReady` is false, keep designing in the plugin. Do not edit application UI source or report a result.
 - If `projectImplementationAllowed` is false, no artboard has completed visual handoff. Do not implement it in product code.
 - Implement only artboards counted by `completedArtboardCount`.

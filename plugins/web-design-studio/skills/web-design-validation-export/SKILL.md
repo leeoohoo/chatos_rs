@@ -9,6 +9,8 @@ metadata:
 
 `web_design_execute_step` renders and mechanically validates each Candidate before review. Inspect its returned screenshots and quality report, then accept or reject through `web_design_control_plan`. For the final visual Design Gate and handoff Steps, use the same Candidate loop with whole-artboard captures at every viewport required by the brief. Structural validation never proves that a design is visually finished.
 
+The Scene v3 tool surface intentionally has no separate `web_design_validate` call. Never guess a `tool_option` for one. Treat the current `deliveryGate.requiredNextAction` as the validation workflow and continue until it reports that the requested scope may complete.
+
 Treat these as hard failures, not optional advice:
 
 - `empty_page`

@@ -9,7 +9,6 @@ import {
   generationArtifactSchema,
   simpleSceneFrameSchema,
   simpleSceneNodeSchema,
-  generationSceneOperationSchema,
   progressiveStepExecutionProperties,
   visualRectSchema
 } from './mcp-tool-schemas.js';
@@ -281,11 +280,18 @@ export const TOOL_DEFINITIONS_BASE = [
         expectedPlanRevision: { type: 'integer', minimum: 0 },
         stepId: { type: 'string', minLength: 1, maxLength: 160 },
         requestId: { type: 'string', minLength: 1, maxLength: 160 },
-        operations: { type: 'array', minItems: 1, maxItems: 256, items: generationSceneOperationSchema, description: 'Structured Scene operations. Load web-design-scene-building for insert-simple-tree and focused operation formats.' },
-        operationsJson: { type: 'string', minLength: 2, maxLength: 262144, description: 'Deprecated compatibility input. JSON array encoded as text; use operations for new calls.' }
+        operations: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 256,
+          items: {
+            type: 'object',
+            description: 'One Scene operation. Activate web-design-scene-building for the validated insert-simple-tree, insert-simple-node, update-node, remove-node, move-node, variable, and responsive-rule formats.'
+          },
+          description: 'Structured Scene operations. Pass the array directly; the plugin applies the complete Scene v2 validation contract at runtime.'
+        }
       },
-      required: ['documentId', 'expectedPlanRevision'],
-      anyOf: [{ required: ['operations'] }, { required: ['operationsJson'] }],
+      required: ['documentId', 'expectedPlanRevision', 'operations'],
       additionalProperties: false
     },
     _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }

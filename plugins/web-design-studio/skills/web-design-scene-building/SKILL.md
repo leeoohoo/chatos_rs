@@ -11,6 +11,8 @@ Read `web_design_get_active_context.artboardDirectory` and choose exactly one re
 
 Call `web_design_execute_step` with visible editable changes in the structured `operations` array. Do not stringify that array into `operationsJson`; the compatibility string input exists only for older callers and makes complex generations more error-prone. The program supplies current-revision screenshots and grounding, chooses initial/retry/repair mode, and creates attempt, idempotency, and transaction IDs.
 
+Use the exact `tool_option` returned for `web_design_execute_step` by the current `capability_describe` result. Never guess a later option number or call the tool with an empty argument object: first read `web_design_get_active_context`, then supply its `documentId`, current Plan revision as `expectedPlanRevision`, the returned ready `stepId`, and at least one operation.
+
 Prefer `insert-simple-tree` for a hierarchy:
 
 ```json
