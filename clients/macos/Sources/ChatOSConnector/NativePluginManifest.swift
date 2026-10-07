@@ -3,6 +3,13 @@ import Foundation
 enum NativeBrowserPluginIdentity {
     static let packageName = "chatos-browser-cdp"
     static let componentKey = "browser-cdp-mcp"
+    static let marketplaceKey = "chatos-browser-cdp@chatos-marketplace"
+}
+
+enum NativeWebDesignPluginIdentity {
+    static let packageName = "chatos-web-design-studio"
+    static let componentKey = "web-design-mcp"
+    static let marketplaceKey = "chatos-web-design-studio@chatos-marketplace"
 }
 
 struct NativePreparedPluginLaunch: Sendable {

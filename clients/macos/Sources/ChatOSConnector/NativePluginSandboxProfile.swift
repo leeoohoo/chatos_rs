@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum NativePluginNetworkAccess: Sendable {
+enum NativePluginNetworkAccess: Sendable, Equatable {
     case disabled
     case loopbackServer
 }
@@ -17,6 +17,7 @@ struct NativePluginProcessLaunch: Sendable {
     var workspaceRoot: URL?
     var permissionSnapshot: Set<String>
     var networkAccess: NativePluginNetworkAccess
+    var homeDirectory: URL?
 
     init(
         record: NativeInstalledPluginRecord,
@@ -28,7 +29,8 @@ struct NativePluginProcessLaunch: Sendable {
         executableDirectories: [URL] = [],
         workspaceRoot: URL?,
         permissionSnapshot: Set<String>,
-        networkAccess: NativePluginNetworkAccess
+        networkAccess: NativePluginNetworkAccess,
+        homeDirectory: URL? = nil
     ) {
         self.record = record
         self.executableURL = executableURL
@@ -40,6 +42,7 @@ struct NativePluginProcessLaunch: Sendable {
         self.workspaceRoot = workspaceRoot
         self.permissionSnapshot = permissionSnapshot
         self.networkAccess = networkAccess
+        self.homeDirectory = homeDirectory
     }
 
     init(stdio launch: NativePreparedPluginLaunch) {
@@ -47,23 +50,79 @@ struct NativePluginProcessLaunch: Sendable {
             "CHATOS_PLUGIN_DATA_DIR", "CHATOS_PLUGIN_CACHE_DIR", "CHATOS_PLUGIN_ARTIFACT_DIR",
             "CHATOS_PLUGIN_FILE_GRANT_DIR", "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
         ]
+        var writableDirectories = writableKeys.compactMap { launch.environment[$0] }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        var executableDirectories = [
+            launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"],
+            launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"],
+        ].compactMap { $0 }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let isBrowserPlugin = launch.record.pluginKey == NativeBrowserPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeBrowserPluginIdentity.packageName
+            && launch.componentKey == NativeBrowserPluginIdentity.componentKey
+        let isWebDesignPlugin = launch.record.pluginKey
+            == NativeWebDesignPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeWebDesignPluginIdentity.packageName
+            && launch.componentKey == NativeWebDesignPluginIdentity.componentKey
+        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin
+        let browserHome = isBrowserPlugin
+            && launch.permissionSnapshot.contains("browser.chrome.attach")
+            ? FileManager.default.homeDirectoryForCurrentUser
+            : nil
+        if let browserHome {
+            writableDirectories.append(contentsOf: Self.browserBridgeWritableDirectories(
+                homeDirectory: browserHome
+            ))
+        }
+        if requiresManagedBrowser {
+            executableDirectories.append(contentsOf: Self.installedBrowserApplications())
+        }
         self.init(
             record: launch.record,
             executableURL: launch.executableURL,
             arguments: launch.arguments,
             environment: launch.environment,
             installationURL: launch.installationURL,
-            writableDirectories: writableKeys.compactMap { launch.environment[$0] }
-                .map { URL(fileURLWithPath: $0, isDirectory: true) },
-            executableDirectories: [
-                launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"],
-                launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"],
-            ].compactMap { $0 }
-                .map { URL(fileURLWithPath: $0, isDirectory: true) },
+            writableDirectories: writableDirectories,
+            executableDirectories: executableDirectories,
             workspaceRoot: launch.workspaceRoot,
             permissionSnapshot: launch.permissionSnapshot,
-            networkAccess: .disabled
+            networkAccess: requiresManagedBrowser ? .loopbackServer : .disabled,
+            homeDirectory: browserHome
         )
+    }
+
+    private static func browserBridgeWritableDirectories(
+        homeDirectory: URL
+    ) -> [URL] {
+        let applicationSupport = homeDirectory
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return [
+            applicationSupport.appendingPathComponent("Chatos/browser-bridge", isDirectory: true),
+            applicationSupport.appendingPathComponent(
+                "Google/Chrome/NativeMessagingHosts",
+                isDirectory: true
+            ),
+            applicationSupport.appendingPathComponent(
+                "Chromium/NativeMessagingHosts",
+                isDirectory: true
+            ),
+            applicationSupport.appendingPathComponent(
+                "Microsoft Edge/NativeMessagingHosts",
+                isDirectory: true
+            ),
+        ]
+    }
+
+    private static func installedBrowserApplications() -> [URL] {
+        [
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Microsoft Edge.app",
+        ].compactMap { path in
+            guard FileManager.default.fileExists(atPath: path) else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
     }
 }
 
@@ -79,12 +138,21 @@ enum NativePluginProcessLauncher {
             record: launch.record,
             installationURL: launch.installationURL
         )
+        for directory in launch.writableDirectories {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        }
         let sandboxExecutable = NativePluginSandboxProfile.executableURL
         return .init(
             executableURL: sandboxExecutable,
             arguments: [sandboxExecutable.path]
                 + (try NativePluginSandboxProfile.arguments(for: launch)),
-            environment: NativePluginProcessEnvironment.make(overrides: launch.environment)
+            environment: NativePluginProcessEnvironment.make(
+                overrides: launch.environment,
+                homeDirectory: launch.homeDirectory?.path
+            )
         )
     }
 }
@@ -119,6 +187,7 @@ enum NativePluginSandboxProfile {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
         }
         for directory in launch.executableDirectories {
+            rules.append("(allow file-read* \(literal(directory.path)))")
             rules.append("(allow process-exec \(literal(directory.path)))")
         }
         let computerPermissions: Set<String> = [

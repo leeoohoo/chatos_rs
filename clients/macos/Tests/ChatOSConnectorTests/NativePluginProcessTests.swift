@@ -166,7 +166,195 @@ extension NativePluginRuntimeTests {
         #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
         #expect(environment["LANG"] == "zh_CN.UTF-8")
         #expect(environment["HOME"] == "/plugin/data")
+        #expect(environment["TMPDIR"] == nil)
         #expect(environment["AWS_SECRET_ACCESS_KEY"] == nil)
+    }
+
+    @Test("plugin temporary files stay inside the isolated cache root")
+    func pluginProcessEnvironmentUsesIsolatedTemporaryDirectory() {
+        let environment = NativePluginProcessEnvironment.make(
+            base: ["TMPDIR": "/Users/example/shared-temp"],
+            overrides: [
+                "CHATOS_PLUGIN_DATA_DIR": "/plugin/data",
+                "CHATOS_PLUGIN_CACHE_DIR": "/plugin/cache",
+            ]
+        )
+
+        #expect(environment["HOME"] == "/plugin/data")
+        #expect(environment["TMPDIR"] == "/plugin/cache")
+    }
+
+    @Test("host-selected plugin home overrides the isolated default without inheriting secrets")
+    func pluginProcessEnvironmentUsesHostSelectedHome() {
+        let environment = NativePluginProcessEnvironment.make(
+            base: [
+                "HOME": "/Users/example",
+                "AWS_SECRET_ACCESS_KEY": "host-secret",
+            ],
+            overrides: ["CHATOS_PLUGIN_DATA_DIR": "/plugin/data"],
+            homeDirectory: "/Users/example"
+        )
+
+        #expect(environment["HOME"] == "/Users/example")
+        #expect(environment["CHATOS_PLUGIN_DATA_DIR"] == "/plugin/data")
+        #expect(environment["AWS_SECRET_ACCESS_KEY"] == nil)
+    }
+
+    @Test("Browser CDP receives only the loopback and native bridge exceptions it needs")
+    func browserPluginLaunchUsesNarrowBridgeExceptions() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let executable = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("chatos-browser-cdp")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion":3,
+              "name":"chatos-browser-cdp",
+              "version":"0.1.15",
+              "mcpServers":{
+                "browser-cdp-mcp":{
+                  "type":"stdio",
+                  "bin":"chatos-browser-cdp",
+                  "args":["mcp"]
+                }
+              },
+              "permissions":[
+                {"permission":"process.spawn","required":true},
+                {"permission":"browser.chrome.attach","required":false}
+              ]
+            }
+            """.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "browser-plugin",
+            releaseID: "release-1",
+            version: "0.1.15",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-10-07T00:00:00Z",
+            pluginKey: NativeBrowserPluginIdentity.marketplaceKey,
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 100,
+                maximumBytes: 1_024 * 1_024
+            )
+        )
+        let prepared = try NativePluginManifestLoader.prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            serverKey: nil,
+            adapterSessionID: "browser-session",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn", "browser.chrome.attach"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+
+        let launch = NativePluginProcessLaunch(stdio: prepared)
+        #expect(launch.networkAccess == .loopbackServer)
+        #expect(launch.homeDirectory == FileManager.default.homeDirectoryForCurrentUser)
+        #expect(launch.writableDirectories.contains(where: {
+            $0.path.hasSuffix("Library/Application Support/Chatos/browser-bridge")
+        }))
+        #expect(launch.writableDirectories.contains(where: {
+            $0.path.hasSuffix("Google/Chrome/NativeMessagingHosts")
+        }))
+        let sandboxArguments = try NativePluginSandboxProfile.arguments(for: launch)
+        let sandboxProfile = try #require(sandboxArguments.dropFirst().first)
+        for browser in launch.executableDirectories {
+            #expect(sandboxProfile.contains("(allow file-read* (subpath \"\(browser.path)\"))"))
+            #expect(sandboxProfile.contains("(allow process-exec (subpath \"\(browser.path)\"))"))
+        }
+    }
+
+    @Test("Web Design receives isolated temporary storage and managed browser access")
+    func webDesignPluginLaunchSupportsVisualVerification() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let executable = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("chatos-web-design-studio")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion":3,
+              "name":"chatos-web-design-studio",
+              "version":"3.0.25",
+              "mcpServers":{
+                "web-design-mcp":{
+                  "type":"stdio",
+                  "bin":"chatos-web-design-studio",
+                  "args":["mcp"]
+                }
+              },
+              "permissions":[
+                {"permission":"process.spawn","required":true},
+                {"permission":"artifact.create","required":true}
+              ]
+            }
+            """.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "web-design-plugin",
+            releaseID: "release-1",
+            version: "3.0.25",
+            artifactSHA256: String(repeating: "b", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-10-07T00:00:00Z",
+            pluginKey: NativeWebDesignPluginIdentity.marketplaceKey,
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 100,
+                maximumBytes: 1_024 * 1_024
+            )
+        )
+        let prepared = try NativePluginManifestLoader.prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: NativeWebDesignPluginIdentity.componentKey,
+            serverKey: nil,
+            adapterSessionID: "web-design-session",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn", "artifact.create"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+
+        let launch = NativePluginProcessLaunch(stdio: prepared)
+        #expect(launch.networkAccess == .loopbackServer)
+        #expect(launch.homeDirectory == nil)
+        let process = try NativePluginProcessLauncher.prepare(launch)
+        #expect(process.environment["HOME"] == prepared.environment["CHATOS_PLUGIN_DATA_DIR"])
+        #expect(process.environment["TMPDIR"] == prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
     }
 
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")

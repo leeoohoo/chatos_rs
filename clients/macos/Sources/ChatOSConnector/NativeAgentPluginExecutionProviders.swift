@@ -515,7 +515,12 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
             toolName: call.name
         )
         let normalized = try await NativePluginModelImageNormalizer.normalizeForModel(registered)
-        return .init(normalized.canonicalJSONString)
+        let isError = normalized.jsonObject?["isError"]?.jsonBool == true
+        return .init(
+            normalized.canonicalJSONString,
+            madeProgress: !isError,
+            isError: isError
+        )
     }
 
     private static func effect(for tool: NativeJSONValue) -> AgentToolDefinition.Effect {
