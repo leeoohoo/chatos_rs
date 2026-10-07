@@ -129,7 +129,7 @@ extension NativePluginRuntimeTests {
                             "producer_artifact_id": .string("solution-1"),
                             "relative_path": .string(fileName),
                             "display_name": .string(fileName),
-                            "media_type": .string("text/markdown"),
+                            "mime_type": .string("text/markdown"),
                         ]),
                     ]),
                 ]),

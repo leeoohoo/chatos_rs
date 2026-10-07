@@ -120,13 +120,20 @@ enum NativePluginArtifactRegistrar {
         let baseKeys: Set<String> = [
             "producer_artifact_id", "relative_path", "display_name", "media_type",
         ]
+        let legacyBaseKeys: Set<String> = [
+            "producer_artifact_id", "relative_path", "display_name", "mime_type",
+        ]
         let integrityKeys: Set<String> = ["size_bytes", "sha256"]
         let keys = Set(object.keys)
-        guard keys == baseKeys || keys == baseKeys.union(integrityKeys),
+        guard keys == baseKeys
+                || keys == baseKeys.union(integrityKeys)
+                || keys == legacyBaseKeys
+                || keys == legacyBaseKeys.union(integrityKeys),
               let producerArtifactID = object["producer_artifact_id"]?.jsonString,
               let relativePath = object["relative_path"]?.jsonString,
               let displayName = object["display_name"]?.jsonString,
-              let mediaType = object["media_type"]?.jsonString else {
+              let mediaType = object["media_type"]?.jsonString
+                ?? object["mime_type"]?.jsonString else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 描述无效")
         }
         guard producerArtifactID == producerArtifactID.trimmingCharacters(in: .whitespacesAndNewlines),

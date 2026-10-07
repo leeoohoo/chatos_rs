@@ -311,7 +311,7 @@ function result(value: Record<string, unknown>, isError = false) {
         producer_artifact_id: `solution_${String(value.sha256)}`,
         relative_path: value.relativePath,
         display_name: value.relativePath,
-        mime_type: value.mimeType,
+        media_type: value.mimeType,
         size_bytes: value.size,
         sha256: value.sha256
       }]

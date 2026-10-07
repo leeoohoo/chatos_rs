@@ -88,7 +88,7 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
       producer_artifact_id: `solution_${finalized.sha256}`,
       relative_path: finalized.relativePath,
       display_name: finalized.relativePath,
-      mime_type: 'text/markdown',
+      media_type: 'text/markdown',
       size_bytes: finalized.size,
       sha256: finalized.sha256
     }]);
