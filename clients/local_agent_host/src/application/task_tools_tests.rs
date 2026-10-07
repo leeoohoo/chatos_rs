@@ -141,6 +141,7 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
         .expect("task graph");
     assert_eq!(graph.graph_id, "local-task-graph-invocation-1");
     assert_eq!(graph.tasks[0].status, LocalTaskStatus::Ready);
+    assert_eq!(graph.tasks[0].max_iterations, 8);
     assert!(graph.tasks[0].active_run_id.is_some());
     assert_eq!(graph.tasks[1].status, LocalTaskStatus::Pending);
     assert_eq!(graph.dependencies.len(), 1);
@@ -161,6 +162,9 @@ async fn batch_tool_creates_an_idempotent_local_dag() {
     assert!(graph.tasks[0].input["prompt"]
         .as_str()
         .is_some_and(|prompt| prompt.starts_with("Task Objective:\nInspect the code")));
+    assert!(graph.tasks[0].input["prompt"]
+        .as_str()
+        .is_some_and(|prompt| prompt.contains("Project Inspection Evidence Contract")));
 }
 
 #[tokio::test]
@@ -176,6 +180,7 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
                     capability_policy_revision: "policy-1".to_string(),
                     instructions: Some(
                         json!({
+                            "max_iterations": 600,
                             "enabled_builtin_kinds": ["Notepad"],
                             "external_mcp_config_ids": ["required-mcp"],
                             "plugin_keys": ["required-plugin"]
@@ -209,6 +214,7 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
         .expect("load graph")
         .expect("graph");
     let options = &graph.tasks[0].input["tool_options"];
+    assert_eq!(graph.tasks[0].max_iterations, 600);
     assert_eq!(options["enabled_builtin_kinds"], json!(["Notepad"]));
     assert_eq!(options["external_mcp_config_ids"], json!(["required-mcp"]));
     assert_eq!(
@@ -373,6 +379,16 @@ fn task_model_definitions_are_host_owned_and_closed() {
             "enabled_builtin_kinds"
         ])
     );
+}
+
+#[test]
+fn project_inspection_task_prompt_requires_code_and_validation_evidence() {
+    let prompt = task_prompt("检查当前项目", "给出项目概览", &Value::Null).expect("task prompt");
+
+    assert!(prompt.contains("项目检查最低证据契约"));
+    assert!(prompt.contains("不得只依据 README 或架构文档结束"));
+    assert!(prompt.contains("源码入口"));
+    assert!(prompt.contains("测试或 CI 配置"));
 }
 
 #[tokio::test]

@@ -113,6 +113,10 @@ public sealed class WindowsLocalAgentBootstrapService
             var connectorSession = await _connectorRuntime
                 .SessionConfigurationAsync(cancellationToken).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The local connector is not paired.");
+            var managedRuntime = await _gateway.GetManagedRuntimeConfigAsync(
+                connectorSession.GatewayBaseUri,
+                connectorSession.AccessToken,
+                cancellationToken).ConfigureAwait(false);
             var agentCapability = await _gateway.GetAgentCapabilityAsync(
                 connectorSession.GatewayBaseUri,
                 connectorSession.AccessToken,
@@ -288,6 +292,7 @@ public sealed class WindowsLocalAgentBootstrapService
                     mainCapabilities.CapabilityPolicyRevision,
                     JsonSerializer.Serialize(new
                     {
+                        max_iterations = managedRuntime.LocalTaskExecutionSettings.MaxIterations,
                         enabled_builtin_kinds = requiredBuiltinKinds,
                         external_mcp_config_ids = requiredExternalIds,
                         plugin_keys = requiredPluginKeys,

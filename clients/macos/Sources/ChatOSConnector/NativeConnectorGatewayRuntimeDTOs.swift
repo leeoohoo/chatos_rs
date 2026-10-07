@@ -2,11 +2,21 @@ import Foundation
 
 struct GatewayManagedRuntimeConfigDTO: Decodable, Sendable {
     var nativeAgentRuntimeSettings: GatewayNativeAgentRuntimeSettingsDTO?
+    var localTaskExecutionSettings: GatewayLocalTaskExecutionSettingsDTO?
     var remoteControlTrust: GatewayRemoteControlTrustDTO
 
     enum CodingKeys: String, CodingKey {
         case nativeAgentRuntimeSettings = "native_agent_runtime_settings"
+        case localTaskExecutionSettings = "local_task_execution_settings"
         case remoteControlTrust = "remote_control_trust"
+    }
+}
+
+struct GatewayLocalTaskExecutionSettingsDTO: Decodable, Sendable {
+    var maxIterations: Int
+
+    enum CodingKeys: String, CodingKey {
+        case maxIterations = "max_iterations"
     }
 }
 

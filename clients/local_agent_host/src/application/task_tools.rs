@@ -126,9 +126,8 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
             CREATE_TASK_TOOL => {
                 let mut args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid create_task input: {error}"))?;
-                self.required_task_policy(&parent)
-                    .await?
-                    .apply_single(&mut args);
+                let task_policy = self.required_task_policy(&parent).await?;
+                task_policy.apply_single(&mut args);
                 self.validate_existing_prerequisites(
                     &parent,
                     conversation_id,
@@ -141,7 +140,13 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     args.default_model_config_id.as_deref(),
                 )
                 .await?;
-                let command = create_single_graph(invocation, &parent, args, model)?;
+                let command = create_single_graph(
+                    invocation,
+                    &parent,
+                    args,
+                    model,
+                    task_policy.max_iterations(parent.max_iterations),
+                )?;
                 let graph = if let Some(existing) = self.reusable_source_graph(&parent).await? {
                     if existing.graph_id == command.graph_id {
                         self.create_graph(&invocation.invocation_id, command)
@@ -176,9 +181,8 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     serde_json::from_value(invocation.arguments.clone()).map_err(|error| {
                         format!("invalid create_tasks_with_prerequisites input: {error}")
                     })?;
-                self.required_task_policy(&parent)
-                    .await?
-                    .apply_batch(&mut args);
+                let task_policy = self.required_task_policy(&parent).await?;
+                task_policy.apply_batch(&mut args);
                 for task in &args.tasks {
                     self.validate_existing_prerequisites(
                         &parent,
@@ -187,8 +191,14 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     )
                     .await?;
                 }
-                let plan =
-                    create_batch_graph(self.runtime.as_ref(), invocation, &parent, args).await?;
+                let plan = create_batch_graph(
+                    self.runtime.as_ref(),
+                    invocation,
+                    &parent,
+                    args,
+                    task_policy.max_iterations(parent.max_iterations),
+                )
+                .await?;
                 let (graph, reused) =
                     if let Some(existing) = self.reusable_source_graph(&parent).await? {
                         if existing.graph_id == plan.command.graph_id {
@@ -404,6 +414,8 @@ struct CreateTasksArgs {
 #[serde(deny_unknown_fields)]
 pub(super) struct RequiredTaskPolicy {
     #[serde(default)]
+    max_iterations: Option<u32>,
+    #[serde(default)]
     enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
     external_mcp_config_ids: Vec<String>,
@@ -412,6 +424,10 @@ pub(super) struct RequiredTaskPolicy {
 }
 
 impl RequiredTaskPolicy {
+    fn max_iterations(&self, fallback: u32) -> u32 {
+        self.max_iterations.unwrap_or(fallback).max(1)
+    }
+
     fn apply_single(&self, args: &mut CreateTaskArgs) {
         extend_unique(&mut args.enabled_builtin_kinds, &self.enabled_builtin_kinds);
         extend_unique(
@@ -519,6 +535,7 @@ fn create_single_graph(
     parent: &LocalAgentRunRecord,
     args: CreateTaskArgs,
     model: (String, String),
+    max_iterations: u32,
 ) -> Result<CreateTaskGraphCommand, String> {
     let enabled_builtin_kinds =
         validated_builtin_kinds(args.requires_execution, args.enabled_builtin_kinds)?;
@@ -562,7 +579,7 @@ fn create_single_graph(
                 "prerequisite_task_ids": args.prerequisite_task_ids,
                 "schedule": schedule
             }),
-            max_iterations: parent.max_iterations,
+            max_iterations,
         }],
         dependencies: Vec::new(),
     })
@@ -573,6 +590,7 @@ async fn create_batch_graph(
     invocation: &LocalAgentToolInvocationRecord,
     parent: &LocalAgentRunRecord,
     args: CreateTasksArgs,
+    max_iterations: u32,
 ) -> Result<CreateBatchPlan, String> {
     if args.tasks.is_empty() || args.tasks.len() > 50 {
         return Err("tasks must contain 1..=50 items".to_string());
@@ -674,7 +692,7 @@ async fn create_batch_graph(
                 "prerequisite_task_ids": item.prerequisite_task_ids,
                 "schedule": schedule
             }),
-            max_iterations: parent.max_iterations,
+            max_iterations,
         });
     }
     Ok(CreateBatchPlan {

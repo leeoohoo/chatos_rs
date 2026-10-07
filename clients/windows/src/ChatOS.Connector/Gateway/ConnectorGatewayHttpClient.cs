@@ -211,7 +211,10 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
         var settings = response.NativeAgentRuntimeSettings?.ToDomain()
             ?? NativeAgentRuntimeSettings.Default;
         settings.Validate();
-        return new ConnectorManagedRuntimeConfig(settings, new RemoteControlTrust(
+        var taskSettings = response.LocalTaskExecutionSettings?.ToDomain()
+            ?? LocalTaskExecutionSettings.Default;
+        taskSettings.Validate();
+        return new ConnectorManagedRuntimeConfig(settings, taskSettings, new RemoteControlTrust(
             response.RemoteControlTrust.RequireSignedMessages,
             response.RemoteControlTrust.SignatureMaxSkewSeconds,
             response.RemoteControlTrust.TrustedRelayPublicKeys));

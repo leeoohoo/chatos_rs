@@ -9,8 +9,19 @@ public sealed partial class ConnectorGatewayHttpClient
         [JsonPropertyName("native_agent_runtime_settings")]
         public GatewayNativeAgentRuntimeSettingsDto? NativeAgentRuntimeSettings { get; init; }
 
+        [JsonPropertyName("local_task_execution_settings")]
+        public GatewayLocalTaskExecutionSettingsDto? LocalTaskExecutionSettings { get; init; }
+
         [JsonPropertyName("remote_control_trust")]
         public required GatewayTrustDto RemoteControlTrust { get; init; }
+    }
+
+    private sealed record GatewayLocalTaskExecutionSettingsDto
+    {
+        [JsonPropertyName("max_iterations")]
+        public required int MaxIterations { get; init; }
+
+        public LocalTaskExecutionSettings ToDomain() => new(MaxIterations);
     }
 
     private sealed record GatewayNativeAgentRuntimeSettingsDto

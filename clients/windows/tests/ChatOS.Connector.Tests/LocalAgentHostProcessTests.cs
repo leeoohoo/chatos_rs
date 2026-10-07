@@ -12,7 +12,7 @@ public sealed class LocalAgentHostProcessTests
             @"C:\ChatOS\local-agent.sqlite3",
             TimeSpan.FromSeconds(10),
             new Uri("https://gateway.example/api/memory"),
-            "local_agent",
+            "chatos",
             TimeSpan.FromMilliseconds(12_345));
         var start = LocalAgentHostProcessLauncher.CreateStartInfo(
             options,
@@ -26,7 +26,7 @@ public sealed class LocalAgentHostProcessTests
         Assert.Contains("--memory-base-url", start.ArgumentList);
         Assert.Contains("https://gateway.example/api/memory", start.ArgumentList);
         Assert.Contains("--memory-source-id", start.ArgumentList);
-        Assert.Contains("local_agent", start.ArgumentList);
+        Assert.Contains("chatos", start.ArgumentList);
         Assert.Contains("12345", start.ArgumentList);
         Assert.DoesNotContain("memory-secret", start.ArgumentList);
         Assert.Equal("memory-secret", start.Environment["CHATOS_MEMORY_ACCESS_TOKEN"]);

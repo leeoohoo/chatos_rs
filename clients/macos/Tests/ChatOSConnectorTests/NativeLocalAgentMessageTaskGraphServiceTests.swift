@@ -40,6 +40,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(task.objective, "Ship locally")
         XCTAssertEqual(task.prerequisiteTaskIDs, ["task-1"])
         XCTAssertEqual(task.lastRun?.resultSummary, "Completed locally")
+        XCTAssertEqual(task.lastRun?.reportContent, "Completed locally")
         XCTAssertTrue(task.processLog?.contains("检查项目结构") == true)
         XCTAssertTrue(task.processLog?.contains("已确认入口和运行方式。") == true)
         XCTAssertFalse(task.processLog?.contains("list_dir") == true)

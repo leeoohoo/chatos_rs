@@ -28,8 +28,14 @@ public sealed record LocalAgentHostOptions(
             database,
             TimeSpan.FromSeconds(10),
             ResolveMemoryBaseUri(apiBaseUrl),
-            "local_agent",
+            ResolveMemorySourceId(),
             TimeSpan.FromSeconds(30));
+    }
+
+    private static string ResolveMemorySourceId()
+    {
+        var configured = Environment.GetEnvironmentVariable("CHATOS_MEMORY_SOURCE_ID")?.Trim();
+        return string.IsNullOrWhiteSpace(configured) ? "chatos" : configured;
     }
 
     private static Uri ResolveMemoryBaseUri(string? apiBaseUrl)

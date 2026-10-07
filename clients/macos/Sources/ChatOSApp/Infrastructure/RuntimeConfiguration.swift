@@ -57,7 +57,7 @@ enum RuntimeConfiguration {
             executableURL: executable,
             databaseURL: database,
             memoryBaseURL: memoryBaseURL,
-            memorySourceID: "local_agent"
+            memorySourceID: nonEmptyEnvironmentValue("CHATOS_MEMORY_SOURCE_ID") ?? "chatos"
         )
     }
 

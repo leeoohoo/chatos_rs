@@ -110,6 +110,13 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.notPaired
         }
         let catalog = try await modelCatalogPayload(forceRefresh: false)
+        let managedRuntime = try await managedRuntimeConfig()
+        let configuredTaskMaxIterations = managedRuntime.localTaskExecutionSettings?.maxIterations
+            ?? 600
+        guard (2...10_000).contains(configuredTaskMaxIterations) else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
+        let taskMaxIterations = UInt32(configuredTaskMaxIterations)
         let configs = catalog.required.filter {
             $0.enabled != false && $0.taskEnabled != false && $0.hasAPIKey != false
         }
@@ -304,6 +311,7 @@ extension NativeLocalConnectorService {
         guard Set(externalMCPConfigs.map(\.resourceID)).isSuperset(of: Set(requiredExternalIDs))
         else { throw NativeLocalAgentBootstrapError.executionAgentUnavailable }
         let requiredPolicy = LocalAgentJSONValue.object([
+            "max_iterations": .number(Double(max(1, taskMaxIterations))),
             "enabled_builtin_kinds": .array(requiredBuiltinKinds.map(LocalAgentJSONValue.string)),
             "external_mcp_config_ids": .array(requiredExternalIDs.map(LocalAgentJSONValue.string)),
             "plugin_keys": .array(requiredPluginKeys.map(LocalAgentJSONValue.string)),

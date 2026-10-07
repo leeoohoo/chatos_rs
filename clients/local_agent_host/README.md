@@ -122,7 +122,7 @@ cargo run -p chatos_local_agent_host -- \
   --database /absolute/path/to/local-agent.sqlite \
   --owner-user-id authenticated-user-id \
   --memory-base-url https://memory.example.com \
-  --memory-source-id local_agent \
+  --memory-source-id chatos \
   --read-only-tool read_file \
   --socket /absolute/path/to/local-agent.sock
 ```

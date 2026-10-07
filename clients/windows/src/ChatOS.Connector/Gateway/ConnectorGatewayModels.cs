@@ -60,7 +60,19 @@ public sealed record NativeAgentRuntimeSettings(
 
 public sealed record ConnectorManagedRuntimeConfig(
     NativeAgentRuntimeSettings NativeAgentRuntimeSettings,
+    LocalTaskExecutionSettings LocalTaskExecutionSettings,
     RemoteControlTrust RemoteControlTrust);
+
+public sealed record LocalTaskExecutionSettings(int MaxIterations)
+{
+    public static LocalTaskExecutionSettings Default { get; } = new(600);
+
+    public void Validate()
+    {
+        if (MaxIterations is < 2 or > 10_000)
+            throw new InvalidDataException("Managed Local Agent task execution settings are invalid.");
+    }
+}
 
 public sealed record ConnectorPluginSource(
     ConnectorPluginCatalog Catalog,

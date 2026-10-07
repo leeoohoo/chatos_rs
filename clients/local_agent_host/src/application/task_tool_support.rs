@@ -500,9 +500,9 @@ pub(super) fn task_prompt(
         );
     }
     prompt.push_str(if english {
-        "\n\n[Output Language Policy]\nUse the language requested by the user or used in this task for all user-visible prose. Preserve code identifiers, commands, paths, APIs, and product names."
+        "\n\n[Project Inspection Evidence Contract]\nWhen the objective asks to inspect, review, evaluate, understand, or summarize a real project, do not finish from README or architecture documents alone. Inspect and cross-check the build or package manifests, source entry points, representative core implementations, and tests or CI configuration. Report the concrete files and checks used as evidence and state any validation gap. When terminal or build tools are available and the user expects current behavior or correctness, run a proportionate validation. Finish once the evidence is sufficient; do not perform unrelated work.\n\n[Output Language Policy]\nUse the language requested by the user or used in this task for all user-visible prose. Preserve code identifiers, commands, paths, APIs, and product names."
     } else {
-        "\n\n[输出语言规则]\n所有用户可见文本使用用户要求或当前任务所使用的语言；代码标识符、命令、路径、API 和产品名保持原样。"
+        "\n\n[项目检查最低证据契约]\n当目标要求检查、审查、评估、了解或总结真实项目时，不得只依据 README 或架构文档结束。至少读取并交叉核对构建或包管理清单、源码入口、具有代表性的核心实现，以及测试或 CI 配置；结果必须列出实际作为证据的文件和检查，并说明尚未验证的部分。若本轮提供终端或构建工具，且用户关注当前行为或正确性，应执行与目标相称的验证。证据充分后及时结束，不得扩展无关工作。\n\n[输出语言规则]\n所有用户可见文本使用用户要求或当前任务所使用的语言；代码标识符、命令、路径、API 和产品名保持原样。"
     });
     Ok(prompt)
 }

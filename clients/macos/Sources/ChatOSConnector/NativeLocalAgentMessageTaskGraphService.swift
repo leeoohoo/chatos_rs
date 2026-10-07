@@ -353,21 +353,27 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     }
 
     private func mapRun(_ run: LocalAgentRunRecord) -> MessageTaskRun {
-        MessageTaskRun(
+        let modelOutput = run.terminalOutcome.flatMap(Self.modelOutput)
+        return MessageTaskRun(
             id: run.runID,
             taskID: run.ownerEntityID,
             status: run.status,
             modelPhaseStatus: run.status,
             startedAt: Self.date(run.createdAtUnixMs),
             finishedAt: Self.isTerminal(run.status) ? Self.date(run.updatedAtUnixMs) : nil,
-            resultSummary: run.terminalOutcome.flatMap {
-                Self.string("content", in: $0)
-                    ?? Self.string("answer", in: $0)
-                    ?? Self.string("text", in: $0)
+            resultSummary: modelOutput,
+            reportContent: run.terminalOutcome.flatMap {
+                Self.string("report", in: $0) ?? Self.modelOutput($0)
             },
-            reportContent: run.terminalOutcome.flatMap { Self.string("report", in: $0) },
             errorMessage: run.terminalOutcome.flatMap { Self.string("error", in: $0) }
         )
+    }
+
+    private static func modelOutput(_ outcome: LocalAgentJSONValue) -> String? {
+        string("content", in: outcome)
+            ?? string("answer", in: outcome)
+            ?? string("text", in: outcome)
+            ?? string("output", in: outcome)
     }
 
     private func processLog(ownerUserID: String, runID: String) async throws -> String? {
