@@ -529,6 +529,15 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(taskSearch.content.contains("plugin_1"))
         XCTAssertFalse(taskSearch.content.contains("builtin_1"))
+        let translatedTaskSearch = try await taskBroker.execute(.init(
+            id: "task-search-translated",
+            name: "capability_search",
+            arguments: #"{"query":"图表 架构图 导出"}"#
+        ))
+        XCTAssertFalse(translatedTaskSearch.isError)
+        XCTAssertTrue(translatedTaskSearch.content.contains("plugin_1"))
+        XCTAssertTrue(translatedTaskSearch.content.contains("test-agent-plugin"))
+        XCTAssertFalse(translatedTaskSearch.content.contains("plugin-1"))
         let taskDescription = try await taskBroker.execute(.init(
             id: "task-describe-1",
             name: "capability_describe",

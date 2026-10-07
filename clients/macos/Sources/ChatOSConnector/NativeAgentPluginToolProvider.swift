@@ -403,6 +403,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let fallbackWorkspaceRootURL: URL?
     private let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
     private let executionPresentation: NativeAgentPluginExecutionPresentation
+    private let fallbackToSelectedOptions: Bool
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -420,7 +421,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         fallbackWorkspaceRootURL: URL? = nil,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         installedPlugins: [NativeInstalledAgentPlugin],
-        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
+        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat,
+        fallbackToSelectedOptions: Bool = false
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
@@ -431,6 +433,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.fallbackWorkspaceRootURL = fallbackWorkspaceRootURL
         self.builtinCapabilities = builtinCapabilities
         self.executionPresentation = executionPresentation
+        self.fallbackToSelectedOptions = fallbackToSelectedOptions
         let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty ? [] : [
             .init(
                 token: "builtin_1",
@@ -462,7 +465,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 return .failure("请提供当前任务需要的能力关键词，不要枚举全部 Plugin。")
             }
             let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            let matches = options.filter { option in
+            let lexicalMatches = options.filter { option in
                 let builtInKeywords = if case .builtIn = option.kind {
                     " 文件 读写 代码 终端 shell command filesystem 需求调研 问卷 Human答案 备注 解决方案 执行计划 项目任务 survey requirement solution plan"
                 } else {
@@ -470,7 +473,15 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 }
                 let searchable = "\(option.name) \(option.description)\(builtInKeywords)".lowercased()
                 return terms.contains(where: searchable.contains)
-            }.prefix(12).map { option in
+            }
+            // A local Task has already frozen and validated its Plugin selections. If a
+            // translated or user-authored query has no literal overlap with an English
+            // manifest, keep those selected capabilities discoverable instead of hiding
+            // them behind a language-dependent lexical match.
+            let visibleOptions = lexicalMatches.isEmpty && fallbackToSelectedOptions
+                ? options
+                : lexicalMatches
+            let matches = visibleOptions.prefix(12).map { option in
                 PluginSummary(
                     pluginOption: option.token,
                     name: option.name,

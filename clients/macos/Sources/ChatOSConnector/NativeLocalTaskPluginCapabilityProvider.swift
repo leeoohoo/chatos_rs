@@ -86,7 +86,8 @@ extension NativeLocalConnectorService {
             fallbackWorkspaceRootURL: executionRootURL,
             builtinCapabilities: [],
             installedPlugins: selectedPlugins,
-            executionPresentation: .localTaskExecution
+            executionPresentation: .localTaskExecution,
+            fallbackToSelectedOptions: true
         )
     }
 
