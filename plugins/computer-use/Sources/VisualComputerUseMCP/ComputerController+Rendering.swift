@@ -6,6 +6,14 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension ComputerController {
+    static func logCaptureFailure(_ error: Error, displayID: UInt32) {
+        let detail = String(describing: error)
+            .replacingOccurrences(of: "\n", with: " ")
+            .prefix(500)
+        let line = "visual-computer-use-mcp: ScreenCaptureKit failed for display \(displayID): \(detail)\n"
+        FileHandle.standardError.write(Data(line.utf8))
+    }
+
     static func displayDTO(_ id: CGDirectDisplayID) -> DisplayDTO {
         let bounds = CGDisplayBounds(id)
         let pixelsWide = CGDisplayPixelsWide(id)

@@ -9,7 +9,7 @@ metadata:
 
 Read `web_design_get_active_context.artboardDirectory` and choose exactly one relevant `artboardId` yourself. Work only on that semantic artboard and the Step returned by `deliveryGate.requiredNextAction`; `web_design_query_scene` and `web_design_edit_scene` reject cross-artboard operations. Do not ask the human to switch the directory for you.
 
-Call `web_design_execute_step` with visible editable changes in `operationsJson`, a JSON-string encoding of one operation array. Keeping the operation contract here instead of repeating a large nested tool schema saves context without weakening server validation. The program supplies current-revision screenshots and grounding, chooses initial/retry/repair mode, and creates attempt, idempotency, and transaction IDs.
+Call `web_design_execute_step` with visible editable changes in the structured `operations` array. Do not stringify that array into `operationsJson`; the compatibility string input exists only for older callers and makes complex generations more error-prone. The program supplies current-revision screenshots and grounding, chooses initial/retry/repair mode, and creates attempt, idempotency, and transaction IDs.
 
 Prefer `insert-simple-tree` for a hierarchy:
 
@@ -17,7 +17,7 @@ Prefer `insert-simple-tree` for a hierarchy:
 [{"op":"insert-simple-tree","parentId":"root:page","index":0,"tree":{"node":{"id":"hero","type":"frame","name":"Hero","frame":{"x":0,"y":0,"width":1440,"height":720}},"children":[{"node":{"id":"hero-title","type":"text","name":"Hero title","frame":{"x":96,"y":120,"width":720,"height":144},"content":"A real headline"}}]}}]
 ```
 
-Serialize that complete array as the `operationsJson` string. Supported focused operations are `insert-simple-tree`, `insert-simple-node`, `insert-node`, `update-node`, `remove-node`, `move-node`, `insert-variable-collection`, and `insert-responsive-rule`. For an `update-node`, patches use path arrays such as `{"path":["appearance","opacity"],"value":0.8}`.
+Pass that complete array directly as `operations`. Supported focused operations are `insert-simple-tree`, `insert-simple-node`, `insert-node`, `update-node`, `remove-node`, `move-node`, `insert-variable-collection`, and `insert-responsive-rule`. For an `update-node`, patches use path arrays such as `{"path":["appearance","opacity"],"value":0.8}`.
 
 Every tree item uses `{node, children?}`. Only `frame` and `group` contain children. Descendants are stored as independent stable nodes and remain editable. Use `insert-simple-node`, update, move, or remove operations for focused changes. Raw nodes are for advanced Scene fields only.
 

@@ -69,6 +69,7 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
       assert.equal(JSON.stringify(tool.inputSchema).includes('projectId'), false);
     }
     const runTool = listed.tools.find((candidate) => candidate.name === 'web_design_execute_step');
+    assert.match(JSON.stringify(runTool.inputSchema), /operations/);
     assert.match(JSON.stringify(runTool.inputSchema), /operationsJson/);
     assert.equal(JSON.stringify(runTool.inputSchema).includes('insert-simple-tree'), true);
     assert.equal(JSON.stringify(runTool.inputSchema).includes('visualInputs'), false);
@@ -137,7 +138,7 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
         documentId,
         expectedPlanRevision: 4,
         requestId: 'mcp-home-structure-scene-2',
-        operationsJson: JSON.stringify([
+        operations: [
           {
             op: 'insert-simple-tree', parentId: 'root:home', index: 0,
             tree: { node: {
@@ -152,7 +153,7 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
                 style: { fill: '#ffffff', fontSize: 32, fontWeight: 800 }
               } }] }
           }
-        ])
+        ]
       }
     });
     assert.equal(executed.isError, false);

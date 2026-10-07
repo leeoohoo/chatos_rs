@@ -220,6 +220,11 @@ enum NativePluginSandboxProfile {
         ]
         if !launch.permissionSnapshot.isDisjoint(with: computerPermissions) {
             rules.append("(allow user-preference-read)")
+            // ScreenCaptureKit returns captured frames as IOSurface-backed
+            // objects from replayd. Permit only the IOSurface root client
+            // needed to decode that response; do not grant general IOKit or
+            // GPU user-client access to the Plugin process.
+            rules.append("(allow iokit-open-user-client (iokit-user-client-class \"IOSurfaceRootUserClient\"))")
             rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\") (global-name \"com.apple.dock.fullscreen\") (global-name \"com.apple.replayd\") (global-name-regex #\"^com[.]apple[.]pasteboard[.][0-9]+$\") (global-name-regex #\"^com[.]apple[.]distributed_notifications.*$\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {

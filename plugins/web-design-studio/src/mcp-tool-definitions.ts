@@ -274,16 +274,18 @@ export const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'web_design_execute_step',
-    description: 'Prepare one visible Scene Candidate from operationsJson for the next or named Step. The plugin validates decoded operations, captures every required viewport, chooses first-run/retry/repair behavior, creates IDs, renders Candidate and Diff PNGs, and waits for explicit visual review.',
+    description: 'Prepare one visible Scene Candidate from a structured operations array for the next or named Step. The plugin validates operations, captures every required viewport, chooses first-run/retry/repair behavior, creates IDs, renders Candidate and Diff PNGs, and waits for explicit visual review.',
     inputSchema: {
       type: 'object', properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
         expectedPlanRevision: { type: 'integer', minimum: 0 },
         stepId: { type: 'string', minLength: 1, maxLength: 160 },
         requestId: { type: 'string', minLength: 1, maxLength: 160 },
-        operationsJson: { type: 'string', minLength: 2, maxLength: 262144, description: 'JSON array encoded as text. Load web-design-scene-building for insert-simple-tree and focused operation formats.' }
+        operations: { type: 'array', minItems: 1, maxItems: 256, items: generationSceneOperationSchema, description: 'Structured Scene operations. Load web-design-scene-building for insert-simple-tree and focused operation formats.' },
+        operationsJson: { type: 'string', minLength: 2, maxLength: 262144, description: 'Deprecated compatibility input. JSON array encoded as text; use operations for new calls.' }
       },
-      required: ['documentId', 'expectedPlanRevision', 'operationsJson'],
+      required: ['documentId', 'expectedPlanRevision'],
+      anyOf: [{ required: ['operations'] }, { required: ['operationsJson'] }],
       additionalProperties: false
     },
     _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }

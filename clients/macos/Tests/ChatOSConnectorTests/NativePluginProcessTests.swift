@@ -312,6 +312,8 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains("com.apple.coreservices.launchservicesd"))
         #expect(permittedProfile.contains("com.apple.dock.fullscreen"))
         #expect(permittedProfile.contains("com.apple.replayd"))
+        #expect(permittedProfile.contains("IOSurfaceRootUserClient"))
+        #expect(!permittedProfile.contains("IOGPUDeviceUserClient"))
         #expect(permittedProfile.contains("com[.]apple[.]pasteboard"))
         #expect(permittedProfile.contains("com[.]apple[.]distributed_notifications"))
 
@@ -323,6 +325,7 @@ extension NativePluginRuntimeTests {
         #expect(!deniedProfile.contains("(allow user-preference-read)"))
         #expect(!deniedProfile.contains("com.apple.CARenderServer"))
         #expect(!deniedProfile.contains("com.apple.replayd"))
+        #expect(!deniedProfile.contains("IOSurfaceRootUserClient"))
         #expect(!deniedProfile.contains("com[.]apple[.]pasteboard"))
     }
 

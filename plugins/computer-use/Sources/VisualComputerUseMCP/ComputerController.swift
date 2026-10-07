@@ -2,6 +2,7 @@
 @preconcurrency import ApplicationServices
 @preconcurrency import CoreGraphics
 @preconcurrency import ImageIO
+@preconcurrency import ScreenCaptureKit
 import Foundation
 import UniformTypeIdentifiers
 
@@ -227,13 +228,6 @@ actor ComputerController {
             width: captureRegion.width,
             height: captureRegion.height
         )
-        guard let captured = CGDisplayCreateImage(
-            selected.id,
-            rect: displaySpaceRegion
-        ) else {
-            throw VisualComputerUseError.screenCaptureFailed(selected.id)
-        }
-
         let nativeWidth = max(
             1,
             Int((captureRegion.width * selected.nativePixelsPerPointX).rounded())
@@ -251,6 +245,39 @@ actor ComputerController {
                     .rounded()
             )
         )
+        guard #available(macOS 14.0, *) else {
+            // CGDisplayCreateImage enters a private WindowServer path that can
+            // terminate a sandboxed Plugin process instead of returning an
+            // error. Keep the failure recoverable on older systems.
+            throw VisualComputerUseError.screenCaptureFailed(selected.id)
+        }
+        let captured: CGImage
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: true
+            )
+            guard let display = content.displays.first(where: {
+                $0.displayID == selected.id
+            }) else {
+                throw VisualComputerUseError.displayNotFound(selected.id)
+            }
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let configuration = SCStreamConfiguration()
+            configuration.sourceRect = displaySpaceRegion
+            configuration.width = targetWidth
+            configuration.height = targetHeight
+            configuration.showsCursor = false
+            configuration.capturesAudio = false
+            configuration.ignoreShadowsSingleWindow = true
+            captured = try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            )
+        } catch {
+            Self.logCaptureFailure(error, displayID: selected.id)
+            throw VisualComputerUseError.screenCaptureFailed(selected.id)
+        }
 
         guard let rendered = Self.render(
             image: captured,

@@ -30,6 +30,7 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ImageIO"),
+                .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("UniformTypeIdentifiers")
             ]
         ),

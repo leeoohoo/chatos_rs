@@ -69,7 +69,7 @@ import {
 } from './mcp-tool-helpers.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.25';
+const SERVER_VERSION = '3.0.26';
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
@@ -203,8 +203,13 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'web_design_execute_step':
       {
-      const decodedOperations = decodeStructuredJson(argumentsValue.operationsJson, 'operationsJson');
-      if (!Array.isArray(decodedOperations)) throw new Error('operationsJson must encode an operation array.');
+      if (argumentsValue.operations !== undefined && argumentsValue.operationsJson !== undefined) {
+        throw new Error('Supply operations only; operationsJson is retained only for compatibility.');
+      }
+      const decodedOperations = Array.isArray(argumentsValue.operations)
+        ? argumentsValue.operations
+        : decodeStructuredJson(argumentsValue.operationsJson, 'operationsJson');
+      if (!Array.isArray(decodedOperations)) throw new Error('operations must be an operation array.');
       return progressiveGenerationService().executeStep({
         documentId: String(argumentsValue.documentId),
         expectedPlanRevision: Number(argumentsValue.expectedPlanRevision),
