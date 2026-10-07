@@ -283,6 +283,46 @@ extension NativePluginRuntimeTests {
         }
     }
 
+    @Test("Computer Use receives only the macOS UI services required by its declared permission")
+    func computerUseSandboxIncludesRequiredUIServices() throws {
+        let installation = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: installation) }
+        let record = try nativePluginTestRecord(
+            installationURL: installation,
+            pluginID: "computer-use-plugin"
+        )
+        let permitted = NativePluginProcessLaunch(
+            record: record,
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: [],
+            environment: [:],
+            installationURL: installation,
+            writableDirectories: [],
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn", "computer.control"],
+            networkAccess: .disabled
+        )
+        let permittedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
+        )
+        #expect(permittedProfile.contains("(allow user-preference-read)"))
+        #expect(permittedProfile.contains("com.apple.CARenderServer"))
+        #expect(permittedProfile.contains("com.apple.coreservices.launchservicesd"))
+        #expect(permittedProfile.contains("com\\.apple\\.pasteboard"))
+        #expect(permittedProfile.contains("com\\.apple\\.distributed_notifications"))
+
+        var denied = permitted
+        denied.permissionSnapshot = ["process.spawn"]
+        let deniedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: denied).dropFirst().first
+        )
+        #expect(!deniedProfile.contains("(allow user-preference-read)"))
+        #expect(!deniedProfile.contains("com.apple.CARenderServer"))
+        #expect(!deniedProfile.contains("com\\.apple\\.pasteboard"))
+    }
+
     @Test("Web Design receives isolated temporary storage and managed browser access")
     func webDesignPluginLaunchSupportsVisualVerification() throws {
         let root = FileManager.default.temporaryDirectory

@@ -219,7 +219,8 @@ enum NativePluginSandboxProfile {
             "computer.control", "computer.accessibility", "computer.screen-recording",
         ]
         if !launch.permissionSnapshot.isDisjoint(with: computerPermissions) {
-            rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\"))")
+            rules.append("(allow user-preference-read)")
+            rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\") (global-name-regex #\"^com\\.apple\\.pasteboard\\.[0-9]+$\") (global-name-regex #\"^com\\.apple\\.distributed_notifications(?:@.*)?$\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {
             if launch.permissionSnapshot.contains("workspace.write") {
