@@ -594,8 +594,11 @@ enum NativeAgentPluginFailurePresenter {
             return "Plugin 返回了无效响应：\(sanitize(message, projectRootURLs: projectRootURLs))"
         case .sessionNotFound, .processUnavailable:
             return "Plugin 本机会话已结束，请重新查看该能力后重试。"
-        case let .processExited(code):
-            return "Plugin 本机进程已退出（\(code)），请重试。"
+        case let .processExited(code, detail):
+            guard let detail else {
+                return "Plugin 本机进程已退出（\(code)），请重试。"
+            }
+            return "Plugin 本机进程已退出（\(code)）：\(sanitize(detail, projectRootURLs: projectRootURLs))"
         case .timeout:
             return "Plugin 工具调用超时，请缩小本次操作范围后重试。"
         case .cancelled:

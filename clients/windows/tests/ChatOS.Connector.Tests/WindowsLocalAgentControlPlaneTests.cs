@@ -78,8 +78,8 @@ public sealed class WindowsLocalAgentControlPlaneTests
     {
         var tools = WindowsLocalAgentCapabilityCatalog.MainChatToolsFor(
         [
-            new("plugin-2", "Plugin Two", "second"),
-            new("plugin-1", "Plugin One", "first"),
+            new("open-computer-use@chatos-marketplace", "Computer Use", "Desktop control."),
+            new("chatos-browser-cdp@chatos-marketplace", "Browser CDP", "Browser pages."),
         ]);
         var create = tools.Single(tool =>
             tool.GetProperty("name").GetString() == "create_task");
@@ -95,7 +95,26 @@ public sealed class WindowsLocalAgentControlPlaneTests
             .Select(value => value.GetString())
             .ToArray();
 
-        Assert.Equal(["plugin-1", "plugin-2"], values);
+        Assert.Equal(
+            ["chatos-browser-cdp@chatos-marketplace", "open-computer-use@chatos-marketplace"],
+            values);
+        var titles = create
+            .GetProperty("parameters")
+            .GetProperty("properties")
+            .GetProperty("plugin_hints")
+            .GetProperty("items")
+            .GetProperty("properties")
+            .GetProperty("plugin_key")
+            .GetProperty("oneOf")
+            .EnumerateArray()
+            .Select(value => value.GetProperty("title").GetString()!)
+            .ToArray();
+        Assert.Contains(titles, title =>
+            title.Contains("Browser pages.", StringComparison.Ordinal) &&
+            title.Contains("only for websites", StringComparison.Ordinal));
+        Assert.Contains(titles, title =>
+            title.Contains("Desktop control.", StringComparison.Ordinal) &&
+            title.Contains("native desktop applications", StringComparison.Ordinal));
     }
 
     [Fact]

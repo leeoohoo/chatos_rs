@@ -28,7 +28,7 @@ internal static class WindowsLocalAgentCapabilityCatalog
             .ToArray();
         var pluginTitles = pluginChoices
             .OrderBy(choice => choice.PluginKey, StringComparer.Ordinal)
-            .Select(choice => $"{choice.DisplayName} — {choice.Description}")
+            .Select(PluginChoiceTitle)
             .ToArray();
         var maxItems = pluginKeys.Length == 0 ? 0 : 16;
         return
@@ -112,7 +112,7 @@ internal static class WindowsLocalAgentCapabilityCatalog
         uniqueItems = true,
         description = pluginKeys.Count == 0
             ? "No installed Plugin is selectable for this request. Send an empty plugin_hints array."
-            : "Suggest only the minimum installed Plugins required by this Task.",
+            : "Suggest only the minimum installed Plugins required by this specific Task. Use only plugin_key values from this request-scoped catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. Do not select both merely as a fallback. The client freezes and validates the selected Plugin keys before execution.",
         items = new
         {
             type = "object",
@@ -129,12 +129,31 @@ internal static class WindowsLocalAgentCapabilityCatalog
                         title,
                     }).ToArray(),
                 },
-                reason = new { type = "string", maxLength = 1000 },
+                reason = new
+                {
+                    type = "string",
+                    maxLength = 1000,
+                    description = "Why this specific Task requires the Plugin.",
+                },
             },
             required = new[] { "plugin_key" },
             additionalProperties = false,
         },
     };
+
+    private static string PluginChoiceTitle(WindowsLocalAgentPluginChoice plugin)
+    {
+        var description = plugin.Description;
+        if (plugin.PluginKey.Contains("computer-use", StringComparison.OrdinalIgnoreCase))
+        {
+            description += " Use this for native desktop applications and operating-system UI, including Feishu/Lark, WeChat, DingTalk, Finder and other installed apps. Prefer it over browser automation whenever the target is a desktop app.";
+        }
+        else if (plugin.PluginKey.Contains("browser-cdp", StringComparison.OrdinalIgnoreCase))
+        {
+            description += " Use this only for websites in managed Chromium or an explicitly connected Chrome session. Do not select it for native desktop applications such as Feishu/Lark, WeChat or DingTalk.";
+        }
+        return $"{plugin.DisplayName} — {description}";
+    }
 
     private static JsonElement AttachmentReadTool { get; } = Parse("""
         {

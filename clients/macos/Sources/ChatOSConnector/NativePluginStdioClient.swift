@@ -361,10 +361,14 @@ actor NativePluginStdioClient {
         self.processID = nil
         processExitSource?.cancel()
         processExitSource = nil
+        let diagnostic = Self.redactedErrorTail(errorBuffer)
         if exitCode != 0 {
             logPluginDiagnostics(reason: "process exited with code \(exitCode)")
         }
-        stop(with: NativePluginRuntimeError.processExited(exitCode))
+        stop(with: NativePluginRuntimeError.processExited(
+            exitCode,
+            diagnostic.isEmpty ? nil : diagnostic
+        ))
     }
 
     private func logPluginDiagnostics(reason: String) {
@@ -467,7 +471,7 @@ enum NativePluginRuntimeError: LocalizedError {
     case mcpError(String)
     case sessionNotFound
     case processUnavailable
-    case processExited(Int32)
+    case processExited(Int32, String?)
     case timeout
     case cancelled
 
@@ -478,7 +482,9 @@ enum NativePluginRuntimeError: LocalizedError {
              let .mcpError(message): message
         case .sessionNotFound: "Plugin 本机会话不存在或已经结束"
         case .processUnavailable: "Plugin MCP 进程不可用"
-        case let .processExited(code): "Plugin MCP 进程已退出（\(code)）"
+        case let .processExited(code, detail):
+            detail.map { "Plugin MCP 进程已退出（\(code)）：\($0)" }
+                ?? "Plugin MCP 进程已退出（\(code)）"
         case .timeout: "Plugin MCP 调用超时"
         case .cancelled: "Plugin MCP 调用已取消"
         }

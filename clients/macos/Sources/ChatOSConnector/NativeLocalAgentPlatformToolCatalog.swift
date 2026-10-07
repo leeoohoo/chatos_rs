@@ -369,16 +369,21 @@ public enum NativeLocalAgentPlatformToolCatalog {
     if !choices.isEmpty {
       pluginKey["enum"] = .array(choices.map { .string($0.pluginKey) })
       pluginKey["oneOf"] = .array(choices.map {
-        .object(["const": .string($0.pluginKey), "title": .string($0.displayName)])
+        .object([
+          "const": .string($0.pluginKey),
+          "title": .string(pluginChoiceTitle($0)),
+        ])
       })
-      pluginKey["x-enum-labels"] = .array(choices.map { .string($0.displayName) })
+      pluginKey["x-enum-labels"] = .array(choices.map {
+        .string(pluginChoiceTitle($0))
+      })
     }
     var schema: [String: LocalAgentJSONValue] = [
       "type": .string("array"),
       "maxItems": .number(16),
       "uniqueItems": .bool(true),
       "description": .string(
-        "Suggest only installed Plugins needed by this Task. The client freezes and validates the selected Plugin keys before execution."
+        "Suggest only the minimum installed Plugins required by this specific Task. Use only plugin_key values from this request-scoped catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. Do not select both merely as a fallback. The client freezes and validates the selected Plugin keys before execution."
       ),
       "items": .object([
         "type": .string("object"),
@@ -386,6 +391,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
           "plugin_key": .object(pluginKey),
           "reason": .object([
             "type": .string("string"), "maxLength": .number(1_000),
+            "description": .string("Why this specific Task requires the Plugin."),
           ]),
         ]),
         "required": .array([.string("plugin_key")]),
@@ -399,6 +405,24 @@ public enum NativeLocalAgentPlatformToolCatalog {
       )
     }
     return .object(schema)
+  }
+
+  private static func pluginChoiceTitle(
+    _ plugin: NativeInstalledAgentPlugin
+  ) -> String {
+    let key = plugin.pluginKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    let description: String
+    if key.contains("computer-use") {
+      description = plugin.description
+        + " Use this for native desktop applications and operating-system UI, including Feishu/Lark, WeChat, DingTalk, Finder and other installed apps. Prefer it over browser automation whenever the target is a desktop app."
+    } else if key.contains("browser-cdp") {
+      description = plugin.description
+        + " Use this only for websites in managed Chromium or an explicitly connected Chrome session. Do not select it for native desktop applications such as Feishu/Lark, WeChat or DingTalk."
+    } else {
+      description = plugin.description
+    }
+    return "\(plugin.displayName) — \(description)"
   }
 
   private static func taskIDTool(

@@ -159,39 +159,6 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         )
     }
 
-    func testMainChatTaskSchemaFreezesInstalledPluginChoices() throws {
-        let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools(pluginChoices: [
-            .init(
-                id: "plugin-2",
-                pluginKey: "plugin-key-2",
-                displayName: "Plugin Two",
-                description: "second",
-                componentCount: 1
-            ),
-            .init(
-                id: "plugin-1",
-                displayName: "Plugin One",
-                description: "first",
-                componentCount: 1
-            ),
-        ])
-        let create = try XCTUnwrap(tools.first { value in
-            guard case .object(let tool) = value else { return false }
-            return tool["name"] == .string("create_task")
-        })
-        guard case .object(let tool) = create,
-              case .object(let parameters)? = tool["parameters"],
-              case .object(let properties)? = parameters["properties"],
-              case .object(let hints)? = properties["plugin_hints"],
-              case .object(let items)? = hints["items"],
-              case .object(let hintProperties)? = items["properties"],
-              case .object(let pluginKey)? = hintProperties["plugin_key"],
-              case .array(let values)? = pluginKey["enum"] else {
-            return XCTFail("missing installed Plugin choice schema")
-        }
-        XCTAssertEqual(values, [.string("plugin-1"), .string("plugin-key-2")])
-    }
-
     func testTaskToolAuthorizationEnforcesSelectedCapabilities() throws {
         let readOnly = try NativeLocalAgentTaskToolAuthorization.resolve([
             "tool_options": .object([

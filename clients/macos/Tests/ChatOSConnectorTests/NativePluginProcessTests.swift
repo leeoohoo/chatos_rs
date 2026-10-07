@@ -318,7 +318,15 @@ extension NativePluginRuntimeTests {
               "permissions":[
                 {"permission":"process.spawn","required":true},
                 {"permission":"artifact.create","required":true}
-              ]
+              ],
+              "runtimeContext":{
+                "scope":"project",
+                "components":["web-design-mcp"],
+                "required":[],
+                "optional":["project.id","workspace.id","workspace.root"],
+                "storageIsolation":"project",
+                "missingContext":"device"
+              }
             }
             """.utf8)
         )
@@ -344,7 +352,9 @@ extension NativePluginRuntimeTests {
             adapterSessionID: "web-design-session",
             ownerUserID: "user-1",
             deviceID: "device-1",
-            workspaceRoot: nil,
+            workspaceID: "workspace-1",
+            workspaceRoot: root.appendingPathComponent("workspace", isDirectory: true),
+            projectID: "project-1",
             permissionSnapshot: ["process.spawn", "artifact.create"],
             runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
         )
@@ -352,9 +362,16 @@ extension NativePluginRuntimeTests {
         let launch = NativePluginProcessLaunch(stdio: prepared)
         #expect(launch.networkAccess == .loopbackServer)
         #expect(launch.homeDirectory == nil)
+        let dataDirectory = try #require(prepared.environment["CHATOS_PLUGIN_DATA_DIR"])
+        let cacheDirectory = try #require(prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+        #expect(launch.writablePaths.map(\.path).contains(dataDirectory + ".lock"))
+        #expect(launch.writablePaths.map(\.path).contains(cacheDirectory + ".lock"))
         let process = try NativePluginProcessLauncher.prepare(launch)
         #expect(process.environment["HOME"] == prepared.environment["CHATOS_PLUGIN_DATA_DIR"])
         #expect(process.environment["TMPDIR"] == prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+        let sandboxProfile = try #require(process.arguments.dropFirst(2).first)
+        #expect(sandboxProfile.contains(dataDirectory + ".lock"))
+        #expect(sandboxProfile.contains(cacheDirectory + ".lock"))
     }
 
     @Test("Document Tools may launch an installed browser for offline visual verification")

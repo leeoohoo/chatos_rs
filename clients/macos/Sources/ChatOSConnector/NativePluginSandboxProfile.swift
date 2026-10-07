@@ -13,6 +13,7 @@ struct NativePluginProcessLaunch: Sendable {
     var environment: [String: String]
     var installationURL: URL
     var writableDirectories: [URL]
+    var writablePaths: [URL]
     var executableDirectories: [URL]
     var workspaceRoot: URL?
     var permissionSnapshot: Set<String>
@@ -26,6 +27,7 @@ struct NativePluginProcessLaunch: Sendable {
         environment: [String: String],
         installationURL: URL,
         writableDirectories: [URL],
+        writablePaths: [URL] = [],
         executableDirectories: [URL] = [],
         workspaceRoot: URL?,
         permissionSnapshot: Set<String>,
@@ -38,6 +40,7 @@ struct NativePluginProcessLaunch: Sendable {
         self.environment = environment
         self.installationURL = installationURL
         self.writableDirectories = writableDirectories
+        self.writablePaths = writablePaths
         self.executableDirectories = executableDirectories
         self.workspaceRoot = workspaceRoot
         self.permissionSnapshot = permissionSnapshot
@@ -52,6 +55,13 @@ struct NativePluginProcessLaunch: Sendable {
         ]
         var writableDirectories = writableKeys.compactMap { launch.environment[$0] }
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        // Some Plugins use an atomic sibling directory (for example `<scope>.lock`)
+        // while opening their isolated data/cache scope. Grant only those exact
+        // sidecar paths; granting the whole `scopes/project` parent would let one
+        // project-scoped process access sibling project state.
+        let writablePaths = ["CHATOS_PLUGIN_DATA_DIR", "CHATOS_PLUGIN_CACHE_DIR"]
+            .compactMap { launch.environment[$0] }
+            .map { URL(fileURLWithPath: $0 + ".lock", isDirectory: true) }
         var executableDirectories = [
             launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"],
             launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"],
@@ -89,6 +99,7 @@ struct NativePluginProcessLaunch: Sendable {
             environment: launch.environment,
             installationURL: launch.installationURL,
             writableDirectories: writableDirectories,
+            writablePaths: writablePaths,
             executableDirectories: executableDirectories,
             workspaceRoot: launch.workspaceRoot,
             permissionSnapshot: launch.permissionSnapshot,
@@ -149,6 +160,12 @@ enum NativePluginProcessLauncher {
                 withIntermediateDirectories: true
             )
         }
+        for path in launch.writablePaths {
+            try FileManager.default.createDirectory(
+                at: path.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        }
         let sandboxExecutable = NativePluginSandboxProfile.executableURL
         return .init(
             executableURL: sandboxExecutable,
@@ -190,6 +207,9 @@ enum NativePluginSandboxProfile {
         ]
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
+        }
+        for path in launch.writablePaths {
+            rules.append("(allow file-read* file-write* \(literal(path.path)))")
         }
         for directory in launch.executableDirectories {
             rules.append("(allow file-read* \(literal(directory.path)))")
