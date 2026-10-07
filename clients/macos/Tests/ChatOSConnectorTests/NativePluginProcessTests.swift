@@ -426,10 +426,14 @@ extension NativePluginRuntimeTests {
         #expect(sandboxProfile.contains("com[.]google[.]Chrome"))
         #expect(!sandboxProfile.contains("com.apple.tccd"))
         #expect(!sandboxProfile.contains("com.apple.replayd"))
-        let temporaryRoot = FileManager.default.temporaryDirectory
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-            .path
+        let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
+            FileManager.default.temporaryDirectory.path
+        )
+        let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        #expect(sandboxProfile.contains(
+            "^\(escapedTemporaryRoot)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)"
+        ))
         #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }
 

@@ -243,10 +243,14 @@ enum NativePluginSandboxProfile {
             // DARWIN_USER_TEMP_DIR, even when TMPDIR and --user-data-dir point at
             // the Plugin cache. Restrict the exception to Chromium's randomized
             // singleton directories rather than exposing the user's whole temp root.
-            let temporaryRoot = FileManager.default.temporaryDirectory
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-                .path
+            // Seatbelt evaluates the canonical vnode path (`/private/var/...`),
+            // while Foundation commonly reports the same directory through the
+            // `/var/...` compatibility symlink. A regex built from the latter
+            // never matches Chromium's ProcessSingleton directory and Chrome
+            // exits with code 21 before DevTools starts.
+            let temporaryRoot = Self.canonicalPath(
+                FileManager.default.temporaryDirectory.path
+            )
             let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
             rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
             rules.append("(allow network* (local unix-socket))")
@@ -273,9 +277,9 @@ enum NativePluginSandboxProfile {
         return rules.joined(separator: "\n")
     }
 
-    private static func literal(_ path: String) -> String {
+    static func canonicalPath(_ path: String) -> String {
         var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let canonical = path.withCString { pointer -> String in
+        return path.withCString { pointer -> String in
             guard realpath(pointer, &resolved) != nil else {
                 return URL(fileURLWithPath: path).standardizedFileURL.path
             }
@@ -284,6 +288,10 @@ enum NativePluginSandboxProfile {
                 as: UTF8.self
             )
         }
+    }
+
+    private static func literal(_ path: String) -> String {
+        let canonical = canonicalPath(path)
         let escaped = canonical
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
