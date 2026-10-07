@@ -154,6 +154,72 @@ extension NativePluginRuntimeTests {
         #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
     }
 
+    @Test("Diagram Studio artifacts are validated and persisted in the project")
+    func diagramArtifactRegistration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fixtures = [
+            ("费用报销审批.svg", "image/svg+xml", Data("<svg/>".utf8)),
+            ("费用报销审批.diagram.json", "application/vnd.chatos.diagram+json", Data("{}".utf8)),
+            ("费用报销审批.puml", "text/vnd.plantuml", Data("@startuml\n@enduml\n".utf8)),
+        ]
+        for fixture in fixtures {
+            try fixture.2.write(to: artifacts.appendingPathComponent(fixture.0))
+        }
+        let candidates = fixtures.enumerated().map { index, fixture in
+            NativeJSONValue.object([
+                "producer_artifact_id": .string("diagram-\(index)"),
+                "relative_path": .string(fixture.0),
+                "display_name": .string(fixture.0),
+                "media_type": .string(fixture.1),
+                "size_bytes": .number(Double(fixture.2.count)),
+                "sha256": .string(NativePluginHash.sha256(fixture.2)),
+            ])
+        }
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-diagram",
+            pluginID: "diagram-plugin",
+            releaseID: "release-1",
+            version: "0.4.3",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "diagram-mcp",
+            adapterSessionID: "adapter-diagram"
+        )
+
+        let registered = try NativePluginArtifactRegistrar.register(
+            result: .object([
+                "content": .array([]),
+                "_meta": .object(["chatos/artifacts": .array(candidates)]),
+            ]),
+            identity: identity,
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            workspaceRootURL: workspace,
+            artifactRootURL: artifacts,
+            permissionSnapshot: ["artifact.create"],
+            toolName: "diagram_export"
+        )
+
+        let descriptors = try #require(
+            registered.jsonObject?["_meta"]?.jsonObject?["chatos/artifacts"]?.jsonArray
+        )
+        #expect(descriptors.count == fixtures.count)
+        for (index, fixture) in fixtures.enumerated() {
+            let descriptor = try #require(descriptors[index].jsonObject?["artifact"]?.jsonObject)
+            #expect(descriptor["display_name"]?.jsonString == fixture.0)
+            #expect(descriptor["media_type"]?.jsonString == fixture.1)
+            let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
+            #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == fixture.2)
+        }
+    }
+
     @Test("computer use image blocks become local visual-session frames")
     func computerUseImageBridge() throws {
         let root = FileManager.default.temporaryDirectory

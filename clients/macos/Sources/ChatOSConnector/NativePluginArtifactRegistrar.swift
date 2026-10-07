@@ -266,8 +266,14 @@ enum NativePluginArtifactRegistrar {
         case "png": ["image/png"]
         case "jpg", "jpeg": ["image/jpeg"]
         case "pdf": ["application/pdf"]
-        case "json": ["application/json", "application/vnd.chatos.solution-workspace+json"]
+        case "json": [
+            "application/json",
+            "application/vnd.chatos.diagram+json",
+            "application/vnd.chatos.solution-workspace+json",
+        ]
         case "har": ["application/json"]
+        case "svg": ["image/svg+xml"]
+        case "puml": ["text/vnd.plantuml"]
         case "md": ["text/markdown"]
         case "txt": ["text/plain"]
         case "csv": ["text/csv"]
