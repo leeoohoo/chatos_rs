@@ -120,6 +120,62 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(pendingApprovals.isEmpty)
     }
 
+    func testInstalledPluginCatalogExcludesUntrustedInstallations() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agent-plugin-integrity-\(UUID().uuidString)")
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: installation, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifestURL = installation.appendingPathComponent("chatos.plugin.json")
+        try Data(#"{"schemaVersion":3,"name":"test-agent-plugin","version":"1.0.0","description":"test","mcpServers":{"test":{"type":"stdio","bin":"test","args":[]}},"permissions":[]}"#.utf8)
+            .write(to: manifestURL)
+
+        let stateURL = root.appendingPathComponent("connector-state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
+        state.deviceID = "device-1"
+        state.installedPluginIDs = ["plugin-1"]
+        state.installedPluginRecords = [
+            "plugin-1": .init(
+                pluginID: "plugin-1",
+                releaseID: "release-1",
+                version: "1.0.0",
+                artifactSHA256: String(repeating: "a", count: 64),
+                installationPath: installation.path,
+                installedAt: "2026-10-07T00:00:00Z"
+            ),
+        ]
+        try JSONEncoder().encode(state).write(to: stateURL)
+
+        var service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: AgentPluginTestTicketProvider()
+        )
+        var installed = try await service.installedAgentPlugins(ownerUserID: "alice")
+        XCTAssertTrue(installed.isEmpty, "Legacy installs without trusted hashes must be hidden")
+
+        state.installedPluginRecords?["plugin-1"]?.packageFileSHA256 =
+            try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 100,
+                maximumBytes: 1_024 * 1_024
+            )
+        try Data("\n".utf8).write(to: manifestURL, options: .atomic)
+        try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
+        service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: AgentPluginTestTicketProvider()
+        )
+        installed = try await service.installedAgentPlugins(ownerUserID: "alice")
+        XCTAssertTrue(installed.isEmpty, "Modified installs must be hidden from task planning")
+    }
+
     func testInstalledPluginRunsDirectlyWithoutRelayRequest() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("agent-plugin-provider-\(UUID().uuidString)")

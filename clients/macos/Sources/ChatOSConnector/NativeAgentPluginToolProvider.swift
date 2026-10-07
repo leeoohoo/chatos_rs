@@ -2,30 +2,6 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
-    public let id: String
-    public let pluginKey: String
-    public let displayName: String
-    public let description: String
-    public let componentCount: Int
-
-    public init(
-        id: String,
-        pluginKey: String? = nil,
-        displayName: String,
-        description: String,
-        componentCount: Int
-    ) {
-        self.id = id
-        let normalizedPluginKey = pluginKey?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.pluginKey = (normalizedPluginKey?.isEmpty == false ? normalizedPluginKey : nil) ?? id
-        self.displayName = displayName
-        self.description = description
-        self.componentCount = componentCount
-    }
-}
-
 /// Starts already-installed stdio MCP plugins directly from the client for one local Agent run.
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
@@ -36,6 +12,7 @@ extension NativeLocalConnectorService {
         }
         return (state.installedPluginRecords ?? [:]).values.compactMap { record in
             guard state.pluginPreferences[record.pluginID] ?? true,
+                  NativePluginInstallationIntegrity.status(record: record) == .verified,
                   let manifest = try? Self.agentPluginManifest(record: record) else { return nil }
             return .init(
                 id: record.pluginID,

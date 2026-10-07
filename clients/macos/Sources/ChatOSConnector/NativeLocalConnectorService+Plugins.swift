@@ -6,10 +6,13 @@ extension NativeLocalConnectorService {
 
     public func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] {
         let records = state.installedPluginRecords ?? [:]
-        return try records.values
+        return records.values
             .filter { state.pluginPreferences[$0.pluginID] ?? true }
             .flatMap { record -> [LocalConnectorPluginApplication] in
-                let manifest = try installedPluginManifest(record: record)
+                guard NativePluginInstallationIntegrity.status(record: record) == .verified,
+                      let manifest = try? installedPluginManifest(record: record) else {
+                    return []
+                }
                 return manifest.ui.compactMap { contribution in
                     guard contribution.surface == "workbench" else { return nil }
                     return pluginApplication(
@@ -40,6 +43,7 @@ extension NativeLocalConnectorService {
         guard let record = state.installedPluginRecords?[pluginID] else {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
+        try Self.verifyTrustedPluginInstallation(record)
         let manifest = try installedPluginManifest(record: record)
         guard let contribution = manifest.ui.first(where: {
             $0.componentKey == componentKey && $0.surface == "workbench"
@@ -106,19 +110,26 @@ extension NativeLocalConnectorService {
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
             let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
-            let installedManifest: NativePluginManifest?
-            let permissions: [LocalConnectorPluginPermission]
-            if let installedRecord,
-               let manifest = try? installedPluginManifest(record: installedRecord) {
-                installedManifest = manifest
-                permissions = try await pluginPermissionSnapshots.permissions(
-                    record: installedRecord,
-                    manifest: manifest,
-                    forceRefresh: forceRefresh
-                )
-            } else {
-                installedManifest = nil
-                permissions = []
+            var installationIssue = Self.pluginInstallationIssue(
+                installed: installed,
+                record: installedRecord
+            )
+            var installedManifest: NativePluginManifest?
+            var permissions: [LocalConnectorPluginPermission] = []
+            if let installedRecord, installationIssue == nil {
+                do {
+                    installedManifest = try installedPluginManifest(record: installedRecord)
+                } catch {
+                    installedManifest = nil
+                    installationIssue = .integrityCheckFailed
+                }
+                if let installedManifest {
+                    permissions = try await pluginPermissionSnapshots.permissions(
+                        record: installedRecord,
+                        manifest: installedManifest,
+                        forceRefresh: forceRefresh
+                    )
+                }
             }
             plugins.append(.init(
                 pluginID: id,
@@ -144,10 +155,27 @@ extension NativeLocalConnectorService {
                     && source.release.npmPackage != nil,
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
-                permissions: permissions
+                permissions: permissions,
+                installationIssue: installationIssue
             ))
         }
         return plugins
+    }
+
+    private static func pluginInstallationIssue(
+        installed: Bool,
+        record: NativeInstalledPluginRecord?
+    ) -> LocalConnectorPluginInstallationIssue? {
+        guard installed else { return nil }
+        guard let record else { return .missingIntegrityRecord }
+        switch NativePluginInstallationIntegrity.status(record: record) {
+        case .verified:
+            return nil
+        case .missingRecord:
+            return .missingIntegrityRecord
+        case .failed:
+            return .integrityCheckFailed
+        }
     }
 
     static func pluginUpdateAvailable(
@@ -317,6 +345,7 @@ extension NativeLocalConnectorService {
               let deviceID = state.deviceID else {
             throw NativeConnectorError.browserExtensionPairing("Browser CDP 尚未安装或设备尚未配对")
         }
+        try Self.verifyTrustedPluginInstallation(record)
         let manifest = try installedPluginManifest(record: record)
         guard manifest.name == NativeBrowserPluginIdentity.packageName,
               manifest.mcpServers[NativeBrowserPluginIdentity.componentKey] != nil else {
@@ -341,6 +370,9 @@ extension NativeLocalConnectorService {
         guard let record = state.installedPluginRecords?[pluginID],
               let ownerUserID = state.user?.id,
               let deviceID = state.deviceID else {
+            return false
+        }
+        guard NativePluginInstallationIntegrity.status(record: record) == .verified else {
             return false
         }
         let manifest = try installedPluginManifest(record: record)
@@ -402,6 +434,7 @@ extension NativeLocalConnectorService {
         guard let record = state.installedPluginRecords?[pluginID] else {
             throw NativeConnectorError.pluginInstallation("Plugin 尚未安装")
         }
+        try Self.verifyTrustedPluginInstallation(record)
         let manifest = try installedPluginManifest(record: record)
         if try await NativePluginPermissionInspector.request(
             record: record,
@@ -433,6 +466,23 @@ extension NativeLocalConnectorService {
             throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
         }
         return manifest
+    }
+
+    private static func verifyTrustedPluginInstallation(
+        _ record: NativeInstalledPluginRecord
+    ) throws {
+        switch NativePluginInstallationIntegrity.status(record: record) {
+        case .verified:
+            return
+        case .missingRecord:
+            throw NativeConnectorError.pluginInstallation(
+                "Plugin 安装缺少可信完整性记录，请从 Marketplace 重新安装"
+            )
+        case .failed:
+            throw NativeConnectorError.pluginInstallation(
+                "Plugin 安装未通过完整性校验，请从 Marketplace 重新安装"
+            )
+        }
     }
 
     private func pluginApplication(

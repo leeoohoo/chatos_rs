@@ -131,7 +131,17 @@ struct LocalConnectorPluginsView: View {
                             .padding(.vertical, 3)
                             .background(.blue.opacity(0.12), in: Capsule())
                     }
-                    if plugin.installed, !plugin.permissions.isEmpty {
+                    if plugin.requiresReinstall {
+                        Label(
+                            model.localized("需要重新安装", english: "Reinstall required"),
+                            systemImage: "exclamationmark.shield.fill"
+                        )
+                        .appFont(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(.orange.opacity(0.12), in: Capsule())
+                    } else if plugin.installed, !plugin.permissions.isEmpty {
                         permissionHealthBadge(plugin.permissions)
                     }
                     if isOperating {
@@ -139,7 +149,7 @@ struct LocalConnectorPluginsView: View {
                             .controlSize(.small)
                     }
                     Spacer()
-                    if plugin.installed {
+                    if plugin.installed, !plugin.requiresReinstall {
                         Toggle(
                             model.localized("启用", english: "Enabled"),
                             isOn: Binding(
@@ -155,10 +165,18 @@ struct LocalConnectorPluginsView: View {
                     .appFont(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                if plugin.installed {
+                if let issue = plugin.installationIssue {
+                    Label(installationIssueMessage(issue), systemImage: "exclamationmark.triangle.fill")
+                        .appFont(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if plugin.installed, !plugin.requiresReinstall {
                     permissionSection(plugin, isOperating: isOperating)
                 }
-                if plugin.installed, BrowserExtensionGuide.isBrowserPlugin(plugin) {
+                if plugin.installed,
+                   !plugin.requiresReinstall,
+                   BrowserExtensionGuide.isBrowserPlugin(plugin) {
                     browserExtensionSection(plugin, isOperating: isOperating)
                 }
                 if let operationError = viewModel.pluginErrorMessages[plugin.id] {
@@ -180,7 +198,12 @@ struct LocalConnectorPluginsView: View {
                     }
                     Spacer()
                     if plugin.installed {
-                        if plugin.updateAvailable {
+                        if plugin.requiresReinstall, plugin.installAvailable {
+                            Button(model.localized("安全重装", english: "Secure Reinstall")) {
+                                installPlugin(plugin)
+                            }
+                                .buttonStyle(.borderedProminent)
+                        } else if plugin.updateAvailable {
                             Button(model.localized("更新", english: "Update")) {
                                 installPlugin(plugin)
                             }
@@ -214,6 +237,23 @@ struct LocalConnectorPluginsView: View {
             "\(plugin.publisher) · 已安装 \(installedVersion)",
             english: "\(plugin.publisher) · Installed \(installedVersion)"
         )
+    }
+
+    private func installationIssueMessage(
+        _ issue: LocalConnectorPluginInstallationIssue
+    ) -> String {
+        switch issue {
+        case .missingIntegrityRecord:
+            return model.localized(
+                "此 Plugin 来自旧版安装，缺少可信的逐文件完整性记录。它已停止提供给任务使用，请从 Marketplace 安全重装。",
+                english: "This plugin is from an older installation and lacks a trusted per-file integrity record. It is unavailable to tasks until securely reinstalled from Marketplace."
+            )
+        case .integrityCheckFailed:
+            return model.localized(
+                "此 Plugin 的安装文件未通过完整性校验。它已停止提供给任务使用，请从 Marketplace 安全重装。",
+                english: "This plugin installation failed its integrity check. It is unavailable to tasks until securely reinstalled from Marketplace."
+            )
+        }
     }
 
     private func browserExtensionSection(

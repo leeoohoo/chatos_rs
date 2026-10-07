@@ -3,6 +3,12 @@ import Darwin
 import Foundation
 
 enum NativePluginInstallationIntegrity {
+    enum Status: Sendable, Equatable {
+        case verified
+        case missingRecord
+        case failed
+    }
+
     private static let defaultMaximumFiles = 20_000
     private static let defaultMaximumBytes: Int64 = 512 * 1_024 * 1_024
 
@@ -20,6 +26,22 @@ enum NativePluginInstallationIntegrity {
         guard actual.count == expected.count,
               actual.allSatisfy({ expected[$0.key] == $0.value }) else {
             throw NativePluginRuntimeError.invalidManifest("Plugin 安装文件已被篡改")
+        }
+    }
+
+    static func status(record: NativeInstalledPluginRecord) -> Status {
+        guard let expected = record.packageFileSHA256, !expected.isEmpty else {
+            return .missingRecord
+        }
+        let installationURL = URL(
+            fileURLWithPath: record.installationPath,
+            isDirectory: true
+        )
+        do {
+            try verify(record: record, installationURL: installationURL)
+            return .verified
+        } catch {
+            return .failed
         }
     }
 
