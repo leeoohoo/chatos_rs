@@ -5,6 +5,22 @@ import Foundation
 import Testing
 
 extension NativePluginRuntimeTests {
+    @Test("stdio output buffer budget is bounded by bytes instead of pipe chunk count")
+    func stdioOutputBufferUsesByteBudget() {
+        let budget = NativePluginOutputBufferBudget(maximumBytes: 1_024)
+
+        for _ in 0..<1_024 {
+            #expect(budget.reserve(1))
+        }
+        #expect(budget.currentBytes == 1_024)
+        #expect(!budget.reserve(1))
+
+        budget.release(768)
+        #expect(budget.currentBytes == 256)
+        #expect(budget.reserve(768))
+        #expect(!budget.reserve(1))
+    }
+
     @Test("stdio plugin sandbox blocks undeclared user file reads")
     func stdioSandboxBlocksUndeclaredFileRead() async throws {
         let parent = FileManager.default.temporaryDirectory
