@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use crate::{memory::memory_plan, LocalAiStepPlanner, PreparedLocalAiStep};
+use crate::{
+    memory::{external_tool_results, memory_plan},
+    LocalAiStepPlanner, PreparedLocalAiStep,
+};
 use async_trait::async_trait;
 use chatos_ai_runtime::model_config::normalize_thinking_level;
 use chatos_ai_runtime::{
-    append_responses_history_items, message_item, user_text_item, ContextualTurnRunner,
-    ModelRuntimeConfig, RuntimeTurnSpec,
+    append_responses_history_items, build_tool_output_items, message_item, user_text_item,
+    ContextualTurnRunner, ModelRuntimeConfig, RuntimeTurnSpec,
 };
 use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalConversationAttachmentSpec};
 use serde_json::{json, Value};
@@ -494,7 +497,7 @@ fn durable_step_input(
     .unwrap_or_default();
     let mut reason = match claim.run.continuation_input.as_ref() {
         Some(value) if value.get("type").and_then(Value::as_str) == Some("tool_results") => {
-            history.extend(tool_output_items(value)?);
+            history.extend(tool_output_items(claim)?);
             "tool_results".to_string()
         }
         Some(value) if value.get("type").and_then(Value::as_str) == Some("resume") => {
@@ -657,33 +660,10 @@ fn array_value(value: &Value) -> Result<Vec<Value>, String> {
         .ok_or_else(|| "durable input items must be an array".to_string())
 }
 
-fn tool_output_items(continuation: &Value) -> Result<Vec<Value>, String> {
-    let invocations = continuation
-        .get("invocations")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "tool continuation requires invocations".to_string())?;
-    invocations
-        .iter()
-        .map(|invocation| {
-            let call_id = invocation
-                .get("call_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "tool result requires call_id".to_string())?;
-            let output = invocation
-                .get("result")
-                .filter(|value| !value.is_null())
-                .cloned()
-                .unwrap_or_else(
-                    || json!({"error": invocation.get("error").cloned().unwrap_or(Value::Null)}),
-                );
-            Ok(json!({
-                "type": "function_call_output",
-                "call_id": call_id,
-                "output": output.to_string()
-            }))
-        })
-        .collect()
+fn tool_output_items(claim: &LocalAgentRunClaim) -> Result<Vec<Value>, String> {
+    Ok(build_tool_output_items(
+        external_tool_results(claim)?.as_slice(),
+    ))
 }
 
 fn ask_user_output_item(response_items: &[Value], input: &Value) -> Result<Value, String> {

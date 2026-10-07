@@ -130,7 +130,7 @@ fn optional_input_string(input: &Value, key: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<ToolResult>, String> {
+pub(super) fn external_tool_results(claim: &LocalAgentRunClaim) -> Result<Vec<ToolResult>, String> {
     let Some(continuation) = claim
         .run
         .continuation_input

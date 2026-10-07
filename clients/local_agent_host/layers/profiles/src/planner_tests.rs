@@ -344,7 +344,12 @@ fn reconstructs_tool_results_from_checkpoint_and_continuation() {
         }}),
         Some(json!({
             "type": "tool_results",
-            "invocations": [{"call_id": "call-1", "result": {"content": "ok"}}]
+            "invocations": [{
+                "call_id": "call-1",
+                "tool_name": "read_file",
+                "status": "succeeded",
+                "result": {"content": "ok"}
+            }]
         })),
     );
     let (items, reason) = durable_step_input(&claim, "message").expect("input");
@@ -357,6 +362,58 @@ fn reconstructs_tool_results_from_checkpoint_and_continuation() {
         items.last().and_then(|item| item.get("type")),
         Some(&json!("function_call_output"))
     );
+}
+
+#[test]
+fn reconstructs_wrapped_mcp_images_as_model_input_from_durable_continuation() {
+    let checkpoint = json!({"response": {
+        "request_input_items": [{"role": "user", "content": "observe"}],
+        "response_output_items": [{
+            "type": "function_call",
+            "call_id": "call-visual",
+            "name": "capability_invoke",
+            "arguments": "{}"
+        }]
+    }});
+    let continuation = json!({
+        "type": "tool_results",
+        "invocations": [{
+            "call_id": "call-visual",
+            "tool_name": "capability_invoke",
+            "status": "succeeded",
+            "result": {
+                "content": {
+                    "content": [
+                        {"type": "text", "text": "Active application: ChatOS"},
+                        {"type": "image", "data": "/9j/AA==", "mimeType": "image/jpeg"}
+                    ],
+                    "structuredContent": {
+                        "activeApplication": {"name": "ChatOS"}
+                    }
+                },
+                "is_error": false
+            }
+        }]
+    });
+
+    let (items, reason) = durable_step_input(&claim(checkpoint, Some(continuation)), "message")
+        .expect("durable Visual continuation");
+
+    assert_eq!(reason, "tool_results");
+    let output = items
+        .iter()
+        .find(|item| item["type"] == "function_call_output")
+        .expect("function output");
+    assert_eq!(output["call_id"], "call-visual");
+    assert_eq!(output["output"], "Active application: ChatOS");
+    let image = items
+        .iter()
+        .find(|item| item["type"] == "message" && item["role"] == "user")
+        .and_then(|item| item["content"].as_array())
+        .and_then(|content| content.first())
+        .expect("transient image input");
+    assert_eq!(image["type"], "input_image");
+    assert_eq!(image["image_url"], "data:image/jpeg;base64,/9j/AA==");
 }
 
 #[tokio::test]
