@@ -319,10 +319,15 @@ actor NativePluginRuntimeStore {
         result: NativeJSONValue
     ) async {
         guard let session = sessions[adapterSessionID] else { return }
+        if toolName == "browser_session_close" {
+            guard NativeBrowserVisualBridge.sessionWasClosed(in: result) else { return }
+            try? NativeBrowserVisualBridge.clearPublishedSession(at: session.visualSessionURL)
+            notifyVisualSessionChanged()
+            return
+        }
         guard session.permissionSnapshot.contains("browser.file.transfer"),
               session.toolNames.contains("browser_screenshot"),
-              Self.browserVisualRefreshTools.contains(toolName),
-              toolName != "browser_session_close" else {
+              Self.browserVisualRefreshTools.contains(toolName) else {
             return
         }
         let screenshotResult: NativeJSONValue

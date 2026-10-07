@@ -78,6 +78,17 @@ enum NativeBrowserVisualBridge {
         return URL(string: raw)?.host ?? raw
     }
 
+    static func sessionWasClosed(in result: NativeJSONValue) -> Bool {
+        result.jsonObject?["isError"]?.jsonBool != true
+            && findBool(key: "closed", in: result) == true
+    }
+
+    static func clearPublishedSession(at visualSessionURL: URL) throws {
+        let metadataURL = visualSessionURL.appendingPathComponent("session.json")
+        guard FileManager.default.fileExists(atPath: metadataURL.path) else { return }
+        try FileManager.default.removeItem(at: metadataURL)
+    }
+
     private static func findString(key: String, in value: NativeJSONValue) -> String? {
         switch value {
         case let .object(object):
@@ -93,6 +104,29 @@ enum NativeBrowserVisualBridge {
             if let data = text.data(using: .utf8),
                let decoded = try? JSONDecoder().decode(NativeJSONValue.self, from: data),
                let found = findString(key: key, in: decoded) {
+                return found
+            }
+        default:
+            break
+        }
+        return nil
+    }
+
+    private static func findBool(key: String, in value: NativeJSONValue) -> Bool? {
+        switch value {
+        case let .object(object):
+            if let direct = object[key]?.jsonBool { return direct }
+            for child in object.values {
+                if let found = findBool(key: key, in: child) { return found }
+            }
+        case let .array(values):
+            for child in values {
+                if let found = findBool(key: key, in: child) { return found }
+            }
+        case let .string(text):
+            if let data = text.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode(NativeJSONValue.self, from: data),
+               let found = findBool(key: key, in: decoded) {
                 return found
             }
         default:

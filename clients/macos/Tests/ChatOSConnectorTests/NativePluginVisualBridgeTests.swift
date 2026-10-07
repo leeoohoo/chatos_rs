@@ -42,6 +42,46 @@ extension NativePluginRuntimeTests {
         #expect(metadata.jsonObject?["target_app"]?.jsonString == "example.com")
     }
 
+    @Test("closing a browser session removes its published live metadata")
+    func browserCloseClearsPublishedVisualSession() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let metadataURL = root.appendingPathComponent("session.json")
+        try Data("{\"status\":\"running\"}".utf8).write(to: metadataURL)
+
+        let result = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("text"),
+                    "text": .string("{\"closed\":true}"),
+                ]),
+            ]),
+            "isError": .bool(false),
+            "structuredContent": .object(["closed": .bool(true)]),
+        ])
+
+        #expect(NativeBrowserVisualBridge.sessionWasClosed(in: result))
+        try NativeBrowserVisualBridge.clearPublishedSession(at: root)
+        #expect(!FileManager.default.fileExists(atPath: metadataURL.path))
+    }
+
+    @Test("failed browser close results do not clear a live visual session")
+    func failedBrowserCloseDoesNotConfirmClosure() {
+        let result = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("text"),
+                    "text": .string("{\"closed\":true}"),
+                ]),
+            ]),
+            "isError": .bool(true),
+        ])
+
+        #expect(!NativeBrowserVisualBridge.sessionWasClosed(in: result))
+    }
+
     @Test("MCP Office Artifact candidates are validated and persisted in the project")
     func officeArtifactRegistration() throws {
         let root = FileManager.default.temporaryDirectory
