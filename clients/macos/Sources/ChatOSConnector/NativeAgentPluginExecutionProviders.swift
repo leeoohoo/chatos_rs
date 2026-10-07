@@ -529,61 +529,13 @@ struct NativeAgentPluginToolProvider: AgentToolProvider, Sendable {
         } catch NativePluginRuntimeError.cancelled {
             throw CancellationError()
         } catch let error as NativePluginRuntimeError {
-            return .failure(modelVisibleFailure(for: error))
+            return .failure(NativeAgentPluginFailurePresenter.message(
+                for: error,
+                projectRootURLs: [projectRootURL]
+            ))
         } catch {
             return .failure("Plugin 工具运行失败，请检查参数后重试。")
         }
-    }
-
-    private func modelVisibleFailure(for error: NativePluginRuntimeError) -> String {
-        switch error {
-        case let .mcpError(message):
-            return "Plugin 工具拒绝了这次调用：\(sanitizePluginMessage(message))"
-        case .invalidRequest:
-            return "Plugin 工具参数或当前状态无效，请重新查看工具定义后重试。"
-        case .invalidManifest:
-            return "Plugin 安装或声明已失效，请重新安装后重试。"
-        case .permissionDenied:
-            return "Plugin 工具缺少这次操作所需的本机权限。"
-        case let .invalidMCPResponse(message):
-            return "Plugin 返回了无效响应：\(sanitizePluginMessage(message))"
-        case .sessionNotFound, .processUnavailable:
-            return "Plugin 本机会话已结束，请重新查看该能力后重试。"
-        case let .processExited(code):
-            return "Plugin 本机进程已退出（\(code)），请重试。"
-        case .timeout:
-            return "Plugin 工具调用超时，请缩小本次操作范围后重试。"
-        case .cancelled:
-            return "Plugin 工具调用已取消。"
-        }
-    }
-
-    private func sanitizePluginMessage(_ message: String) -> String {
-        var value = String(message.prefix(2_000))
-        for path in [projectRootURL.path, NSHomeDirectory()]
-        where !path.isEmpty {
-            value = value.replacingOccurrences(of: path, with: "[local-path]")
-        }
-        let patterns = [
-            #"(?i)(password|passwd|access[_-]?token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+"#,
-            #"(?<![A-Za-z0-9_])(?:file://)?/[A-Za-z0-9_./~%+@-]+"#,
-            #"(?i)(?<![A-Za-z0-9_])[A-Z]:\\[^\s\"'<>]+"#,
-        ]
-        for pattern in patterns {
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
-            let range = NSRange(value.startIndex..., in: value)
-            value = expression.stringByReplacingMatches(
-                in: value,
-                range: range,
-                withTemplate: pattern.contains("password") ? "$1=[redacted]" : "[local-path]"
-            )
-        }
-        let compact = value
-            .split(whereSeparator: \.isNewline)
-            .prefix(8)
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return compact.isEmpty ? "Plugin MCP 调用失败" : compact
     }
 
     private static func effect(for tool: NativeJSONValue) -> AgentToolDefinition.Effect {
@@ -621,5 +573,61 @@ private final class NativeAgentPluginSessionLease: @unchecked Sendable {
                 invocationID: nil
             )
         }
+    }
+}
+
+enum NativeAgentPluginFailurePresenter {
+    static func message(
+        for error: NativePluginRuntimeError,
+        projectRootURLs: [URL]
+    ) -> String {
+        switch error {
+        case let .mcpError(message):
+            return "Plugin 工具拒绝了这次调用：\(sanitize(message, projectRootURLs: projectRootURLs))"
+        case .invalidRequest:
+            return "Plugin 工具参数或当前状态无效，请重新查看工具定义后重试。"
+        case .invalidManifest:
+            return "Plugin 安装或声明已失效，请重新安装后重试。"
+        case .permissionDenied:
+            return "Plugin 工具缺少这次操作所需的本机权限。"
+        case let .invalidMCPResponse(message):
+            return "Plugin 返回了无效响应：\(sanitize(message, projectRootURLs: projectRootURLs))"
+        case .sessionNotFound, .processUnavailable:
+            return "Plugin 本机会话已结束，请重新查看该能力后重试。"
+        case let .processExited(code):
+            return "Plugin 本机进程已退出（\(code)），请重试。"
+        case .timeout:
+            return "Plugin 工具调用超时，请缩小本次操作范围后重试。"
+        case .cancelled:
+            return "Plugin 工具调用已取消。"
+        }
+    }
+
+    private static func sanitize(_ message: String, projectRootURLs: [URL]) -> String {
+        var value = String(message.prefix(2_000))
+        for path in projectRootURLs.map(\.path) + [NSHomeDirectory()]
+        where !path.isEmpty {
+            value = value.replacingOccurrences(of: path, with: "[local-path]")
+        }
+        let patterns = [
+            #"(?i)(password|passwd|access[_-]?token|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+"#,
+            #"(?<![A-Za-z0-9_])(?:file://)?/[A-Za-z0-9_./~%+@-]+"#,
+            #"(?i)(?<![A-Za-z0-9_])[A-Z]:\\[^\s\"'<>]+"#,
+        ]
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(value.startIndex..., in: value)
+            value = expression.stringByReplacingMatches(
+                in: value,
+                range: range,
+                withTemplate: pattern.contains("password") ? "$1=[redacted]" : "[local-path]"
+            )
+        }
+        let compact = value
+            .split(whereSeparator: \.isNewline)
+            .prefix(8)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return compact.isEmpty ? "Plugin MCP 调用失败" : compact
     }
 }

@@ -345,55 +345,6 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let limit: Int?
     }
 
-    private struct PluginSummary: Encodable {
-        let pluginOption: String
-        let name: String
-        let description: String
-    }
-
-    private struct SearchResponse: Encodable {
-        let matches: [PluginSummary]
-    }
-
-    private struct ToolSummary: Encodable {
-        let toolOption: String
-        let name: String
-        let description: String
-        let inputSchema: NativeJSONValue
-        let effect: String
-        let requiredSkills: [String]
-    }
-
-    private struct SkillSummary: Encodable {
-        let name: String
-        let role: String
-        let description: String
-    }
-
-    private struct DescribeResponse: Encodable {
-        let pluginOption: String
-        let name: String
-        let tools: [ToolSummary]
-        let skills: [SkillSummary]
-    }
-
-    private struct SkillActivationResponse: Encodable {
-        let pluginOption: String
-        let skillName: String
-        let instructions: String
-        let resources: [String]
-    }
-
-    private struct SkillResourceResponse: Encodable {
-        let pluginOption: String
-        let skillName: String
-        let relativePath: String
-        let content: String
-        let offset: Int
-        let nextOffset: Int?
-        let truncated: Bool
-    }
-
     private let service: NativeLocalConnectorService
     private let ownerUserID: String
     private let runContext: LocalAgentChatRunContext
@@ -457,6 +408,24 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        do {
+            return try await executeBrokerCall(call)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch NativePluginRuntimeError.cancelled {
+            throw CancellationError()
+        } catch let error as NativePluginRuntimeError {
+            return .failure(NativeAgentPluginFailurePresenter.message(
+                for: error,
+                projectRootURLs: [resolvedProject?.absoluteURL, fallbackWorkspaceRootURL]
+                    .compactMap { $0 }
+            ))
+        } catch {
+            return .failure("Plugin 能力启动或运行失败，请重新查看该能力后重试。")
+        }
+    }
+
+    private func executeBrokerCall(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         switch call.name {
         case Self.searchToolName:
             let arguments = try decode(SearchArguments.self, from: call.arguments)
