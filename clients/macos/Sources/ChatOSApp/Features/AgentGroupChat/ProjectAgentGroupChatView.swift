@@ -149,6 +149,7 @@ struct ProjectAgentGroupChatView: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
+                    .fixedSize(horizontal: false, vertical: true)
                 Divider()
                 workspaceContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
