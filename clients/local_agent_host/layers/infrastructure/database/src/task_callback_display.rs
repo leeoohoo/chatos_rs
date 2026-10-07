@@ -137,30 +137,6 @@ pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<Stri
             "任务暂时无法启动，请稍后重试。".to_string()
         });
     }
-    if [
-        "authorization: bearer",
-        "authorization",
-        "bearer ",
-        "x-api-key",
-        "api key",
-        "api_key",
-        "api_key=",
-        "password=",
-        "database_url=",
-        "postgres://",
-        "access_token",
-        "internal_trace",
-        "trace=",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-    {
-        return Some(if english {
-            "The request failed. Please try again later.".to_string()
-        } else {
-            "请求失败，请稍后重试。".to_string()
-        });
-    }
     let mut in_code_fence = false;
     let mut lines = Vec::new();
     for raw_line in value.lines() {
@@ -181,6 +157,14 @@ pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<Stri
             || normalized.contains("invocation_id")
             || normalized.contains("claim_token")
         {
+            continue;
+        }
+        // Model output often explains authentication code using identifiers such as
+        // `access_token` or placeholders such as `Authorization: Bearer ...`. Those are
+        // safe documentation, not credentials. Drop only lines that contain an assigned,
+        // non-placeholder secret so one example cannot replace an otherwise successful
+        // task callback with a misleading request-failed message.
+        if line_exposes_secret(trimmed) {
             continue;
         }
         if lines.last().is_some_and(|line: &String| line == trimmed) {
@@ -275,9 +259,104 @@ fn callback_detail_line_is_internal(line: &str) -> bool {
         "parent_task_id",
         "tool_call_id",
         "model_config_id",
+        "internal_trace",
+        "trace=",
     ]
     .iter()
     .any(|key| line.contains(key))
+}
+
+fn line_exposes_secret(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("postgres://") {
+        return true;
+    }
+    if bearer_secret_value(value, &lower) {
+        return true;
+    }
+    if assigned_secret_value(value, &lower, "authorization", true) {
+        return true;
+    }
+    [
+        "x-api-key",
+        "api_key",
+        "api key",
+        "password",
+        "database_url",
+        "access_token",
+    ]
+    .iter()
+    .any(|key| assigned_secret_value(value, &lower, key, false))
+}
+
+fn assigned_secret_value(value: &str, lower: &str, key: &str, bearer_value: bool) -> bool {
+    let mut offset = 0;
+    while let Some(relative_index) = lower[offset..].find(key) {
+        let key_end = offset + relative_index + key.len();
+        let suffix = value[key_end..].trim_start_matches(|character: char| {
+            character.is_whitespace() || matches!(character, '`' | '"' | '\'' | ']' | ')')
+        });
+        let Some(delimiter) = suffix.chars().next() else {
+            return false;
+        };
+        if matches!(delimiter, ':' | '=') {
+            let mut candidate = suffix[delimiter.len_utf8()..].trim_start();
+            if bearer_value {
+                let candidate_lower = candidate.to_ascii_lowercase();
+                if let Some(remainder) = candidate_lower.strip_prefix("bearer") {
+                    let bearer_bytes = candidate.len() - remainder.len();
+                    candidate = candidate[bearer_bytes..].trim_start();
+                }
+            }
+            if !secret_value_is_placeholder(candidate) {
+                return true;
+            }
+        }
+        offset = key_end;
+    }
+    false
+}
+
+fn bearer_secret_value(value: &str, lower: &str) -> bool {
+    let mut offset = 0;
+    while let Some(relative_index) = lower[offset..].find("bearer ") {
+        let value_start = offset + relative_index + "bearer ".len();
+        if !secret_value_is_placeholder(&value[value_start..]) {
+            return true;
+        }
+        offset = value_start;
+    }
+    false
+}
+
+fn secret_value_is_placeholder(value: &str) -> bool {
+    let token = value
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['`', '"', '\'', ',', ';']);
+    if token.is_empty()
+        || token
+            .chars()
+            .all(|character| matches!(character, '.' | '…' | '*'))
+    {
+        return true;
+    }
+    let normalized = token
+        .trim_matches(['<', '>', '{', '}', '[', ']', '$'])
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "token"
+            | "access_token"
+            | "api_key"
+            | "apikey"
+            | "password"
+            | "secret"
+            | "redacted"
+            | "masked"
+            | "placeholder"
+    )
 }
 
 fn strip_internal_identifiers(value: &str) -> String {

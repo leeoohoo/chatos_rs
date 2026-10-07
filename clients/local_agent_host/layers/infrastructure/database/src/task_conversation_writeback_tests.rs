@@ -70,7 +70,21 @@ fn callback_detail_hides_runtime_secrets_ids_and_transient_errors() {
             "authorization: Bearer secret-token\nreasoning: private",
             true
         ),
-        Some("The request failed. Please try again later.".to_string())
+        None
+    );
+    assert_eq!(
+        super::sanitize_visible_detail(
+            "Completed the inspection.\npassword=real-secret-value\nNo files changed.",
+            true
+        ),
+        Some("Completed the inspection.\nNo files changed.".to_string())
+    );
+    assert_eq!(
+        super::sanitize_visible_detail(
+            "Completed the inspection.\nSend Bearer actual-secret-token to the API.",
+            true
+        ),
+        Some("Completed the inspection.".to_string())
     );
     assert_eq!(
         super::sanitize_visible_detail("任务 `123e4567-e89b-12d3-a456-426614174000` 已完成", false),
@@ -80,6 +94,25 @@ fn callback_detail_hides_runtime_secrets_ids_and_transient_errors() {
         super::sanitize_visible_detail("upstream returned status 503", true),
         Some("The service is temporarily unavailable. Please try again later.".to_string())
     );
+}
+
+#[test]
+fn completed_callback_keeps_documented_authentication_placeholders() {
+    let outcome = json!({
+        "content": "## 扫码报工当前流程\n\n确认结论：扫码入口按二维码类型分流。\n\nAPI 客户端从 storage 读取 `wms_access_token` 并附带 `Authorization: Bearer ...`，401 会清除 token。"
+    });
+
+    let content = super::callback_content(
+        "梳理扫码报工逻辑",
+        "检查扫码报工逻辑",
+        "task.completed",
+        Some(&outcome),
+        false,
+    );
+
+    assert!(content.contains("扫码报工当前流程"));
+    assert!(content.contains("确认结论：扫码入口按二维码类型分流。"));
+    assert_ne!(content, "请求失败，请稍后重试。");
 }
 
 async fn finish_task_run(
