@@ -25,6 +25,15 @@ private struct AgentChatTimelineBottomMarker: View {
 }
 
 enum AgentChatTimelineScrollMetrics {
+    static func shouldScrollToBottomInitially(
+        markerMaxY: CGFloat,
+        viewportHeight: CGFloat
+    ) -> Bool {
+        guard markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
+              viewportHeight > 0 else { return false }
+        return markerMaxY > viewportHeight
+    }
+
     static func isAtBottom(
         markerMaxY: CGFloat,
         viewportHeight: CGFloat,
@@ -51,7 +60,9 @@ where Item.ID == String {
     let emptyContent: () -> EmptyContent
 
     @State private var hasPositionedInitially = false
+    @State private var isPositioningInitially = false
     @State private var isAtBottom = false
+    @State private var latestMarkerMaxY = CGFloat.greatestFiniteMagnitude
     @State private var coordinateSpaceName = "agent-chat-timeline-\(UUID().uuidString)"
 
     private let bottomID = "agent-chat-timeline-bottom"
@@ -125,20 +136,28 @@ where Item.ID == String {
                     }
                     .padding(18)
                 }
-                .agentChatInitialScrollAnchor()
                 .coordinateSpace(name: coordinateSpaceName)
                 .onPreferenceChange(AgentChatTimelineBottomPreferenceKey.self) { markerMaxY in
+                    latestMarkerMaxY = markerMaxY
                     let nextValue = AgentChatTimelineScrollMetrics.isAtBottom(
                         markerMaxY: markerMaxY,
                         viewportHeight: viewport.size.height
                     )
                     if nextValue != isAtBottom { isAtBottom = nextValue }
+                    positionInitially(proxy, viewportHeight: viewport.size.height)
                 }
-                .onAppear { positionInitially(proxy) }
-                .onChange(of: isInitialContentReady) { positionInitially(proxy) }
+                .onAppear {
+                    positionInitially(proxy, viewportHeight: viewport.size.height)
+                }
+                .onChange(of: isInitialContentReady) {
+                    positionInitially(proxy, viewportHeight: viewport.size.height)
+                }
+                .onChange(of: viewport.size.height) { _, height in
+                    positionInitially(proxy, viewportHeight: height)
+                }
                 .onChange(of: items.last?.id) {
                     guard hasPositionedInitially else {
-                        positionInitially(proxy)
+                        positionInitially(proxy, viewportHeight: viewport.size.height)
                         return
                     }
                     guard isAtBottom else { return }
@@ -151,34 +170,28 @@ where Item.ID == String {
         }
     }
 
-    private func positionInitially(_ proxy: ScrollViewProxy) {
+    private func positionInitially(
+        _ proxy: ScrollViewProxy,
+        viewportHeight: CGFloat
+    ) {
         guard !hasPositionedInitially,
+              !isPositioningInitially,
               isInitialContentReady,
-              !items.isEmpty else { return }
-        hasPositionedInitially = true
-        if #available(macOS 15.0, *) {
-            // The role-specific anchors position long content at its latest item while keeping
-            // short content top-aligned. No post-layout jump is required on current systems.
-            return
-        }
+              !items.isEmpty,
+              latestMarkerMaxY < CGFloat.greatestFiniteMagnitude / 2,
+              viewportHeight > 0 else { return }
+        isPositioningInitially = true
         Task { @MainActor in
             await Task.yield()
-            // A short transcript cannot scroll, so it remains naturally top-aligned. A long
-            // transcript opens at the latest item without using a bottom default anchor.
-            proxy.scrollTo(bottomID, anchor: .bottom)
-        }
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func agentChatInitialScrollAnchor() -> some View {
-        if #available(macOS 15.0, *) {
-            self
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.top, for: .alignment)
-        } else {
-            self
+            await Task.yield()
+            if AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
+                markerMaxY: latestMarkerMaxY,
+                viewportHeight: viewportHeight
+            ) {
+                proxy.scrollTo(bottomID, anchor: .bottom)
+            }
+            hasPositionedInitially = true
+            isPositioningInitially = false
         }
     }
 }

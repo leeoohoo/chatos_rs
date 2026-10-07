@@ -26,6 +26,26 @@ struct AgentChatMentionTests {
 
 struct AgentChatTimelineScrollTests {
     @Test
+    func initialPositionScrollsOnlyWhenContentExceedsViewport() {
+        #expect(!AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
+            markerMaxY: 599,
+            viewportHeight: 600
+        ))
+        #expect(!AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
+            markerMaxY: 600,
+            viewportHeight: 600
+        ))
+        #expect(AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
+            markerMaxY: 601,
+            viewportHeight: 600
+        ))
+        #expect(!AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
+            markerMaxY: CGFloat.greatestFiniteMagnitude,
+            viewportHeight: 600
+        ))
+    }
+
+    @Test
     func bottomDetectionChangesOnlyWhenMarkerLeavesViewportTolerance() {
         #expect(AgentChatTimelineScrollMetrics.isAtBottom(
             markerMaxY: 600,
