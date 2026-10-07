@@ -12,6 +12,12 @@ enum NativeWebDesignPluginIdentity {
     static let marketplaceKey = "chatos-web-design-studio@chatos-marketplace"
 }
 
+enum NativeDocumentPluginIdentity {
+    static let packageName = "chatos-document-mcp"
+    static let componentKey = "document-mcp"
+    static let marketplaceKey = "chatos-document-mcp@chatos-marketplace"
+}
+
 struct NativePreparedPluginLaunch: Sendable {
     var record: NativeInstalledPluginRecord
     var manifest: NativePluginManifest

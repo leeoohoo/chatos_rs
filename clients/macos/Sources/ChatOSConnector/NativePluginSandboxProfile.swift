@@ -64,7 +64,12 @@ struct NativePluginProcessLaunch: Sendable {
             == NativeWebDesignPluginIdentity.marketplaceKey
             && launch.manifest.name == NativeWebDesignPluginIdentity.packageName
             && launch.componentKey == NativeWebDesignPluginIdentity.componentKey
-        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin
+        let isDocumentPlugin = launch.record.pluginKey
+            == NativeDocumentPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeDocumentPluginIdentity.packageName
+            && launch.componentKey == NativeDocumentPluginIdentity.componentKey
+        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
+        let requiresLoopbackServer = isBrowserPlugin || isWebDesignPlugin
         let browserHome = isBrowserPlugin
             && launch.permissionSnapshot.contains("browser.chrome.attach")
             ? FileManager.default.homeDirectoryForCurrentUser
@@ -87,7 +92,7 @@ struct NativePluginProcessLaunch: Sendable {
             executableDirectories: executableDirectories,
             workspaceRoot: launch.workspaceRoot,
             permissionSnapshot: launch.permissionSnapshot,
-            networkAccess: requiresManagedBrowser ? .loopbackServer : .disabled,
+            networkAccess: requiresLoopbackServer ? .loopbackServer : .disabled,
             homeDirectory: browserHome
         )
     }

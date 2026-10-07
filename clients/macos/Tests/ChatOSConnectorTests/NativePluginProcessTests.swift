@@ -357,6 +357,85 @@ extension NativePluginRuntimeTests {
         #expect(process.environment["TMPDIR"] == prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
     }
 
+    @Test("Document Tools may launch an installed browser for offline visual verification")
+    func documentPluginLaunchSupportsVisualVerification() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let executable = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("chatos-document-mcp")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion":3,
+              "name":"chatos-document-mcp",
+              "version":"0.1.7",
+              "mcpServers":{
+                "document-mcp":{
+                  "type":"stdio",
+                  "bin":"chatos-document-mcp",
+                  "args":["mcp"]
+                }
+              },
+              "permissions":[
+                {"permission":"process.spawn","required":true},
+                {"permission":"artifact.create","required":true}
+              ]
+            }
+            """.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "document-plugin",
+            releaseID: "release-1",
+            version: "0.1.7",
+            artifactSHA256: String(repeating: "c", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-10-07T00:00:00Z",
+            pluginKey: NativeDocumentPluginIdentity.marketplaceKey,
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 100,
+                maximumBytes: 1_024 * 1_024
+            )
+        )
+        let prepared = try NativePluginManifestLoader.prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: NativeDocumentPluginIdentity.componentKey,
+            serverKey: nil,
+            adapterSessionID: "document-session",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn", "artifact.create"],
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+
+        let launch = NativePluginProcessLaunch(stdio: prepared)
+        #expect(launch.networkAccess == .disabled)
+        #expect(launch.homeDirectory == nil)
+        let installedBrowserPaths = [
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Microsoft Edge.app",
+        ].filter(FileManager.default.fileExists(atPath:))
+        #expect(Set(launch.executableDirectories.map(\.path)).isSuperset(of: installedBrowserPaths))
+        let process = try NativePluginProcessLauncher.prepare(launch)
+        #expect(process.environment["TMPDIR"] == prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+    }
+
     @Test("plugin capabilities are reported as available instead of ambiguous on-demand permissions")
     func pluginCapabilityStatusIsExplicit() async throws {
         let root = FileManager.default.temporaryDirectory
