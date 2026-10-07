@@ -73,15 +73,25 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.equal(incompleteFinalization.isError, true);
     assert.match(incompleteFinalization.structuredContent.error, /未找到设计块 D-001-B-999/);
 
-    const finalized = await call(client, 'solution_finalize', {
+    const finalizedResponse = await client.callTool({ name: 'solution_finalize', arguments: {
       workspaceId: accepted.workspace.workspaceId,
       expectedRevision: accepted.workspace.revision,
       scope: 'full',
       expectedDesignBlocks: [{ id: 'D-000-B-002', type: 'architecture' }, { id: 'D-001-B-002', type: 'flowchart' }]
-    });
+    } });
+    assert.equal(finalizedResponse.isError, false);
+    const finalized = finalizedResponse.structuredContent;
     assert.equal(finalized.completionProof.id, accepted.completionRequirement.id);
     assert.equal(finalized.completionProof.verifier, 'solution_finalize');
     assert.deepEqual(finalized.verifiedDesignBlocks, [{ id: 'D-000-B-002', type: 'architecture' }, { id: 'D-001-B-002', type: 'flowchart' }]);
+    assert.deepEqual(finalizedResponse._meta['chatos/artifacts'], [{
+      producer_artifact_id: `solution_${finalized.sha256}`,
+      relative_path: finalized.relativePath,
+      display_name: finalized.relativePath,
+      mime_type: 'text/markdown',
+      size_bytes: finalized.size,
+      sha256: finalized.sha256
+    }]);
     assert.deepEqual(await readdir(projectRoot), []);
   } finally {
     await client.close();

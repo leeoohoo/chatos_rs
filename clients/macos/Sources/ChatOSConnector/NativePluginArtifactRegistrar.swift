@@ -146,7 +146,7 @@ enum NativePluginArtifactRegistrar {
               mediaType == mediaType.trimmingCharacters(in: .whitespacesAndNewlines),
               !mediaType.isEmpty,
               mediaType.utf8.count <= 256,
-              mediaTypeForPath(displayName) == mediaType else {
+              mediaTypesForPath(displayName).contains(mediaType) else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 文件名或 MIME 类型无效")
         }
         var source = artifactRoot
@@ -232,19 +232,21 @@ enum NativePluginArtifactRegistrar {
         return target.path == root.path || target.path.hasPrefix(rootPath)
     }
 
-    private static func mediaTypeForPath(_ path: String) -> String? {
+    private static func mediaTypesForPath(_ path: String) -> Set<String> {
         switch URL(fileURLWithPath: path).pathExtension.lowercased() {
-        case "png": "image/png"
-        case "jpg", "jpeg": "image/jpeg"
-        case "pdf": "application/pdf"
-        case "json", "har": "application/json"
-        case "txt": "text/plain"
-        case "csv": "text/csv"
-        case "zip": "application/zip"
-        case "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        case "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        case "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-        default: nil
+        case "png": ["image/png"]
+        case "jpg", "jpeg": ["image/jpeg"]
+        case "pdf": ["application/pdf"]
+        case "json": ["application/json", "application/vnd.chatos.solution-workspace+json"]
+        case "har": ["application/json"]
+        case "md": ["text/markdown"]
+        case "txt": ["text/plain"]
+        case "csv": ["text/csv"]
+        case "zip": ["application/zip"]
+        case "docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"]
+        case "xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"]
+        case "pptx": ["application/vnd.openxmlformats-officedocument.presentationml.presentation"]
+        default: []
         }
     }
 }

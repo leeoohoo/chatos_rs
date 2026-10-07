@@ -99,6 +99,62 @@ extension NativePluginRuntimeTests {
         #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
     }
 
+    @Test("Solution Studio Markdown artifacts are validated and persisted in the project")
+    func solutionMarkdownArtifactRegistration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data("# Verified solution\n".utf8)
+        let fileName = "solution-123.md"
+        try bytes.write(to: artifacts.appendingPathComponent(fileName))
+        let sha256 = NativePluginHash.sha256(bytes)
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-1",
+            pluginID: "solution-plugin",
+            releaseID: "release-1",
+            version: "0.1.8",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "solution-mcp",
+            adapterSessionID: "adapter-solution"
+        )
+        let registered = try NativePluginArtifactRegistrar.register(
+            result: .object([
+                "content": .array([]),
+                "_meta": .object([
+                    "chatos/artifacts": .array([
+                        .object([
+                            "producer_artifact_id": .string("solution-1"),
+                            "relative_path": .string(fileName),
+                            "display_name": .string(fileName),
+                            "media_type": .string("text/markdown"),
+                            "size_bytes": .number(Double(bytes.count)),
+                            "sha256": .string(sha256),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            identity: identity,
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            workspaceRootURL: workspace,
+            artifactRootURL: artifacts,
+            permissionSnapshot: ["artifact.create"],
+            toolName: "solution_finalize"
+        )
+        let descriptor = try #require(
+            registered.jsonObject?["_meta"]?.jsonObject?["chatos/artifacts"]?
+                .jsonArray?.first?.jsonObject?["artifact"]?.jsonObject
+        )
+        #expect(descriptor["media_type"]?.jsonString == "text/markdown")
+        let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
+        #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
+    }
+
     @Test("computer use image blocks become local visual-session frames")
     func computerUseImageBridge() throws {
         let root = FileManager.default.temporaryDirectory
