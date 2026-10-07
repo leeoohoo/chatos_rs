@@ -55,7 +55,7 @@ pub(super) fn task_for_agent_tool(
         "status": task_status_for_agent(task),
         "priority": input.and_then(|input| input.get("priority")).cloned().unwrap_or_else(|| Value::from(0)),
         "tags": input.and_then(|input| input.get("tags")).cloned().unwrap_or_else(|| json!([])),
-        "result_summary": Value::Null,
+        "result_summary": task.result_summary.clone(),
         "last_run_id": task.active_run_id,
         "schedule": input.and_then(|input| input.get("schedule")).cloned().unwrap_or_else(|| json!({"mode": "contact_async"})),
         "parent_task_id": input.and_then(|input| input.get("parent_task_id")).cloned().unwrap_or(Value::Null),
@@ -629,4 +629,39 @@ pub(super) fn contact_async_schedule(schedule: Option<TaskScheduleArgs>) -> Resu
         "run_at_unix_ms": run_at_unix_ms,
         "interval_seconds": Value::Null,
     }))
+}
+
+#[cfg(test)]
+mod result_tests {
+    use super::*;
+
+    #[test]
+    fn task_tool_payload_returns_the_latest_model_output() {
+        let task = LocalTaskRecord {
+            graph_id: "graph-1".to_string(),
+            owner_user_id: "user-1".to_string(),
+            source_entity_type: "conversation_turn".to_string(),
+            source_entity_id: "turn-1".to_string(),
+            task_id: "task-1".to_string(),
+            title: "Inspect project".to_string(),
+            profile_key: "task_execution".to_string(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            input: json!({"objective": "Inspect the project"}),
+            max_iterations: 600,
+            status: LocalTaskStatus::Succeeded,
+            active_run_id: None,
+            result_summary: Some("Godot project; run with godot --path .".to_string()),
+            version: 2,
+            created_at_unix_ms: 1,
+            updated_at_unix_ms: 2,
+        };
+
+        let output = task_for_agent_tool(&task, &[]);
+        assert_eq!(
+            output["result_summary"],
+            "Godot project; run with godot --path ."
+        );
+    }
 }

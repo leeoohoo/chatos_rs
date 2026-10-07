@@ -175,6 +175,48 @@ async fn task_run_query_rejects_invalid_input() {
 }
 
 #[tokio::test]
+async fn task_queries_surface_the_latest_terminal_model_output() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(
+            &command("create-result", "graph-result"),
+            &graph("graph-result", &["task-result", "task-after-result"]),
+            10_000,
+        )
+        .await
+        .expect("create graph");
+    storage
+        .start_next_task_run("user-1", "run-result", "event-result", 20_000)
+        .await
+        .expect("start task")
+        .expect("ready task");
+    sqlx::query(
+        "UPDATE local_agent_runs SET terminal_outcome_json = ? WHERE run_id = 'run-result'",
+    )
+    .bind(json!({"content": "Godot project; run with godot --path ."}).to_string())
+    .execute(&storage.pool)
+    .await
+    .expect("store terminal outcome");
+
+    let graph = storage
+        .get_task_graph("user-1", "graph-result")
+        .await
+        .expect("get graph")
+        .expect("stored graph");
+    let task = graph
+        .tasks
+        .iter()
+        .find(|task| task.task_id == "task-result")
+        .expect("result task");
+    assert_eq!(
+        task.result_summary.as_deref(),
+        Some("Godot project; run with godot --path .")
+    );
+}
+
+#[tokio::test]
 async fn idle_task_materialization_does_not_wait_for_the_sqlite_writer() {
     let root = tempfile::tempdir().expect("temporary database root");
     let storage = SqliteClientStorage::connect_file(&root.path().join("agent.sqlite3"))

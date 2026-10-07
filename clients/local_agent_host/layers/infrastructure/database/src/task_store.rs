@@ -14,6 +14,38 @@ use chatos_local_agent_protocol::{
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
 
+use super::task_result::decode_result_summary;
+
+const SCOPED_TASK_SELECT: &str =
+    "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+     t.model_config_revision, t.capability_policy_revision, t.input_json, \
+     t.max_iterations, t.status, t.active_run_id, t.version, \
+     t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
+     g.source_entity_type, g.source_entity_id, \
+     (SELECT r.terminal_outcome_json FROM local_agent_runs r \
+        WHERE r.owner_user_id = g.owner_user_id \
+          AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
+        ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
+       AS latest_terminal_outcome_json FROM local_tasks t \
+     JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+     JOIN local_conversation_turns source_turn \
+       ON g.source_entity_type = 'conversation_turn' \
+      AND source_turn.turn_id = g.source_entity_id \
+     JOIN local_conversations source_conversation \
+       ON source_conversation.conversation_id = source_turn.conversation_id \
+     JOIN local_conversations current_conversation \
+       ON current_conversation.conversation_id = ? \
+     WHERE g.owner_user_id = ? \
+     AND source_conversation.owner_user_id = ? \
+     AND current_conversation.owner_user_id = ? \
+     AND ((current_conversation.resource_kind = 'project' \
+           AND current_conversation.resource_id IS NOT NULL \
+           AND source_conversation.resource_kind = 'project' \
+           AND source_conversation.resource_id = current_conversation.resource_id) \
+          OR ((current_conversation.resource_kind IS NULL \
+               OR current_conversation.resource_kind <> 'project') \
+              AND source_conversation.conversation_id = current_conversation.conversation_id))";
+
 #[async_trait]
 impl LocalAgentTaskStore for SqliteClientStorage {
     async fn create_task_graph(
@@ -158,31 +190,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let source_run_id = source_run_id
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let rows = sqlx::query(
-            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
-             t.model_config_revision, t.capability_policy_revision, t.input_json, \
-             t.max_iterations, t.status, t.active_run_id, t.version, \
-             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
-             g.source_entity_type, g.source_entity_id FROM local_tasks t \
-             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             JOIN local_conversation_turns source_turn \
-               ON g.source_entity_type = 'conversation_turn' \
-              AND source_turn.turn_id = g.source_entity_id \
-             JOIN local_conversations source_conversation \
-               ON source_conversation.conversation_id = source_turn.conversation_id \
-             JOIN local_conversations current_conversation \
-               ON current_conversation.conversation_id = ? \
-             WHERE g.owner_user_id = ? \
-             AND source_conversation.owner_user_id = ? \
-             AND current_conversation.owner_user_id = ? \
-             AND ((current_conversation.resource_kind = 'project' \
-                   AND current_conversation.resource_id IS NOT NULL \
-                   AND source_conversation.resource_kind = 'project' \
-                   AND source_conversation.resource_id = current_conversation.resource_id) \
-                  OR ((current_conversation.resource_kind IS NULL \
-                       OR current_conversation.resource_kind <> 'project') \
-                      AND source_conversation.conversation_id = \
-                          current_conversation.conversation_id)) \
+        let sql = format!(
+            "{SCOPED_TASK_SELECT} \
              AND (? IS NULL OR t.status = ?) \
              AND (? IS NULL OR LOWER(t.task_id || ' ' || t.title || ' ' || t.input_json) \
                   LIKE ? ESCAPE '\\') \
@@ -192,28 +201,29 @@ impl LocalAgentTaskStore for SqliteClientStorage {
                   <> 'manual') \
              AND (? IS NULL OR json_extract(t.input_json, '$.parent_task_id') = ?) \
              AND (? IS NULL OR json_extract(t.input_json, '$.source_run_id') = ?) \
-             ORDER BY t.updated_at_unix_ms DESC, t.task_id DESC LIMIT ? OFFSET ?",
-        )
-        .bind(conversation_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(status)
-        .bind(status)
-        .bind(normalized_keyword.as_deref())
-        .bind(normalized_keyword.as_deref())
-        .bind(tag)
-        .bind(tag)
-        .bind(i64::from(scheduled_only))
-        .bind(parent_task_id)
-        .bind(parent_task_id)
-        .bind(source_run_id)
-        .bind(source_run_id)
-        .bind(i64::from(limit))
-        .bind(i64::from(offset))
-        .fetch_all(&self.pool)
-        .await
-        .db()?;
+             ORDER BY t.updated_at_unix_ms DESC, t.task_id DESC LIMIT ? OFFSET ?"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(conversation_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(status)
+            .bind(status)
+            .bind(normalized_keyword.as_deref())
+            .bind(normalized_keyword.as_deref())
+            .bind(tag)
+            .bind(tag)
+            .bind(i64::from(scheduled_only))
+            .bind(parent_task_id)
+            .bind(parent_task_id)
+            .bind(source_run_id)
+            .bind(source_run_id)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .db()?;
         rows.into_iter().map(decode_scoped_task).collect()
     }
 
@@ -230,41 +240,16 @@ impl LocalAgentTaskStore for SqliteClientStorage {
                 "invalid task id".to_string(),
             ));
         }
-        let row = sqlx::query(
-            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
-             t.model_config_revision, t.capability_policy_revision, t.input_json, \
-             t.max_iterations, t.status, t.active_run_id, t.version, \
-             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
-             g.source_entity_type, g.source_entity_id FROM local_tasks t \
-             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             JOIN local_conversation_turns source_turn \
-               ON g.source_entity_type = 'conversation_turn' \
-              AND source_turn.turn_id = g.source_entity_id \
-             JOIN local_conversations source_conversation \
-               ON source_conversation.conversation_id = source_turn.conversation_id \
-             JOIN local_conversations current_conversation \
-               ON current_conversation.conversation_id = ? \
-             WHERE g.owner_user_id = ? \
-             AND source_conversation.owner_user_id = ? \
-             AND current_conversation.owner_user_id = ? \
-             AND ((current_conversation.resource_kind = 'project' \
-                   AND current_conversation.resource_id IS NOT NULL \
-                   AND source_conversation.resource_kind = 'project' \
-                   AND source_conversation.resource_id = current_conversation.resource_id) \
-                  OR ((current_conversation.resource_kind IS NULL \
-                       OR current_conversation.resource_kind <> 'project') \
-                      AND source_conversation.conversation_id = \
-                          current_conversation.conversation_id)) \
-             AND t.task_id = ?",
-        )
-        .bind(conversation_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(task_id)
-        .fetch_optional(&self.pool)
-        .await
-        .db()?;
+        let sql = format!("{SCOPED_TASK_SELECT} AND t.task_id = ?");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(conversation_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(task_id)
+            .fetch_optional(&self.pool)
+            .await
+            .db()?;
         row.map(decode_scoped_task).transpose()
     }
 
@@ -614,10 +599,16 @@ pub(super) async fn fetch_graph(
     .db()?;
     let Some(graph) = graph else { return Ok(None) };
     let tasks = sqlx::query(
-        "SELECT task_id, graph_id, title, profile_key, model_config_ref, \
-         model_config_revision, capability_policy_revision, input_json, max_iterations, \
-         status, active_run_id, version, created_at_unix_ms, updated_at_unix_ms \
-         FROM local_tasks WHERE graph_id = ? ORDER BY task_id",
+        "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+         t.model_config_revision, t.capability_policy_revision, t.input_json, t.max_iterations, \
+         t.status, t.active_run_id, t.version, t.created_at_unix_ms, t.updated_at_unix_ms, \
+         (SELECT r.terminal_outcome_json FROM local_agent_runs r \
+            WHERE r.owner_user_id = g.owner_user_id \
+              AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
+            ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
+           AS latest_terminal_outcome_json \
+         FROM local_tasks t JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+         WHERE t.graph_id = ? ORDER BY t.task_id",
     )
     .bind(graph_id)
     .fetch_all(&mut *connection)
@@ -693,6 +684,7 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
@@ -719,6 +711,7 @@ fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageEr
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,

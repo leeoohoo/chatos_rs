@@ -484,6 +484,8 @@ pub struct LocalTaskRecord {
     pub max_iterations: u32,
     pub status: LocalTaskStatus,
     pub active_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
     pub version: u64,
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
@@ -567,6 +569,7 @@ mod tests {
             max_iterations: 4,
             status,
             active_run_id: None,
+            result_summary: None,
             version: 1,
             created_at_unix_ms: 1,
             updated_at_unix_ms: 1,

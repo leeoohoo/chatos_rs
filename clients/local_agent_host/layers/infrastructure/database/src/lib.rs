@@ -52,6 +52,7 @@ mod task_lifecycle;
 mod task_query_store;
 #[cfg(test)]
 mod task_restart_descendant_tests;
+mod task_result;
 mod task_retry_input;
 mod task_store;
 mod tool_approval_store;
