@@ -39,19 +39,19 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
-        let project = try context.requireProject()
+        let approvalScope = Self.approvalScope(for: context)
         let presentation = Self.presentation(invocation)
         let decision = await connector.approvalDecision(
             requestID: invocation.invocationID,
             command: presentation.command,
             arguments: presentation.arguments,
-            cwd: project.absoluteURL,
-            projectRoot: project.absoluteURL,
+            cwd: approvalScope.rootURL,
+            projectRoot: approvalScope.rootURL,
             source: "Local Agent Task",
             risk: presentation.risk,
             requestedPermissionsDescription: presentation.permission,
             approvalScopeKey: presentation.scope + ":\(context.conversationID)",
-            workspaceID: project.workspace.id
+            workspaceID: approvalScope.workspaceID
         )
         let approved: Bool
         let reason: String
@@ -71,6 +71,14 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             reason: String(reason.prefix(4_000))
         )
         return true
+    }
+
+    static func approvalScope(
+        for context: NativeLocalAgentTaskExecutionContext
+    ) -> (rootURL: URL, workspaceID: String) {
+        // Project and direct-contact tasks both execute inside a host-bound root. Requiring a
+        // project here strands contact tasks before their selected Plugin can ever run.
+        (context.executionRootURL, context.workspaceScopeID)
     }
 
     private static func presentation(

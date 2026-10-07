@@ -38,8 +38,12 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         XCTAssertNil(first.resolvedPath)
         XCTAssertEqual(first.applicationContext, .device)
         XCTAssertEqual(first.executionRootURL, second.executionRootURL)
+        XCTAssertTrue(first.workspaceScopeID.hasPrefix("contact:"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.executionRootURL.path))
         XCTAssertTrue(first.toolAuthorization.allows("capability_search"))
+        let approvalScope = NativeLocalAgentToolApprovalHandler.approvalScope(for: first)
+        XCTAssertEqual(approvalScope.rootURL, first.executionRootURL)
+        XCTAssertEqual(approvalScope.workspaceID, first.workspaceScopeID)
         XCTAssertThrowsError(try first.requireProject()) { error in
             XCTAssertEqual(error as? NativeLocalAgentPlatformToolError, .projectUnavailable)
         }
