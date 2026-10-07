@@ -51,7 +51,11 @@ extension ProjectAgentGroupChatView {
 
                 VStack(alignment: .leading, spacing: 9) {
                     if !message.content.isEmpty {
-                        MarkdownDocumentView(markdown: message.content, widthBehavior: .fitContent)
+                        MarkdownDocumentView(
+                            markdown: message.content,
+                            allowsTextSelection: true,
+                            widthBehavior: .fitContent
+                        )
                     }
                     if !message.attachmentItems.isEmpty {
                         AgentMessageAttachmentChips(

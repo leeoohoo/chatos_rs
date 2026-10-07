@@ -36,25 +36,26 @@ pub(super) async fn get_agent_prompt_bundle(
         .get_agent_prompt_bundle_manifest_for_service()
         .await
         .map_err(plugin_management_error)?;
-    let mut prompts = Vec::with_capacity(AgentPromptVendor::ALL.len());
-    for vendor in AgentPromptVendor::ALL {
-        let prompt = state
-            .plugin_management_client
-            .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
-                agent_key: SystemAgentKey::LocalConnectorCommandApprovalAgent,
-                vendor,
-                profile: None,
-            })
-            .await
-            .map_err(plugin_management_error)?;
-        if prompt.agent_key != SystemAgentKey::LocalConnectorCommandApprovalAgent.as_str()
-            || prompt.vendor != vendor
-        {
-            return Err(ApiError::service_unavailable(
-                "Plugin Management returned a mismatched local approval Agent Prompt",
-            ));
+    let mut prompts =
+        Vec::with_capacity(CLIENT_AGENT_PROMPT_KEYS.len() * AgentPromptVendor::ALL.len());
+    for agent_key in CLIENT_AGENT_PROMPT_KEYS {
+        for vendor in AgentPromptVendor::ALL {
+            let prompt = state
+                .plugin_management_client
+                .resolve_agent_prompt_for_service(&ResolveAgentPromptRequest {
+                    agent_key,
+                    vendor,
+                    profile: None,
+                })
+                .await
+                .map_err(plugin_management_error)?;
+            if prompt.agent_key != agent_key.as_str() || prompt.vendor != vendor {
+                return Err(ApiError::service_unavailable(
+                    "Plugin Management returned a mismatched client Agent Prompt",
+                ));
+            }
+            prompts.push(prompt);
         }
-        prompts.push(prompt);
     }
     Ok(Json(AgentPromptBundle {
         bundle_version: manifest.bundle_version,
@@ -62,6 +63,12 @@ pub(super) async fn get_agent_prompt_bundle(
         prompts,
     }))
 }
+
+const CLIENT_AGENT_PROMPT_KEYS: [SystemAgentKey; 3] = [
+    SystemAgentKey::ChatosConversationAgent,
+    SystemAgentKey::LocalAgentExecutionAgent,
+    SystemAgentKey::LocalConnectorCommandApprovalAgent,
+];
 
 fn require_human_user(user: &CurrentUser) -> Result<(), ApiError> {
     if user.principal_type == "human_user" {
@@ -94,5 +101,26 @@ fn plugin_management_error(
             message,
         } => ApiError::conflict("agent_prompt_bundle_incomplete", message),
         other => ApiError::service_unavailable(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_prompt_bundle_covers_conversation_execution_and_approval_agents() {
+        assert_eq!(
+            CLIENT_AGENT_PROMPT_KEYS,
+            [
+                SystemAgentKey::ChatosConversationAgent,
+                SystemAgentKey::LocalAgentExecutionAgent,
+                SystemAgentKey::LocalConnectorCommandApprovalAgent,
+            ]
+        );
+        assert_eq!(
+            CLIENT_AGENT_PROMPT_KEYS.len() * AgentPromptVendor::ALL.len(),
+            12
+        );
     }
 }

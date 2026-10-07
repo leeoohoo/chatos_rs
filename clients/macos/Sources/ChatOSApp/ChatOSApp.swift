@@ -7,7 +7,7 @@ struct ChatOSApp: App {
     var body: some Scene {
         Settings {
             ChatOSSettingsSceneView(model: appDelegate.model)
-                .frame(minWidth: 1_050, minHeight: 700)
+                .frame(minWidth: 1_180, minHeight: 760)
         }
         .commands {
             ChatOSGlobalUtilityCommands(model: appDelegate.model)

@@ -63,7 +63,7 @@ struct MessageTaskInspectorView: View {
         MessageTaskDetailSections(
             task: task,
             isLoadingModelOutput: viewModel.isLoadingModelOutput,
-            allowsTextSelection: false
+            allowsTextSelection: true
         )
         if task.normalizedStatus == "blocked" || task.normalizedStatus == "failed" {
             blockedActions(task)
@@ -78,7 +78,7 @@ struct MessageTaskInspectorView: View {
                 processLog: task.processLog,
                 taskStatus: task.status
             ),
-            allowsTextSelection: false
+            allowsTextSelection: true
         )
     }
 
@@ -92,7 +92,7 @@ struct MessageTaskInspectorView: View {
                 TaskDetailTextCard(
                     title: "模型输出",
                     text: output,
-                    allowsTextSelection: false
+                    allowsTextSelection: true
                 )
             }
             if let summary = detail.run.resultSummary,
@@ -101,7 +101,7 @@ struct MessageTaskInspectorView: View {
                 TaskDetailTextCard(
                     title: "运行结果摘要",
                     text: summary,
-                    allowsTextSelection: false
+                    allowsTextSelection: true
                 )
             }
             VStack(alignment: .leading, spacing: 10) {
@@ -119,7 +119,7 @@ struct MessageTaskInspectorView: View {
             if !detail.events.isEmpty {
                 TaskRunEventTimeline(
                     events: detail.events,
-                    allowsTextSelection: false
+                    allowsTextSelection: true
                 )
                 if detail.eventsHasMore {
                     Button {
@@ -182,7 +182,7 @@ struct MessageTaskInspectorView: View {
             Text(text)
                 .appFont(.callout)
                 .foregroundStyle(.secondary)
-                .appTextSelection(false)
+                .appTextSelection(true)
         }
     }
 

@@ -149,6 +149,7 @@ struct ProjectAgentGroupChatView: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(spacing: 0) {
                 roomHeader
+                    .fixedSize(horizontal: false, vertical: true)
                 Divider()
                 workspaceContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -183,16 +184,7 @@ struct ProjectAgentGroupChatView: View {
                 }
             )
         case .chat:
-            if !viewModel.pendingProposals.isEmpty
-                || !viewModel.pendingRemovalProposals.isEmpty
-                || !viewModel.pendingTeamProposals.isEmpty
-                || !viewModel.pendingMembershipProposals.isEmpty {
-                pendingProposals
-                Divider()
-            }
-            transcript
-            Divider()
-            composer
+            chatWorkspace
         case .tasks:
             TeamTodoBoardView(
                 todos: viewModel.teamTodos,
@@ -242,6 +234,24 @@ struct ProjectAgentGroupChatView: View {
                 }
             )
         }
+    }
+
+    private var chatWorkspace: some View {
+        VStack(spacing: 0) {
+            if !viewModel.pendingProposals.isEmpty
+                || !viewModel.pendingRemovalProposals.isEmpty
+                || !viewModel.pendingTeamProposals.isEmpty
+                || !viewModel.pendingMembershipProposals.isEmpty {
+                pendingProposals
+                Divider()
+            }
+            transcript
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            composer
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var pendingProposals: some View {

@@ -43,7 +43,9 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
         }
 
         var invocation = result.Invocations.FirstOrDefault(value =>
-            value.ToolName is "project_write" or "terminal_exec");
+            value.ToolName is "project_write" or "terminal_exec" or
+                "remote_connection_controller_run_command" or
+                "remote_connection_controller_upload_file");
         if (invocation is null) return false;
 
         WindowsLocalAgentProjectContext context;
@@ -129,6 +131,44 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
         WindowsLocalToolInvocation invocation,
         WindowsLocalAgentProjectContext context)
     {
+        if (invocation.ToolName == "remote_connection_controller_run_command")
+        {
+            if (string.IsNullOrWhiteSpace(context.RemoteConnectionId))
+            {
+                throw new InvalidOperationException(
+                    "The Local Agent Task has no program-bound remote connection.");
+            }
+            var command = WindowsLocalAgentProjectToolExecutor.RequiredString(
+                invocation.Arguments, "command");
+            var workingDirectory = WindowsLocalAgentProjectToolExecutor.OptionalString(
+                invocation.Arguments, "working_directory") ?? "~";
+            return new ApprovalPresentation(
+                command,
+                [],
+                workingDirectory,
+                riskEvaluator.Evaluate(command, []),
+                "local-agent-remote-command");
+        }
+
+        if (invocation.ToolName == "remote_connection_controller_upload_file")
+        {
+            if (string.IsNullOrWhiteSpace(context.RemoteConnectionId))
+            {
+                throw new InvalidOperationException(
+                    "The Local Agent Task has no program-bound remote connection.");
+            }
+            var path = WindowsLocalAgentProjectToolExecutor.RequiredString(
+                invocation.Arguments, "path");
+            return new ApprovalPresentation(
+                "remote_upload_file",
+                [path],
+                "remote",
+                new ConnectorApprovalRisk(
+                    ConnectorApprovalRiskLevel.Medium,
+                    "The local task requests permission to upload a remote file."),
+                "local-agent-remote-upload");
+        }
+
         if (invocation.ToolName == "terminal_exec")
         {
             var command = WindowsLocalAgentProjectToolExecutor.RequiredString(

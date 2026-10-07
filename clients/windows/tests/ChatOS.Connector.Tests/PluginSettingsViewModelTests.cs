@@ -159,6 +159,7 @@ public sealed class PluginSettingsViewModelTests
             CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<LocalConnectorPlugin>>(
             [new LocalConnectorPlugin(
                 "plugin.one",
+                "plugin-one",
                 "Plugin One",
                 "Test plugin",
                 "Tools",

@@ -36,6 +36,13 @@ impl LocalAgentRuntime {
                     })?;
                 Ok(HostResult::ModelConfigSnapshot { snapshot })
             }
+            HostCommand::ListLatestModelConfigSnapshots(command) => {
+                let snapshots = self
+                    .store
+                    .list_latest_model_config_snapshots(&command.owner_user_id)
+                    .await?;
+                Ok(HostResult::ModelConfigSnapshots { snapshots })
+            }
             HostCommand::PutCapabilityPolicySnapshot(command) => {
                 let snapshot = self
                     .store
@@ -60,6 +67,14 @@ impl LocalAgentRuntime {
                     })?;
                 Ok(HostResult::CapabilityPolicySnapshot { snapshot })
             }
+            HostCommand::GetLatestCapabilityPolicySnapshot(command) => {
+                let snapshot = self
+                    .store
+                    .get_latest_capability_snapshot(&command.owner_user_id, &command.profile_key)
+                    .await?
+                    .ok_or_else(|| ClientStorageError::NotFound(command.profile_key.clone()))?;
+                Ok(HostResult::CapabilityPolicySnapshot { snapshot })
+            }
             _ => unreachable!("non-control-plane command routed to control-plane runtime"),
         }
     }
@@ -70,7 +85,8 @@ mod tests {
     use super::*;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{
-        GetCapabilityPolicySnapshotCommand, GetModelConfigSnapshotCommand, HostRequestEnvelope,
+        GetCapabilityPolicySnapshotCommand, GetLatestCapabilityPolicySnapshotCommand,
+        GetModelConfigSnapshotCommand, HostRequestEnvelope, ListLatestModelConfigSnapshotsCommand,
         LocalCapabilityPolicySnapshot, LocalModelConfigSnapshot,
         PutCapabilityPolicySnapshotCommand, PutModelConfigSnapshotCommand,
         LOCAL_AGENT_PROTOCOL_VERSION,
@@ -169,6 +185,22 @@ mod tests {
             second_owner,
             HostResult::ModelConfigSnapshot { snapshot } if snapshot.model == "model-b"
         ));
+        let latest_models = runtime
+            .try_handle(request(
+                "list-latest-models",
+                HostCommand::ListLatestModelConfigSnapshots(
+                    ListLatestModelConfigSnapshotsCommand {
+                        owner_user_id: "user-1".to_string(),
+                    },
+                ),
+            ))
+            .await
+            .expect("list latest models");
+        assert!(matches!(
+            latest_models,
+            HostResult::ModelConfigSnapshots { snapshots }
+                if snapshots.len() == 1 && snapshots[0].model == "model-a"
+        ));
         let cross_owner = runtime
             .handle(request(
                 "get-model-3",
@@ -222,6 +254,23 @@ mod tests {
             policy,
             HostResult::CapabilityPolicySnapshot { snapshot }
                 if snapshot.instructions.as_deref() == Some("local policy")
+        ));
+        let latest_policy = runtime
+            .try_handle(request(
+                "get-latest-policy",
+                HostCommand::GetLatestCapabilityPolicySnapshot(
+                    GetLatestCapabilityPolicySnapshotCommand {
+                        owner_user_id: "user-1".to_string(),
+                        profile_key: "main_chat".to_string(),
+                    },
+                ),
+            ))
+            .await
+            .expect("get latest policy");
+        assert!(matches!(
+            latest_policy,
+            HostResult::CapabilityPolicySnapshot { snapshot }
+                if snapshot.capability_policy_revision == "policy-1"
         ));
     }
 }

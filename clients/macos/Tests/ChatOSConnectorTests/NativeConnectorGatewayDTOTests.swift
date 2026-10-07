@@ -17,6 +17,14 @@ struct NativeConnectorGatewayDTOTests {
                 "context_window_tokens": 1500000,
                 "output_reserve_tokens": 40000
               },
+              "local_task_execution_settings": {
+                "max_iterations": 640,
+                "review_read_only_iterations": 8,
+                "review_missing_read_failures": 2,
+                "review_repeat_interval_iterations": 8,
+                "prompt_cache_enabled": true,
+                "prompt_cache_retention_enabled": true
+              },
               "remote_control_trust": {
                 "require_signed_messages": true,
                 "signature_max_skew_seconds": 300,
@@ -35,6 +43,7 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.maximumNoProgressRounds == 9)
         #expect(settings.contextWindowTokens == 1_500_000)
         #expect(settings.outputReserveTokens == 40_000)
+        #expect(decoded.localTaskExecutionSettings?.maxIterations == 640)
     }
 
     @Test

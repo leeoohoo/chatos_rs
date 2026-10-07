@@ -35,7 +35,14 @@ extension AppModel {
                 projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
-            startLocalAgentHost(ownerUserID: session.user.id)
+            // Authentication and Local Connector pairing can be restored in either order.
+            // Always bootstrap the local control plane after the Host starts so a connector
+            // status value emitted before `authenticatedUserID` was installed cannot leave
+            // conversation settings permanently unconfigured.
+            startLocalAgentHost(
+                ownerUserID: session.user.id,
+                refreshControlPlaneAfterStart: true
+            )
             restartAgentHeartbeatCoordinator()
             restartAgentArtifactStorageCoordinator()
             mediaStudio.activate(userID: session.user.id)
@@ -155,6 +162,31 @@ extension AppModel {
                         await localAgentHost.stop()
                     }
                     return
+                }
+                if let host = localAgentHost as? NativeLocalAgentHostLifecycle {
+                    do {
+                        let memoryAccessToken = await self?.apiClient.currentAccessToken()
+                        if let restored = try await self?.localConnectorService
+                            .restoreLocalAgentHost(
+                                host,
+                                ownerUserID: ownerUserID,
+                                memoryAccessToken: memoryAccessToken
+                            ) {
+                            guard !Task.isCancelled,
+                                  self?.authenticatedUserID == ownerUserID,
+                                  self?.localAgentHostLifecycleGeneration == generation else {
+                                await host.stop()
+                                return
+                            }
+                            try await self?.configureLocalAgentServices(
+                                ownerUserID: ownerUserID,
+                                bootstrap: restored
+                            )
+                        }
+                    } catch {
+                        // A missing or stale local snapshot must not prevent the authenticated
+                        // gateway refresh below from repairing the control plane.
+                    }
                 }
                 await self?.workspaceService?.configure(ownerUserID: ownerUserID)
                 await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
@@ -366,22 +398,10 @@ extension AppModel {
                         await host.stop()
                         return
                     }
-                    try await runtimeSettingsService?.configure(
+                    try await configureLocalAgentServices(
                         ownerUserID: ownerUserID,
                         bootstrap: bootstrap
                     )
-                    await petActivityService?.configure(ownerUserID: ownerUserID)
-                    try await commandService?.configure(
-                        ownerUserID: ownerUserID,
-                        bootstrap: bootstrap
-                    )
-                    await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
-                    await askUserPromptService?.configure(ownerUserID: ownerUserID)
-                    await turnProcessService?.configure(ownerUserID: ownerUserID)
-                    await platformToolWorker?.configure(ownerUserID: ownerUserID)
-                    conversationCache.values.forEach {
-                        $0.localAgentRuntimeDidBecomeReady()
-                    }
                     localAgentControlPlaneOwnerUserID = ownerUserID
                     localAgentControlPlaneBootstrapOwnerUserID = nil
                     localAgentCrashRecoveryAttempts = 0
@@ -398,6 +418,31 @@ extension AppModel {
                     localAgentHostError = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func configureLocalAgentServices(
+        ownerUserID: String,
+        bootstrap: NativeLocalAgentBootstrapResult
+    ) async throws {
+        try await runtimeSettingsService?.configure(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
+        await petActivityService?.configure(ownerUserID: ownerUserID)
+        try await commandService?.configure(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
+        await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
+        await askUserPromptService?.configure(ownerUserID: ownerUserID)
+        await turnProcessService?.configure(ownerUserID: ownerUserID)
+        try await platformToolWorker?.configure(
+            ownerUserID: ownerUserID,
+            externalMCPConfigs: bootstrap.externalMCPConfigs
+        )
+        conversationCache.values.forEach {
+            $0.localAgentRuntimeDidBecomeReady()
         }
     }
 

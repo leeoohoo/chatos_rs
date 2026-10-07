@@ -90,7 +90,7 @@ struct TaskReplyInspectorContent: View {
                 case .process:
                     TaskProcessTimelineView(
                         items: viewModel.processTimelineItems,
-                        allowsTextSelection: false
+                        allowsTextSelection: true
                     )
                 case .detail:
                     taskDetail(task)
@@ -104,7 +104,7 @@ struct TaskReplyInspectorContent: View {
         MessageTaskDetailSections(
             task: task,
             isLoadingModelOutput: viewModel.isLoadingModelOutput,
-            allowsTextSelection: false
+            allowsTextSelection: true
         )
         if let modelOutputError = viewModel.modelOutputError {
             Label("模型输出读取失败：\(modelOutputError)", systemImage: "exclamationmark.triangle")

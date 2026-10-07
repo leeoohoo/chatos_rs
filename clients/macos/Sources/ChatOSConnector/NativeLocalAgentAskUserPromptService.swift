@@ -48,7 +48,11 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
     ) async throws -> AskUserPrompt {
         let resolved = try await resolve(promptID: promptID, sessionID: sessionID)
         try Self.rejectSecrets(in: submission, prompt: resolved.prompt)
-        let input = Self.submissionInput(submission, promptID: promptID)
+        let input = Self.submissionInput(
+            submission,
+            promptID: promptID,
+            toolCallID: resolved.prompt.toolCallID
+        )
         let message = Self.submissionMessage(submission)
         if resolved.run.profileKey == "main_chat" {
             let conversation = try await conversationClient.get(
@@ -186,7 +190,8 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
 
     private static func submissionInput(
         _ submission: AskUserSubmission,
-        promptID: String
+        promptID: String,
+        toolCallID: String?
     ) -> LocalAgentJSONValue {
         let values = submission.values.mapValues(LocalAgentJSONValue.string)
         let selection: LocalAgentJSONValue = switch submission.selection {
@@ -194,12 +199,16 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
         case let .multiple(values): .array(values.map(LocalAgentJSONValue.string))
         case nil: .null
         }
-        return .object([
+        var object: [String: LocalAgentJSONValue] = [
             "source": .string("ask_user"),
             "prompt_id": .string(promptID),
             "values": .object(values),
             "selection": selection,
-        ])
+        ]
+        if let toolCallID, !toolCallID.isEmpty {
+            object["tool_call_id"] = .string(toolCallID)
+        }
+        return .object(object)
     }
 
     private static func submissionMessage(_ submission: AskUserSubmission) -> String {

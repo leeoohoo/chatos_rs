@@ -2,31 +2,99 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    conversation_store::next_message_ordinal, task_store::fetch_graph, ClientStorageError,
-    SqliteClientStorage, SqliteResultExt,
+    conversation_store::next_message_ordinal, ClientStorageError, SqliteClientStorage,
+    SqliteResultExt,
 };
-use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalTaskGraphStatus, LocalTaskStatus};
+use chatos_local_agent_protocol::LocalAgentRunRecord;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::{Row, SqliteConnection};
 
-pub(super) async fn write_back_terminal_graph(
+#[cfg(test)]
+use super::task_callback_display::sanitize_visible_detail;
+use super::task_callback_display::{
+    callback_content, contains_cjk, truncate_chars, user_visible_callback_detail,
+};
+
+struct CallbackSource {
+    graph_id: String,
+    task_id: String,
+    task_title: String,
+    task_objective: String,
+    task_status: String,
+    task_version: u64,
+    task_updated_at_unix_ms: i64,
+    conversation_id: String,
+    turn_id: String,
+    source_user_message_id: String,
+    source_run_id: String,
+    prefers_english: bool,
+    cancel_reason: Option<String>,
+    replacement_task_ids: Vec<String>,
+    cancelled_because_task_id: Option<String>,
+    schedule_mode: String,
+}
+
+pub(super) async fn write_back_task_run_started(
     connection: &mut SqliteConnection,
-    cause_run: &LocalAgentRunRecord,
+    run: &LocalAgentRunRecord,
     now_unix_ms: i64,
 ) -> Result<bool, ClientStorageError> {
-    if cause_run.owner_entity_type != "task" || !cause_run.status.is_terminal() {
+    if run.owner_entity_type != "task" || run.status.is_terminal() {
         return Ok(false);
     }
-    let graph_id: Option<String> =
-        sqlx::query_scalar("SELECT graph_id FROM local_tasks WHERE task_id = ?")
-            .bind(&cause_run.owner_entity_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .db()?;
-    let Some(graph_id) = graph_id else {
+    let Some(source) = callback_source(connection, &run.owner_entity_id).await? else {
         return Ok(false);
     };
-    write_back_graph(connection, &graph_id, now_unix_ms).await
+    write_callback(
+        connection,
+        &source,
+        Some(run),
+        "task.run.started",
+        "running",
+        None,
+        now_unix_ms,
+    )
+    .await
+}
+
+pub(super) async fn write_back_terminal_task_run(
+    connection: &mut SqliteConnection,
+    run: &LocalAgentRunRecord,
+    now_unix_ms: i64,
+) -> Result<bool, ClientStorageError> {
+    if run.owner_entity_type != "task" || !run.status.is_terminal() {
+        return Ok(false);
+    }
+    let Some(source) = callback_source(connection, &run.owner_entity_id).await? else {
+        return Ok(false);
+    };
+    let (event, status) = terminal_event_and_status(&source.task_status)?;
+    let reported_outcome =
+        super::task_lifecycle::reported_task_outcome(connection, &run.run_id).await?;
+    let reported_detail = reported_outcome.as_ref().map(|outcome| {
+        json!({
+            "status": outcome.status,
+            "reason": outcome.reason,
+        })
+    });
+    let terminal_outcome = if matches!(event, "task.failed" | "task.blocked") {
+        reported_detail.as_ref().or(run.terminal_outcome.as_ref())
+    } else {
+        run.terminal_outcome.as_ref()
+    };
+    let changed = write_callback(
+        connection,
+        &source,
+        Some(run),
+        event,
+        status,
+        terminal_outcome,
+        now_unix_ms,
+    )
+    .await?;
+    write_back_graph(connection, &source.graph_id, now_unix_ms).await?;
+    Ok(changed)
 }
 
 pub(super) async fn write_back_graph(
@@ -34,134 +102,314 @@ pub(super) async fn write_back_graph(
     graph_id: &str,
     now_unix_ms: i64,
 ) -> Result<bool, ClientStorageError> {
-    let Some(graph) = fetch_graph(connection, graph_id).await? else {
-        return Ok(false);
-    };
-    if matches!(
-        graph.status,
-        LocalTaskGraphStatus::Pending | LocalTaskGraphStatus::Running
-    ) || graph.source_entity_type != "conversation_turn"
-    {
-        return Ok(false);
-    }
-    let terminal_signature = serde_json::to_string(
-        &graph
-            .tasks
-            .iter()
-            .map(|task| {
-                json!({
-                    "task_id": task.task_id,
-                    "status": task.status,
-                    "version": task.version,
-                })
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let already_written: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM local_task_graph_writebacks \
-         WHERE graph_id = ? AND terminal_signature = ?)",
+    let rows = sqlx::query(
+        "SELECT t.task_id, \
+         (SELECT r.run_id FROM local_agent_runs r \
+          WHERE r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
+          AND r.status IN ('succeeded', 'failed', 'cancelled') \
+          ORDER BY r.updated_at_unix_ms DESC, r.created_at_unix_ms DESC, r.rowid DESC LIMIT 1) \
+          AS terminal_run_id \
+         FROM local_tasks t WHERE t.graph_id = ? \
+         AND t.status IN ('succeeded', 'failed', 'cancelled', 'blocked') \
+         ORDER BY t.task_id",
     )
     .bind(graph_id)
-    .bind(&terminal_signature)
-    .fetch_one(&mut *connection)
+    .fetch_all(&mut *connection)
     .await
     .db()?;
-    if already_written {
-        return Ok(false);
+    let mut changed = false;
+    for row in rows {
+        let task_id: String = row.try_get("task_id").db()?;
+        let run_id: Option<String> = row.try_get("terminal_run_id").db()?;
+        let run = if let Some(run_id) = run_id {
+            SqliteClientStorage::fetch_run_on(connection, &run_id).await?
+        } else {
+            None
+        };
+        let Some(source) = callback_source(connection, &task_id).await? else {
+            continue;
+        };
+        let (event, status) = terminal_event_and_status(&source.task_status)?;
+        let reported_outcome = if let Some(run) = run.as_ref() {
+            super::task_lifecycle::reported_task_outcome(connection, &run.run_id).await?
+        } else {
+            None
+        };
+        let reported_detail = reported_outcome.as_ref().map(|outcome| {
+            json!({
+                "status": outcome.status,
+                "reason": outcome.reason,
+            })
+        });
+        let terminal_outcome = if matches!(event, "task.failed" | "task.blocked") {
+            reported_detail
+                .as_ref()
+                .or_else(|| run.as_ref().and_then(|run| run.terminal_outcome.as_ref()))
+        } else {
+            run.as_ref().and_then(|run| run.terminal_outcome.as_ref())
+        };
+        changed |= write_callback(
+            connection,
+            &source,
+            run.as_ref(),
+            event,
+            status,
+            terminal_outcome,
+            now_unix_ms,
+        )
+        .await?;
     }
-    let source = sqlx::query(
-        "SELECT t.conversation_id, t.turn_id, t.run_id, c.owner_user_id \
-         FROM local_conversation_turns t \
-         JOIN local_conversations c ON c.conversation_id = t.conversation_id \
-         WHERE t.turn_id = ?",
+    Ok(changed)
+}
+
+async fn callback_source(
+    connection: &mut SqliteConnection,
+    task_id: &str,
+) -> Result<Option<CallbackSource>, ClientStorageError> {
+    let row = sqlx::query(
+        "SELECT g.graph_id, t.task_id, t.title, t.input_json, t.status, t.version, \
+         t.updated_at_unix_ms AS task_updated_at_unix_ms, \
+         t.cancel_reason, t.replacement_task_ids_json, t.cancelled_because_task_id, \
+         turn.conversation_id, turn.turn_id, turn.user_message_id, turn.run_id AS source_run_id, \
+         message.content_json AS source_message_content \
+         FROM local_tasks t \
+         JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+         JOIN local_conversation_turns turn \
+           ON g.source_entity_type = 'conversation_turn' \
+          AND turn.turn_id = g.source_entity_id \
+         JOIN local_conversations conversation \
+           ON conversation.conversation_id = turn.conversation_id \
+          AND conversation.owner_user_id = g.owner_user_id \
+         JOIN local_conversation_messages message \
+           ON message.message_id = turn.user_message_id \
+         WHERE t.task_id = ?",
     )
-    .bind(&graph.source_entity_id)
+    .bind(task_id)
     .fetch_optional(&mut *connection)
     .await
     .db()?;
-    let Some(source) = source else {
+    row.map(|row| {
+        let source_message_content: String = row.try_get("source_message_content").db()?;
+        let source_message_content: Value = serde_json::from_str(&source_message_content)?;
+        let task_input_json: String = row.try_get("input_json").db()?;
+        let task_input: Value = serde_json::from_str(&task_input_json)?;
+        let replacement_task_ids_json: String = row.try_get("replacement_task_ids_json").db()?;
+        Ok(CallbackSource {
+            graph_id: row.try_get("graph_id").db()?,
+            task_id: row.try_get("task_id").db()?,
+            task_title: row.try_get("title").db()?,
+            task_objective: task_input
+                .get("objective")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            task_status: row.try_get("status").db()?,
+            task_version: u64::try_from(row.try_get::<i64, _>("version").db()?).map_err(|_| {
+                ClientStorageError::InvalidState("invalid Task version".to_string())
+            })?,
+            task_updated_at_unix_ms: row.try_get("task_updated_at_unix_ms").db()?,
+            conversation_id: row.try_get("conversation_id").db()?,
+            turn_id: row.try_get("turn_id").db()?,
+            source_user_message_id: row.try_get("user_message_id").db()?,
+            source_run_id: row.try_get("source_run_id").db()?,
+            prefers_english: !contains_cjk(&source_message_content),
+            cancel_reason: row.try_get("cancel_reason").db()?,
+            replacement_task_ids: serde_json::from_str(&replacement_task_ids_json)?,
+            cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
+            schedule_mode: task_input
+                .pointer("/schedule/mode")
+                .and_then(Value::as_str)
+                .unwrap_or("contact_async")
+                .trim()
+                .to_string(),
+        })
+    })
+    .transpose()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write_callback(
+    connection: &mut SqliteConnection,
+    source: &CallbackSource,
+    run: Option<&LocalAgentRunRecord>,
+    event: &str,
+    status: &str,
+    terminal_outcome: Option<&Value>,
+    now_unix_ms: i64,
+) -> Result<bool, ClientStorageError> {
+    if event == "task.cancelled" && !task_cancellation_is_user_visible(source) {
         return Ok(false);
-    };
-    let owner_user_id: String = source.try_get("owner_user_id").db()?;
-    if owner_user_id != graph.owner_user_id {
-        return Err(ClientStorageError::InvalidState(format!(
-            "Task Graph owner does not match source Conversation: {graph_id}"
-        )));
     }
-    let conversation_id: String = source.try_get("conversation_id").db()?;
-    let turn_id: String = source.try_get("turn_id").db()?;
-    let source_run_id: String = source.try_get("run_id").db()?;
-    let generation: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(generation), 0) + 1 FROM local_task_graph_writebacks \
-         WHERE graph_id = ?",
-    )
-    .bind(graph_id)
-    .fetch_one(&mut *connection)
-    .await
-    .db()?;
-    let message_id = format!("task-graph:{graph_id}:{generation}");
-    let ordinal = next_message_ordinal(connection, &conversation_id).await?;
-    let tasks = task_summaries(connection, graph_id).await?;
-    let content = json!({
-        "type": "task_graph_terminal",
-        "graph_id": graph_id,
-        "status": graph.status,
-        "tasks": tasks,
+    let run_scope = run.map(|run| run.run_id.as_str()).unwrap_or(status);
+    let message_id = format!(
+        "task_runner_callback::{}::{}::{}",
+        source.source_user_message_id, source.task_id, run_scope
+    );
+    let content = callback_content(
+        &source.task_title,
+        &source.task_objective,
+        event,
+        terminal_outcome,
+        source.prefers_english,
+    );
+    let callback_at_unix_ms = run
+        .map(|run| run.updated_at_unix_ms)
+        .unwrap_or(source.task_updated_at_unix_ms);
+    let mut task_runner_async = json!({
+        "mode": "contact_async",
+        "message_kind": "task_lifecycle_update",
+        "event": event,
+        "task_id": source.task_id,
+        "run_id": run.map(|run| run.run_id.as_str()),
+        "status": status,
+        "task_status": source.task_status,
+        "task_title": source.task_title,
+        "task_objective": source.task_objective,
+        "fallback_locale": if source.prefers_english { "en-US" } else { "zh-CN" },
+        "source_session_id": source.conversation_id,
+        "source_turn_id": source.turn_id,
+        "source_user_message_id": source.source_user_message_id,
+        "source_run_id": source.source_run_id,
+        "schedule_mode": source.schedule_mode,
+        "callback_at_unix_ms": callback_at_unix_ms,
+        "callback_at": unix_ms_rfc3339(callback_at_unix_ms),
     });
-    sqlx::query(
-        "INSERT INTO local_conversation_messages(\
-         message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
-         created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?)",
+    if let Some((detail_source, detail)) = user_visible_callback_detail(
+        &source.task_objective,
+        event,
+        terminal_outcome,
+        source.prefers_english,
+    ) {
+        let preview = truncate_chars(&detail, 420);
+        task_runner_async["detail_source"] = json!(detail_source);
+        task_runner_async["detail_preview"] = json!(preview);
+        match event {
+            "task.completed" => {
+                task_runner_async["result_summary"] = json!(detail);
+                if detail_source == "report" {
+                    task_runner_async["report_excerpt"] = json!(preview);
+                }
+            }
+            "task.failed" | "task.blocked" => {
+                task_runner_async["error_message"] = json!(preview);
+            }
+            _ => {}
+        }
+    }
+    if event == "task.run.started" {
+        task_runner_async["started_at_unix_ms"] = json!(callback_at_unix_ms);
+        task_runner_async["started_at"] = unix_ms_rfc3339(callback_at_unix_ms);
+    } else {
+        task_runner_async["finished_at_unix_ms"] = json!(callback_at_unix_ms);
+        task_runner_async["finished_at"] = unix_ms_rfc3339(callback_at_unix_ms);
+    }
+    let mut metadata = json!({
+        "kind": "task_execution_callback",
+        "graph_id": source.graph_id,
+        "conversation_turn_id": source.turn_id,
+        "task_runner_async": task_runner_async,
+    });
+    let existing = sqlx::query(
+        "SELECT content_json, metadata_json FROM local_conversation_messages \
+         WHERE message_id = ?",
     )
     .bind(&message_id)
-    .bind(&conversation_id)
-    .bind(&turn_id)
-    .bind(ordinal)
-    .bind(serde_json::to_string(&content)?)
-    .bind(serde_json::to_string(&json!({
-        "kind": "task_graph_terminal",
-        "graph_id": graph_id,
-        "generation": generation,
-    }))?)
-    .bind(now_unix_ms)
-    .execute(&mut *connection)
+    .fetch_optional(&mut *connection)
     .await
     .db()?;
-    sqlx::query(
-        "INSERT INTO local_task_graph_writebacks(\
-         graph_id, generation, terminal_signature, message_id, terminal_status, \
-         created_at_unix_ms) VALUES(?, ?, ?, ?, ?, ?)",
-    )
-    .bind(graph_id)
-    .bind(generation)
-    .bind(&terminal_signature)
-    .bind(&message_id)
-    .bind(graph_status_value(graph.status))
-    .bind(now_unix_ms)
-    .execute(&mut *connection)
-    .await
-    .db()?;
+    if event != "task.run.started" {
+        if let Some(started_at) = existing
+            .as_ref()
+            .and_then(|row| row.try_get::<String, _>("metadata_json").ok())
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .and_then(|value| {
+                value
+                    .pointer("/task_runner_async/started_at_unix_ms")
+                    .cloned()
+            })
+        {
+            metadata["task_runner_async"]["started_at_unix_ms"] = started_at;
+        }
+        if let Some(started_at) = existing
+            .as_ref()
+            .and_then(|row| row.try_get::<String, _>("metadata_json").ok())
+            .and_then(|value| serde_json::from_str::<Value>(&value).ok())
+            .and_then(|value| value.pointer("/task_runner_async/started_at").cloned())
+        {
+            metadata["task_runner_async"]["started_at"] = started_at;
+        }
+    }
+    let content_json = serde_json::to_string(&Value::String(content))?;
+    let metadata_json = serde_json::to_string(&metadata)?;
+    let changed = if let Some(existing) = existing {
+        let current_content: String = existing.try_get("content_json").db()?;
+        let current_metadata: String = existing.try_get("metadata_json").db()?;
+        if current_content == content_json && current_metadata == metadata_json {
+            false
+        } else {
+            sqlx::query(
+                "UPDATE local_conversation_messages SET content_json = ?, metadata_json = ? \
+                 WHERE message_id = ?",
+            )
+            .bind(&content_json)
+            .bind(&metadata_json)
+            .bind(&message_id)
+            .execute(&mut *connection)
+            .await
+            .db()?;
+            true
+        }
+    } else {
+        let ordinal = next_message_ordinal(connection, &source.conversation_id).await?;
+        sqlx::query(
+            "INSERT INTO local_conversation_messages(\
+             message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
+             created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?)",
+        )
+        .bind(&message_id)
+        .bind(&source.conversation_id)
+        .bind(&source.turn_id)
+        .bind(ordinal)
+        .bind(&content_json)
+        .bind(&metadata_json)
+        .bind(now_unix_ms)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        true
+    };
+    if !changed {
+        return Ok(false);
+    }
     sqlx::query(
         "UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? \
          WHERE conversation_id = ?",
     )
     .bind(now_unix_ms)
-    .bind(&conversation_id)
+    .bind(&source.conversation_id)
     .execute(&mut *connection)
     .await
     .db()?;
+    let callback_version = run.map(|run| run.version).unwrap_or(source.task_version);
     SqliteClientStorage::insert_event(
         connection,
-        &format!("task-writeback:{graph_id}:{generation}"),
-        &source_run_id,
-        "task_graph_written_back",
+        &format!(
+            "task-callback:{}:{}:{event}:{callback_version}",
+            source.task_id, run_scope
+        ),
+        run.map(|run| run.run_id.as_str())
+            .unwrap_or(source.source_run_id.as_str()),
+        "task_callback_written_back",
         &json!({
-            "conversation_id": conversation_id,
-            "turn_id": turn_id,
-            "graph_id": graph_id,
-            "status": graph.status,
+            "conversation_id": source.conversation_id,
+            "turn_id": source.turn_id,
+            "graph_id": source.graph_id,
+            "task_id": source.task_id,
+            "run_id": run.map(|run| run.run_id.as_str()),
+            "event": event,
+            "status": status,
             "message_id": message_id,
-            "generation": generation,
         }),
         now_unix_ms,
     )
@@ -169,330 +417,49 @@ pub(super) async fn write_back_graph(
     Ok(true)
 }
 
-fn graph_status_value(status: LocalTaskGraphStatus) -> &'static str {
-    match status {
-        LocalTaskGraphStatus::Succeeded => "succeeded",
-        LocalTaskGraphStatus::Failed => "failed",
-        LocalTaskGraphStatus::Cancelled => "cancelled",
-        LocalTaskGraphStatus::Pending | LocalTaskGraphStatus::Running => {
-            unreachable!("only terminal Task Graphs are written back")
-        }
-    }
+fn unix_ms_rfc3339(value: i64) -> Value {
+    DateTime::<Utc>::from_timestamp_millis(value)
+        .map(|value| Value::String(value.to_rfc3339()))
+        .unwrap_or(Value::Null)
 }
 
-async fn task_summaries(
-    connection: &mut SqliteConnection,
-    graph_id: &str,
-) -> Result<Vec<Value>, ClientStorageError> {
-    let rows = sqlx::query(
-        "SELECT t.task_id, t.title, t.status, \
-         (SELECT r.terminal_outcome_json FROM local_agent_runs r \
-          WHERE r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
-          AND r.status IN ('succeeded', 'failed', 'cancelled') \
-          ORDER BY r.updated_at_unix_ms DESC, r.created_at_unix_ms DESC, r.rowid DESC LIMIT 1) \
-          AS terminal_outcome_json \
-         FROM local_tasks t WHERE t.graph_id = ? ORDER BY t.task_id",
-    )
-    .bind(graph_id)
-    .fetch_all(&mut *connection)
-    .await
-    .db()?;
-    rows.into_iter()
-        .map(|row| {
-            let status: String = row.try_get("status").db()?;
-            let status = status
-                .parse::<LocalTaskStatus>()
-                .map_err(ClientStorageError::InvalidState)?;
-            let terminal_outcome: Option<String> = row.try_get("terminal_outcome_json").db()?;
-            Ok(json!({
-                "task_id": row.try_get::<String, _>("task_id").db()?,
-                "title": row.try_get::<String, _>("title").db()?,
-                "status": status,
-                "terminal_outcome": terminal_outcome
-                    .map(|value| serde_json::from_str::<Value>(&value))
-                    .transpose()?,
-            }))
-        })
-        .collect()
+fn task_cancellation_is_user_visible(source: &CallbackSource) -> bool {
+    if source.cancelled_because_task_id.is_some() || !source.replacement_task_ids.is_empty() {
+        return false;
+    }
+    let Some(reason) = source
+        .cancel_reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+    else {
+        return true;
+    };
+    !(reason.contains("重新执行前")
+        || reason.contains("重新规划前")
+        || reason.contains("替换旧")
+        || reason.contains("旧执行计划")
+        || reason.contains("replacement")
+        || reason.contains("replan")
+        || reason.contains("rerun")
+        || reason.contains("supersed"))
+}
+
+fn terminal_event_and_status(
+    status: &str,
+) -> Result<(&'static str, &'static str), ClientStorageError> {
+    match status {
+        "succeeded" => Ok(("task.completed", "succeeded")),
+        "failed" => Ok(("task.failed", "failed")),
+        "blocked" => Ok(("task.blocked", "blocked")),
+        "cancelled" => Ok(("task.cancelled", "cancelled")),
+        _ => Err(ClientStorageError::InvalidState(format!(
+            "Task callback requires terminal status: {status}"
+        ))),
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::{
-        IdempotentCommand, LocalAgentRunStore, LocalAgentTaskStore, LocalConversationStore,
-        RunTransition, SqliteClientStorage,
-    };
-    use chatos_local_agent_protocol::{
-        CreateConversationCommand, CreateTaskGraphCommand, LocalAgentRunRecord,
-        LocalAgentRunStatus, LocalConversationTurnStatus, LocalTaskSpec,
-        StartConversationTurnCommand,
-    };
-    use serde_json::{json, Value};
-
-    fn command(command_id: &str) -> IdempotentCommand {
-        IdempotentCommand {
-            command_id: command_id.to_string(),
-            request_fingerprint: command_id.to_string(),
-            persist_receipt: true,
-        }
-    }
-
-    fn conversation_run(turn: &StartConversationTurnCommand) -> LocalAgentRunRecord {
-        LocalAgentRunRecord {
-            run_id: turn.run_id.clone(),
-            owner_user_id: "user-1".to_string(),
-            owner_entity_type: "conversation_turn".to_string(),
-            owner_entity_id: turn.turn_id.clone(),
-            profile_key: "main_chat".to_string(),
-            model_config_ref: turn.model_config_ref.clone(),
-            model_config_revision: turn.model_config_revision.clone(),
-            capability_policy_revision: turn.capability_policy_revision.clone(),
-            input: json!({"message": turn.message, "attachments": []}),
-            status: LocalAgentRunStatus::Queued,
-            iteration: 0,
-            model_attempt: 1,
-            max_iterations: turn.max_iterations,
-            version: 1,
-            claim_token: None,
-            claim_until_unix_ms: None,
-            next_attempt_at_unix_ms: None,
-            pending_tool_batch: None,
-            checkpoint: Value::Null,
-            continuation_input: None,
-            terminal_outcome: None,
-            created_at_unix_ms: 2_000,
-            updated_at_unix_ms: 2_000,
-        }
-    }
-
-    async fn finish_task_run(
-        storage: &SqliteClientStorage,
-        run_id: &str,
-        status: LocalAgentRunStatus,
-        now_unix_ms: i64,
-    ) {
-        storage
-            .start_next_task_run("user-1", run_id, &format!("start-{run_id}"), now_unix_ms)
-            .await
-            .expect("start Task Run")
-            .expect("runnable Task");
-        let claim = storage
-            .claim_next_run(
-                &command(&format!("claim-{run_id}")),
-                "user-1",
-                "worker-1",
-                &format!("token-{run_id}"),
-                now_unix_ms + 1,
-                now_unix_ms + 10_000,
-                &format!("claim-event-{run_id}"),
-            )
-            .await
-            .expect("claim Task Run")
-            .expect("Task Run claim");
-        storage
-            .apply_transition(
-                &command(&format!("finish-{run_id}")),
-                &RunTransition {
-                    run_id: claim.run.run_id,
-                    claim_token: claim.claim_token,
-                    expected_version: claim.run.version,
-                    expected_status: LocalAgentRunStatus::ModelRunning,
-                    next_status: status,
-                    next_model_attempt: 1,
-                    next_attempt_at_unix_ms: None,
-                    pending_tool_batch: None,
-                    tool_batch: None,
-                    checkpoint: None,
-                    clear_continuation_input: true,
-                    terminal_outcome: Some(json!({"run": run_id, "status": status})),
-                    event_id: format!("finish-event-{run_id}"),
-                    event_type: format!("run_{}", status.as_str()),
-                    event_payload: json!({"status": status}),
-                    occurred_at_unix_ms: now_unix_ms + 2,
-                },
-            )
-            .await
-            .expect("finish Task Run");
-    }
-
-    #[tokio::test]
-    async fn terminal_task_graphs_write_back_each_terminal_generation() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        storage
-            .create_conversation(
-                &command("create-conversation"),
-                &CreateConversationCommand {
-                    conversation_id: "conversation-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    title: "Local conversation".to_string(),
-                    resource: None,
-                },
-                1_000,
-            )
-            .await
-            .expect("create Conversation");
-        let turn = StartConversationTurnCommand {
-            owner_user_id: "user-1".to_string(),
-            conversation_id: "conversation-1".to_string(),
-            expected_conversation_version: 1,
-            turn_id: "turn-1".to_string(),
-            message_id: "message-1".to_string(),
-            run_id: "conversation-run-1".to_string(),
-            message: "Do the task".to_string(),
-            message_metadata: json!({}),
-            attachments: Vec::new(),
-            model_config_ref: "model-1".to_string(),
-            model_config_revision: "revision-1".to_string(),
-            capability_policy_revision: "policy-1".to_string(),
-            max_iterations: 8,
-        };
-        storage
-            .start_conversation_turn(
-                &command("start-turn"),
-                &turn,
-                &conversation_run(&turn),
-                "start-turn-event",
-                2_000,
-            )
-            .await
-            .expect("start Turn");
-        storage
-            .cancel_run(
-                &command("cancel-conversation-run"),
-                &turn.run_id,
-                Some(1),
-                "main response completed elsewhere",
-                "cancel-conversation-event",
-                3_000,
-            )
-            .await
-            .expect("close source Turn");
-        storage
-            .create_task_graph(
-                &command("create-graph"),
-                &CreateTaskGraphCommand {
-                    graph_id: "graph-1".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    source_entity_type: "conversation_turn".to_string(),
-                    source_entity_id: "turn-1".to_string(),
-                    tasks: vec![LocalTaskSpec {
-                        task_id: "task-1".to_string(),
-                        title: "Inspect project".to_string(),
-                        profile_key: "task_execution".to_string(),
-                        model_config_ref: "model-1".to_string(),
-                        model_config_revision: "revision-1".to_string(),
-                        capability_policy_revision: "policy-1".to_string(),
-                        input: json!({"prompt": "inspect"}),
-                        max_iterations: 8,
-                    }],
-                    dependencies: Vec::new(),
-                },
-                4_000,
-            )
-            .await
-            .expect("create Task Graph");
-
-        finish_task_run(
-            &storage,
-            "task-run-failed",
-            LocalAgentRunStatus::Failed,
-            5_000,
-        )
-        .await;
-        storage
-            .retry_task(&command("retry-task"), "user-1", "task-1", 3, None, 6_000)
-            .await
-            .expect("retry Task");
-        finish_task_run(
-            &storage,
-            "task-run-succeeded",
-            LocalAgentRunStatus::Succeeded,
-            7_000,
-        )
-        .await;
-
-        storage
-            .create_task_graph(
-                &command("create-cancelled-graph"),
-                &CreateTaskGraphCommand {
-                    graph_id: "graph-cancelled".to_string(),
-                    owner_user_id: "user-1".to_string(),
-                    source_entity_type: "conversation_turn".to_string(),
-                    source_entity_id: "turn-1".to_string(),
-                    tasks: vec![LocalTaskSpec {
-                        task_id: "task-cancelled".to_string(),
-                        title: "Cancelled task".to_string(),
-                        profile_key: "task_execution".to_string(),
-                        model_config_ref: "model-1".to_string(),
-                        model_config_revision: "revision-1".to_string(),
-                        capability_policy_revision: "policy-1".to_string(),
-                        input: json!({"prompt": "cancel"}),
-                        max_iterations: 8,
-                    }],
-                    dependencies: Vec::new(),
-                },
-                8_000,
-            )
-            .await
-            .expect("create cancellable Task Graph");
-        storage
-            .cancel_task(
-                &command("cancel-task"),
-                "user-1",
-                "task-cancelled",
-                Some(1),
-                "no longer needed",
-                "unused-run-event",
-                9_000,
-            )
-            .await
-            .expect("cancel pending Task");
-
-        let conversation = storage
-            .get_conversation("user-1", "conversation-1")
-            .await
-            .expect("load Conversation")
-            .expect("Conversation");
-        assert_eq!(conversation.conversation.version, 6);
-        assert_eq!(
-            conversation.turns[0].status,
-            LocalConversationTurnStatus::Cancelled
-        );
-        assert_eq!(conversation.messages.len(), 4);
-        assert_eq!(conversation.messages[1].content["status"], "failed");
-        assert_eq!(conversation.messages[2].content["status"], "succeeded");
-        assert_eq!(
-            conversation.messages[2].content["tasks"][0]["terminal_outcome"]["run"],
-            "task-run-succeeded"
-        );
-        assert_eq!(conversation.messages[3].content["status"], "cancelled");
-        let writebacks: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM local_task_graph_writebacks WHERE graph_id = 'graph-1'",
-        )
-        .fetch_one(&storage.pool)
-        .await
-        .expect("count writebacks");
-        assert_eq!(writebacks, 2);
-        let cancelled_writebacks: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM local_task_graph_writebacks \
-             WHERE graph_id = 'graph-cancelled'",
-        )
-        .fetch_one(&storage.pool)
-        .await
-        .expect("count cancelled writebacks");
-        assert_eq!(cancelled_writebacks, 1);
-        let events = storage
-            .list_events(0, 100, Some("conversation-run-1"))
-            .await
-            .expect("list source Run events");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| event.event_type == "task_graph_written_back")
-                .count(),
-            3
-        );
-    }
-}
+#[path = "task_conversation_writeback_tests.rs"]
+mod tests;

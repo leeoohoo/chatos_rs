@@ -49,6 +49,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     private readonly WindowsLocalAgentAttachmentVault _vault;
     private readonly WindowsLocalAgentProjectToolExecutor? _projectTools;
     private readonly IWindowsLocalAgentPluginToolExecutor? _pluginTools;
+    private readonly WindowsLocalAgentExternalMcpExecutor? _externalMcps;
     private readonly WindowsLocalAgentToolApprovalHandler? _approvals;
     private readonly WindowsLocalAgentEventHub? _eventHub;
     private readonly object _gate = new();
@@ -63,6 +64,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         WindowsLocalAgentAttachmentVault vault,
         WindowsLocalAgentProjectToolExecutor projectTools,
         IWindowsLocalAgentPluginToolExecutor pluginTools,
+        WindowsLocalAgentExternalMcpExecutor externalMcps,
         WindowsLocalAgentToolApprovalHandler approvals,
         WindowsLocalAgentEventHub eventHub)
     {
@@ -71,6 +73,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         _vault = vault;
         _projectTools = projectTools;
         _pluginTools = pluginTools;
+        _externalMcps = externalMcps;
         _approvals = approvals;
         _eventHub = eventHub;
     }
@@ -87,11 +90,21 @@ public sealed class WindowsLocalAgentPlatformToolWorker
 
     public void Configure(string ownerUserId)
     {
+        Configure(ownerUserId, [], new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    public IReadOnlyList<WindowsLocalAgentExternalMcpTool> Configure(
+        string ownerUserId,
+        IReadOnlyList<ChatOS.Connector.Gateway.ConnectorResolvedMcp> mcps,
+        IReadOnlySet<string> selectableExternalMcpIds)
+    {
         Reset();
+        var externalTools = _externalMcps?.Configure(mcps, selectableExternalMcpIds) ?? [];
         lock (_gate) _owner = ownerUserId;
         _eventHub?.Configure(ownerUserId);
         StartEventMonitoring(ownerUserId);
         Start(TimeSpan.Zero);
+        return externalTools;
     }
 
     public void Reset()
@@ -101,6 +114,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             _owner = null;
             _pendingWake = false;
             _pluginTools?.Reset();
+            _externalMcps?.Reset();
             _polling?.Cancel();
             _polling = null;
             _eventMonitoring?.Cancel();
@@ -109,6 +123,11 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     }
 
     public void Wake() => Start(TimeSpan.FromSeconds(15));
+
+    internal Task<IReadOnlyList<WindowsLocalAgentPluginChoice>> ListPluginChoicesAsync(
+        CancellationToken cancellationToken) =>
+        _pluginTools?.ListChoicesAsync(cancellationToken)
+        ?? Task.FromResult<IReadOnlyList<WindowsLocalAgentPluginChoice>>([]);
 
     private void StartEventMonitoring(string owner)
     {
@@ -184,7 +203,9 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                 }
                 var result = await _host.SendAsync<ClaimLocalToolCommand, ClaimLocalToolResult>(new(
                     "claim_next_tool", owner, "windows-platform-tool-worker", 30_000,
-                    [AttachmentTool, .. WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames],
+                    WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames
+                        .Concat(_externalMcps?.ToolNames() ?? [])
+                        .ToHashSet(StringComparer.Ordinal),
                     ["create_task", "create_tasks_with_prerequisites"]), source.Token)
                     .ConfigureAwait(false);
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
@@ -284,6 +305,14 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     {
         try
         {
+            if (_externalMcps?.ToolNames().Contains(claim.Invocation.ToolName) == true)
+            {
+                var externalOutput = await _externalMcps.ExecuteAsync(
+                    owner,
+                    claim.Invocation,
+                    cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.SerializeToElement(new { type = "succeeded", output = externalOutput });
+            }
             if (WindowsLocalAgentCapabilityCatalog.PluginToolNames.Contains(
                     claim.Invocation.ToolName))
             {
@@ -317,8 +346,11 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             var limit = args.TryGetProperty("limit", out var limitValue) ? limitValue.GetInt32() : 16_384;
             var runResult = await _host.SendAsync<GetLocalRunCommand, GetLocalRunResult>(
                 new("get_run", owner, claim.Invocation.RunId), cancellationToken).ConfigureAwait(false);
+            var hasConversation = runResult.Run.Input.TryGetProperty(
+                "source_conversation_id", out var conversationValue) ||
+                runResult.Run.Input.TryGetProperty("conversation_id", out conversationValue);
             if (runResult.Type != "run" || runResult.Run.OwnerUserId != owner ||
-                !runResult.Run.Input.TryGetProperty("conversation_id", out var conversationValue))
+                !hasConversation)
                 throw new InvalidOperationException("Invalid Local Agent Run context.");
             var conversationId = conversationValue.GetString()
                 ?? throw new InvalidOperationException("Invalid Local Agent conversation context.");

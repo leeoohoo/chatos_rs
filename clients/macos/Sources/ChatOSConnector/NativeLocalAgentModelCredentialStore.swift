@@ -1,68 +1,75 @@
+import CryptoKit
 import Foundation
-import Security
 
 struct NativeLocalAgentModelCredentialStore: Sendable {
-    private static let service = "com.chatos.swift.local-agent-model"
+    static let maximumCredentialBytes = 64 * 1_024
+    private let rootURL: URL
 
-    func load(ownerUserID: String, modelConfigRef: String) throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
+    init(rootURL: URL? = nil) {
+        if let rootURL {
+            self.rootURL = rootURL
+            return
+        }
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+        self.rootURL = support
+            .appendingPathComponent("ChatOSSwift", isDirectory: true)
+            .appendingPathComponent("NativeConnector", isDirectory: true)
+            .appendingPathComponent("Secrets", isDirectory: true)
+            .appendingPathComponent("LocalAgentModels", isDirectory: true)
+    }
+
+    func loadWithoutUserInteraction(
+        ownerUserID: String,
+        modelConfigRef: String
+    ) throws -> String? {
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data = try NativeBoundedFileReader.read(
+            url,
+            maximumBytes: Self.maximumCredentialBytes
+        )
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw NativeLocalAgentModelCredentialError.invalidCredential
         }
         return value
     }
 
-    func save(_ credential: String, ownerUserID: String, modelConfigRef: String) throws {
+    @discardableResult
+    func saveWithoutUserInteraction(
+        _ credential: String,
+        ownerUserID: String,
+        modelConfigRef: String
+    ) throws -> Bool {
         guard !credential.isEmpty,
-              credential.lengthOfBytes(using: .utf8) <= 64 * 1_024,
+              credential.lengthOfBytes(using: .utf8) <= Self.maximumCredentialBytes,
               !credential.contains("\0") else {
             throw NativeLocalAgentModelCredentialError.invalidCredential
         }
-        let account = account(ownerUserID, modelConfigRef)
-        let selector: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account,
-        ]
-        let data = Data(credential.utf8)
-        let update = SecItemUpdate(
-            selector as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary
+        try FileManager.default.createDirectory(
+            at: rootURL,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
         )
-        if update == errSecSuccess { return }
-        guard update == errSecItemNotFound else {
-            throw NativeLocalAgentModelCredentialError.keychain(update)
-        }
-        var insert = selector
-        insert[kSecValueData as String] = data
-        insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(insert as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
-        }
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: rootURL.path
+        )
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        try Data(credential.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
+        return true
     }
 
     func delete(ownerUserID: String, modelConfigRef: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: account(ownerUserID, modelConfigRef),
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw NativeLocalAgentModelCredentialError.keychain(status)
-        }
+        let url = credentialURL(ownerUserID: ownerUserID, modelConfigRef: modelConfigRef)
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
     }
 
     func environmentVariable(modelConfigRef: String) -> String {
@@ -73,21 +80,22 @@ struct NativeLocalAgentModelCredentialStore: Sendable {
         return "CHATOS_LOCAL_AGENT_MODEL_\(normalized.prefix(96))"
     }
 
-    private func account(_ ownerUserID: String, _ modelConfigRef: String) -> String {
-        "v1:\(ownerUserID):\(modelConfigRef)"
+    func credentialURL(ownerUserID: String, modelConfigRef: String) -> URL {
+        let identity = Data("\(ownerUserID)\u{0}\(modelConfigRef)".utf8)
+        let digest = SHA256.hash(data: identity)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return rootURL.appendingPathComponent("model-\(digest)", isDirectory: false)
     }
 }
 
 enum NativeLocalAgentModelCredentialError: LocalizedError {
     case invalidCredential
-    case keychain(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .invalidCredential:
             "Local Agent model credential is invalid."
-        case let .keychain(status):
-            "Local Agent model credential Keychain operation failed (\(status))."
         }
     }
 }

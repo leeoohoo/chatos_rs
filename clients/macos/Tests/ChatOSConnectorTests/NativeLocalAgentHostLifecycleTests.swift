@@ -90,6 +90,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             modelConfigRevision: "model-revision-1"
         )
         XCTAssertEqual(loadedModel, model)
+        let latestModels = try await controlPlane.latestModels(ownerUserID: "user-1")
+        XCTAssertEqual(latestModels, [model])
         let capabilities = LocalAgentCapabilityPolicySnapshot(
             ownerUserID: "user-1",
             profileKey: "main_chat",
@@ -104,6 +106,11 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             capabilityPolicyRevision: "capability-revision-1"
         )
         XCTAssertEqual(loadedCapabilities, capabilities)
+        let latestCapabilities = try await controlPlane.latestCapabilities(
+            ownerUserID: "user-1",
+            profileKey: "main_chat"
+        )
+        XCTAssertEqual(latestCapabilities, capabilities)
         try await lifecycle.restart(
             ownerUserID: "user-1",
             credentialEnvironment: ["CHATOS_LOCAL_AGENT_MODEL_MODEL_1": "test-only-secret"]
@@ -186,6 +193,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         ))
         XCTAssertEqual(localHistory.turns.first?.id, "turn-1")
         XCTAssertEqual(localHistory.turns.first?.userMessage.text, "hello locally")
+        let taskLookup = try XCTUnwrap(localHistory.turns.first?.messageTaskLookup)
+        XCTAssertEqual(taskLookup.sessionID, "conversation-1")
+        XCTAssertEqual(taskLookup.turnID, "turn-1")
+        XCTAssertEqual(taskLookup.sourceUserMessageID, acknowledgement.userMessageID)
         let eventStream = await conversationService.events(sessionID: "conversation-1")
         var eventIterator = eventStream.makeAsyncIterator()
         let event = try await eventIterator.next()

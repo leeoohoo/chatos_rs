@@ -333,6 +333,7 @@ mod tests {
         assert!(content.contains("本地 SQLite 持久化"));
         assert!(content.contains("不要在同一轮重复创建等价任务"));
         assert!(content.contains("不要把中间状态冒充最终交付物"));
+        assert!(content.contains("不能退化成只读 README 的简短概览"));
 
         let run_prompt = prompts
             .iter()
@@ -348,6 +349,7 @@ mod tests {
         assert!(run_prompt.contains("有节奏的用户可见任务过程记录"));
         assert!(run_prompt.contains("关键验证得出结果"));
         assert!(run_prompt.contains("不要为每次工具调用"));
+        assert!(run_prompt.contains("不得只依据 README 或架构文档结束"));
     }
 
     #[test]

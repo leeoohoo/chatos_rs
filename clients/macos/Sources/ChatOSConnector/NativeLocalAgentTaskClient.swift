@@ -88,6 +88,48 @@ public struct LocalAgentTaskGraphPage: Decodable, Sendable, Equatable {
     }
 }
 
+public struct LocalAgentMessageTaskGraphNode: Decodable, Sendable, Equatable {
+    public let task: LocalAgentTaskRecord
+    public let depth: UInt32
+    public let isRoot: Bool
+    public let isCurrentMessage: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case task, depth
+        case isRoot = "is_root"
+        case isCurrentMessage = "is_current_message"
+    }
+}
+
+public struct LocalAgentMessageTaskGraphEdge: Decodable, Sendable, Equatable {
+    public let sourceTaskID: String
+    public let targetTaskID: String
+    public let kind: String
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case sourceTaskID = "source_task_id"
+        case targetTaskID = "target_task_id"
+    }
+}
+
+public struct LocalAgentMessageTaskGraph: Decodable, Sendable, Equatable {
+    public let rootTaskIDs: [String]
+    public let nodes: [LocalAgentMessageTaskGraphNode]
+    public let edges: [LocalAgentMessageTaskGraphEdge]
+    public let sourceConversationID: String
+    public let sourceTurnID: String
+    public let sourceUserMessageID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case nodes, edges
+        case rootTaskIDs = "root_task_ids"
+        case sourceConversationID = "source_conversation_id"
+        case sourceTurnID = "source_turn_id"
+        case sourceUserMessageID = "source_user_message_id"
+    }
+}
+
 public struct NativeLocalAgentTaskClient: Sendable {
     private let host: any LocalAgentHostClientServicing
 
@@ -124,6 +166,25 @@ public struct NativeLocalAgentTaskClient: Sendable {
             graphID: graphID
         ))
         guard result.type == "task_graph" else { throw NativeLocalAgentHostError.invalidResponse }
+        return result.graph
+    }
+
+    public func messageGraph(
+        ownerUserID: String,
+        sourceConversationID: String,
+        sourceTurnID: String,
+        sourceUserMessageID: String?
+    ) async throws -> LocalAgentMessageTaskGraph {
+        let result: MessageTaskGraphResult = try await host.request(GetMessageTaskGraphCommand(
+            type: "get_message_task_graph",
+            ownerUserID: ownerUserID,
+            sourceConversationID: sourceConversationID,
+            sourceTurnID: sourceTurnID,
+            sourceUserMessageID: sourceUserMessageID
+        ))
+        guard result.type == "message_task_graph" else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
         return result.graph
     }
 
@@ -258,6 +319,27 @@ private struct GetGraphCommand: Encodable, Sendable {
         case ownerUserID = "owner_user_id"
         case graphID = "graph_id"
     }
+}
+
+private struct GetMessageTaskGraphCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let sourceConversationID: String
+    let sourceTurnID: String
+    let sourceUserMessageID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case sourceConversationID = "source_conversation_id"
+        case sourceTurnID = "source_turn_id"
+        case sourceUserMessageID = "source_user_message_id"
+    }
+}
+
+private struct MessageTaskGraphResult: Decodable, Sendable {
+    let type: String
+    let graph: LocalAgentMessageTaskGraph
 }
 
 private struct GetTaskRunsCommand: Encodable, Sendable {

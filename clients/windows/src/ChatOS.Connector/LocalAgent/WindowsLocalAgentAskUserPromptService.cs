@@ -49,7 +49,7 @@ public sealed class WindowsLocalAgentAskUserPromptService : IAskUserPromptServic
         var resolved = await ResolveAsync(promptId, conversationId, cancellationToken)
             .ConfigureAwait(false);
         RejectSecrets(submission, resolved.Prompt);
-        var input = SubmissionInput(promptId, submission);
+        var input = SubmissionInput(promptId, resolved.Prompt.ToolCallId, submission);
         if (resolved.Run.ProfileKey == "main_chat")
         {
             var conversation = await _conversations.GetAsync(
@@ -186,9 +186,11 @@ public sealed class WindowsLocalAgentAskUserPromptService : IAskUserPromptServic
             throw new InvalidOperationException("Secret answers cannot be stored in Local Agent state.");
     }
 
-    private static JsonElement SubmissionInput(string promptId, AskUserSubmission submission) =>
+    private static JsonElement SubmissionInput(
+        string promptId, string? toolCallId, AskUserSubmission submission) =>
         JsonSerializer.SerializeToElement(new {
-            source = "ask_user", prompt_id = promptId, values = submission.Values,
+            source = "ask_user", prompt_id = promptId, tool_call_id = toolCallId,
+            values = submission.Values,
             selection = submission.Selection switch {
                 AskUserSelection.Single single => (object)single.Value,
                 AskUserSelection.Multiple multiple => multiple.Values,

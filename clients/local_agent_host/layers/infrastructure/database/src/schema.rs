@@ -590,3 +590,23 @@ pub(super) const SCHEMA_V26: &[&str] = &[
        owner_user_id, source_run_id, status\
      )",
 ];
+
+pub(super) const SCHEMA_V27: &[&str] = &[
+    "ALTER TABLE local_tasks ADD COLUMN cancel_reason TEXT",
+    "ALTER TABLE local_tasks ADD COLUMN replacement_task_ids_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE local_tasks ADD COLUMN cancelled_because_task_id TEXT",
+    "ALTER TABLE local_tasks ADD COLUMN cascade_root_task_id TEXT",
+];
+
+pub(super) const SCHEMA_V28: &[&str] = &[
+    "CREATE TABLE local_task_external_dependencies (\
+       task_id TEXT NOT NULL,\
+       prerequisite_task_id TEXT NOT NULL,\
+       PRIMARY KEY(task_id, prerequisite_task_id),\
+       FOREIGN KEY(task_id) REFERENCES local_tasks(task_id) ON DELETE CASCADE,\
+       FOREIGN KEY(prerequisite_task_id) REFERENCES local_tasks(task_id) ON DELETE CASCADE,\
+       CHECK(task_id <> prerequisite_task_id)\
+     )",
+    "CREATE INDEX local_task_external_dependencies_prerequisite ON \
+       local_task_external_dependencies(prerequisite_task_id, task_id)",
+];

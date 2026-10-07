@@ -116,6 +116,10 @@ struct NativeConnectorStateStoreTests {
             ),
         ]
         state.pluginPreferences = ["plugin-a": false]
+        state.localAgentCapabilityRevisionsByModelConfigID = [
+            "model-gpt": "managed-prompt-revision-7",
+        ]
+        state.localAgentPromptBundleVersion = 7
         state.workspaces = [
             .init(id: "workspace-1", alias: "Project", absoluteRoot: "/tmp/project", fingerprint: "abc")
         ]
@@ -138,6 +142,11 @@ struct NativeConnectorStateStoreTests {
         #expect(restored.installedPluginRecords?["plugin-a"]?.version == "1.2.3")
         #expect(restored.installedPluginRecords?["plugin-a"]?.pluginKey == "plugin-a@official")
         #expect(restored.pluginPreferences["plugin-a"] == false)
+        #expect(
+            restored.localAgentCapabilityRevisionsByModelConfigID?["model-gpt"]
+                == "managed-prompt-revision-7"
+        )
+        #expect(restored.localAgentPromptBundleVersion == 7)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
     }
 

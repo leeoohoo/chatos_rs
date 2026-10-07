@@ -3,6 +3,7 @@
 
 use async_trait::async_trait;
 use chatos_ai_runtime::{
+    message_item,
     tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name},
     AiRuntimeResult, AiSingleStepOutcome, ContextualTurnRequest, ContextualTurnRunner,
 };
@@ -148,7 +149,14 @@ impl ToolSafetyPolicy for NamedReadOnlyTools {
     }
 
     fn requires_approval(&self, tool_name: &str) -> bool {
-        self.is_side_effecting(tool_name) && !self.approval_exempt.contains(tool_name)
+        self.is_side_effecting(tool_name)
+            && !self.approval_exempt.contains(tool_name)
+            // External MCP authorization is enforced by the request-scoped
+            // native adapter and the MCP provider itself. The former Task
+            // Runner did not add a second generic Host approval to every MCP
+            // call; doing so here would also leave these calls permanently
+            // pending because project approval handlers cannot interpret them.
+            && !tool_name.starts_with("external_mcp__")
     }
 }
 
@@ -189,8 +197,62 @@ impl LocalAgentProfile for DurableAiProfile {
         claim: &LocalAgentRunClaim,
     ) -> Result<LocalAgentStepOutcome, String> {
         let outcome = self.executor.execute_ai_step(claim).await?;
-        reduce_ai_step_outcome(outcome, (self.clock)()?, self.tool_safety.as_ref())
+        reduce_ai_step_outcome_for_claim(outcome, claim, (self.clock)()?, self.tool_safety.as_ref())
     }
+}
+
+fn reduce_ai_step_outcome_for_claim(
+    outcome: AiSingleStepOutcome,
+    claim: &LocalAgentRunClaim,
+    now_unix_ms: i64,
+    tool_safety: &dyn ToolSafetyPolicy,
+) -> Result<LocalAgentStepOutcome, String> {
+    if claim.run.profile_key == "task_execution"
+        && claim.run.owner_entity_type == "task"
+        && !task_outcome_reported(claim.run.continuation_input.as_ref())
+    {
+        return match outcome {
+            AiSingleStepOutcome::Final(response) => Ok(LocalAgentStepOutcome::Continue {
+                checkpoint: response_checkpoint(
+                    response,
+                    Some(json!({
+                        "reason": "task_outcome_required",
+                        "input_items": [task_outcome_report_required_message()]
+                    })),
+                ),
+            }),
+            outcome => reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety),
+        };
+    }
+    reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety)
+}
+
+fn task_outcome_reported(continuation: Option<&Value>) -> bool {
+    continuation
+        .and_then(|value| value.get("invocations"))
+        .and_then(Value::as_array)
+        .is_some_and(|invocations| {
+            invocations.iter().any(|invocation| {
+                invocation.get("tool_name").and_then(Value::as_str)
+                    == Some("task_run_process_report_outcome")
+                    && invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                    && invocation
+                        .get("result")
+                        .and_then(|result| result.get("reported"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+        })
+}
+
+fn task_outcome_report_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Call `task_run_process_report_outcome` now exactly once with `status` set to `succeeded`, `failed`, or `blocked` and a short concrete `reason`. Do not call any other tool. After that tool succeeds, provide the final user-facing response without doing more work."
+                .to_string(),
+        ),
+    )
 }
 
 pub fn reduce_ai_step_outcome(
@@ -417,5 +479,69 @@ mod tests {
         assert_eq!(output["content"], "done");
         assert_eq!(output["response_id"], "response-1");
         assert_eq!(output["request_input_items"][0]["role"], "user");
+    }
+
+    #[test]
+    fn task_final_without_reported_outcome_continues_with_required_guidance() {
+        let claim = LocalAgentRunClaim {
+            worker_id: "worker".to_string(),
+            claim_token: "token".to_string(),
+            run: chatos_local_agent_protocol::LocalAgentRunRecord {
+                run_id: "run-1".to_string(),
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "task".to_string(),
+                owner_entity_id: "task-1".to_string(),
+                profile_key: "task_execution".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"prompt": "do the work"}),
+                status: chatos_local_agent_protocol::LocalAgentRunStatus::ModelRunning,
+                iteration: 1,
+                model_attempt: 1,
+                max_iterations: 8,
+                version: 2,
+                claim_token: Some("token".to_string()),
+                claim_until_unix_ms: Some(20_000),
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                checkpoint: Value::Null,
+                continuation_input: None,
+                terminal_outcome: None,
+                created_at_unix_ms: 1,
+                updated_at_unix_ms: 2,
+            },
+        };
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce Task final");
+
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("Task must continue until its outcome is reported")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "task_outcome_required"
+        );
+        assert!(checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .is_some_and(|text| text.contains("[Task Outcome Required]")));
+    }
+
+    #[test]
+    fn successful_task_outcome_report_is_detected() {
+        assert!(task_outcome_reported(Some(&json!({
+            "type": "tool_results",
+            "invocations": [{
+                "tool_name": "task_run_process_report_outcome",
+                "status": "succeeded",
+                "result": {"reported": true}
+            }]
+        }))));
     }
 }

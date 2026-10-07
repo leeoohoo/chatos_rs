@@ -4,6 +4,23 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
+    func testTerminalCommandResolverSkipsBlankCompatibilityField() {
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": LocalAgentJSONValue.string("  "),
+                "command": .string("command -v godot"),
+            ]),
+            "command -v godot"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": NativeJSONValue.string(""),
+                "command": .string("git status --short"),
+            ]),
+            "git status --short"
+        )
+    }
+
     func testWorkerDoesNotKeepEventHubAliveBeforeWorkStarts() async throws {
         let host = PlatformToolHostStub(mode: .eventDrivenClaim)
         let eventHub = NativeLocalAgentEventHub(host: host)
@@ -18,6 +35,30 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
 
         let eventListRequests = await host.eventListRequestCount()
         XCTAssertEqual(eventListRequests, 0)
+        await worker.reset()
+    }
+
+    func testWorkerStartsEventMonitoringAfterRecoveringPersistedWork() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let eventHub = NativeLocalAgentEventHub(host: host)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: FailingPlatformToolExecutor(),
+            eventHub: eventHub,
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await host.commitCount() > 0,
+               await host.eventListRequestCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let commits = await host.commitCount()
+        let eventListRequests = await host.eventListRequestCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThan(eventListRequests, 0)
         await worker.reset()
     }
 
@@ -82,7 +123,11 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             [
                 "local_attachment_read", "read_file_raw", "read_file_range", "list_dir",
                 "search_text", "read_file", "search_files", "process_poll", "process_log",
-                "process_wait", "capability_describe", "capability_search",
+                "process_wait", "remote_connection_controller_download_file",
+                "remote_connection_controller_list_directory",
+                "remote_connection_controller_read_file",
+                "remote_connection_controller_test_connection",
+                "capability_describe", "capability_search",
                 "capability_skill_activate", "capability_skill_read_resource",
             ]
         )
@@ -94,6 +139,13 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "commit_edit_session", "abort_edit_session",
                 "execute_command", "process_poll", "process_log", "process_wait",
                 "process_write", "process_kill",
+                "remote_connection_controller_test_connection",
+                "remote_connection_controller_run_command",
+                "remote_connection_controller_list_directory",
+                "remote_connection_controller_read_file",
+                "remote_connection_controller_download_file",
+                "remote_connection_controller_upload_file",
+                "local_attachment_read",
                 "capability_search", "capability_describe", "capability_skill_activate",
                 "capability_skill_read_resource", "capability_invoke",
             ])
@@ -105,6 +157,69 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "capability_invoke",
             ]
         )
+    }
+
+    func testMainChatTaskSchemaFreezesInstalledPluginChoices() throws {
+        let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools(pluginChoices: [
+            .init(
+                id: "plugin-2",
+                pluginKey: "plugin-key-2",
+                displayName: "Plugin Two",
+                description: "second",
+                componentCount: 1
+            ),
+            .init(
+                id: "plugin-1",
+                displayName: "Plugin One",
+                description: "first",
+                componentCount: 1
+            ),
+        ])
+        let create = try XCTUnwrap(tools.first { value in
+            guard case .object(let tool) = value else { return false }
+            return tool["name"] == .string("create_task")
+        })
+        guard case .object(let tool) = create,
+              case .object(let parameters)? = tool["parameters"],
+              case .object(let properties)? = parameters["properties"],
+              case .object(let hints)? = properties["plugin_hints"],
+              case .object(let items)? = hints["items"],
+              case .object(let hintProperties)? = items["properties"],
+              case .object(let pluginKey)? = hintProperties["plugin_key"],
+              case .array(let values)? = pluginKey["enum"] else {
+            return XCTFail("missing installed Plugin choice schema")
+        }
+        XCTAssertEqual(values, [.string("plugin-1"), .string("plugin-key-2")])
+    }
+
+    func testTaskToolAuthorizationEnforcesSelectedCapabilities() throws {
+        let readOnly = try NativeLocalAgentTaskToolAuthorization.resolve([
+            "tool_options": .object([
+                "requires_execution": .bool(false),
+                "enabled_builtin_kinds": .array([.string("CodeMaintainerRead")]),
+                "plugin_hints": .array([]),
+            ]),
+        ])
+        XCTAssertTrue(readOnly.allows("read_file"))
+        XCTAssertFalse(readOnly.allows("commit_edit_session"))
+        XCTAssertFalse(readOnly.allows("execute_command"))
+        XCTAssertFalse(readOnly.allows("capability_search"))
+
+        let execution = try NativeLocalAgentTaskToolAuthorization.resolve([
+            "tool_options": .object([
+                "requires_execution": .bool(true),
+                "enabled_builtin_kinds": .array([
+                    .string("CodeMaintainerRead"),
+                    .string("CodeMaintainerWrite"),
+                    .string("TerminalController"),
+                ]),
+                "plugin_hints": .array([.object(["plugin_key": .string("browser")])]),
+            ]),
+        ])
+        XCTAssertTrue(execution.allows("commit_edit_session"))
+        XCTAssertTrue(execution.allows("execute_command"))
+        XCTAssertTrue(execution.allows("capability_search"))
+        XCTAssertEqual(execution.pluginKeys, ["browser"])
     }
 
     func testExecutorDispatchesTaskExecutionProjectTool() async throws {
@@ -493,12 +608,12 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
         case "get_event_cursor":
-            guard case .eventDrivenClaim = mode else {
+            guard supportsEventStream else {
                 throw CocoaError(.featureUnsupported)
             }
             return try json(["type": "event_cursor", "cursor": 0])
         case "wait_events":
-            guard case .eventDrivenClaim = mode else {
+            guard supportsEventStream else {
                 throw CocoaError(.featureUnsupported)
             }
             eventListRequests += 1
@@ -602,6 +717,13 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
     func claimAttemptCount() -> Int { claimAttempts }
 
     func eventListRequestCount() -> Int { eventListRequests }
+
+    private var supportsEventStream: Bool {
+        switch mode {
+        case .eventDrivenClaim, .oneSideEffectingClaim: true
+        default: false
+        }
+    }
 
     private func invocation(status: String, version: Int) -> [String: Any] {
         [

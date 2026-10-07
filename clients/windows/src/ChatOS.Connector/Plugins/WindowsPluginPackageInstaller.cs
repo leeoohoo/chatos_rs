@@ -142,7 +142,8 @@ public sealed partial class WindowsPluginPackageInstaller
                 finalPath,
                 DateTimeOffset.UtcNow,
                 manifest.Permissions.Select(static permission => permission.Permission).Distinct().Order().ToArray(),
-                extraction.FileSha256);
+                extraction.FileSha256,
+                source.Catalog.PluginKey);
         }
         catch (PluginPackageException)
         {

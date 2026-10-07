@@ -149,3 +149,60 @@ async fn iteration_limit_becomes_review_instead_of_success() {
     };
     assert_eq!(run.status, LocalAgentRunStatus::NeedsReview);
 }
+
+#[tokio::test]
+async fn task_execution_cannot_finish_before_reporting_its_outcome() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+    runtime.initialize("user-1").await.expect("initialize");
+    let mut command = match create_command() {
+        HostCommand::CreateRun(command) => command,
+        _ => unreachable!(),
+    };
+    command.owner_entity_type = "task".to_string();
+    command.owner_entity_id = "task-1".to_string();
+    command.profile_key = "task_execution".to_string();
+    command.input = json!({"prompt": "do the work"});
+    runtime
+        .handle(envelope("create-task-run", HostCommand::CreateRun(command)))
+        .await;
+    let claimed = runtime
+        .handle(envelope(
+            "claim-task-run",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".to_string(),
+                worker_id: "worker-1".to_string(),
+                lease_duration_ms: 10_000,
+            }),
+        ))
+        .await;
+    let claim = match claimed.result.expect("claim result") {
+        HostResult::Claim { claim: Some(claim) } => claim,
+        result => panic!("unexpected result: {result:?}"),
+    };
+
+    let rejected = runtime
+        .handle(envelope(
+            "commit-task-run",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".to_string(),
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::Succeed {
+                    output: json!({"content": "done"}),
+                },
+            }),
+        ))
+        .await;
+
+    assert!(!rejected.ok);
+    assert!(rejected
+        .error
+        .as_ref()
+        .is_some_and(|error| error.message.contains("must report its outcome")));
+}

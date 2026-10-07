@@ -65,6 +65,14 @@ public sealed class ConnectorGatewayHttpClientTests
                         "context_window_tokens": 200000,
                         "output_reserve_tokens": 12000
                       },
+                      "local_task_execution_settings": {
+                        "max_iterations": 640,
+                        "review_read_only_iterations": 8,
+                        "review_missing_read_failures": 2,
+                        "review_repeat_interval_iterations": 8,
+                        "prompt_cache_enabled": true,
+                        "prompt_cache_retention_enabled": true
+                      },
                       "remote_control_trust": {
                         "require_signed_messages": true,
                         "signature_max_skew_seconds": 120,
@@ -97,6 +105,7 @@ public sealed class ConnectorGatewayHttpClientTests
         Assert.True(trust.RequireSignedMessages);
         Assert.Equal(120, trust.SignatureMaxSkewSeconds);
         Assert.Equal(240, managed.NativeAgentRuntimeSettings.MaximumModelCalls);
+        Assert.Equal(640, managed.LocalTaskExecutionSettings.MaxIterations);
         Assert.Equal(90, managed.NativeAgentRuntimeSettings.RequestTimeoutSeconds);
         Assert.Equal(12_000, managed.NativeAgentRuntimeSettings.OutputReserveTokens);
         Assert.All(requests, request => Assert.Equal("Bearer token-1", request.Authorization));

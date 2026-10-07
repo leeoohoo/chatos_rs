@@ -8,7 +8,7 @@ public actor NativeLocalAgentConversationService:
 {
     private struct Context: Sendable {
         let ownerUserID: String
-        let capability: LocalAgentCapabilityPolicySnapshot
+        let capabilitiesByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
     }
 
     private let client: NativeLocalAgentConversationClient
@@ -37,12 +37,16 @@ public actor NativeLocalAgentConversationService:
         bootstrap: NativeLocalAgentBootstrapResult
     ) async throws {
         guard !bootstrap.modelSnapshots.isEmpty,
-              bootstrap.capabilitySnapshot.ownerUserID == ownerUserID else {
+              bootstrap.capabilitySnapshot.ownerUserID == ownerUserID,
+              bootstrap.modelSnapshots.allSatisfy({ snapshot in
+                  bootstrap.capabilitySnapshot(forModelConfigRef: snapshot.modelConfigRef)?
+                      .ownerUserID == ownerUserID
+              }) else {
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         context = .init(
             ownerUserID: ownerUserID,
-            capability: bootstrap.capabilitySnapshot
+            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef
         )
         await eventHub.configure(ownerUserID: ownerUserID)
     }
@@ -59,6 +63,11 @@ public actor NativeLocalAgentConversationService:
         let runtimeSelection = try await runtimeSettings.resolveSelection(
             sessionID: command.sessionID
         )
+        guard let capability = context.capabilitiesByModelConfigRef[
+            runtimeSelection.modelSnapshot.modelConfigRef
+        ] else {
+            throw NativeLocalAgentConversationServiceError.notConfigured
+        }
         let conversation = try await ensureConversation(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
@@ -84,7 +93,7 @@ public actor NativeLocalAgentConversationService:
             attachments: attachments,
             modelConfigRef: runtimeSelection.modelSnapshot.modelConfigRef,
             modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
-            capabilityPolicyRevision: context.capability.capabilityPolicyRevision
+            capabilityPolicyRevision: capability.capabilityPolicyRevision
         ))
         await platformToolWorker?.wake()
         return .init(
@@ -370,15 +379,26 @@ public actor NativeLocalAgentConversationService:
                 ownerUserID: page.conversation.ownerUserID,
                 conversationID: turn.conversationID
             )
-            let replies = assistants.map { message in
-                ConversationAssistantReply(message: mapMessage(
-                    message,
-                    fallbackID: message.messageID,
-                    attachments: attachmentsByMessage[message.messageID] ?? [],
-                    ownerUserID: page.conversation.ownerUserID,
-                    conversationID: turn.conversationID
-                ))
+            let projectedReplies = assistants.flatMap { message in
+                message.replyProjections(sourceUserMessageID: turn.userMessageID).map { projection in
+                    ConversationAssistantReply(
+                        message: mapMessage(
+                            message,
+                            fallbackID: projection.messageID,
+                            attachments: attachmentsByMessage[message.messageID] ?? [],
+                            ownerUserID: page.conversation.ownerUserID,
+                            conversationID: turn.conversationID,
+                            projectedText: projection.text
+                        ),
+                        taskCallback: projection.taskCallback
+                    )
+                }
             }
+            // Preserve the original Task Runner presentation contract: the Main Chat
+            // handoff reply is rendered first, then each Task/Run callback. Storage
+            // ordinals can interleave because local scheduling starts immediately.
+            let replies = Self.orderedConversationReplies(projectedReplies)
+            let finalReplies = replies.filter { $0.taskCallback == nil }
             let status = mapStatus(turn.status)
             return ConversationTurn(
                 id: turn.turnID,
@@ -391,8 +411,13 @@ public actor NativeLocalAgentConversationService:
                     title: processTitle(status),
                     status: status
                 )],
-                finalAssistantMessage: replies.last?.message,
+                finalAssistantMessage: finalReplies.last?.message,
                 assistantReplies: replies,
+                messageTaskLookup: MessageTaskLookup(
+                    sessionID: turn.conversationID,
+                    turnID: turn.turnID,
+                    sourceUserMessageID: userMessage.id
+                ),
                 isTaskGraphAvailable: true,
                 status: status,
                 startedAt: Date(timeIntervalSince1970: Double(turn.createdAtUnixMs) / 1_000),
@@ -402,17 +427,26 @@ public actor NativeLocalAgentConversationService:
         }
     }
 
+    static func orderedConversationReplies(
+        _ replies: [ConversationAssistantReply]
+    ) -> [ConversationAssistantReply] {
+        let mainChat = replies.filter { $0.taskCallback == nil }
+        let callbacks = replies.filter { $0.taskCallback != nil }
+        return mainChat + callbacks
+    }
+
     private func mapMessage(
         _ message: LocalAgentConversationMessageRecord?,
         fallbackID: String,
         attachments: [LocalAgentConversationAttachmentRecord],
         ownerUserID: String,
-        conversationID: String
+        conversationID: String,
+        projectedText: String? = nil
     ) -> ChatMessage {
         ChatMessage(
-            id: message?.messageID ?? fallbackID,
+            id: projectedText == nil ? (message?.messageID ?? fallbackID) : fallbackID,
             role: message?.role == "assistant" ? .assistant : .user,
-            text: message?.content.conversationDisplayText ?? "",
+            text: projectedText ?? message?.content.conversationDisplayText ?? "",
             createdAt: Date(
                 timeIntervalSince1970: Double(message?.createdAtUnixMs ?? 0) / 1_000
             ),

@@ -30,7 +30,8 @@ pub use artifact::{
     LOCAL_AGENT_ARTIFACT_MAX_PAGE_SIZE,
 };
 pub use control_plane::{
-    GetCapabilityPolicySnapshotCommand, GetModelConfigSnapshotCommand,
+    GetCapabilityPolicySnapshotCommand, GetLatestCapabilityPolicySnapshotCommand,
+    GetModelConfigSnapshotCommand, ListLatestModelConfigSnapshotsCommand,
     LocalCapabilityPolicySnapshot, LocalJsonSchemaOutputFormat, LocalModelConfigSnapshot,
     PutCapabilityPolicySnapshotCommand, PutModelConfigSnapshotCommand,
     MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
@@ -80,8 +81,9 @@ pub use run_query::{
 };
 
 pub use task::{
-    CancelTaskCommand, CreateTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand,
-    ListTaskGraphsCommand, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    CancelTaskCommand, CreateTaskGraphCommand, GetMessageTaskGraphCommand, GetTaskGraphCommand,
+    GetTaskRunsCommand, ListTaskGraphsCommand, LocalMessageTaskGraph, LocalMessageTaskGraphEdge,
+    LocalMessageTaskGraphNode, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
     LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
     LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
@@ -93,7 +95,7 @@ pub use tool::{
     LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 39;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 41;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -125,8 +127,10 @@ pub enum HostCommand {
     GetMemorySyncStatus(GetMemorySyncStatusCommand),
     PutModelConfigSnapshot(PutModelConfigSnapshotCommand),
     GetModelConfigSnapshot(GetModelConfigSnapshotCommand),
+    ListLatestModelConfigSnapshots(ListLatestModelConfigSnapshotsCommand),
     PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand),
     GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
+    GetLatestCapabilityPolicySnapshot(GetLatestCapabilityPolicySnapshotCommand),
     CreateRun(CreateRunCommand),
     GetRun(GetRunCommand),
     ListRuns(ListRunsCommand),
@@ -145,6 +149,7 @@ pub enum HostCommand {
     CreateTaskGraph(CreateTaskGraphCommand),
     ListTaskGraphs(ListTaskGraphsCommand),
     GetTaskGraph(GetTaskGraphCommand),
+    GetMessageTaskGraph(GetMessageTaskGraphCommand),
     GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
     RetryTask(RetryTaskCommand),
@@ -196,8 +201,10 @@ impl HostCommand {
             Self::GetMemorySyncStatus(command) => command.validate(),
             Self::PutModelConfigSnapshot(command) => command.validate(),
             Self::GetModelConfigSnapshot(command) => command.validate(),
+            Self::ListLatestModelConfigSnapshots(command) => command.validate(),
             Self::PutCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetCapabilityPolicySnapshot(command) => command.validate(),
+            Self::GetLatestCapabilityPolicySnapshot(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
             Self::GetRun(command) => command.validate(),
             Self::ListRuns(command) => command.validate(),
@@ -216,6 +223,7 @@ impl HostCommand {
             Self::CreateTaskGraph(command) => command.validate(),
             Self::ListTaskGraphs(command) => command.validate(),
             Self::GetTaskGraph(command) => command.validate(),
+            Self::GetMessageTaskGraph(command) => command.validate(),
             Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),

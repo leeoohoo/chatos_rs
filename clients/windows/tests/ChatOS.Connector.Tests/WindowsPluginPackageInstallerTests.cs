@@ -196,6 +196,7 @@ public sealed class WindowsPluginPackageInstallerTests : IDisposable
     private static ConnectorPluginSource Source(string version, PackageFixture package) => new(
         new ConnectorPluginCatalog(
             "plugin-1",
+            "plugin-one",
             "Test Plugin",
             "test-plugin",
             "Tests plugins",

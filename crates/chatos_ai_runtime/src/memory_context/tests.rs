@@ -1,20 +1,80 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use memory_engine_sdk::{
     ComposeContextBlock, ComposeContextMeta, ComposeContextPolicy, ComposeContextResponse,
     EngineRecord,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::{
     compose_response_to_input_items, compose_response_to_input_items_with_budget,
     MemoryContextCache, MemoryContextComposer, MemoryRecordScope, MemoryScope,
 };
 use crate::tool_runtime::ToolResultModelBudgetLimits;
-use crate::SaveRecordInput;
+use crate::{MemoryRecordWriter, SaveRecordInput};
+
+#[derive(Clone, Default)]
+struct MemoryWriteServerState {
+    thread_upserts: Arc<AtomicUsize>,
+    record_syncs: Arc<AtomicUsize>,
+}
+
+async fn accept_thread_upsert(
+    axum::extract::State(state): axum::extract::State<MemoryWriteServerState>,
+    axum::extract::Path(thread_id): axum::extract::Path<String>,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    state.thread_upserts.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(request["tenant_id"], "user-1");
+    assert_eq!(request["source_id"], "chatos");
+    axum::Json(json!({
+        "id": thread_id,
+        "tenant_id": "user-1",
+        "source_id": "chatos",
+        "subject_id": "user-1",
+        "thread_type": "conversation",
+        "external_thread_id": "conversation-1",
+        "title": null,
+        "labels": null,
+        "metadata": null,
+        "status": "active",
+        "summary_status": "idle",
+        "summary_job_run_id": null,
+        "summary_locked_at": null,
+        "summary_lock_expires_at": null,
+        "pending_record_count": 0,
+        "pending_summary_tokens": 0,
+        "created_at": "2026-10-07T00:00:00Z",
+        "updated_at": "2026-10-07T00:00:00Z",
+        "archived_at": null
+    }))
+}
+
+async fn accept_record_sync(
+    axum::extract::State(state): axum::extract::State<MemoryWriteServerState>,
+    axum::extract::Path(thread_id): axum::extract::Path<String>,
+    axum::Json(request): axum::Json<Value>,
+) -> axum::Json<Value> {
+    assert!(state.thread_upserts.load(Ordering::SeqCst) > 0);
+    state.record_syncs.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(request["tenant_id"], "user-1");
+    assert_eq!(request["source_id"], "chatos");
+    axum::Json(json!({
+        "thread_id": thread_id,
+        "received_count": 1,
+        "upserted_count": 1
+    }))
+}
 
 #[test]
 fn memory_scope_builder_keeps_runtime_source_key() {
@@ -92,6 +152,61 @@ fn memory_record_writer_resolves_multi_user_tenant_from_record_metadata() {
     );
     let missing = SaveRecordInput::user_message("conversation-2", "hello");
     assert!(writer.tenant_id_for_record(&missing).is_err());
+}
+
+#[tokio::test]
+async fn memory_record_writer_creates_each_thread_before_syncing_records() {
+    use axum::{routing::put, Router};
+
+    let state = MemoryWriteServerState::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn({
+        let state = state.clone();
+        async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route(
+                        "/api/memory-engine/v1/threads/{thread_id}",
+                        put(accept_thread_upsert),
+                    )
+                    .route(
+                        "/api/memory-engine/v1/threads/{thread_id}/records/batch-sync",
+                        put(accept_record_sync),
+                    )
+                    .with_state(state),
+            )
+            .await
+            .expect("server");
+        }
+    });
+    let client = memory_engine_sdk::MemoryEngineClient::new_direct(
+        format!("http://{address}"),
+        Duration::from_secs(1),
+        "chatos",
+    )
+    .expect("client");
+    let writer = super::MemoryEngineRecordWriter::from_client(
+        client,
+        MemoryRecordScope::per_record_tenant("tenant_id"),
+    );
+    for (message_id, content) in [("message-1", "hello"), ("message-2", "continue")] {
+        writer
+            .save_record(
+                SaveRecordInput::user_message("conversation-1", content)
+                    .with_message_id(message_id)
+                    .with_metadata(json!({"tenant_id": "user-1"})),
+            )
+            .await
+            .expect("record sync");
+    }
+
+    assert_eq!(state.thread_upserts.load(Ordering::SeqCst), 1);
+    assert_eq!(state.record_syncs.load(Ordering::SeqCst), 2);
+    server.abort();
 }
 
 #[test]

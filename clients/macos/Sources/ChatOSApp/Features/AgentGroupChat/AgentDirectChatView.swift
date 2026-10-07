@@ -155,7 +155,11 @@ struct AgentDirectChatView: View {
                 }
                 .foregroundStyle(.secondary)
                 if !message.content.isEmpty {
-                    MarkdownDocumentView(markdown: message.content, widthBehavior: .fitContent)
+                    MarkdownDocumentView(
+                        markdown: message.content,
+                        allowsTextSelection: true,
+                        widthBehavior: .fitContent
+                    )
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
                         .background(messageBubbleBackground(isHuman: isHuman))

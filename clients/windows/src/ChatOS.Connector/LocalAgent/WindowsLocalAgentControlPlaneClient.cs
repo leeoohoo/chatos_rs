@@ -44,12 +44,37 @@ public sealed class WindowsLocalAgentControlPlaneClient(ILocalAgentHostClient ho
             : throw new InvalidDataException("Local Agent Host returned an invalid model snapshot result.");
     }
 
+    public async Task<IReadOnlyList<WindowsLocalAgentModelSnapshot>> LatestModelsAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await host.SendAsync<ListLatestModelsCommand, ModelsResult>(
+            new("list_latest_model_config_snapshots", ownerUserId),
+            cancellationToken).ConfigureAwait(false);
+        return response.Type == "model_config_snapshots"
+            ? response.Snapshots
+            : throw new InvalidDataException("Local Agent Host returned an invalid model snapshots result.");
+    }
+
     public async Task<WindowsLocalAgentCapabilitySnapshot> PublishCapabilitiesAsync(
         WindowsLocalAgentCapabilitySnapshot snapshot,
         CancellationToken cancellationToken = default)
     {
         var response = await host.SendAsync<PutCapabilityCommand, CapabilityResult>(
             new("put_capability_policy_snapshot", snapshot),
+            cancellationToken).ConfigureAwait(false);
+        return response.Type == "capability_policy_snapshot"
+            ? response.Snapshot
+            : throw new InvalidDataException("Local Agent Host returned an invalid capability snapshot result.");
+    }
+
+    public async Task<WindowsLocalAgentCapabilitySnapshot> LatestCapabilitiesAsync(
+        string ownerUserId,
+        string profileKey,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await host.SendAsync<GetLatestCapabilityCommand, CapabilityResult>(
+            new("get_latest_capability_policy_snapshot", ownerUserId, profileKey),
             cancellationToken).ConfigureAwait(false);
         return response.Type == "capability_policy_snapshot"
             ? response.Snapshot
@@ -64,9 +89,22 @@ public sealed class WindowsLocalAgentControlPlaneClient(ILocalAgentHostClient ho
         string Type,
         WindowsLocalAgentCapabilitySnapshot Snapshot);
 
+    private sealed record ListLatestModelsCommand(
+        string Type,
+        string OwnerUserId);
+
+    private sealed record GetLatestCapabilityCommand(
+        string Type,
+        string OwnerUserId,
+        string ProfileKey);
+
     private sealed record ModelResult(
         string Type,
         WindowsLocalAgentModelSnapshot Snapshot);
+
+    private sealed record ModelsResult(
+        string Type,
+        IReadOnlyList<WindowsLocalAgentModelSnapshot> Snapshots);
 
     private sealed record CapabilityResult(
         string Type,

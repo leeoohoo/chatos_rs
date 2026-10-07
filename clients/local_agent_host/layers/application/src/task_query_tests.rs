@@ -83,6 +83,7 @@ async fn lists_owner_task_graphs_with_scope_and_stable_cursor() {
                 task_id: "task-b".to_string(),
                 expected_version: Some(1),
                 reason: "not needed".to_string(),
+                replacement_task_ids: Vec::new(),
             }),
         ))
         .await
@@ -181,6 +182,7 @@ async fn lists_owner_task_graphs_with_scope_and_stable_cursor() {
                 task_id: "task-a".to_string(),
                 expected_version: Some(1),
                 reason: "wrong account".to_string(),
+                replacement_task_ids: Vec::new(),
             }),
         ))
         .await

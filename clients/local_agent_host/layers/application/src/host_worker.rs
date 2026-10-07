@@ -24,4 +24,16 @@ impl LocalAgentRuntime {
     ) -> Result<Option<LocalAgentToolInvocationRecord>, LocalAgentRuntimeError> {
         Ok(self.store.get_tool_invocation(invocation_id).await?)
     }
+
+    #[doc(hidden)]
+    pub async fn successful_tool_invocation_count_for_host_worker(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<u64, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .successful_tool_invocation_count(run_id, tool_name)
+            .await?)
+    }
 }

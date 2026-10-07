@@ -12,6 +12,8 @@ use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalConversationAttachmen
 use serde_json::{json, Value};
 use std::{collections::HashSet, sync::Arc};
 
+use crate::planner_tools::task_scoped_tools;
+
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
 
@@ -91,6 +93,7 @@ pub struct ControlPlaneLocalAiStepPlanner {
     memory_source_id: Option<String>,
     local_tools: Vec<Value>,
     local_tool_prefixes: Vec<String>,
+    local_prefixed_input_items: Vec<Value>,
 }
 
 impl ControlPlaneLocalAiStepPlanner {
@@ -138,6 +141,7 @@ impl ControlPlaneLocalAiStepPlanner {
             memory_source_id: None,
             local_tools: Vec::new(),
             local_tool_prefixes: Vec::new(),
+            local_prefixed_input_items: Vec::new(),
         }
     }
 
@@ -171,6 +175,11 @@ impl ControlPlaneLocalAiStepPlanner {
             return Err("local tool prefix must not be empty".to_string());
         }
         Ok(self)
+    }
+
+    pub fn with_local_prefixed_input_items(mut self, items: Vec<Value>) -> Self {
+        self.local_prefixed_input_items = items;
+        self
     }
 
     pub fn with_memory_source_id(mut self, source_id: impl Into<String>) -> Result<Self, String> {
@@ -217,11 +226,48 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             &self.local_tools,
             &self.local_tool_prefixes,
         )?;
+        if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
+            capabilities.tools = task_scoped_tools(capabilities.tools, &claim.run.input)?;
+        }
+        capabilities
+            .prefixed_input_items
+            .extend(self.local_prefixed_input_items.clone());
         transient.model_config.instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,
         );
-        let (current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
+        let (mut current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
+        let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
+            && completed_async_task_handoff(claim.run.continuation_input.as_ref());
+        let task_outcome_reported = self.profile_key == TASK_EXECUTION_PROFILE_KEY
+            && completed_task_outcome_report(claim.run.continuation_input.as_ref());
+        if async_handoff_confirmed {
+            // Preserve the former server Task Runner boundary exactly: after the
+            // explicit handoff succeeds, Main Chat gets one tool-free response
+            // whose only job is to acknowledge that work has started. Task
+            // results arrive later through the normal per-Task callbacks.
+            capabilities.tools.clear();
+            current_input_items.push(message_item(
+                "system",
+                Value::String(
+                    "[Continued Work Accepted]\n`wait_for_task_completion` has succeeded and the requested work is continuing independently. Do not call any tool, inspect execution status, wait for completion, or claim that the requested work is finished. Immediately respond in the contact's first-person voice with one concise, natural sentence saying that you have started working on the request, then end the turn. Do not mention tasks, Task Runner, background work, callbacks, tool calls, handoffs, or any internal execution structure to the user."
+                        .to_string(),
+                ),
+            ));
+        } else if task_outcome_reported {
+            // Match the former Task Runner lifecycle hook: once the explicit
+            // outcome has been accepted, the next request is a tool-free final
+            // response. The model may explain the completed work, but it may
+            // not perform more work or revise the reported terminal status.
+            capabilities.tools.clear();
+            current_input_items.push(message_item(
+                "system",
+                Value::String(
+                    "[Task Outcome Reported]\nThe task outcome has been recorded. Tools are now disabled. Provide the final user-facing response based on the completed work and the reported outcome. Do not perform more work or revise the reported status."
+                        .to_string(),
+                ),
+            ));
+        }
         let memory = self
             .memory_source_id
             .as_deref()
@@ -265,15 +311,62 @@ fn merge_local_tools(
     local: &[Value],
     local_prefixes: &[String],
 ) -> Result<Vec<Value>, String> {
-    let local_names = validate_unique_tool_names(local)?;
+    let mut merged_local = local.to_vec();
+    for tool in &mut merged_local {
+        let Some(name) = tool_name(tool) else {
+            continue;
+        };
+        let Some(controlled_tool) = controlled
+            .iter()
+            .find(|candidate| tool_name(candidate) == Some(name))
+        else {
+            continue;
+        };
+        merge_task_selection_schema(tool, controlled_tool);
+    }
+    let local_names = validate_unique_tool_names(&merged_local)?;
     controlled.retain(|tool| {
         tool_name(tool).is_none_or(|name| {
             !local_names.contains(name)
                 && !local_prefixes.iter().any(|prefix| name.starts_with(prefix))
         })
     });
-    controlled.extend_from_slice(local);
+    controlled.extend(merged_local);
     Ok(controlled)
+}
+
+fn merge_task_selection_schema(local: &mut Value, controlled: &Value) {
+    let properties_pointer = match tool_name(local) {
+        Some("create_task") => "/parameters/properties",
+        Some("create_tasks_with_prerequisites") => "/parameters/properties/tasks/items/properties",
+        _ => return,
+    };
+    let Some(controlled_properties) = controlled
+        .pointer(properties_pointer)
+        .and_then(Value::as_object)
+    else {
+        return;
+    };
+    let Some(local_properties) = local
+        .pointer_mut(properties_pointer)
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    // The native client resolves the request-scoped Agent capability policy.
+    // Keep the durable Rust implementations of the Task tools, but restore the
+    // three selection fields from that trusted snapshot exactly as the former
+    // Task Runner did. Hard-coding any of these here silently changes product
+    // behavior when an administrator edits the Agent binding.
+    for key in [
+        "enabled_builtin_kinds",
+        "external_mcp_config_ids",
+        "plugin_hints",
+    ] {
+        if let Some(schema) = controlled_properties.get(key) {
+            local_properties.insert(key.to_string(), schema.clone());
+        }
+    }
 }
 
 fn validate_unique_tool_names(tools: &[Value]) -> Result<HashSet<&str>, String> {
@@ -293,6 +386,42 @@ fn tool_name(tool: &Value) -> Option<&str> {
     tool.get("name")
         .and_then(Value::as_str)
         .or_else(|| tool.pointer("/function/name").and_then(Value::as_str))
+}
+
+fn completed_async_task_handoff(continuation: Option<&Value>) -> bool {
+    continuation
+        .and_then(|value| value.get("invocations"))
+        .and_then(Value::as_array)
+        .is_some_and(|invocations| {
+            invocations.iter().any(|invocation| {
+                invocation.get("tool_name").and_then(Value::as_str)
+                    == Some("wait_for_task_completion")
+                    && invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                    && invocation
+                        .get("result")
+                        .and_then(|result| result.get("accepted"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+        })
+}
+
+fn completed_task_outcome_report(continuation: Option<&Value>) -> bool {
+    continuation
+        .and_then(|value| value.get("invocations"))
+        .and_then(Value::as_array)
+        .is_some_and(|invocations| {
+            invocations.iter().any(|invocation| {
+                invocation.get("tool_name").and_then(Value::as_str)
+                    == Some("task_run_process_report_outcome")
+                    && invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                    && invocation
+                        .get("result")
+                        .and_then(|result| result.get("reported"))
+                        .and_then(Value::as_bool)
+                        == Some(true)
+            })
+        })
 }
 
 fn apply_run_thinking_level(config: &mut ModelRuntimeConfig, input: &Value) -> Result<(), String> {
@@ -374,10 +503,16 @@ fn durable_step_input(
                 .and_then(Value::as_str)
                 .unwrap_or("resumed");
             let input = value.get("input").cloned().unwrap_or(Value::Null);
-            history.push(user_text_item(format!(
-                "Local Agent resumed ({reason}). User input: {}",
-                input
-            )));
+            if reason == "ask_user_submitted"
+                && input.get("source").and_then(Value::as_str) == Some("ask_user")
+            {
+                history.push(ask_user_output_item(&response_items, &input)?);
+            } else {
+                history.push(user_text_item(format!(
+                    "Local Agent resumed ({reason}). User input: {}",
+                    input
+                )));
+            }
             "user_resume".to_string()
         }
         Some(value) if value.get("type").and_then(Value::as_str) == Some("guidance") => {
@@ -551,229 +686,34 @@ fn tool_output_items(continuation: &Value) -> Result<Vec<Value>, String> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chatos_ai_runtime::AiRuntime;
-    use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
-
-    struct OwnerCheckingModelResolver;
-
-    #[async_trait]
-    impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
-        async fn resolve_model_runtime(
-            &self,
-            owner_user_id: &str,
-            _model_config_ref: &str,
-            _model_config_revision: &str,
-        ) -> Result<TransientLocalModelRuntime, String> {
-            if owner_user_id != "user-1" {
-                return Err("wrong model owner".to_string());
-            }
-            Ok(TransientLocalModelRuntime {
-                runner: Arc::new(ContextualTurnRunner::new(AiRuntime::new(None), None)),
-                model_config: ModelRuntimeConfig {
-                    model: "test-model".to_string(),
-                    ..ModelRuntimeConfig::default()
-                },
+fn ask_user_output_item(response_items: &[Value], input: &Value) -> Result<Value, String> {
+    let explicit_call_id = input
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let call_id = explicit_call_id
+        .or_else(|| {
+            response_items.iter().rev().find_map(|item| {
+                let name = item.get("name").and_then(Value::as_str)?;
+                name.starts_with("ask_user_")
+                    .then(|| item.get("call_id").and_then(Value::as_str))
+                    .flatten()
             })
-        }
-    }
-
-    struct OwnerCheckingCapabilityResolver;
-
-    #[async_trait]
-    impl LocalCapabilityResolver for OwnerCheckingCapabilityResolver {
-        async fn resolve_capabilities(
-            &self,
-            owner_user_id: &str,
-            _profile_key: &str,
-            _capability_policy_revision: &str,
-        ) -> Result<ResolvedLocalCapabilities, String> {
-            if owner_user_id != "user-1" {
-                return Err("wrong capability owner".to_string());
-            }
-            Ok(ResolvedLocalCapabilities::default())
-        }
-    }
-
-    fn claim(checkpoint: Value, continuation_input: Option<Value>) -> LocalAgentRunClaim {
-        LocalAgentRunClaim {
-            worker_id: "worker".to_string(),
-            claim_token: "token".to_string(),
-            run: LocalAgentRunRecord {
-                run_id: "run-1".to_string(),
-                owner_user_id: "user-1".to_string(),
-                owner_entity_type: "conversation".to_string(),
-                owner_entity_id: "conversation-1".to_string(),
-                profile_key: MAIN_CHAT_PROFILE_KEY.to_string(),
-                model_config_ref: "model-1".to_string(),
-                model_config_revision: "revision-1".to_string(),
-                capability_policy_revision: "policy-1".to_string(),
-                input: json!({"message": "hello"}),
-                status: LocalAgentRunStatus::ModelRunning,
-                iteration: 2,
-                model_attempt: 1,
-                max_iterations: 8,
-                version: 4,
-                claim_token: Some("token".to_string()),
-                claim_until_unix_ms: Some(20_000),
-                next_attempt_at_unix_ms: None,
-                pending_tool_batch: None,
-                checkpoint,
-                continuation_input,
-                terminal_outcome: None,
-                created_at_unix_ms: 1,
-                updated_at_unix_ms: 2,
-            },
-        }
-    }
-
-    #[tokio::test]
-    async fn planner_resolves_control_plane_state_for_the_run_owner() {
-        let planner = ControlPlaneLocalAiStepPlanner::main_chat(
-            OwnerCheckingModelResolver,
-            OwnerCheckingCapabilityResolver,
-        );
-        let prepared = planner
-            .prepare_ai_step(&claim(Value::Null, None))
-            .await
-            .expect("prepare owner-scoped step");
-        assert_eq!(
-            prepared.request.runtime_options.caller_model.as_deref(),
-            Some("test-model")
-        );
-    }
-
-    #[test]
-    fn conversation_runtime_settings_override_the_snapshot_thinking_level_per_run() {
-        let mut config = ModelRuntimeConfig {
-            provider: "openai".to_string(),
-            thinking_level: Some("medium".to_string()),
-            ..ModelRuntimeConfig::default()
-        };
-        apply_run_thinking_level(
-            &mut config,
-            &json!({"runtime_settings": {
-                "reasoning_enabled": true,
-                "selected_thinking_level": "high"
-            }}),
-        )
-        .expect("enabled override");
-        assert_eq!(config.thinking_level.as_deref(), Some("high"));
-
-        apply_run_thinking_level(
-            &mut config,
-            &json!({"runtime_settings": {
-                "reasoning_enabled": false,
-                "selected_thinking_level": "high"
-            }}),
-        )
-        .expect("disabled override");
-        assert_eq!(config.thinking_level.as_deref(), Some("none"));
-    }
-
-    #[test]
-    fn local_tool_definitions_replace_control_plane_copies() {
-        let controlled = vec![
-            json!({"type": "function", "name": "notepad_read_note", "description": "server"}),
-            json!({"type": "function", "name": "notepad_delete_note"}),
-            json!({"type": "function", "name": "read_file"}),
-        ];
-        let local = vec![json!({
-            "type": "function",
-            "name": "notepad_read_note",
-            "description": "local"
-        })];
-        let merged =
-            merge_local_tools(controlled, &local, &["notepad_".to_string()]).expect("merge tools");
-        assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0]["name"], "read_file");
-        assert_eq!(merged[1]["description"], "local");
-    }
-
-    #[test]
-    fn reconstructs_tool_results_from_checkpoint_and_continuation() {
-        let claim = claim(
-            json!({"response": {
-                "request_input_items": [{"role": "user", "content": "hello"}],
-                "response_output_items": [{"type": "function_call", "call_id": "call-1"}]
-            }}),
-            Some(json!({
-                "type": "tool_results",
-                "invocations": [{"call_id": "call-1", "result": {"content": "ok"}}]
-            })),
-        );
-        let (items, reason) = durable_step_input(&claim, "message").expect("input");
-        assert_eq!(reason, "tool_results");
-        assert_eq!(
-            items.last().and_then(|item| item.get("call_id")),
-            Some(&json!("call-1"))
-        );
-        assert_eq!(
-            items.last().and_then(|item| item.get("type")),
-            Some(&json!("function_call_output"))
-        );
-    }
-
-    #[test]
-    fn initial_retry_reuses_durable_run_input() {
-        let mut claim = claim(Value::Null, None);
-        claim.run.model_attempt = 2;
-        let (items, reason) = durable_step_input(&claim, "message").expect("input");
-        assert_eq!(reason, "model_retry");
-        assert_eq!(items[0]["role"], "user");
-    }
-
-    #[test]
-    fn guidance_is_appended_to_initial_or_existing_history() {
-        let guidance = Some(json!({
-            "type": "guidance",
-            "guidance": [{"message_id": "message-2", "message": "inspect tests", "attachments": []}]
-        }));
-        let initial = claim(Value::Null, guidance.clone());
-        let (items, reason) = durable_step_input(&initial, "message").expect("initial guidance");
-        assert_eq!(reason, "initial_request_with_guidance");
-        assert_eq!(items.len(), 2);
-
-        let continued = claim(
-            json!({"response": {
-                "request_input_items": [{"role": "user", "content": "hello"}],
-                "response_output_items": [{"type": "message", "content": "working"}]
-            }}),
-            guidance,
-        );
-        let (items, reason) =
-            durable_step_input(&continued, "message").expect("continued guidance");
-        assert_eq!(reason, "user_guidance");
-        assert!(items.len() >= 3);
-    }
-
-    #[test]
-    fn attachment_only_input_becomes_an_opaque_local_resource_manifest() {
-        let mut claim = claim(Value::Null, None);
-        claim.run.input = json!({
-            "message": "",
-            "attachments": [{
-                "attachment_id": "attachment-1",
-                "display_name": "brief.pdf",
-                "media_type": "application/pdf",
-                "byte_size": 42,
-                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "authorized_local_ref": "local-attachment:authority-1",
-                "metadata": {"must_not_be_forwarded": true}
-            }]
-        });
-
-        let (items, reason) = durable_step_input(&claim, "message").expect("input");
-        assert_eq!(reason, "initial_request");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["role"], "user");
-        let manifest = items[0]["content"][0]["text"]
-            .as_str()
-            .expect("manifest text");
-        assert!(manifest.contains("local-attachment:authority-1"));
-        assert!(manifest.contains("brief.pdf"));
-        assert!(!manifest.contains("must_not_be_forwarded"));
-    }
+        })
+        .ok_or_else(|| "Ask User resume has no matching function call".to_string())?;
+    let output = json!({
+        "status": "ok",
+        "values": input.get("values").cloned().unwrap_or_else(|| json!({})),
+        "selection": input.get("selection").cloned().unwrap_or(Value::Null)
+    });
+    Ok(json!({
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": output.to_string()
+    }))
 }
+
+#[cfg(test)]
+#[path = "planner_tests.rs"]
+mod tests;

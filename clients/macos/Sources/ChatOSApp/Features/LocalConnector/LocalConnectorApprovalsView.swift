@@ -5,6 +5,8 @@ struct LocalConnectorApprovalsView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewModel: LocalConnectorControlCenterViewModel
     @State private var proposedElevatedMode: LocalConnectorApprovalMode?
+    @State private var historyPage = 0
+    @State private var historyPageSize = 10
 
     var body: some View {
         SettingsGroupedPage {
@@ -31,6 +33,9 @@ struct LocalConnectorApprovalsView: View {
             }
         } message: {
             Text(approvalConfirmationMessage)
+        }
+        .onChange(of: approvalHistory.count) { _, _ in
+            clampHistoryPage()
         }
     }
 
@@ -146,14 +151,14 @@ struct LocalConnectorApprovalsView: View {
             ),
             systemImage: "clock.arrow.circlepath"
         ) {
-            let history = Array((viewModel.approvalSettings?.history ?? []).prefix(30))
+            let history = approvalHistory
             if history.isEmpty {
                 Text(model.localized("还没有审批记录。", english: "No approval history yet."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(history) { entry in
+                    ForEach(pagedApprovalHistory) { entry in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: decisionIcon(entry.decision))
                                 .foregroundStyle(decisionColor(entry.decision))
@@ -172,11 +177,37 @@ struct LocalConnectorApprovalsView: View {
                                 .foregroundStyle(decisionColor(entry.decision))
                         }
                         .padding(.vertical, 8)
-                        if entry.id != history.last?.id { Divider() }
+                        if entry.id != pagedApprovalHistory.last?.id { Divider() }
+                    }
+                    if history.count > historyPageSize {
+                        Divider()
+                            .padding(.vertical, 8)
+                        AgentListPaginationBar(
+                            totalCount: history.count,
+                            page: $historyPage,
+                            pageSize: $historyPageSize,
+                            pageSizeOptions: [10, 20, 50]
+                        )
                     }
                 }
             }
         }
+    }
+
+    private var approvalHistory: [LocalConnectorApprovalHistoryEntry] {
+        viewModel.approvalSettings?.history ?? []
+    }
+
+    private var pagedApprovalHistory: [LocalConnectorApprovalHistoryEntry] {
+        approvalHistory.agentPage(index: historyPage, size: historyPageSize)
+    }
+
+    private func clampHistoryPage() {
+        let pageCount = max(
+            1,
+            Int(ceil(Double(approvalHistory.count) / Double(max(1, historyPageSize))))
+        )
+        historyPage = min(max(0, historyPage), pageCount - 1)
     }
 
     private var approvalModeDescription: String {

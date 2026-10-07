@@ -15,6 +15,14 @@ const SNAPSHOT_SELECT: &str =
      max_transient_retries, output_format_json FROM local_model_config_snapshots \
      WHERE owner_user_id = ? AND model_config_ref = ? AND model_config_revision = ?";
 
+const LATEST_SNAPSHOT_SELECT: &str =
+    "SELECT owner_user_id, model_config_ref, model_config_revision, credential_ref, base_url, model, provider, \
+     supports_responses, supports_images, instructions, temperature, max_output_tokens, \
+     thinking_level, include_prompt_cache_retention, request_body_limit_bytes, \
+     max_transient_retries, output_format_json FROM local_model_config_snapshots \
+     WHERE owner_user_id = ? AND model_config_ref = ? \
+     ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1";
+
 #[async_trait]
 impl LocalModelConfigSnapshotStore for SqliteClientStorage {
     async fn put_model_config_snapshot(
@@ -94,6 +102,49 @@ impl LocalModelConfigSnapshotStore for SqliteClientStorage {
             model_config_revision,
         )
         .await
+    }
+
+    async fn get_latest_model_config_snapshot(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
+    ) -> Result<Option<LocalModelConfigSnapshot>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        let row = sqlx::query(LATEST_SNAPSHOT_SELECT)
+            .bind(owner_user_id)
+            .bind(model_config_ref)
+            .fetch_optional(&mut *connection)
+            .await
+            .db()?;
+        row.map(|row| decode_snapshot(&row)).transpose()
+    }
+
+    async fn list_latest_model_config_snapshots(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<LocalModelConfigSnapshot>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        let rows = sqlx::query(
+            "SELECT s.owner_user_id, s.model_config_ref, s.model_config_revision, \
+             s.credential_ref, s.base_url, s.model, s.provider, s.supports_responses, \
+             s.supports_images, s.instructions, s.temperature, s.max_output_tokens, \
+             s.thinking_level, s.include_prompt_cache_retention, s.request_body_limit_bytes, \
+             s.max_transient_retries, s.output_format_json \
+             FROM local_model_config_snapshots s \
+             WHERE s.owner_user_id = ? AND NOT EXISTS ( \
+               SELECT 1 FROM local_model_config_snapshots newer \
+               WHERE newer.owner_user_id = s.owner_user_id \
+                 AND newer.model_config_ref = s.model_config_ref \
+                 AND (newer.created_at_unix_ms > s.created_at_unix_ms \
+                   OR (newer.created_at_unix_ms = s.created_at_unix_ms \
+                     AND newer.rowid > s.rowid)) \
+             ) ORDER BY s.model_config_ref ASC",
+        )
+        .bind(owner_user_id)
+        .fetch_all(&mut *connection)
+        .await
+        .db()?;
+        rows.iter().map(decode_snapshot).collect()
     }
 }
 
@@ -294,6 +345,83 @@ mod tests {
             .await
             .expect("cross-owner read")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn latest_model_snapshot_uses_creation_order_within_one_model() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let mut first = snapshot("user-1", "model-a");
+        first.model_config_ref = "model-2".to_string();
+        first.model_config_revision = "revision-1".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-model-1", "model-a"), &first, 1_000)
+            .await
+            .expect("put first revision");
+
+        let mut second = snapshot("user-1", "model-b");
+        second.model_config_ref = "model-2".to_string();
+        second.model_config_revision = "revision-2".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-model-2", "model-b"), &second, 2_000)
+            .await
+            .expect("put second revision");
+
+        let latest = storage
+            .get_latest_model_config_snapshot("user-1", "model-2")
+            .await
+            .expect("get latest revision")
+            .expect("latest snapshot");
+        assert_eq!(latest.model_config_revision, "revision-2");
+        assert_eq!(latest.model, "model-b");
+    }
+
+    #[tokio::test]
+    async fn latest_model_snapshot_list_returns_one_revision_per_model_and_owner() {
+        let storage = SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage");
+        let mut first = snapshot("user-1", "model-a-v1");
+        first.model_config_ref = "model-a".to_string();
+        first.model_config_revision = "revision-1".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-a-1", "a-1"), &first, 1_000)
+            .await
+            .expect("put first model revision");
+
+        let mut latest = snapshot("user-1", "model-a-v2");
+        latest.model_config_ref = "model-a".to_string();
+        latest.model_config_revision = "revision-2".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-a-2", "a-2"), &latest, 2_000)
+            .await
+            .expect("put latest model revision");
+
+        let mut second = snapshot("user-1", "model-b-v1");
+        second.model_config_ref = "model-b".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-b-1", "b-1"), &second, 1_500)
+            .await
+            .expect("put second model");
+
+        let mut another_owner = snapshot("user-2", "private-model");
+        another_owner.model_config_ref = "model-private".to_string();
+        storage
+            .put_model_config_snapshot(&command("put-private", "private"), &another_owner, 3_000)
+            .await
+            .expect("put another owner model");
+
+        let restored = storage
+            .list_latest_model_config_snapshots("user-1")
+            .await
+            .expect("list latest models");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].model_config_ref, "model-a");
+        assert_eq!(restored[0].model_config_revision, "revision-2");
+        assert_eq!(restored[0].model, "model-a-v2");
+        assert_eq!(restored[1].model_config_ref, "model-b");
+        assert!(restored.iter().all(|value| value.owner_user_id == "user-1"));
     }
 
     #[tokio::test]

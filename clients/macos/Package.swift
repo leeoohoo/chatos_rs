@@ -55,6 +55,7 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("sqlite3"),
                 .linkedFramework("ApplicationServices"),
+                .linkedFramework("LocalAuthentication"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("CoreMedia"),

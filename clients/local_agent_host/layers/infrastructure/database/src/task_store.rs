@@ -14,6 +14,38 @@ use chatos_local_agent_protocol::{
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::{collections::HashSet, str::FromStr};
 
+use super::task_result::decode_result_summary;
+
+const SCOPED_TASK_SELECT: &str =
+    "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+     t.model_config_revision, t.capability_policy_revision, t.input_json, \
+     t.max_iterations, t.status, t.active_run_id, t.version, \
+     t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
+     g.source_entity_type, g.source_entity_id, \
+     (SELECT r.terminal_outcome_json FROM local_agent_runs r \
+        WHERE r.owner_user_id = g.owner_user_id \
+          AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
+        ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
+       AS latest_terminal_outcome_json FROM local_tasks t \
+     JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+     JOIN local_conversation_turns source_turn \
+       ON g.source_entity_type = 'conversation_turn' \
+      AND source_turn.turn_id = g.source_entity_id \
+     JOIN local_conversations source_conversation \
+       ON source_conversation.conversation_id = source_turn.conversation_id \
+     JOIN local_conversations current_conversation \
+       ON current_conversation.conversation_id = ? \
+     WHERE g.owner_user_id = ? \
+     AND source_conversation.owner_user_id = ? \
+     AND current_conversation.owner_user_id = ? \
+     AND ((current_conversation.resource_kind = 'project' \
+           AND current_conversation.resource_id IS NOT NULL \
+           AND source_conversation.resource_kind = 'project' \
+           AND source_conversation.resource_id = current_conversation.resource_id) \
+          OR ((current_conversation.resource_kind IS NULL \
+               OR current_conversation.resource_kind <> 'project') \
+              AND source_conversation.conversation_id = current_conversation.conversation_id))";
+
 #[async_trait]
 impl LocalAgentTaskStore for SqliteClientStorage {
     async fn create_task_graph(
@@ -128,58 +160,70 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         conversation_id: &str,
         status: Option<LocalTaskStatus>,
         keyword: Option<&str>,
+        tag: Option<&str>,
+        scheduled_only: Option<bool>,
+        parent_task_id: Option<&str>,
+        source_run_id: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<LocalTaskRecord>, ClientStorageError> {
-        validate_task_query(owner_user_id, conversation_id, keyword, limit, offset)?;
+        validate_task_query(
+            owner_user_id,
+            conversation_id,
+            keyword,
+            tag,
+            parent_task_id,
+            source_run_id,
+            limit,
+            offset,
+        )?;
         let normalized_keyword = keyword
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(escaped_like_pattern);
         let status = status.map(LocalTaskStatus::as_str);
-        let rows = sqlx::query(
-            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
-             t.model_config_revision, t.capability_policy_revision, t.input_json, \
-             t.max_iterations, t.status, t.active_run_id, t.version, \
-             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
-             g.source_entity_type, g.source_entity_id FROM local_tasks t \
-             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             JOIN local_conversation_turns source_turn \
-               ON g.source_entity_type = 'conversation_turn' \
-              AND source_turn.turn_id = g.source_entity_id \
-             JOIN local_conversations source_conversation \
-               ON source_conversation.conversation_id = source_turn.conversation_id \
-             JOIN local_conversations current_conversation \
-               ON current_conversation.conversation_id = ? \
-             WHERE g.owner_user_id = ? \
-             AND source_conversation.owner_user_id = ? \
-             AND current_conversation.owner_user_id = ? \
-             AND ((current_conversation.resource_kind = 'project' \
-                   AND current_conversation.resource_id IS NOT NULL \
-                   AND source_conversation.resource_kind = 'project' \
-                   AND source_conversation.resource_id = current_conversation.resource_id) \
-                  OR ((current_conversation.resource_kind IS NULL \
-                       OR current_conversation.resource_kind <> 'project') \
-                      AND source_conversation.conversation_id = \
-                          current_conversation.conversation_id)) \
+        let tag = tag.map(str::trim).filter(|value| !value.is_empty());
+        let scheduled_only = scheduled_only.unwrap_or(false);
+        let parent_task_id = parent_task_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let source_run_id = source_run_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let sql = format!(
+            "{SCOPED_TASK_SELECT} \
              AND (? IS NULL OR t.status = ?) \
              AND (? IS NULL OR LOWER(t.task_id || ' ' || t.title || ' ' || t.input_json) \
                   LIKE ? ESCAPE '\\') \
-             ORDER BY t.updated_at_unix_ms DESC, t.task_id DESC LIMIT ? OFFSET ?",
-        )
-        .bind(conversation_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(status)
-        .bind(status)
-        .bind(normalized_keyword.as_deref())
-        .bind(normalized_keyword.as_deref())
-        .bind(i64::from(limit))
-        .bind(i64::from(offset))
-        .fetch_all(&self.pool)
-        .await
-        .db()?;
+             AND (? IS NULL OR EXISTS (SELECT 1 FROM json_each(t.input_json, '$.tags') tag_item \
+                  WHERE tag_item.value = ?)) \
+             AND (? = 0 OR COALESCE(json_extract(t.input_json, '$.schedule.mode'), 'manual') \
+                  <> 'manual') \
+             AND (? IS NULL OR json_extract(t.input_json, '$.parent_task_id') = ?) \
+             AND (? IS NULL OR json_extract(t.input_json, '$.source_run_id') = ?) \
+             ORDER BY t.updated_at_unix_ms DESC, t.task_id DESC LIMIT ? OFFSET ?"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(conversation_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(status)
+            .bind(status)
+            .bind(normalized_keyword.as_deref())
+            .bind(normalized_keyword.as_deref())
+            .bind(tag)
+            .bind(tag)
+            .bind(i64::from(scheduled_only))
+            .bind(parent_task_id)
+            .bind(parent_task_id)
+            .bind(source_run_id)
+            .bind(source_run_id)
+            .bind(i64::from(limit))
+            .bind(i64::from(offset))
+            .fetch_all(&self.pool)
+            .await
+            .db()?;
         rows.into_iter().map(decode_scoped_task).collect()
     }
 
@@ -189,48 +233,23 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         conversation_id: &str,
         task_id: &str,
     ) -> Result<Option<LocalTaskRecord>, ClientStorageError> {
-        validate_task_query(owner_user_id, conversation_id, None, 1, 0)?;
+        validate_task_query(owner_user_id, conversation_id, None, None, None, None, 1, 0)?;
         if task_id.trim().is_empty() || task_id.len() > 256 || task_id.chars().any(char::is_control)
         {
             return Err(ClientStorageError::InvalidState(
                 "invalid task id".to_string(),
             ));
         }
-        let row = sqlx::query(
-            "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
-             t.model_config_revision, t.capability_policy_revision, t.input_json, \
-             t.max_iterations, t.status, t.active_run_id, t.version, \
-             t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
-             g.source_entity_type, g.source_entity_id FROM local_tasks t \
-             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             JOIN local_conversation_turns source_turn \
-               ON g.source_entity_type = 'conversation_turn' \
-              AND source_turn.turn_id = g.source_entity_id \
-             JOIN local_conversations source_conversation \
-               ON source_conversation.conversation_id = source_turn.conversation_id \
-             JOIN local_conversations current_conversation \
-               ON current_conversation.conversation_id = ? \
-             WHERE g.owner_user_id = ? \
-             AND source_conversation.owner_user_id = ? \
-             AND current_conversation.owner_user_id = ? \
-             AND ((current_conversation.resource_kind = 'project' \
-                   AND current_conversation.resource_id IS NOT NULL \
-                   AND source_conversation.resource_kind = 'project' \
-                   AND source_conversation.resource_id = current_conversation.resource_id) \
-                  OR ((current_conversation.resource_kind IS NULL \
-                       OR current_conversation.resource_kind <> 'project') \
-                      AND source_conversation.conversation_id = \
-                          current_conversation.conversation_id)) \
-             AND t.task_id = ?",
-        )
-        .bind(conversation_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(owner_user_id)
-        .bind(task_id)
-        .fetch_optional(&self.pool)
-        .await
-        .db()?;
+        let sql = format!("{SCOPED_TASK_SELECT} AND t.task_id = ?");
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(conversation_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(owner_user_id)
+            .bind(task_id)
+            .fetch_optional(&self.pool)
+            .await
+            .db()?;
         row.map(decode_scoped_task).transpose()
     }
 
@@ -263,6 +282,44 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let result = super::task_lifecycle::start_next_task_run(
             &mut connection,
             owner_user_id,
+            None,
+            run_id,
+            event_id,
+            now_unix_ms,
+        )
+        .await;
+        Self::finish_write(&mut connection, result).await
+    }
+
+    async fn start_next_task_run_for_graph(
+        &self,
+        owner_user_id: &str,
+        graph_id: &str,
+        run_id: &str,
+        event_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
+        let has_ready_task = sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM local_tasks t \
+             JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+             WHERE g.owner_user_id = ? AND t.graph_id = ? AND t.status = 'ready' \
+             AND t.active_run_id IS NULL LIMIT 1",
+        )
+        .bind(owner_user_id)
+        .bind(graph_id)
+        .fetch_optional(&self.pool)
+        .await
+        .db()?
+        .is_some();
+        if !has_ready_task {
+            return Ok(None);
+        }
+        let mut connection = self.pool.acquire().await.db()?;
+        Self::begin_immediate(&mut connection).await.db()?;
+        let result = super::task_lifecycle::start_next_task_run(
+            &mut connection,
+            owner_user_id,
+            Some(graph_id),
             run_id,
             event_id,
             now_unix_ms,
@@ -278,6 +335,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         task_id: &str,
         expected_version: Option<u64>,
         reason: &str,
+        replacement_task_ids: &[String],
         run_event_id: &str,
         now_unix_ms: i64,
     ) -> Result<LocalTaskGraph, ClientStorageError> {
@@ -290,6 +348,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             task_id,
             expected_version,
             reason,
+            replacement_task_ids,
             run_event_id,
             now_unix_ms,
         )
@@ -353,6 +412,48 @@ async fn insert_graph(
     graph: &CreateTaskGraphCommand,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
+    let external_dependencies = graph
+        .tasks
+        .iter()
+        .map(|task| {
+            external_prerequisite_ids(&task.input).map(|prerequisite_ids| {
+                prerequisite_ids
+                    .into_iter()
+                    .map(|prerequisite_task_id| LocalTaskDependency {
+                        task_id: task.task_id.clone(),
+                        prerequisite_task_id,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for dependency in &external_dependencies {
+        if dependency.task_id == dependency.prerequisite_task_id {
+            return Err(ClientStorageError::InvalidState(
+                "a task cannot depend on itself".to_string(),
+            ));
+        }
+        let owned: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM local_tasks prerequisite \
+             JOIN local_task_graphs prerequisite_graph \
+               ON prerequisite_graph.graph_id = prerequisite.graph_id \
+             WHERE prerequisite.task_id = ? AND prerequisite_graph.owner_user_id = ?",
+        )
+        .bind(&dependency.prerequisite_task_id)
+        .bind(&graph.owner_user_id)
+        .fetch_one(&mut *connection)
+        .await
+        .db()?;
+        if owned == 0 {
+            return Err(ClientStorageError::NotFound(format!(
+                "prerequisite Task not found for owner: {}",
+                dependency.prerequisite_task_id
+            )));
+        }
+    }
     let insert = sqlx::query(
         "INSERT INTO local_task_graphs(\
          graph_id, owner_user_id, source_entity_type, source_entity_id, created_at_unix_ms) \
@@ -374,6 +475,11 @@ async fn insert_graph(
         .dependencies
         .iter()
         .map(|dependency| dependency.task_id.as_str())
+        .chain(
+            external_dependencies
+                .iter()
+                .map(|dependency| dependency.task_id.as_str()),
+        )
         .collect::<HashSet<_>>();
     for task in &graph.tasks {
         let status = if pending.contains(task.task_id.as_str()) {
@@ -416,7 +522,50 @@ async fn insert_graph(
         .await
         .db()?;
     }
+    for dependency in &external_dependencies {
+        sqlx::query(
+            "INSERT INTO local_task_external_dependencies(task_id, prerequisite_task_id) \
+             VALUES(?, ?)",
+        )
+        .bind(&dependency.task_id)
+        .bind(&dependency.prerequisite_task_id)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+    }
     Ok(())
+}
+
+fn external_prerequisite_ids(input: &serde_json::Value) -> Result<Vec<String>, ClientStorageError> {
+    let Some(value) = input.get("prerequisite_task_ids") else {
+        return Ok(Vec::new());
+    };
+    let values = value.as_array().ok_or_else(|| {
+        ClientStorageError::InvalidState(
+            "Task prerequisite_task_ids must be a JSON array".to_string(),
+        )
+    })?;
+    let mut unique = HashSet::new();
+    values
+        .iter()
+        .map(|value| {
+            let task_id = value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ClientStorageError::InvalidState(
+                        "Task prerequisite_task_ids contains an invalid id".to_string(),
+                    )
+                })?;
+            if !unique.insert(task_id.to_string()) {
+                return Err(ClientStorageError::InvalidState(
+                    "Task prerequisite_task_ids contains a duplicate".to_string(),
+                ));
+            }
+            Ok(task_id.to_string())
+        })
+        .collect()
 }
 
 fn map_insert(
@@ -450,10 +599,16 @@ pub(super) async fn fetch_graph(
     .db()?;
     let Some(graph) = graph else { return Ok(None) };
     let tasks = sqlx::query(
-        "SELECT task_id, graph_id, title, profile_key, model_config_ref, \
-         model_config_revision, capability_policy_revision, input_json, max_iterations, \
-         status, active_run_id, version, created_at_unix_ms, updated_at_unix_ms \
-         FROM local_tasks WHERE graph_id = ? ORDER BY task_id",
+        "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
+         t.model_config_revision, t.capability_policy_revision, t.input_json, t.max_iterations, \
+         t.status, t.active_run_id, t.version, t.created_at_unix_ms, t.updated_at_unix_ms, \
+         (SELECT r.terminal_outcome_json FROM local_agent_runs r \
+            WHERE r.owner_user_id = g.owner_user_id \
+              AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
+            ORDER BY r.created_at_unix_ms DESC, r.run_id DESC LIMIT 1) \
+           AS latest_terminal_outcome_json \
+         FROM local_tasks t JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+         WHERE t.graph_id = ? ORDER BY t.task_id",
     )
     .bind(graph_id)
     .fetch_all(&mut *connection)
@@ -529,6 +684,7 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
@@ -555,6 +711,7 @@ fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageEr
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         active_run_id: row.try_get("active_run_id").db()?,
+        result_summary: decode_result_summary(&row)?,
         version: u64::try_from(row.try_get::<i64, _>("version").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid task version".to_string()))?,
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
@@ -566,6 +723,9 @@ fn validate_task_query(
     owner_user_id: &str,
     conversation_id: &str,
     keyword: Option<&str>,
+    tag: Option<&str>,
+    parent_task_id: Option<&str>,
+    source_run_id: Option<&str>,
     limit: u32,
     offset: u32,
 ) -> Result<(), ClientStorageError> {
@@ -574,9 +734,13 @@ fn validate_task_query(
     };
     if !valid_identifier(owner_user_id)
         || !valid_identifier(conversation_id)
-        || !(1..=100).contains(&limit)
-        || offset > 10_000
+        || !(1..=500).contains(&limit)
+        || offset > 100_000
         || keyword.is_some_and(|value| value.len() > 500 || value.chars().any(char::is_control))
+        || [tag, parent_task_id, source_run_id]
+            .into_iter()
+            .flatten()
+            .any(|value| value.len() > 256 || value.chars().any(char::is_control))
     {
         return Err(ClientStorageError::InvalidState(
             "invalid task query".to_string(),
@@ -595,156 +759,5 @@ fn escaped_like_pattern(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chatos_local_agent_protocol::LocalTaskSpec;
-    use serde_json::json;
-
-    fn task(task_id: &str) -> LocalTaskSpec {
-        LocalTaskSpec {
-            task_id: task_id.to_string(),
-            title: format!("Task {task_id}"),
-            profile_key: "task_execution".to_string(),
-            model_config_ref: "model-1".to_string(),
-            model_config_revision: "revision-1".to_string(),
-            capability_policy_revision: "policy-1".to_string(),
-            input: json!({"prompt": task_id}),
-            max_iterations: 6,
-        }
-    }
-
-    fn graph(graph_id: &str, task_ids: &[&str]) -> CreateTaskGraphCommand {
-        CreateTaskGraphCommand {
-            graph_id: graph_id.to_string(),
-            owner_user_id: "user-1".to_string(),
-            source_entity_type: "conversation".to_string(),
-            source_entity_id: "conversation-1".to_string(),
-            tasks: task_ids.iter().map(|task_id| task(task_id)).collect(),
-            dependencies: vec![LocalTaskDependency {
-                task_id: task_ids[1].to_string(),
-                prerequisite_task_id: task_ids[0].to_string(),
-            }],
-        }
-    }
-
-    fn command(command_id: &str, fingerprint: &str) -> IdempotentCommand {
-        IdempotentCommand {
-            command_id: command_id.to_string(),
-            request_fingerprint: fingerprint.to_string(),
-            persist_receipt: true,
-        }
-    }
-
-    #[tokio::test]
-    async fn creates_and_replays_complete_task_graph() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        let spec = graph("graph-1", &["task-root", "task-child"]);
-        let created = storage
-            .create_task_graph(&command("create-1", "graph-1"), &spec, 10_000)
-            .await
-            .expect("create graph");
-        let replay = storage
-            .create_task_graph(&command("create-1", "graph-1"), &spec, 20_000)
-            .await
-            .expect("replay graph");
-        assert_eq!(created, replay);
-        assert_eq!(created.tasks[0].task_id, "task-child");
-        assert_eq!(created.tasks[0].status, LocalTaskStatus::Pending);
-        assert_eq!(created.tasks[1].task_id, "task-root");
-        assert_eq!(created.tasks[1].status, LocalTaskStatus::Ready);
-        assert_eq!(created.status, LocalTaskGraphStatus::Pending);
-        assert_eq!(created.dependencies, spec.dependencies);
-        assert_eq!(created.created_at_unix_ms, 10_000);
-
-        let loaded = storage
-            .get_task_graph("user-1", "graph-1")
-            .await
-            .expect("get graph")
-            .expect("stored graph");
-        assert_eq!(loaded, created);
-
-        storage
-            .start_next_task_run("user-1", "run-root", "event-run-root", 30_000)
-            .await
-            .expect("start task")
-            .expect("ready task");
-        let running = storage
-            .get_task_graph("user-1", "graph-1")
-            .await
-            .expect("get graph")
-            .expect("stored graph");
-        assert_eq!(running.status, LocalTaskGraphStatus::Running);
-    }
-
-    #[tokio::test]
-    async fn graph_conflicts_roll_back_atomically() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        let first = graph("graph-1", &["task-1", "task-2"]);
-        storage
-            .create_task_graph(&command("create-1", "graph-1"), &first, 10_000)
-            .await
-            .expect("create graph");
-        let duplicate_graph = storage
-            .create_task_graph(&command("create-2", "duplicate"), &first, 20_000)
-            .await
-            .expect_err("duplicate graph must conflict");
-        assert!(matches!(duplicate_graph, ClientStorageError::Conflict(_)));
-
-        let second = graph("graph-2", &["task-1", "task-3"]);
-        let duplicate_task = storage
-            .create_task_graph(&command("create-3", "graph-2"), &second, 30_000)
-            .await
-            .expect_err("duplicate task must conflict");
-        assert!(matches!(duplicate_task, ClientStorageError::Conflict(_)));
-        assert!(storage
-            .get_task_graph("user-1", "graph-2")
-            .await
-            .expect("get graph")
-            .is_none());
-    }
-
-    #[tokio::test]
-    async fn task_run_query_rejects_invalid_input() {
-        let storage = SqliteClientStorage::connect_memory()
-            .await
-            .expect("storage");
-        assert!(matches!(
-            storage.list_task_runs("user-1", "missing-task", 10).await,
-            Err(ClientStorageError::NotFound(_))
-        ));
-        assert!(matches!(
-            storage.list_task_runs("user-1", "missing-task", 0).await,
-            Err(ClientStorageError::InvalidState(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn idle_task_materialization_does_not_wait_for_the_sqlite_writer() {
-        let root = tempfile::tempdir().expect("temporary database root");
-        let storage = SqliteClientStorage::connect_file(&root.path().join("agent.sqlite3"))
-            .await
-            .expect("storage");
-        let mut writer = storage.pool.acquire().await.expect("writer connection");
-        SqliteClientStorage::begin_immediate(&mut writer)
-            .await
-            .expect("hold write reservation");
-
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(250),
-            storage.start_next_task_run("user-1", "run-idle", "event-idle", 10_000),
-        )
-        .await
-        .expect("idle scheduler must stay read-only")
-        .expect("idle task lookup");
-        assert!(result.is_none());
-
-        sqlx::query("ROLLBACK")
-            .execute(&mut *writer)
-            .await
-            .expect("release writer");
-    }
-}
+#[path = "task_store_tests.rs"]
+mod tests;
