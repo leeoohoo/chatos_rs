@@ -29,6 +29,10 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var installedPluginIDs: Set<String> = []
     var installedPluginRecords: [String: NativeInstalledPluginRecord]?
     var pluginPreferences: [String: Bool] = [:]
+    /// Associates each locally cached model with the managed Prompt/capability revision
+    /// selected for its vendor. The actual prompt and tools remain in Local Agent Host's
+    /// durable capability store; this map only lets wake/offline restore select the right one.
+    var localAgentCapabilityRevisionsByModelConfigID: [String: String]?
 
     static let empty = NativeConnectorPersistentState()
 }

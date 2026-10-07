@@ -1,6 +1,5 @@
 import ChatOSAgentRuntime
 import ChatOSCore
-import CryptoKit
 import Foundation
 
 enum NativeApprovalDecision: Sendable, Equatable {
@@ -22,8 +21,6 @@ struct NativeApprovalAgentRequest: Sendable {
 
 struct NativeApprovalAgent: Sendable {
     static let agentKey = "local_connector_command_approval_agent"
-    static let maximumManagedPromptBytes = 256 * 1024
-
     private let tools = NativeApprovalAgentTools()
     private let settingsStore: AgentSettingsStore
 
@@ -122,55 +119,11 @@ struct NativeApprovalAgent: Sendable {
               capability.policyRevision.trimmedNonEmpty != nil else {
             throw NativeApprovalAgentError.invalidManagedCapability
         }
-        guard bundle.bundleVersion > 0 else {
-            throw NativeApprovalAgentError.invalidManagedPrompt
-        }
-        let vendor = try normalizedPromptVendor(
-            explicitVendor: model.promptVendor,
-            provider: model.provider
-        )
-        guard let prompt = bundle.prompts.first(where: {
-            $0.agentKey == agentKey && $0.vendor.caseInsensitiveCompare(vendor) == .orderedSame
-        }), prompt.revision > 0 else {
-            throw NativeApprovalAgentError.invalidManagedPrompt
-        }
-        guard prompt.content.trimmedNonEmpty != nil,
-              prompt.content.lengthOfBytes(using: .utf8) <= maximumManagedPromptBytes else {
-            throw NativeApprovalAgentError.invalidManagedPrompt
-        }
-        let digest = SHA256.hash(data: Data(prompt.content.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        guard prompt.checksum.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            == "sha256:\(digest)" else {
-            throw NativeApprovalAgentError.invalidManagedPrompt
-        }
-        return prompt.content
-    }
-
-    private static func normalizedPromptVendor(
-        explicitVendor: String?,
-        provider: String
-    ) throws -> String {
-        let provider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-        let normalizedProvider: String
-        switch provider {
-        case "openai", "gpt": normalizedProvider = "gpt"
-        case "moonshot", "kimik2", "kimi": normalizedProvider = "kimi"
-        case "zhipu", "zhipuai", "zai", "chatglm", "glm": normalizedProvider = "glm"
-        case "deepseek": normalizedProvider = "deepseek"
-        default: throw NativeApprovalAgentError.unsupportedPromptVendor
-        }
-        let candidate = explicitVendor?.trimmedNonEmpty?.lowercased() ?? normalizedProvider
-        switch candidate {
-        case "gpt", "openai": return "gpt"
-        case "deepseek": return "deepseek"
-        case "kimi", "moonshot": return "kimi"
-        case "glm", "zhipu", "zai": return "glm"
-        default: throw NativeApprovalAgentError.unsupportedPromptVendor
-        }
+        return try NativeManagedAgentPromptResolver.resolve(
+            agentKey: agentKey,
+            model: model,
+            bundle: bundle
+        ).content
     }
 
     private func decodeArguments(_ text: String) throws -> [String: Any] {

@@ -8,7 +8,7 @@ public actor NativeLocalAgentConversationService:
 {
     private struct Context: Sendable {
         let ownerUserID: String
-        let capability: LocalAgentCapabilityPolicySnapshot
+        let capabilitiesByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
     }
 
     private let client: NativeLocalAgentConversationClient
@@ -37,12 +37,16 @@ public actor NativeLocalAgentConversationService:
         bootstrap: NativeLocalAgentBootstrapResult
     ) async throws {
         guard !bootstrap.modelSnapshots.isEmpty,
-              bootstrap.capabilitySnapshot.ownerUserID == ownerUserID else {
+              bootstrap.capabilitySnapshot.ownerUserID == ownerUserID,
+              bootstrap.modelSnapshots.allSatisfy({ snapshot in
+                  bootstrap.capabilitySnapshot(forModelConfigRef: snapshot.modelConfigRef)?
+                      .ownerUserID == ownerUserID
+              }) else {
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         context = .init(
             ownerUserID: ownerUserID,
-            capability: bootstrap.capabilitySnapshot
+            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef
         )
         await eventHub.configure(ownerUserID: ownerUserID)
     }
@@ -59,6 +63,11 @@ public actor NativeLocalAgentConversationService:
         let runtimeSelection = try await runtimeSettings.resolveSelection(
             sessionID: command.sessionID
         )
+        guard let capability = context.capabilitiesByModelConfigRef[
+            runtimeSelection.modelSnapshot.modelConfigRef
+        ] else {
+            throw NativeLocalAgentConversationServiceError.notConfigured
+        }
         let conversation = try await ensureConversation(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
@@ -84,7 +93,7 @@ public actor NativeLocalAgentConversationService:
             attachments: attachments,
             modelConfigRef: runtimeSelection.modelSnapshot.modelConfigRef,
             modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
-            capabilityPolicyRevision: context.capability.capabilityPolicyRevision
+            capabilityPolicyRevision: capability.capabilityPolicyRevision
         ))
         await platformToolWorker?.wake()
         return .init(

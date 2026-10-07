@@ -6,18 +6,31 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
     public let modelOptions: [ConversationModelOption]
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
+    public let capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
     public let externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
 
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
         modelOptions: [ConversationModelOption],
         capabilitySnapshot: LocalAgentCapabilityPolicySnapshot,
+        capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot] = [:],
         externalMCPConfigs: [NativeLocalAgentExternalMCPConfig] = []
     ) {
         self.modelSnapshots = modelSnapshots
         self.modelOptions = modelOptions
         self.capabilitySnapshot = capabilitySnapshot
+        self.capabilitySnapshotsByModelConfigRef = capabilitySnapshotsByModelConfigRef.isEmpty
+            ? Dictionary(uniqueKeysWithValues: modelSnapshots.map {
+                ($0.modelConfigRef, capabilitySnapshot)
+            })
+            : capabilitySnapshotsByModelConfigRef
         self.externalMCPConfigs = externalMCPConfigs
+    }
+
+    public func capabilitySnapshot(
+        forModelConfigRef modelConfigRef: String
+    ) -> LocalAgentCapabilityPolicySnapshot? {
+        capabilitySnapshotsByModelConfigRef[modelConfigRef]
     }
 }
 
@@ -32,10 +45,6 @@ extension NativeLocalConnectorService {
     ) async throws -> NativeLocalAgentBootstrapResult? {
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
-        let capability = try await controlPlane.latestCapabilities(
-            ownerUserID: ownerUserID,
-            profileKey: "main_chat"
-        )
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
         var snapshots: [LocalAgentModelConfigSnapshot] = []
@@ -67,9 +76,7 @@ extension NativeLocalConnectorService {
                     : []
             ))
         }
-        guard !snapshots.isEmpty,
-              capability.ownerUserID == ownerUserID,
-              capability.profileKey == "main_chat" else { return nil }
+        guard !snapshots.isEmpty else { return nil }
         if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
             environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
         }
@@ -78,10 +85,19 @@ extension NativeLocalConnectorService {
             credentialEnvironment: environment
         )
         environment.removeAll(keepingCapacity: false)
+        let capabilitiesByModel = try await restoredMainChatCapabilities(
+            controlPlane: controlPlane,
+            ownerUserID: ownerUserID,
+            modelSnapshots: snapshots
+        )
+        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef],
+              capability.ownerUserID == ownerUserID,
+              capability.profileKey == "main_chat" else { return nil }
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
-            capabilitySnapshot: capability
+            capabilitySnapshot: capability,
+            capabilitySnapshotsByModelConfigRef: capabilitiesByModel
         )
     }
 
@@ -101,6 +117,7 @@ extension NativeLocalConnectorService {
         let token = try requireAccessToken()
         let gateway = gateway
         let agentCapability: GatewayAgentCapabilityDTO?
+        let promptBundle: GatewayAgentPromptBundleDTO?
         do {
             agentCapability = try await gateway.agentCapability(
                 token: token,
@@ -118,6 +135,9 @@ extension NativeLocalConnectorService {
                   agentCapability.agentKey == "local_agent_execution_agent" else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
+            promptBundle = try await gateway.agentPromptBundle(token: token)
+        } else {
+            promptBundle = nil
         }
         let credentialStore = NativeLocalAgentModelCredentialStore()
         var environment: [String: String] = [:]
@@ -200,14 +220,14 @@ extension NativeLocalConnectorService {
             try await controlPlane.publishModel(snapshot)
         }
         guard let agentCapability else {
-            let capability = try await controlPlane.latestCapabilities(
+            let capabilitiesByModel = try await restoredMainChatCapabilities(
+                controlPlane: controlPlane,
                 ownerUserID: ownerUserID,
-                profileKey: "main_chat"
+                modelSnapshots: snapshots
             )
-            _ = try await controlPlane.latestCapabilities(
-                ownerUserID: ownerUserID,
-                profileKey: "task_execution"
-            )
+            guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+                throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+            }
             guard capability.ownerUserID == ownerUserID,
                   capability.profileKey == "main_chat" else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
@@ -215,8 +235,12 @@ extension NativeLocalConnectorService {
             return .init(
                 modelSnapshots: snapshots,
                 modelOptions: modelOptions,
-                capabilitySnapshot: capability
+                capabilitySnapshot: capability,
+                capabilitySnapshotsByModelConfigRef: capabilitiesByModel
             )
+        }
+        guard let promptBundle else {
+            throw NativeLocalAgentBootstrapError.managedPromptUnavailable
         }
         let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
         guard !agentCapability.mcps.contains(where: {
@@ -264,24 +288,6 @@ extension NativeLocalConnectorService {
         )
         guard Set(externalMCPConfigs.map(\.resourceID)).isSuperset(of: Set(requiredExternalIDs))
         else { throw NativeLocalAgentBootstrapError.executionAgentUnavailable }
-        let capabilityRevision = Self.capabilityRevision(
-            agentCapability,
-            plugins: pluginChoices,
-            builtinChoices: builtinChoices,
-            externalChoices: externalChoices
-        )
-        let capability = LocalAgentCapabilityPolicySnapshot(
-            ownerUserID: ownerUserID,
-            profileKey: "main_chat",
-            capabilityPolicyRevision: capabilityRevision,
-            instructions: "You are the local Main Chat task planner. Use only the local task tools to inspect, create, query, cancel, and hand off durable work. When a project-bound request requires reading project files or using execution tools, create a task bound to the current conversation/project; never claim the project is unavailable and never ask the user to re-upload an already bound project. Do not read project files, run commands, or execute plugins directly. Task state and execution remain local.",
-            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools(
-                pluginChoices: pluginChoices,
-                builtinChoices: builtinChoices,
-                externalChoices: externalChoices
-            )
-        )
-        try await controlPlane.publishCapabilities(capability)
         let requiredPolicy = LocalAgentJSONValue.object([
             "enabled_builtin_kinds": .array(requiredBuiltinKinds.map(LocalAgentJSONValue.string)),
             "external_mcp_config_ids": .array(requiredExternalIDs.map(LocalAgentJSONValue.string)),
@@ -291,25 +297,75 @@ extension NativeLocalConnectorService {
         guard let requiredPolicyJSON = String(data: requiredPolicyData, encoding: .utf8) else {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
-        try await controlPlane.publishCapabilities(.init(
-            ownerUserID: ownerUserID,
-            profileKey: "task_policy_internal",
-            capabilityPolicyRevision: capability.capabilityPolicyRevision,
-            instructions: requiredPolicyJSON
-        ))
-        try await controlPlane.publishCapabilities(.init(
-            ownerUserID: ownerUserID,
-            profileKey: "task_execution",
-            capabilityPolicyRevision: capability.capabilityPolicyRevision,
-            instructions: "Complete the durable local task objective and return a concrete result. Use the local project tools to inspect the bound project. For changes, open an edit session, stage a bounded batch with the read SHA-256 (or null only for a proven-new file), and commit it; the client requests approval before the commit reaches disk. Use execute_command only when project inspection or verification requires it; commands run locally inside the bound project and require approval. For background commands, wait for completion or terminate them before finishing. Requirement surveys are project-bound local records: inspect existing surveys before creating or resolving one, and activate/read the survey skill resources when their detailed contract is needed. Use capability_search only when the task needs an installed Plugin, then describe its opaque option, activate every required Skill, and invoke only a returned tool option. Plugin discovery and execution are account-, project-, and Run-scoped on this client. Do not create nested tasks.",
-            tools: NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools(
-                externalMCPConfigs: externalMCPConfigs
+        var resolvedByID: [String: GatewayModelConfigDTO] = [:]
+        for resolved in resolvedConfigs { resolvedByID[resolved.id] = resolved }
+        var capabilitiesByModel: [String: LocalAgentCapabilityPolicySnapshot] = [:]
+        var publishedRevisions = Set<String>()
+        for snapshot in snapshots {
+            guard let model = resolvedByID[snapshot.modelConfigRef] else {
+                throw NativeLocalAgentBootstrapError.managedPromptUnavailable
+            }
+            let mainPrompt = try NativeManagedAgentPromptResolver.resolve(
+                agentKey: "chatos_conversation_agent",
+                model: model,
+                bundle: promptBundle
             )
-        ))
+            let taskPrompt = try NativeManagedAgentPromptResolver.resolve(
+                agentKey: "local_agent_execution_agent",
+                model: model,
+                bundle: promptBundle
+            )
+            let capabilityRevision = Self.capabilityRevision(
+                agentCapability,
+                plugins: pluginChoices,
+                builtinChoices: builtinChoices,
+                externalChoices: externalChoices,
+                promptBundleVersion: promptBundle.bundleVersion,
+                mainPrompt: mainPrompt,
+                taskPrompt: taskPrompt
+            )
+            let mainCapability = LocalAgentCapabilityPolicySnapshot(
+                ownerUserID: ownerUserID,
+                profileKey: "main_chat",
+                capabilityPolicyRevision: capabilityRevision,
+                instructions: mainPrompt.content,
+                tools: NativeLocalAgentPlatformToolCatalog.capabilityTools(
+                    pluginChoices: pluginChoices,
+                    builtinChoices: builtinChoices,
+                    externalChoices: externalChoices
+                )
+            )
+            capabilitiesByModel[snapshot.modelConfigRef] = mainCapability
+            guard publishedRevisions.insert(capabilityRevision).inserted else { continue }
+            try await controlPlane.publishCapabilities(mainCapability)
+            try await controlPlane.publishCapabilities(.init(
+                ownerUserID: ownerUserID,
+                profileKey: "task_policy_internal",
+                capabilityPolicyRevision: capabilityRevision,
+                instructions: requiredPolicyJSON
+            ))
+            try await controlPlane.publishCapabilities(.init(
+                ownerUserID: ownerUserID,
+                profileKey: "task_execution",
+                capabilityPolicyRevision: capabilityRevision,
+                instructions: taskPrompt.content,
+                tools: NativeLocalAgentPlatformToolCatalog.taskExecutionCapabilityTools(
+                    externalMCPConfigs: externalMCPConfigs
+                )
+            ))
+        }
+        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+            throw NativeLocalAgentBootstrapError.managedPromptUnavailable
+        }
+        state.localAgentCapabilityRevisionsByModelConfigID = capabilitiesByModel.mapValues(
+            \.capabilityPolicyRevision
+        )
+        try stateStore.save(state)
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
             capabilitySnapshot: capability,
+            capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
             externalMCPConfigs: externalMCPConfigs
         )
     }
@@ -416,9 +472,17 @@ extension NativeLocalConnectorService {
         _ capability: GatewayAgentCapabilityDTO,
         plugins: [NativeInstalledAgentPlugin],
         builtinChoices: [NativeLocalAgentMCPChoice],
-        externalChoices: [NativeLocalAgentMCPChoice]
+        externalChoices: [NativeLocalAgentMCPChoice],
+        promptBundleVersion: Int64,
+        mainPrompt: GatewayAgentPromptDTO,
+        taskPrompt: GatewayAgentPromptDTO
     ) -> String {
-        let fields = [capability.policyRevision]
+        let fields = [
+            capability.policyRevision,
+            "prompt-bundle:\(promptBundleVersion)",
+            "\(mainPrompt.agentKey):\(mainPrompt.vendor):\(mainPrompt.revision):\(mainPrompt.checksum)",
+            "\(taskPrompt.agentKey):\(taskPrompt.vendor):\(taskPrompt.revision):\(taskPrompt.checksum)",
+        ]
           + plugins.map(\.pluginKey).sorted()
           + builtinChoices.map(\.value).sorted()
           + externalChoices.map(\.value).sorted()
@@ -431,6 +495,69 @@ extension NativeLocalConnectorService {
         guard let connectorError = error as? NativeConnectorError,
               case let .server(status, _) = connectorError else { return false }
         return status == 404
+    }
+
+    private func restoredMainChatCapabilities(
+        controlPlane: NativeLocalAgentControlPlaneClient,
+        ownerUserID: String,
+        modelSnapshots: [LocalAgentModelConfigSnapshot]
+    ) async throws -> [String: LocalAgentCapabilityPolicySnapshot] {
+        var result: [String: LocalAgentCapabilityPolicySnapshot] = [:]
+        var validatedRevisions = Set<String>()
+        for snapshot in modelSnapshots {
+            guard let revision = state.localAgentCapabilityRevisionsByModelConfigID?[
+                snapshot.modelConfigRef
+            ]?.trimmedNonEmpty else { continue }
+            do {
+                let main = try await controlPlane.capabilities(
+                    ownerUserID: ownerUserID,
+                    profileKey: "main_chat",
+                    capabilityPolicyRevision: revision
+                )
+                if !validatedRevisions.contains(revision) {
+                    _ = try await controlPlane.capabilities(
+                        ownerUserID: ownerUserID,
+                        profileKey: "task_execution",
+                        capabilityPolicyRevision: revision
+                    )
+                    _ = try await controlPlane.capabilities(
+                        ownerUserID: ownerUserID,
+                        profileKey: "task_policy_internal",
+                        capabilityPolicyRevision: revision
+                    )
+                    validatedRevisions.insert(revision)
+                }
+                guard main.ownerUserID == ownerUserID,
+                      main.profileKey == "main_chat",
+                      main.capabilityPolicyRevision == revision else { continue }
+                result[snapshot.modelConfigRef] = main
+            } catch {
+                continue
+            }
+        }
+        if result.count < modelSnapshots.count {
+            let latest = try await controlPlane.latestCapabilities(
+                ownerUserID: ownerUserID,
+                profileKey: "main_chat"
+            )
+            _ = try await controlPlane.capabilities(
+                ownerUserID: ownerUserID,
+                profileKey: "task_execution",
+                capabilityPolicyRevision: latest.capabilityPolicyRevision
+            )
+            _ = try await controlPlane.capabilities(
+                ownerUserID: ownerUserID,
+                profileKey: "task_policy_internal",
+                capabilityPolicyRevision: latest.capabilityPolicyRevision
+            )
+            for snapshot in modelSnapshots where result[snapshot.modelConfigRef] == nil {
+                result[snapshot.modelConfigRef] = latest
+            }
+        }
+        guard result.count == modelSnapshots.count else {
+            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
+        }
+        return result
     }
 
     private func modelRevision(_ model: GatewayModelConfigDTO) -> String {
@@ -470,6 +597,7 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
     case noEnabledModel
     case credentialVariableCollision
     case executionAgentUnavailable
+    case managedPromptUnavailable
 
     public var errorDescription: String? {
         switch self {
@@ -479,6 +607,8 @@ public enum NativeLocalAgentBootstrapError: LocalizedError {
             "Local Agent model identifiers produce the same credential variable."
         case .executionAgentUnavailable:
             "The Local Agent execution capability is unavailable for this account."
+        case .managedPromptUnavailable:
+            "The managed Agent Prompt configuration is unavailable."
         }
     }
 }
