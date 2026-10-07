@@ -15,6 +15,11 @@ test('package contains manifests, built UI, runtime entries, and finished skills
   assert.deepEqual(chatosManifest.runtimeContext.optional, ['project.id', 'workspace.id', 'workspace.root']);
   const files = ['skills/solution-studio/SKILL.md', 'skills/solution-discovery/SKILL.md', 'skills/solution-design/SKILL.md', 'skills/solution-execution-plan/SKILL.md', 'skills/solution-validation/SKILL.md'];
   for (const file of files) assert.doesNotMatch(await readFile(file, 'utf8'), /TODO|\[TODO:/);
+  for (const file of ['skills/solution-studio/SKILL.md', 'skills/solution-execution-plan/SKILL.md', 'skills/solution-validation/SKILL.md']) {
+    const skill = await readFile(file, 'utf8');
+    assert.match(skill, /stale_plan/);
+    assert.match(skill, /basedOnDesignRevision/);
+  }
   const app = await readFile('ui/assets/app.js', 'utf8');
   assert.doesNotMatch(app, /Diagram Studio|关联图表/);
   assert.doesNotMatch(app, /基于代码与文档证据|从目标与约束开始/);
