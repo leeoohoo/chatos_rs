@@ -6,7 +6,8 @@ enum PetActivityPresentation {
     static func genericMessage(for activity: PetActivity, model: AppModel) -> String {
         switch activity.kind {
         case .waitingForUser: model.localized("打开对应输入表单后即可继续任务。", english: "Open the input form to continue the task.")
-        case .working, .reviewing: model.localized("任务仍在执行，可以打开查看完整过程。", english: "The task is still running. Open it to view the full process.")
+        case .working: model.localized("任务仍在执行，可以打开查看完整过程。", english: "The task is still running. Open it to view the full process.")
+        case .reviewing: model.localized("任务已暂停，需要检查执行结果后再处理。", english: "The task is paused. Review the result before continuing.")
         case .succeeded: model.localized("任务已经完成，可以打开查看结果。", english: "The task is complete. Open it to view the result.")
         case .cancelled: model.localized("任务已经取消。", english: "The task was cancelled.")
         case .waitingForApproval: model.localized("打开审批详情进行处理。", english: "Open approval details to decide.")
@@ -62,7 +63,7 @@ enum PetActivityPresentation {
         case .failed: model.localized("任务执行失败", english: "Task Failed")
         case .blocked: model.localized("任务执行被阻塞", english: "Task Blocked")
         case .succeeded: model.localized("任务已完成", english: "Task Completed")
-        case .reviewing: model.localized("AI 正在检查结果", english: "AI Is Reviewing the Result")
+        case .reviewing: model.localized("任务需要检查", english: "Task Needs Review")
         case .working: model.localized("AI 正在处理任务", english: "AI Is Working on the Task")
         case .cancelled: model.localized("任务已取消", english: "Task Cancelled")
         }

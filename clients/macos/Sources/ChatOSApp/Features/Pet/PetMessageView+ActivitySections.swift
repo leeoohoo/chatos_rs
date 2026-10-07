@@ -409,7 +409,7 @@ extension PetMessageView {
 
     func runningActivities() -> [PetActivity] {
         store.activities.filter {
-            $0.kind == .working || $0.kind == .reviewing
+            $0.kind == .working
         }
     }
 
@@ -430,7 +430,7 @@ extension PetMessageView {
 
     func shouldShowActiveWorkSummary(for activity: PetActivity) -> Bool {
         guard store.presentation.activeWorkCount > 0 else { return false }
-        if activity.kind == .working || activity.kind == .reviewing {
+        if activity.kind == .working {
             return store.presentation.activeWorkCount > 1
         }
         return true
@@ -445,7 +445,8 @@ extension PetMessageView {
         case .waitingForApproval: model.localized("点击查看命令并审批", english: "Review the command and decide")
         case .waitingForUser: model.localized("点击查看需要填写的内容", english: "View the requested input")
         case .failed, .blocked: model.localized("点击查看并重新处理", english: "Review and retry")
-        case .working, .reviewing: model.localized("点击查看执行详情", english: "View execution details")
+        case .working: model.localized("点击查看执行详情", english: "View execution details")
+        case .reviewing: model.localized("任务已暂停，需要检查后处理", english: "The task is paused and needs review")
         case .succeeded, .cancelled: model.localized("点击查看结果", english: "View result")
         }
     }
@@ -455,21 +456,22 @@ extension PetMessageView {
         case .waitingForApproval: model.localized("可直接在此完成审批", english: "Approve or decline here")
         case .waitingForUser: model.localized("任务正在等待你的答复", english: "The task is waiting for your reply")
         case .failed, .blocked: model.localized("检查原因并重新处理", english: "Review the cause and retry")
-        case .working, .reviewing: model.localized("实时执行状态", english: "Live execution status")
+        case .working: model.localized("实时执行状态", english: "Live execution status")
+        case .reviewing: model.localized("任务已暂停，需要检查或取消", english: "The task is paused; review or cancel it")
         case .succeeded: model.localized("执行结果", english: "Execution result")
         case .cancelled: model.localized("任务状态", english: "Task status")
         }
     }
 
     func expandedPanelTitle(for activity: PetActivity) -> String {
-        if activity.kind == .working || activity.kind == .reviewing {
+        if activity.kind == .working {
             return model.localized("任务动态", english: "Task Activity")
         }
         return PetActivityPresentation.displayTitle(for: activity, model: model)
     }
 
     func expandedPanelSubtitle(for activity: PetActivity) -> String {
-        if activity.kind == .working || activity.kind == .reviewing {
+        if activity.kind == .working {
             let count = max(1, store.presentation.activeWorkCount)
             return model.localized("\(count) 项任务正在执行", english: "\(count) tasks running")
         }

@@ -114,7 +114,7 @@ public struct PetStateReducer: Sendable {
             animationState: primary.kind.animationState,
             primaryActivity: primary,
             activeWorkCount: visible.filter {
-                $0.kind == .working || $0.kind == .reviewing
+                $0.kind == .working
             }.count,
             attentionCount: visible.filter {
                 $0.kind == .waitingForApproval || $0.kind == .waitingForUser

@@ -296,8 +296,7 @@ final class PetOverlayCoordinator {
 
     private func shouldApply(_ event: PetActivityEvent) -> Bool {
         guard case let .upsert(activity) = event else { return true }
-        if !preferences.showProcess,
-           activity.kind == .working || activity.kind == .reviewing {
+        if !preferences.showProcess, activity.kind == .working {
             return false
         }
         if !preferences.showCompletions, activity.kind == .succeeded {

@@ -688,7 +688,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private static func isRunningActivity(_ activity: PetActivity) -> Bool {
-        activity.kind == .working || activity.kind == .reviewing
+        activity.kind == .working
     }
 
     private func presentTaskInspector(
