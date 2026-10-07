@@ -119,6 +119,7 @@ struct NativeConnectorStateStoreTests {
         state.localAgentCapabilityRevisionsByModelConfigID = [
             "model-gpt": "managed-prompt-revision-7",
         ]
+        state.localAgentPromptBundleVersion = 7
         state.workspaces = [
             .init(id: "workspace-1", alias: "Project", absoluteRoot: "/tmp/project", fingerprint: "abc")
         ]
@@ -145,6 +146,7 @@ struct NativeConnectorStateStoreTests {
             restored.localAgentCapabilityRevisionsByModelConfigID?["model-gpt"]
                 == "managed-prompt-revision-7"
         )
+        #expect(restored.localAgentPromptBundleVersion == 7)
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
     }
 

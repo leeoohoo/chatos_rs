@@ -33,6 +33,7 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     /// selected for its vendor. The actual prompt and tools remain in Local Agent Host's
     /// durable capability store; this map only lets wake/offline restore select the right one.
     var localAgentCapabilityRevisionsByModelConfigID: [String: String]?
+    var localAgentPromptBundleVersion: Int64?
 
     static let empty = NativeConnectorPersistentState()
 }
