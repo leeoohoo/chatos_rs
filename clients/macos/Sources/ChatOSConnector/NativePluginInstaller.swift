@@ -4,6 +4,13 @@ import Darwin
 import Foundation
 
 struct NativePluginInstaller: Sendable {
+    private struct VerifiedPackage {
+        let version: String
+        let artifactSHA256: String
+        let packageRoot: URL
+        let packageFileSHA256: [String: String]
+    }
+
     private let rootURL: URL
     private let maximumFiles = 20_000
     private let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
@@ -17,6 +24,109 @@ struct NativePluginInstaller: Sendable {
         token: String,
         gateway: NativeConnectorGateway
     ) async throws -> NativeInstalledPluginRecord {
+        try await withVerifiedPackage(source: source, token: token, gateway: gateway) { package in
+            let pluginDirectory = rootURL
+                .appendingPathComponent(pluginDirectoryName(source.catalog.id), isDirectory: true)
+            let finalURL = pluginDirectory.appendingPathComponent(package.version, isDirectory: true)
+            let backupURL = rootURL.appendingPathComponent(
+                ".backup-\(pluginDirectory.lastPathComponent)-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let hadPreviousInstallation = FileManager.default.fileExists(atPath: pluginDirectory.path)
+            if hadPreviousInstallation {
+                try FileManager.default.moveItem(at: pluginDirectory, to: backupURL)
+            }
+            do {
+                try FileManager.default.createDirectory(
+                    at: pluginDirectory,
+                    withIntermediateDirectories: true
+                )
+                try FileManager.default.moveItem(at: package.packageRoot, to: finalURL)
+                if hadPreviousInstallation {
+                    try? FileManager.default.removeItem(at: backupURL)
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: pluginDirectory)
+                if hadPreviousInstallation,
+                   FileManager.default.fileExists(atPath: backupURL.path) {
+                    try? FileManager.default.moveItem(at: backupURL, to: pluginDirectory)
+                }
+                throw error
+            }
+
+            return NativeInstalledPluginRecord(
+                pluginID: source.catalog.id,
+                releaseID: source.release.id,
+                version: package.version,
+                artifactSHA256: package.artifactSHA256,
+                installationPath: finalURL.path,
+                installedAt: ISO8601DateFormatter().string(from: Date()),
+                pluginKey: source.catalog.pluginKey,
+                packageFileSHA256: package.packageFileSHA256
+            )
+        }
+    }
+
+    func attestLegacyInstallation(
+        record: NativeInstalledPluginRecord,
+        source: GatewayPluginSourceDTO,
+        token: String,
+        gateway: NativeConnectorGateway
+    ) async throws -> NativeInstalledPluginRecord {
+        guard record.pluginID == source.catalog.id,
+              record.releaseID == source.release.id,
+              record.version == source.release.version?.trimmedNonEmpty,
+              record.artifactSHA256 == source.release.artifactSHA256?.trimmedNonEmpty?.lowercased()
+        else {
+            throw NativeConnectorError.pluginInstallation("旧 Plugin 安装记录与 Marketplace Release 不一致")
+        }
+        return try await withVerifiedPackage(
+            source: source,
+            token: token,
+            gateway: gateway
+        ) { package in
+            try attestLegacyInstallation(
+                record: record,
+                trustedPackageFileSHA256: package.packageFileSHA256
+            )
+        }
+    }
+
+    func attestLegacyInstallation(
+        record: NativeInstalledPluginRecord,
+        trustedPackageFileSHA256: [String: String]
+    ) throws -> NativeInstalledPluginRecord {
+        guard record.packageFileSHA256?.isEmpty != false,
+              !trustedPackageFileSHA256.isEmpty else {
+            throw NativeConnectorError.pluginInstallation("Plugin 安装记录不需要兼容校验")
+        }
+        let current = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: URL(fileURLWithPath: record.installationPath, isDirectory: true),
+            maximumFiles: maximumFiles,
+            maximumBytes: maximumUnpackedBytes
+        )
+        guard current == trustedPackageFileSHA256 else {
+            throw NativeConnectorError.pluginInstallation("本机 Plugin 文件与可信 Marketplace 制品不一致")
+        }
+        var attested = record
+        attested.packageFileSHA256 = trustedPackageFileSHA256
+        return attested
+    }
+
+    func uninstall(pluginID: String) throws {
+        let directory = rootURL
+            .appendingPathComponent(pluginDirectoryName(pluginID), isDirectory: true)
+        if FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    private func withVerifiedPackage<T>(
+        source: GatewayPluginSourceDTO,
+        token: String,
+        gateway: NativeConnectorGateway,
+        body: (VerifiedPackage) throws -> T
+    ) async throws -> T {
         guard let version = source.release.version?.trimmedNonEmpty,
               let artifactSHA256 = source.release.artifactSHA256?.trimmedNonEmpty,
               let npmPackage = source.release.npmPackage else {
@@ -25,7 +135,6 @@ struct NativePluginInstaller: Sendable {
         guard npmPackage.version == version else {
             throw NativeConnectorError.pluginInstallation("npm 版本与 Release 不一致")
         }
-
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         let archiveURL = try await gateway.downloadPluginArtifact(
             token: token,
@@ -33,7 +142,6 @@ struct NativePluginInstaller: Sendable {
             releaseID: source.release.id
         )
         defer { try? FileManager.default.removeItem(at: archiveURL) }
-
         guard try sha256(of: archiveURL) == artifactSHA256.lowercased() else {
             throw NativeConnectorError.pluginInstallation("安装包 SHA-256 校验失败")
         }
@@ -46,7 +154,6 @@ struct NativePluginInstaller: Sendable {
         try FileManager.default.createDirectory(at: stagingURL, withIntermediateDirectories: true)
         try validateArchiveEntries(archiveURL)
         try runTar(["-xzf", archiveURL.path, "-C", stagingURL.path])
-
         let packageRoot = stagingURL.appendingPathComponent("package", isDirectory: true)
         guard FileManager.default.fileExists(atPath: packageRoot.path) else {
             throw NativeConnectorError.pluginInstallation("npm 安装包缺少 package 目录")
@@ -62,54 +169,12 @@ struct NativePluginInstaller: Sendable {
             maximumFiles: maximumFiles,
             maximumBytes: maximumUnpackedBytes
         )
-
-        let pluginDirectory = rootURL
-            .appendingPathComponent(pluginDirectoryName(source.catalog.id), isDirectory: true)
-        let finalURL = pluginDirectory.appendingPathComponent(version, isDirectory: true)
-        let backupURL = rootURL.appendingPathComponent(
-            ".backup-\(pluginDirectory.lastPathComponent)-\(UUID().uuidString)",
-            isDirectory: true
-        )
-        let hadPreviousInstallation = FileManager.default.fileExists(atPath: pluginDirectory.path)
-        if hadPreviousInstallation {
-            try FileManager.default.moveItem(at: pluginDirectory, to: backupURL)
-        }
-        do {
-            try FileManager.default.createDirectory(
-                at: pluginDirectory,
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.moveItem(at: packageRoot, to: finalURL)
-            if hadPreviousInstallation {
-                try? FileManager.default.removeItem(at: backupURL)
-            }
-        } catch {
-            try? FileManager.default.removeItem(at: pluginDirectory)
-            if hadPreviousInstallation,
-               FileManager.default.fileExists(atPath: backupURL.path) {
-                try? FileManager.default.moveItem(at: backupURL, to: pluginDirectory)
-            }
-            throw error
-        }
-
-        return NativeInstalledPluginRecord(
-            pluginID: source.catalog.id,
-            releaseID: source.release.id,
+        return try body(.init(
             version: version,
             artifactSHA256: artifactSHA256.lowercased(),
-            installationPath: finalURL.path,
-            installedAt: ISO8601DateFormatter().string(from: Date()),
-            pluginKey: source.catalog.pluginKey,
+            packageRoot: packageRoot,
             packageFileSHA256: packageFileSHA256
-        )
-    }
-
-    func uninstall(pluginID: String) throws {
-        let directory = rootURL
-            .appendingPathComponent(pluginDirectoryName(pluginID), isDirectory: true)
-        if FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.removeItem(at: directory)
-        }
+        ))
     }
 
     private func validateArchiveEntries(_ archiveURL: URL) throws {

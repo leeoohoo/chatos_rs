@@ -6,10 +6,13 @@ import Foundation
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
 extension NativeLocalConnectorService {
-    public func installedAgentPlugins(ownerUserID: String) throws -> [NativeInstalledAgentPlugin] {
+    public func installedAgentPlugins(
+        ownerUserID: String
+    ) async throws -> [NativeInstalledAgentPlugin] {
         guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest("本机 Plugin 不属于当前账户")
         }
+        await repairLegacyPluginIntegrityRecordsIfNeeded()
         return (state.installedPluginRecords ?? [:]).values.compactMap { record in
             guard state.pluginPreferences[record.pluginID] ?? true,
                   NativePluginInstallationIntegrity.status(record: record) == .verified,
@@ -190,7 +193,7 @@ extension NativeLocalConnectorService {
         runContext: LocalAgentChatRunContext,
         projectContext: LocalConnectorPluginApplicationContext,
         executionPlan: LocalAgentTodoExecutionPlan
-    ) throws -> any AgentToolProvider {
+    ) async throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
               projectContext.projectID == runContext.projectID,
@@ -202,7 +205,7 @@ extension NativeLocalConnectorService {
         }
         try executionPlan.validate()
         let resolvedProject = try resolveProjectPath(projectRoot)
-        let installed = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installed = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let selectedPlugins = try executionPlan.plugins.map { selection in
             guard let plugin = installedByID[selection.pluginID] else {

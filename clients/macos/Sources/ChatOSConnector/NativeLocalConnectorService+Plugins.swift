@@ -100,7 +100,12 @@ extension NativeLocalConnectorService {
         forceRefresh: Bool
     ) async throws -> [LocalConnectorPlugin] {
         let sources = try await pluginSources(forceRefresh: forceRefresh)
+        var stateChanged = reconcileInstalledPluginIdentities(with: sources.items)
+        await repairLegacyPluginIntegrityRecordsIfNeeded(sources: sources.items)
         if reconcileInstalledPluginIdentities(with: sources.items) {
+            stateChanged = true
+        }
+        if stateChanged {
             try stateStore.save(state)
             try? await sendPluginInstallationStatus()
         }
@@ -160,6 +165,69 @@ extension NativeLocalConnectorService {
             ))
         }
         return plugins
+    }
+
+    func repairLegacyPluginIntegrityRecordsIfNeeded(
+        sources: [GatewayPluginSourceDTO]? = nil
+    ) async {
+        guard (state.installedPluginRecords ?? [:]).values.contains(where: {
+            $0.packageFileSHA256?.isEmpty != false
+        }) else { return }
+        if let pluginIntegrityRepairTask {
+            await pluginIntegrityRepairTask.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.repairLegacyPluginIntegrityRecords(sources: sources)
+        }
+        pluginIntegrityRepairTask = task
+        await task.value
+        pluginIntegrityRepairTask = nil
+    }
+
+    private func repairLegacyPluginIntegrityRecords(
+        sources suppliedSources: [GatewayPluginSourceDTO]?
+    ) async {
+        do {
+            let sources: [GatewayPluginSourceDTO] = if let suppliedSources {
+                suppliedSources
+            } else {
+                try await pluginSources().items
+            }
+            let sourcesByID: [String: GatewayPluginSourceDTO] = Dictionary(
+                uniqueKeysWithValues: sources.map {
+                    ($0.catalog.id, $0)
+                }
+            )
+            let token = try requireAccessToken()
+            let candidates = (state.installedPluginRecords ?? [:]).values
+                .filter { $0.packageFileSHA256?.isEmpty != false }
+                .sorted { $0.pluginID < $1.pluginID }
+            var changed = false
+            for record in candidates {
+                guard let source = sourcesByID[record.pluginID] else { continue }
+                do {
+                    let attested = try await pluginInstaller.attestLegacyInstallation(
+                        record: record,
+                        source: source,
+                        token: token,
+                        gateway: gateway
+                    )
+                    guard state.installedPluginRecords?[record.pluginID] == record else { continue }
+                    state.installedPluginRecords?[record.pluginID] = attested
+                    changed = true
+                } catch {
+                    continue
+                }
+            }
+            guard changed else { return }
+            try stateStore.save(state)
+            await pluginPermissionSnapshots.invalidateAll()
+            try? await publishPluginInstallationStatus()
+        } catch {
+            return
+        }
     }
 
     private static func pluginInstallationIssue(

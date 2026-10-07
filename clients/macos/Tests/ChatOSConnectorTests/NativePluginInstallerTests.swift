@@ -4,6 +4,45 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativePluginInstallerTests {
+    @Test("legacy installation is attested only against a trusted package snapshot")
+    func legacyInstallationAttestationUsesTrustedSnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativePluginAttestation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manifest = root.appendingPathComponent("chatos.plugin.json")
+        try Data("trusted".utf8).write(to: manifest)
+        let trusted = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: root,
+            maximumFiles: 10,
+            maximumBytes: 1_024
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-10-06T00:00:00Z"
+        )
+        let installer = NativePluginInstaller(rootURL: root.deletingLastPathComponent())
+
+        let attested = try installer.attestLegacyInstallation(
+            record: record,
+            trustedPackageFileSHA256: trusted
+        )
+        #expect(attested.packageFileSHA256 == trusted)
+        try NativePluginInstallationIntegrity.verify(record: attested, installationURL: root)
+
+        try Data("tampered".utf8).write(to: manifest, options: .atomic)
+        #expect(throws: NativeConnectorError.self) {
+            _ = try installer.attestLegacyInstallation(
+                record: record,
+                trustedPackageFileSHA256: trusted
+            )
+        }
+    }
+
     @Test("installed plugin files are revalidated before every launch")
     func installedFileTamperingIsRejected() throws {
         let root = FileManager.default.temporaryDirectory

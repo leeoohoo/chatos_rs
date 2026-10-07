@@ -28,7 +28,7 @@ extension NativeLocalConnectorService {
         executionRootURL: URL,
         workspaceScopeID: String,
         pluginIDs: [String]?
-    ) throws -> any AgentToolProvider {
+    ) async throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest(
                 "本地任务 Plugin 与当前账户不匹配"
@@ -59,7 +59,7 @@ extension NativeLocalConnectorService {
             hopCount: 0,
             lane: .executor
         )
-        let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let selectedPlugins: [NativeInstalledAgentPlugin]
         if let pluginIDs {
             let installedByKey = Dictionary(

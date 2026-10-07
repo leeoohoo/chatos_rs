@@ -264,7 +264,7 @@ extension NativeLocalConnectorService {
         guard let promptBundle else {
             throw NativeLocalAgentBootstrapError.managedPromptUnavailable
         }
-        let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
         guard !agentCapability.mcps.contains(where: {
             $0.binding.required && !$0.available
         }), !agentCapability.plugins.contains(where: {
