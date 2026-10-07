@@ -111,7 +111,6 @@ extension NativePluginRuntimeTests {
         let bytes = Data("# Verified solution\n".utf8)
         let fileName = "solution-123.md"
         try bytes.write(to: artifacts.appendingPathComponent(fileName))
-        let sha256 = NativePluginHash.sha256(bytes)
         let identity = NativePluginRuntimeStore.Identity(
             runID: "run-1",
             pluginID: "solution-plugin",
@@ -131,8 +130,6 @@ extension NativePluginRuntimeTests {
                             "relative_path": .string(fileName),
                             "display_name": .string(fileName),
                             "media_type": .string("text/markdown"),
-                            "size_bytes": .number(Double(bytes.count)),
-                            "sha256": .string(sha256),
                         ]),
                     ]),
                 ]),
@@ -151,6 +148,8 @@ extension NativePluginRuntimeTests {
                 .jsonArray?.first?.jsonObject?["artifact"]?.jsonObject
         )
         #expect(descriptor["media_type"]?.jsonString == "text/markdown")
+        #expect(descriptor["size_bytes"]?.jsonNumber == Double(bytes.count))
+        #expect(descriptor["sha256"]?.jsonString == NativePluginHash.sha256(bytes))
         let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
         #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
     }

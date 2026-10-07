@@ -114,27 +114,44 @@ enum NativePluginArtifactRegistrar {
         _ value: NativeJSONValue,
         artifactRoot: URL
     ) throws -> Candidate {
-        guard let object = value.jsonObject,
-              object.count == 6,
+        guard let object = value.jsonObject else {
+            throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 描述无效")
+        }
+        let baseKeys: Set<String> = [
+            "producer_artifact_id", "relative_path", "display_name", "media_type",
+        ]
+        let integrityKeys: Set<String> = ["size_bytes", "sha256"]
+        let keys = Set(object.keys)
+        guard keys == baseKeys || keys == baseKeys.union(integrityKeys),
               let producerArtifactID = object["producer_artifact_id"]?.jsonString,
               let relativePath = object["relative_path"]?.jsonString,
               let displayName = object["display_name"]?.jsonString,
-              let mediaType = object["media_type"]?.jsonString,
-              let sizeNumber = object["size_bytes"]?.jsonNumber,
-              let sha256 = object["sha256"]?.jsonString else {
+              let mediaType = object["media_type"]?.jsonString else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 描述无效")
         }
         guard producerArtifactID == producerArtifactID.trimmingCharacters(in: .whitespacesAndNewlines),
               !producerArtifactID.isEmpty,
               producerArtifactID.utf8.count <= 256,
-              !producerArtifactID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              sizeNumber.isFinite,
-              sizeNumber.rounded() == sizeNumber,
-              sizeNumber >= 0,
-              sizeNumber <= Double(maximumArtifactBytes),
-              sha256.count == 64,
-              sha256.allSatisfy({ $0.isNumber || ("a"..."f").contains(String($0)) }) else {
+              !producerArtifactID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 标识或大小无效")
+        }
+        let declaredIntegrity: (sizeBytes: Int, sha256: String)?
+        if keys.contains("size_bytes") {
+            guard let sizeNumber = object["size_bytes"]?.jsonNumber,
+                  let sha256 = object["sha256"]?.jsonString,
+                  sizeNumber.isFinite,
+                  sizeNumber.rounded() == sizeNumber,
+                  sizeNumber >= 0,
+                  sizeNumber <= Double(maximumArtifactBytes),
+                  sha256.count == 64,
+                  sha256.allSatisfy({ $0.isNumber || ("a"..."f").contains(String($0)) }) else {
+                throw NativePluginRuntimeError.invalidMCPResponse(
+                    "Plugin MCP Artifact 标识或大小无效"
+                )
+            }
+            declaredIntegrity = (Int(sizeNumber), sha256)
+        } else {
+            declaredIntegrity = nil
         }
         let components = try safeRelativeComponents(relativePath)
         guard displayName == displayName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -162,15 +179,20 @@ enum NativePluginArtifactRegistrar {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 路径越界")
         }
         let values = try canonicalSource.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        let sizeBytes = Int(sizeNumber)
-        guard values.isRegularFile == true, values.fileSize == sizeBytes else {
+        guard values.isRegularFile == true,
+              let sizeBytes = values.fileSize,
+              sizeBytes >= 0,
+              sizeBytes <= maximumArtifactBytes else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact 不是有效文件或大小不匹配")
         }
         let data = try NativeBoundedFileReader.read(
             canonicalSource,
             maximumBytes: max(sizeBytes, 1)
         )
-        guard data.count == sizeBytes, NativePluginHash.sha256(data) == sha256 else {
+        let sha256 = NativePluginHash.sha256(data)
+        guard data.count == sizeBytes,
+              declaredIntegrity?.sizeBytes == nil || declaredIntegrity?.sizeBytes == sizeBytes,
+              declaredIntegrity?.sha256 == nil || declaredIntegrity?.sha256 == sha256 else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP Artifact SHA-256 不匹配")
         }
         return Candidate(
