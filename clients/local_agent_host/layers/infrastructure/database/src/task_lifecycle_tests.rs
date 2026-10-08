@@ -456,4 +456,20 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
     assert!(graph.tasks[1..]
         .iter()
         .all(|task| task.status == LocalTaskStatus::Blocked));
+
+    let retried = storage
+        .retry_task(
+            &command("retry-reported-block"),
+            "user-1",
+            &graph.tasks[0].task_id,
+            graph.tasks[0].version,
+            Some("Use the corrected date range."),
+            3_000,
+        )
+        .await
+        .expect("retry explicitly blocked task");
+    assert_eq!(retried.tasks[0].status, LocalTaskStatus::Ready);
+    assert!(retried.tasks[1..]
+        .iter()
+        .all(|task| task.status == LocalTaskStatus::Pending));
 }

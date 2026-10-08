@@ -363,9 +363,12 @@ pub(super) async fn retry_task(
             "task version changed: {task_id}"
         )));
     }
-    if !matches!(status, LocalTaskStatus::Failed | LocalTaskStatus::Cancelled) {
+    if !matches!(
+        status,
+        LocalTaskStatus::Failed | LocalTaskStatus::Cancelled | LocalTaskStatus::Blocked
+    ) {
         return Err(ClientStorageError::Conflict(format!(
-            "only failed or cancelled tasks can be retried: {task_id}"
+            "only failed, cancelled, or blocked tasks can be retried: {task_id}"
         )));
     }
     require_satisfied_prerequisites(connection, &graph_id, task_id).await?;
