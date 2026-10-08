@@ -207,7 +207,7 @@ enum NativePluginSandboxProfile {
             "(allow process-fork)",
             "(allow signal (target same-sandbox))",
             "(allow sysctl-read)",
-            "(allow mach-lookup (global-name \"com.apple.cfprefsd.agent\") (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\") (global-name \"com.apple.securityd\") (global-name \"com.apple.system.opendirectoryd.libinfo\"))",
+            "(allow mach-lookup (global-name \"com.apple.cfprefsd.agent\") (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\") (global-name \"com.apple.securityd\") (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.FSEvents\"))",
             "(allow file-read-metadata)",
             "(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/opt/homebrew\") (subpath \"/usr/local\") (subpath \"/Library/Apple\") \(literal(launch.installationURL.path)))",
         ]

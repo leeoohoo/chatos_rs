@@ -418,6 +418,7 @@ extension NativePluginRuntimeTests {
         #expect(process.environment["CHATOS_PLUGIN_SANDBOX"] == "macos-seatbelt")
         #expect(launch.managedBrowserAccess)
         let sandboxProfile = try #require(process.arguments.dropFirst(2).first)
+        #expect(sandboxProfile.contains("com.apple.FSEvents"))
         #expect(sandboxProfile.contains(dataDirectory + ".lock"))
         #expect(sandboxProfile.contains(cacheDirectory + ".lock"))
         #expect(sandboxProfile.contains("(allow iokit-open)"))
