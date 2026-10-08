@@ -92,7 +92,7 @@ actor NativePluginApplicationRuntime {
                 artifactSHA256: record.artifactSHA256
             )
         }
-        guard runtime.type == "local_http" else {
+        guard runtime.type == NativePluginApplicationHostContract.runtimeType else {
             throw NativeConnectorError.pluginInstallation("Plugin UI runtime 类型不受支持")
         }
         guard manifest.permissions.contains(where: {
@@ -121,19 +121,21 @@ actor NativePluginApplicationRuntime {
         let error = Pipe()
         NativeProcessPipeReader.install(on: output.fileHandleForReading)
         NativeProcessPipeReader.install(on: error.fileHandleForReading)
-        var overrides = [
-            "CHATOS_PLUGIN_ROOT": installationURL.path,
-            "CHATOS_PLUGIN_DATA_DIR": dataURL.path,
-            "CHATOS_PLUGIN_CACHE_DIR": cacheURL.path,
-            "CHATOS_PLUGIN_APP_HOST": "127.0.0.1",
-            "CHATOS_PLUGIN_APP_PORT": String(port),
-            "CHATOS_PLUGIN_ID": record.pluginID,
-            "CHATOS_PLUGIN_COMPONENT_KEY": contribution.componentKey,
-            "CHATOS_PLUGIN_RELEASE_ID": record.releaseID,
-            "CHATOS_PLUGIN_VERSION": record.version,
-            "CHATOS_PLUGIN_ARTIFACT_SHA256": record.artifactSHA256,
-        ]
-        overrides.merge(resolvedContext.environment, uniquingKeysWith: { _, runtime in runtime })
+        var overrides = resolvedContext.environment
+        overrides.merge(
+            NativePluginApplicationHostContract.environment(
+                record: record,
+                componentKey: contribution.componentKey,
+                installationURL: installationURL,
+                dataURL: dataURL,
+                cacheURL: cacheURL,
+                port: port
+            ),
+            // CHATOS_PLUGIN_* application values are Host-owned. A manifest
+            // context must not replace the assigned loopback endpoint or its
+            // sandbox compatibility policy.
+            uniquingKeysWith: { _, host in host }
+        )
         let process = try NativePluginProcessLauncher.prepare(.init(
             record: record,
             executableURL: executableURL,
@@ -141,10 +143,10 @@ actor NativePluginApplicationRuntime {
             environment: overrides,
             installationURL: installationURL,
             writableDirectories: [dataURL, cacheURL],
-            writablePaths: [
-                URL(fileURLWithPath: dataURL.path + ".lock", isDirectory: true),
-                URL(fileURLWithPath: cacheURL.path + ".lock", isDirectory: true),
-            ],
+            writablePaths: NativePluginApplicationHostContract.writableSidecarURLs(
+                dataURL: dataURL,
+                cacheURL: cacheURL
+            ),
             workspaceRoot: hostContext.workspaceRoot,
             permissionSnapshot: Set(manifest.permissions.map(\.permission)),
             networkAccess: .loopbackServer

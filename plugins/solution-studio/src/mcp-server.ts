@@ -320,7 +320,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: 'chatos-solution-studio', version: '0.1.8' }, { capabilities: { tools: {} } });
+const server = new Server({ name: 'chatos-solution-studio', version: '0.1.9' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

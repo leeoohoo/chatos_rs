@@ -205,6 +205,7 @@ internal sealed class WindowsPluginApplicationRuntime : IAsyncDisposable
             {
                 ["CHATOS_PLUGIN_APP_HOST"] = "127.0.0.1",
                 ["CHATOS_PLUGIN_APP_PORT"] = port.ToString(),
+                ["CHATOS_PLUGIN_FILE_WATCH_MODE"] = "native",
             };
             var process = await _launcher.LaunchAsync(
                 PluginProcessLaunchRequest.From(prepared with { Environment = environment }),

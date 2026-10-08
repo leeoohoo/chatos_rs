@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readPluginLocalHttpEndpoint } from '../../shared/local-http-application-runtime.js';
 import { WebDesignDocumentStore, RevisionConflictError } from './document-store.js';
 import { runtimeScopeFingerprint } from './runtime-scope.js';
 import { assertWebDesignDocument, type WebDesignDocument } from './schema.js';
@@ -18,8 +19,11 @@ import { ProgressiveGenerationService } from './v2/progressive-generation-servic
 import { parseWorkspaceArtboards, WorkspacePlacementStore } from './v2/workspace-placement-store.js';
 import { parseWorkspaceCamera } from './v2/workspace-camera.js';
 
-const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.WEB_DESIGN_STUDIO_PORT ?? '4188', 10);
-const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.WEB_DESIGN_STUDIO_HOST ?? '127.0.0.1';
+const { host, port } = readPluginLocalHttpEndpoint({
+  defaultPort: 4188,
+  legacyHostEnvironmentKey: 'WEB_DESIGN_STUDIO_HOST',
+  legacyPortEnvironmentKey: 'WEB_DESIGN_STUDIO_PORT'
+});
 const store = new WebDesignDocumentStore();
 await store.initialize();
 

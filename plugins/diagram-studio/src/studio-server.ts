@@ -1,16 +1,19 @@
 import express from 'express';
-import { watch } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  readPluginLocalHttpEndpoint,
+  startPluginDirectoryMonitor
+} from '../../shared/local-http-application-runtime.js';
 import { DiagramDocumentStore, RevisionConflictError } from './document-store.js';
 import { runtimeDataScopeFingerprint } from './generation-guides.js';
 import { assertDiagramDocument, type DiagramDocument, type DiagramKind } from './schema.js';
 
-const port = Number.parseInt(
-  process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.DIAGRAM_STUDIO_PORT ?? '4178',
-  10
-);
-const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.DIAGRAM_STUDIO_HOST ?? '127.0.0.1';
+const { host, port } = readPluginLocalHttpEndpoint({
+  defaultPort: 4178,
+  legacyHostEnvironmentKey: 'DIAGRAM_STUDIO_HOST',
+  legacyPortEnvironmentKey: 'DIAGRAM_STUDIO_PORT'
+});
 const store = new DiagramDocumentStore();
 await store.initialize();
 
@@ -209,8 +212,10 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   });
 });
 
-watch(store.rootDirectory, { persistent: false }, (_event, fileName) => {
-  if (fileName?.endsWith('.diagram.json') || fileName?.endsWith('.project.json')) publishChange();
+startPluginDirectoryMonitor({
+  directory: store.rootDirectory,
+  accepts: (fileName) => fileName.endsWith('.diagram.json') || fileName.endsWith('.project.json'),
+  onChange: publishChange
 });
 
 app.listen(port, host, () => {

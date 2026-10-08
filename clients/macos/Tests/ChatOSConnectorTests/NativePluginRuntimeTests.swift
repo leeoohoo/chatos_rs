@@ -25,6 +25,7 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
+        test "$CHATOS_PLUGIN_FILE_WATCH_MODE" = "polling"
         mkdir "$CHATOS_PLUGIN_DATA_DIR.lock"
         rmdir "$CHATOS_PLUGIN_DATA_DIR.lock"
         mkdir "$CHATOS_PLUGIN_CACHE_DIR.lock"

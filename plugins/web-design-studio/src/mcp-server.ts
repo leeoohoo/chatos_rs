@@ -69,7 +69,7 @@ import {
 } from './mcp-tool-helpers.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.28';
+const SERVER_VERSION = '3.0.30';
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
