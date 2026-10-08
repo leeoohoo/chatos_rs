@@ -120,10 +120,10 @@ struct AgentManagementView: View {
                     .padding(.bottom, 10)
 
                     if viewModel.selectedAgentID != nil {
-                        Spacer(minLength: 24)
                         Divider()
                         triggerRunsPanel
                             .frame(height: 340)
+                            .padding(.top, 12)
                     } else {
                         Spacer(minLength: 0)
                     }
