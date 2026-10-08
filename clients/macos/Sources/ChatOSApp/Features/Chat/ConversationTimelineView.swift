@@ -203,7 +203,11 @@ private struct ConversationTimelineContentView: View {
                 }
                 .onPreferenceChange(ConversationTimelineBottomPreferenceKey.self) { bottomY in
                     let nextPinned = bottomY <= viewport.size.height + 28
-                    guard nextPinned != isPinnedToBottom else { return }
+                    guard ConversationTimelineBottomSyncPolicy.shouldPublish(
+                        currentIsPinned: isPinnedToBottom,
+                        detectedIsPinned: nextPinned,
+                        unreadNewerCount: conversation.unreadNewerCount
+                    ) else { return }
                     isPinnedToBottom = nextPinned
                     conversation.setTimelinePinnedToBottom(nextPinned)
                 }
@@ -391,6 +395,17 @@ private struct ConversationTimelineContentView: View {
 
     private func localized(_ chinese: String, english: String) -> String {
         locale.identifier.lowercased().hasPrefix("en") ? english : chinese
+    }
+}
+
+enum ConversationTimelineBottomSyncPolicy {
+    static func shouldPublish(
+        currentIsPinned: Bool,
+        detectedIsPinned: Bool,
+        unreadNewerCount: Int
+    ) -> Bool {
+        currentIsPinned != detectedIsPinned
+            || (detectedIsPinned && unreadNewerCount > 0)
     }
 }
 
