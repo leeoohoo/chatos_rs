@@ -58,6 +58,16 @@ struct NativeTerminalTests {
             if case .exited = terminal.state { return true }
             return false
         }
+        let expectedOutput = "\(marker)|xterm-256color|truecolor"
+        try await waitUntil(timeout: .seconds(5)) {
+            String(
+                decoding: terminal.terminalView.terminal.getBufferAsData(),
+                as: UTF8.self
+            )
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .contains(expectedOutput)
+        }
         let contents = String(
             decoding: terminal.terminalView.terminal.getBufferAsData(),
             as: UTF8.self
@@ -65,7 +75,7 @@ struct NativeTerminalTests {
         let unwrappedContents = contents
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "")
-        #expect(unwrappedContents.contains("\(marker)|xterm-256color|truecolor"))
+        #expect(unwrappedContents.contains(expectedOutput))
     }
 
     private func waitUntil(
