@@ -456,11 +456,15 @@ impl TaskExecutionProgressState {
 
     fn record_validation_for_current_generation(&self) -> bool {
         let generation = self.project_mutation_generation.load(Ordering::Relaxed);
-        self.last_validated_generation
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last_validated| {
-                (last_validated != generation).then_some(generation)
-            })
-            .is_ok()
+        // Rust 1.94 deprecates `fetch_update` before its `try_update` replacement
+        // is stable. Keep the compatible spelling until the pinned toolchain advances.
+        #[allow(deprecated)]
+        let updated = self.last_validated_generation.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |last_validated| (last_validated != generation).then_some(generation),
+        );
+        updated.is_ok()
     }
 
     pub fn should_trigger_review(&self, iteration: usize) -> Option<TaskExecutionReviewCheckpoint> {
