@@ -26,6 +26,25 @@ struct AgentChatMentionTests {
 
 struct AgentChatTimelineScrollTests {
     @Test
+    func markerPositionStopsInvalidatingTimelineAfterInitialPositioning() {
+        #expect(AgentChatTimelineScrollMetrics.shouldCaptureInitialMarker(
+            hasPositionedInitially: false,
+            currentMarkerMaxY: 1_200,
+            nextMarkerMaxY: 1_180
+        ))
+        #expect(!AgentChatTimelineScrollMetrics.shouldCaptureInitialMarker(
+            hasPositionedInitially: false,
+            currentMarkerMaxY: 1_200,
+            nextMarkerMaxY: 1_200
+        ))
+        #expect(!AgentChatTimelineScrollMetrics.shouldCaptureInitialMarker(
+            hasPositionedInitially: true,
+            currentMarkerMaxY: 1_200,
+            nextMarkerMaxY: 400
+        ))
+    }
+
+    @Test
     func initialPositionScrollsOnlyWhenContentExceedsViewport() {
         #expect(!AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
             markerMaxY: 599,

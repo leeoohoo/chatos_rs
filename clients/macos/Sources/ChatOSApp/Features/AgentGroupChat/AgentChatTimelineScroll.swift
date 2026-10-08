@@ -25,6 +25,14 @@ private struct AgentChatTimelineBottomMarker: View {
 }
 
 enum AgentChatTimelineScrollMetrics {
+    static func shouldCaptureInitialMarker(
+        hasPositionedInitially: Bool,
+        currentMarkerMaxY: CGFloat,
+        nextMarkerMaxY: CGFloat
+    ) -> Bool {
+        !hasPositionedInitially && currentMarkerMaxY != nextMarkerMaxY
+    }
+
     static func shouldScrollToBottomInitially(
         markerMaxY: CGFloat,
         viewportHeight: CGFloat
@@ -138,7 +146,16 @@ where Item.ID == String {
                 }
                 .coordinateSpace(name: coordinateSpaceName)
                 .onPreferenceChange(AgentChatTimelineBottomPreferenceKey.self) { markerMaxY in
-                    latestMarkerMaxY = markerMaxY
+                    // The marker moves on every scroll frame. Its exact position is needed only
+                    // until the initial offset is resolved; persisting it afterwards invalidates
+                    // the entire eager Markdown stack continuously while the user scrolls.
+                    if AgentChatTimelineScrollMetrics.shouldCaptureInitialMarker(
+                        hasPositionedInitially: hasPositionedInitially,
+                        currentMarkerMaxY: latestMarkerMaxY,
+                        nextMarkerMaxY: markerMaxY
+                    ) {
+                        latestMarkerMaxY = markerMaxY
+                    }
                     let nextValue = AgentChatTimelineScrollMetrics.isAtBottom(
                         markerMaxY: markerMaxY,
                         viewportHeight: viewport.size.height
