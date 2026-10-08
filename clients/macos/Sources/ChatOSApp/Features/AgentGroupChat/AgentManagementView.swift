@@ -109,7 +109,7 @@ struct AgentManagementView: View {
                         }
                         .padding(18)
                     }
-                    .frame(maxHeight: viewModel.selectedAgentID == nil ? .infinity : 320)
+                    .frame(maxHeight: .infinity)
 
                     AgentListPaginationBar(
                         totalCount: viewModel.agents.count,
@@ -123,7 +123,6 @@ struct AgentManagementView: View {
                         Divider()
                         triggerRunsPanel
                             .frame(height: 340)
-                            .padding(.top, 12)
                     } else {
                         Spacer(minLength: 0)
                     }
