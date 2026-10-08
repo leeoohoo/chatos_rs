@@ -56,4 +56,43 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
             $0.contains("Desktop control.") && $0.contains("native desktop applications")
         }))
     }
+
+    func testTaskModelSchemaOnlyPublishesTaskEnabledChoices() throws {
+        let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools(
+            pluginChoices: [],
+            taskModelChoices: [
+                .init(value: "task-model-2", title: "Task Model 2"),
+                .init(value: "task-model-1", title: "Task Model 1"),
+            ]
+        )
+
+        let createTask = try XCTUnwrap(tools.first { value in
+            guard case .object(let tool) = value else { return false }
+            return tool["name"] == .string("create_task")
+        })
+        guard case .object(let createTaskDefinition) = createTask,
+              case .object(let createTaskParameters)? = createTaskDefinition["parameters"],
+              case .object(let createTaskProperties)? = createTaskParameters["properties"],
+              case .object(let createTaskModel)? = createTaskProperties["default_model_config_id"],
+              case .array(let createTaskModels)? = createTaskModel["enum"] else {
+            return XCTFail("missing create_task model choice schema")
+        }
+        XCTAssertEqual(createTaskModels, [.string("task-model-1"), .string("task-model-2")])
+
+        let createTasks = try XCTUnwrap(tools.first { value in
+            guard case .object(let tool) = value else { return false }
+            return tool["name"] == .string("create_tasks_with_prerequisites")
+        })
+        guard case .object(let createTasksDefinition) = createTasks,
+              case .object(let createTasksParameters)? = createTasksDefinition["parameters"],
+              case .object(let createTasksProperties)? = createTasksParameters["properties"],
+              case .object(let tasks)? = createTasksProperties["tasks"],
+              case .object(let items)? = tasks["items"],
+              case .object(let itemProperties)? = items["properties"],
+              case .object(let createTasksModel)? = itemProperties["default_model_config_id"],
+              case .array(let createTasksModels)? = createTasksModel["enum"] else {
+            return XCTFail("missing batch Task model choice schema")
+        }
+        XCTAssertEqual(createTasksModels, createTaskModels)
+    }
 }

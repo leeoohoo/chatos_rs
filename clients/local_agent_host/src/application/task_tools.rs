@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{task_tool_definitions::*, task_tool_support::*};
+use super::{
+    task_model_policy::resolve_task_model, task_tool_definitions::*, task_tool_support::*,
+};
 use crate::LocalToolExecutor;
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -138,6 +140,7 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     self.runtime.as_ref(),
                     &parent,
                     args.default_model_config_id.as_deref(),
+                    task_policy.allowed_model_config_ids.as_deref(),
                 )
                 .await?;
                 let command = create_single_graph(
@@ -197,6 +200,7 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     &parent,
                     args,
                     task_policy.max_iterations(parent.max_iterations),
+                    task_policy.allowed_model_config_ids.as_deref(),
                 )
                 .await?;
                 let (graph, reused) =
@@ -423,6 +427,8 @@ pub(super) struct RequiredTaskPolicy {
     external_mcp_config_ids: Vec<String>,
     #[serde(default)]
     plugin_keys: Vec<String>,
+    #[serde(default)]
+    allowed_model_config_ids: Option<Vec<String>>,
 }
 
 impl RequiredTaskPolicy {
@@ -597,6 +603,7 @@ async fn create_batch_graph(
     parent: &LocalAgentRunRecord,
     args: CreateTasksArgs,
     max_iterations: u32,
+    allowed_model_config_ids: Option<&[String]>,
 ) -> Result<CreateBatchPlan, String> {
     if args.tasks.is_empty() || args.tasks.len() > 50 {
         return Err("tasks must contain 1..=50 items".to_string());
@@ -641,8 +648,13 @@ async fn create_batch_graph(
     let mut tasks = Vec::with_capacity(items.len());
     let mut dependencies = Vec::new();
     for item in items {
-        let model =
-            resolve_task_model(runtime, parent, item.default_model_config_id.as_deref()).await?;
+        let model = resolve_task_model(
+            runtime,
+            parent,
+            item.default_model_config_id.as_deref(),
+            allowed_model_config_ids,
+        )
+        .await?;
         let enabled_builtin_kinds =
             validated_builtin_kinds(item.requires_execution, item.enabled_builtin_kinds)?;
         let external_mcp_config_ids = validate_external_mcp_ids(&item.external_mcp_config_ids)?;
@@ -762,27 +774,6 @@ fn input_string(input: &Value, key: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
-}
-
-async fn resolve_task_model(
-    runtime: &LocalAgentRuntime,
-    parent: &LocalAgentRunRecord,
-    requested: Option<&str>,
-) -> Result<(String, String), String> {
-    let requested = requested.map(str::trim).filter(|value| !value.is_empty());
-    if requested.is_none() || requested == Some(parent.model_config_ref.as_str()) {
-        return Ok((
-            parent.model_config_ref.clone(),
-            parent.model_config_revision.clone(),
-        ));
-    }
-    let requested = requested.unwrap_or_default();
-    let snapshot = runtime
-        .latest_model_config_for_task(&parent.owner_user_id, requested)
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("model config not found: {requested}"))?;
-    Ok((snapshot.model_config_ref, snapshot.model_config_revision))
 }
 
 pub(super) fn envelope(command_id: String, command: HostCommand) -> HostRequestEnvelope {

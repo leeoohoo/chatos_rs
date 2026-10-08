@@ -45,6 +45,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var signedOutSuspensionTask: Task<Void, Never>?
     private var signedOutSuspensionGeneration: UInt64 = 0
     private var servicePreparationTask: Task<Void, Never>?
+    private var modelConfigurationChanged: (@MainActor @Sendable () -> Void)?
 
     init(
         service: any LocalConnectorControlServicing
@@ -82,6 +83,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         servicePreparationTask = task
     }
 
+    func setModelConfigurationChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) { modelConfigurationChanged = handler }
     func refreshStatus(
         pairIfNeeded: Bool = false,
         expectedOwnerUserID: String? = nil,
@@ -432,7 +434,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             try Task.checkCancellation()
             let catalog = try await self.service.fetchModelCatalog(refresh: false)
             try Task.checkCancellation()
-            self.modelCatalog = catalog
+            self.modelCatalog = catalog; self.modelConfigurationChanged?()
         }
     }
 
@@ -446,7 +448,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             let nextCatalog = try await catalog
             try Task.checkCancellation()
             self.modelProviders = nextProviders
-            self.modelCatalog = nextCatalog
+            self.modelCatalog = nextCatalog; self.modelConfigurationChanged?()
         }
     }
 
@@ -460,7 +462,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             let nextCatalog = try await catalog
             try Task.checkCancellation()
             self.modelProviders = nextProviders
-            self.modelCatalog = nextCatalog
+            self.modelCatalog = nextCatalog; self.modelConfigurationChanged?()
         }
     }
 
@@ -474,7 +476,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             let nextCatalog = try await catalog
             try Task.checkCancellation()
             self.modelProviders = nextProviders
-            self.modelCatalog = nextCatalog
+            self.modelCatalog = nextCatalog; self.modelConfigurationChanged?()
         }
     }
 
@@ -488,7 +490,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             let nextCatalog = try await catalog
             try Task.checkCancellation()
             self.modelProviders = nextProviders
-            self.modelCatalog = nextCatalog
+            self.modelCatalog = nextCatalog; self.modelConfigurationChanged?()
         }
     }
 

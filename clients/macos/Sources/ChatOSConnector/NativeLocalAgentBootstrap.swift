@@ -117,9 +117,14 @@ extension NativeLocalConnectorService {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
         let taskMaxIterations = UInt32(configuredTaskMaxIterations)
+        // Main Chat may use every enabled model with a valid credential. `taskEnabled`
+        // only controls whether create_task may bind that model to a background Task.
         let configs = catalog.required.filter {
-            $0.enabled != false && $0.taskEnabled != false && $0.hasAPIKey != false
+            $0.enabled != false && $0.hasAPIKey != false
         }
+        let taskEnabledModelConfigIDs = Set(configs.compactMap {
+            $0.taskEnabled != false ? $0.id : nil
+        })
         let settings = catalog.optional
         let token = try requireAccessToken()
         let gateway = gateway
@@ -160,6 +165,15 @@ extension NativeLocalConnectorService {
                 token: token,
                 id: config.id,
                 includeSecret: true
+            )
+        }
+        let taskModelChoices = resolvedConfigs.compactMap { model -> NativeLocalAgentMCPChoice? in
+            guard taskEnabledModelConfigIDs.contains(model.id) else { return nil }
+            let displayName = model.name.trimmedNonEmpty ?? model.model
+            let usage = model.taskUsageScenario?.trimmedNonEmpty.map { " - \($0)" } ?? ""
+            return .init(
+                value: model.id,
+                title: "\(displayName) (\(model.provider)/\(model.model))\(usage)"
             )
         }
         for resolved in resolvedConfigs {
@@ -312,6 +326,9 @@ extension NativeLocalConnectorService {
         else { throw NativeLocalAgentBootstrapError.executionAgentUnavailable }
         let requiredPolicy = LocalAgentJSONValue.object([
             "max_iterations": .number(Double(max(1, taskMaxIterations))),
+            "allowed_model_config_ids": .array(
+                taskModelChoices.map { .string($0.value) }
+            ),
             "enabled_builtin_kinds": .array(requiredBuiltinKinds.map(LocalAgentJSONValue.string)),
             "external_mcp_config_ids": .array(requiredExternalIDs.map(LocalAgentJSONValue.string)),
             "plugin_keys": .array(requiredPluginKeys.map(LocalAgentJSONValue.string)),
@@ -343,6 +360,7 @@ extension NativeLocalConnectorService {
                 plugins: pluginChoices,
                 builtinChoices: builtinChoices,
                 externalChoices: externalChoices,
+                taskModelChoices: taskModelChoices,
                 promptBundleVersion: promptBundle.bundleVersion,
                 mainPrompt: mainPrompt,
                 taskPrompt: taskPrompt
@@ -355,7 +373,8 @@ extension NativeLocalConnectorService {
                 tools: NativeLocalAgentPlatformToolCatalog.capabilityTools(
                     pluginChoices: pluginChoices,
                     builtinChoices: builtinChoices,
-                    externalChoices: externalChoices
+                    externalChoices: externalChoices,
+                    taskModelChoices: taskModelChoices
                 )
             )
             capabilitiesByModel[snapshot.modelConfigRef] = mainCapability
@@ -495,6 +514,7 @@ extension NativeLocalConnectorService {
         plugins: [NativeInstalledAgentPlugin],
         builtinChoices: [NativeLocalAgentMCPChoice],
         externalChoices: [NativeLocalAgentMCPChoice],
+        taskModelChoices: [NativeLocalAgentMCPChoice],
         promptBundleVersion: Int64,
         mainPrompt: GatewayAgentPromptDTO,
         taskPrompt: GatewayAgentPromptDTO
@@ -508,6 +528,7 @@ extension NativeLocalConnectorService {
           + plugins.map(\.pluginKey).sorted()
           + builtinChoices.map(\.value).sorted()
           + externalChoices.map(\.value).sorted()
+          + taskModelChoices.map(\.value).sorted()
         let digest = SHA256.hash(data: Data(fields.joined(separator: "\u{0}").utf8))
           .map { String(format: "%02x", $0) }.joined()
         return "local-agent-\(digest)"

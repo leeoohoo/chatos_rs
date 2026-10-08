@@ -372,7 +372,11 @@ extension AppModel {
         }
     }
 
-    func refreshLocalAgentControlPlane(ownerUserID: String) {
+    func refreshLocalAgentControlPlane(ownerUserID: String, force: Bool = false) {
+        if force {
+            localAgentControlPlaneOwnerUserID = nil
+            localAgentControlPlaneBootstrapOwnerUserID = nil
+        }
         guard localAgentControlPlaneOwnerUserID != ownerUserID,
               localAgentControlPlaneBootstrapOwnerUserID != ownerUserID else { return }
         localAgentBootstrapTask?.cancel()

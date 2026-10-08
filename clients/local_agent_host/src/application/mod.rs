@@ -18,6 +18,7 @@ mod notepad_tool_tests;
 mod notepad_tools;
 mod requirement_survey_tools;
 mod scheduler;
+mod task_model_policy;
 mod task_process_tools;
 mod task_tool_definitions;
 mod task_tool_executor_support;

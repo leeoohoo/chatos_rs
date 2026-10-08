@@ -248,7 +248,8 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static func capabilityTools(
     pluginChoices: [NativeInstalledAgentPlugin],
     builtinChoices: [NativeLocalAgentMCPChoice] = [],
-    externalChoices: [NativeLocalAgentMCPChoice] = []
+    externalChoices: [NativeLocalAgentMCPChoice] = [],
+    taskModelChoices: [NativeLocalAgentMCPChoice] = []
   ) -> [LocalAgentJSONValue] {
     let pluginSchema = pluginHints(pluginChoices)
     let builtinSchema = mcpSelection(
@@ -259,6 +260,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       externalChoices,
       emptyDescription: "No external MCP configuration is selectable for this Agent binding. Send an empty external_mcp_config_ids array."
     )
+    let taskModelSchema = taskModelSelection(taskModelChoices)
     return baseCapabilityTools.map { tool in
       guard case .object(var definition) = tool,
         case .string(let name)? = definition["name"],
@@ -270,6 +272,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         properties["enabled_builtin_kinds"] = builtinSchema
         properties["external_mcp_config_ids"] = externalSchema
         properties["plugin_hints"] = pluginSchema
+        properties["default_model_config_id"] = taskModelSchema
         parameters["properties"] = .object(properties)
       } else if name == createTasksToolName,
         case .object(var properties)? = parameters["properties"],
@@ -280,6 +283,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         itemProperties["enabled_builtin_kinds"] = builtinSchema
         itemProperties["external_mcp_config_ids"] = externalSchema
         itemProperties["plugin_hints"] = pluginSchema
+        itemProperties["default_model_config_id"] = taskModelSchema
         items["properties"] = .object(itemProperties)
         tasks["items"] = .object(items)
         properties["tasks"] = .object(tasks)
@@ -288,6 +292,28 @@ public enum NativeLocalAgentPlatformToolCatalog {
       definition["parameters"] = .object(parameters)
       return .object(definition)
     }
+  }
+
+  private static func taskModelSelection(
+    _ rawChoices: [NativeLocalAgentMCPChoice]
+  ) -> LocalAgentJSONValue {
+    let choices = Dictionary(uniqueKeysWithValues: rawChoices.map { ($0.value, $0) })
+      .values.sorted { $0.value < $1.value }
+    var schema: [String: LocalAgentJSONValue] = [
+      "type": .string("string"),
+      "minLength": .number(1),
+      "description": .string(
+        "Optional Task execution model. Only models enabled for Tasks are accepted. Omit it to reuse the Main Chat model when eligible, otherwise the first eligible Task model is used."
+      ),
+    ]
+    if !choices.isEmpty {
+      schema["enum"] = .array(choices.map { .string($0.value) })
+      schema["oneOf"] = .array(choices.map {
+        .object(["const": .string($0.value), "title": .string($0.title)])
+      })
+      schema["x-enum-labels"] = .array(choices.map { .string($0.title) })
+    }
+    return .object(schema)
   }
 
   private static func mcpSelection(

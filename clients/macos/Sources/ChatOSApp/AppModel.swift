@@ -557,6 +557,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             await localConnectorService.setCompanionRuntime(self)
         }
         localConnectorControl.setServicePreparationTask(connectorServicePreparationTask)
+        localConnectorControl.setModelConfigurationChangedHandler { [weak self] in
+            guard let self, let ownerUserID = authenticatedUserID else { return }
+            refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+        }
         authentication.start()
     }
 
