@@ -18,7 +18,6 @@ import type {
 export type ProviderFormValues = {
   owner_user_id?: string;
   name: string;
-  provider: string;
   prompt_vendor: AgentPromptVendor;
   api_key?: string;
   clear_api_key?: boolean;
@@ -26,15 +25,7 @@ export type ProviderFormValues = {
   enabled: boolean;
   supports_images: boolean;
   supports_reasoning: boolean;
-  supports_responses: boolean;
 };
-
-export const PROVIDER_OPTIONS = [
-  { label: 'GPT / OpenAI', value: 'gpt' },
-  { label: 'DeepSeek', value: 'deepseek' },
-  { label: 'Kimi', value: 'kimi' },
-  { label: 'GLM', value: 'glm' },
-];
 
 export const PROMPT_VENDOR_OPTIONS = [
   { label: 'GLM', value: 'glm' },
@@ -42,22 +33,6 @@ export const PROMPT_VENDOR_OPTIONS = [
   { label: 'GPT / OpenAI', value: 'gpt' },
   { label: 'Kimi / Moonshot', value: 'kimi' },
 ];
-
-export function defaultPromptVendor(provider: string): AgentPromptVendor {
-  switch (provider.trim().toLowerCase()) {
-    case 'glm':
-    case 'zhipu':
-    case 'zhipuai':
-      return 'glm';
-    case 'deepseek':
-      return 'deepseek';
-    case 'kimi':
-    case 'moonshot':
-      return 'kimi';
-    default:
-      return 'gpt';
-  }
-}
 
 export const ALL_USERS_SCOPE = '__all_users__';
 
@@ -110,14 +85,14 @@ export function buildUpdateProviderPayload(
 function normalizeProviderValues(values: ProviderFormValues) {
   return {
     name: values.name.trim(),
-    provider: values.provider,
+    provider: 'gpt',
     prompt_vendor: values.prompt_vendor,
     api_key: values.api_key?.trim() || undefined,
     base_url: values.base_url?.trim() || undefined,
     enabled: values.enabled,
     supports_images: values.supports_images,
     supports_reasoning: values.supports_reasoning,
-    supports_responses: values.supports_responses,
+    supports_responses: true,
   };
 }
 
@@ -226,7 +201,7 @@ export function ModelCapabilityTags({
 }: {
   record: Pick<
     UserModelConfigRecord | UserModelProviderRecord,
-    'enabled' | 'supports_images' | 'supports_reasoning' | 'supports_responses'
+    'enabled' | 'supports_images' | 'supports_reasoning'
   >;
   showEnabled?: boolean;
 }) {
@@ -239,7 +214,6 @@ export function ModelCapabilityTags({
       ) : null}
       {record.supports_images ? <Tag>Image</Tag> : null}
       {record.supports_reasoning ? <Tag>Reasoning</Tag> : null}
-      {record.supports_responses ? <Tag>Responses</Tag> : null}
     </Space>
   );
 }

@@ -35,7 +35,6 @@ import {
   buildCreateProviderPayload,
   buildProviderColumns,
   buildUpdateProviderPayload,
-  defaultPromptVendor,
   ModelCapabilityTags,
   type ProviderFormValues,
   userLabel,
@@ -251,12 +250,10 @@ export function ModelsPage() {
     form.resetFields();
     form.setFieldsValue({
       owner_user_id: selectedUserId,
-      provider: 'gpt',
       prompt_vendor: 'gpt',
       enabled: true,
       supports_images: false,
       supports_reasoning: false,
-      supports_responses: true,
       clear_api_key: false,
     });
     setDrawerOpen(true);
@@ -267,15 +264,13 @@ export function ModelsPage() {
     form.setFieldsValue({
       owner_user_id: record.owner_user_id,
       name: record.name,
-      provider: record.provider,
-      prompt_vendor: record.prompt_vendor || defaultPromptVendor(record.provider),
+      prompt_vendor: record.prompt_vendor || 'gpt',
       api_key: '',
       clear_api_key: false,
       base_url: record.base_url || '',
       enabled: record.enabled,
       supports_images: record.supports_images,
       supports_reasoning: record.supports_reasoning,
-      supports_responses: record.supports_responses,
     });
     setDrawerOpen(true);
   }
