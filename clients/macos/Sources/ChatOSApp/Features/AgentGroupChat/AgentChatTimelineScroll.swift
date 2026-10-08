@@ -1,43 +1,21 @@
+import ChatOSCore
 import SwiftUI
 
-private struct AgentChatTimelineBottomPreferenceKey: PreferenceKey {
-    static let defaultValue = CGFloat.greatestFiniteMagnitude
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct AgentChatTimelineBottomMarker: View {
-    let id: String
-    let coordinateSpaceName: String
-
-    var body: some View {
-        GeometryReader { geometry in
-            Color.clear.preference(
-                key: AgentChatTimelineBottomPreferenceKey.self,
-                value: geometry.frame(in: .named(coordinateSpaceName)).maxY
-            )
-        }
-        .frame(height: 1)
-        .id(id)
-    }
+/// Only changes that affect message rows may update their hosted content. Scheduler activity,
+/// drafts and task-board changes must not recreate historical Markdown documents.
+struct AgentChatTimelineRowState: Equatable {
+    var profiles: [LocalAgentProfile] = []
+    var attachmentData: [String: Data] = [:]
+    var teams: [ProjectAgentRoom] = []
+    var actionIDs: Set<String> = []
 }
 
 enum AgentChatTimelineScrollMetrics {
-    static func shouldCaptureInitialMarker(
-        hasPositionedInitially: Bool,
-        currentMarkerMaxY: CGFloat,
-        nextMarkerMaxY: CGFloat
-    ) -> Bool {
-        !hasPositionedInitially && currentMarkerMaxY != nextMarkerMaxY
-    }
-
     static func shouldScrollToBottomInitially(
         markerMaxY: CGFloat,
         viewportHeight: CGFloat
     ) -> Bool {
-        guard markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
+        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
               viewportHeight > 0 else { return false }
         return markerMaxY > viewportHeight
     }
@@ -47,168 +25,72 @@ enum AgentChatTimelineScrollMetrics {
         viewportHeight: CGFloat,
         tolerance: CGFloat = 32
     ) -> Bool {
-        guard markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
+        guard markerMaxY.isFinite, markerMaxY < CGFloat.greatestFiniteMagnitude / 2,
               viewportHeight > 0 else { return false }
         return markerMaxY <= viewportHeight + tolerance
     }
 }
 
-/// The single scrolling implementation for team rooms and direct conversations. Message and
-/// proposal cards are supplied by each surface, while pagination, initial positioning, bottom
-/// detection, and follow-latest behavior remain identical.
-struct AgentChatTimelineView<Item: Identifiable, RowContent: View, EmptyContent: View>: View
+/// The native table creates/recycles views only for visible rows. Loaded history remains cheap
+/// metadata; scrolling no longer feeds positions through SwiftUI or lays out a whole page.
+struct AgentChatTimelineView<Item: Identifiable & Equatable, RowContent: View, EmptyContent: View>: View
 where Item.ID == String {
+    @Environment(\.interfaceFontScale) private var fontScale
+    @Environment(\.colorScheme) private var colorScheme
     let items: [Item]
     let isInitialContentReady: Bool
     let hasOlderItems: Bool
     let isLoadingOlderItems: Bool
     let scrollToLatestRequest: Int
+    var rowState = AgentChatTimelineRowState()
     let loadOlderItems: () async -> String?
-    let rowContent: (Item) -> RowContent
-    let emptyContent: () -> EmptyContent
-
-    @State private var hasPositionedInitially = false
-    @State private var isPositioningInitially = false
-    @State private var isAtBottom = false
-    @State private var latestMarkerMaxY = CGFloat.greatestFiniteMagnitude
-    @State private var coordinateSpaceName = "agent-chat-timeline-\(UUID().uuidString)"
-
-    private let bottomID = "agent-chat-timeline-bottom"
-
-    init(
-        items: [Item],
-        isInitialContentReady: Bool,
-        hasOlderItems: Bool,
-        isLoadingOlderItems: Bool,
-        scrollToLatestRequest: Int,
-        loadOlderItems: @escaping () async -> String?,
-        @ViewBuilder rowContent: @escaping (Item) -> RowContent,
-        @ViewBuilder emptyContent: @escaping () -> EmptyContent
-    ) {
-        self.items = items
-        self.isInitialContentReady = isInitialContentReady
-        self.hasOlderItems = hasOlderItems
-        self.isLoadingOlderItems = isLoadingOlderItems
-        self.scrollToLatestRequest = scrollToLatestRequest
-        self.loadOlderItems = loadOlderItems
-        self.rowContent = rowContent
-        self.emptyContent = emptyContent
-    }
+    @ViewBuilder let rowContent: (Item) -> RowContent
+    @ViewBuilder let emptyContent: () -> EmptyContent
 
     var body: some View {
-        GeometryReader { viewport in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    // The timeline is already bounded by database pagination (20 messages in a
-                    // direct chat, 50 in a team room). An eager stack is therefore predictable
-                    // in memory and avoids LazyVStack's repeated visible-range placement loop
-                    // for very tall native Markdown views.
-                    VStack(alignment: .leading, spacing: 12) {
-                        if hasOlderItems {
-                            HStack {
-                                Spacer()
-                                Button {
-                                    Task {
-                                        if let anchorID = await loadOlderItems() {
-                                            await Task.yield()
-                                            proxy.scrollTo(anchorID, anchor: .top)
-                                        }
-                                    }
-                                } label: {
-                                    if isLoadingOlderItems {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Label("加载更早消息", systemImage: "clock.arrow.circlepath")
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
-                                .disabled(isLoadingOlderItems)
-                                Spacer()
-                            }
-                            .padding(.bottom, 4)
-                        }
-
-                        if items.isEmpty {
-                            emptyContent()
-                        } else {
-                            ForEach(items) { item in
-                                rowContent(item).id(item.id)
-                            }
-                        }
-
-                        AgentChatTimelineBottomMarker(
-                            id: bottomID,
-                            coordinateSpaceName: coordinateSpaceName
-                        )
-                    }
-                    .padding(18)
-                }
-                .coordinateSpace(name: coordinateSpaceName)
-                .onPreferenceChange(AgentChatTimelineBottomPreferenceKey.self) { markerMaxY in
-                    // The marker moves on every scroll frame. Its exact position is needed only
-                    // until the initial offset is resolved; persisting it afterwards invalidates
-                    // the entire eager Markdown stack continuously while the user scrolls.
-                    if AgentChatTimelineScrollMetrics.shouldCaptureInitialMarker(
-                        hasPositionedInitially: hasPositionedInitially,
-                        currentMarkerMaxY: latestMarkerMaxY,
-                        nextMarkerMaxY: markerMaxY
-                    ) {
-                        latestMarkerMaxY = markerMaxY
-                    }
-                    let nextValue = AgentChatTimelineScrollMetrics.isAtBottom(
-                        markerMaxY: markerMaxY,
-                        viewportHeight: viewport.size.height
-                    )
-                    if nextValue != isAtBottom { isAtBottom = nextValue }
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
-                }
-                .onAppear {
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
-                }
-                .onChange(of: isInitialContentReady) {
-                    positionInitially(proxy, viewportHeight: viewport.size.height)
-                }
-                .onChange(of: viewport.size.height) { _, height in
-                    positionInitially(proxy, viewportHeight: height)
-                }
-                .onChange(of: items.last?.id) {
-                    guard hasPositionedInitially else {
-                        positionInitially(proxy, viewportHeight: viewport.size.height)
-                        return
-                    }
-                    guard isAtBottom else { return }
-                    withAnimation { proxy.scrollTo(bottomID, anchor: .bottom) }
-                }
-                .onChange(of: scrollToLatestRequest) {
-                    withAnimation { proxy.scrollTo(bottomID, anchor: .bottom) }
-                }
-            }
-        }
+        AgentChatNativeTimeline(
+            entries: entries,
+            rowState: rowState,
+            fontScale: fontScale,
+            colorScheme: colorScheme,
+            isInitialContentReady: isInitialContentReady && !items.isEmpty,
+            scrollToLatestRequest: scrollToLatestRequest
+        )
     }
 
-    private func positionInitially(
-        _ proxy: ScrollViewProxy,
-        viewportHeight: CGFloat
-    ) {
-        guard !hasPositionedInitially,
-              !isPositioningInitially,
-              isInitialContentReady,
-              !items.isEmpty,
-              latestMarkerMaxY < CGFloat.greatestFiniteMagnitude / 2,
-              viewportHeight > 0 else { return }
-        isPositioningInitially = true
-        Task { @MainActor in
-            await Task.yield()
-            await Task.yield()
-            if AgentChatTimelineScrollMetrics.shouldScrollToBottomInitially(
-                markerMaxY: latestMarkerMaxY,
-                viewportHeight: viewportHeight
-            ) {
-                proxy.scrollTo(bottomID, anchor: .bottom)
-            }
-            hasPositionedInitially = true
-            isPositioningInitially = false
+    private var entries: [AgentChatTimelineEntry] {
+        var result: [AgentChatTimelineEntry] = []
+        if hasOlderItems {
+            let loading = isLoadingOlderItems
+            result.append(.init(id: "timeline:load-older", value: loading) {
+                AnyView(HStack {
+                    Spacer()
+                    Button {
+                        Task { _ = await loadOlderItems() }
+                    } label: {
+                        if loading {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("加载更早消息", systemImage: "clock.arrow.circlepath")
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .disabled(loading)
+                    Spacer()
+                }.padding(.vertical, 8))
+            })
         }
+        result += items.map { item in
+            AgentChatTimelineEntry(id: "timeline:item:\(item.id)", value: item) {
+                AnyView(rowContent(item))
+            }
+        }
+        if items.isEmpty {
+            result.append(.init(id: "timeline:empty", value: true) {
+                AnyView(emptyContent())
+            })
+        }
+        return result
     }
 }

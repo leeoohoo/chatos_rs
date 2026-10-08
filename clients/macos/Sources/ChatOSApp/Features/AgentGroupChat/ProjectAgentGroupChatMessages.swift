@@ -12,6 +12,7 @@ extension ProjectAgentGroupChatView {
             hasOlderItems: viewModel.hasOlderMessages,
             isLoadingOlderItems: viewModel.isLoadingOlderMessages,
             scrollToLatestRequest: viewModel.scrollToLatestRequest,
+            rowState: .init(profiles: viewModel.agents, attachmentData: viewModel.attachmentDataByID),
             loadOlderItems: { await viewModel.loadOlderMessages() },
             rowContent: { message in messageRow(message) },
             emptyContent: {
@@ -23,6 +24,7 @@ extension ProjectAgentGroupChatView {
                 .padding(.top, 70)
             }
         )
+        .id(viewModel.room?.id)
         .background(AppPalette.canvas)
     }
 
@@ -90,7 +92,6 @@ extension ProjectAgentGroupChatView {
                             lineWidth: 1
                         )
                 }
-                .shadow(color: .black.opacity(isHuman ? 0 : 0.025), radius: 5, y: 2)
             }
             .frame(maxWidth: isHuman ? 720 : 820, alignment: isHuman ? .trailing : .leading)
 
