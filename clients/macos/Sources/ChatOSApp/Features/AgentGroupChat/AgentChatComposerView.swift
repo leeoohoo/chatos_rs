@@ -31,8 +31,7 @@ struct AgentChatComposerView<LeadingControl: View>: View {
             controls
             attachmentStrip
             errorView
-            mentionSuggestions
-            input
+            inputWithMentionSuggestions
         }
         .padding(12)
         .background(AppPalette.surfaceSubtle, in: RoundedRectangle(cornerRadius: 13))
@@ -162,6 +161,20 @@ struct AgentChatComposerView<LeadingControl: View>: View {
             RoundedRectangle(cornerRadius: 11)
                 .stroke(AppPalette.ai.opacity(0.24), lineWidth: 1)
         }
+    }
+
+    private var inputWithMentionSuggestions: some View {
+        input
+            .overlay(alignment: .topLeading) {
+                mentionSuggestions
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Keep the suggestions above the input without contributing to the
+                    // composer's intrinsic height. Otherwise a bare "@" expands the
+                    // fixed-size composer and can push the room header outside the window.
+                    .alignmentGuide(.top) { dimensions in
+                        dimensions[.bottom] + 8
+                    }
+            }
     }
 
     @ViewBuilder
