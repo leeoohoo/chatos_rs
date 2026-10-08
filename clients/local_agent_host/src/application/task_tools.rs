@@ -785,30 +785,6 @@ async fn resolve_task_model(
     Ok((snapshot.model_config_ref, snapshot.model_config_revision))
 }
 
-fn task_runtime_settings(thinking_level: Option<&str>) -> Result<Value, String> {
-    let Some(level) = thinking_level
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(Value::Null);
-    };
-    let normalized = match level.to_ascii_lowercase().as_str() {
-        "off" | "disabled" | "none" => "none",
-        "auto" => "auto",
-        "minimal" => "minimal",
-        "low" => "low",
-        "medium" => "medium",
-        "high" => "high",
-        "xhigh" => "xhigh",
-        "max" => "max",
-        _ => return Err("invalid thinking_level".to_string()),
-    };
-    Ok(json!({
-        "selected_thinking_level": normalized,
-        "reasoning_enabled": normalized != "none"
-    }))
-}
-
 pub(super) fn envelope(command_id: String, command: HostCommand) -> HostRequestEnvelope {
     HostRequestEnvelope {
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
