@@ -5,7 +5,7 @@ use super::{
     conversation_store::next_message_ordinal, ClientStorageError, SqliteClientStorage,
     SqliteResultExt,
 };
-use chatos_local_agent_protocol::LocalAgentRunRecord;
+use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::{Row, SqliteConnection};
@@ -63,7 +63,9 @@ pub(super) async fn write_back_terminal_task_run(
     run: &LocalAgentRunRecord,
     now_unix_ms: i64,
 ) -> Result<bool, ClientStorageError> {
-    if run.owner_entity_type != "task" || !run.status.is_terminal() {
+    if run.owner_entity_type != "task"
+        || (!run.status.is_terminal() && run.status != LocalAgentRunStatus::NeedsReview)
+    {
         return Ok(false);
     }
     let Some(source) = callback_source(connection, &run.owner_entity_id).await? else {
@@ -106,7 +108,7 @@ pub(super) async fn write_back_graph(
         "SELECT t.task_id, \
          (SELECT r.run_id FROM local_agent_runs r \
           WHERE r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
-          AND r.status IN ('succeeded', 'failed', 'cancelled') \
+          AND r.status IN ('succeeded', 'failed', 'cancelled', 'needs_review') \
           ORDER BY r.updated_at_unix_ms DESC, r.created_at_unix_ms DESC, r.rowid DESC LIMIT 1) \
           AS terminal_run_id \
          FROM local_tasks t WHERE t.graph_id = ? \

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
+use super::{
+    task_conversation_writeback, task_lifecycle, ClientStorageError, SqliteClientStorage,
+    SqliteResultExt,
+};
 use sqlx::{Row, SqliteConnection};
 
 pub(super) async fn recover_expired_claims(
@@ -49,6 +52,34 @@ pub(super) async fn recover_expired_claims(
         )
         .await
         .db()?;
+        let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+        task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
+        task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+            .await?;
     }
-    Ok(rows.len() as u64)
+
+    // Repair databases written by older Hosts that already moved the Run to
+    // needs_review but left its owning Task permanently marked as running.
+    let stranded_task_runs: Vec<String> = sqlx::query_scalar(
+        "SELECT run.run_id FROM local_agent_runs run \
+         JOIN local_tasks task ON task.task_id = run.owner_entity_id \
+         WHERE run.owner_user_id = ? AND run.owner_entity_type = 'task' \
+         AND run.status = 'needs_review' AND task.status = 'running' \
+         AND task.active_run_id = run.run_id ORDER BY run.run_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for run_id in &stranded_task_runs {
+        let run = SqliteClientStorage::fetch_run_on(connection, run_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+        task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
+        task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+            .await?;
+    }
+    Ok((rows.len() + stranded_task_runs.len()) as u64)
 }

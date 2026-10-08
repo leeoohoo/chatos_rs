@@ -47,7 +47,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     static func launch(
         configuration: NativeLocalAgentHostConfiguration,
         ownerUserID: String,
-        credentialEnvironment: [String: String]
+        credentialEnvironment: [String: String],
+        workersEnabled: Bool
     ) throws -> ManagedLocalAgentHostProcess {
         let executable = configuration.executableURL.standardizedFileURL
         let values = try executable.resourceValues(forKeys: [
@@ -88,7 +89,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         process.arguments = arguments(
             configuration: configuration,
             database: database,
-            ownerUserID: ownerUserID
+            ownerUserID: ownerUserID,
+            workersEnabled: workersEnabled
         )
         process.environment = safeEnvironment(credentialEnvironment: credentialEnvironment)
         process.standardInput = inputPipe
@@ -407,7 +409,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
     static func arguments(
         configuration: NativeLocalAgentHostConfiguration,
         database: URL,
-        ownerUserID: String
+        ownerUserID: String,
+        workersEnabled: Bool = true
     ) -> [String] {
         var arguments = [
             "--database", database.path,
@@ -426,6 +429,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         }
         arguments += configuration.approvalExemptToolNames.sorted().flatMap {
             ["--approval-exempt-tool", $0]
+        }
+        if !workersEnabled {
+            arguments.append("--disable-workers")
         }
         arguments.append("--stdio")
         return arguments

@@ -70,7 +70,23 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         if managedProcess?.process.isRunning == true, activeOwnerUserID == ownerUserID {
             return
         }
-        try await launch(ownerUserID: ownerUserID, credentialEnvironment: [:])
+        try await launch(
+            ownerUserID: ownerUserID,
+            credentialEnvironment: [:],
+            workersEnabled: true
+        )
+    }
+
+    /// Starts an IPC-only Host so persisted control-plane state can be read before model
+    /// credentials are restored. The bootstrap process must not claim durable work because
+    /// `restart` replaces it as soon as Keychain-backed credentials have been loaded.
+    public func startForBootstrap(ownerUserID: String) async throws {
+        try Self.validate(ownerUserID: ownerUserID)
+        try await launch(
+            ownerUserID: ownerUserID,
+            credentialEnvironment: [:],
+            workersEnabled: false
+        )
     }
 
     /// Restarts the Host with model credentials visible only to the child
@@ -84,13 +100,15 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         try Self.validate(credentialEnvironment: credentialEnvironment)
         try await launch(
             ownerUserID: ownerUserID,
-            credentialEnvironment: credentialEnvironment
+            credentialEnvironment: credentialEnvironment,
+            workersEnabled: true
         )
     }
 
     private func launch(
         ownerUserID: String,
-        credentialEnvironment: [String: String]
+        credentialEnvironment: [String: String],
+        workersEnabled: Bool
     ) async throws {
         stopLocked()
         do {
@@ -99,7 +117,8 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                 try ManagedLocalAgentHostProcess.launch(
                     configuration: configuration,
                     ownerUserID: ownerUserID,
-                    credentialEnvironment: credentialEnvironment
+                    credentialEnvironment: credentialEnvironment,
+                    workersEnabled: workersEnabled
                 )
             }.value
             managedProcess = managed

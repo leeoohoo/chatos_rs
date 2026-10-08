@@ -473,3 +473,120 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
         .iter()
         .all(|task| task.status == LocalTaskStatus::Pending));
 }
+
+#[tokio::test]
+async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(&command("create-expired-graph"), &graph(), 1_000)
+        .await
+        .expect("create graph");
+    let run = storage
+        .start_next_task_run(
+            "user-1",
+            "run-expired-task",
+            "event-start-expired-task",
+            2_000,
+        )
+        .await
+        .expect("start task")
+        .expect("ready task");
+    storage
+        .claim_next_run(
+            &command("claim-expired-task"),
+            "user-1",
+            "worker-1",
+            "claim-expired-task",
+            2_001,
+            3_000,
+            "event-claim-expired-task",
+        )
+        .await
+        .expect("claim task run")
+        .expect("claimed task run");
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 3_001)
+            .await
+            .expect("recover expired task run"),
+        1
+    );
+
+    let recovered_run = storage
+        .get_run(&run.run_id)
+        .await
+        .expect("get run")
+        .expect("run");
+    assert_eq!(recovered_run.status, LocalAgentRunStatus::NeedsReview);
+    let recovered_graph = storage
+        .get_task_graph("user-1", "graph-lifecycle")
+        .await
+        .expect("get graph")
+        .expect("graph");
+    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Blocked);
+    assert!(recovered_graph.tasks[0].active_run_id.is_none());
+    assert!(recovered_graph.tasks[1..]
+        .iter()
+        .all(|task| task.status == LocalTaskStatus::Blocked));
+}
+
+#[tokio::test]
+async fn startup_repairs_a_legacy_needs_review_run_with_a_running_task() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_task_graph(&command("create-stranded-graph"), &graph(), 1_000)
+        .await
+        .expect("create graph");
+    let run = storage
+        .start_next_task_run(
+            "user-1",
+            "run-stranded-task",
+            "event-start-stranded-task",
+            2_000,
+        )
+        .await
+        .expect("start task")
+        .expect("ready task");
+    storage
+        .claim_next_run(
+            &command("claim-stranded-task"),
+            "user-1",
+            "worker-1",
+            "claim-stranded-task",
+            2_001,
+            3_000,
+            "event-claim-stranded-task",
+        )
+        .await
+        .expect("claim task run")
+        .expect("claimed task run");
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+         claim_token = NULL, claim_until_unix_ms = NULL WHERE run_id = ?",
+    )
+    .bind(&run.run_id)
+    .execute(&storage.pool)
+    .await
+    .expect("simulate legacy recovery");
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 3_001)
+            .await
+            .expect("repair stranded task run"),
+        1
+    );
+
+    let recovered_graph = storage
+        .get_task_graph("user-1", "graph-lifecycle")
+        .await
+        .expect("get graph")
+        .expect("graph");
+    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Blocked);
+    assert!(recovered_graph.tasks[0].active_run_id.is_none());
+}

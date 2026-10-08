@@ -154,7 +154,11 @@ extension AppModel {
                 guard self?.authenticatedUserID == ownerUserID,
                       self?.localAgentHostLifecycleGeneration == generation else { return }
                 await localAgentEventHub?.reset()
-                try await localAgentHost.start(ownerUserID: ownerUserID)
+                if let host = localAgentHost as? NativeLocalAgentHostLifecycle {
+                    try await host.startForBootstrap(ownerUserID: ownerUserID)
+                } else {
+                    try await localAgentHost.start(ownerUserID: ownerUserID)
+                }
                 guard !Task.isCancelled,
                       self?.authenticatedUserID == ownerUserID,
                       self?.localAgentHostLifecycleGeneration == generation else {
