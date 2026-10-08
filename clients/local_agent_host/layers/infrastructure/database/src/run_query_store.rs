@@ -24,31 +24,37 @@ pub(super) async fn list_runs(
         limit,
     )?;
     let scope_filter = match scope {
-        LocalAgentRunListScope::Active => " AND status NOT IN ('succeeded','failed','cancelled')",
-        LocalAgentRunListScope::Terminal => " AND status IN ('succeeded','failed','cancelled')",
+        LocalAgentRunListScope::Active => {
+            " AND run.status NOT IN ('succeeded','failed','cancelled') \
+             AND NOT (run.status = 'needs_review' AND run.owner_entity_type = 'task' \
+               AND EXISTS (SELECT 1 FROM local_tasks task \
+                 WHERE task.task_id = run.owner_entity_id AND task.status <> 'blocked'))"
+        }
+        LocalAgentRunListScope::Terminal => " AND run.status IN ('succeeded','failed','cancelled')",
         LocalAgentRunListScope::All => "",
     };
     let status_filter = if status.is_some() {
-        " AND status = ?"
+        " AND run.status = ?"
     } else {
         ""
     };
     let cursor_filter = if before_updated_at_unix_ms.is_some() {
-        " AND (updated_at_unix_ms < ? OR (updated_at_unix_ms = ? AND run_id < ?))"
+        " AND (run.updated_at_unix_ms < ? OR \
+         (run.updated_at_unix_ms = ? AND run.run_id < ?))"
     } else {
         ""
     };
     let updated_after_filter = if updated_after_unix_ms.is_some() {
-        " AND updated_at_unix_ms >= ?"
+        " AND run.updated_at_unix_ms >= ?"
     } else {
         ""
     };
     let sql = format!(
-        "SELECT run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key, \
-         input_json, status, version, terminal_outcome_json, \
-         created_at_unix_ms, updated_at_unix_ms FROM local_agent_runs \
-         WHERE owner_user_id = ?{scope_filter}{status_filter}{updated_after_filter}{cursor_filter} \
-         ORDER BY updated_at_unix_ms DESC, run_id DESC LIMIT ?"
+        "SELECT run.run_id, run.owner_user_id, run.owner_entity_type, run.owner_entity_id, \
+         run.profile_key, run.input_json, run.status, run.version, run.terminal_outcome_json, \
+         run.created_at_unix_ms, run.updated_at_unix_ms FROM local_agent_runs run \
+         WHERE run.owner_user_id = ?{scope_filter}{status_filter}{updated_after_filter}{cursor_filter} \
+         ORDER BY run.updated_at_unix_ms DESC, run.run_id DESC LIMIT ?"
     );
     let mut query = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(owner_user_id);
     if let Some(status) = status {
