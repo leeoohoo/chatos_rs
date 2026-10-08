@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::{
     ModelRequest, ModelRuntimeConfig, RuntimeRecordOptions, SaveAssistantRecordInput,
-    SaveRecordInput,
+    SaveRecordInput, SaveToolRecordInput,
 };
 
 #[test]
@@ -136,6 +136,47 @@ fn runtime_record_options_builders_configure_persistence() {
             .and_then(|v| v["kind"].as_str()),
         Some("tool")
     );
+}
+
+#[test]
+fn tool_records_omit_binary_payloads_and_duplicate_structured_metadata() {
+    let encoded_image = "a".repeat(400_000);
+    let structured = json!({
+        "content": [
+            {"type": "text", "text": "Active application: ChatOS"},
+            {"type": "image", "mimeType": "image/jpeg", "data": encoded_image}
+        ],
+        "structuredContent": {"activeApplication": {"name": "ChatOS"}}
+    });
+    let input = SaveToolRecordInput {
+        conversation_id: "conversation-1".to_string(),
+        tool_call_id: "call-1".to_string(),
+        tool_name: "capability_invoke".to_string(),
+        content: serde_json::to_string(&structured).expect("content"),
+        success: true,
+        structured_result: Some(structured),
+        ..SaveToolRecordInput::default()
+    };
+
+    let record: SaveRecordInput = input.into();
+    let encoded = serde_json::to_vec(&record).expect("record");
+
+    assert!(encoded.len() < 1_048_576);
+    assert!(record.content.contains("binary omitted from memory"));
+    assert!(!record.content.contains(&"a".repeat(8_192)));
+    assert_eq!(
+        record
+            .structured_payload
+            .as_ref()
+            .and_then(|value| value["content"][1]["data"].as_str())
+            .map(|value| value.starts_with("[binary omitted from memory")),
+        Some(true)
+    );
+    assert!(record
+        .metadata
+        .as_ref()
+        .and_then(|value| value.get("structured_result"))
+        .is_none());
 }
 
 #[test]

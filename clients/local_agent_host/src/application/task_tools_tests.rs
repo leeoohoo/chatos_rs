@@ -365,6 +365,15 @@ fn task_model_definitions_are_host_owned_and_closed() {
             ["uniqueItems"],
         true
     );
+    assert_eq!(
+        tools[2]["parameters"]["properties"]["thinking_level"]["enum"],
+        json!(["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"])
+    );
+    assert_eq!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["thinking_level"]
+            ["type"],
+        "string"
+    );
     assert!(tools[2]["description"]
         .as_str()
         .expect("create task description")
@@ -445,6 +454,7 @@ async fn task_tool_resolves_an_explicit_authorized_model_revision() {
         "title": "Task",
         "objective": "Do work",
         "default_model_config_id": "model-2",
+        "thinking_level": "high",
         "requires_execution": false,
         "enabled_builtin_kinds": []
     }));
@@ -471,6 +481,153 @@ async fn task_tool_resolves_an_explicit_authorized_model_revision() {
         .expect("task");
     assert_eq!(task.model_config_ref, "model-2");
     assert_eq!(task.model_config_revision, "revision-2");
+    assert_eq!(
+        task.input["runtime_settings"],
+        json!({
+            "selected_thinking_level": "high",
+            "reasoning_enabled": true
+        })
+    );
+}
+
+#[tokio::test]
+async fn task_tool_rejects_a_model_excluded_by_required_policy() {
+    let runtime = runtime_with_parent().await;
+    runtime
+        .try_handle(envelope(
+            "publish-required-task-model-policy".to_string(),
+            HostCommand::PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand {
+                snapshot: LocalCapabilityPolicySnapshot {
+                    owner_user_id: "user-1".to_string(),
+                    profile_key: "task_policy_internal".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    instructions: Some(
+                        json!({
+                            "allowed_model_config_ids": ["model-2"]
+                        })
+                        .to_string(),
+                    ),
+                    prefixed_input_items: Vec::new(),
+                    tools: Vec::new(),
+                },
+            }),
+        ))
+        .await
+        .expect("publish required Task model policy");
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").expect("executor");
+    let mut invocation = invocation(json!({
+        "title": "Task",
+        "objective": "Do work",
+        "default_model_config_id": "model-1",
+        "requires_execution": false,
+        "enabled_builtin_kinds": []
+    }));
+    invocation.tool_name = CREATE_TASK_TOOL.to_string();
+
+    let error = executor
+        .execute_tool(&invocation)
+        .await
+        .expect_err("policy-excluded model must be rejected");
+    assert!(error.contains("model configuration is not enabled for local Tasks: model-1"));
+}
+
+#[tokio::test]
+async fn task_tool_falls_back_when_main_chat_model_is_excluded_by_required_policy() {
+    let runtime = runtime_with_parent().await;
+    runtime
+        .try_handle(envelope(
+            "publish-model-2".to_string(),
+            HostCommand::PutModelConfigSnapshot(PutModelConfigSnapshotCommand {
+                snapshot: LocalModelConfigSnapshot {
+                    owner_user_id: "user-1".to_string(),
+                    model_config_ref: "model-2".to_string(),
+                    model_config_revision: "revision-2".to_string(),
+                    credential_ref: "keychain:model/model-2".to_string(),
+                    base_url: "https://api.example.test/v1".to_string(),
+                    model: "example-model".to_string(),
+                    provider: "openai".to_string(),
+                    supports_responses: true,
+                    supports_images: Some(true),
+                    instructions: None,
+                    temperature: None,
+                    max_output_tokens: None,
+                    thinking_level: None,
+                    include_prompt_cache_retention: false,
+                    request_body_limit_bytes: None,
+                    max_transient_retries: None,
+                    output_format: None,
+                },
+            }),
+        ))
+        .await
+        .expect("publish fallback model");
+    runtime
+        .try_handle(envelope(
+            "publish-required-task-model-policy".to_string(),
+            HostCommand::PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand {
+                snapshot: LocalCapabilityPolicySnapshot {
+                    owner_user_id: "user-1".to_string(),
+                    profile_key: "task_policy_internal".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    instructions: Some(
+                        json!({
+                            "allowed_model_config_ids": ["model-2"]
+                        })
+                        .to_string(),
+                    ),
+                    prefixed_input_items: Vec::new(),
+                    tools: Vec::new(),
+                },
+            }),
+        ))
+        .await
+        .expect("publish required Task model policy");
+    let executor = LocalTaskToolExecutor::new(runtime, "user-1").expect("executor");
+    let mut invocation = invocation(json!({
+        "title": "Task",
+        "objective": "Do work",
+        "requires_execution": false,
+        "enabled_builtin_kinds": []
+    }));
+    invocation.tool_name = CREATE_TASK_TOOL.to_string();
+
+    let LocalAgentToolOutcome::Succeeded { output } = executor
+        .execute_tool(&invocation)
+        .await
+        .expect("create Task with fallback model")
+    else {
+        panic!("expected success")
+    };
+    let task_id = output["id"].as_str().expect("task id");
+    let graph = executor
+        .runtime
+        .task_graph_by_id("user-1", "local-task-graph-invocation-1")
+        .await
+        .expect("load graph")
+        .expect("graph");
+    let task = graph
+        .tasks
+        .iter()
+        .find(|task| task.task_id == task_id)
+        .expect("task");
+    assert_eq!(task.model_config_ref, "model-2");
+    assert_eq!(task.model_config_revision, "revision-2");
+}
+
+#[test]
+fn task_thinking_override_normalizes_disabled_aliases_and_rejects_unknown_levels() {
+    assert_eq!(
+        task_runtime_settings(Some("disabled")).expect("disabled override"),
+        json!({
+            "selected_thinking_level": "none",
+            "reasoning_enabled": false
+        })
+    );
+    assert!(task_runtime_settings(Some("extreme")).is_err());
+    assert_eq!(
+        task_runtime_settings(None).expect("default thinking"),
+        Value::Null
+    );
 }
 
 #[tokio::test]

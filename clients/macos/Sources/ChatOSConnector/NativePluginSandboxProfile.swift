@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum NativePluginNetworkAccess: Sendable {
+enum NativePluginNetworkAccess: Sendable, Equatable {
     case disabled
     case loopbackServer
 }
@@ -13,10 +13,13 @@ struct NativePluginProcessLaunch: Sendable {
     var environment: [String: String]
     var installationURL: URL
     var writableDirectories: [URL]
+    var writablePaths: [URL]
     var executableDirectories: [URL]
     var workspaceRoot: URL?
     var permissionSnapshot: Set<String>
     var networkAccess: NativePluginNetworkAccess
+    var homeDirectory: URL?
+    var managedBrowserAccess: Bool
 
     init(
         record: NativeInstalledPluginRecord,
@@ -25,10 +28,13 @@ struct NativePluginProcessLaunch: Sendable {
         environment: [String: String],
         installationURL: URL,
         writableDirectories: [URL],
+        writablePaths: [URL] = [],
         executableDirectories: [URL] = [],
         workspaceRoot: URL?,
         permissionSnapshot: Set<String>,
-        networkAccess: NativePluginNetworkAccess
+        networkAccess: NativePluginNetworkAccess,
+        homeDirectory: URL? = nil,
+        managedBrowserAccess: Bool = false
     ) {
         self.record = record
         self.executableURL = executableURL
@@ -36,10 +42,13 @@ struct NativePluginProcessLaunch: Sendable {
         self.environment = environment
         self.installationURL = installationURL
         self.writableDirectories = writableDirectories
+        self.writablePaths = writablePaths
         self.executableDirectories = executableDirectories
         self.workspaceRoot = workspaceRoot
         self.permissionSnapshot = permissionSnapshot
         self.networkAccess = networkAccess
+        self.homeDirectory = homeDirectory
+        self.managedBrowserAccess = managedBrowserAccess
     }
 
     init(stdio launch: NativePreparedPluginLaunch) {
@@ -47,23 +56,93 @@ struct NativePluginProcessLaunch: Sendable {
             "CHATOS_PLUGIN_DATA_DIR", "CHATOS_PLUGIN_CACHE_DIR", "CHATOS_PLUGIN_ARTIFACT_DIR",
             "CHATOS_PLUGIN_FILE_GRANT_DIR", "CHATOS_PLUGIN_VISUAL_SESSION_DIR",
         ]
+        var writableDirectories = writableKeys.compactMap { launch.environment[$0] }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        // Some Plugins use an atomic sibling directory (for example `<scope>.lock`)
+        // while opening their isolated data/cache scope. Grant only those exact
+        // sidecar paths; granting the whole `scopes/project` parent would let one
+        // project-scoped process access sibling project state.
+        let writablePaths = ["CHATOS_PLUGIN_DATA_DIR", "CHATOS_PLUGIN_CACHE_DIR"]
+            .compactMap { launch.environment[$0] }
+            .map { URL(fileURLWithPath: $0 + ".lock", isDirectory: true) }
+        var executableDirectories = [
+            launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"],
+            launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"],
+        ].compactMap { $0 }
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let isBrowserPlugin = launch.record.pluginKey == NativeBrowserPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeBrowserPluginIdentity.packageName
+            && launch.componentKey == NativeBrowserPluginIdentity.componentKey
+        let isWebDesignPlugin = launch.record.pluginKey
+            == NativeWebDesignPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeWebDesignPluginIdentity.packageName
+            && launch.componentKey == NativeWebDesignPluginIdentity.componentKey
+        let isDocumentPlugin = launch.record.pluginKey
+            == NativeDocumentPluginIdentity.marketplaceKey
+            && launch.manifest.name == NativeDocumentPluginIdentity.packageName
+            && launch.componentKey == NativeDocumentPluginIdentity.componentKey
+        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
+        let requiresLoopbackServer = isBrowserPlugin || isWebDesignPlugin
+        let browserHome = isBrowserPlugin
+            && launch.permissionSnapshot.contains("browser.chrome.attach")
+            ? FileManager.default.homeDirectoryForCurrentUser
+            : nil
+        if let browserHome {
+            writableDirectories.append(contentsOf: Self.browserBridgeWritableDirectories(
+                homeDirectory: browserHome
+            ))
+        }
+        if requiresManagedBrowser {
+            executableDirectories.append(contentsOf: Self.installedBrowserApplications())
+        }
         self.init(
             record: launch.record,
             executableURL: launch.executableURL,
             arguments: launch.arguments,
             environment: launch.environment,
             installationURL: launch.installationURL,
-            writableDirectories: writableKeys.compactMap { launch.environment[$0] }
-                .map { URL(fileURLWithPath: $0, isDirectory: true) },
-            executableDirectories: [
-                launch.environment["VISUAL_COMPUTER_USE_MANAGED_APP_ROOT"],
-                launch.environment["OPEN_COMPUTER_USE_MANAGED_APP_ROOT"],
-            ].compactMap { $0 }
-                .map { URL(fileURLWithPath: $0, isDirectory: true) },
+            writableDirectories: writableDirectories,
+            writablePaths: writablePaths,
+            executableDirectories: executableDirectories,
             workspaceRoot: launch.workspaceRoot,
             permissionSnapshot: launch.permissionSnapshot,
-            networkAccess: .disabled
+            networkAccess: requiresLoopbackServer ? .loopbackServer : .disabled,
+            homeDirectory: browserHome,
+            managedBrowserAccess: requiresManagedBrowser
         )
+    }
+
+    private static func browserBridgeWritableDirectories(
+        homeDirectory: URL
+    ) -> [URL] {
+        let applicationSupport = homeDirectory
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return [
+            applicationSupport.appendingPathComponent("Chatos/browser-bridge", isDirectory: true),
+            applicationSupport.appendingPathComponent(
+                "Google/Chrome/NativeMessagingHosts",
+                isDirectory: true
+            ),
+            applicationSupport.appendingPathComponent(
+                "Chromium/NativeMessagingHosts",
+                isDirectory: true
+            ),
+            applicationSupport.appendingPathComponent(
+                "Microsoft Edge/NativeMessagingHosts",
+                isDirectory: true
+            ),
+        ]
+    }
+
+    private static func installedBrowserApplications() -> [URL] {
+        [
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Microsoft Edge.app",
+        ].compactMap { path in
+            guard FileManager.default.fileExists(atPath: path) else { return nil }
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
     }
 }
 
@@ -79,12 +158,29 @@ enum NativePluginProcessLauncher {
             record: launch.record,
             installationURL: launch.installationURL
         )
+        for directory in launch.writableDirectories {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+        }
+        for path in launch.writablePaths {
+            try FileManager.default.createDirectory(
+                at: path.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        }
         let sandboxExecutable = NativePluginSandboxProfile.executableURL
+        var environment = NativePluginProcessEnvironment.make(
+            overrides: launch.environment,
+            homeDirectory: launch.homeDirectory?.path
+        )
+        environment["CHATOS_PLUGIN_SANDBOX"] = "macos-seatbelt"
         return .init(
             executableURL: sandboxExecutable,
             arguments: [sandboxExecutable.path]
                 + (try NativePluginSandboxProfile.arguments(for: launch)),
-            environment: NativePluginProcessEnvironment.make(overrides: launch.environment)
+            environment: environment
         )
     }
 }
@@ -111,21 +207,60 @@ enum NativePluginSandboxProfile {
             "(allow process-fork)",
             "(allow signal (target same-sandbox))",
             "(allow sysctl-read)",
-            "(allow mach-lookup (global-name \"com.apple.cfprefsd.agent\") (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\") (global-name \"com.apple.securityd\") (global-name \"com.apple.system.opendirectoryd.libinfo\"))",
+            "(allow mach-lookup (global-name \"com.apple.cfprefsd.agent\") (global-name \"com.apple.system.logger\") (global-name \"com.apple.system.notification_center\") (global-name \"com.apple.securityd\") (global-name \"com.apple.system.opendirectoryd.libinfo\") (global-name \"com.apple.FSEvents\"))",
             "(allow file-read-metadata)",
             "(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/opt/homebrew\") (subpath \"/usr/local\") (subpath \"/Library/Apple\") \(literal(launch.installationURL.path)))",
         ]
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
         }
+        for path in launch.writablePaths {
+            rules.append("(allow file-read* file-write* \(literal(path.path)))")
+        }
         for directory in launch.executableDirectories {
+            rules.append("(allow file-read* \(literal(directory.path)))")
             rules.append("(allow process-exec \(literal(directory.path)))")
         }
         let computerPermissions: Set<String> = [
             "computer.control", "computer.accessibility", "computer.screen-recording",
         ]
-        if !launch.permissionSnapshot.isDisjoint(with: computerPermissions) {
-            rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\"))")
+        let hasComputerPermission = !launch.permissionSnapshot.isDisjoint(
+            with: computerPermissions
+        )
+        if launch.managedBrowserAccess || hasComputerPermission {
+            rules.append("(allow user-preference-read)")
+            // ScreenCaptureKit returns captured frames as IOSurface-backed
+            // objects from replayd. Permit only the IOSurface root client
+            // needed to decode that response; do not grant general IOKit or
+            // GPU user-client access to the Plugin process.
+            rules.append("(allow iokit-open-user-client (iokit-user-client-class \"IOSurfaceRootUserClient\"))")
+        }
+        if hasComputerPermission {
+            rules.append("(allow mach-lookup (global-name \"com.apple.tccd\") (global-name \"com.apple.tccd.system\") (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\") (global-name \"com.apple.dock.fullscreen\") (global-name \"com.apple.replayd\") (global-name-regex #\"^com[.]apple[.]pasteboard[.][0-9]+$\") (global-name-regex #\"^com[.]apple[.]distributed_notifications.*$\"))")
+        }
+        if launch.managedBrowserAccess {
+            // Chromium's macOS process singleton always places its Unix socket in
+            // DARWIN_USER_TEMP_DIR, even when TMPDIR and --user-data-dir point at
+            // the Plugin cache. Restrict the exception to Chromium's randomized
+            // singleton directories rather than exposing the user's whole temp root.
+            // Seatbelt evaluates the canonical vnode path (`/private/var/...`),
+            // while Foundation commonly reports the same directory through the
+            // `/var/...` compatibility symlink. A regex built from the latter
+            // never matches Chromium's ProcessSingleton directory and Chrome
+            // exits with code 21 before DevTools starts.
+            let temporaryRoot = Self.canonicalPath(
+                FileManager.default.temporaryDirectory.path
+            )
+            let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
+            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
+            rules.append("(allow network* (local unix-socket))")
+            // The host Seatbelt profile remains the security boundary. Chromium's
+            // nested sandbox cannot initialize inside it, so its helper rendezvous
+            // ports are explicitly scoped to known browser service names.
+            rules.append("(allow iokit-open)")
+            rules.append("(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\"))")
+            rules.append("(allow mach-register (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.](MachPortRendezvousServer[.][0-9]+|apps[.][A-Fa-f0-9]+)$\"))")
+            rules.append("(allow mach-lookup (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.]MachPortRendezvousServer[.][0-9]+$\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {
             if launch.permissionSnapshot.contains("workspace.write") {
@@ -142,9 +277,9 @@ enum NativePluginSandboxProfile {
         return rules.joined(separator: "\n")
     }
 
-    private static func literal(_ path: String) -> String {
+    static func canonicalPath(_ path: String) -> String {
         var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
-        let canonical = path.withCString { pointer -> String in
+        return path.withCString { pointer -> String in
             guard realpath(pointer, &resolved) != nil else {
                 return URL(fileURLWithPath: path).standardizedFileURL.path
             }
@@ -153,9 +288,18 @@ enum NativePluginSandboxProfile {
                 as: UTF8.self
             )
         }
+    }
+
+    private static func literal(_ path: String) -> String {
+        let canonical = canonicalPath(path)
         let escaped = canonical
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "(subpath \"\(escaped)\")"
+    }
+
+    private static func regexLiteral(_ path: String) -> String {
+        NSRegularExpression.escapedPattern(for: path)
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 }

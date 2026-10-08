@@ -426,7 +426,8 @@ export class GenerationVisualService {
       artifacts.push(comparison.artifact);
       const diffImage = compared.__images.find((item) => item.label === 'diff');
       if (diffImage) images.push({ ...diffImage, label: `diff-${viewportWidth}` });
-      if (input.step.kind !== 'interaction' && Number(compared.changedPixels) === 0) {
+      const requiresVisibleChange = !['interaction', 'design-gate', 'handoff'].includes(input.step.kind);
+      if (requiresVisibleChange && Number(compared.changedPixels) === 0) {
         visibleChangeFailed = true;
         issueIds.push(`visual:${viewportWidth}:no-visible-change`);
       }

@@ -185,11 +185,16 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         }
         var terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries |
             StringSplitOptions.TrimEntries);
-        var matches = session.Options.Where(option =>
+        var lexicalMatches = session.Options.Where(option =>
         {
             var searchable = $"{option.Catalog.DisplayName} {option.Catalog.Description}";
             return terms.Any(term => searchable.Contains(term, StringComparison.OrdinalIgnoreCase));
-        }).Take(12).Select(option => new
+        }).ToArray();
+        // The Task already froze this run's trusted Plugin selections. A translated
+        // query may have no literal overlap with an English manifest, so keep the
+        // selected options discoverable instead of returning a misleading empty list.
+        var visibleOptions = lexicalMatches.Length == 0 ? session.Options : lexicalMatches;
+        var matches = visibleOptions.Take(12).Select(option => new
         {
             plugin_option = option.Token,
             name = option.Catalog.DisplayName,

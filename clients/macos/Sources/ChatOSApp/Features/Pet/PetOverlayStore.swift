@@ -134,7 +134,7 @@ final class PetOverlayStore: ObservableObject {
     }
 
     func removeProcessActivities() {
-        reducer.remove(kinds: [.working, .reviewing])
+        reducer.remove(kinds: [.working])
         bumpAllCloudVersions()
         publishPresentation()
     }

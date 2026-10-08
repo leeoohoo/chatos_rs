@@ -2,40 +2,20 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
-    public let id: String
-    public let pluginKey: String
-    public let displayName: String
-    public let description: String
-    public let componentCount: Int
-
-    public init(
-        id: String,
-        pluginKey: String? = nil,
-        displayName: String,
-        description: String,
-        componentCount: Int
-    ) {
-        self.id = id
-        let normalizedPluginKey = pluginKey?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        self.pluginKey = (normalizedPluginKey?.isEmpty == false ? normalizedPluginKey : nil) ?? id
-        self.displayName = displayName
-        self.description = description
-        self.componentCount = componentCount
-    }
-}
-
 /// Starts already-installed stdio MCP plugins directly from the client for one local Agent run.
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
 extension NativeLocalConnectorService {
-    public func installedAgentPlugins(ownerUserID: String) throws -> [NativeInstalledAgentPlugin] {
+    public func installedAgentPlugins(
+        ownerUserID: String
+    ) async throws -> [NativeInstalledAgentPlugin] {
         guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest("本机 Plugin 不属于当前账户")
         }
+        await repairLegacyPluginIntegrityRecordsIfNeeded()
         return (state.installedPluginRecords ?? [:]).values.compactMap { record in
             guard state.pluginPreferences[record.pluginID] ?? true,
+                  NativePluginInstallationIntegrity.status(record: record) == .verified,
                   let manifest = try? Self.agentPluginManifest(record: record) else { return nil }
             return .init(
                 id: record.pluginID,
@@ -71,21 +51,36 @@ extension NativeLocalConnectorService {
         runContext: LocalAgentChatRunContext,
         pluginIDs: [String],
         projectContext: LocalConnectorPluginApplicationContext,
+        fallbackWorkspaceID: String? = nil,
+        fallbackWorkspaceRootURL: URL? = nil,
         executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
     ) async throws -> [NativeAgentPluginToolProvider] {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
-              projectContext.projectID == runContext.projectID,
-              let deviceID = state.deviceID,
-              let rawProjectRoot = projectContext.projectRoot else {
+              let deviceID = state.deviceID else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前账户或项目不匹配")
         }
-        let resolvedProject = try resolveProjectPath(rawProjectRoot)
+        let resolvedProject: NativeResolvedProjectPath?
+        if let rawProjectRoot = projectContext.projectRoot {
+            guard projectContext.projectID == runContext.projectID else {
+                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前项目不匹配")
+            }
+            resolvedProject = try resolveProjectPath(rawProjectRoot)
+        } else {
+            guard projectContext.projectID == nil,
+                  runContext.projectID.hasPrefix("direct:") else {
+                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少项目上下文")
+            }
+            resolvedProject = nil
+        }
+        guard let workspaceRootURL = resolvedProject?.absoluteURL ?? fallbackWorkspaceRootURL,
+              let workspaceID = resolvedProject?.workspace.id ?? fallbackWorkspaceID else {
+            throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少工作目录")
+        }
         let selectedPluginIDs = Array(Set(pluginIDs)).sorted()
         guard selectedPluginIDs.count <= 100 else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent 选择的 Plugin 数量无效")
         }
-
         var providers: [NativeAgentPluginToolProvider] = []
         for pluginID in selectedPluginIDs {
             guard state.pluginPreferences[pluginID] ?? true,
@@ -116,8 +111,8 @@ extension NativeLocalConnectorService {
                     adapterSessionID: adapterSessionID,
                     ownerUserID: ownerUserID,
                     deviceID: deviceID,
-                    workspaceID: resolvedProject.workspace.id,
-                    workspaceRoot: resolvedProject.absoluteURL,
+                    workspaceID: workspaceID,
+                    workspaceRoot: workspaceRootURL,
                     projectID: projectContext.projectID,
                     projectName: projectContext.projectName,
                     permissionSnapshot: permissionSnapshot,
@@ -136,7 +131,7 @@ extension NativeLocalConnectorService {
                         artifactSHA256: record.artifactSHA256,
                         componentKey: componentKey,
                         adapterSessionID: adapterSessionID,
-                        projectID: runContext.projectID,
+                        projectID: projectContext.projectID,
                         requiresExclusiveExecution: launch.server.requiresExclusiveExecution
                     )
                     await pluginRuntimeStore.insert(
@@ -147,8 +142,8 @@ extension NativeLocalConnectorService {
                         displayName: launch.displayName,
                         visualSessionURL: launch.visualSessionURL,
                         artifactURL: launch.artifactURL,
-                        projectRootURL: resolvedProject.absoluteURL,
-                        workspaceID: resolvedProject.workspace.id
+                        projectRootURL: workspaceRootURL,
+                        workspaceID: workspaceID
                     )
                     await pluginRuntimeStore.bindOwner(
                         .init(
@@ -168,8 +163,8 @@ extension NativeLocalConnectorService {
                             tools: tools,
                             displayName: launch.displayName,
                             ownerUserID: ownerUserID,
-                            projectRootURL: resolvedProject.absoluteURL,
-                            workspaceID: resolvedProject.workspace.id,
+                            projectRootURL: workspaceRootURL,
+                            workspaceID: workspaceID,
                             permissionSnapshot: permissionSnapshot,
                             executionPresentation: executionPresentation,
                             pluginSkillSnapshot: skillSnapshot,
@@ -191,7 +186,6 @@ extension NativeLocalConnectorService {
         }
         return providers
     }
-
     /// Creates a compact, run-scoped capability broker. It exposes only discovery/invocation
     /// tools to the model and starts a concrete Plugin only after the Agent selects it.
     public func makeAgentCapabilityToolProvider(
@@ -199,7 +193,7 @@ extension NativeLocalConnectorService {
         runContext: LocalAgentChatRunContext,
         projectContext: LocalConnectorPluginApplicationContext,
         executionPlan: LocalAgentTodoExecutionPlan
-    ) throws -> any AgentToolProvider {
+    ) async throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID,
               runContext.ownerUserID == ownerUserID,
               projectContext.projectID == runContext.projectID,
@@ -211,7 +205,7 @@ extension NativeLocalConnectorService {
         }
         try executionPlan.validate()
         let resolvedProject = try resolveProjectPath(projectRoot)
-        let installed = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installed = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let selectedPlugins = try executionPlan.plugins.map { selection in
             guard let plugin = installedByID[selection.pluginID] else {
@@ -231,7 +225,6 @@ extension NativeLocalConnectorService {
             installedPlugins: selectedPlugins
         )
     }
-
     func approveAgentPluginTool(
         callID: String,
         componentKey: String,
@@ -352,62 +345,16 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let limit: Int?
     }
 
-    private struct PluginSummary: Encodable {
-        let pluginOption: String
-        let name: String
-        let description: String
-    }
-
-    private struct SearchResponse: Encodable {
-        let matches: [PluginSummary]
-    }
-
-    private struct ToolSummary: Encodable {
-        let toolOption: String
-        let name: String
-        let description: String
-        let inputSchema: NativeJSONValue
-        let effect: String
-        let requiredSkills: [String]
-    }
-
-    private struct SkillSummary: Encodable {
-        let name: String
-        let role: String
-        let description: String
-    }
-
-    private struct DescribeResponse: Encodable {
-        let pluginOption: String
-        let name: String
-        let tools: [ToolSummary]
-        let skills: [SkillSummary]
-    }
-
-    private struct SkillActivationResponse: Encodable {
-        let pluginOption: String
-        let skillName: String
-        let instructions: String
-        let resources: [String]
-    }
-
-    private struct SkillResourceResponse: Encodable {
-        let pluginOption: String
-        let skillName: String
-        let relativePath: String
-        let content: String
-        let offset: Int
-        let nextOffset: Int?
-        let truncated: Bool
-    }
-
     private let service: NativeLocalConnectorService
     private let ownerUserID: String
     private let runContext: LocalAgentChatRunContext
     private let projectContext: LocalConnectorPluginApplicationContext
-    private let resolvedProject: NativeResolvedProjectPath
+    private let resolvedProject: NativeResolvedProjectPath?
+    private let fallbackWorkspaceID: String?
+    private let fallbackWorkspaceRootURL: URL?
     private let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
     private let executionPresentation: NativeAgentPluginExecutionPresentation
+    private let fallbackToSelectedOptions: Bool
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -420,18 +367,24 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
         projectContext: LocalConnectorPluginApplicationContext,
-        resolvedProject: NativeResolvedProjectPath,
+        resolvedProject: NativeResolvedProjectPath?,
+        fallbackWorkspaceID: String? = nil,
+        fallbackWorkspaceRootURL: URL? = nil,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         installedPlugins: [NativeInstalledAgentPlugin],
-        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
+        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat,
+        fallbackToSelectedOptions: Bool = false
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
         self.runContext = runContext
         self.projectContext = projectContext
         self.resolvedProject = resolvedProject
+        self.fallbackWorkspaceID = fallbackWorkspaceID
+        self.fallbackWorkspaceRootURL = fallbackWorkspaceRootURL
         self.builtinCapabilities = builtinCapabilities
         self.executionPresentation = executionPresentation
+        self.fallbackToSelectedOptions = fallbackToSelectedOptions
         let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty ? [] : [
             .init(
                 token: "builtin_1",
@@ -455,6 +408,24 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     func execute(_ call: AgentToolCall) async throws -> AgentToolOutcome {
+        do {
+            return try await executeBrokerCall(call)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch NativePluginRuntimeError.cancelled {
+            throw CancellationError()
+        } catch let error as NativePluginRuntimeError {
+            return .failure(NativeAgentPluginFailurePresenter.message(
+                for: error,
+                projectRootURLs: [resolvedProject?.absoluteURL, fallbackWorkspaceRootURL]
+                    .compactMap { $0 }
+            ))
+        } catch {
+            return .failure("Plugin 能力启动或运行失败，请重新查看该能力后重试。")
+        }
+    }
+
+    private func executeBrokerCall(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         switch call.name {
         case Self.searchToolName:
             let arguments = try decode(SearchArguments.self, from: call.arguments)
@@ -463,7 +434,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 return .failure("请提供当前任务需要的能力关键词，不要枚举全部 Plugin。")
             }
             let terms = query.lowercased().split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            let matches = options.filter { option in
+            let lexicalMatches = options.filter { option in
                 let builtInKeywords = if case .builtIn = option.kind {
                     " 文件 读写 代码 终端 shell command filesystem 需求调研 问卷 Human答案 备注 解决方案 执行计划 项目任务 survey requirement solution plan"
                 } else {
@@ -471,7 +442,15 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 }
                 let searchable = "\(option.name) \(option.description)\(builtInKeywords)".lowercased()
                 return terms.contains(where: searchable.contains)
-            }.prefix(12).map { option in
+            }
+            // A local Task has already frozen and validated its Plugin selections. If a
+            // translated or user-authored query has no literal overlap with an English
+            // manifest, keep those selected capabilities discoverable instead of hiding
+            // them behind a language-dependent lexical match.
+            let visibleOptions = lexicalMatches.isEmpty && fallbackToSelectedOptions
+                ? options
+                : lexicalMatches
+            let matches = visibleOptions.prefix(12).map { option in
                 PluginSummary(
                     pluginOption: option.token,
                     name: option.name,
@@ -611,6 +590,9 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let providers: [any AgentToolProvider]
         switch option.kind {
         case .builtIn:
+            guard let resolvedProject else {
+                throw NativePluginRuntimeError.invalidRequest("当前会话没有绑定项目能力")
+            }
             providers = [NativeAgentBuiltinToolProvider(
                 service: service,
                 runContext: runContext,
@@ -623,6 +605,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 runContext: runContext,
                 pluginIDs: [plugin.id],
                 projectContext: projectContext,
+                fallbackWorkspaceID: fallbackWorkspaceID,
+                fallbackWorkspaceRootURL: fallbackWorkspaceRootURL,
                 executionPresentation: executionPresentation
             )
             guard let first = pluginProviders.first else {

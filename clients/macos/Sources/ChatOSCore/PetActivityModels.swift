@@ -31,8 +31,8 @@ public enum PetActivityKind: String, Sendable, Equatable, Codable {
 
     public var requiresAttention: Bool {
         switch self {
-        case .waitingForApproval, .waitingForUser, .failed, .blocked: true
-        case .working, .reviewing, .succeeded, .cancelled: false
+        case .reviewing, .waitingForApproval, .waitingForUser, .failed, .blocked: true
+        case .working, .succeeded, .cancelled: false
         }
     }
 

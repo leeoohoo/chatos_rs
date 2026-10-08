@@ -133,6 +133,7 @@ struct MessageTaskDetailSections: View {
             LabeledContent("状态", value: task.status ?? "未知")
             LabeledContent("创建人", value: creatorDisplayName)
             LabeledContent("模型", value: modelDisplayName)
+            LabeledContent("思考等级", value: thinkingLevelDisplayName)
             if let priority = task.priority {
                 LabeledContent("优先级", value: "P\(priority)")
             }
@@ -237,6 +238,10 @@ struct MessageTaskDetailSections: View {
             if !name.isEmpty { return name }
         }
         return task.defaultModelConfigID?.nonEmpty ?? "-"
+    }
+
+    private var thinkingLevelDisplayName: String {
+        task.thinkingLevel?.nonEmpty ?? "默认"
     }
 
     private var lastRunDisplayName: String {

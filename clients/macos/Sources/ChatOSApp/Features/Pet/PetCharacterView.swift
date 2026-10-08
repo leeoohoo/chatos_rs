@@ -27,9 +27,9 @@ enum PetMessageActivityScope: Equatable {
     func contains(_ activity: PetActivity) -> Bool {
         switch self {
         case .primary:
-            return activity.kind != .working && activity.kind != .reviewing
+            return activity.kind != .working
         case .running:
-            return activity.kind == .working || activity.kind == .reviewing
+            return activity.kind == .working
         }
     }
 }

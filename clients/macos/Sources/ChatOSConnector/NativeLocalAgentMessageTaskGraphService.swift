@@ -7,10 +7,20 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private static let maximumProcessEventPages = 10
 
     private let client: NativeLocalAgentTaskClient
+    private let controlPlane: NativeLocalAgentControlPlaneClient
+    private let beforeRetry: @Sendable (String) async -> Void
+    private let afterRetry: @Sendable () async -> Void
     private var ownerUserID: String?
 
-    public init(host: any LocalAgentHostClientServicing) {
+    public init(
+        host: any LocalAgentHostClientServicing,
+        beforeRetry: @escaping @Sendable (String) async -> Void = { _ in },
+        afterRetry: @escaping @Sendable () async -> Void = {}
+    ) {
         self.client = NativeLocalAgentTaskClient(host: host)
+        self.controlPlane = NativeLocalAgentControlPlaneClient(host: host)
+        self.beforeRetry = beforeRetry
+        self.afterRetry = afterRetry
     }
 
     public func configure(ownerUserID: String) {
@@ -117,6 +127,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         guard let current else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
         }
+        await beforeRetry(runID)
         let graph = try await client.retry(
             ownerUserID: owner,
             taskID: current.taskID,
@@ -124,6 +135,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             retryInstruction: instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
                 .nilIfEmpty
         )
+        await afterRetry()
         guard let retried = graph.tasks.first(where: { $0.taskID == current.taskID }) else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
         }
@@ -316,6 +328,21 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     ) async throws -> MessageTask {
         var mapped = mapTaskWithoutRun(task, dependencies: dependencies)
         let owner = try requireOwner()
+        if let revision = task.modelConfigRevision,
+           let snapshot = try? await controlPlane.model(
+            ownerUserID: owner,
+            modelConfigRef: task.modelConfigRef,
+            modelConfigRevision: revision
+           ) {
+            mapped.defaultModelConfig = MessageTaskModelConfigSummary(
+                id: snapshot.modelConfigRef,
+                provider: snapshot.provider,
+                model: snapshot.model
+            )
+            if mapped.thinkingLevel == nil {
+                mapped.thinkingLevel = snapshot.thinkingLevel
+            }
+        }
         if let run = try await client.runs(ownerUserID: owner, taskID: task.taskID).first {
             mapped = mapped.merging(run: mapRun(run))
             mapped.processLog = try? await processLog(ownerUserID: owner, runID: run.runID)
@@ -335,6 +362,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             objective: Self.string("objective", in: task.input),
             status: task.status == "ready" && task.activeRunID != nil ? "queued" : task.status,
             defaultModelConfigID: task.modelConfigRef,
+            thinkingLevel: Self.taskThinkingLevel(in: task.input),
             lastRunID: task.activeRunID,
             sourceTurnID: task.sourceEntityType == "conversation_turn"
                 ? task.sourceEntityID : nil,
@@ -374,6 +402,12 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             ?? string("answer", in: outcome)
             ?? string("text", in: outcome)
             ?? string("output", in: outcome)
+    }
+
+    private static func taskThinkingLevel(in input: LocalAgentJSONValue) -> String? {
+        guard let settings = value("runtime_settings", in: input) else { return nil }
+        if bool("reasoning_enabled", in: settings) == false { return "none" }
+        return string("selected_thinking_level", in: settings)
     }
 
     private func processLog(ownerUserID: String, runID: String) async throws -> String? {
@@ -490,6 +524,12 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             guard case let .string(result) = value else { return nil }
             return result
         }
+    }
+
+    private static func bool(_ key: String, in value: LocalAgentJSONValue) -> Bool? {
+        guard case let .object(object) = value,
+              case let .bool(result)? = object[key] else { return nil }
+        return result
     }
 
     private static func json(_ value: LocalAgentJSONValue) -> String? {

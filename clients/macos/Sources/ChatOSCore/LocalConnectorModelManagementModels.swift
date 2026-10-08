@@ -48,7 +48,6 @@ public struct LocalConnectorModelProvider: Codable, Identifiable, Sendable, Equa
 
 public struct LocalConnectorModelProviderDraft: Codable, Sendable, Equatable {
     public var name: String
-    public var provider: String
     public var promptVendor: String
     public var baseURL: String
     public var apiKey: String
@@ -56,22 +55,18 @@ public struct LocalConnectorModelProviderDraft: Codable, Sendable, Equatable {
     public var enabled: Bool
     public var supportsImages: Bool
     public var supportsReasoning: Bool
-    public var supportsResponses: Bool
 
     public init(
         name: String,
-        provider: String,
         promptVendor: String,
         baseURL: String,
         apiKey: String,
         clearAPIKey: Bool = false,
         enabled: Bool,
         supportsImages: Bool,
-        supportsReasoning: Bool,
-        supportsResponses: Bool
+        supportsReasoning: Bool
     ) {
         self.name = name
-        self.provider = provider
         self.promptVendor = promptVendor
         self.baseURL = baseURL
         self.apiKey = apiKey
@@ -79,7 +74,6 @@ public struct LocalConnectorModelProviderDraft: Codable, Sendable, Equatable {
         self.enabled = enabled
         self.supportsImages = supportsImages
         self.supportsReasoning = supportsReasoning
-        self.supportsResponses = supportsResponses
     }
 }
 

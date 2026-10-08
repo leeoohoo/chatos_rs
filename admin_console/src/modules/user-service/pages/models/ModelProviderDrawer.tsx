@@ -6,9 +6,7 @@ import type { FormInstance } from 'antd';
 
 import type { UserModelProviderRecord } from '../../types';
 import {
-  defaultPromptVendor,
   PROMPT_VENDOR_OPTIONS,
-  PROVIDER_OPTIONS,
   type ProviderFormValues,
 } from './modelPageUtils';
 
@@ -59,12 +57,10 @@ export function ModelProviderDrawer({
         layout="vertical"
         requiredMark={false}
         initialValues={{
-          provider: 'gpt',
           prompt_vendor: 'gpt',
           enabled: true,
           supports_images: false,
           supports_reasoning: false,
-          supports_responses: true,
           clear_api_key: false,
         }}
         onFinish={onSubmit}
@@ -84,12 +80,6 @@ export function ModelProviderDrawer({
           rules={[{ required: true, message: 'Please enter a name' }]}
         >
           <Input />
-        </Form.Item>
-        <Form.Item name="provider" label="Provider" rules={[{ required: true }]}>
-          <Select
-            options={PROVIDER_OPTIONS}
-            onChange={(provider) => form.setFieldValue('prompt_vendor', defaultPromptVendor(provider))}
-          />
         </Form.Item>
         <Form.Item
           name="prompt_vendor"
@@ -121,9 +111,6 @@ export function ModelProviderDrawer({
           <Switch />
         </Form.Item>
         <Form.Item name="supports_reasoning" label="Supports Reasoning" valuePropName="checked">
-          <Switch />
-        </Form.Item>
-        <Form.Item name="supports_responses" label="Supports Responses API" valuePropName="checked">
           <Switch />
         </Form.Item>
       </Form>

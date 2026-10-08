@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 import Testing
 @testable import ChatOSConnector
@@ -180,6 +181,31 @@ struct NativeConnectorGatewayDTOTests {
         #expect(settings.modelRequestMaxRetries == 4)
         #expect(settings.memorySummaryModelConfigID == "memory-model")
         #expect(settings.memorySummaryThinkingLevel == "low")
+    }
+
+    @Test
+    func providerMutationAlwaysUsesOpenAIResponsesProtocol() throws {
+        let draft = LocalConnectorModelProviderDraft(
+            name: "Gateway",
+            promptVendor: "deepseek",
+            baseURL: "https://gateway.example/v1",
+            apiKey: "secret",
+            enabled: true,
+            supportsImages: true,
+            supportsReasoning: true
+        )
+        let request = GatewayModelProviderMutationRequest(
+            draft: draft,
+            includeEmptyAPIKey: true
+        )
+        let data = try JSONEncoder().encode(request)
+        let payload = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        #expect(payload["provider"] as? String == "gpt")
+        #expect(payload["prompt_vendor"] as? String == "deepseek")
+        #expect(payload["supports_responses"] as? Bool == true)
     }
 
     @Test

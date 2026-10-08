@@ -109,6 +109,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         "default_model_config_id": .object([
           "type": .string("string"), "minLength": .number(1),
         ]),
+        "thinking_level": thinkingLevelOverride,
         "requires_execution": .object(["type": .string("boolean")]),
         "enabled_builtin_kinds": builtinKindSelection,
         "external_mcp_config_ids": unavailableExternalMCPSelection,
@@ -148,6 +149,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
                 "default_model_config_id": .object([
                   "type": .string("string"), "minLength": .number(1),
                 ]),
+                "thinking_level": thinkingLevelOverride,
                 "requires_execution": .object(["type": .string("boolean")]),
                 "enabled_builtin_kinds": builtinKindSelection,
                 "external_mcp_config_ids": unavailableExternalMCPSelection,
@@ -232,10 +234,22 @@ public enum NativeLocalAgentPlatformToolCatalog {
     capabilityTools(pluginChoices: [], builtinChoices: [], externalChoices: [])
   }
 
+  private static let thinkingLevelOverride: LocalAgentJSONValue = .object([
+    "type": .string("string"),
+    "enum": .array(
+      ["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"]
+        .map(LocalAgentJSONValue.string)
+    ),
+    "description": .string(
+      "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level."
+    ),
+  ])
+
   public static func capabilityTools(
     pluginChoices: [NativeInstalledAgentPlugin],
     builtinChoices: [NativeLocalAgentMCPChoice] = [],
-    externalChoices: [NativeLocalAgentMCPChoice] = []
+    externalChoices: [NativeLocalAgentMCPChoice] = [],
+    taskModelChoices: [NativeLocalAgentMCPChoice] = []
   ) -> [LocalAgentJSONValue] {
     let pluginSchema = pluginHints(pluginChoices)
     let builtinSchema = mcpSelection(
@@ -246,6 +260,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       externalChoices,
       emptyDescription: "No external MCP configuration is selectable for this Agent binding. Send an empty external_mcp_config_ids array."
     )
+    let taskModelSchema = taskModelSelection(taskModelChoices)
     return baseCapabilityTools.map { tool in
       guard case .object(var definition) = tool,
         case .string(let name)? = definition["name"],
@@ -257,6 +272,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         properties["enabled_builtin_kinds"] = builtinSchema
         properties["external_mcp_config_ids"] = externalSchema
         properties["plugin_hints"] = pluginSchema
+        properties["default_model_config_id"] = taskModelSchema
         parameters["properties"] = .object(properties)
       } else if name == createTasksToolName,
         case .object(var properties)? = parameters["properties"],
@@ -267,6 +283,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         itemProperties["enabled_builtin_kinds"] = builtinSchema
         itemProperties["external_mcp_config_ids"] = externalSchema
         itemProperties["plugin_hints"] = pluginSchema
+        itemProperties["default_model_config_id"] = taskModelSchema
         items["properties"] = .object(itemProperties)
         tasks["items"] = .object(items)
         properties["tasks"] = .object(tasks)
@@ -275,6 +292,28 @@ public enum NativeLocalAgentPlatformToolCatalog {
       definition["parameters"] = .object(parameters)
       return .object(definition)
     }
+  }
+
+  private static func taskModelSelection(
+    _ rawChoices: [NativeLocalAgentMCPChoice]
+  ) -> LocalAgentJSONValue {
+    let choices = Dictionary(uniqueKeysWithValues: rawChoices.map { ($0.value, $0) })
+      .values.sorted { $0.value < $1.value }
+    var schema: [String: LocalAgentJSONValue] = [
+      "type": .string("string"),
+      "minLength": .number(1),
+      "description": .string(
+        "Optional Task execution model. Only models enabled for Tasks are accepted. Omit it to reuse the Main Chat model when eligible, otherwise the first eligible Task model is used."
+      ),
+    ]
+    if !choices.isEmpty {
+      schema["enum"] = .array(choices.map { .string($0.value) })
+      schema["oneOf"] = .array(choices.map {
+        .object(["const": .string($0.value), "title": .string($0.title)])
+      })
+      schema["x-enum-labels"] = .array(choices.map { .string($0.title) })
+    }
+    return .object(schema)
   }
 
   private static func mcpSelection(
@@ -369,16 +408,21 @@ public enum NativeLocalAgentPlatformToolCatalog {
     if !choices.isEmpty {
       pluginKey["enum"] = .array(choices.map { .string($0.pluginKey) })
       pluginKey["oneOf"] = .array(choices.map {
-        .object(["const": .string($0.pluginKey), "title": .string($0.displayName)])
+        .object([
+          "const": .string($0.pluginKey),
+          "title": .string(pluginChoiceTitle($0)),
+        ])
       })
-      pluginKey["x-enum-labels"] = .array(choices.map { .string($0.displayName) })
+      pluginKey["x-enum-labels"] = .array(choices.map {
+        .string(pluginChoiceTitle($0))
+      })
     }
     var schema: [String: LocalAgentJSONValue] = [
       "type": .string("array"),
       "maxItems": .number(16),
       "uniqueItems": .bool(true),
       "description": .string(
-        "Suggest only installed Plugins needed by this Task. The client freezes and validates the selected Plugin keys before execution."
+        "Suggest only the minimum installed Plugins required by this specific Task. Use only plugin_key values from this request-scoped catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. Do not select both merely as a fallback. The client freezes and validates the selected Plugin keys before execution."
       ),
       "items": .object([
         "type": .string("object"),
@@ -386,6 +430,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
           "plugin_key": .object(pluginKey),
           "reason": .object([
             "type": .string("string"), "maxLength": .number(1_000),
+            "description": .string("Why this specific Task requires the Plugin."),
           ]),
         ]),
         "required": .array([.string("plugin_key")]),
@@ -399,6 +444,24 @@ public enum NativeLocalAgentPlatformToolCatalog {
       )
     }
     return .object(schema)
+  }
+
+  private static func pluginChoiceTitle(
+    _ plugin: NativeInstalledAgentPlugin
+  ) -> String {
+    let key = plugin.pluginKey.trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    let description: String
+    if key.contains("computer-use") {
+      description = plugin.description
+        + " Use this for native desktop applications and operating-system UI, including Feishu/Lark, WeChat, DingTalk, Finder and other installed apps. Prefer it over browser automation whenever the target is a desktop app."
+    } else if key.contains("browser-cdp") {
+      description = plugin.description
+        + " Use this only for websites in managed Chromium or an explicitly connected Chrome session. Do not select it for native desktop applications such as Feishu/Lark, WeChat or DingTalk."
+    } else {
+      description = plugin.description
+    }
+    return "\(plugin.displayName) — \(description)"
   }
 
   private static func taskIDTool(

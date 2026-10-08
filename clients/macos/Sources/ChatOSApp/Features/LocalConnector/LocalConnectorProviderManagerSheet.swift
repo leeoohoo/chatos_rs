@@ -134,7 +134,10 @@ struct LocalConnectorProviderManagerSheet: View {
                             color: provider.hasAPIKey ? .green : .orange
                         )
                     }
-                    Text("\(provider.provider) · Prompt: \(provider.promptVendor)")
+                    Text(appModel.localized(
+                        "OpenAI Responses · Prompt 模板：\(provider.promptVendor)",
+                        english: "OpenAI Responses · Prompt: \(provider.promptVendor)"
+                    ))
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                     Text(provider.baseURL)
@@ -159,7 +162,6 @@ struct LocalConnectorProviderManagerSheet: View {
             HStack {
                 capabilityBadge(appModel.localized("图片", english: "Images"), enabled: provider.supportsImages)
                 capabilityBadge(appModel.localized("推理", english: "Reasoning"), enabled: provider.supportsReasoning)
-                capabilityBadge("Responses", enabled: provider.supportsResponses)
                 Spacer()
                 Button(appModel.localized("刷新模型", english: "Refresh Models"), systemImage: "arrow.triangle.2.circlepath") {
                     viewModel.refreshModelProvider(id: provider.id)
@@ -214,7 +216,6 @@ private struct LocalConnectorProviderEditor: View {
     var onSave: (LocalConnectorModelProviderDraft) -> Void
 
     @State private var name: String
-    @State private var providerType: String
     @State private var promptVendor: String
     @State private var baseURL: String
     @State private var apiKey = ""
@@ -222,10 +223,8 @@ private struct LocalConnectorProviderEditor: View {
     @State private var enabled: Bool
     @State private var supportsImages: Bool
     @State private var supportsReasoning: Bool
-    @State private var supportsResponses: Bool
     @State private var validationMessage: String?
 
-    private let providerOptions = ["gpt", "deepseek", "kimi", "glm"]
     private let promptVendorOptions = ["gpt", "deepseek", "kimi", "glm"]
 
     init(
@@ -239,13 +238,11 @@ private struct LocalConnectorProviderEditor: View {
         self.onCancel = onCancel
         self.onSave = onSave
         _name = State(initialValue: provider?.name ?? "")
-        _providerType = State(initialValue: provider?.provider ?? "gpt")
         _promptVendor = State(initialValue: provider?.promptVendor ?? "gpt")
         _baseURL = State(initialValue: provider?.baseURL ?? "")
         _enabled = State(initialValue: provider?.enabled ?? true)
         _supportsImages = State(initialValue: provider?.supportsImages ?? false)
         _supportsReasoning = State(initialValue: provider?.supportsReasoning ?? false)
-        _supportsResponses = State(initialValue: provider?.supportsResponses ?? false)
     }
 
     var body: some View {
@@ -260,15 +257,6 @@ private struct LocalConnectorProviderEditor: View {
                     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 14) {
                         editorRow(appModel.localized("名称", english: "Name")) {
                             TextField(appModel.localized("例如：OpenAI Production", english: "For example: OpenAI Production"), text: $name)
-                        }
-                        editorRow(appModel.localized("供应商协议", english: "Provider protocol")) {
-                            Picker(appModel.localized("供应商协议", english: "Provider protocol"), selection: $providerType) {
-                                ForEach(providerOptions, id: \.self, content: Text.init)
-                            }
-                            .labelsHidden()
-                            .onChange(of: providerType) { _, next in
-                                promptVendor = defaultPromptVendor(next)
-                            }
                         }
                         editorRow(appModel.localized("Prompt 模板", english: "Prompt template")) {
                             Picker(appModel.localized("Prompt 模板", english: "Prompt template"), selection: $promptVendor) {
@@ -306,7 +294,6 @@ private struct LocalConnectorProviderEditor: View {
                         Toggle(appModel.localized("启用这个供应商", english: "Enable this provider"), isOn: $enabled)
                         Toggle(appModel.localized("支持图片输入", english: "Supports image input"), isOn: $supportsImages)
                         Toggle(appModel.localized("支持推理模型", english: "Supports reasoning models"), isOn: $supportsReasoning)
-                        Toggle(appModel.localized("支持 Responses API", english: "Supports Responses API"), isOn: $supportsResponses)
                     }
                     .padding(.top, 8)
                 }
@@ -360,24 +347,13 @@ private struct LocalConnectorProviderEditor: View {
         validationMessage = nil
         onSave(.init(
             name: cleanName,
-            provider: providerType,
             promptVendor: promptVendor,
             baseURL: cleanBaseURL,
             apiKey: cleanAPIKey,
             clearAPIKey: clearAPIKey,
             enabled: enabled,
             supportsImages: supportsImages,
-            supportsReasoning: supportsReasoning,
-            supportsResponses: supportsResponses
+            supportsReasoning: supportsReasoning
         ))
-    }
-
-    private func defaultPromptVendor(_ value: String) -> String {
-        switch value.lowercased() {
-        case "deepseek": "deepseek"
-        case "kimi", "moonshot", "kimik2": "kimi"
-        case "glm", "zhipu", "zai": "glm"
-        default: "gpt"
-        }
     }
 }

@@ -364,7 +364,16 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertTrue(arguments.contains("local_agent"))
         XCTAssertTrue(arguments.contains("12345"))
         XCTAssertFalse(arguments.contains("memory-secret"))
+        XCTAssertFalse(arguments.contains("--disable-workers"))
         XCTAssertEqual(arguments.last, "--stdio")
+
+        let bootstrapArguments = ManagedLocalAgentHostProcess.arguments(
+            configuration: configuration,
+            database: database,
+            ownerUserID: "user-1",
+            workersEnabled: false
+        )
+        XCTAssertEqual(bootstrapArguments.suffix(2), ["--disable-workers", "--stdio"])
 
         let environment = ManagedLocalAgentHostProcess.safeEnvironment(
             credentialEnvironment: [

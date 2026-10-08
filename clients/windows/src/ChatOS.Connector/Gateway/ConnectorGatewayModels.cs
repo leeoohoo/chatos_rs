@@ -239,6 +239,7 @@ public interface IConnectorGatewayClient
         string token,
         CancellationToken cancellationToken = default) => new(
             NativeAgentRuntimeSettings.Default,
+            LocalTaskExecutionSettings.Default,
             await GetRemoteControlTrustAsync(
                 gatewayBaseUri, token, cancellationToken).ConfigureAwait(false));
 

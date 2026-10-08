@@ -42,10 +42,22 @@ class FakeSceneRenderer {
   }
 }
 
-async function fixture(root) {
+class ConstantSceneRenderer {
+  async capture(input) {
+    const width = Math.ceil(input.clip?.width ?? input.width);
+    const height = Math.ceil(input.clip?.height ?? input.height);
+    return {
+      png: solidPng(width, height, [30, 60, 90]),
+      width,
+      height,
+      measurements: measurementsFromHtml(input.html)
+    };
+  }
+}
+
+async function fixture(root, renderer = new FakeSceneRenderer()) {
   const scenes = new SceneDocumentStore(root);
   const document = await scenes.create(nestedWebsite());
-  const renderer = new FakeSceneRenderer();
   return {
     document,
     renderer,
@@ -96,6 +108,38 @@ test('visual service captures persistent page and region images with stable node
     assert.deepEqual({ x: heading.rect.x, y: heading.rect.y }, { x: 10, y: 10 });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('visual edits require pixel changes while review gates may validate an unchanged artboard', async () => {
+  for (const [kind, expectedPassed] of [
+    ['visual', false],
+    ['design-gate', true],
+    ['handoff', true]
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `web-design-unchanged-${kind}-`));
+    try {
+      const { document, service } = await fixture(root, new ConstantSceneRenderer());
+      const before = await service.capturePage(document.documentId, 'page-home', 800);
+      const candidateDocument = structuredClone(document);
+      candidateDocument.revision = document.revision + 1;
+      const verified = await service.verifyCandidate({
+        scope: { projectId: 'project-visual-service', documentId: document.documentId },
+        page: { pageId: 'page-home', name: 'Home', purpose: 'Landing', order: 0, status: 'running', steps: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+        step: { stepId: `${kind}-step`, pageId: 'page-home', title: `${kind} pass`, kind, required: true, dependsOn: [], target: { nodeIds: ['section-responsive'], viewportWidths: [800] }, status: 'validating', attempts: [], createdAt: '2026-09-08T15:00:00.000Z', updatedAt: '2026-09-08T15:00:00.000Z' },
+        baseDocument: document,
+        candidateDocument,
+        visualInputs: before.artifacts
+      });
+      assert.equal(verified.passed, expectedPassed, kind);
+      assert.equal(
+        verified.issueIds.includes('visual:800:no-visible-change'),
+        !expectedPassed,
+        kind
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   }
 });
 

@@ -150,7 +150,7 @@ struct PetStackedPanelPlacementTests {
 
 @Suite("Pet activity panel scopes")
 struct PetActivityPanelScopeTests {
-    @Test("running work and new messages are routed to different panels")
+    @Test("only live work is routed to the running panel")
     func separatesRunningWorkFromMessages() {
         let running = PetActivity(
             id: "running",
@@ -164,10 +164,34 @@ struct PetActivityPanelScopeTests {
             kind: .succeeded,
             title: "AI 已完成本轮任务"
         )
+        let review = PetActivity(
+            id: "review",
+            source: .taskExecution,
+            kind: .reviewing,
+            title: "需要检查"
+        )
 
         #expect(PetMessageActivityScope.running.contains(running))
         #expect(!PetMessageActivityScope.running.contains(completion))
+        #expect(!PetMessageActivityScope.running.contains(review))
         #expect(PetMessageActivityScope.primary.contains(completion))
+        #expect(PetMessageActivityScope.primary.contains(review))
         #expect(!PetMessageActivityScope.primary.contains(running))
+    }
+
+    @Test("local task routes do not require a cloud message identifier")
+    @MainActor
+    func localTaskActionsUseDurableLocalIdentifiers() {
+        let activity = PetActivity(
+            id: "local-run:run-1",
+            source: .taskExecution,
+            kind: .reviewing,
+            title: "需要检查",
+            route: .init(taskID: "task-1", runID: "run-1")
+        )
+
+        #expect(PetActivityPresentation.canLoadTask(activity))
+        #expect(PetActivityPresentation.canRetry(activity))
+        #expect(PetActivityPresentation.canCancel(activity))
     }
 }

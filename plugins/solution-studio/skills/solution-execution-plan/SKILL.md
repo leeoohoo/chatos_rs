@@ -17,4 +17,6 @@ Use `dependsOn` only for real prerequisites: a task belongs there when its outpu
 
 Before calling `solution_upsert_execution_plan`, verify that all dependency IDs exist, no task depends on itself, and the graph is acyclic. Canvas positions are optional presentation state and never define order. Planned tasks with every prerequisite complete are computed as ready; do not persist a separate ready status. After the upsert, call `solution_finalize` with `scope: "plan"`, the returned workspace revision, and the visual block inventory already promised by the design; the plan is not delivered while the completion requirement remains pending.
 
+Every authorized design mutation invalidates the previous plan revision by design. If validation reports `stale_plan`, re-read the current workspace and immediately upsert a substantively equivalent or appropriately revised execution plan whose `basedOnDesignRevision` equals the current `design.revision`. Then validate again. `stale_plan` is not a reason to stop unless the upsert itself fails or repairing the plan requires a product decision the user has not supplied.
+
 Read [the workspace schema](../solution-studio/references/workspace-schema.md) for the exact shape. This skill plans work and may update task status when asked; it does not execute the planned tasks.

@@ -27,11 +27,11 @@
     "properties": [
       {
         "name": "chatos:source:packageLockSha256",
-        "value": "392257a0cc6473194b04cc8d6ec2154b200118f7bb6a625b0a90472a8ef32dd1"
+        "value": "4b5e2f760e72da62b2809e19be0f6760ea29603c8131bd7095f54a3a33d43999"
       },
       {
         "name": "chatos:source:esbuildMetafileSha256",
-        "value": "60f3b93bdf91303585fda1ec591d1c3114196edd89821407dded9980f0aac425"
+        "value": "0458d5b278ec021c0989cb760e2caf007f1e2d68ca4d59d77c27d4bfb686d9fa"
       },
       {
         "name": "chatos:scope",
@@ -955,11 +955,11 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+      "bom-ref": "pkg:npm/%40modelcontextprotocol/sdk@1.32.1",
       "name": "@modelcontextprotocol/sdk",
-      "version": "1.30.0",
+      "version": "1.32.1",
       "scope": "required",
-      "purl": "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+      "purl": "pkg:npm/%40modelcontextprotocol/sdk@1.32.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -968,13 +968,13 @@
       "hashes": [
         {
           "alg": "SHA-512",
-          "content": "c4a77c388ce5a8dcdca9c36e98601aea0f8f5b69230f9beba5c28e9df95d0143cfde3ee59ea30fc254d7426f2017e5301fbdb3d25a9a45b8ebf61a86cf47884c"
+          "content": "d83744f92243b732c4116cd8d598d8ed0f9570f85c5752a2b03df3238bb45d9ca4b6c8c7ba6d66c1b308f896ae954062d8e664f8a2408b6b8f5f3c627213e477"
         }
       ],
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz"
+          "url": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.1.tgz"
         }
       ],
       "properties": [
@@ -1550,7 +1550,7 @@
         "pkg:generic/zlib@1.3.1",
         "pkg:github/iOfficeAI/OfficeCLI@1.0.144",
         "pkg:npm/%40hyzyla/pdfium@2.1.13",
-        "pkg:npm/%40modelcontextprotocol/sdk@1.30.0",
+        "pkg:npm/%40modelcontextprotocol/sdk@1.32.1",
         "pkg:npm/%40pdf-lib/standard-fonts@1.0.0",
         "pkg:npm/%40pdf-lib/upng@1.0.1",
         "pkg:npm/ajv-formats@3.0.1",

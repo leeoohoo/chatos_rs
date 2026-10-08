@@ -307,13 +307,20 @@ function result(value: Record<string, unknown>, isError = false) {
   };
   if (!isError && typeof value.relativePath === 'string') {
     response._meta = {
-      'chatos/artifacts': [{ producer_artifact_id: `solution_${String(value.sha256)}`, relative_path: value.relativePath, display_name: value.relativePath, mime_type: value.mimeType }]
+      'chatos/artifacts': [{
+        producer_artifact_id: `solution_${String(value.sha256)}`,
+        relative_path: value.relativePath,
+        display_name: value.relativePath,
+        media_type: value.mimeType,
+        size_bytes: value.size,
+        sha256: value.sha256
+      }]
     };
   }
   return response;
 }
 
-const server = new Server({ name: 'chatos-solution-studio', version: '0.1.7' }, { capabilities: { tools: {} } });
+const server = new Server({ name: 'chatos-solution-studio', version: '0.1.9' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

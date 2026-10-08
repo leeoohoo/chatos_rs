@@ -12,6 +12,7 @@ extension ProjectAgentGroupChatView {
             hasOlderItems: viewModel.hasOlderMessages,
             isLoadingOlderItems: viewModel.isLoadingOlderMessages,
             scrollToLatestRequest: viewModel.scrollToLatestRequest,
+            rowState: .init(profiles: viewModel.agents, attachmentData: viewModel.attachmentDataByID),
             loadOlderItems: { await viewModel.loadOlderMessages() },
             rowContent: { message in messageRow(message) },
             emptyContent: {
@@ -23,6 +24,7 @@ extension ProjectAgentGroupChatView {
                 .padding(.top, 70)
             }
         )
+        .id(viewModel.room?.id)
         .background(AppPalette.canvas)
     }
 
@@ -90,7 +92,6 @@ extension ProjectAgentGroupChatView {
                             lineWidth: 1
                         )
                 }
-                .shadow(color: .black.opacity(isHuman ? 0 : 0.025), radius: 5, y: 2)
             }
             .frame(maxWidth: isHuman ? 720 : 820, alignment: isHuman ? .trailing : .leading)
 
@@ -175,13 +176,7 @@ private struct AgentGroupChatComposerSection: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(state.selectedMentionAgentIDs.sorted(), id: \.self) { id in
-                            Button {
-                                onToggleMention(id)
-                            } label: {
-                                Text("@\(name(for: id))  ×")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            selectedMentionChip(id: id)
                         }
                     }
                 }
@@ -226,6 +221,34 @@ private struct AgentGroupChatComposerSection: View {
 
     private var availableMentionCandidates: [AgentChatMentionCandidate] {
         mentionCandidates.filter { !state.selectedMentionAgentIDs.contains($0.id) }
+    }
+
+    private func selectedMentionChip(id: String) -> some View {
+        let agentName = name(for: id)
+        return HStack(spacing: 4) {
+            Text("@\(agentName)")
+                .appFont(.caption)
+                .foregroundStyle(AppPalette.ai)
+            Button {
+                onToggleMention(id)
+            } label: {
+                Image(systemName: "xmark")
+                    .appFont(.caption2.weight(.semibold))
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppPalette.ai)
+            .help("移除 @\(agentName)")
+            .accessibilityLabel("移除 @\(agentName)")
+        }
+        .padding(.leading, 9)
+        .padding(.trailing, 4)
+        .padding(.vertical, 3)
+        .background(AppPalette.aiSoft, in: Capsule())
+        .overlay {
+            Capsule().stroke(AppPalette.ai.opacity(0.18), lineWidth: 1)
+        }
     }
 
     private func name(for id: String) -> String {

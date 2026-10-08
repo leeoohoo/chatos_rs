@@ -6,22 +6,31 @@ protocol NativeLocalAgentProjectToolExecuting: Sendable {
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue
+    func release(runID: String) async
     func reset() async
 }
 
-struct NativeLocalAgentProjectContext: Sendable {
+extension NativeLocalAgentProjectToolExecuting {
+    func release(runID _: String) async {}
+}
+
+struct NativeLocalAgentTaskExecutionContext: Sendable {
     let conversationID: String
-    let projectID: String
+    let projectID: String?
     let applicationContext: LocalConnectorPluginApplicationContext
-    let resolvedPath: NativeResolvedProjectPath
+    let resolvedPath: NativeResolvedProjectPath?
+    let executionRootURL: URL
+    let workspaceScopeID: String
     let toolAuthorization: NativeLocalAgentTaskToolAuthorization
     let remoteConnectionID: String?
 
     init(
         conversationID: String,
-        projectID: String,
+        projectID: String?,
         applicationContext: LocalConnectorPluginApplicationContext,
-        resolvedPath: NativeResolvedProjectPath,
+        resolvedPath: NativeResolvedProjectPath?,
+        executionRootURL: URL,
+        workspaceScopeID: String,
         toolAuthorization: NativeLocalAgentTaskToolAuthorization,
         remoteConnectionID: String? = nil
     ) {
@@ -29,8 +38,29 @@ struct NativeLocalAgentProjectContext: Sendable {
         self.projectID = projectID
         self.applicationContext = applicationContext
         self.resolvedPath = resolvedPath
+        self.executionRootURL = executionRootURL
+        self.workspaceScopeID = workspaceScopeID
         self.toolAuthorization = toolAuthorization
         self.remoteConnectionID = remoteConnectionID
+    }
+
+    func requireProject() throws -> NativeResolvedProjectPath {
+        guard let resolvedPath, projectID != nil else {
+            throw NativeLocalAgentPlatformToolError.projectUnavailable
+        }
+        return resolvedPath
+    }
+
+    var executionWorkspace: LocalConnectorWorkspace {
+        if let resolvedPath { return resolvedPath.workspace }
+        return .init(
+            id: workspaceScopeID,
+            alias: "Conversation Workspace",
+            absoluteRoot: executionRootURL.path,
+            fingerprint: NativePluginManifestLoader.sha256(
+                workspaceScopeID + "\n" + executionRootURL.path
+            )
+        )
     }
 }
 
@@ -131,7 +161,7 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
     func resolve(
         ownerUserID: String,
         runID: String
-    ) async throws -> NativeLocalAgentProjectContext {
+    ) async throws -> NativeLocalAgentTaskExecutionContext {
         let run = try await runtime.run(ownerUserID: ownerUserID, runID: runID)
         guard run.ownerUserID == ownerUserID,
               case let .object(input) = run.input,
@@ -143,9 +173,27 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
             conversationID: conversationID
         )
         guard detail.conversation.ownerUserID == ownerUserID,
-              let resource = detail.conversation.resource,
-              resource.kind == .project else {
-            throw NativeLocalAgentPlatformToolError.projectUnavailable
+              let resource = detail.conversation.resource else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let authorization = try NativeLocalAgentTaskToolAuthorization.resolve(input)
+        if resource.kind == .contact {
+            let root = try await connector.taskExecutionConversationRoot(
+                ownerUserID: ownerUserID,
+                conversationID: conversationID
+            )
+            return .init(
+                conversationID: conversationID,
+                projectID: nil,
+                applicationContext: .device,
+                resolvedPath: nil,
+                executionRootURL: root,
+                workspaceScopeID: "contact:" + NativePluginManifestLoader.sha256(
+                    ownerUserID + "\n" + conversationID
+                ),
+                toolAuthorization: authorization,
+                remoteConnectionID: Self.string("remote_connection_id", in: input)
+            )
         }
         let context = try await projects.pluginContext(
             ownerUserID: ownerUserID,
@@ -160,7 +208,9 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
             projectID: resource.resourceID,
             applicationContext: context,
             resolvedPath: resolvedPath,
-            toolAuthorization: try NativeLocalAgentTaskToolAuthorization.resolve(input),
+            executionRootURL: resolvedPath.absoluteURL,
+            workspaceScopeID: resolvedPath.workspace.id,
+            toolAuthorization: authorization,
             remoteConnectionID: Self.string("remote_connection_id", in: input)
         )
     }
@@ -217,7 +267,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         ), case let .object(arguments) = invocation.arguments else {
             throw NativeLocalAgentPlatformToolError.invalidArguments
         }
-        let context: NativeLocalAgentProjectContext
+        let context: NativeLocalAgentTaskExecutionContext
         do {
             context = try await contextResolver.resolve(
                 ownerUserID: ownerUserID,
@@ -232,13 +282,22 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             throw NativeLocalAgentPlatformToolError.capabilityNotSelected
         }
         do {
+            let nativeArguments = arguments.mapValues(NativeJSONValue.init(local:))
+            if NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(invocation.toolName) {
+                let result = try await pluginTools.execute(
+                    ownerUserID: ownerUserID,
+                    invocation: invocation,
+                    context: context,
+                    arguments: nativeArguments
+                )
+                return .init(native: result)
+            }
             let tool = NativeMCPCodeReadTools(
-                workspace: context.resolvedPath.workspace,
-                projectRoot: context.resolvedPath.absoluteURL,
+                workspace: context.executionWorkspace,
+                projectRoot: context.executionRootURL,
                 requestCWD: nil,
                 defaultToolRoot: nil
             )
-            let nativeArguments = arguments.mapValues(NativeJSONValue.init(local:))
             let result: NativeJSONValue
             if NativeMCPCodeWriteStore.toolNames.contains(invocation.toolName) {
                 if invocation.toolName == "commit_edit_session" {
@@ -251,11 +310,11 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     name: invocation.toolName,
                     arguments: nativeArguments,
                     scope: .init(
-                        workspaceID: context.resolvedPath.workspace.id,
+                        workspaceID: context.workspaceScopeID,
                         sessionID: context.conversationID,
                         runID: invocation.runID
                     ),
-                    projectRoot: context.resolvedPath.absoluteURL
+                    projectRoot: context.executionRootURL
                 )
             } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                 invocation.toolName
@@ -264,15 +323,6 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                     invocation: invocation,
                     arguments: nativeArguments,
                     context: context
-                )
-            } else if NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(
-                invocation.toolName
-            ) {
-                result = try await pluginTools.execute(
-                    ownerUserID: ownerUserID,
-                    invocation: invocation,
-                    context: context,
-                    arguments: nativeArguments
                 )
             } else if NativeLocalAgentPlatformToolCatalog.taskExecutionRemoteToolNames.contains(
                 invocation.toolName
@@ -316,10 +366,16 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         await pluginTools.reset()
     }
 
+    func release(runID: String) async {
+        _ = await terminalStore.cancel(ownerRunID: runID)
+        _ = await writeStore.discard(runID: runID)
+        await pluginTools.release(runID: runID)
+    }
+
     private func executeTerminal(
         invocation: LocalAgentToolInvocationRecord,
         arguments: [String: NativeJSONValue],
-        context: NativeLocalAgentProjectContext
+        context: NativeLocalAgentTaskExecutionContext
     ) async throws -> NativeJSONValue {
         let name = invocation.toolName
         if ["execute_command", "process_write", "process_kill"].contains(name) {
@@ -328,7 +384,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                 throw NativeLocalAgentPlatformToolError.approvalRequired
             }
         }
-        let root = context.resolvedPath.absoluteURL
+        let root = context.executionRootURL
         guard name == "execute_command" else {
             return try await terminalStore.call(
                 name: name,

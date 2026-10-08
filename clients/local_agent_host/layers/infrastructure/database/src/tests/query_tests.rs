@@ -303,6 +303,81 @@ async fn run_status_filter_is_applied_before_the_page_limit() {
 }
 
 #[tokio::test]
+async fn active_run_pages_hide_review_attempts_after_the_task_moves_on() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    let mut review = run(1_000);
+    review.run_id = "run-review".to_string();
+    review.owner_entity_type = "task".to_string();
+    review.owner_entity_id = "task-1".to_string();
+    review.profile_key = "task_execution".to_string();
+    review.status = LocalAgentRunStatus::NeedsReview;
+    storage
+        .create_run(
+            &command("create-review-run", "review"),
+            &review,
+            "event-review",
+        )
+        .await
+        .expect("review Run");
+    sqlx::query(
+        "INSERT INTO local_task_graphs (graph_id, owner_user_id, source_entity_type, \
+         source_entity_id, created_at_unix_ms) VALUES ('graph-1', 'user-1', \
+         'conversation_turn', 'turn-1', 1000)",
+    )
+    .execute(&storage.pool)
+    .await
+    .expect("task graph");
+    sqlx::query(
+        "INSERT INTO local_tasks (task_id, graph_id, title, profile_key, model_config_ref, \
+         model_config_revision, capability_policy_revision, input_json, max_iterations, status, \
+         active_run_id, version, created_at_unix_ms, updated_at_unix_ms) VALUES \
+         ('task-1', 'graph-1', 'Review task', 'task_execution', 'model-1', 'revision-1', \
+         'policy-1', '{}', 8, 'blocked', NULL, 1, 1000, 1000)",
+    )
+    .execute(&storage.pool)
+    .await
+    .expect("blocked task");
+
+    let blocked = storage
+        .list_runs(
+            "user-1",
+            LocalAgentRunListScope::Active,
+            None,
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("blocked activity page");
+    assert_eq!(blocked.runs.len(), 1);
+    assert_eq!(blocked.runs[0].run_id, "run-review");
+
+    sqlx::query(
+        "UPDATE local_tasks SET status = 'succeeded', version = version + 1, \
+         updated_at_unix_ms = 2000 WHERE task_id = 'task-1'",
+    )
+    .execute(&storage.pool)
+    .await
+    .expect("completed task");
+    let completed = storage
+        .list_runs(
+            "user-1",
+            LocalAgentRunListScope::Active,
+            None,
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .expect("completed activity page");
+    assert!(completed.runs.is_empty());
+}
+
+#[tokio::test]
 async fn owner_event_pages_project_payloads_inside_sqlite() {
     let storage = SqliteClientStorage::connect_memory()
         .await

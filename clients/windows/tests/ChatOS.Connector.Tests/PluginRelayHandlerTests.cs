@@ -557,7 +557,9 @@ public sealed class PluginRelayHandlerTests : IDisposable
     {
         public Task<IReadOnlyList<LocalConnectorPlugin>> ListAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LocalConnectorPlugin>>([
-                new("plugin-1", "Test", string.Empty, "Tools", "ChatOS", "1.0.0", true, false, true, true, ["process.spawn"]),
+                new(
+                    "plugin-1", "plugin-1@fixture", "Test", string.Empty, "Tools", "ChatOS",
+                    "1.0.0", true, false, true, true, ["process.spawn"]),
             ]);
         public Task<InstalledPluginRecord> InstallAsync(string pluginId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();

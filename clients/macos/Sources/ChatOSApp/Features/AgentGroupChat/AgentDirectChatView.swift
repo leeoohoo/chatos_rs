@@ -106,6 +106,10 @@ struct AgentDirectChatView: View {
             hasOlderItems: viewModel.hasOlderMessages,
             isLoadingOlderItems: viewModel.isLoadingOlderMessages,
             scrollToLatestRequest: viewModel.scrollToLatestRequest,
+            rowState: .init(
+                profiles: viewModel.agents, attachmentData: viewModel.attachmentDataByID,
+                teams: viewModel.teams, actionIDs: viewModel.proposalActionIDs
+            ),
             loadOlderItems: {
                 await viewModel.loadOlderMessages().map { "message:\($0)" }
             },

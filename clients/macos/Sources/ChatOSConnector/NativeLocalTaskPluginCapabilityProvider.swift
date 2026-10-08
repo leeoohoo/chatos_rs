@@ -20,19 +20,36 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
 }
 
 extension NativeLocalConnectorService {
+    func cancelAgentPluginTools(runID: String) async {
+        await pluginRuntimeStore.cancel(runID: runID)
+    }
+
     func makeTaskExecutionCapabilityToolProvider(
         ownerUserID: String,
         runID: String,
         conversationID: String,
         projectContext: LocalConnectorPluginApplicationContext,
+        executionRootURL: URL,
+        workspaceScopeID: String,
         pluginIDs: [String]?
-    ) throws -> any AgentToolProvider {
-        guard state.user?.id == ownerUserID,
-              let projectID = projectContext.projectID,
-              let projectRoot = projectContext.projectRoot else {
+    ) async throws -> any AgentToolProvider {
+        guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest(
-                "本地任务 Plugin 与当前账户或项目不匹配"
+                "本地任务 Plugin 与当前账户不匹配"
             )
+        }
+        let projectID = projectContext.projectID ?? "direct:\(conversationID)"
+        let resolvedProject: NativeResolvedProjectPath?
+        if let projectRoot = projectContext.projectRoot {
+            guard projectContext.projectID != nil else {
+                throw NativePluginRuntimeError.invalidRequest("本地任务 Plugin 项目上下文无效")
+            }
+            resolvedProject = try resolveProjectPath(projectRoot)
+        } else {
+            guard projectContext.projectID == nil else {
+                throw NativePluginRuntimeError.invalidRequest("本地任务 Plugin 缺少项目根目录")
+            }
+            resolvedProject = nil
         }
         let runContext = try LocalAgentChatRunContext(
             ownerUserID: ownerUserID,
@@ -46,7 +63,7 @@ extension NativeLocalConnectorService {
             hopCount: 0,
             lane: .executor
         )
-        let installedPlugins = try installedAgentPlugins(ownerUserID: ownerUserID)
+        let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let selectedPlugins: [NativeInstalledAgentPlugin]
         if let pluginIDs {
             let installedByKey = Dictionary(
@@ -68,10 +85,34 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             runContext: runContext,
             projectContext: projectContext,
-            resolvedProject: try resolveProjectPath(projectRoot),
+            resolvedProject: resolvedProject,
+            fallbackWorkspaceID: workspaceScopeID,
+            fallbackWorkspaceRootURL: executionRootURL,
             builtinCapabilities: [],
             installedPlugins: selectedPlugins,
-            executionPresentation: .localTaskExecution
+            executionPresentation: .localTaskExecution,
+            fallbackToSelectedOptions: true
         )
+    }
+
+    func taskExecutionConversationRoot(
+        ownerUserID: String,
+        conversationID: String
+    ) throws -> URL {
+        guard state.user?.id == ownerUserID else {
+            throw NativePluginRuntimeError.invalidRequest("本地任务与当前账户不匹配")
+        }
+        let ownerScope = NativePluginManifestLoader.sha256(ownerUserID)
+        let conversationScope = NativePluginManifestLoader.sha256(conversationID)
+        let root = configuration.stateURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("LocalAgent/ConversationWorkspaces", isDirectory: true)
+            .appendingPathComponent(ownerScope, isDirectory: true)
+            .appendingPathComponent(conversationScope, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true
+        )
+        return root.standardizedFileURL
     }
 }

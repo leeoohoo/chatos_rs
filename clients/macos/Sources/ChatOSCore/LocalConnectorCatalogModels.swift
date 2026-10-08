@@ -64,6 +64,11 @@ public struct LocalConnectorSandboxSettings: Codable, Sendable, Equatable {
     }
 }
 
+public enum LocalConnectorPluginInstallationIssue: String, Codable, Sendable, Equatable {
+    case missingIntegrityRecord = "missing_integrity_record"
+    case integrityCheckFailed = "integrity_check_failed"
+}
+
 public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var pluginID: String
     public var packageName: String?
@@ -80,8 +85,10 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var enabled: Bool
     public var hasUI: Bool?
     public var permissions: [LocalConnectorPluginPermission]
+    public var installationIssue: LocalConnectorPluginInstallationIssue?
 
     public var id: String { pluginID }
+    public var requiresReinstall: Bool { installationIssue != nil }
 
     public init(
         pluginID: String,
@@ -98,7 +105,8 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         installAvailable: Bool,
         enabled: Bool,
         hasUI: Bool? = nil,
-        permissions: [LocalConnectorPluginPermission] = []
+        permissions: [LocalConnectorPluginPermission] = [],
+        installationIssue: LocalConnectorPluginInstallationIssue? = nil
     ) {
         self.pluginID = pluginID
         self.packageName = packageName
@@ -115,6 +123,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.enabled = enabled
         self.hasUI = hasUI
         self.permissions = permissions
+        self.installationIssue = installationIssue
     }
 }
 

@@ -78,12 +78,17 @@ export function resolveHeadlessBrowserExecutable(explicit = process.env.WEB_DESI
   return available;
 }
 
-async function startBrowser(browser: string, profileDirectory: string, timeoutMs: number): Promise<{ child: ChildProcessWithoutNullStreams; port: number }> {
-  const child = spawn(browser, [
+export function headlessBrowserArguments(profileDirectory: string, sandbox = process.env.CHATOS_PLUGIN_SANDBOX): string[] {
+  return [
     '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     '--disable-background-networking', '--disable-component-update', '--disable-sync', '--metrics-recording-only',
+    ...(sandbox === 'macos-seatbelt' ? ['--no-sandbox'] : []),
     '--remote-debugging-port=0', `--user-data-dir=${profileDirectory}`, 'about:blank'
-  ], { stdio: ['pipe', 'pipe', 'pipe'] });
+  ];
+}
+
+async function startBrowser(browser: string, profileDirectory: string, timeoutMs: number): Promise<{ child: ChildProcessWithoutNullStreams; port: number }> {
+  const child = spawn(browser, headlessBrowserArguments(profileDirectory), { stdio: ['pipe', 'pipe', 'pipe'] });
   let diagnostic = '';
   const endpoint = new Promise<number>((resolve, reject) => {
     child.stderr.setEncoding('utf8');
@@ -93,7 +98,7 @@ async function startBrowser(browser: string, profileDirectory: string, timeoutMs
       if (match) resolve(Number(match[1]));
     });
     child.once('error', reject);
-    child.once('exit', (code) => reject(new Error(`Headless browser exited before DevTools was ready with code ${code}. ${diagnostic.slice(-2000)}`)));
+    child.once('exit', (code, signal) => reject(new Error(`Headless browser exited before DevTools was ready with code ${code} and signal ${signal ?? 'none'}. ${diagnostic.slice(-2000)}`)));
   });
   try {
     return { child, port: await withTimeout(endpoint, timeoutMs, 'Headless browser startup timed out.') };

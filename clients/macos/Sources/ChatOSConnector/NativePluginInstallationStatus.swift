@@ -71,6 +71,10 @@ enum NativePluginInstallationStatusBuilder {
     ) throws -> GatewayPluginInstallationStatusItem {
         let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
             .standardizedFileURL
+        try NativePluginInstallationIntegrity.verify(
+            record: record,
+            installationURL: installationURL
+        )
         let manifestURL = installationURL.appendingPathComponent("chatos.plugin.json")
         let manifest = try NativePluginManifestLoader.loadManifest(from: manifestURL)
         guard manifest.schemaVersion == 3, manifest.version == record.version else {

@@ -3,6 +3,37 @@ import Darwin
 import Foundation
 import OSLog
 
+final class NativePluginOutputBufferBudget: @unchecked Sendable {
+    private let lock = NSLock()
+    private let maximumBytes: Int
+    private var queuedBytes = 0
+
+    init(maximumBytes: Int) {
+        self.maximumBytes = max(1, maximumBytes)
+    }
+
+    func reserve(_ byteCount: Int) -> Bool {
+        guard byteCount >= 0 else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        guard byteCount <= maximumBytes - queuedBytes else { return false }
+        queuedBytes += byteCount
+        return true
+    }
+
+    func release(_ byteCount: Int) {
+        lock.lock()
+        queuedBytes = max(0, queuedBytes - max(0, byteCount))
+        lock.unlock()
+    }
+
+    var currentBytes: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return queuedBytes
+    }
+}
+
 actor NativePluginStdioClient {
     private enum TimeoutBehavior: Sendable, Equatable {
         case terminateProcess
@@ -54,22 +85,34 @@ actor NativePluginStdioClient {
 
     func start() throws {
         guard processID == nil else { return }
+        let outputBufferBudget = NativePluginOutputBufferBudget(
+            maximumBytes: maximumMessageBytes
+        )
         let outputStream = AsyncThrowingStream<Data, Error>(
-            bufferingPolicy: .bufferingOldest(64)
+            bufferingPolicy: .unbounded
         ) { continuation in
             NativeProcessPipeReader.install(
                 on: output,
                 onData: { data in
+                    guard outputBufferBudget.reserve(data.count) else {
+                        continuation.finish(throwing: NativePluginRuntimeError.invalidMCPResponse(
+                            "Plugin MCP 输出积压超过大小限制"
+                        ))
+                        return
+                    }
                     switch continuation.yield(data) {
                     case .enqueued:
                         break
                     case .dropped:
+                        outputBufferBudget.release(data.count)
                         continuation.finish(throwing: NativePluginRuntimeError.invalidMCPResponse(
-                            "Plugin MCP 输出速度超过本机处理上限"
+                            "Plugin MCP 输出流丢失数据"
                         ))
                     case .terminated:
+                        outputBufferBudget.release(data.count)
                         break
                     @unknown default:
+                        outputBufferBudget.release(data.count)
                         continuation.finish(throwing: NativePluginRuntimeError.invalidMCPResponse(
                             "Plugin MCP 输出流状态无效"
                         ))
@@ -88,6 +131,7 @@ actor NativePluginStdioClient {
         outputReaderTask = Task { [weak self] in
             do {
                 for try await data in outputStream {
+                    outputBufferBudget.release(data.count)
                     guard let self else { return }
                     await self.consume(data)
                 }
@@ -361,10 +405,14 @@ actor NativePluginStdioClient {
         self.processID = nil
         processExitSource?.cancel()
         processExitSource = nil
+        let diagnostic = Self.redactedErrorTail(errorBuffer)
         if exitCode != 0 {
             logPluginDiagnostics(reason: "process exited with code \(exitCode)")
         }
-        stop(with: NativePluginRuntimeError.processExited(exitCode))
+        stop(with: NativePluginRuntimeError.processExited(
+            exitCode,
+            diagnostic.isEmpty ? nil : diagnostic
+        ))
     }
 
     private func logPluginDiagnostics(reason: String) {
@@ -467,7 +515,7 @@ enum NativePluginRuntimeError: LocalizedError {
     case mcpError(String)
     case sessionNotFound
     case processUnavailable
-    case processExited(Int32)
+    case processExited(Int32, String?)
     case timeout
     case cancelled
 
@@ -478,7 +526,9 @@ enum NativePluginRuntimeError: LocalizedError {
              let .mcpError(message): message
         case .sessionNotFound: "Plugin 本机会话不存在或已经结束"
         case .processUnavailable: "Plugin MCP 进程不可用"
-        case let .processExited(code): "Plugin MCP 进程已退出（\(code)）"
+        case let .processExited(code, detail):
+            detail.map { "Plugin MCP 进程已退出（\(code)）：\($0)" }
+                ?? "Plugin MCP 进程已退出（\(code)）"
         case .timeout: "Plugin MCP 调用超时"
         case .cancelled: "Plugin MCP 调用已取消"
         }

@@ -70,6 +70,11 @@ final class LocalAgentGroupChatSchedulerTests: XCTestCase {
             scope: "account:alice:agent:test:run:test",
             messages: [.init(role: .system, content: "system")]
         )
+        XCTAssertTrue(
+            LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint),
+            "A claimed delivery interrupted before its first model call must resume from ready"
+        )
+
         checkpoint.status = .paused
         checkpoint.stopReason = AgentContextError.unavailable.localizedDescription
         XCTAssertTrue(LocalAgentGroupChatScheduler.isAutomaticTriggerRecoveryEligible(checkpoint))

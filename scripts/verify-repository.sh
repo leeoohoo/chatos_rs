@@ -120,9 +120,9 @@ run_native_platform() {
   case "$(uname -s)" in
     Darwin)
       run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
-      run_swiftpm test --package-path "$ROOT_DIR/clients/macos"
+      run_swiftpm test --package-path "$ROOT_DIR/clients/macos" --no-parallel
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"
-      run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use"
+      run_swiftpm test --package-path "$ROOT_DIR/plugins/computer-use" --no-parallel
       ;;
     MINGW*|MSYS*|CYGWIN*)
       if ! dotnet build "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release; then

@@ -9,6 +9,7 @@ protocol NativeLocalAgentPlatformToolExecuting: Sendable {
   func configureExternalMCPs(
     _ configs: [NativeLocalAgentExternalMCPConfig]
   ) async throws
+  func release(runID: String) async
   func reset() async
 }
 
@@ -16,6 +17,7 @@ extension NativeLocalAgentPlatformToolExecuting {
   func configureExternalMCPs(
     _: [NativeLocalAgentExternalMCPConfig]
   ) async throws {}
+  func release(runID _: String) async {}
   func reset() async {}
 }
 
@@ -112,6 +114,10 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   func reset() async {
     await externalMCPs.reset()
     await projectTools?.reset()
+  }
+
+  func release(runID: String) async {
+    await projectTools?.release(runID: runID)
   }
 
   func configureExternalMCPs(
@@ -252,17 +258,26 @@ public actor NativeLocalAgentPlatformToolWorker {
     ownerUserID: String,
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) async throws {
-    resetLocked()
+    let cancelledPollingTask = resetLocked()
     await executor.reset()
+    await cancelledPollingTask?.value
     try await executor.configureExternalMCPs(externalMCPConfigs)
     self.ownerUserID = ownerUserID
     schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: .zero)
   }
 
   public func reset() async {
-    resetLocked()
+    let cancelledPollingTask = resetLocked()
     await executor.reset()
+    await cancelledPollingTask?.value
     ownerUserID = nil
+  }
+
+  /// Releases resources owned by a terminal Run before a retry creates its successor.
+  /// Browser CDP owns an exclusive Chrome Bridge, so waiting for idle expiration would
+  /// leave the replacement Run with a paired mode but no usable bridge backend.
+  public func releaseRun(_ runID: String) async {
+    await executor.release(runID: runID)
   }
 
   /// Starts one short compatibility window. Durable tool-request and approval
@@ -509,7 +524,8 @@ public actor NativeLocalAgentPlatformToolWorker {
     }
   }
 
-  private func resetLocked() {
+  private func resetLocked() -> Task<Void, Never>? {
+    let task = pollingTask
     generation = UUID()
     pollingTask?.cancel()
     pollingTask = nil
@@ -518,6 +534,7 @@ public actor NativeLocalAgentPlatformToolWorker {
     eventWakeTimeoutTask?.cancel()
     eventWakeTimeoutTask = nil
     pendingWake = false
+    return task
   }
 
   private static func safeErrorSummary(_ error: Error) -> String {

@@ -42,7 +42,7 @@ struct NativeMCPCodeReadTools: Sendable {
             ),
             definition(
                 name: "list_dir",
-                description: "列出当前本机项目中的目录内容。",
+                description: "列出当前本机项目中的目录内容。path 省略、为空或为 . 时，严格表示当前会话绑定的项目根目录；返回条目就是该根目录内容，不要根据子目录名称重新推断项目根目录。",
                 properties: [
                     "path": .object(["type": .string("string")]),
                     "max_entries": .object([
@@ -281,7 +281,8 @@ struct NativeMCPCodeReadTools: Sendable {
     }
 
     private func normalizedToolPath(_ rawPath: String) throws -> String {
-        var path = try projectRelativePath(rawPath)
+        let trimmedPath = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        var path = try projectRelativePath(trimmedPath.isEmpty ? "." : trimmedPath)
         if let defaultRoot = defaultToolRoot?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .nilIfEmpty {

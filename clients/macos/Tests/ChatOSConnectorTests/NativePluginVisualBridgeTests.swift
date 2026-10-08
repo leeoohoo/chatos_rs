@@ -42,6 +42,46 @@ extension NativePluginRuntimeTests {
         #expect(metadata.jsonObject?["target_app"]?.jsonString == "example.com")
     }
 
+    @Test("closing a browser session removes its published live metadata")
+    func browserCloseClearsPublishedVisualSession() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let metadataURL = root.appendingPathComponent("session.json")
+        try Data("{\"status\":\"running\"}".utf8).write(to: metadataURL)
+
+        let result = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("text"),
+                    "text": .string("{\"closed\":true}"),
+                ]),
+            ]),
+            "isError": .bool(false),
+            "structuredContent": .object(["closed": .bool(true)]),
+        ])
+
+        #expect(NativeBrowserVisualBridge.sessionWasClosed(in: result))
+        try NativeBrowserVisualBridge.clearPublishedSession(at: root)
+        #expect(!FileManager.default.fileExists(atPath: metadataURL.path))
+    }
+
+    @Test("failed browser close results do not clear a live visual session")
+    func failedBrowserCloseDoesNotConfirmClosure() {
+        let result = NativeJSONValue.object([
+            "content": .array([
+                .object([
+                    "type": .string("text"),
+                    "text": .string("{\"closed\":true}"),
+                ]),
+            ]),
+            "isError": .bool(true),
+        ])
+
+        #expect(!NativeBrowserVisualBridge.sessionWasClosed(in: result))
+    }
+
     @Test("MCP Office Artifact candidates are validated and persisted in the project")
     func officeArtifactRegistration() throws {
         let root = FileManager.default.temporaryDirectory
@@ -97,6 +137,127 @@ extension NativePluginRuntimeTests {
         let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
         #expect(relativePath.hasPrefix("chatos-plugin-artifacts/adapter-1/pa_"))
         #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
+    }
+
+    @Test("Solution Studio Markdown artifacts are validated and persisted in the project")
+    func solutionMarkdownArtifactRegistration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data("# Verified solution\n".utf8)
+        let fileName = "solution-123.md"
+        try bytes.write(to: artifacts.appendingPathComponent(fileName))
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-1",
+            pluginID: "solution-plugin",
+            releaseID: "release-1",
+            version: "0.1.8",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "solution-mcp",
+            adapterSessionID: "adapter-solution"
+        )
+        let registered = try NativePluginArtifactRegistrar.register(
+            result: .object([
+                "content": .array([]),
+                "_meta": .object([
+                    "chatos/artifacts": .array([
+                        .object([
+                            "producer_artifact_id": .string("solution-1"),
+                            "relative_path": .string(fileName),
+                            "display_name": .string(fileName),
+                            "mime_type": .string("text/markdown"),
+                        ]),
+                    ]),
+                ]),
+            ]),
+            identity: identity,
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            workspaceRootURL: workspace,
+            artifactRootURL: artifacts,
+            permissionSnapshot: ["artifact.create"],
+            toolName: "solution_finalize"
+        )
+        let descriptor = try #require(
+            registered.jsonObject?["_meta"]?.jsonObject?["chatos/artifacts"]?
+                .jsonArray?.first?.jsonObject?["artifact"]?.jsonObject
+        )
+        #expect(descriptor["media_type"]?.jsonString == "text/markdown")
+        #expect(descriptor["size_bytes"]?.jsonNumber == Double(bytes.count))
+        #expect(descriptor["sha256"]?.jsonString == NativePluginHash.sha256(bytes))
+        let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
+        #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
+    }
+
+    @Test("Diagram Studio artifacts are validated and persisted in the project")
+    func diagramArtifactRegistration() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let fixtures = [
+            ("费用报销审批.svg", "image/svg+xml", Data("<svg/>".utf8)),
+            ("费用报销审批.diagram.json", "application/vnd.chatos.diagram+json", Data("{}".utf8)),
+            ("费用报销审批.puml", "text/vnd.plantuml", Data("@startuml\n@enduml\n".utf8)),
+        ]
+        for fixture in fixtures {
+            try fixture.2.write(to: artifacts.appendingPathComponent(fixture.0))
+        }
+        let candidates = fixtures.enumerated().map { index, fixture in
+            NativeJSONValue.object([
+                "producer_artifact_id": .string("diagram-\(index)"),
+                "relative_path": .string(fixture.0),
+                "display_name": .string(fixture.0),
+                "media_type": .string(fixture.1),
+                "size_bytes": .number(Double(fixture.2.count)),
+                "sha256": .string(NativePluginHash.sha256(fixture.2)),
+            ])
+        }
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-diagram",
+            pluginID: "diagram-plugin",
+            releaseID: "release-1",
+            version: "0.4.3",
+            artifactSHA256: String(repeating: "a", count: 64),
+            componentKey: "diagram-mcp",
+            adapterSessionID: "adapter-diagram"
+        )
+
+        let registered = try NativePluginArtifactRegistrar.register(
+            result: .object([
+                "content": .array([]),
+                "_meta": .object(["chatos/artifacts": .array(candidates)]),
+            ]),
+            identity: identity,
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceID: "workspace-1",
+            workspaceRootURL: workspace,
+            artifactRootURL: artifacts,
+            permissionSnapshot: ["artifact.create"],
+            toolName: "diagram_export"
+        )
+
+        let descriptors = try #require(
+            registered.jsonObject?["_meta"]?.jsonObject?["chatos/artifacts"]?.jsonArray
+        )
+        #expect(descriptors.count == fixtures.count)
+        for (index, fixture) in fixtures.enumerated() {
+            let descriptor = try #require(descriptors[index].jsonObject?["artifact"]?.jsonObject)
+            #expect(descriptor["display_name"]?.jsonString == fixture.0)
+            #expect(descriptor["media_type"]?.jsonString == fixture.1)
+            let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
+            #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == fixture.2)
+        }
     }
 
     @Test("computer use image blocks become local visual-session frames")

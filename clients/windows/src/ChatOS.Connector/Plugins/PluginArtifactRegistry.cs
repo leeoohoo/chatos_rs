@@ -160,8 +160,7 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
                     "Plugin MCP Artifact size or SHA-256 does not match its candidate descriptor.");
             }
 
-            var mediaType = MediaTypeForPath(path);
-            if (!string.Equals(mediaType, candidate.MediaType, StringComparison.Ordinal))
+            if (!MediaTypesForPath(path).Contains(candidate.MediaType, StringComparer.Ordinal))
             {
                 throw new PluginRuntimeException(
                     "Plugin MCP Artifact MIME type does not match its file extension.");
@@ -316,10 +315,8 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
         var (size, hash) = await HashAsync(registered.AbsolutePath, cancellationToken).ConfigureAwait(false);
         if (size != registered.Descriptor.SizeBytes ||
             !string.Equals(hash, registered.Descriptor.Sha256, StringComparison.Ordinal) ||
-            !string.Equals(
-                MediaTypeForPath(registered.AbsolutePath),
-                registered.Descriptor.MediaType,
-                StringComparison.Ordinal))
+            !MediaTypesForPath(registered.AbsolutePath)
+                .Contains(registered.Descriptor.MediaType, StringComparer.Ordinal))
         {
             throw new PluginRuntimeException("Plugin Artifact changed after registration.");
         }
@@ -342,19 +339,29 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
         }
     }
 
-    private static string? MediaTypeForPath(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    private static IReadOnlyList<string> MediaTypesForPath(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
     {
-        ".png" => "image/png",
-        ".jpg" or ".jpeg" => "image/jpeg",
-        ".pdf" => "application/pdf",
-        ".json" or ".har" => "application/json",
-        ".txt" => "text/plain",
-        ".csv" => "text/csv",
-        ".zip" => "application/zip",
-        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ".xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        _ => null,
+        ".png" => ["image/png"],
+        ".jpg" or ".jpeg" => ["image/jpeg"],
+        ".pdf" => ["application/pdf"],
+        ".json" =>
+        [
+            "application/json",
+            "application/vnd.chatos.diagram+json",
+            "application/vnd.chatos.solution-workspace+json",
+        ],
+        ".har" => ["application/json"],
+        ".svg" => ["image/svg+xml"],
+        ".puml" => ["text/vnd.plantuml"],
+        ".md" => ["text/markdown"],
+        ".txt" => ["text/plain"],
+        ".csv" => ["text/csv"],
+        ".zip" => ["application/zip"],
+        ".docx" => ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        ".xlsx" => ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        ".pptx" => ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+        _ => [],
     };
 
     private void RemoveMissing()

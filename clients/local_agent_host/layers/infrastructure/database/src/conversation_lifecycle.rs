@@ -46,8 +46,18 @@ pub(super) async fn reconcile_conversation_after_run(
             "conversation Turn changed while reconciling: {turn_id}"
         )));
     }
-    if run.status == LocalAgentRunStatus::Succeeded {
+    if matches!(
+        run.status,
+        LocalAgentRunStatus::Succeeded | LocalAgentRunStatus::Failed
+    ) {
         let ordinal = next_message_ordinal(connection, &conversation_id).await?;
+        let content = run.terminal_outcome.clone().unwrap_or_else(|| {
+            if run.status == LocalAgentRunStatus::Failed {
+                json!({"error": "Local model execution failed before producing a response."})
+            } else {
+                serde_json::Value::Null
+            }
+        });
         sqlx::query(
             "INSERT INTO local_conversation_messages(\
              message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
@@ -57,12 +67,11 @@ pub(super) async fn reconcile_conversation_after_run(
         .bind(&conversation_id)
         .bind(&turn_id)
         .bind(ordinal)
-        .bind(serde_json::to_string(
-            run.terminal_outcome
-                .as_ref()
-                .unwrap_or(&serde_json::Value::Null),
-        )?)
-        .bind(serde_json::to_string(&json!({"run_id": run.run_id}))?)
+        .bind(serde_json::to_string(&content)?)
+        .bind(serde_json::to_string(&json!({
+            "run_id": run.run_id,
+            "terminal_status": run.status.as_str(),
+        }))?)
         .bind(now_unix_ms)
         .execute(&mut *connection)
         .await

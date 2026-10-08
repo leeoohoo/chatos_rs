@@ -2,7 +2,7 @@ import ChatOSConnector
 import ChatOSCore
 import SwiftUI
 
-enum AgentDirectTimelineItem: Identifiable {
+enum AgentDirectTimelineItem: Identifiable, Equatable {
     case message(ProjectAgentMessage)
     case agentProposal(LocalAgentCreationProposal)
     case teamProposal(LocalAgentTeamCreationProposal)
@@ -30,11 +30,24 @@ enum AgentDirectTimelineItem: Identifiable {
 @MainActor
 final class AgentDirectChatViewModel: ObservableObject {
     @Published private(set) var conversation: ProjectAgentRoom?
-    @Published private(set) var agents: [LocalAgentProfile] = []
-    @Published private(set) var messages: [ProjectAgentMessage] = []
-    @Published private(set) var pendingAgentProposals: [LocalAgentCreationProposal] = []
-    @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = []
-    @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = []
+    @Published private(set) var agents: [LocalAgentProfile] = [] {
+        didSet {
+            guard oldValue != agents else { return }
+            profilesByID = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
+        }
+    }
+    @Published private(set) var messages: [ProjectAgentMessage] = [] {
+        didSet { if oldValue != messages { rebuildTimeline() } }
+    }
+    @Published private(set) var pendingAgentProposals: [LocalAgentCreationProposal] = [] {
+        didSet { if oldValue != pendingAgentProposals { rebuildTimeline() } }
+    }
+    @Published private(set) var pendingTeamProposals: [LocalAgentTeamCreationProposal] = [] {
+        didSet { if oldValue != pendingTeamProposals { rebuildTimeline() } }
+    }
+    @Published private(set) var pendingMembershipProposals: [LocalAgentMembershipProposal] = [] {
+        didSet { if oldValue != pendingMembershipProposals { rebuildTimeline() } }
+    }
     @Published private(set) var teams: [ProjectAgentRoom] = []
     let composerState = AgentChatComposerState()
     @Published private(set) var attachmentDataByID: [String: Data] = [:]
@@ -103,9 +116,8 @@ final class AgentDirectChatViewModel: ObservableObject {
         supplementaryLoadTask?.cancel()
     }
 
-    var profilesByID: [String: LocalAgentProfile] {
-        Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
-    }
+    private(set) var profilesByID: [String: LocalAgentProfile] = [:]
+    private(set) var timelineItems: [AgentDirectTimelineItem] = []
 
     var teamsByID: [String: ProjectAgentRoom] {
         Dictionary(uniqueKeysWithValues: teams.map { ($0.id, $0) })
@@ -119,12 +131,12 @@ final class AgentDirectChatViewModel: ObservableObject {
         errorMessage ?? schedulerIssue?.message
     }
 
-    var timelineItems: [AgentDirectTimelineItem] {
+    private func rebuildTimeline() {
         let items = messages.map(AgentDirectTimelineItem.message)
             + pendingAgentProposals.map(AgentDirectTimelineItem.agentProposal)
             + pendingTeamProposals.map(AgentDirectTimelineItem.teamProposal)
             + pendingMembershipProposals.map(AgentDirectTimelineItem.membershipProposal)
-        return items.sorted {
+        timelineItems = items.sorted {
             ($0.createdAtUnixMs, $0.id) < ($1.createdAtUnixMs, $1.id)
         }
     }

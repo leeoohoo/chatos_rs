@@ -5,6 +5,34 @@ import Foundation
 import Testing
 
 extension NativePluginRuntimeTests {
+    @Test("installation status rejects legacy records without trusted file hashes")
+    func installationStatusRequiresIntegritySnapshot() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data(#"{"schemaVersion":3,"name":"fixture","version":"1.0.0","mcpServers":{}}"#.utf8)
+            .write(to: root.appendingPathComponent("chatos.plugin.json"))
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-10-07T00:00:00Z"
+        )
+
+        #expect(throws: NativePluginRuntimeError.self) {
+            _ = try NativePluginInstallationStatusBuilder.makeItem(
+                record: record,
+                ownerUserID: "user-1",
+                deviceID: "device-1",
+                platform: "macos-arm64",
+                active: true
+            )
+        }
+    }
+
     @Test("installation status reports permissions and ready MCP components")
     func installationStatusSnapshot() throws {
         let root = FileManager.default.temporaryDirectory
@@ -54,7 +82,12 @@ extension NativePluginRuntimeTests {
                 version: "1.0.0",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: root.path,
-                installedAt: "2026-08-26T00:00:00Z"
+                installedAt: "2026-08-26T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: root,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             ownerUserID: "user-1",
             deviceID: "device-1",
@@ -134,7 +167,12 @@ extension NativePluginRuntimeTests {
                 version: "1.0.0",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: root.path,
-                installedAt: "2026-08-26T00:00:00Z"
+                installedAt: "2026-08-26T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: root,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             ownerUserID: "user-1",
             deviceID: "device-1",
@@ -283,7 +321,12 @@ extension NativePluginRuntimeTests {
                 version: "1.0.0",
                 artifactSHA256: String(repeating: "a", count: 64),
                 installationPath: root.path,
-                installedAt: "2026-08-26T00:00:00Z"
+                installedAt: "2026-08-26T00:00:00Z",
+                packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                    installationURL: root,
+                    maximumFiles: 100,
+                    maximumBytes: 1_024 * 1_024
+                )
             ),
             ownerUserID: "user-1",
             deviceID: "device-1",

@@ -299,7 +299,15 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         }
         let localMessageTaskGraphService = localAgentHost.map {
-            NativeLocalAgentMessageTaskGraphService(host: $0)
+            NativeLocalAgentMessageTaskGraphService(
+                host: $0,
+                beforeRetry: { runID in
+                    await localAgentPlatformToolWorker?.releaseRun(runID)
+                },
+                afterRetry: {
+                    await localAgentPlatformToolWorker?.wake()
+                }
+            )
         }
         self.messageTaskGraphService = localMessageTaskGraphService
         self.turnProcessService = localAgentHost.map {
@@ -549,6 +557,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             await localConnectorService.setCompanionRuntime(self)
         }
         localConnectorControl.setServicePreparationTask(connectorServicePreparationTask)
+        localConnectorControl.setModelConfigurationChangedHandler { [weak self] in
+            guard let self, let ownerUserID = authenticatedUserID else { return }
+            refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+        }
         authentication.start()
     }
 

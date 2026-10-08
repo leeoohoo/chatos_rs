@@ -173,6 +173,23 @@ struct PetStateReducerTests {
     }
 
     @Test
+    func reviewWorkIsPausedAndDoesNotCountAsRunning() {
+        var reducer = PetStateReducer()
+        reducer.apply(.upsert(.init(
+            id: "review-1",
+            source: .taskExecution,
+            kind: .reviewing,
+            title: "需要检查"
+        )))
+
+        let presentation = reducer.presentation()
+        #expect(presentation.primaryActivity?.id == "review-1")
+        #expect(presentation.activeWorkCount == 0)
+        #expect(presentation.animationState == .review)
+        #expect(presentation.primaryActivity?.kind.requiresAttention == true)
+    }
+
+    @Test
     func visibleActivitiesKeepRunningWorkAlongsideApproval() {
         var reducer = PetStateReducer()
         reducer.apply(.upsert(.init(

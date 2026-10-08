@@ -25,9 +25,14 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
+        test "$CHATOS_PLUGIN_FILE_WATCH_MODE" = "polling"
+        mkdir "$CHATOS_PLUGIN_DATA_DIR.lock"
+        rmdir "$CHATOS_PLUGIN_DATA_DIR.lock"
+        mkdir "$CHATOS_PLUGIN_CACHE_DIR.lock"
+        rmdir "$CHATOS_PLUGIN_CACHE_DIR.lock"
         sleep 60 &
         echo $! > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
-        exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'
+        exec node -e 'const fs=require("node:fs");const http=require("node:http");const watcher=fs.watch(process.env.CHATOS_PLUGIN_DATA_DIR,()=>{});const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);const server=http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)});server.on("close",()=>watcher.close());server.listen(port,"127.0.0.1")'
         """#
         try Data(script.utf8).write(to: launcher)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)

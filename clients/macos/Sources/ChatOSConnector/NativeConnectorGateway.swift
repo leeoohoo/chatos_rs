@@ -572,7 +572,7 @@ struct GatewayModelProviderDTO: Decodable, Sendable {
     }
 }
 
-private struct GatewayModelProviderMutationRequest: Encodable {
+struct GatewayModelProviderMutationRequest: Encodable {
     var name: String
     var provider: String
     var promptVendor: String
@@ -586,7 +586,7 @@ private struct GatewayModelProviderMutationRequest: Encodable {
 
     init(draft: LocalConnectorModelProviderDraft, includeEmptyAPIKey: Bool) {
         name = draft.name
-        provider = draft.provider
+        provider = "gpt"
         promptVendor = draft.promptVendor
         apiKey = includeEmptyAPIKey || !draft.apiKey.isEmpty ? draft.apiKey : nil
         clearAPIKey = draft.clearAPIKey
@@ -594,7 +594,7 @@ private struct GatewayModelProviderMutationRequest: Encodable {
         enabled = draft.enabled
         supportsImages = draft.supportsImages
         supportsReasoning = draft.supportsReasoning
-        supportsResponses = draft.supportsResponses
+        supportsResponses = true
     }
 
     enum CodingKeys: String, CodingKey {

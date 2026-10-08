@@ -339,7 +339,12 @@ extension LocalAgentGroupChatScheduler {
     static func isAutomaticTriggerRecoveryEligible(
         _ checkpoint: AgentRunCheckpoint
     ) -> Bool {
-        if checkpoint.status == .running { return true }
+        // Claiming a Delivery and persisting its initial Run are deliberately durable before the
+        // first model request starts. If the app exits in that narrow window, the Delivery is
+        // already `running` while the checkpoint is still `ready`. Replaying that checkpoint is
+        // side-effect free and is required to keep the manager/executor lane from being occupied
+        // forever after restart.
+        if checkpoint.status == .ready || checkpoint.status == .running { return true }
         guard checkpoint.status == .paused,
               checkpoint.pendingCalls.isEmpty,
               checkpoint.inFlightCallID == nil,

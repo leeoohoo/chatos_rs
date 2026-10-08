@@ -29,9 +29,9 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ================================================================================
-COMPONENT: @modelcontextprotocol/sdk@1.30.0
+COMPONENT: @modelcontextprotocol/sdk@1.32.1
 DECLARED LICENSE: MIT
-SOURCE: https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.30.0.tgz
+SOURCE: https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.32.1.tgz
 
 MIT License
 

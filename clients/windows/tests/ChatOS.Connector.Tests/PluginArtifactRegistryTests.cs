@@ -92,6 +92,40 @@ public sealed class PluginArtifactRegistryTests : IDisposable
             CancellationToken.None));
     }
 
+    [Fact]
+    public async Task RegistersDiagramAndSolutionArtifactMediaTypes()
+    {
+        var root = Path.Combine(_directory, "studio-artifacts");
+        Directory.CreateDirectory(root);
+        var registry = new PluginArtifactRegistry();
+        var fixtures = new[]
+        {
+            (Name: "费用报销审批.svg", MediaType: "image/svg+xml", Content: "<svg/>"),
+            (Name: "费用报销审批.diagram.json", MediaType: "application/vnd.chatos.diagram+json", Content: "{}"),
+            (Name: "费用报销审批.puml", MediaType: "text/vnd.plantuml", Content: "@startuml\n@enduml\n"),
+            (Name: "费用报销审批.md", MediaType: "text/markdown", Content: "# 费用报销审批\n"),
+        };
+
+        foreach (var fixture in fixtures)
+        {
+            var bytes = Encoding.UTF8.GetBytes(fixture.Content);
+            await File.WriteAllBytesAsync(Path.Combine(root, fixture.Name), bytes);
+            var result = await registry.RegisterAsync(
+                Identity(),
+                "owner-1",
+                "device-1",
+                root,
+                "studio_export",
+                Candidate(fixture.Name, fixture.Name, fixture.MediaType, bytes),
+                CancellationToken.None);
+
+            var descriptor = result.GetProperty("_meta").GetProperty("chatos/artifacts")[0]
+                .GetProperty("artifact");
+            Assert.Equal(fixture.Name, descriptor.GetProperty("display_name").GetString());
+            Assert.Equal(fixture.MediaType, descriptor.GetProperty("media_type").GetString());
+        }
+    }
+
     public void Dispose()
     {
         try

@@ -346,7 +346,19 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
         .expect("failed conversation");
     assert_eq!(failed.conversation.version, 3);
     assert_eq!(failed.turns[0].status, LocalConversationTurnStatus::Failed);
-    assert_eq!(failed.messages.len(), 1);
+    assert_eq!(failed.messages.len(), 2);
+    assert_eq!(
+        failed.messages[1].role,
+        LocalConversationMessageRole::Assistant
+    );
+    assert_eq!(
+        failed.messages[1].content,
+        json!({"error": "provider rejected request"})
+    );
+    assert_eq!(
+        failed.messages[1].metadata,
+        json!({"run_id": "run-failure", "terminal_status": "failed"})
+    );
 }
 
 #[tokio::test]

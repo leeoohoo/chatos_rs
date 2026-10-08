@@ -1,16 +1,23 @@
 import express from 'express';
 import { execFile } from 'node:child_process';
-import { promises as fs, watch } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import {
+  readPluginLocalHttpEndpoint,
+  startPluginDirectoryMonitor
+} from '../../shared/local-http-application-runtime.js';
 import { assertSolutionWorkspace, validateWorkspace, workspaceToMarkdown, type SourceMode } from './schema.js';
 import { RevisionConflictError, SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
 
-const port = Number.parseInt(process.env.CHATOS_PLUGIN_APP_PORT ?? process.env.SOLUTION_STUDIO_PORT ?? '4198', 10);
-const host = process.env.CHATOS_PLUGIN_APP_HOST ?? process.env.SOLUTION_STUDIO_HOST ?? '127.0.0.1';
+const { host, port } = readPluginLocalHttpEndpoint({
+  defaultPort: 4198,
+  legacyHostEnvironmentKey: 'SOLUTION_STUDIO_HOST',
+  legacyPortEnvironmentKey: 'SOLUTION_STUDIO_PORT'
+});
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
 const execFileAsync = promisify(execFile);
@@ -138,5 +145,9 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(status).json({ error: error instanceof Error ? error.message : String(error), ...(error instanceof RevisionConflictError ? { actualRevision: error.actualRevision } : {}) });
 });
 
-watch(store.rootDirectory, { persistent: false }, (_event, fileName) => { if (fileName?.endsWith('.solution.json')) publishChange(); });
+startPluginDirectoryMonitor({
+  directory: store.rootDirectory,
+  accepts: (fileName) => fileName.endsWith('.solution.json'),
+  onChange: publishChange
+});
 app.listen(port, host, () => process.stdout.write(`Solution Studio is available at http://${host}:${port}\n`));

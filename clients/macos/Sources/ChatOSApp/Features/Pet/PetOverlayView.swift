@@ -225,7 +225,7 @@ struct PetMessageView: View {
 
             if isInspectingTask {
                 PetTaskProcessInlineView(activity: activity, onLoadTask: onLoadTask)
-            } else if activity.kind == .working || activity.kind == .reviewing {
+            } else if activity.kind == .working {
                 runningActivitiesSection(runningActivities(), showsHeader: false)
             } else if let approval = approval(for: activity) {
                 approvalContent(approval)

@@ -7,6 +7,9 @@ use serde_json::{Map, Value};
 
 use chatos_mcp_runtime::ToolResult;
 
+const MEMORY_TOOL_CONTENT_MAX_CHARS: usize = 262_144;
+const OMITTED_BINARY_PREFIX: &str = "[binary omitted from memory";
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeRecordOptions {
     pub persist_assistant_records: bool,
@@ -277,24 +280,21 @@ impl SaveToolRecordInput {
 
 impl From<SaveToolRecordInput> for SaveRecordInput {
     fn from(input: SaveToolRecordInput) -> Self {
+        let content = memory_safe_tool_content(input.content.as_str());
+        let structured_result = input.structured_result.map(memory_safe_tool_value);
         let mut metadata = metadata_object(input.metadata);
         insert_non_empty(&mut metadata, "toolName", &Some(input.tool_name));
         metadata.insert("success".to_string(), Value::Bool(input.success));
         metadata.insert("isError".to_string(), Value::Bool(input.is_error));
         metadata.insert("isStream".to_string(), Value::Bool(input.is_stream));
-        insert_value(
-            &mut metadata,
-            "structured_result",
-            input.structured_result.clone(),
-        );
 
         Self {
             conversation_id: input.conversation_id,
             conversation_turn_id: input.conversation_turn_id,
             message_id: input.message_id,
             role: "tool".to_string(),
-            content: input.content,
-            structured_payload: input.structured_result,
+            content,
+            structured_payload: structured_result,
             metadata: if metadata.is_empty() {
                 None
             } else {
@@ -312,6 +312,83 @@ impl From<SaveToolRecordInput> for SaveRecordInput {
             summarized_at: input.summarized_at,
             created_at: input.created_at,
         }
+    }
+}
+
+fn memory_safe_tool_content(content: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        let value = memory_safe_tool_value(value);
+        if let Ok(encoded) = serde_json::to_string(&value) {
+            return bound_memory_tool_content(encoded.as_str());
+        }
+    }
+    bound_memory_tool_content(content)
+}
+
+fn bound_memory_tool_content(content: &str) -> String {
+    if content.chars().count() <= MEMORY_TOOL_CONTENT_MAX_CHARS {
+        return content.to_string();
+    }
+    let mut bounded = content
+        .chars()
+        .take(MEMORY_TOOL_CONTENT_MAX_CHARS)
+        .collect::<String>();
+    bounded.push_str("\n[tool output truncated for memory persistence]");
+    bounded
+}
+
+fn memory_safe_tool_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(memory_safe_tool_value).collect())
+        }
+        Value::Object(mut map) => {
+            let binary_kind = map
+                .get("type")
+                .and_then(Value::as_str)
+                .filter(|kind| matches!(*kind, "image" | "audio"));
+            let mime_type = map
+                .get("mimeType")
+                .or_else(|| map.get("mime_type"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if let Some(data) = map.get("data").and_then(Value::as_str) {
+                let is_binary = binary_kind.is_some()
+                    || mime_type.as_deref().is_some_and(|value| {
+                        value.starts_with("image/") || value.starts_with("audio/")
+                    });
+                if is_binary {
+                    let kind = binary_kind.unwrap_or("binary");
+                    let mime = mime_type.as_deref().unwrap_or("application/octet-stream");
+                    map.insert(
+                        "data".to_string(),
+                        Value::String(format!(
+                            "{OMITTED_BINARY_PREFIX}: type={kind}, mime={mime}, encoded_chars={}]",
+                            data.len()
+                        )),
+                    );
+                }
+            }
+            for value in map.values_mut() {
+                let original = std::mem::take(value);
+                *value = memory_safe_tool_value(original);
+            }
+            Value::Object(map)
+        }
+        Value::String(value)
+            if value.len() > 4_096 && value.starts_with("data:") && value.contains(";base64,") =>
+        {
+            let mime = value
+                .strip_prefix("data:")
+                .and_then(|value| value.split_once(';'))
+                .map(|(mime, _)| mime)
+                .unwrap_or("application/octet-stream");
+            Value::String(format!(
+                "{OMITTED_BINARY_PREFIX}: mime={mime}, encoded_chars={}]",
+                value.len()
+            ))
+        }
+        other => other,
     }
 }
 

@@ -66,5 +66,10 @@ await Promise.all([
     ...common,
     entryPoints: ['src/generation-guides.ts'],
     outfile: 'dist/generation-guides.test.mjs'
+  }),
+  build({
+    ...common,
+    entryPoints: ['../shared/local-http-application-runtime.ts'],
+    outfile: 'dist/local-http-application-runtime.test.mjs'
   })
 ]);

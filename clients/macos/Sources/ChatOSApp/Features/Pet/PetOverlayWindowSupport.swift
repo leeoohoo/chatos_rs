@@ -422,9 +422,11 @@ enum PetOverlaySizing {
             height = store.presentation.attentionCount > 1 ? 470 : 390
         case .blocked, .failed:
             height = 345
-        case .working, .reviewing:
+        case .working:
             let taskCount = max(1, store.presentation.activeWorkCount)
             height = min(320, 148 + CGFloat(min(taskCount - 1, 3)) * 57)
+        case .reviewing:
+            height = 300
         case .waitingForUser:
             height = 470
         case .succeeded, .cancelled:

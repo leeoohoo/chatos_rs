@@ -24,6 +24,7 @@ struct Options {
     database: PathBuf,
     owner_user_id: String,
     mode: IpcMode,
+    workers_enabled: bool,
     read_only_tools: Vec<String>,
     approval_exempt_tools: Vec<String>,
     memory: Option<MemoryOptions>,
@@ -112,6 +113,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             serve_with_coordinator(
                 coordinator,
                 serve_stdio_until_parent_exit(assembly.coordinator()),
+                options.workers_enabled,
             )
             .await?;
         }
@@ -120,6 +122,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             serve_with_coordinator(
                 coordinator,
                 chatos_local_agent_host::unix::serve(&path, assembly.coordinator()),
+                options.workers_enabled,
             )
             .await?;
         }
@@ -128,6 +131,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             serve_with_coordinator(
                 coordinator,
                 chatos_local_agent_host::windows::serve(&name, assembly.coordinator()),
+                options.workers_enabled,
             )
             .await?;
         }
@@ -173,6 +177,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut database = None;
     let mut owner_user_id = None;
     let mut mode = None;
+    let mut workers_enabled = true;
     let mut read_only_tools = Vec::new();
     let mut approval_exempt_tools = Vec::new();
     let mut memory_base_url = None;
@@ -219,6 +224,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
                     return Err("--memory-timeout-ms must be between 1 and 300000".to_string());
                 }
             }
+            "--disable-workers" => workers_enabled = false,
             "--stdio" => set_mode(&mut mode, IpcMode::Stdio)?,
             #[cfg(unix)]
             "--socket" => {
@@ -253,6 +259,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
         database: database.ok_or_else(|| "--database is required".to_string())?,
         owner_user_id: owner_user_id.ok_or_else(|| "--owner-user-id is required".to_string())?,
         mode: mode.ok_or_else(|| "one IPC mode is required".to_string())?,
+        workers_enabled,
         read_only_tools,
         approval_exempt_tools,
         memory,
@@ -295,6 +302,9 @@ fn print_help() {
     eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
     eprintln!("  --memory-timeout-ms <ms>  Memory request timeout (default: 30000)");
+    eprintln!(
+        "  --disable-workers    Serve IPC without claiming model or tool work during bootstrap"
+    );
     eprintln!("  --stdio             Serve framed JSON on stdin/stdout");
     #[cfg(unix)]
     eprintln!("  --socket <path>     Serve a permission-restricted Unix socket");
@@ -305,10 +315,15 @@ fn print_help() {
 async fn serve_with_coordinator<F>(
     coordinator: Arc<LocalAgentHostCoordinator>,
     serve: F,
+    workers_enabled: bool,
 ) -> Result<(), Box<dyn Error>>
 where
     F: Future<Output = Result<(), chatos_local_agent_host::HostTransportError>>,
 {
+    if !workers_enabled {
+        serve.await?;
+        return Ok(());
+    }
     let (shutdown, receiver) = watch::channel(false);
     let mut coordinator_task = tokio::spawn({
         let coordinator = Arc::clone(&coordinator);
@@ -363,6 +378,21 @@ mod tests {
         assert!(!parent_process_changed(42, 42));
         assert!(parent_process_changed(42, 1));
         assert!(parent_process_changed(1, 1));
+    }
+
+    #[test]
+    fn parses_bootstrap_mode_without_workers() {
+        let options = parse_options(vec![
+            "--database".to_string(),
+            "/tmp/local-agent.sqlite3".to_string(),
+            "--owner-user-id".to_string(),
+            "user-1".to_string(),
+            "--disable-workers".to_string(),
+            "--stdio".to_string(),
+        ])
+        .expect("bootstrap options");
+
+        assert!(!options.workers_enabled);
     }
 
     #[tokio::test]

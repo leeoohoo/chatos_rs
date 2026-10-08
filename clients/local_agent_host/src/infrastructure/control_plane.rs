@@ -19,6 +19,11 @@ use std::{
 
 type RevisionKey = (String, String, String);
 
+// Local task runs can legitimately emit sizeable structured tool arguments, but
+// leaving the provider limit unset allows a malformed response to stream
+// indefinitely while still satisfying the inactivity watchdog.
+const DEFAULT_LOCAL_AGENT_MAX_OUTPUT_TOKENS: i64 = 16_384;
+
 #[async_trait]
 pub trait LocalModelCredentialResolver: Send + Sync {
     /// Resolves one native credential-store reference for a single model
@@ -327,7 +332,11 @@ fn decode_model_config(
         supports_images: snapshot.supports_images,
         instructions: snapshot.instructions,
         temperature: snapshot.temperature,
-        max_output_tokens: snapshot.max_output_tokens,
+        max_output_tokens: Some(
+            snapshot
+                .max_output_tokens
+                .unwrap_or(DEFAULT_LOCAL_AGENT_MAX_OUTPUT_TOKENS),
+        ),
         thinking_level: snapshot.thinking_level,
         prompt_cache_key: None,
         previous_response_id: None,

@@ -77,7 +77,12 @@ final class AgentGroupChatViewModel: ObservableObject {
     let ownerUserID: String
 
     @Published var room: ProjectAgentRoom?
-    @Published var agents: [LocalAgentProfile] = []
+    @Published var agents: [LocalAgentProfile] = [] {
+        didSet {
+            guard oldValue != agents else { return }
+            profilesByID = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
+        }
+    }
     @Published var members: [ProjectAgentRoomMember] = []
     @Published var messages: [ProjectAgentMessage] = []
     @Published var availableModels: [LocalAgentBuilderModelOption] = []
@@ -178,9 +183,7 @@ final class AgentGroupChatViewModel: ObservableObject {
         for task in runRefreshTasks.values { task.cancel() }
     }
 
-    var profilesByID: [String: LocalAgentProfile] {
-        Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
-    }
+    private(set) var profilesByID: [String: LocalAgentProfile] = [:]
 
     var activeMembers: [MemberPresentation] {
         let profiles = profilesByID

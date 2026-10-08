@@ -102,7 +102,12 @@ RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -print0 \
         openssh-client \
         ripgrep \
         tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 chatos \
+    && useradd --system --uid 10001 --gid chatos --home-dir /nonexistent \
+        --shell /usr/sbin/nologin chatos \
+    && mkdir -p /app /data /workspace /tmp/chatos \
+    && chown -R chatos:chatos /app /data /workspace /tmp/chatos
 
 FROM runtime-deps AS runtime-base
 
@@ -114,6 +119,8 @@ RUN sed -i 's/\r$//' /usr/local/bin/chatos-rust-service-entrypoint \
 
 WORKDIR /app
 ENV RUST_LOG=info
+
+USER chatos
 
 ENTRYPOINT ["chatos-rust-service-entrypoint"]
 

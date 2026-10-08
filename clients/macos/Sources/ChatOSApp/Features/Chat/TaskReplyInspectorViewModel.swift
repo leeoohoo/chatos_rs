@@ -54,6 +54,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     @Published var retryInstruction = ""
     @Published var errorMessage: String?
     @Published private(set) var modelOutputError: String?
+    @Published private(set) var retryErrorMessage: String?
 
     private let service: any MessageTaskGraphServicing
     private let realtimeService: (any ConversationRealtimeStreaming)?
@@ -186,6 +187,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
               !isRetrying else { return }
         isRetrying = true
         errorMessage = nil
+        retryErrorMessage = nil
         Task {
             do {
                 _ = try await service.retryRun(
@@ -202,7 +204,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 isRetrying = false
                 refresh()
             } catch {
-                errorMessage = error.localizedDescription
+                retryErrorMessage = error.localizedDescription
                 isRetrying = false
             }
         }

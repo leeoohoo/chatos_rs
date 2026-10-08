@@ -272,6 +272,22 @@ actor NativePluginRuntimeStore {
         return "cancelled"
     }
 
+    func cancel(runID: String) async {
+        let matching = sessions.filter { $0.value.identity.runID == runID }
+        guard !matching.isEmpty else { return }
+        for adapterSessionID in matching.keys {
+            sessions.removeValue(forKey: adapterSessionID)
+        }
+        for adapterSessionID in matching.keys {
+            releaseComputerUseLease(adapterSessionID: adapterSessionID)
+        }
+        notifyVisualSessionChanged()
+        for session in matching.values {
+            await session.client.terminate()
+            try? FileManager.default.removeItem(at: session.visualSessionURL)
+        }
+    }
+
     func visualDescriptors() -> [VisualDescriptor] {
         sessions.values.compactMap { session in
             guard let owner = session.owner, let ownerBoundAt = session.ownerBoundAt else { return nil }
@@ -319,10 +335,15 @@ actor NativePluginRuntimeStore {
         result: NativeJSONValue
     ) async {
         guard let session = sessions[adapterSessionID] else { return }
+        if toolName == "browser_session_close" {
+            guard NativeBrowserVisualBridge.sessionWasClosed(in: result) else { return }
+            try? NativeBrowserVisualBridge.clearPublishedSession(at: session.visualSessionURL)
+            notifyVisualSessionChanged()
+            return
+        }
         guard session.permissionSnapshot.contains("browser.file.transfer"),
               session.toolNames.contains("browser_screenshot"),
-              Self.browserVisualRefreshTools.contains(toolName),
-              toolName != "browser_session_close" else {
+              Self.browserVisualRefreshTools.contains(toolName) else {
             return
         }
         let screenshotResult: NativeJSONValue

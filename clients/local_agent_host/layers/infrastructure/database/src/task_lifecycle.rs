@@ -301,7 +301,9 @@ pub(super) async fn reconcile_task_after_run(
     run: &LocalAgentRunRecord,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
-    if run.owner_entity_type != "task" || !run.status.is_terminal() {
+    if run.owner_entity_type != "task"
+        || (!run.status.is_terminal() && run.status != LocalAgentRunStatus::NeedsReview)
+    {
         return Ok(());
     }
     let reported_outcome = reported_task_outcome(connection, &run.run_id).await?;
@@ -312,6 +314,10 @@ pub(super) async fn reconcile_task_after_run(
             .unwrap_or("succeeded"),
         LocalAgentRunStatus::Failed => "failed",
         LocalAgentRunStatus::Cancelled => "cancelled",
+        // A model claim can expire after its Host disappears. The Run keeps the more
+        // precise needs_review state, while the owning Task becomes blocked so it cannot
+        // remain falsely active and can be explicitly retried by the user.
+        LocalAgentRunStatus::NeedsReview => "blocked",
         _ => return Ok(()),
     };
     let updated = sqlx::query(

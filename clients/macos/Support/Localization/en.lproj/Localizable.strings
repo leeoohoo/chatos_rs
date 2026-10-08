@@ -269,6 +269,9 @@
 "重新处理" = "Retry";
 "重新处理此节点" = "Retry This Node";
 "重新运行" = "Run Again";
+"补充希望本次重试遵循的说明。留空也可以直接重新处理。" = "Add any guidance for this retry, or leave it blank to retry immediately.";
+"例如：使用当前日期重新查询，并汇总已确认的信息" = "For example: search again using the current date and summarize only verified information";
+"正在提交…" = "Submitting…";
 "重试" = "Retry";
 "错误" = "Error";
 "长时间未更新" = "Not Updated Recently";

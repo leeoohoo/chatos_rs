@@ -157,11 +157,11 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
                 throw new InvalidOperationException(
                     "The Local Agent Task has no program-bound remote connection.");
             }
-            var path = WindowsLocalAgentProjectToolExecutor.RequiredString(
+            var remotePath = WindowsLocalAgentProjectToolExecutor.RequiredString(
                 invocation.Arguments, "path");
             return new ApprovalPresentation(
                 "remote_upload_file",
-                [path],
+                [remotePath],
                 "remote",
                 new ConnectorApprovalRisk(
                     ConnectorApprovalRiskLevel.Medium,

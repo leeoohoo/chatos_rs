@@ -42,7 +42,9 @@ RUN sed -i \
       -e 's|https://dl-cdn.alpinelinux.org|https://mirrors.aliyun.com|g' \
       -e 's|http://dl-cdn.alpinelinux.org|http://mirrors.aliyun.com|g' \
       /etc/apk/repositories \
-    && apk upgrade --no-cache
+    && apk upgrade --no-cache \
+    && mkdir -p /var/cache/nginx /var/run /etc/nginx/conf.d \
+    && chown -R nginx:nginx /var/cache/nginx /var/run /etc/nginx/conf.d
 
 COPY ${NGINX_CONF_TEMPLATE} /etc/nginx/templates/default.conf.template
 COPY --from=builder /src/${APP_DIR}/dist /usr/share/nginx/html
@@ -50,5 +52,7 @@ COPY --from=builder /src/${APP_DIR}/dist /usr/share/nginx/html
 ENV API_PROXY_PASS=http://127.0.0.1:1
 ENV MEMORY_ENGINE_PROXY_PASS=http://127.0.0.1:1
 ENV USER_SERVICE_PROXY_PASS=http://127.0.0.1:1
+
+USER nginx
 
 EXPOSE 80

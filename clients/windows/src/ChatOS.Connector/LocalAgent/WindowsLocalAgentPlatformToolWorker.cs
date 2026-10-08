@@ -204,8 +204,12 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                 var result = await _host.SendAsync<ClaimLocalToolCommand, ClaimLocalToolResult>(new(
                     "claim_next_tool", owner, "windows-platform-tool-worker", 30_000,
                     WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames
-                        .Concat(_externalMcps?.ToolNames() ?? [])
-                        .ToHashSet(StringComparer.Ordinal),
+                        .Concat(
+                            _externalMcps?.ToolNames() ??
+                            new HashSet<string>(StringComparer.Ordinal))
+                        .ToHashSet(StringComparer.Ordinal)
+                        .OrderBy(name => name, StringComparer.Ordinal)
+                        .ToArray(),
                     ["create_task", "create_tasks_with_prerequisites"]), source.Token)
                     .ConfigureAwait(false);
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
