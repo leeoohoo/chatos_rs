@@ -21,7 +21,7 @@ public sealed class WindowsLocalAgentControlPlaneTests
         Assert.Equal("main_chat", capabilities.ProfileKey);
         Assert.Equal(
             ["list_latest_model_config_snapshots", "get_latest_capability_policy_snapshot"],
-            host.Commands.Select(command => command.GetProperty("type").GetString()).ToArray());
+            host.Commands.Select(command => command.GetProperty("type").GetString()!).ToArray());
         Assert.All(host.Commands, command =>
             Assert.Equal("user-1", command.GetProperty("owner_user_id").GetString()));
         Assert.Equal("main_chat", host.Commands[1].GetProperty("profile_key").GetString());
@@ -63,7 +63,7 @@ public sealed class WindowsLocalAgentControlPlaneTests
     public void MainChatCatalogOnlyPublishesTaskSchemaOverlays()
     {
         var names = WindowsLocalAgentCapabilityCatalog.MainChatTools
-            .Select(tool => tool.GetProperty("name").GetString())
+            .Select(tool => tool.GetProperty("name").GetString()!)
             .ToArray();
 
         Assert.Equal(
@@ -92,7 +92,7 @@ public sealed class WindowsLocalAgentControlPlaneTests
             .GetProperty("plugin_key")
             .GetProperty("enum")
             .EnumerateArray()
-            .Select(value => value.GetString())
+            .Select(value => value.GetString()!)
             .ToArray();
 
         Assert.Equal(
