@@ -259,8 +259,8 @@ public actor NativeLocalAgentPlatformToolWorker {
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) async throws {
     let cancelledPollingTask = resetLocked()
-    await cancelledPollingTask?.value
     await executor.reset()
+    await cancelledPollingTask?.value
     try await executor.configureExternalMCPs(externalMCPConfigs)
     self.ownerUserID = ownerUserID
     schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: .zero)
@@ -268,8 +268,8 @@ public actor NativeLocalAgentPlatformToolWorker {
 
   public func reset() async {
     let cancelledPollingTask = resetLocked()
-    await cancelledPollingTask?.value
     await executor.reset()
+    await cancelledPollingTask?.value
     ownerUserID = nil
   }
 
