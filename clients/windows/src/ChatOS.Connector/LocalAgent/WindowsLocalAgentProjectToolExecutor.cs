@@ -65,7 +65,7 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
         }
         var kinds = StringSet(rawKinds, "enabled_builtin_kinds");
         var pluginKeys = options.TryGetProperty("plugin_hints", out var rawHints)
-            ? PluginKeys(rawHints)
+            ? ParsePluginKeys(rawHints)
             : new HashSet<string>(StringComparer.Ordinal);
         return new(requiresExecution.GetBoolean(), kinds, pluginKeys, false);
     }
@@ -86,7 +86,7 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
         return output;
     }
 
-    private static HashSet<string> PluginKeys(JsonElement hints)
+    private static HashSet<string> ParsePluginKeys(JsonElement hints)
     {
         if (hints.ValueKind != JsonValueKind.Array)
         {

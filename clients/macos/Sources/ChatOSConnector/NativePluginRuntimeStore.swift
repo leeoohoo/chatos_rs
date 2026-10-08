@@ -272,6 +272,22 @@ actor NativePluginRuntimeStore {
         return "cancelled"
     }
 
+    func cancel(runID: String) async {
+        let matching = sessions.filter { $0.value.identity.runID == runID }
+        guard !matching.isEmpty else { return }
+        for adapterSessionID in matching.keys {
+            sessions.removeValue(forKey: adapterSessionID)
+        }
+        for adapterSessionID in matching.keys {
+            releaseComputerUseLease(adapterSessionID: adapterSessionID)
+        }
+        notifyVisualSessionChanged()
+        for session in matching.values {
+            await session.client.terminate()
+            try? FileManager.default.removeItem(at: session.visualSessionURL)
+        }
+    }
+
     func visualDescriptors() -> [VisualDescriptor] {
         sessions.values.compactMap { session in
             guard let owner = session.owner, let ownerBoundAt = session.ownerBoundAt else { return nil }

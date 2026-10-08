@@ -35,7 +35,7 @@
     "pack:verify": "npm run test && npm pack --dry-run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@xyflow/react": "12.9.3",
     "elkjs": "0.11.0",
     "express": "5.1.0",

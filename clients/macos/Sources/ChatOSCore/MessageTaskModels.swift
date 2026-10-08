@@ -26,6 +26,7 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
     public var tags: [String]
     public var defaultModelConfigID: String?
     public var defaultModelConfig: MessageTaskModelConfigSummary?
+    public var thinkingLevel: String?
     public var creatorUserID: String?
     public var creatorUsername: String?
     public var creatorDisplayName: String?
@@ -63,6 +64,7 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
         tags: [String] = [],
         defaultModelConfigID: String? = nil,
         defaultModelConfig: MessageTaskModelConfigSummary? = nil,
+        thinkingLevel: String? = nil,
         creatorUserID: String? = nil,
         creatorUsername: String? = nil,
         creatorDisplayName: String? = nil,
@@ -99,6 +101,7 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
         self.tags = tags
         self.defaultModelConfigID = defaultModelConfigID
         self.defaultModelConfig = defaultModelConfig
+        self.thinkingLevel = thinkingLevel
         self.creatorUserID = creatorUserID
         self.creatorUsername = creatorUsername
         self.creatorDisplayName = creatorDisplayName

@@ -103,7 +103,7 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
         lock (_gate) return _routes.Keys.ToHashSet(StringComparer.Ordinal);
     }
 
-    public async Task<JsonElement> ExecuteAsync(
+    internal async Task<JsonElement> ExecuteAsync(
         string ownerUserId,
         WindowsLocalToolInvocation invocation,
         CancellationToken cancellationToken)

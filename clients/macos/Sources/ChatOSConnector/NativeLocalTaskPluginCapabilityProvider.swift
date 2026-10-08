@@ -20,6 +20,10 @@ struct NativeAgentPluginExecutionPresentation: Sendable {
 }
 
 extension NativeLocalConnectorService {
+    func cancelAgentPluginTools(runID: String) async {
+        await pluginRuntimeStore.cancel(runID: runID)
+    }
+
     func makeTaskExecutionCapabilityToolProvider(
         ownerUserID: String,
         runID: String,

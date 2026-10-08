@@ -226,6 +226,20 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertEqual(recorded?.toolName, "read_file_raw")
     }
 
+    func testExecutorReleasesProjectResourcesForRun() async {
+        let projectExecutor = RecordingProjectToolExecutor()
+        let executor = NativeLocalAgentPlatformToolExecutor(
+            host: PlatformToolHostStub(mode: .idle),
+            attachmentRootURL: FileManager.default.temporaryDirectory,
+            projectTools: projectExecutor
+        )
+
+        await executor.release(runID: "run-1")
+
+        let releasedRunIDs = await projectExecutor.releasedRunIDs()
+        XCTAssertEqual(releasedRunIDs, ["run-1"])
+    }
+
     func testAttachmentVaultResolvesBoundedContentAndRejectsTampering() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-agent-attachment-test-\(UUID().uuidString)")
@@ -498,6 +512,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
 
 private actor RecordingProjectToolExecutor: NativeLocalAgentProjectToolExecuting {
     private var invocation: LocalAgentToolInvocationRecord?
+    private var releasedRuns: [String] = []
 
     func execute(
         ownerUserID: String,
@@ -508,6 +523,12 @@ private actor RecordingProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     }
 
     func recordedInvocation() -> LocalAgentToolInvocationRecord? { invocation }
+
+    func release(runID: String) async {
+        releasedRuns.append(runID)
+    }
+
+    func releasedRunIDs() -> [String] { releasedRuns }
 
     func reset() async {}
 }

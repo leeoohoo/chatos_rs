@@ -104,6 +104,7 @@ pub fn task_model_tools() -> Vec<Value> {
                         "minLength": 1,
                         "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
                     },
+                    "thinking_level": thinking_level_override_schema(),
                     "requires_execution": {
                         "type": "boolean",
                         "description": "Whether this Task needs command execution, tests, builds, Git operations, or file mutation. Project reads remain available without an execution workspace."
@@ -153,6 +154,7 @@ pub fn task_model_tools() -> Vec<Value> {
                                     "minLength": 1,
                                     "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
                                 },
+                                "thinking_level": thinking_level_override_schema(),
                                 "requires_execution": {"type": "boolean"},
                                 "enabled_builtin_kinds": builtin_kind_selection_schema(),
                                 "external_mcp_config_ids": {
@@ -228,6 +230,14 @@ pub fn task_model_tools() -> Vec<Value> {
             }
         }),
     ]
+}
+
+fn thinking_level_override_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"],
+        "description": "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level."
+    })
 }
 
 fn builtin_kind_selection_schema() -> Value {

@@ -299,7 +299,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             }
         }
         let localMessageTaskGraphService = localAgentHost.map {
-            NativeLocalAgentMessageTaskGraphService(host: $0)
+            NativeLocalAgentMessageTaskGraphService(
+                host: $0,
+                beforeRetry: { runID in
+                    await localAgentPlatformToolWorker?.releaseRun(runID)
+                }
+            )
         }
         self.messageTaskGraphService = localMessageTaskGraphService
         self.turnProcessService = localAgentHost.map {

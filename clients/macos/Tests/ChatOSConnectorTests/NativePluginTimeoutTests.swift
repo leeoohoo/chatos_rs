@@ -158,6 +158,22 @@ extension NativePluginRuntimeTests {
             timeout: .seconds(1)
         )
         #expect(status.jsonObject?["structuredContent"]?.jsonObject?["state"]?.jsonString == "open")
+        await store.cancel(runID: "run-1")
+        do {
+            _ = try await store.validate(
+                adapterSessionID: identity.adapterSessionID,
+                pluginID: identity.pluginID,
+                releaseID: identity.releaseID,
+                artifactSHA256: identity.artifactSHA256,
+                componentKey: identity.componentKey,
+                workspaceID: nil
+            )
+            Issue.record("Expected releasing the Run to terminate its plugin session")
+        } catch NativePluginRuntimeError.sessionNotFound {
+            // Expected: retry cleanup removes the old Run's adapter session.
+        } catch {
+            Issue.record("Unexpected error after releasing the Run: \(error)")
+        }
         await store.terminateAll()
     }
 

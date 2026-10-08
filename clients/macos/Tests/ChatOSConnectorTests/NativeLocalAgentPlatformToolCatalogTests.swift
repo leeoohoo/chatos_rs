@@ -26,6 +26,8 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         guard case .object(let tool) = create,
               case .object(let parameters)? = tool["parameters"],
               case .object(let properties)? = parameters["properties"],
+              case .object(let thinkingLevel)? = properties["thinking_level"],
+              case .array(let thinkingLevels)? = thinkingLevel["enum"],
               case .object(let hints)? = properties["plugin_hints"],
               case .object(let items)? = hints["items"],
               case .object(let hintProperties)? = items["properties"],
@@ -37,6 +39,10 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertEqual(values, [
             .string(NativeBrowserPluginIdentity.marketplaceKey),
             .string("open-computer-use@chatos-marketplace"),
+        ])
+        XCTAssertEqual(thinkingLevels, [
+            .string("none"), .string("auto"), .string("minimal"), .string("low"),
+            .string("medium"), .string("high"), .string("xhigh"), .string("max"),
         ])
         let titles = choices.compactMap { choice -> String? in
             guard case .object(let object) = choice,

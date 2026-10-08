@@ -39,12 +39,22 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         )
         XCTAssertEqual(task.objective, "Ship locally")
         XCTAssertEqual(task.prerequisiteTaskIDs, ["task-1"])
+        XCTAssertEqual(task.defaultModelConfig?.displayName, "gpt/gpt-6-sol")
+        XCTAssertEqual(task.thinkingLevel, "high")
         XCTAssertEqual(task.lastRun?.resultSummary, "Completed locally")
         XCTAssertEqual(task.lastRun?.reportContent, "Completed locally")
         XCTAssertTrue(task.processLog?.contains("检查项目结构") == true)
         XCTAssertTrue(task.processLog?.contains("已确认入口和运行方式。") == true)
         XCTAssertFalse(task.processLog?.contains("list_dir") == true)
         XCTAssertFalse(task.processLog?.contains("private model output") == true)
+
+        let defaultThinkingTask = try await service.fetchTask(
+            messageID: "message-1",
+            taskID: "task-1",
+            lookup: lookup
+        )
+        XCTAssertEqual(defaultThinkingTask.defaultModelConfig?.displayName, "gpt/gpt-6-sol")
+        XCTAssertEqual(defaultThinkingTask.thinkingLevel, "medium")
 
         try await service.cancelTask(
             messageID: "message-1",
@@ -60,7 +70,12 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
 
     func testRetryPersistsAdditionalInstructionInLocalCommand() async throws {
         let host = LocalTaskHostStub()
-        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        let service = NativeLocalAgentMessageTaskGraphService(
+            host: host,
+            beforeRetry: { runID in
+                await host.recordRelease(runID)
+            }
+        )
         await service.configure(ownerUserID: "user-1")
 
         _ = try await service.retryRun(
@@ -71,8 +86,13 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         )
 
         let command = try await host.lastCommand()
+        let lifecycle = await host.recordedLifecycle()
         XCTAssertEqual(command["type"], .string("retry_task"))
         XCTAssertEqual(command["retry_instruction"], .string("Use the local fallback"))
+        XCTAssertEqual(
+            Array(lifecycle.suffix(2)),
+            ["release:run-task-2", "command:retry_task"]
+        )
     }
 
     func testTaskClientRestartsWithCurrentVersionAndReason() async throws {
@@ -147,6 +167,7 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
 
 private actor LocalTaskHostStub: LocalAgentHostClientServicing {
     private var commands: [Data] = []
+    private var lifecycle: [String] = []
 
     func start(ownerUserID: String) async throws {}
     func stop() async {}
@@ -154,6 +175,7 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
     func request(command: Data) async throws -> Data {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
+        lifecycle.append("command:\(object?["type"] as? String ?? "unknown")")
         switch object?["type"] as? String {
         case "get_message_task_graph":
             return try json(["type": "message_task_graph", "graph": messageGraph()])
@@ -179,6 +201,22 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             return try json([
                 "type": "run",
                 "run": run(),
+            ])
+        case "get_model_config_snapshot":
+            return try json([
+                "type": "model_config_snapshot",
+                "snapshot": [
+                    "owner_user_id": "user-1",
+                    "model_config_ref": "model-1",
+                    "model_config_revision": "revision-1",
+                    "credential_ref": "env:MODEL_1_API_KEY",
+                    "base_url": "https://api.example.test/v1",
+                    "model": "gpt-6-sol",
+                    "provider": "gpt",
+                    "supports_responses": true,
+                    "thinking_level": "medium",
+                    "include_prompt_cache_retention": false,
+                ],
             ])
         case "get_task_runs":
             let taskID = object?["task_id"] as? String ?? "task-1"
@@ -237,6 +275,14 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             }
             return object
         }
+    }
+
+    func recordRelease(_ runID: String) {
+        lifecycle.append("release:\(runID)")
+    }
+
+    func recordedLifecycle() -> [String] {
+        lifecycle
     }
 
     private func graph() -> [String: Any] {
@@ -309,7 +355,13 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
         clientRef: String,
         contextRefs: [String] = []
     ) -> [String: Any] {
-        [
+        let runtimeSettings: Any = id == "task-2"
+            ? [
+                "selected_thinking_level": "high",
+                "reasoning_enabled": true,
+            ]
+            : NSNull()
+        return [
             "graph_id": "graph-1",
             "owner_user_id": "user-1",
             "source_entity_type": "conversation_turn",
@@ -317,8 +369,10 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "task_id": id,
             "title": id,
             "model_config_ref": "model-1",
+            "model_config_revision": "revision-1",
             "input": [
                 "objective": "Ship locally",
+                "runtime_settings": runtimeSettings,
                 "input_payload": [
                     "execution_client_ref": clientRef,
                     "dependency_context_refs": contextRefs,

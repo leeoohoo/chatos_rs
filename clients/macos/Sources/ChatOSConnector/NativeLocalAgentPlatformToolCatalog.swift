@@ -109,6 +109,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         "default_model_config_id": .object([
           "type": .string("string"), "minLength": .number(1),
         ]),
+        "thinking_level": thinkingLevelOverride,
         "requires_execution": .object(["type": .string("boolean")]),
         "enabled_builtin_kinds": builtinKindSelection,
         "external_mcp_config_ids": unavailableExternalMCPSelection,
@@ -148,6 +149,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
                 "default_model_config_id": .object([
                   "type": .string("string"), "minLength": .number(1),
                 ]),
+                "thinking_level": thinkingLevelOverride,
                 "requires_execution": .object(["type": .string("boolean")]),
                 "enabled_builtin_kinds": builtinKindSelection,
                 "external_mcp_config_ids": unavailableExternalMCPSelection,
@@ -231,6 +233,17 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static var capabilityTools: [LocalAgentJSONValue] {
     capabilityTools(pluginChoices: [], builtinChoices: [], externalChoices: [])
   }
+
+  private static let thinkingLevelOverride: LocalAgentJSONValue = .object([
+    "type": .string("string"),
+    "enum": .array(
+      ["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"]
+        .map(LocalAgentJSONValue.string)
+    ),
+    "description": .string(
+      "Optional reasoning level override for this Task. Omit it to use the selected model configuration's default Thinking level."
+    ),
+  ])
 
   public static func capabilityTools(
     pluginChoices: [NativeInstalledAgentPlugin],

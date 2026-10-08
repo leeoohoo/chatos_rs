@@ -95,23 +95,26 @@ enum NativeTerminalExecutor {
             )
         }
 
-        let exitSignal = NativeProcessExitSignal.reap(processID: processID)
+        // Freeze the out-parameter before any concurrently executing cancellation
+        // handler captures it. Swift 6.2 correctly rejects capturing the mutable local.
+        let spawnedProcessID = processID
+        let exitSignal = NativeProcessExitSignal.reap(processID: spawnedProcessID)
         var exitCode = await withTaskCancellationHandler {
             await exitSignal.waitAsync(timeout: max(0, timeout))
         } onCancel: {
-            _ = chatos_signal_process_group(processID, SIGKILL)
+            _ = chatos_signal_process_group(spawnedProcessID, SIGKILL)
         }
         let timedOut = exitCode == nil
         if timedOut {
-            _ = chatos_signal_process_group(processID, SIGTERM)
+            _ = chatos_signal_process_group(spawnedProcessID, SIGTERM)
             exitCode = await exitSignal.waitAsync(timeout: 0.75)
             if exitCode == nil {
-                _ = chatos_signal_process_group(processID, SIGKILL)
+                _ = chatos_signal_process_group(spawnedProcessID, SIGKILL)
                 exitCode = await exitSignal.waitAsync(timeout: 2)
             }
         }
         // The group leader may exit while a shell child remains alive.
-        _ = chatos_signal_process_group(processID, SIGKILL)
+        _ = chatos_signal_process_group(spawnedProcessID, SIGKILL)
 
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil

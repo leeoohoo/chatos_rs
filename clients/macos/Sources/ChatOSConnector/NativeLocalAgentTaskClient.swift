@@ -9,6 +9,7 @@ public struct LocalAgentTaskRecord: Decodable, Sendable, Equatable {
     public let taskID: String
     public let title: String
     public let modelConfigRef: String
+    public let modelConfigRevision: String?
     public let input: LocalAgentJSONValue
     public let status: String
     public let activeRunID: String?
@@ -24,6 +25,7 @@ public struct LocalAgentTaskRecord: Decodable, Sendable, Equatable {
         case taskID = "task_id"
         case title
         case modelConfigRef = "model_config_ref"
+        case modelConfigRevision = "model_config_revision"
         case input, status
         case activeRunID = "active_run_id"
         case version

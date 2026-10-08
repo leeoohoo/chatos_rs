@@ -389,6 +389,8 @@ struct CreateTaskArgs {
     input_payload: Value,
     #[serde(default)]
     default_model_config_id: Option<String>,
+    #[serde(default)]
+    thinking_level: Option<String>,
     requires_execution: bool,
     enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
@@ -489,6 +491,8 @@ pub(super) struct CreateTaskItem {
     input_payload: Value,
     #[serde(default)]
     default_model_config_id: Option<String>,
+    #[serde(default)]
+    thinking_level: Option<String>,
     requires_execution: bool,
     enabled_builtin_kinds: Vec<String>,
     #[serde(default)]
@@ -543,6 +547,7 @@ fn create_single_graph(
     validate_plugin_hints(&args.plugin_hints)?;
     let prompt = task_prompt(&args.objective, &args.description, &args.input_payload)?;
     let schedule = contact_async_schedule(args.schedule)?;
+    let runtime_settings = task_runtime_settings(args.thinking_level.as_deref())?;
     let graph_id = format!("local-task-graph-{}", invocation.invocation_id);
     let source_context = source_conversation_context(parent);
     let source_attachments = source_attachments(parent)?;
@@ -575,6 +580,7 @@ fn create_single_graph(
                 "source_turn_id": source_context.turn_id.clone(),
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
+                "runtime_settings": runtime_settings,
                 "attachments": source_attachments,
                 "prerequisite_task_ids": args.prerequisite_task_ids,
                 "schedule": schedule
@@ -648,6 +654,7 @@ async fn create_batch_graph(
         );
         let prompt = task_prompt(&item.objective, &item.description, &input_payload)?;
         let schedule = contact_async_schedule(item.schedule)?;
+        let runtime_settings = task_runtime_settings(item.thinking_level.as_deref())?;
         let task_id = ref_to_id
             .get(item.client_ref.trim())
             .cloned()
@@ -688,6 +695,7 @@ async fn create_batch_graph(
                 "source_turn_id": source_context.turn_id.clone(),
                 "remote_connection_id": source_context.remote_connection_id.clone(),
                 "source_run_id": parent.run_id,
+                "runtime_settings": runtime_settings,
                 "attachments": source_attachments.clone(),
                 "prerequisite_task_ids": item.prerequisite_task_ids,
                 "schedule": schedule
@@ -775,6 +783,30 @@ async fn resolve_task_model(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("model config not found: {requested}"))?;
     Ok((snapshot.model_config_ref, snapshot.model_config_revision))
+}
+
+fn task_runtime_settings(thinking_level: Option<&str>) -> Result<Value, String> {
+    let Some(level) = thinking_level
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Value::Null);
+    };
+    let normalized = match level.to_ascii_lowercase().as_str() {
+        "off" | "disabled" | "none" => "none",
+        "auto" => "auto",
+        "minimal" => "minimal",
+        "low" => "low",
+        "medium" => "medium",
+        "high" => "high",
+        "xhigh" => "xhigh",
+        "max" => "max",
+        _ => return Err("invalid thinking_level".to_string()),
+    };
+    Ok(json!({
+        "selected_thinking_level": normalized,
+        "reasoning_enabled": normalized != "none"
+    }))
 }
 
 pub(super) fn envelope(command_id: String, command: HostCommand) -> HostRequestEnvelope {

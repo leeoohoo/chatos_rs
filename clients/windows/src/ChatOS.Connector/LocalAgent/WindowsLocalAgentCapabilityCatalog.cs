@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace ChatOS.Connector.LocalAgent;
 
-internal sealed record WindowsLocalAgentPluginChoice(
+public sealed record WindowsLocalAgentPluginChoice(
     string PluginKey,
     string DisplayName,
     string Description);

@@ -365,6 +365,15 @@ fn task_model_definitions_are_host_owned_and_closed() {
             ["uniqueItems"],
         true
     );
+    assert_eq!(
+        tools[2]["parameters"]["properties"]["thinking_level"]["enum"],
+        json!(["none", "auto", "minimal", "low", "medium", "high", "xhigh", "max"])
+    );
+    assert_eq!(
+        tools[3]["parameters"]["properties"]["tasks"]["items"]["properties"]["thinking_level"]
+            ["type"],
+        "string"
+    );
     assert!(tools[2]["description"]
         .as_str()
         .expect("create task description")
@@ -445,6 +454,7 @@ async fn task_tool_resolves_an_explicit_authorized_model_revision() {
         "title": "Task",
         "objective": "Do work",
         "default_model_config_id": "model-2",
+        "thinking_level": "high",
         "requires_execution": false,
         "enabled_builtin_kinds": []
     }));
@@ -471,6 +481,29 @@ async fn task_tool_resolves_an_explicit_authorized_model_revision() {
         .expect("task");
     assert_eq!(task.model_config_ref, "model-2");
     assert_eq!(task.model_config_revision, "revision-2");
+    assert_eq!(
+        task.input["runtime_settings"],
+        json!({
+            "selected_thinking_level": "high",
+            "reasoning_enabled": true
+        })
+    );
+}
+
+#[test]
+fn task_thinking_override_normalizes_disabled_aliases_and_rejects_unknown_levels() {
+    assert_eq!(
+        task_runtime_settings(Some("disabled")).expect("disabled override"),
+        json!({
+            "selected_thinking_level": "none",
+            "reasoning_enabled": false
+        })
+    );
+    assert!(task_runtime_settings(Some("extreme")).is_err());
+    assert_eq!(
+        task_runtime_settings(None).expect("default thinking"),
+        Value::Null
+    );
 }
 
 #[tokio::test]

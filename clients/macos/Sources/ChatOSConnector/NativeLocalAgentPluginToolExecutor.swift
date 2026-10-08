@@ -72,6 +72,12 @@ actor NativeLocalAgentPluginToolExecutor {
         sessions.removeAll()
     }
 
+    func release(runID: String) async {
+        suspendExpiration(runID: runID)
+        sessions.removeValue(forKey: runID)
+        await connector.cancelAgentPluginTools(runID: runID)
+    }
+
     private func provider(
         ownerUserID: String,
         runID: String,

@@ -9,6 +9,7 @@ protocol NativeLocalAgentPlatformToolExecuting: Sendable {
   func configureExternalMCPs(
     _ configs: [NativeLocalAgentExternalMCPConfig]
   ) async throws
+  func release(runID: String) async
   func reset() async
 }
 
@@ -16,6 +17,7 @@ extension NativeLocalAgentPlatformToolExecuting {
   func configureExternalMCPs(
     _: [NativeLocalAgentExternalMCPConfig]
   ) async throws {}
+  func release(runID _: String) async {}
   func reset() async {}
 }
 
@@ -112,6 +114,10 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   func reset() async {
     await externalMCPs.reset()
     await projectTools?.reset()
+  }
+
+  func release(runID: String) async {
+    await projectTools?.release(runID: runID)
   }
 
   func configureExternalMCPs(
@@ -263,6 +269,13 @@ public actor NativeLocalAgentPlatformToolWorker {
     resetLocked()
     await executor.reset()
     ownerUserID = nil
+  }
+
+  /// Releases resources owned by a terminal Run before a retry creates its successor.
+  /// Browser CDP owns an exclusive Chrome Bridge, so waiting for idle expiration would
+  /// leave the replacement Run with a paired mode but no usable bridge backend.
+  public func releaseRun(_ runID: String) async {
+    await executor.release(runID: runID)
   }
 
   /// Starts one short compatibility window. Durable tool-request and approval

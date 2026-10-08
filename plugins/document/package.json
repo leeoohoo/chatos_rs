@@ -44,7 +44,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@hyzyla/pdfium": "2.1.13",
     "fflate": "0.8.3",
     "pdf-lib": "1.17.1",

@@ -6,7 +6,12 @@ protocol NativeLocalAgentProjectToolExecuting: Sendable {
         ownerUserID: String,
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue
+    func release(runID: String) async
     func reset() async
+}
+
+extension NativeLocalAgentProjectToolExecuting {
+    func release(runID _: String) async {}
 }
 
 struct NativeLocalAgentTaskExecutionContext: Sendable {
@@ -359,6 +364,12 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
     func reset() async {
         await terminalStore.cancelAll()
         await pluginTools.reset()
+    }
+
+    func release(runID: String) async {
+        _ = await terminalStore.cancel(ownerRunID: runID)
+        _ = await writeStore.discard(runID: runID)
+        await pluginTools.release(runID: runID)
     }
 
     private func executeTerminal(
