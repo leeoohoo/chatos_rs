@@ -10,8 +10,8 @@ struct LocalConnectorTaskModelsSection: View {
         LocalConnectorCard(
             appModel.localized("本地任务执行模型", english: "Local Task Execution Models"),
             subtitle: appModel.localized(
-                "每个模型分别配置任务用途、默认 Thinking、Temperature 与最大输出长度。",
-                english: "Configure task usage, default thinking, temperature, and maximum output for each model."
+                "选择可用于本地任务的模型，并补充用途说明。",
+                english: "Choose the models available to local Tasks and optionally describe their intended use."
             ),
             systemImage: "point.3.connected.trianglepath.dotted"
         ) {
@@ -79,34 +79,15 @@ private struct LocalConnectorTaskModelRow: View {
                     .controlSize(.small)
             }
 
-            Grid(horizontalSpacing: 12, verticalSpacing: 5) {
-                GridRow {
-                    fieldTitle(appModel.localized("任务用途", english: "Task Usage"))
-                    fieldTitle(appModel.localized("默认 Thinking", english: "Default Thinking"))
-                    fieldTitle("Temperature")
-                    fieldTitle("Max Tokens")
-                }
-                GridRow {
-                    TextField(
-                        appModel.localized(
-                            "例如：代码实现、分析、视觉理解",
-                            english: "For example: coding, analysis, visual understanding"
-                        ),
-                        text: $draft.usage
-                    )
-                        .frame(minWidth: 220)
-                    Picker("Thinking", selection: $draft.thinking) {
-                        ForEach(LocalConnectorThinkingOptions.options(provider: model.provider)) { option in
-                            Text(option.label).tag(option.value)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 150)
-                    TextField(appModel.localized("默认", english: "Default"), text: $draft.temperature)
-                        .frame(width: 100)
-                    TextField(appModel.localized("默认", english: "Default"), text: $draft.maxOutputTokens)
-                        .frame(width: 110)
-                }
+            VStack(alignment: .leading, spacing: 5) {
+                fieldTitle(appModel.localized("任务用途", english: "Task Usage"))
+                TextField(
+                    appModel.localized(
+                        "例如：代码实现、分析、视觉理解",
+                        english: "For example: coding, analysis, visual understanding"
+                    ),
+                    text: $draft.usage
+                )
             }
             .textFieldStyle(.roundedBorder)
             .disabled(!draft.taskEnabled)
