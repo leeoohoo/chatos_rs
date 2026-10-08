@@ -258,7 +258,8 @@ public actor NativeLocalAgentPlatformToolWorker {
     ownerUserID: String,
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) async throws {
-    resetLocked()
+    let cancelledPollingTask = resetLocked()
+    await cancelledPollingTask?.value
     await executor.reset()
     try await executor.configureExternalMCPs(externalMCPConfigs)
     self.ownerUserID = ownerUserID
@@ -266,7 +267,8 @@ public actor NativeLocalAgentPlatformToolWorker {
   }
 
   public func reset() async {
-    resetLocked()
+    let cancelledPollingTask = resetLocked()
+    await cancelledPollingTask?.value
     await executor.reset()
     ownerUserID = nil
   }
@@ -522,7 +524,8 @@ public actor NativeLocalAgentPlatformToolWorker {
     }
   }
 
-  private func resetLocked() {
+  private func resetLocked() -> Task<Void, Never>? {
+    let task = pollingTask
     generation = UUID()
     pollingTask?.cancel()
     pollingTask = nil
@@ -531,6 +534,7 @@ public actor NativeLocalAgentPlatformToolWorker {
     eventWakeTimeoutTask?.cancel()
     eventWakeTimeoutTask = nil
     pendingWake = false
+    return task
   }
 
   private static func safeErrorSummary(_ error: Error) -> String {
