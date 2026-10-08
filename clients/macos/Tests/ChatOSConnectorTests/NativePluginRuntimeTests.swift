@@ -25,6 +25,10 @@ struct NativePluginRuntimeTests {
         let launcher = binDirectory.appendingPathComponent("demo-app")
         let script = #"""
         #!/bin/sh
+        mkdir "$CHATOS_PLUGIN_DATA_DIR.lock"
+        rmdir "$CHATOS_PLUGIN_DATA_DIR.lock"
+        mkdir "$CHATOS_PLUGIN_CACHE_DIR.lock"
+        rmdir "$CHATOS_PLUGIN_CACHE_DIR.lock"
         sleep 60 &
         echo $! > "$CHATOS_PLUGIN_DATA_DIR/child.pid"
         exec node -e 'const http=require("http");const port=Number(process.env.CHATOS_PLUGIN_APP_PORT);http.createServer((req,res)=>{res.writeHead(200,{"content-type":"text/html"});res.end(process.env.CHATOS_PLUGIN_RELEASE_ID)}).listen(port,"127.0.0.1")'

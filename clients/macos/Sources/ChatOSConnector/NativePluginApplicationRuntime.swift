@@ -141,6 +141,10 @@ actor NativePluginApplicationRuntime {
             environment: overrides,
             installationURL: installationURL,
             writableDirectories: [dataURL, cacheURL],
+            writablePaths: [
+                URL(fileURLWithPath: dataURL.path + ".lock", isDirectory: true),
+                URL(fileURLWithPath: cacheURL.path + ".lock", isDirectory: true),
+            ],
             workspaceRoot: hostContext.workspaceRoot,
             permissionSnapshot: Set(manifest.permissions.map(\.permission)),
             networkAccess: .loopbackServer
