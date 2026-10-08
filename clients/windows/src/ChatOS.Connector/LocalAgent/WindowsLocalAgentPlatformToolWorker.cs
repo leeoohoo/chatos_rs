@@ -207,7 +207,9 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                         .Concat(
                             _externalMcps?.ToolNames() ??
                             new HashSet<string>(StringComparer.Ordinal))
-                        .ToHashSet(StringComparer.Ordinal),
+                        .ToHashSet(StringComparer.Ordinal)
+                        .OrderBy(name => name, StringComparer.Ordinal)
+                        .ToArray(),
                     ["create_task", "create_tasks_with_prerequisites"]), source.Token)
                     .ConfigureAwait(false);
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
