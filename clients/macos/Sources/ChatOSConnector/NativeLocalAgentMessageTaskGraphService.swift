@@ -9,15 +9,18 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private let client: NativeLocalAgentTaskClient
     private let controlPlane: NativeLocalAgentControlPlaneClient
     private let beforeRetry: @Sendable (String) async -> Void
+    private let afterRetry: @Sendable () async -> Void
     private var ownerUserID: String?
 
     public init(
         host: any LocalAgentHostClientServicing,
-        beforeRetry: @escaping @Sendable (String) async -> Void = { _ in }
+        beforeRetry: @escaping @Sendable (String) async -> Void = { _ in },
+        afterRetry: @escaping @Sendable () async -> Void = {}
     ) {
         self.client = NativeLocalAgentTaskClient(host: host)
         self.controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         self.beforeRetry = beforeRetry
+        self.afterRetry = afterRetry
     }
 
     public func configure(ownerUserID: String) {
@@ -132,6 +135,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             retryInstruction: instruction?.trimmingCharacters(in: .whitespacesAndNewlines)
                 .nilIfEmpty
         )
+        await afterRetry()
         guard let retried = graph.tasks.first(where: { $0.taskID == current.taskID }) else {
             throw NativeLocalAgentMessageTaskGraphServiceError.taskNotFound
         }

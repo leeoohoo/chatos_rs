@@ -303,6 +303,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 host: $0,
                 beforeRetry: { runID in
                     await localAgentPlatformToolWorker?.releaseRun(runID)
+                },
+                afterRetry: {
+                    await localAgentPlatformToolWorker?.wake()
                 }
             )
         }

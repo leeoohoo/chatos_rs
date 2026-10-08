@@ -74,6 +74,9 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
             host: host,
             beforeRetry: { runID in
                 await host.recordRelease(runID)
+            },
+            afterRetry: {
+                await host.recordWake()
             }
         )
         await service.configure(ownerUserID: "user-1")
@@ -90,8 +93,8 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["type"], .string("retry_task"))
         XCTAssertEqual(command["retry_instruction"], .string("Use the local fallback"))
         XCTAssertEqual(
-            Array(lifecycle.suffix(2)),
-            ["release:run-task-2", "command:retry_task"]
+            Array(lifecycle.suffix(3)),
+            ["release:run-task-2", "command:retry_task", "wake"]
         )
     }
 
@@ -279,6 +282,10 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
 
     func recordRelease(_ runID: String) {
         lifecycle.append("release:\(runID)")
+    }
+
+    func recordWake() {
+        lifecycle.append("wake")
     }
 
     func recordedLifecycle() -> [String] {
