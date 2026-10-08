@@ -100,7 +100,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     assert!(backup_path
         .file_name()
         .and_then(|value| value.to_str())
-        .is_some_and(|name| name.contains(".pre-migration-v18-to-v28-")));
+        .is_some_and(|name| name.contains(".pre-migration-v18-to-v29-")));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -181,7 +181,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 28);
+    assert_eq!(schema_version, 29);
 
     storage.pool.close().await;
     drop(storage);
@@ -221,6 +221,132 @@ async fn current_database_reopen_does_not_create_redundant_backup() {
         database_path.with_extension("sqlite-wal"),
         database_path.with_extension("sqlite-shm"),
     ] {
+        if let Err(error) = std::fs::remove_file(path) {
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        }
+    }
+}
+
+#[tokio::test]
+async fn version_twenty_nine_backfills_failed_conversation_messages() {
+    let database_path = std::env::temp_dir().join(format!(
+        "chatos-failed-conversation-migration-{}.sqlite",
+        Uuid::new_v4()
+    ));
+    let storage = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("create current database");
+    storage.pool.close().await;
+    drop(storage);
+
+    let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .foreign_keys(true);
+    let mut connection = SqliteConnection::connect_with(&options)
+        .await
+        .expect("open version 28 database");
+    sqlx::query("DELETE FROM client_schema_migrations WHERE version = 29")
+        .execute(&mut connection)
+        .await
+        .expect("rewind schema version");
+    sqlx::query(
+        "INSERT INTO local_conversations(\
+         conversation_id, owner_user_id, title, version, created_at_unix_ms, updated_at_unix_ms\
+         ) VALUES('conversation-failed', 'user-1', 'Failed conversation', 1, 1000, 1000)",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("insert conversation");
+    sqlx::query(
+        "INSERT INTO local_agent_runs(\
+         run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key,\
+         model_config_ref, model_config_revision, capability_policy_revision, input_json, status,\
+         iteration, model_attempt, max_iterations, version, terminal_outcome_json, checkpoint_json,\
+         created_at_unix_ms, updated_at_unix_ms\
+         ) VALUES(\
+         'run-failed', 'user-1', 'conversation_turn', 'turn-failed', 'main_chat',\
+         'model-1', 'revision-1', 'policy-1', '{}', 'failed',\
+         1, 5, 8, 2, '{\"error\":\"provider rejected request\"}', 'null', 2000, 3000\
+         )",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("insert failed Run");
+    sqlx::query(
+        "INSERT INTO local_conversation_turns(\
+         turn_id, conversation_id, user_message_id, run_id, status,\
+         created_at_unix_ms, updated_at_unix_ms\
+         ) VALUES(\
+         'turn-failed', 'conversation-failed', 'message-user', 'run-failed', 'failed', 2000, 3000\
+         )",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("insert failed Turn");
+    sqlx::query(
+        "INSERT INTO local_conversation_messages(\
+         message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json,\
+         created_at_unix_ms\
+         ) VALUES(\
+         'message-user', 'conversation-failed', 'turn-failed', 1, 'user',\
+         '{\"message\":\"hello\"}', '{}', 2000\
+         )",
+    )
+    .execute(&mut connection)
+    .await
+    .expect("insert user message");
+    connection.close().await.expect("close version 28 database");
+
+    let migrated = SqliteClientStorage::connect_file(&database_path)
+        .await
+        .expect("migrate failed conversation");
+    let rows = sqlx::query(
+        "SELECT message_id, ordinal, role, content_json, metadata_json \
+         FROM local_conversation_messages \
+         WHERE conversation_id = 'conversation-failed' ORDER BY ordinal",
+    )
+    .fetch_all(&migrated.pool)
+    .await
+    .expect("read migrated messages");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[1].get::<String, _>("message_id"),
+        "assistant:run-failed"
+    );
+    assert_eq!(rows[1].get::<i64, _>("ordinal"), 2);
+    assert_eq!(rows[1].get::<String, _>("role"), "assistant");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows[1].get::<String, _>("content_json"))
+            .expect("assistant content"),
+        serde_json::json!({"error": "provider rejected request"})
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&rows[1].get::<String, _>("metadata_json"))
+            .expect("assistant metadata"),
+        serde_json::json!({"run_id": "run-failed", "terminal_status": "failed"})
+    );
+    let conversation: (i64, i64) = sqlx::query_as(
+        "SELECT version, updated_at_unix_ms FROM local_conversations \
+         WHERE conversation_id = 'conversation-failed'",
+    )
+    .fetch_one(&migrated.pool)
+    .await
+    .expect("read migrated conversation");
+    assert_eq!(conversation, (2, 3000));
+    let schema_version: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM client_schema_migrations")
+            .fetch_one(&migrated.pool)
+            .await
+            .expect("schema version");
+    assert_eq!(schema_version, 29);
+
+    migrated.pool.close().await;
+    drop(migrated);
+    for path in std::iter::once(database_path.clone())
+        .chain(std::iter::once(database_path.with_extension("sqlite-wal")))
+        .chain(std::iter::once(database_path.with_extension("sqlite-shm")))
+        .chain(migration_backups(&database_path))
+    {
         if let Err(error) = std::fs::remove_file(path) {
             assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
         }

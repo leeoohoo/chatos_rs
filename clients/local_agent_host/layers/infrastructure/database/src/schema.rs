@@ -610,3 +610,60 @@ pub(super) const SCHEMA_V28: &[&str] = &[
     "CREATE INDEX local_task_external_dependencies_prerequisite ON \
        local_task_external_dependencies(prerequisite_task_id, task_id)",
 ];
+
+/// Failed conversation Runs used to update only the Turn status. Backfill the
+/// missing assistant message so historical failures are visible in Main Chat.
+pub(super) const SCHEMA_V29: &[&str] = &[
+    r#"WITH missing_failed_messages AS (
+         SELECT t.turn_id, t.conversation_id, t.run_id,
+                r.terminal_outcome_json, r.updated_at_unix_ms,
+                COALESCE((
+                  SELECT MAX(stored_message.ordinal)
+                  FROM local_conversation_messages stored_message
+                  WHERE stored_message.conversation_id = t.conversation_id
+                ), 0) AS current_max_ordinal,
+                ROW_NUMBER() OVER (
+                  PARTITION BY t.conversation_id
+                  ORDER BY r.updated_at_unix_ms, t.turn_id
+                ) AS missing_ordinal
+         FROM local_conversation_turns t
+         JOIN local_agent_runs r ON r.run_id = t.run_id
+         WHERE t.status = 'failed'
+           AND r.status = 'failed'
+           AND r.owner_entity_type = 'conversation_turn'
+           AND NOT EXISTS (
+             SELECT 1 FROM local_conversation_messages assistant
+             WHERE assistant.turn_id = t.turn_id AND assistant.role = 'assistant'
+           )
+       )
+       INSERT INTO local_conversation_messages(
+         message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json,
+         created_at_unix_ms
+       )
+       SELECT 'assistant:' || run_id, conversation_id, turn_id,
+              current_max_ordinal + missing_ordinal, 'assistant',
+              COALESCE(terminal_outcome_json,
+                '{"error":"Local model execution failed before producing a response."}'),
+              json_object('run_id', run_id, 'terminal_status', 'failed'),
+              updated_at_unix_ms
+       FROM missing_failed_messages"#,
+    r#"UPDATE local_conversations
+       SET version = version + 1,
+           updated_at_unix_ms = MAX(updated_at_unix_ms, COALESCE((
+             SELECT MAX(r.updated_at_unix_ms)
+             FROM local_conversation_turns t
+             JOIN local_agent_runs r ON r.run_id = t.run_id
+             WHERE t.conversation_id = local_conversations.conversation_id
+               AND t.status = 'failed'
+               AND r.status = 'failed'
+           ), updated_at_unix_ms))
+       WHERE EXISTS (
+         SELECT 1
+         FROM local_conversation_turns t
+         JOIN local_conversation_messages m ON m.turn_id = t.turn_id
+         WHERE t.conversation_id = local_conversations.conversation_id
+           AND t.status = 'failed'
+           AND m.role = 'assistant'
+           AND json_extract(m.metadata_json, '$.terminal_status') = 'failed'
+       )"#,
+];
