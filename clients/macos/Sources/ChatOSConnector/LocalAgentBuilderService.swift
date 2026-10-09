@@ -61,8 +61,11 @@ public struct LocalAgentBuilderService: Sendable {
         ownerUserID: String, refresh: Bool = false
     ) async throws -> LocalAgentBuilderResources {
         let catalog = try await connectorService.fetchModelCatalog(refresh: refresh)
-        let models = catalog.items.compactMap { model -> LocalAgentBuilderModelOption? in
-            guard model.enabled, model.taskEnabled, model.hasAPIKey else { return nil }
+        return .init(models: Self.modelOptions(from: catalog.items), plugins: [])
+    }
+
+    static func modelOptions(from models: [LocalConnectorModelConfig]) -> [LocalAgentBuilderModelOption] {
+        LocalConnectorModelSelectionPolicy.models(from: models, scope: .general).map { model -> LocalAgentBuilderModelOption in
             return .init(
                 id: model.id,
                 name: model.name,
@@ -80,7 +83,6 @@ public struct LocalAgentBuilderService: Sendable {
             }
             return $0.id < $1.id
         }
-        return .init(models: models, plugins: [])
     }
 
     public func generateDraft(

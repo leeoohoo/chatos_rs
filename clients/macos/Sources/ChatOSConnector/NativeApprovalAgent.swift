@@ -37,21 +37,7 @@ struct NativeApprovalAgent: Sendable {
     ) async -> NativeApprovalDecision {
         do {
             let policy = try settingsStore.load().effective(.approval)
-            guard model.enabled != false,
-                  model.taskEnabled != false,
-                  let apiKey = model.apiKey?.trimmedNonEmpty,
-                  let baseURLText = model.baseURL?.trimmedNonEmpty,
-                  let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
-                throw NativeApprovalAgentError.invalidModelConfiguration
-            }
-            let reserve = (policy.context ?? .init()).outputReserveTokens
-            let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
-            let client: any AgentModelClient = try AgentResponsesModelClient(
-                baseURL: baseURL, model: model.model, apiKey: apiKey,
-                thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
-                temperature: model.temperature ?? 0,
-                promptCacheKey: "approval-agent:\(model.id)"
-            )
+            let client = try Self.makeModelClient(model: model, policy: policy, thinkingLevel: thinkingLevel)
             return await evaluate(
                 request: request, modelClient: client, systemPrompt: systemPrompt, policy: policy,
                 runID: runID, runtimeScope: runtimeScope, contextProvider: contextProvider
@@ -59,6 +45,24 @@ struct NativeApprovalAgent: Sendable {
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
+    }
+
+    static func makeModelClient(
+        model: GatewayModelConfigDTO, policy: AgentRunPolicy, thinkingLevel: String?
+    ) throws -> any AgentModelClient {
+        guard model.isSelectable(for: .general),
+              let apiKey = model.apiKey?.trimmedNonEmpty,
+              let baseURLText = model.baseURL?.trimmedNonEmpty,
+              let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
+            throw NativeApprovalAgentError.invalidModelConfiguration
+        }
+        let reserve = (policy.context ?? .init()).outputReserveTokens
+        let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
+        return try AgentResponsesModelClient(
+            baseURL: baseURL, model: model.model, apiKey: apiKey,
+            thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
+            temperature: model.temperature ?? 0, promptCacheKey: "approval-agent:\(model.id)"
+        )
     }
 
     /// Shared loop with a separate read-only registry. Production callers provide

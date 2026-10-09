@@ -406,19 +406,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func availableTaskModels() async throws -> [LocalConnectorModelConfig] {
+        try await availableModels(scope: .taskCreation)
+    }
+
+    func availableModels(scope: LocalConnectorModelSelectionScope) async throws -> [LocalConnectorModelConfig] {
         if let modelCatalog {
-            return modelCatalog.items.filter {
-                $0.enabled && $0.taskEnabled && $0.hasAPIKey
-            }
+            return LocalConnectorModelSelectionPolicy.models(from: modelCatalog.items, scope: scope)
         }
         let lifecycle = lifecycleGeneration
         let catalog = try await service.fetchModelCatalog(refresh: false)
         try Task.checkCancellation()
         guard lifecycle == lifecycleGeneration else { throw CancellationError() }
         modelCatalog = catalog
-        return catalog.items.filter {
-            $0.enabled && $0.taskEnabled && $0.hasAPIKey
-        }
+        return LocalConnectorModelSelectionPolicy.models(from: catalog.items, scope: scope)
     }
 
     func saveModelConfiguration(

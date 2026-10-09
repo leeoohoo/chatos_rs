@@ -138,29 +138,14 @@ struct LocalConnectorModelsView: View {
     private func save() {
         guard let catalog = viewModel.modelCatalog else { return }
         do {
-            let updates = try Dictionary(uniqueKeysWithValues: catalog.items.map { model in
-                let draft = taskDrafts[model.id] ?? .init(model: model)
-                return (model.id, try draft.validatedUpdate(modelName: model.name))
-            })
-            var nextSettings = settingsDraft
-            let enabledIDs = Set(updates.compactMap { $0.value.taskEnabled ? $0.key : nil })
-            clearDisabledSelection(\.memorySummaryModelConfigID, thinking: \.memorySummaryThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
-            clearDisabledSelection(\.commandApprovalModelConfigID, thinking: \.commandApprovalThinkingLevel, in: &nextSettings, enabledIDs: enabledIDs)
+            let plan = try LocalConnectorModelSavePlan(
+                settings: settingsDraft, models: catalog.items, drafts: taskDrafts
+            )
             validationMessage = nil
-            viewModel.saveModelConfiguration(settings: nextSettings, updates: updates)
+            viewModel.saveModelConfiguration(settings: plan.settings, updates: plan.updates)
         } catch {
             validationMessage = error.localizedDescription
         }
     }
 
-    private func clearDisabledSelection(
-        _ modelKeyPath: WritableKeyPath<LocalConnectorModelSettings, String?>,
-        thinking thinkingKeyPath: WritableKeyPath<LocalConnectorModelSettings, String?>,
-        in settings: inout LocalConnectorModelSettings,
-        enabledIDs: Set<String>
-    ) {
-        guard let id = settings[keyPath: modelKeyPath], !enabledIDs.contains(id) else { return }
-        settings[keyPath: modelKeyPath] = nil
-        settings[keyPath: thinkingKeyPath] = nil
-    }
 }

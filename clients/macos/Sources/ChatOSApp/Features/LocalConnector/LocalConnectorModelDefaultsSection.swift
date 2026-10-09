@@ -40,7 +40,7 @@ struct LocalConnectorModelDefaultsSection: View {
     }
 
     private var runnableModels: [LocalConnectorModelConfig] {
-        models.filter { $0.enabled && $0.taskEnabled && $0.hasAPIKey }
+        LocalConnectorModelSelectionPolicy.models(from: models, scope: .general)
     }
 
     private func defaultModelRow(

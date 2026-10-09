@@ -100,6 +100,26 @@ final class LocalConnectorControlCenterViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.modelCatalog)
     }
 
+    func testTranslationAndOtherGeneralConsumersDoNotUseTaskCandidateFilter() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.setModelCatalogItems([
+            .init(id: "general-only", name: "General", provider: "gpt", modelName: "general",
+                  enabled: true, taskEnabled: false, hasAPIKey: true,
+                  supportsImages: false, supportsReasoning: false),
+            .init(id: "task", name: "Task", provider: "gpt", modelName: "task",
+                  enabled: true, taskEnabled: true, hasAPIKey: true,
+                  supportsImages: false, supportsReasoning: false),
+        ])
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        let loading = Task { try await viewModel.availableModels(scope: .general) }
+        try await waitUntil { await service.hasDelayedModelCatalogRequest() }
+        await service.resumeDelayedModelCatalogRequest()
+        let generalModels = try await loading.value
+        XCTAssertEqual(generalModels.map(\.id), ["general-only", "task"])
+        let taskModels = try await viewModel.availableTaskModels()
+        XCTAssertEqual(taskModels.map(\.id), ["task"])
+    }
+
     func testActivationWaitsForPendingSignedOutSuspension() async throws {
         let service = BrowserExtensionPairingServiceStub()
         await service.delayNextSuspension()
@@ -236,6 +256,7 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     private var delayedDisconnectContinuation: CheckedContinuation<Void, Never>?
     private var delayedApprovalContinuation: CheckedContinuation<Void, Never>?
     private var delayedModelCatalogContinuation: CheckedContinuation<Void, Never>?
+    private var modelCatalogItems: [LocalConnectorModelConfig] = []
     private var delayedPairingContinuation: CheckedContinuation<Void, Never>?
     private var delayedSuspensionContinuation: CheckedContinuation<Void, Never>?
     private var shouldDelayNextPairing = false
@@ -298,6 +319,7 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     }
 
     func hasDelayedModelCatalogRequest() -> Bool { delayedModelCatalogContinuation != nil }
+    func setModelCatalogItems(_ items: [LocalConnectorModelConfig]) { modelCatalogItems = items }
 
     func resumeDelayedModelCatalogRequest() {
         delayedModelCatalogContinuation?.resume()
@@ -381,7 +403,7 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
             delayedModelCatalogContinuation = continuation
         }
         return .init(
-            items: [],
+            items: modelCatalogItems,
             settings: .init(
                 modelRequestMaxRetries: nil,
                 commandApprovalModelConfigID: nil,

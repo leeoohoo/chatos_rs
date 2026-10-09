@@ -77,7 +77,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
             ),
             modelProvider: { [weak model] in
                 guard let model else { throw CancellationError() }
-                return try await model.localConnectorControl.availableTaskModels()
+                return try await model.localConnectorControl.availableModels(scope: .general)
             }
         )
         self.notepadViewModel = NotepadViewModel(service: model.notepadService)

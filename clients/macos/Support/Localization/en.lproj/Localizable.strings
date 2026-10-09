@@ -693,3 +693,4 @@
 "原模型配置 ID：%@" = "Original Model Configuration ID: %@";
 "请先选择可用模型" = "Choose an Available Model First";
 "%@（原配置）" = "%@ (Original Setting)";
+"仅控制创建任务时的模型候选，不影响聊天、Agent、翻译或默认模型选择。" = "Only controls model choices when creating Tasks, not chat, Agents, translation, or default model selection.";

@@ -10,8 +10,8 @@ struct LocalConnectorTaskModelsSection: View {
         LocalConnectorCard(
             appModel.localized("本地任务执行模型", english: "Local Task Execution Models"),
             subtitle: appModel.localized(
-                "选择可用于本地任务的模型，并补充用途说明。",
-                english: "Choose the models available to local Tasks and optionally describe their intended use."
+                "仅控制创建任务时的模型候选，不影响聊天、Agent、翻译或默认模型选择。",
+                english: "Only controls model choices when creating Tasks, not chat, Agents, translation, or default model selection."
             ),
             systemImage: "point.3.connected.trianglepath.dotted"
         ) {

@@ -120,10 +120,10 @@ extension NativeLocalConnectorService {
         // Main Chat may use every enabled model with a valid credential. `taskEnabled`
         // only controls whether create_task may bind that model to a background Task.
         let configs = catalog.required.filter {
-            $0.enabled != false && $0.hasAPIKey != false
+            $0.isSelectable(for: .general)
         }
         let taskEnabledModelConfigIDs = Set(configs.compactMap {
-            $0.taskEnabled != false ? $0.id : nil
+            $0.isSelectable(for: .taskCreation) ? $0.id : nil
         })
         let settings = catalog.optional
         let token = try requireAccessToken()
