@@ -118,6 +118,7 @@ pub fn task_model_tools() -> Vec<Value> {
                     },
                     "plugin_hints": plugin_hints_schema(),
                     "prerequisite_task_ids": prerequisite_task_ids_schema(),
+                    "supersedes_task_ids": supersedes_task_ids_schema(),
                     "schedule": task_schedule_schema()
                 },
                 "required": ["title", "objective", "requires_execution", "enabled_builtin_kinds"],
@@ -131,6 +132,7 @@ pub fn task_model_tools() -> Vec<Value> {
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "supersedes_task_ids": supersedes_task_ids_schema(),
                     "tasks": {
                         "type": "array",
                         "minItems": 1,
@@ -230,6 +232,14 @@ pub fn task_model_tools() -> Vec<Value> {
             }
         }),
     ]
+}
+
+fn supersedes_task_ids_schema() -> Value {
+    json!({
+        "type": "array", "maxItems": 50, "uniqueItems": true,
+        "items": {"type": "string", "minLength": 1},
+        "description": "Ids of affected old tasks already confirmed cancelled with cancel_task. Creates corrected work instead of reusing the old source graph; all ids must belong to this conversation. Omit for ordinary creation."
+    })
 }
 
 fn thinking_level_override_schema() -> Value {

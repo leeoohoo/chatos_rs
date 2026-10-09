@@ -24,6 +24,7 @@ mod task_tool_definitions;
 mod task_tool_executor_support;
 #[cfg(test)]
 mod task_tool_scope_tests;
+mod task_tool_source_context;
 mod task_tool_support;
 mod task_tools;
 mod tool_scheduler;

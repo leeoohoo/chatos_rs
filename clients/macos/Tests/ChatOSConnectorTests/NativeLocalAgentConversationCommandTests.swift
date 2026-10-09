@@ -4,6 +4,47 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentConversationCommandTests: XCTestCase {
+    func testHistoryMapsEverySameTurnUserMessageIncludingAttachmentOnlyGuidance() async throws {
+        let host = ConversationCommandHostStub()
+        let service = NativeLocalAgentConversationService(
+            host: host,
+            attachmentRootURL: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString),
+            runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        )
+        func message(_ id: String, _ ordinal: Int, _ role: String, _ content: String) -> [String: Any] {
+            ["message_id": id, "conversation_id": "conversation-1", "turn_id": "turn-1",
+             "ordinal": ordinal, "role": role, "content": content, "metadata": [:],
+             "created_at_unix_ms": ordinal * 1_000]
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "conversation": ["conversation_id": "conversation-1", "owner_user_id": "user-1",
+                             "title": "Test", "version": 4, "created_at_unix_ms": 1, "updated_at_unix_ms": 4_000],
+            "turns": [["turn_id": "turn-1", "conversation_id": "conversation-1",
+                       "user_message_id": "original", "run_id": "run-1", "status": "running",
+                       "created_at_unix_ms": 1_000, "updated_at_unix_ms": 4_000]],
+            // Deliberately unsorted: mapping must use storage ordinals.
+            "messages": [message("attachment-only", 4, "user", ""), message("guidance", 3, "user", "别发布"),
+                         message("original", 1, "user", "原要求"), message("reply", 2, "assistant", "已开始")],
+            "attachments": [["attachment_id": "attachment-1", "conversation_id": "conversation-1",
+                             "turn_id": "turn-1", "message_id": "attachment-only", "ordinal": 1,
+                             "display_name": "brief.txt", "media_type": "text/plain", "byte_size": 1,
+                             "sha256": String(repeating: "a", count: 64), "authorized_local_ref": "opaque-ref",
+                             "metadata": [:], "created_at_unix_ms": 4_000]],
+        ])
+        let page = try JSONDecoder().decode(LocalAgentConversationHistoryPage.self, from: data)
+        let mapped = await service.mapTurns(page)
+        let turn = try XCTUnwrap(mapped.first)
+        XCTAssertEqual(turn.userMessage.id, "original")
+        XCTAssertEqual(turn.additionalUserMessages.map(\.id), ["guidance", "attachment-only"])
+        XCTAssertEqual(turn.additionalUserMessages.first?.text, "别发布")
+        XCTAssertEqual(turn.additionalUserMessages.map(\.storageOrdinal), [3, 4])
+        XCTAssertEqual(turn.additionalUserMessages.last?.attachments.first?.id, "attachment-1")
+        XCTAssertTrue(turn.userMessage.attachments.isEmpty)
+        XCTAssertEqual(turn.resolvedMessageTaskLookup.sourceUserMessageID, "original")
+        let refreshed = await service.mapTurns(page)
+        XCTAssertEqual(refreshed, mapped)
+    }
+
     func testCreateConversationPersistsTypedProjectBinding() async throws {
         let host = ConversationCommandHostStub()
         let client = NativeLocalAgentConversationClient(host: host)

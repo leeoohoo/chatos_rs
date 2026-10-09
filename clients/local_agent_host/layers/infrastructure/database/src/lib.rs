@@ -50,6 +50,7 @@ mod task_commands;
 mod task_conversation_writeback;
 mod task_lifecycle;
 mod task_query_store;
+mod task_replacement_validation;
 #[cfg(test)]
 mod task_restart_descendant_tests;
 mod task_result;

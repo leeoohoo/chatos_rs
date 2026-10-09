@@ -365,12 +365,21 @@ public actor NativeLocalAgentConversationService:
         )
     }
 
-    private func mapTurns(_ page: LocalAgentConversationHistoryPage) -> [ConversationTurn] {
+    func mapTurns(_ page: LocalAgentConversationHistoryPage) -> [ConversationTurn] {
         let messagesByTurn = Dictionary(grouping: page.messages, by: \.turnID)
         let attachmentsByMessage = Dictionary(grouping: page.attachments, by: \.messageID)
         return page.turns.map { turn in
             let messages = (messagesByTurn[turn.turnID] ?? []).sorted { $0.ordinal < $1.ordinal }
             let user = messages.first(where: { $0.role == "user" })
+            let additionalUsers = messages.filter { $0.role == "user" }.dropFirst().map { message in
+                mapMessage(
+                    message,
+                    fallbackID: message.messageID,
+                    attachments: attachmentsByMessage[message.messageID] ?? [],
+                    ownerUserID: page.conversation.ownerUserID,
+                    conversationID: turn.conversationID
+                )
+            }
             let assistants = messages.filter { $0.role == "assistant" }
             let userMessage = mapMessage(
                 user,
@@ -406,6 +415,7 @@ public actor NativeLocalAgentConversationService:
                 sequence: Int64(clamping: user?.ordinal ?? 0),
                 revision: Int64(clamping: page.conversation.version),
                 userMessage: userMessage,
+                additionalUserMessages: additionalUsers,
                 processEvents: [TurnProcessEvent(
                     id: "local-process:\(turn.runID):\(turn.updatedAtUnixMs)",
                     title: processTitle(status),
@@ -464,7 +474,8 @@ public actor NativeLocalAgentConversationService:
                         conversationID: conversationID
                     )
                 )
-            }
+            },
+            storageOrdinal: message?.ordinal
         )
     }
 

@@ -16,7 +16,7 @@ use std::{collections::HashSet, str::FromStr};
 
 use super::task_result::decode_result_summary;
 
-const SCOPED_TASK_SELECT: &str =
+pub(super) const SCOPED_TASK_SELECT: &str =
     "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
      t.model_config_revision, t.capability_policy_revision, t.input_json, \
      t.max_iterations, t.status, t.active_run_id, t.version, \
@@ -61,6 +61,8 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
+            super::task_replacement_validation::validate_cancelled_sources(&mut connection, graph)
+                .await?;
             insert_graph(&mut connection, graph, now_unix_ms)
                 .await
                 .db()?;

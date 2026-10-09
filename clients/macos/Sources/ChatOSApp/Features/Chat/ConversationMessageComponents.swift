@@ -6,6 +6,9 @@ struct UserTurnMessageView: View {
     let showsTaskGraph: Bool
     let onOpenProcess: () -> Void
     let onOpenTaskGraph: () -> Void
+    var messageOverride: ChatMessage? = nil
+
+    private var message: ChatMessage { messageOverride ?? turn.userMessage }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -15,16 +18,16 @@ struct UserTurnMessageView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack {
                     Text("你").appFont(.caption.weight(.semibold))
-                    Text(turn.userMessage.createdAt, style: .time)
+                    Text(message.createdAt, style: .time)
                         .appFont(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-                if !turn.userMessage.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(turn.userMessage.text)
+                if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(message.text)
                         .textSelection(.enabled)
                 }
-                if !turn.userMessage.attachments.isEmpty {
-                    MessageAttachmentChips(attachments: turn.userMessage.attachments)
+                if !message.attachments.isEmpty {
+                    MessageAttachmentChips(attachments: message.attachments)
                 }
                 if showsProcess || showsTaskGraph {
                     HStack(spacing: 8) {
@@ -51,7 +54,7 @@ struct UserTurnMessageView: View {
     }
 
     private var showsProcess: Bool {
-        !turn.processEvents.isEmpty
+        messageOverride == nil && !turn.processEvents.isEmpty
     }
 
 }
