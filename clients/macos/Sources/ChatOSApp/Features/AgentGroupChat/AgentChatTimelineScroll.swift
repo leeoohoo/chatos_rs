@@ -48,14 +48,23 @@ where Item.ID == String {
     @ViewBuilder let emptyContent: () -> EmptyContent
 
     var body: some View {
-        AgentChatNativeTimeline(
-            entries: entries,
-            rowState: rowState,
-            fontScale: fontScale,
-            colorScheme: colorScheme,
-            isInitialContentReady: isInitialContentReady && !items.isEmpty,
-            scrollToLatestRequest: scrollToLatestRequest
-        )
+        Group {
+            if items.isEmpty && !hasOlderItems {
+                // An empty state belongs to the viewport, not a height-estimated message row.
+                emptyContent()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                AgentChatNativeTimeline(
+                    entries: entries,
+                    rowState: rowState,
+                    fontScale: fontScale,
+                    colorScheme: colorScheme,
+                    isInitialContentReady: isInitialContentReady && !items.isEmpty,
+                    scrollToLatestRequest: scrollToLatestRequest
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var entries: [AgentChatTimelineEntry] {
@@ -85,11 +94,6 @@ where Item.ID == String {
             AgentChatTimelineEntry(id: "timeline:item:\(item.id)", value: item) {
                 AnyView(rowContent(item))
             }
-        }
-        if items.isEmpty {
-            result.append(.init(id: "timeline:empty", value: true) {
-                AnyView(emptyContent())
-            })
         }
         return result
     }
