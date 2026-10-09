@@ -36,11 +36,12 @@ struct ResourceSidebar: View {
                 ForEach(model.projects) { project in
                     resourceRow(
                         title: project.title,
-                        subtitle: project.subtitle,
+                        subtitle: nil,
                         systemImage: "folder",
                         tint: .accentColor
                     )
                     .tag(SidebarSelection.project(project.id))
+                    .help(projectDirectoryHelp(project))
                     .contextMenu {
                         Button("重命名", systemImage: "pencil") {
                             creationSheet = .renameProject(project.id)
@@ -280,6 +281,14 @@ struct ResourceSidebar: View {
                 )
             }
         }
+    }
+
+    private func projectDirectoryHelp(_ project: ResourceItem) -> String {
+        let workspace = model.workspaceProject(id: project.id)
+        return ProjectDirectoryPresentation(
+            workspace?.displayRootPath ?? workspace?.rootPath ?? project.subtitle,
+            workspaces: model.localConnectorControl.status?.workspaces ?? []
+        ).path ?? project.title
     }
 
     private func resourceRow(
