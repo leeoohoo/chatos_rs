@@ -6,13 +6,6 @@ import Foundation
 @MainActor
 extension AgentGroupChatViewModel {
     func prepareAgentEditor() async -> Bool {
-        if hasLoadedModels {
-            if availableModels.isEmpty {
-                errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
-                return false
-            }
-            return true
-        }
         let task: Task<LocalAgentBuilderResources, Error>
         if let modelLoadTask {
             task = modelLoadTask
@@ -20,7 +13,7 @@ extension AgentGroupChatViewModel {
             let builderService = builderService
             let ownerUserID = ownerUserID
             let created = Task {
-                try await builderService.loadResources(ownerUserID: ownerUserID)
+                try await builderService.loadResources(ownerUserID: ownerUserID, refresh: true)
             }
             modelLoadTask = created
             task = created
@@ -32,7 +25,6 @@ extension AgentGroupChatViewModel {
         }
         do {
             availableModels = try await task.value.models
-            hasLoadedModels = true
             guard !availableModels.isEmpty else {
                 errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
                 return false
@@ -332,6 +324,7 @@ extension AgentGroupChatViewModel {
             errorMessage = AgentGroupChatError.notFound.localizedDescription
             return false
         }
+        guard await prepareAgentEditor() else { return false }
         let normalizedModelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let selectedModel = availableModels.first(where: { $0.id == normalizedModelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription

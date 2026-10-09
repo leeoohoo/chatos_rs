@@ -47,6 +47,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     @Published private(set) var directConversations: [ProjectAgentRoom] = []
     @Published private(set) var agents: [LocalAgentProfile] = []
     @Published private(set) var availableModels: [LocalAgentBuilderModelOption] = []
+    @Published private(set) var modelCatalogStatus: AgentModelCatalogStatus = .notLoaded
     @Published private(set) var triggerRuns: [TriggerRunPresentation] = []
     @Published private(set) var triggerRunDetailsByID: [UUID: TriggerRunDetails] = [:]
     @Published private(set) var selectedAgentID: String?
@@ -64,7 +65,7 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     private let builderService: LocalAgentBuilderService
     private var openedStore: SQLiteAgentGroupChatStore?
     private var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
-    private var hasLoadedModels = false
+    private let loadModelResources: @Sendable () async throws -> LocalAgentBuilderResources
     private var changeObservationTask: Task<Void, Never>?
     private var changeRefreshCoalescer: AgentChangeRefreshCoalescer?
     private var pendingRefreshPlan = AgentWorkspaceRefreshPlan()
@@ -76,12 +77,16 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         ownerUserID: String,
         service: NativeAgentGroupChatService,
         scheduler: LocalAgentGroupChatScheduler,
-        builderService: LocalAgentBuilderService
+        builderService: LocalAgentBuilderService,
+        loadModelResources: (@Sendable () async throws -> LocalAgentBuilderResources)? = nil
     ) {
         self.ownerUserID = ownerUserID
         self.service = service
         self.scheduler = scheduler
         self.builderService = builderService
+        self.loadModelResources = loadModelResources ?? {
+            try await builderService.loadResources(ownerUserID: ownerUserID, refresh: true)
+        }
     }
 
     deinit {
@@ -174,41 +179,40 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
     }
 
     func prepareAgentEditor() async -> Bool {
-        if hasLoadedModels {
-            if availableModels.isEmpty {
-                errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
-                return false
-            }
-            return true
-        }
+        await refreshModelCatalog(reportErrors: true)
+    }
 
+    func refreshModelCatalog(reportErrors: Bool) async -> Bool {
         let task: Task<LocalAgentBuilderResources, Error>
         if let modelLoadTask {
             task = modelLoadTask
         } else {
-            let builderService = builderService
-            let ownerUserID = ownerUserID
+            let loadModelResources = loadModelResources
             let created = Task {
-                try await builderService.loadResources(ownerUserID: ownerUserID)
+                try await loadModelResources()
             }
             modelLoadTask = created
             task = created
+            modelCatalogStatus = .loading
         }
         defer {
             modelLoadTask = nil
         }
         do {
             let resources = try await task.value
-            availableModels = resources.models
-            hasLoadedModels = true
+            if availableModels != resources.models { availableModels = resources.models }
+            modelCatalogStatus = .ready
             guard !availableModels.isEmpty else {
-                errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
+                if reportErrors {
+                    errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
+                }
                 return false
             }
-            errorMessage = nil
+            if reportErrors { errorMessage = nil }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            modelCatalogStatus = .failed
+            if reportErrors { errorMessage = error.localizedDescription }
             return false
         }
     }
@@ -229,6 +233,9 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         heartbeatPrompt: String
     ) async -> Bool {
         guard !isSavingAgent else { return false }
+        isSavingAgent = true
+        defer { isSavingAgent = false }
+        guard await refreshModelCatalog(reportErrors: true) else { return false }
         let modelConfigID = modelConfigID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let selectedModel = availableModels.first(where: { $0.id == modelConfigID }) else {
             errorMessage = LocalAgentBuilderError.modelUnavailable.localizedDescription
@@ -262,8 +269,6 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             heartbeatIntervalSeconds: heartbeatIntervalSeconds,
             heartbeatPrompt: heartbeatPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        isSavingAgent = true
-        defer { isSavingAgent = false }
         do {
             let store = try await resolveStore()
             if let existing {

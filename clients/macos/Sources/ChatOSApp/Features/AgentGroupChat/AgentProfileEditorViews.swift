@@ -97,11 +97,7 @@ struct AgentProfileEditorSheet: View {
                             .textFieldStyle(.roundedBorder)
                     }
                     editorField("模型") {
-                        Picker("", selection: $modelConfigID) {
-                            ForEach(viewModel.availableModels) { model in
-                                Text("\(model.name) · \(model.modelName)").tag(model.id)
-                            }
-                        }
+                        AgentModelPicker(selection: $modelConfigID, models: viewModel.availableModels)
                         .labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -112,11 +108,18 @@ struct AgentProfileEditorSheet: View {
                                 ForEach(selectedModel?.thinkingLevels ?? [], id: \.self) { level in
                                     Text(level).tag(level)
                                 }
+                                if selectedModel == nil, !thinkingLevel.isEmpty {
+                                    Text("\(thinkingLevel)（原配置）").tag(thinkingLevel)
+                                }
                             }
                             .labelsHidden()
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .disabled(selectedModel?.supportsReasoning != true)
-                            if selectedModel?.supportsReasoning != true {
+                            if selectedModel == nil {
+                                Text("请先选择可用模型")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else if selectedModel?.supportsReasoning != true {
                                 Text("当前模型未启用思考能力")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -225,9 +228,10 @@ struct AgentProfileEditorSheet: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(
                     viewModel.isSavingAgent
+                        || viewModel.modelCatalogStatus != .ready
                         || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || rolePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || modelConfigID.isEmpty
+                        || selectedModel == nil
                 )
             }
         }
@@ -252,9 +256,10 @@ struct AgentProfileEditorSheet: View {
     }
 
     private func normalizeThinkingLevel() {
+        guard let selectedModel else { return }
         thinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
             thinkingLevel,
-            allowedValues: selectedModel?.thinkingLevels ?? []
+            allowedValues: selectedModel.thinkingLevels
         ) ?? ""
     }
 

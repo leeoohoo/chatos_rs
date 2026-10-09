@@ -130,6 +130,7 @@ struct AgentManagementView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .task { _ = await viewModel.refreshModelCatalog(reportErrors: false) }
         .sheet(item: $editorTarget) { target in
             AgentProfileEditorSheet(
                 viewModel: viewModel,
@@ -234,8 +235,10 @@ struct AgentManagementView: View {
             }
             Divider()
             LabeledContent("模型") {
-                Text(modelName(agent.draft.modelConfigID))
-                    .lineLimit(1)
+                AgentModelStatusLabel(availability: .resolve(
+                    id: agent.draft.modelConfigID, models: viewModel.availableModels,
+                    catalogStatus: viewModel.modelCatalogStatus
+                ))
             }
             .font(.caption)
             LabeledContent("思考等级") {
@@ -702,13 +705,6 @@ struct AgentManagementView: View {
         case 3_600: "每小时"
         default: "每 \(seconds / 60) 分钟"
         }
-    }
-
-    private func modelName(_ id: String) -> String {
-        guard let model = viewModel.availableModels.first(where: { $0.id == id }) else {
-            return "已配置"
-        }
-        return "\(model.name) · \(model.modelName)"
     }
 
     private func openEditor(_ target: AgentProfileEditorTarget) {

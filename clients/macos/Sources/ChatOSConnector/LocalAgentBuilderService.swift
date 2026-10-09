@@ -57,8 +57,10 @@ public struct LocalAgentBuilderService: Sendable {
         self.runtime = runtime
     }
 
-    public func loadResources(ownerUserID: String) async throws -> LocalAgentBuilderResources {
-        let catalog = try await connectorService.fetchModelCatalog(refresh: false)
+    public func loadResources(
+        ownerUserID: String, refresh: Bool = false
+    ) async throws -> LocalAgentBuilderResources {
+        let catalog = try await connectorService.fetchModelCatalog(refresh: refresh)
         let models = catalog.items.compactMap { model -> LocalAgentBuilderModelOption? in
             guard model.enabled, model.taskEnabled, model.hasAPIKey else { return nil }
             return .init(

@@ -683,3 +683,13 @@
 "渐进披露结构" = "Progressive Disclosure Structure";
 "运行时 Router 预览" = "Runtime Router Preview";
 "项目经理尚未建立里程碑。" = "The project manager has not created milestones yet.";
+"模型状态未确认" = "Model Status Not Checked";
+"正在检查模型" = "Checking Model";
+"模型不可用" = "Model Unavailable";
+"模型列表加载失败" = "Failed to Load Models";
+"当前保存的模型不在可用列表中，请编辑后重新选择。" = "The saved model is not in the available list. Edit this Agent to choose another model.";
+"请选择模型" = "Choose a Model";
+"原模型不可用" = "Original Model Unavailable";
+"原模型配置 ID：%@" = "Original Model Configuration ID: %@";
+"请先选择可用模型" = "Choose an Available Model First";
+"%@（原配置）" = "%@ (Original Setting)";
