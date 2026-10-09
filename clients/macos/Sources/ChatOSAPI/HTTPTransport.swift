@@ -120,40 +120,7 @@ public struct URLSessionHTTPTransport: HTTPTransport {
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
             result[String(describing: entry.key).lowercased()] = String(describing: entry.value)
         }
-        let stream = AsyncThrowingStream<Data, Error>(
-            bufferingPolicy: .bufferingOldest(64)
-        ) { continuation in
-            let task = Task {
-                do {
-                    var chunk = Data(); chunk.reserveCapacity(4_096)
-                    for try await byte in bytes {
-                        chunk.append(byte)
-                        if byte == 10 || chunk.count >= 4_096 {
-                            switch continuation.yield(chunk) {
-                            case .enqueued:
-                                chunk.removeAll(keepingCapacity: true)
-                            case .dropped:
-                                continuation.finish(throwing: ChatOSAPIError.invalidResponse)
-                                return
-                            case .terminated:
-                                return
-                            @unknown default:
-                                continuation.finish(throwing: ChatOSAPIError.invalidResponse)
-                                return
-                            }
-                        }
-                    }
-                    if !chunk.isEmpty {
-                        guard case .enqueued = continuation.yield(chunk) else {
-                            continuation.finish(throwing: ChatOSAPIError.invalidResponse)
-                            return
-                        }
-                    }
-                    continuation.finish()
-                } catch { continuation.finish(throwing: error) }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        let stream = URLSessionChunkStream.body(from: bytes)
         return .init(statusCode: response.statusCode, headers: headers, body: stream)
     }
 }
