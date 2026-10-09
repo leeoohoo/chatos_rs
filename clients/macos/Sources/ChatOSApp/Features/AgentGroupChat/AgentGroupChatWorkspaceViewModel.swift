@@ -193,7 +193,8 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
             }
             modelLoadTask = created
             task = created
-            modelCatalogStatus = .loading
+            // Revalidating one editor must not erase every card's confirmed model status.
+            if modelCatalogStatus != .ready { modelCatalogStatus = .loading }
         }
         defer {
             modelLoadTask = nil
@@ -201,17 +202,17 @@ final class AgentGroupChatWorkspaceViewModel: ObservableObject {
         do {
             let resources = try await task.value
             if availableModels != resources.models { availableModels = resources.models }
-            modelCatalogStatus = .ready
+            if modelCatalogStatus != .ready { modelCatalogStatus = .ready }
             guard !availableModels.isEmpty else {
                 if reportErrors {
                     errorMessage = LocalAgentBuilderError.noAvailableModel.localizedDescription
                 }
                 return false
             }
-            if reportErrors { errorMessage = nil }
+            if reportErrors, errorMessage != nil { errorMessage = nil }
             return true
         } catch {
-            modelCatalogStatus = .failed
+            if modelCatalogStatus != .failed { modelCatalogStatus = .failed }
             if reportErrors { errorMessage = error.localizedDescription }
             return false
         }

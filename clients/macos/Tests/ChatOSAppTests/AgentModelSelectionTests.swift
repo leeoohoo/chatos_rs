@@ -2,6 +2,7 @@ import AppKit
 import ChatOSAgentRuntime
 import ChatOSConnector
 import ChatOSCore
+import Combine
 import SwiftUI
 import XCTest
 @testable import ChatOSApp
@@ -101,6 +102,53 @@ final class AgentModelSelectionTests: XCTestCase {
         XCTAssertEqual(fixture.viewModel.modelCatalogStatus, .ready)
     }
 
+    func testOpeningEditorKeepsConfirmedCardStatusesAndDoesNotPublishUnchangedCatalog() async throws {
+        let resources = LocalAgentBuilderResources(models: [Self.current], plugins: [])
+        let probe = ModelSelectionCatalogProbe(results: [.success(resources), .success(resources)],
+                                                delay: .milliseconds(100))
+        let fixture = makeFixture(probe: probe)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        _ = await fixture.viewModel.prepareAgentEditor()
+        var publications = 0
+        let subscription = fixture.viewModel.objectWillChange.sink { publications += 1 }
+        defer { subscription.cancel() }
+        let opening = Task { await fixture.viewModel.prepareAgentEditor() }
+        try await waitForCatalogRequest(2, probe: probe)
+        XCTAssertEqual(fixture.viewModel.modelCatalogStatus, .ready)
+        XCTAssertEqual(AgentModelAvailability.resolve(
+            id: Self.current.id, models: fixture.viewModel.availableModels,
+            catalogStatus: fixture.viewModel.modelCatalogStatus
+        ), .available(Self.current))
+        XCTAssertEqual(AgentModelAvailability.resolve(
+            id: Self.removed.id, models: fixture.viewModel.availableModels,
+            catalogStatus: fixture.viewModel.modelCatalogStatus
+        ), .unavailable)
+        let prepared = await opening.value
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(publications, 0, "Editing must not broadcast loading/ready to every card")
+    }
+
+    func testRealCatalogChangesStillUpdateCardAvailabilityAfterRefresh() async throws {
+        let probe = ModelSelectionCatalogProbe(results: [
+            .success(.init(models: [Self.removed], plugins: [])),
+            .success(.init(models: [Self.current], plugins: [])),
+        ], delay: .milliseconds(100))
+        let fixture = makeFixture(probe: probe)
+        defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
+        _ = await fixture.viewModel.prepareAgentEditor()
+        let opening = Task { await fixture.viewModel.prepareAgentEditor() }
+        try await waitForCatalogRequest(2, probe: probe)
+        XCTAssertEqual(fixture.viewModel.availableModels, [Self.removed])
+        XCTAssertEqual(fixture.viewModel.modelCatalogStatus, .ready)
+        let prepared = await opening.value
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(fixture.viewModel.availableModels, [Self.current])
+        XCTAssertEqual(AgentModelAvailability.resolve(
+            id: Self.removed.id, models: fixture.viewModel.availableModels,
+            catalogStatus: fixture.viewModel.modelCatalogStatus
+        ), .unavailable)
+    }
+
     func testFailedRefreshDoesNotClaimCachedModelsAreConfirmed() async throws {
         let probe = ModelSelectionCatalogProbe(results: [
             .success(.init(models: [Self.current], plugins: [])),
@@ -160,6 +208,14 @@ final class AgentModelSelectionTests: XCTestCase {
         XCTAssertEqual(agents.first?.draft.rolePrompt, agent.draft.rolePrompt)
     }
 
+    private func waitForCatalogRequest(_ count: Int, probe: ModelSelectionCatalogProbe) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while await probe.count < count {
+            guard ContinuousClock.now < deadline else { throw ModelSelectionFixtureError.unexpectedRequest }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+    }
+
     private func save(
         agent: LocalAgentProfile, modelID: String, in viewModel: AgentGroupChatWorkspaceViewModel
     ) async -> Bool {
@@ -203,15 +259,19 @@ private enum ModelSelectionFixtureError: Error { case unexpectedRequest }
 
 private actor ModelSelectionCatalogProbe {
     private var results: [Result<LocalAgentBuilderResources, Error>]
+    private let delay: Duration
     private(set) var count = 0
 
-    init(results: [Result<LocalAgentBuilderResources, Error>]) { self.results = results }
+    init(results: [Result<LocalAgentBuilderResources, Error>], delay: Duration = .milliseconds(10)) {
+        self.results = results
+        self.delay = delay
+    }
 
     func load() async throws -> LocalAgentBuilderResources {
         count += 1
         guard !results.isEmpty else { throw ModelSelectionFixtureError.unexpectedRequest }
         let result = results.removeFirst()
-        try await Task.sleep(for: .milliseconds(10))
+        try await Task.sleep(for: delay)
         return try result.get()
     }
 }

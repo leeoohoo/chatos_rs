@@ -1,11 +1,11 @@
 import ChatOSCore
 import SwiftUI
 
-enum AgentModelCatalogStatus: Equatable {
+enum AgentModelCatalogStatus: Equatable, Sendable {
     case notLoaded, loading, ready, failed
 }
 
-enum AgentModelAvailability: Equatable {
+enum AgentModelAvailability: Equatable, Sendable {
     case unchecked, loading, available(LocalAgentBuilderModelOption), unavailable, failed
 
     static func resolve(

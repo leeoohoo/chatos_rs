@@ -182,112 +182,22 @@ struct AgentManagementView: View {
     }
 
     private func agentCard(_ agent: LocalAgentProfile) -> some View {
-        let canManageStaff = LocalAgentPermission.canManageStaff(agent.draft.defaultSkillIDs)
-        let canAccessLocalProjects = LocalAgentPermission.canAccessLocalProjects(
-            agent.draft.defaultSkillIDs
+        AgentManagementCard(
+            agent: agent,
+            modelAvailability: .resolve(
+                id: agent.draft.modelConfigID, models: viewModel.availableModels,
+                catalogStatus: viewModel.modelCatalogStatus
+            ),
+            professionLabel: professions.first(where: { $0.key == agent.draft.professionKey })?.label
+                ?? agent.draft.professionKey,
+            isSelected: viewModel.selectedAgentID == agent.id,
+            isPreparingEditor: preparingEditorTargetID == agent.id,
+            onOpenDirect: { openDirect(agent) },
+            onEdit: { openEditor(.edit(agent)) },
+            onSelect: { Task { await viewModel.selectAgent(agent.id) } }
         )
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                AgentAvatarView(
-                    name: agent.draft.name,
-                    data: agent.draft.avatarData,
-                    size: AgentAvatarMetrics.managementCard,
-                    cornerRadius: 26
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(agent.draft.name)
-                        .font(.headline)
-                    Text(canManageStaff ? "可招募和解雇成员" : "无人员管理权限")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            if !agent.draft.description.isEmpty {
-                Text(agent.draft.description)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            HStack(spacing: 10) {
-                Button("私聊", systemImage: "bubble.left.and.bubble.right") {
-                    openDirect(agent)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .fixedSize()
-                Spacer(minLength: 0)
-                Button {
-                    openEditor(.edit(agent))
-                } label: {
-                    Text("编辑")
-                        .opacity(preparingEditorTargetID == agent.id ? 0 : 1)
-                        .overlay {
-                            if preparingEditorTargetID == agent.id {
-                                ProgressView().controlSize(.small)
-                            }
-                        }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .fixedSize()
-                .disabled(preparingEditorTargetID == agent.id)
-            }
-            Divider()
-            LabeledContent("模型") {
-                AgentModelStatusLabel(availability: .resolve(
-                    id: agent.draft.modelConfigID, models: viewModel.availableModels,
-                    catalogStatus: viewModel.modelCatalogStatus
-                ))
-            }
-            .font(.caption)
-            LabeledContent("思考等级") {
-                Text(agent.draft.thinkingLevel ?? "跟随模型默认")
-            }
-            .font(.caption)
-            LabeledContent("职业") {
-                Text(professions.first(where: { $0.key == agent.draft.professionKey })?.label
-                    ?? agent.draft.professionKey)
-            }
-            .font(.caption)
-            LabeledContent("主动巡检") {
-                Text(
-                    agent.draft.heartbeatEnabled
-                        ? Self.heartbeatIntervalLabel(agent.draft.heartbeatIntervalSeconds)
-                        : "关闭"
-                )
-            }
-            .font(.caption)
-            if canManageStaff || canAccessLocalProjects {
-                HStack(spacing: 6) {
-                    if canManageStaff {
-                        Label("人员管理", systemImage: "person.2.badge.gearshape")
-                    }
-                    if canAccessLocalProjects {
-                        Label("项目与团队", systemImage: "folder.badge.gearshape")
-                    }
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(
-                    viewModel.selectedAgentID == agent.id
-                        ? Color.accentColor : Color.primary.opacity(0.08),
-                    lineWidth: viewModel.selectedAgentID == agent.id ? 2 : 1
-                )
-        }
-        .contentShape(RoundedRectangle(cornerRadius: 12))
-        .onTapGesture {
-            Task { await viewModel.selectAgent(agent.id) }
-        }
+        .equatable()
     }
-
     @ViewBuilder
     private var triggerRunsPanel: some View {
         if let selectedAgentID = viewModel.selectedAgentID,
@@ -694,17 +604,6 @@ struct AgentManagementView: View {
             date: .abbreviated,
             time: .shortened
         )
-    }
-
-    private static func heartbeatIntervalLabel(_ seconds: Int) -> String {
-        switch seconds {
-        case 60: "每分钟"
-        case 300: "每 5 分钟"
-        case 900: "每 15 分钟"
-        case 1_800: "每 30 分钟"
-        case 3_600: "每小时"
-        default: "每 \(seconds / 60) 分钟"
-        }
     }
 
     private func openEditor(_ target: AgentProfileEditorTarget) {
