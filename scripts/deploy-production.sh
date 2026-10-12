@@ -223,7 +223,6 @@ ensure_admin_certificate() {
     user.jgoool.com
     memory.jgoool.com
     plugin.jgoool.com
-    task.jgoool.com
     official.jgoool.com
     connector.jgoool.com
     local-connector.jgoool.com
@@ -470,6 +469,11 @@ if [[ -e "$retired_sandbox_mtls" ]]; then
   echo "[INFO] removing retired Sandbox Manager mTLS material from the release"
   rm -rf -- "$retired_sandbox_mtls"
 fi
+retired_task_runner_mtls="$release_dir/docker/secrets/task-runner-mtls"
+if [[ -e "$retired_task_runner_mtls" ]]; then
+  echo "[INFO] removing retired Task Runner mTLS material from the release"
+  rm -rf -- "$retired_task_runner_mtls"
+fi
 
 ensure_admin_certificate
 
@@ -630,7 +634,6 @@ frontend_hosts=(
   user.jgoool.com
   memory.jgoool.com
   plugin.jgoool.com
-  task.jgoool.com
   official.jgoool.com
 )
 for host in "${frontend_hosts[@]}"; do

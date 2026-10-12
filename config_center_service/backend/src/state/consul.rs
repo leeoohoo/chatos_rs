@@ -51,4 +51,28 @@ impl AppState {
         }
         Ok(())
     }
+
+    pub(super) async fn delete_consul_service_config(
+        &self,
+        environment: &str,
+        service_name: &str,
+    ) -> Result<(), String> {
+        let Some(consul) = self.config.consul_http_addr.as_deref() else {
+            return Ok(());
+        };
+        let key = format!("chatos/{environment}/services/{service_name}/config");
+        let response = self
+            .http
+            .delete(format!("{}/v1/kv/{key}", consul.trim_end_matches('/')))
+            .send()
+            .await
+            .map_err(|err| format!("Consul delete {key} failed: {err}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Consul delete {key} returned {}",
+                response.status()
+            ));
+        }
+        Ok(())
+    }
 }

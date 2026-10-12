@@ -46,6 +46,8 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
     "user_service.downstream.memory_engine_base_url",
 ];
+pub const RETIRED_CONFIG_KEY_PREFIXES: &[&str] = &["task_runner."];
+pub const RETIRED_CONFIG_SERVICES: &[&str] = &["task-runner"];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
 pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =
     "platform.pressure.controller.enabled";

@@ -74,6 +74,21 @@ class UnifiedAdminTopologyTests(unittest.TestCase):
         self.assertIn('retired_sandbox_mtls="$release_dir/docker/secrets/sandbox-manager-mtls"', deploy)
         self.assertIn('rm -rf -- "$retired_sandbox_mtls"', deploy)
 
+    def test_task_runner_public_host_and_runtime_material_are_gone(self) -> None:
+        for relative_path in (
+            "docker/apisix/apisix.yaml",
+            "docker/nginx/jgoool-http.conf",
+            "docker/nginx/jgoool-https.conf",
+        ):
+            content = (ROOT / relative_path).read_text()
+            self.assertNotIn("task.jgoool.com", content)
+            self.assertNotIn("task-runner-backend", content)
+
+        deploy = (ROOT / "scripts/deploy-production.sh").read_text()
+        self.assertNotIn("task.jgoool.com", deploy)
+        self.assertIn('retired_task_runner_mtls="$release_dir/docker/secrets/task-runner-mtls"', deploy)
+        self.assertIn('rm -rf -- "$retired_task_runner_mtls"', deploy)
+
     def test_full_cloud_deploy_runs_in_remote_background(self) -> None:
         deploy = (ROOT / "scripts/deploy-production.sh").read_text()
         self.assertIn(

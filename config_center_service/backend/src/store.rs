@@ -78,6 +78,33 @@ impl AppStore {
             .map_err(db_error)
     }
 
+    pub async fn delete_definitions_by_prefixes(&self, prefixes: &[&str]) -> Result<(), String> {
+        sqlx::query(
+            r#"
+            DELETE FROM config_definitions
+            WHERE EXISTS (
+                SELECT 1
+                FROM unnest($1::text[]) AS retired(prefix)
+                WHERE key LIKE retired.prefix || '%'
+            )
+            "#,
+        )
+        .bind(prefixes)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(db_error)
+    }
+
+    pub async fn delete_snapshots_for_services(&self, services: &[&str]) -> Result<(), String> {
+        sqlx::query("DELETE FROM config_snapshots WHERE service_name = ANY($1)")
+            .bind(services)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(db_error)
+    }
+
     pub async fn list_definitions(&self) -> Result<Vec<ConfigDefinitionRecord>, String> {
         fetch_all(
             sqlx::query_scalar("SELECT data FROM config_definitions ORDER BY ui_order, key"),

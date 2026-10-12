@@ -2,6 +2,13 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+
+pub(super) fn is_retired_config_key(key: &str) -> bool {
+    RETIRED_CONFIG_KEYS.contains(&key)
+        || RETIRED_CONFIG_KEY_PREFIXES
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+}
 use crate::catalog::{
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_SIGNING_KEY_ID_CONFIG_KEY,
