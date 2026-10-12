@@ -396,7 +396,7 @@ function App() {
       </section>
 
       <section className="brand-statement" id="statement">
-        <span className="statement-label">OUR POINT OF VIEW</span><p>真正好用的产品，不靠一句<br /><span>“更聪明”</span>证明自己。</p><p>它要先把每一个工具认真做好，尊重人的判断，<br />再陪人把每一件事情稳稳做好。</p>
+        <span className="statement-label">OUR POINT OF VIEW</span><p>让每一次呼唤，<br />都能接住<span>未完的远方。</span></p><p>记得走过的路，也珍藏尚未抵达的念想。<br />下一次开口，不必从头开始，只需从停下的地方继续出发。</p>
         <div className="statement-sign"><PetSprite className="pet-peek" /><strong>叽咕狸</strong><small>为每一件真实的事</small></div>
       </section>
 
