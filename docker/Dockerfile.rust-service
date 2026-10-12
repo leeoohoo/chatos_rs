@@ -119,6 +119,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/chatos-rust-service-entrypoint \
 
 WORKDIR /app
 ENV RUST_LOG=info
+ENV MCP_STATE_ROOT=/tmp/chatos/mcp-state
 
 USER chatos
 

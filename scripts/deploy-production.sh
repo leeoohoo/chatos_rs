@@ -474,6 +474,8 @@ if [[ -e "$retired_task_runner_mtls" ]]; then
   echo "[INFO] removing retired Task Runner mTLS material from the release"
   rm -rf -- "$retired_task_runner_mtls"
 fi
+find "$release_dir/docker/secrets" -type f -name task-runner.identity.pem -delete
+python3 "$release_dir/scripts/prepare-production-secrets.py" "$release_dir"
 
 ensure_admin_certificate
 

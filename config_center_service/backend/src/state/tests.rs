@@ -5,6 +5,26 @@ use super::releases::overlay_pressure_state;
 use super::support::*;
 
 use super::*;
+
+#[test]
+fn retired_execution_keys_are_removed_without_matching_native_task_policy() {
+    for key in [
+        "task_runner.runtime.port",
+        "task_runner.custom.future_setting",
+        "chatos.downstream.task_runner_base_url",
+        "mcp_management.runtime.port",
+        "user_service.auth.task_runner_audience",
+        "plugin_management.downstream.task_runner_internal_api_secret",
+    ] {
+        assert!(is_retired_config_key(key), "retired key survived: {key}");
+    }
+    for key in [
+        "shared.local_task_execution.max_iterations",
+        "developer.task_runner_notes",
+    ] {
+        assert!(!is_retired_config_key(key), "active key was retired: {key}");
+    }
+}
 use crate::catalog::{
     LOCAL_CONNECTOR_ACTIVE_SESSION_LEASE_TTL_SECONDS_CONFIG_KEY,
     LOCAL_CONNECTOR_CONTROLLED_NETWORK_POLICY_TTL_SECONDS_CONFIG_KEY,

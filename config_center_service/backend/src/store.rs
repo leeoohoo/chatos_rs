@@ -85,7 +85,7 @@ impl AppStore {
             WHERE EXISTS (
                 SELECT 1
                 FROM unnest($1::text[]) AS retired(prefix)
-                WHERE key LIKE retired.prefix || '%'
+                WHERE starts_with(key, retired.prefix)
             )
             "#,
         )
@@ -98,6 +98,15 @@ impl AppStore {
 
     pub async fn delete_snapshots_for_services(&self, services: &[&str]) -> Result<(), String> {
         sqlx::query("DELETE FROM config_snapshots WHERE service_name = ANY($1)")
+            .bind(services)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(db_error)
+    }
+
+    pub async fn delete_instances_for_services(&self, services: &[&str]) -> Result<(), String> {
+        sqlx::query("DELETE FROM config_service_instances WHERE service_name = ANY($1)")
             .bind(services)
             .execute(&self.pool)
             .await

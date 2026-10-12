@@ -18,6 +18,7 @@ pub struct SummaryDispatchOutbox {
 }
 
 const COLUMNS: &str = "tenant_id,source_id,id AS thread_id,summary_dispatch_version,summary_dispatch_published_version,summary_dispatch_consumed_version";
+const RETURNING_COLUMNS: &str = "t.tenant_id,t.source_id,t.id AS thread_id,t.summary_dispatch_version,t.summary_dispatch_published_version,t.summary_dispatch_consumed_version";
 
 pub async fn get_summary_dispatch_state(
     db: &Db,
@@ -50,7 +51,7 @@ pub async fn claim_pending_summary_dispatches(
          summary_dispatch_published_version=GREATEST(t.summary_dispatch_published_version,t.summary_dispatch_version), \
          summary_dispatch_published_at=now(),summary_dispatch_last_error=NULL,summary_dispatch_pending=false \
          FROM candidates c WHERE t.tenant_id=c.tenant_id AND t.source_id=c.source_id AND t.id=c.id \
-         RETURNING {COLUMNS}"
+         RETURNING {RETURNING_COLUMNS}"
     )))
     .bind(limit.clamp(1, 10_000))
     .fetch_all(db)

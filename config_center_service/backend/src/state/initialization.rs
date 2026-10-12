@@ -26,6 +26,9 @@ impl AppState {
         store
             .delete_snapshots_for_services(RETIRED_CONFIG_SERVICES)
             .await?;
+        store
+            .delete_instances_for_services(RETIRED_CONFIG_SERVICES)
+            .await?;
         for definition in builtin_definitions() {
             store.upsert_definition(&definition).await?;
         }
