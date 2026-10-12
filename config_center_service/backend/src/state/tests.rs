@@ -15,6 +15,11 @@ fn retired_execution_keys_are_removed_without_matching_native_task_policy() {
         "mcp_management.runtime.port",
         "user_service.auth.task_runner_audience",
         "plugin_management.downstream.task_runner_internal_api_secret",
+        "project_service.downstream.task_runner_base_url",
+        "project_service.downstream.task_runner_internal_secret",
+        "project_service.downstream.task_runner_request_timeout_ms",
+        "project_service.security.mcp_management_internal_api_secret",
+        "project_service.security.task_runner_internal_api_secret",
     ] {
         assert!(is_retired_config_key(key), "retired key survived: {key}");
     }
