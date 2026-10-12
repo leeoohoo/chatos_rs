@@ -22,6 +22,8 @@ pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
 
 const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
 
+const MAIN_CHAT_TASK_REVISION_INSTRUCTIONS: &str = "[Latest User Intent and Executing Work]\nBefore arranging work or answering a follow-up that adds, changes, replaces, or cancels requirements, use list_tasks and get_task to inspect related non-terminal tasks in this conversation. Compare their actual objectives with the latest user message, including same-turn guidance. A verbal acknowledgement does not update an executing task. If requirements conflict or replace earlier work, call cancel_task on the affected tasks first and verify its result before claiming they stopped. Inspect get_task_dependency_graph and stop affected downstream work too; do not stop unrelated tasks. For a clear correction, create corrected work only after the affected old tasks are confirmed cancelled, passing their ids as supersedes_task_ids, and include the full revised objective and the need to inspect existing side effects. For an explicit stop, cancel without creating replacement work. For an ambiguous target or correction, ask for clarification; do not broadly cancel. Status inquiries and unrelated requests must not cancel tasks. Preserve old execution history. Cancellation prevents further durable execution but cannot undo already-completed files, external operations, or an in-flight external call; never promise rollback. Confirm what actually changed or stopped based on tool results. Never close a handoff while new guidance remains unhandled.";
+
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
 pub struct TransientLocalModelRuntime {
@@ -246,12 +248,23 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 Some(TASK_EXECUTION_WORKSPACE_INSTRUCTIONS.to_string()),
                 configured_instructions,
             )
+        } else if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            merge_instructions(
+                Some(MAIN_CHAT_TASK_REVISION_INSTRUCTIONS.to_string()),
+                configured_instructions,
+            )
         } else {
             configured_instructions
         };
         let (mut current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
         let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
-            && completed_async_task_handoff(claim.run.continuation_input.as_ref());
+            && completed_async_task_handoff(claim.run.continuation_input.as_ref())
+            && !claim.run.continuation_input.as_ref().is_some_and(|value| {
+                value
+                    .get("guidance")
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| !items.is_empty())
+            });
         let task_outcome_reported = self.profile_key == TASK_EXECUTION_PROFILE_KEY
             && completed_task_outcome_report(claim.run.continuation_input.as_ref());
         if async_handoff_confirmed {

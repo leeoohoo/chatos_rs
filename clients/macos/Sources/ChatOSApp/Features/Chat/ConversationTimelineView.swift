@@ -223,7 +223,7 @@ private struct ConversationTimelineContentView: View {
         let replyID = turn.assistantReplies.last?.id
             ?? turn.finalAssistantMessage?.id
             ?? "none"
-        return "\(turn.id)|\(turn.revision)|\(turn.assistantReplies.count)|\(replyID)"
+        return "\(turn.id)|\(turn.revision)|\(turn.additionalUserMessages.count)|\(turn.assistantReplies.count)|\(replyID)"
     }
 
     @ViewBuilder
@@ -239,6 +239,15 @@ private struct ConversationTimelineContentView: View {
                     requestedRunID = nil
                     selectedTaskTurn = turn
                 }
+            )
+
+        case let .additionalUser(turn, message):
+            UserTurnMessageView(
+                turn: turn,
+                showsTaskGraph: false,
+                onOpenProcess: {},
+                onOpenTaskGraph: {},
+                messageOverride: message
             )
 
         case let .reply(turn, reply):

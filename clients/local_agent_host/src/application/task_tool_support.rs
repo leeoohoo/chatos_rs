@@ -85,6 +85,7 @@ pub(super) fn task_for_agent_tool(
         "parent_task_id": input.and_then(|input| input.get("parent_task_id")).cloned().unwrap_or(Value::Null),
         "source_run_id": input.and_then(|input| input.get("source_run_id")).cloned().unwrap_or(Value::Null),
         "prerequisite_task_ids": prerequisite_task_ids,
+        "supersedes_task_ids": input.and_then(|input| input.get("supersedes_task_ids")).cloned().unwrap_or_else(|| json!([])),
         "created_at": unix_ms_rfc3339(task.created_at_unix_ms),
         "updated_at": unix_ms_rfc3339(task.updated_at_unix_ms),
     });

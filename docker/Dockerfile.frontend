@@ -43,6 +43,7 @@ RUN sed -i \
       -e 's|http://dl-cdn.alpinelinux.org|http://mirrors.aliyun.com|g' \
       /etc/apk/repositories \
     && apk upgrade --no-cache \
+    && sed -i 's|pid[[:space:]]*/var/run/nginx.pid;|pid /tmp/nginx.pid;|; s|pid[[:space:]]*/run/nginx.pid;|pid /tmp/nginx.pid;|' /etc/nginx/nginx.conf \
     && mkdir -p /var/cache/nginx /var/run /etc/nginx/conf.d \
     && chown -R nginx:nginx /var/cache/nginx /var/run /etc/nginx/conf.d
 

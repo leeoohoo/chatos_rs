@@ -21,7 +21,6 @@ extension ProjectAgentGroupChatView {
                     systemImage: "bubble.left.and.bubble.right",
                     description: Text("创建 Agent 后，通过 @ 提及开始协作。")
                 )
-                .padding(.top, 70)
             }
         )
         .id(viewModel.room?.id)

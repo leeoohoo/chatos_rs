@@ -115,6 +115,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
         "external_mcp_config_ids": unavailableExternalMCPSelection,
         "plugin_hints": pluginHints,
         "prerequisite_task_ids": prerequisiteTaskIDs,
+        "supersedes_task_ids": supersedesTaskIDs,
         "schedule": taskSchedule,
       ],
       required: ["title", "objective", "requires_execution", "enabled_builtin_kinds"]
@@ -128,6 +129,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       "parameters": .object([
         "type": .string("object"),
         "properties": .object([
+          "supersedes_task_ids": supersedesTaskIDs,
           "tasks": .object([
             "type": .string("array"),
             "minItems": .number(1),
@@ -343,6 +345,14 @@ public enum NativeLocalAgentPlatformToolCatalog {
     }
     return .object(schema)
   }
+
+  private static let supersedesTaskIDs: LocalAgentJSONValue = .object([
+    "type": .string("array"), "maxItems": .number(50), "uniqueItems": .bool(true),
+    "items": .object(["type": .string("string"), "minLength": .number(1)]),
+    "description": .string(
+      "Ids of affected old tasks already confirmed cancelled with cancel_task. Creates corrected work instead of reusing the old source graph; all ids must belong to this conversation. Omit for ordinary creation."
+    ),
+  ])
 
   private static let prerequisiteTaskIDs: LocalAgentJSONValue = .object([
     "type": .string("array"),

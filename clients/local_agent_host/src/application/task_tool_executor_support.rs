@@ -75,7 +75,61 @@ impl LocalTaskToolExecutor {
     pub(super) async fn reusable_source_graph(
         &self,
         parent: &LocalAgentRunRecord,
+        conversation_id: &str,
+        supersedes_task_ids: &[String],
     ) -> Result<Option<LocalTaskGraph>, String> {
+        if !supersedes_task_ids.is_empty() {
+            if supersedes_task_ids.len() > 50 {
+                return Err("supersedes_task_ids must contain at most 50 ids".to_string());
+            }
+            let mut unique = HashSet::new();
+            for task_id in supersedes_task_ids {
+                if task_id.trim().is_empty() || !unique.insert(task_id) {
+                    return Err("supersedes_task_ids must be nonempty unique ids".to_string());
+                }
+                let task = self
+                    .runtime
+                    .get_task_for_conversation(&parent.owner_user_id, conversation_id, task_id)
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("superseded task not found: {task_id}"))?;
+                if task.status != LocalTaskStatus::Cancelled {
+                    return Err(format!(
+                        "superseded task must be cancelled before replacement: {task_id}"
+                    ));
+                }
+            }
+            // An unaffected task may still keep the original source graph active.
+            // Reusing that graph would silently discard the corrected objective.
+            let existing = self
+                .runtime
+                .active_task_graph_for_source(
+                    &parent.owner_user_id,
+                    &parent.owner_entity_type,
+                    &parent.owner_entity_id,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            // Preserve model retry deduplication for the replacement itself.
+            return Ok(existing.filter(|graph| {
+                graph.tasks.iter().any(|task| {
+                    matches!(
+                        task.status,
+                        LocalTaskStatus::Pending
+                            | LocalTaskStatus::Ready
+                            | LocalTaskStatus::Running
+                    ) && task
+                        .input
+                        .get("supersedes_task_ids")
+                        .and_then(Value::as_array)
+                        .is_some_and(|ids| {
+                            let ids = ids.iter().filter_map(Value::as_str).collect::<HashSet<_>>();
+                            ids.len() == unique.len()
+                                && unique.iter().all(|id| ids.contains(id.as_str()))
+                        })
+                })
+            }));
+        }
         self.runtime
             .active_task_graph_for_source(
                 &parent.owner_user_id,

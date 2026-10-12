@@ -522,74 +522,22 @@ struct ProjectAgentGroupChatView: View {
     }
 
     private var roomHeader: some View {
-        HStack(alignment: .center, spacing: 14) {
-            HStack(spacing: 11) {
-                Image(systemName: "person.3.fill")
-                    .appFont(.headline)
-                    .foregroundStyle(AppPalette.ai)
-                    .frame(width: 34, height: 34)
-                    .background(AppPalette.aiSoft, in: RoundedRectangle(cornerRadius: 10))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(viewModel.room?.draft.name ?? "Agent 群聊")
-                        .appFont(.headline.weight(.semibold))
-                    if let goal = viewModel.room?.draft.goal, !goal.isEmpty {
-                        Text(goal)
-                            .appFont(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            .layoutPriority(1)
-
-            Spacer()
-
-            if viewModel.isRunningAgents {
-                Button {
-                    Task { await viewModel.pauseAgents() }
-                } label: {
-                    if viewModel.isPausingAgents {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("暂停", systemImage: "pause.fill")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(viewModel.isPausingAgents || viewModel.isStoppingAgents)
-            }
-            if viewModel.isRunningAgents || !viewModel.interruptedRuns.isEmpty {
-                Button(role: .destructive) {
-                    showsStopAllConfirmation = true
-                } label: {
-                    if viewModel.isStoppingAgents {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("停止全部", systemImage: "stop.fill")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(viewModel.isStoppingAgents)
-            }
-
-            Picker("团队区域", selection: $selectedSection) {
-                ForEach(AgentTeamSection.allCases) { section in
-                    Label(section.rawValue, systemImage: section.iconName)
-                        .tag(section)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(width: 470)
-        }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .background(AppPalette.surface)
+        AgentTeamHeader(
+            name: viewModel.room?.draft.name ?? "Agent 群聊",
+            goal: viewModel.room?.draft.goal,
+            selectedSection: $selectedSection,
+            isRunning: viewModel.isRunningAgents,
+            hasInterruptedRuns: !viewModel.interruptedRuns.isEmpty,
+            isPausing: viewModel.isPausingAgents,
+            isStopping: viewModel.isStoppingAgents,
+            onPause: { Task { await viewModel.pauseAgents() } },
+            onStop: { showsStopAllConfirmation = true }
+        )
     }
 
 }
 
-private extension AgentTeamSection {
+extension AgentTeamSection {
     var iconName: String {
         switch self {
         case .overview: "rectangle.3.group"

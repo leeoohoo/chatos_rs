@@ -1,6 +1,31 @@
 pub const USER_PREFERENCE_CONFIG_KEYS: &[&str] =
     &["shared.ui.locale", "shared.ai.internal_context_locale"];
 pub const RETIRED_CONFIG_KEYS: &[&str] = &[
+    "configuration_center.downstream.mcp_management_base_url",
+    "configuration_center.downstream.mcp_management_internal_api_secret",
+    "local_connector.security.mcp_management_internal_api_secret",
+    "memory_engine.security.task_runner_internal_api_secret",
+    "memory_engine.queue.rabbitmq_exchange",
+    "memory_engine.queue.rabbitmq_reconnect_delay_ms",
+    "memory_engine.queue.rabbitmq_url",
+    "plugin_management.catalog.rabbitmq_exchange",
+    "plugin_management.catalog.rabbitmq_reconnect_ms",
+    "plugin_management.catalog.rabbitmq_url",
+    "plugin_management.downstream.mcp_management_internal_api_secret",
+    "plugin_management.downstream.task_runner_base_url",
+    "plugin_management.downstream.task_runner_internal_api_secret",
+    "project_service.downstream.task_runner_base_url",
+    "project_service.downstream.task_runner_internal_secret",
+    "project_service.downstream.task_runner_request_timeout_ms",
+    "project_service.security.mcp_management_internal_api_secret",
+    "project_service.security.task_runner_internal_api_secret",
+    "shared.downstream.mcp_management_request_timeout_ms",
+    "shared.downstream.mcp_management_runtime_session_request_timeout_ms",
+    "shared.downstream.mcp_management_service_base_url",
+    "user_service.auth.task_runner_access_ttl_seconds",
+    "user_service.auth.task_runner_audience",
+    "user_service.downstream.task_runner_base_url",
+    "user_service.downstream.task_runner_internal_api_secret",
     "local_connector.relay.sandbox_image_request_timeout_ms",
     "local_connector.coordination.relay_delivery_ack_timeout_ms",
     "local_connector.coordination.terminal_subscriber_refresh_seconds",
@@ -46,6 +71,9 @@ pub const RETIRED_CONFIG_KEYS: &[&str] = &[
     "sandbox_manager.security.system_client_max_lease_ttl_seconds",
     "user_service.downstream.memory_engine_base_url",
 ];
+pub const RETIRED_CONFIG_KEY_PREFIXES: &[&str] = &["task_runner.", "chatos.", "mcp_management."];
+pub const RETIRED_CONFIG_SERVICES: &[&str] =
+    &["task-runner", "chatos-backend", "mcp-management-service"];
 pub const PLATFORM_PRESSURE_LEVEL_CONFIG_KEY: &str = "platform.pressure.level";
 pub const PLATFORM_PRESSURE_CONTROLLER_ENABLED_CONFIG_KEY: &str =
     "platform.pressure.controller.enabled";

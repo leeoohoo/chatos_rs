@@ -134,7 +134,6 @@ final class AgentGroupChatViewModel: ObservableObject {
     var supplementaryLoadTask: Task<Void, Never>?
     var runRefreshTasks: [UUID: Task<Void, Never>] = [:]
     var modelLoadTask: Task<LocalAgentBuilderResources, Error>?
-    var hasLoadedModels = false
     private var isLoadInFlight = false
     var hasLoadedRunHistory = false
     let messagePageSize = 50

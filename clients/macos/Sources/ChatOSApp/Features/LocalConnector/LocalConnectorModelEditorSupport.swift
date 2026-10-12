@@ -45,6 +45,23 @@ struct LocalConnectorTaskModelDraft: Equatable {
     }
 }
 
+/// Task switches only change task configuration; default model bindings stay untouched.
+struct LocalConnectorModelSavePlan {
+    let settings: LocalConnectorModelSettings
+    let updates: [String: LocalConnectorModelConfigUpdate]
+
+    init(
+        settings: LocalConnectorModelSettings, models: [LocalConnectorModelConfig],
+        drafts: [String: LocalConnectorTaskModelDraft]
+    ) throws {
+        self.settings = settings
+        updates = try Dictionary(uniqueKeysWithValues: models.map { model in
+            let draft = drafts[model.id] ?? .init(model: model)
+            return (model.id, try draft.validatedUpdate(modelName: model.name))
+        })
+    }
+}
+
 enum LocalConnectorModelEditorError: LocalizedError {
     case invalidTemperature(String)
     case invalidMaxTokens(String)

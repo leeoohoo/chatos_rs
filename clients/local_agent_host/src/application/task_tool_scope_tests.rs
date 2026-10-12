@@ -16,6 +16,9 @@ use chatos_local_agent_protocol::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+#[path = "task_revision_tests.rs"]
+mod revisions;
+
 fn envelope(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
     HostRequestEnvelope {
         protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,

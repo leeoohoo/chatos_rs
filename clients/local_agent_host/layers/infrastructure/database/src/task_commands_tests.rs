@@ -162,12 +162,25 @@ async fn cancelling_running_task_terminates_its_active_run() {
         .await
         .expect("start task")
         .expect("run");
+    let claim = storage
+        .claim_next_run(
+            &command("claim-before-cancel"),
+            "user-1",
+            "worker-1",
+            "old-token",
+            2_001,
+            12_001,
+            "event-old-claim",
+        )
+        .await
+        .expect("claim model step")
+        .expect("active model claim");
     let cancelled = storage
         .cancel_task(
             &command("cancel"),
             "user-1",
             "task-root",
-            Some(2),
+            None,
             "stop",
             &[],
             "event-run-cancelled",
@@ -183,6 +196,31 @@ async fn cancelling_running_task_terminates_its_active_run() {
         .expect("get run")
         .expect("stored run");
     assert_eq!(stored_run.status, LocalAgentRunStatus::Cancelled);
+    let late_result = storage
+        .apply_transition(
+            &command("late-result"),
+            &RunTransition {
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                expected_status: LocalAgentRunStatus::ModelRunning,
+                next_status: LocalAgentRunStatus::Succeeded,
+                next_model_attempt: 1,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                tool_batch: None,
+                checkpoint: None,
+                clear_continuation_input: true,
+                terminal_outcome: Some(json!({"content": "stale success"})),
+                event_id: "event-stale-success".to_string(),
+                event_type: "run_succeeded".to_string(),
+                event_payload: json!({}),
+                occurred_at_unix_ms: 3_001,
+            },
+        )
+        .await
+        .expect_err("cancelled execution cannot commit a late result");
+    assert!(matches!(late_result, ClientStorageError::Conflict(_)));
     let events = storage
         .list_events(0, 20, Some(&run.run_id))
         .await

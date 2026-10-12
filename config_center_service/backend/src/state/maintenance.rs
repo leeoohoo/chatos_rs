@@ -213,13 +213,11 @@ impl AppState {
     pub(super) async fn purge_retired_config_keys(&self) -> Result<(), String> {
         for mut release in self.store.list_all_releases().await? {
             let previous_values_len = release.values.len();
-            release
-                .values
-                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            release.values.retain(|key, _| !is_retired_config_key(key));
             let previous_changed_keys_len = release.changed_keys.len();
             release
                 .changed_keys
-                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+                .retain(|key| !is_retired_config_key(key));
             if release.values.len() != previous_values_len
                 || release.changed_keys.len() != previous_changed_keys_len
             {
@@ -230,9 +228,7 @@ impl AppState {
         let definitions = self.store.list_definitions().await?;
         for mut snapshot in self.store.list_all_snapshots().await? {
             let previous_values_len = snapshot.values.len();
-            snapshot
-                .values
-                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            snapshot.values.retain(|key, _| !is_retired_config_key(key));
             let previous_env = snapshot.env.clone();
             snapshot.env = compatibility_env(&definitions, &snapshot.values, |definition| {
                 definition.scope == "shared"
@@ -249,9 +245,7 @@ impl AppState {
 
         for mut draft in self.store.list_drafts().await? {
             let previous_len = draft.changes.len();
-            draft
-                .changes
-                .retain(|key, _| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            draft.changes.retain(|key, _| !is_retired_config_key(key));
             if draft.changes.len() != previous_len {
                 draft.validation_status = "pending".to_string();
                 draft.validation_errors.clear();
@@ -262,9 +256,7 @@ impl AppState {
 
         for mut event in self.store.list_all_audit().await? {
             let previous_len = event.changed_keys.len();
-            event
-                .changed_keys
-                .retain(|key| !RETIRED_CONFIG_KEYS.contains(&key.as_str()));
+            event.changed_keys.retain(|key| !is_retired_config_key(key));
             if event.changed_keys.len() != previous_len {
                 self.store.save_audit(&event).await?;
             }
@@ -272,8 +264,27 @@ impl AppState {
 
         self.republish_active_releases_to_consul(&definitions, "remove retired configuration")
             .await?;
+        for active in self.store.list_active_releases().await? {
+            for service_name in RETIRED_CONFIG_SERVICES {
+                if let Err(err) = self
+                    .delete_consul_service_config(active.environment.as_str(), service_name)
+                    .await
+                {
+                    if self.config.consul_required {
+                        return Err(err);
+                    }
+                    tracing::warn!(
+                        environment = active.environment.as_str(),
+                        service_name,
+                        error = err.as_str(),
+                        "failed to remove retired service configuration from Consul"
+                    );
+                }
+            }
+        }
         tracing::info!(
             retired_key_count = RETIRED_CONFIG_KEYS.len(),
+            retired_prefix_count = RETIRED_CONFIG_KEY_PREFIXES.len(),
             "retired configuration has been removed from configuration center"
         );
         Ok(())

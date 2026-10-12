@@ -131,7 +131,6 @@ struct AgentDirectChatView: View {
                 ContentUnavailableView {
                     Label("开始对话", systemImage: "bubble.left")
                 }
-                .padding(.top, 80)
             }
         )
     }

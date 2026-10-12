@@ -81,19 +81,13 @@ extension NativeLocalConnectorService {
         let token = try requireAccessToken()
         _ = try await gateway.updateModelConfig(token: token, id: id, update: update)
         invalidateModelCatalog()
-        if !update.taskEnabled, state.commandApprovalModelConfigID == id {
-            state.commandApprovalModelConfigID = nil
-            state.commandApprovalThinkingLevel = nil
-            try stateStore.save(state)
-        }
     }
 
     public func updateModelSettings(_ settings: LocalConnectorModelSettings) async throws {
         let token = try requireAccessToken()
         if let approvalID = settings.commandApprovalModelConfigID?.trimmedNonEmpty {
             let model = try await gateway.modelConfig(token: token, id: approvalID, includeSecret: false)
-            guard model.enabled ?? true,
-                  model.taskEnabled ?? (model.enabled ?? true),
+            guard model.isSelectable(for: .general),
                   model.hasAPIKey ?? false else {
                 throw NativeConnectorError.server(
                     status: 409,

@@ -564,6 +564,50 @@ async fn successful_task_outcome_report_forces_a_tool_free_final_response() {
         .is_some_and(|text| text.contains("[Task Outcome Reported]")));
 }
 
+#[tokio::test]
+async fn guidance_after_handoff_keeps_task_control_tools_and_latest_intent() {
+    let planner = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        OwnerCheckingCapabilityResolver,
+    )
+    .with_local_tools(vec![json!({
+        "type": "function", "name": "cancel_task", "parameters": {}
+    })])
+    .expect("task control tools");
+    let prepared = planner.prepare_ai_step(&claim(
+        json!({"response": {
+            "request_input_items": [{"role": "user", "content": "publish it"}],
+            "response_output_items": [{
+                "type": "function_call", "call_id": "handoff",
+                "name": "wait_for_task_completion", "arguments": "{}"
+            }]
+        }}),
+        Some(json!({
+            "type": "tool_results",
+            "invocations": [{
+                "call_id": "handoff", "tool_name": "wait_for_task_completion",
+                "status": "succeeded", "result": {"accepted": true}
+            }],
+            "guidance": [{"message_id": "guidance-1", "message": "Stop, do not publish", "attachments": []}]
+        })),
+    )).await.expect("handle latest guidance instead of closing handoff");
+    assert!(prepared
+        .request
+        .model_request
+        .tools
+        .iter()
+        .any(|tool| tool["name"] == "cancel_task"));
+    assert_eq!(
+        prepared.request.current_input_items.last().unwrap()["content"],
+        "Stop, do not publish"
+    );
+    assert_eq!(prepared.reason, "tool_results_with_guidance");
+    let instructions = prepared.request.model_request.instructions.unwrap();
+    assert!(instructions.contains("call cancel_task on the affected tasks first"));
+    assert!(instructions.contains("Status inquiries and unrelated requests must not cancel tasks"));
+    assert!(instructions.contains("cannot undo"));
+}
+
 #[test]
 fn failed_or_unaccepted_wait_does_not_close_the_main_chat_tool_boundary() {
     assert!(!completed_async_task_handoff(Some(&json!({

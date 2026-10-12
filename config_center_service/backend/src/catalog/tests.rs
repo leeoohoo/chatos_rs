@@ -23,7 +23,14 @@ fn catalog_does_not_reintroduce_retired_configuration() {
     assert_eq!(retired.len(), RETIRED_CONFIG_KEYS.len());
     assert!(definitions
         .iter()
-        .all(|definition| !retired.contains(definition.key.as_str())));
+        .all(|definition| !retired.contains(definition.key.as_str())
+            && RETIRED_CONFIG_KEY_PREFIXES
+                .iter()
+                .all(|prefix| !definition.key.starts_with(prefix))
+            && !definition
+                .service_name
+                .as_deref()
+                .is_some_and(|service| RETIRED_CONFIG_SERVICES.contains(&service))));
     assert!(definitions.iter().all(|definition| {
         !definition.key.starts_with("chatos.")
             && definition.service_name.as_deref() != Some("chatos-backend")

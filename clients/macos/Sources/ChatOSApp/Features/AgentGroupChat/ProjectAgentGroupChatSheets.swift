@@ -53,15 +53,14 @@ struct EditLocalAgentSheet: View {
                     .lineLimit(2...4)
                 TextField("角色 Prompt", text: $rolePrompt, axis: .vertical)
                     .lineLimit(4...8)
-                Picker("模型", selection: $modelConfigID) {
-                    ForEach(viewModel.availableModels) { model in
-                        Text("\(model.name) · \(model.modelName)").tag(model.id)
-                    }
-                }
+                AgentModelPicker(selection: $modelConfigID, models: viewModel.availableModels)
                 Picker("思考等级", selection: $thinkingLevel) {
                     Text(defaultThinkingLabel).tag("")
                     ForEach(selectedModel?.thinkingLevels ?? [], id: \.self) { level in
                         Text(level).tag(level)
+                    }
+                    if selectedModel == nil, !thinkingLevel.isEmpty {
+                        Text("\(thinkingLevel)（原配置）").tag(thinkingLevel)
                     }
                 }
                 .disabled(selectedModel?.supportsReasoning != true)
@@ -71,11 +70,6 @@ struct EditLocalAgentSheet: View {
                     Text("项目经理独占团队任务板的创建、分配、优先级和依赖管理权限。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                if !viewModel.availableModels.contains(where: { $0.id == modelConfigID }) {
-                    Text("原模型当前不可用，请选择新的模型后保存。")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
                 }
             }
             HStack {
@@ -113,7 +107,7 @@ struct EditLocalAgentSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(
-                    isSaving
+                    isSaving || selectedModel == nil
                         || [name, role, rolePrompt, modelConfigID].contains {
                             $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         }
@@ -122,6 +116,7 @@ struct EditLocalAgentSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+        .onAppear { normalizeThinkingLevel() }
         .onChange(of: modelConfigID) { normalizeThinkingLevel() }
     }
 
@@ -136,9 +131,10 @@ struct EditLocalAgentSheet: View {
     }
 
     private func normalizeThinkingLevel() {
+        guard let selectedModel else { return }
         thinkingLevel = LocalAgentThinkingLevelCatalog.normalized(
             thinkingLevel,
-            allowedValues: selectedModel?.thinkingLevels ?? []
+            allowedValues: selectedModel.thinkingLevels
         ) ?? ""
     }
 }

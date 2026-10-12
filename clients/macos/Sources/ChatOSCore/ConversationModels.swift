@@ -20,19 +20,22 @@ public struct ChatMessage: Identifiable, Codable, Sendable, Equatable {
     public var text: String
     public var createdAt: Date
     public var attachments: [ConversationAttachmentReference]
+    public var storageOrdinal: UInt64?
 
     public init(
         id: String,
         role: Role,
         text: String,
         createdAt: Date,
-        attachments: [ConversationAttachmentReference] = []
+        attachments: [ConversationAttachmentReference] = [],
+        storageOrdinal: UInt64? = nil
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
         self.attachments = attachments
+        self.storageOrdinal = storageOrdinal
     }
 }
 
@@ -93,11 +96,18 @@ public struct ConversationAssistantReply: Identifiable, Codable, Sendable, Equat
 }
 
 public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
+    enum CodingKeys: String, CodingKey {
+        case id, sessionID, sequence, revision, userMessage, additionalUserMessages
+        case processEvents, finalAssistantMessage, assistantReplies, messageTaskLookup
+        case isTaskGraphAvailable, status, startedAt, completedAt
+    }
+
     public let id: String
     public let sessionID: String
     public var sequence: Int64
     public var revision: Int64
     public var userMessage: ChatMessage
+    public var additionalUserMessages: [ChatMessage]
     public var processEvents: [TurnProcessEvent]
     public var finalAssistantMessage: ChatMessage?
     public var assistantReplies: [ConversationAssistantReply]
@@ -113,6 +123,7 @@ public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
         sequence: Int64,
         revision: Int64,
         userMessage: ChatMessage,
+        additionalUserMessages: [ChatMessage] = [],
         processEvents: [TurnProcessEvent] = [],
         finalAssistantMessage: ChatMessage? = nil,
         assistantReplies: [ConversationAssistantReply] = [],
@@ -127,6 +138,7 @@ public struct ConversationTurn: Identifiable, Codable, Sendable, Equatable {
         self.sequence = sequence
         self.revision = revision
         self.userMessage = userMessage
+        self.additionalUserMessages = additionalUserMessages
         self.processEvents = processEvents
         self.finalAssistantMessage = finalAssistantMessage
         self.assistantReplies = assistantReplies

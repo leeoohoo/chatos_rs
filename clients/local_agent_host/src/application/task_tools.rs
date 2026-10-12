@@ -2,7 +2,10 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    task_model_policy::resolve_task_model, task_tool_definitions::*, task_tool_support::*,
+    task_model_policy::resolve_task_model,
+    task_tool_definitions::*,
+    task_tool_source_context::{source_attachments, source_conversation_context},
+    task_tool_support::*,
 };
 use crate::LocalToolExecutor;
 use async_trait::async_trait;
@@ -128,6 +131,9 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
             CREATE_TASK_TOOL => {
                 let mut args: CreateTaskArgs = serde_json::from_value(invocation.arguments.clone())
                     .map_err(|error| format!("invalid create_task input: {error}"))?;
+                let existing = self
+                    .reusable_source_graph(&parent, conversation_id, &args.supersedes_task_ids)
+                    .await?;
                 let task_policy = self.required_task_policy(&parent).await?;
                 task_policy.apply_single(&mut args);
                 self.validate_existing_prerequisites(
@@ -150,7 +156,7 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     model,
                     task_policy.max_iterations(parent.max_iterations),
                 )?;
-                let graph = if let Some(existing) = self.reusable_source_graph(&parent).await? {
+                let graph = if let Some(existing) = existing {
                     if existing.graph_id == command.graph_id {
                         self.create_graph(&invocation.invocation_id, command)
                             .await?
@@ -184,6 +190,9 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     serde_json::from_value(invocation.arguments.clone()).map_err(|error| {
                         format!("invalid create_tasks_with_prerequisites input: {error}")
                     })?;
+                let existing = self
+                    .reusable_source_graph(&parent, conversation_id, &args.supersedes_task_ids)
+                    .await?;
                 let task_policy = self.required_task_policy(&parent).await?;
                 task_policy.apply_batch(&mut args);
                 for task in &args.tasks {
@@ -203,24 +212,23 @@ impl LocalToolExecutor for LocalTaskToolExecutor {
                     task_policy.allowed_model_config_ids.as_deref(),
                 )
                 .await?;
-                let (graph, reused) =
-                    if let Some(existing) = self.reusable_source_graph(&parent).await? {
-                        if existing.graph_id == plan.command.graph_id {
-                            (
-                                self.create_graph(&invocation.invocation_id, plan.command.clone())
-                                    .await?,
-                                false,
-                            )
-                        } else {
-                            (existing, true)
-                        }
-                    } else {
+                let (graph, reused) = if let Some(existing) = existing {
+                    if existing.graph_id == plan.command.graph_id {
                         (
                             self.create_graph(&invocation.invocation_id, plan.command.clone())
                                 .await?,
                             false,
                         )
-                    };
+                    } else {
+                        (existing, true)
+                    }
+                } else {
+                    (
+                        self.create_graph(&invocation.invocation_id, plan.command.clone())
+                            .await?,
+                        false,
+                    )
+                };
                 let auto_started_runs = self
                     .runtime
                     .start_ready_task_runs_for_graph(&parent.owner_user_id, &graph.graph_id)
@@ -409,11 +417,15 @@ struct CreateTaskArgs {
     prerequisite_task_ids: Vec<String>,
     #[serde(default)]
     schedule: Option<TaskScheduleArgs>,
+    #[serde(default)]
+    supersedes_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CreateTasksArgs {
     tasks: Vec<CreateTaskItem>,
+    #[serde(default)]
+    supersedes_task_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -589,6 +601,7 @@ fn create_single_graph(
                 "runtime_settings": runtime_settings,
                 "attachments": source_attachments,
                 "prerequisite_task_ids": args.prerequisite_task_ids,
+                "supersedes_task_ids": args.supersedes_task_ids,
                 "schedule": schedule
             }),
             max_iterations,
@@ -710,6 +723,7 @@ async fn create_batch_graph(
                 "runtime_settings": runtime_settings,
                 "attachments": source_attachments.clone(),
                 "prerequisite_task_ids": item.prerequisite_task_ids,
+                "supersedes_task_ids": args.supersedes_task_ids,
                 "schedule": schedule
             }),
             max_iterations,
@@ -733,47 +747,6 @@ struct CreateBatchPlan {
     command: CreateTaskGraphCommand,
     bindings: Vec<CreatedTaskBinding>,
     diagnostics: DependencyReduction,
-}
-
-#[derive(Debug, Clone)]
-struct SourceConversationContext {
-    conversation_id: Option<String>,
-    turn_id: Option<String>,
-    remote_connection_id: Option<String>,
-}
-
-fn source_attachments(parent: &LocalAgentRunRecord) -> Result<Vec<Value>, String> {
-    let Some(attachments) = parent.input.get("attachments") else {
-        return Ok(Vec::new());
-    };
-    attachments
-        .as_array()
-        .cloned()
-        .ok_or_else(|| "source conversation attachments must be an array".to_string())
-}
-
-fn source_conversation_context(parent: &LocalAgentRunRecord) -> SourceConversationContext {
-    SourceConversationContext {
-        conversation_id: input_string(&parent.input, "conversation_id")
-            .or_else(|| input_string(&parent.input, "source_conversation_id")),
-        turn_id: input_string(&parent.input, "turn_id")
-            .or_else(|| input_string(&parent.input, "source_turn_id")),
-        remote_connection_id: parent
-            .input
-            .pointer("/runtime_settings/remote_connection_id")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string)
-            .or_else(|| input_string(&parent.input, "remote_connection_id")),
-    }
-}
-
-fn input_string(input: &Value, key: &str) -> Option<String> {
-    input
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
 }
 
 pub(super) fn envelope(command_id: String, command: HostCommand) -> HostRequestEnvelope {

@@ -1,3 +1,4 @@
+import AppKit
 import ChatOSCore
 import SwiftUI
 
@@ -111,10 +112,7 @@ struct ProjectRunSettingsView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(projectName).appFont(.title2.weight(.semibold))
-                Text(rootPath ?? model.localized("未配置项目目录", english: "Project Folder Not Configured"))
-                    .appFont(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+                directoryLabel
                 HStack {
                     StatusCapsule(title: runStatusTitle, color: runStatusColor)
                     StatusCapsule(
@@ -132,6 +130,29 @@ struct ProjectRunSettingsView: View {
             Button("刷新", systemImage: "arrow.clockwise") { Task { await viewModel.load() } }
                 .disabled(viewModel.isLoading || viewModel.isMutating)
         }
+    }
+
+    private var directoryLabel: some View {
+        let directory = ProjectDirectoryPresentation(
+            rootPath, workspaces: model.localConnectorControl.status?.workspaces ?? []
+        )
+        let fallback = (rootPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            ? model.localized("未配置项目目录", english: "Project Folder Not Configured")
+            : model.localized("本机项目目录", english: "Local Project Folder")
+        return Label(directory.name ?? fallback, systemImage: "folder")
+            .appFont(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help(directory.path ?? fallback)
+            .contextMenu {
+                if let path = directory.path {
+                    Button(model.localized("复制目录路径", english: "Copy Folder Path")) {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path, forType: .string)
+                    }
+                }
+            }
     }
 
     private var preflightSection: some View {
