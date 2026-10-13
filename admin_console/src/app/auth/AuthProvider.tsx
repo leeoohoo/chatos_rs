@@ -3,7 +3,7 @@ import { LockOutlined, LoginOutlined, UserOutlined } from '@ant-design/icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
-import { adminApi, type AdminUser, type LoginPayload } from '../../shared/api/adminApi';
+import { adminApi, AdminSessionError, type AdminUser, type LoginPayload } from '../../shared/api/adminApi';
 import { canAccessAdminConsole } from './access';
 import { useAdminI18n } from '../i18n/AdminI18nProvider';
 import {
@@ -38,24 +38,32 @@ export function AdminAuthProvider({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [logoutLoading, setLogoutLoading] = useState(false);
+  const [restoreError, setRestoreError] = useState(false);
+  const [restoreAttempt, setRestoreAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     async function refresh() {
-      const token = migrateLegacyAuthToken();
-      if (!token) {
-        if (alive) setChecking(false);
-        return;
-      }
+      migrateLegacyAuthToken();
+      setChecking(true);
+      setRestoreError(false);
       try {
-        const response = await adminApi.me();
+        const response = await adminApi.restoreSession();
+        if (!alive) return;
         if (!canAccessAdminConsole(response.user.role)) {
-          throw new Error(t('auth.noAccess'));
+          throw new AdminSessionError(403, t('auth.noAccess'));
         }
-        if (alive) setUser(response.user);
-      } catch {
-        clearAuthToken();
-        if (alive) setUser(null);
+        setAuthToken(response.token);
+        setUser(response.user);
+      } catch (error) {
+        if (!alive) return;
+        if (error instanceof AdminSessionError && [401, 403].includes(error.status)) {
+          clearAuthToken();
+          setUser(null);
+        } else {
+          // A timeout or unavailable server is not proof that the session ended.
+          setRestoreError(true);
+        }
       } finally {
         if (alive) setChecking(false);
       }
@@ -72,7 +80,7 @@ export function AdminAuthProvider({ children }: { children: React.ReactNode }) {
       alive = false;
       window.removeEventListener(ADMIN_AUTH_CHANGED_EVENT, onAuthChanged);
     };
-  }, [queryClient, t]);
+  }, [queryClient, t, restoreAttempt]);
 
   async function login(payload: LoginPayload) {
     setLoginLoading(true);
@@ -96,14 +104,14 @@ export function AdminAuthProvider({ children }: { children: React.ReactNode }) {
     setLogoutLoading(true);
     try {
       await adminApi.logout();
-    } catch {
-      // Local logout remains authoritative when the remote session is unavailable.
-    } finally {
       clearAuthToken();
       queryClient.clear();
       setUser(null);
-      setLogoutLoading(false);
       message.success(t('auth.logoutSuccess'));
+    } catch {
+      message.error(t('auth.logoutFailed'));
+    } finally {
+      setLogoutLoading(false);
     }
   }
 
@@ -114,6 +122,14 @@ export function AdminAuthProvider({ children }: { children: React.ReactNode }) {
 
   if (checking) {
     return <Flex align="center" justify="center" className="admin-fullscreen"><Spin size="large" /></Flex>;
+  }
+  if (restoreError) {
+    return <Flex align="center" justify="center" className="admin-fullscreen">
+      <Space direction="vertical" align="center">
+        <Typography.Text>{t('auth.restoreFailed')}</Typography.Text>
+        <Button onClick={() => setRestoreAttempt((attempt) => attempt + 1)}>{t('auth.retry')}</Button>
+      </Space>
+    </Flex>;
   }
   if (!user) {
     return <LoginPage loading={loginLoading} onLogin={login} />;
