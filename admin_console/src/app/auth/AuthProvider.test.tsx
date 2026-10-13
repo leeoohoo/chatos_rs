@@ -60,7 +60,7 @@ describe('administrator browser session recovery', () => {
     mount();
     await screen.findByText('暂时无法恢复登录状态，请检查网络后重试');
     expect(screen.queryByText('ChatOS 统一管理端')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    fireEvent.click(screen.getByRole('button', { name: /重\s*试/ }));
     await screen.findByText('Protected content');
   });
 
