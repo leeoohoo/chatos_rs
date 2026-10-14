@@ -99,10 +99,9 @@ final class ProjectDirectoryViewModel: ObservableObject {
     var canNavigateBack: Bool { !navigationHistory.isEmpty }
 
     func load() async {
-        guard let rootPath = rootPath?.trimmedNonEmpty else {
-            errorMessage = "这个项目还没有配置可访问的项目目录。"
-            return
-        }
+        // A missing root is a valid not-yet-resolved state and already has a dedicated empty
+        // presentation in ProjectDirectoryView. It is not a failed filesystem operation.
+        guard let rootPath = rootPath?.trimmedNonEmpty else { return }
         await loadChildrenWithConnectorRetry(of: rootPath)
     }
 

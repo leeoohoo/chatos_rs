@@ -5,6 +5,20 @@ import XCTest
 
 @MainActor
 final class CreateProjectViewModelTests: XCTestCase {
+    func testDirectoryLoadWithoutResolvedRootDoesNotReportOperationFailure() async {
+        let model = ProjectDirectoryViewModel(
+            projectID: "new-project",
+            rootPath: nil,
+            service: Directories(),
+            codeNavigationService: NoopCodeNavigation()
+        )
+
+        await model.load()
+
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.isLoading)
+    }
+
     func testCreatesWithoutDeviceContactGitOrNetwork() async throws {
         let creator = RecordingLocalCreator()
         let model = CreateProjectViewModel(connectorStatus: status, filesystemService: Directories(), creationService: creator)
@@ -36,6 +50,26 @@ final class CreateProjectViewModelTests: XCTestCase {
         .init(configured: false, connectorRunning: false, developerMode: false, cloudBaseURL: nil,
               userServiceBaseURL: nil, deviceID: nil, deviceName: nil, user: nil, defaultWorkspaceID: "ws",
               workspaces: [.init(id: "ws", alias: "workspace", absoluteRoot: "/test-workspace", fingerprint: "fp")])
+    }
+}
+
+private struct NoopCodeNavigation: ProjectCodeNavigationServicing {
+    func definition(
+        projectRoot: String,
+        filePath: String,
+        line: Int,
+        column: Int
+    ) async throws -> ProjectCodeNavigationResult {
+        .init(provider: "test", language: "test", mode: "definition", token: nil, locations: [])
+    }
+
+    func references(
+        projectRoot: String,
+        filePath: String,
+        line: Int,
+        column: Int
+    ) async throws -> ProjectCodeNavigationResult {
+        .init(provider: "test", language: "test", mode: "references", token: nil, locations: [])
     }
 }
 

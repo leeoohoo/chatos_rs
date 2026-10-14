@@ -32,6 +32,10 @@ extension AppModel {
                 var local = try await loader.loadLocal(deviceID: nil)
                 try Task.checkCancellation()
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                // This first registry-only snapshot intentionally has no device metadata yet.
+                // Keep any values already resolved by project creation or a previous refresh so
+                // the UI does not briefly lose its directory/conversation while pairing loads.
+                local.preserveUnavailableProjectMetadata(from: workspaceProjects)
                 local.contacts = workspaceContacts
                 local.conversations = workspaceConversations
                 await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
@@ -248,5 +252,20 @@ enum LocalConnectorRecoveryPolicy {
         if hasLiveTask { return false }
         guard let secondsSinceLastRecovery else { return true }
         return secondsSinceLastRecovery >= minimumRecoveryInterval
+    }
+}
+
+extension WorkspaceSnapshot {
+    mutating func preserveUnavailableProjectMetadata(from existingProjects: [WorkspaceProject]) {
+        let existingByID = Dictionary(uniqueKeysWithValues: existingProjects.map { ($0.id, $0) })
+        projects = projects.map { project in
+            guard let existing = existingByID[project.id] else { return project }
+            var merged = project
+            merged.rootPath = project.rootPath ?? existing.rootPath
+            merged.displayRootPath = project.displayRootPath ?? existing.displayRootPath
+            merged.latestConversationID = project.latestConversationID ?? existing.latestConversationID
+            merged.projectContext = project.projectContext ?? existing.projectContext
+            return merged
+        }
     }
 }

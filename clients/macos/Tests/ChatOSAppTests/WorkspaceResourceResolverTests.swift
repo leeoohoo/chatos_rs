@@ -4,6 +4,35 @@ import XCTest
 @testable import ChatOSApp
 
 final class WorkspaceResourceResolverTests: XCTestCase {
+    func testRegistryOnlySnapshotPreservesPreviouslyResolvedProjectMetadata() {
+        var snapshot = WorkspaceSnapshot(
+            projects: [
+                WorkspaceProject(
+                    id: "project-1",
+                    name: "Renamed project",
+                    rootPath: nil,
+                    latestConversationID: nil
+                ),
+            ],
+            contacts: [],
+            conversations: []
+        )
+        snapshot.preserveUnavailableProjectMetadata(from: [
+            WorkspaceProject(
+                id: "project-1",
+                name: "Old name",
+                rootPath: "local://connector/device/workspace/project",
+                displayRootPath: "/Users/test/project",
+                latestConversationID: "conversation-1"
+            ),
+        ])
+
+        XCTAssertEqual(snapshot.projects.first?.name, "Renamed project")
+        XCTAssertEqual(snapshot.projects.first?.rootPath, "local://connector/device/workspace/project")
+        XCTAssertEqual(snapshot.projects.first?.displayRootPath, "/Users/test/project")
+        XCTAssertEqual(snapshot.projects.first?.latestConversationID, "conversation-1")
+    }
+
     func testContactUsesOnlyGlobalConversationInsteadOfNewerProjectConversation() throws {
         let contact = WorkspaceContact(
             id: "contact-1",
