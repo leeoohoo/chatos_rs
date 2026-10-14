@@ -7,6 +7,8 @@ description: Arrange durable background work through the bound local task execut
 
 Use task history as context, not as proof that the current request has been completed. Create new work for a new execution request; cancel still-active work when the user's latest intent replaces it.
 
+Choose the execution model and reasoning effort per Task before creating it. Set `default_model_config_id` from the advertised eligible choices, using their usage descriptions and the Task's difficulty, specialist needs and risk; honor an explicit user model preference. Main Chat's current model is a fallback, not a reason to assign every Task to it. Set `thinking_level` deliberately: use low effort for straightforward bounded work, medium for ordinary implementation or analysis, and high or higher supported effort for difficult debugging, architecture, migrations or consequential review. Use `auto` only when intentionally choosing the model default; respect the selected model's supported levels. If no eligible model catalog is advertised, omit the model ID rather than inventing one.
+
 Each created task must have a concrete objective, acceptance criteria, necessary input, and only the capabilities needed to finish. The platform binds user, project, workspace, callback, and execution routing; do not ask for or invent their internal identifiers.
 
 After arranging the requested work, call `wait_for_task_completion` exactly once as the handoff signal. When it succeeds, call no more task tools in that turn and immediately give a concise user-facing statement that work has started. Do not expose internal task-routing terminology.

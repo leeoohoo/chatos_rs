@@ -381,13 +381,15 @@ fn merge_task_selection_schema(local: &mut Value, controlled: &Value) {
     };
     // The native client resolves the request-scoped Agent capability policy.
     // Keep the durable Rust implementations of the Task tools, but restore the
-    // three selection fields from that trusted snapshot exactly as the former
+    // capability and model selection fields from that trusted snapshot as the former
     // Task Runner did. Hard-coding any of these here silently changes product
     // behavior when an administrator edits the Agent binding.
     for key in [
         "enabled_builtin_kinds",
         "external_mcp_config_ids",
         "plugin_hints",
+        "default_model_config_id",
+        "thinking_level",
     ] {
         if let Some(schema) = controlled_properties.get(key) {
             local_properties.insert(key.to_string(), schema.clone());

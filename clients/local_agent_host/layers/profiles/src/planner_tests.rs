@@ -218,6 +218,84 @@ fn local_task_tools_keep_request_scoped_plugin_and_external_mcp_choices() {
     );
 }
 
+#[tokio::test]
+async fn main_chat_model_request_preserves_task_model_catalog_and_reasoning_policy() {
+    struct TaskChoiceResolver(Vec<Value>);
+    #[async_trait]
+    impl LocalCapabilityResolver for TaskChoiceResolver {
+        async fn resolve_capabilities(
+            &self,
+            _owner_user_id: &str,
+            _profile_key: &str,
+            _capability_policy_revision: &str,
+        ) -> Result<ResolvedLocalCapabilities, String> {
+            Ok(ResolvedLocalCapabilities {
+                tools: self.0.clone(),
+                ..ResolvedLocalCapabilities::default()
+            })
+        }
+    }
+    let model_schema = json!({
+        "type": "string",
+        "enum": ["model-simple", "model-complex"],
+        "oneOf": [
+            {"const": "model-simple", "title": "Luna - simple tasks"},
+            {"const": "model-complex", "title": "Sol - complex tasks"}
+        ],
+        "x-enum-labels": ["Luna - simple tasks", "Sol - complex tasks"]
+    });
+    let thinking_schema = json!({
+        "type": "string", "enum": ["low", "medium", "high"]
+    });
+    let mut controlled = Vec::new();
+    let mut local = Vec::new();
+    for (name, pointer) in [
+        ("create_task", "/parameters/properties"),
+        (
+            "create_tasks_with_prerequisites",
+            "/parameters/properties/tasks/items/properties",
+        ),
+    ] {
+        let mut tool = json!({
+            "name": name,
+            "parameters": {"properties": {
+                "tasks": {"items": {"properties": {}}}
+            }}
+        });
+        let properties = tool.pointer_mut(pointer).unwrap().as_object_mut().unwrap();
+        properties.insert("default_model_config_id".into(), model_schema.clone());
+        properties.insert("thinking_level".into(), thinking_schema.clone());
+        controlled.push(tool.clone());
+        let properties = tool.pointer_mut(pointer).unwrap().as_object_mut().unwrap();
+        properties.insert("default_model_config_id".into(), json!({"type": "string"}));
+        properties.insert("thinking_level".into(), json!({"type": "string"}));
+        properties.insert("objective".into(), json!({"type": "string", "minLength": 1}));
+        local.push(tool);
+    }
+    let prepared = ControlPlaneLocalAiStepPlanner::main_chat(
+        OwnerCheckingModelResolver,
+        TaskChoiceResolver(controlled),
+    )
+    .with_local_tools(local.clone())
+    .unwrap()
+    .prepare_ai_step(&claim(Value::Null, None))
+    .await
+    .expect("prepare Main Chat model request");
+    let merged = prepared.request.model_request.tools;
+    assert_eq!(merged.len(), 2);
+    for (tool, pointer) in merged.iter().zip([
+        "/parameters/properties",
+        "/parameters/properties/tasks/items/properties",
+    ]) {
+        let properties = tool.pointer(pointer).unwrap();
+        assert_eq!(properties["default_model_config_id"], model_schema);
+        assert_eq!(properties["thinking_level"], thinking_schema);
+        assert_eq!(properties["objective"]["minLength"], 1);
+    }
+    // Legacy snapshots without choices must retain the local tool definitions.
+    assert_eq!(merge_local_tools(vec![], &local, &[]).unwrap(), local);
+}
+
 #[test]
 fn task_tools_are_filtered_to_the_declared_minimum_capabilities() {
     let tools = vec![
