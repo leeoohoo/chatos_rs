@@ -61,6 +61,10 @@ struct ProjectMessagesView: View {
         }
         .workspaceFill()
         .task(id: projectID) {
+            // `.task` may begin in the same SwiftUI update pass that inserts this view. Yield once
+            // before changing AppModel's published preparation state so a transient error/progress
+            // branch cannot be presented and immediately replaced during that pass.
+            await Task.yield()
             model.prepareProjectChat(projectID: projectID)
         }
     }
