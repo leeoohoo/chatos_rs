@@ -696,3 +696,4 @@
 "仅控制创建任务时的模型候选，不影响聊天、Agent、翻译或默认模型选择。" = "Only controls model choices when creating Tasks, not chat, Agents, translation, or default model selection.";
 "暂停当前团队的 Agent" = "Pause the Agents in this team";
 "停止当前团队的全部 Agent" = "Stop all Agents in this team";
+"验收依据来自执行者报告；不等同于浏览器或工具运行状态。" = "Acceptance evidence comes from the executor report; it does not represent browser or tool execution status.";
