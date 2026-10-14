@@ -20,6 +20,7 @@ use crate::models::{PRINCIPAL_TYPE_AGENT_ACCOUNT, PRINCIPAL_TYPE_HUMAN_USER};
 use crate::state::AppState;
 use crate::store::now_rfc3339;
 
+mod admin_session;
 mod agents;
 mod auth;
 mod device_proof;
@@ -145,6 +146,9 @@ pub fn build_public_router(state: AppState) -> Router {
         .route("/api/health", get(system::health))
         .route("/metrics", get(system::metrics))
         .route("/api/auth/login", post(auth::login))
+        .route("/api/auth/admin/login", post(admin_session::login))
+        .route("/api/auth/admin/session", post(admin_session::restore))
+        .route("/api/auth/admin/logout", post(admin_session::logout))
         .route("/api/auth/register", post(auth::register))
         .route(
             "/api/auth/wechat/mini-program/login",
@@ -483,6 +487,9 @@ mod tests {
             .await
             .expect("build router test state")
     }
+
+    #[path = "admin_session_contract.rs"]
+    mod admin_session_contract;
 
     async fn spawn_router(router: axum::Router) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
