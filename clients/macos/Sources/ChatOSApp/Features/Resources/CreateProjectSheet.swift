@@ -37,6 +37,7 @@ struct CreateProjectSheet: View {
 
     @State private var showingNewFolderPrompt = false
     @State private var newFolderName = ""
+    @State private var projectPendingDelivery: WorkspaceProject?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,6 +50,16 @@ struct CreateProjectSheet: View {
         }
         .frame(minWidth: 700, idealWidth: 740, minHeight: 650, idealHeight: 700)
         .task { await viewModel.loadInitialDirectory() }
+        .onDisappear {
+            guard let project = projectPendingDelivery else { return }
+            // Publishing the new selection while SwiftUI is dismissing this sheet can make the
+            // presentation briefly render a stale error state. Deliver the successful result only
+            // after the sheet has left the hierarchy and the current update pass has completed.
+            Task { @MainActor in
+                await Task.yield()
+                onCreated(project)
+            }
+        }
         .alert("新建文件夹", isPresented: $showingNewFolderPrompt) {
             TextField("文件夹名称", text: $newFolderName)
             Button("取消", role: .cancel) { newFolderName = "" }
@@ -165,7 +176,7 @@ struct CreateProjectSheet: View {
             Button("创建项目") {
                 Task {
                     if let project = await viewModel.save() {
-                        onCreated(project)
+                        projectPendingDelivery = project
                         dismiss()
                     }
                 }

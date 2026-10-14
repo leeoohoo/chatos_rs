@@ -14,6 +14,8 @@ final class CreateProjectViewModelTests: XCTestCase {
         let result = await model.save()
         XCTAssertEqual(result?.name, "Local")
         XCTAssertNil(result?.latestConversationID)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertFalse(model.isSaving)
         let drafts = await creator.drafts
         XCTAssertEqual(drafts, [.init(name: "Local", workspaceID: "ws")])
     }
