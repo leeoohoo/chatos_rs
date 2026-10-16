@@ -9,7 +9,10 @@ public struct ModelReasoningCapabilities: Decodable, Sendable {
 
     private struct Catalog: Decodable { let models: [ModelReasoningCapabilities] }
     private static let catalog: [ModelReasoningCapabilities] = {
-        guard let url = Bundle.module.url(forResource: "ModelReasoningCapabilities", withExtension: "json"),
+        guard let url = ChatOSModelCapabilitiesResourceBundle.bundle.url(
+            forResource: "ModelReasoningCapabilities",
+            withExtension: "json"
+        ),
               let data = try? Data(contentsOf: url),
               let catalog = try? JSONDecoder().decode(Catalog.self, from: data) else {
             preconditionFailure("Missing or invalid model reasoning capability resource")

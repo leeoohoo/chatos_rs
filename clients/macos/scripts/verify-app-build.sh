@@ -48,12 +48,8 @@ for RESOURCE_BUNDLE in \
   ChatOSSwift_ChatOSModelCapabilities.bundle \
   SwiftTerm_SwiftTerm.bundle
 do
-  if [[ ! -d "$APP_PATH/$RESOURCE_BUNDLE" ]]; then
-    echo "Missing native Swift resource bundle: $APP_PATH/$RESOURCE_BUNDLE" >&2
-    exit 1
-  fi
   if [[ ! -d "$APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" ]]; then
-    echo "Missing SwiftBuild resource bundle: $APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" >&2
+    echo "Missing Swift resource bundle: $APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" >&2
     exit 1
   fi
 done

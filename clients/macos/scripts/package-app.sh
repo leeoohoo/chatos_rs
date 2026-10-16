@@ -112,10 +112,9 @@ copy_swift_resource_bundle() {
     exit 1
   fi
 
-  # SwiftPM's native build accessor looks beside Bundle.main.bundleURL, while
-  # SwiftBuild's accessor looks below Bundle.main.resourceURL. Keep both layouts
-  # so a packaged app never falls back to the build machine's absolute path.
-  cp -R "$source_bundle" "$APP_DIR/"
+  # Resource bundles belong under Contents/Resources in a signed macOS app.
+  # Product code resolves this location explicitly because SwiftPM's native
+  # accessor otherwise checks the sealed app root and its build-machine path.
   cp -R "$source_bundle" "$RESOURCES_DIR/"
 }
 

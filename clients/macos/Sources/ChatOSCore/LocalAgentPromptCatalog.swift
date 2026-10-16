@@ -99,11 +99,11 @@ public enum LocalAgentPromptCatalog {
     private static let templates: [LocalAgentPromptTemplate: String] = {
         var result: [LocalAgentPromptTemplate: String] = [:]
         for template in LocalAgentPromptTemplate.allCases {
-            guard let url = Bundle.module.url(
+            guard let url = ChatOSCoreResourceBundle.bundle.url(
                 forResource: template.rawValue,
                 withExtension: "md",
                 subdirectory: template.rawValue.contains(".Skill.") ? "Prompts" : nil
-            ) ?? Bundle.module.url(
+            ) ?? ChatOSCoreResourceBundle.bundle.url(
                 forResource: template.rawValue,
                 withExtension: "md"
             ), let text = try? String(contentsOf: url, encoding: .utf8) else {

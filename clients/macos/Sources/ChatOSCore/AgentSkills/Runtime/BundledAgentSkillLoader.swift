@@ -95,7 +95,7 @@ public enum BundledAgentSkillLoader {
     }
 
     private static func skillsRoot() throws -> URL {
-        guard let root = Bundle.module.url(forResource: "Skills", withExtension: nil) else {
+        guard let root = ChatOSCoreResourceBundle.bundle.url(forResource: "Skills", withExtension: nil) else {
             throw LoaderError.invalidEntrypoint("Skills")
         }
         return root
