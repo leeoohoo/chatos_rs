@@ -97,7 +97,12 @@ pub(super) fn user_visible_callback_detail(
     terminal_outcome
         .and_then(visible_detail_with_source)
         .and_then(|(source, detail)| {
-            sanitize_visible_detail(&detail, english).map(|detail| (source, detail))
+            let detail = if matches!(event, "task.failed" | "task.blocked") {
+                sanitize_failure_detail(&detail, english)
+            } else {
+                sanitize_visible_detail(&detail, english)
+            };
+            detail.map(|detail| (source, detail))
         })
 }
 
@@ -230,6 +235,16 @@ pub(super) fn progress_callback_content_with_status(
 }
 
 pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<String> {
+    sanitize_visible_text(value, english)
+}
+
+// Error classification is intentionally separate from ordinary result sanitization.
+// Successful reports routinely discuss HTTP 5xx responses, timeouts, unavailable
+// dependencies, or platform failures that were diagnosed and fixed. Treating those
+// words as the Run's own failure discards the completed report and replaces it with a
+// misleading retry message. The authoritative Task event decides whether this
+// classifier may run; the report text itself never changes a successful event.
+fn sanitize_failure_detail(value: &str, english: bool) -> Option<String> {
     if value == "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation." {
         return Some(if english {
             value.to_string()
@@ -263,6 +278,10 @@ pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<Stri
             "任务暂时无法启动，请稍后重试。".to_string()
         });
     }
+    sanitize_visible_text(value, english)
+}
+
+fn sanitize_visible_text(value: &str, english: bool) -> Option<String> {
     let mut in_code_fence = false;
     let mut lines = Vec::new();
     for raw_line in value.lines() {
