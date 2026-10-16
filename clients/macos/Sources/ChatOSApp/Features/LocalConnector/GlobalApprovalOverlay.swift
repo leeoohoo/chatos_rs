@@ -143,10 +143,26 @@ struct GlobalApprovalOverlayHost: View {
                             .foregroundStyle(.tertiary)
                     }
 
-                    Text(approval.command)
-                        .appFont(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !purpose.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(model.localized("运行目的", english: "Purpose"), systemImage: "target")
+                                .appFont(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(purpose)
+                                .appFont(.callout.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+
+                    DisclosureGroup(model.localized("命令详情", english: "Command details")) {
+                        Text(approval.command)
+                            .appFont(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 4)
+                    }
+                    .appFont(.caption)
 
                     Label(approval.cwd, systemImage: "folder")
                         .appFont(.caption.monospaced())

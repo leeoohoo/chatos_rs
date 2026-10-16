@@ -57,6 +57,7 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertTrue(messages.first?.content.contains("managed approval prompt") == true)
         XCTAssertTrue(messages.first?.content.contains("# Command approval") == true)
         XCTAssertTrue(messages[1].content.contains("AI 自动审批"))
+        XCTAssertTrue(messages[1].content.contains("检查示例文件内容"))
         XCTAssertTrue(messages[1].content.contains("不要仅为了让用户重复确认") == true)
         XCTAssertEqual(messages[2].toolCalls.first?.id, "read-1")
         XCTAssertEqual(messages[3].toolCallID, "read-1")
@@ -206,7 +207,8 @@ final class NativeApprovalAgentTests: XCTestCase {
 
     private func request(_ root: URL) -> NativeApprovalAgentRequest {
         .init(command: "read", arguments: ["sample.txt"], cwd: ".", source: "test", projectRoot: root,
-              riskLevel: "low", riskReason: nil, requestedPermissionsDescription: nil)
+              riskLevel: "low", riskReason: nil, purpose: "检查示例文件内容",
+              requestedPermissionsDescription: nil)
     }
 }
 

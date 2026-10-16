@@ -188,6 +188,21 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         )
     }
 
+    func testTerminalPurposeIsTrimmedAndStrictlyBounded() {
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.purpose([
+                "purpose": NativeJSONValue.string("  验证项目能否通过类型检查  "),
+            ]),
+            "验证项目能否通过类型检查"
+        )
+        XCTAssertNil(NativeLocalAgentTerminalCommandResolver.purpose([
+            "purpose": NativeJSONValue.string(" \n "),
+        ]))
+        XCTAssertNil(NativeLocalAgentTerminalCommandResolver.purpose([
+            "purpose": NativeJSONValue.string(String(repeating: "a", count: 501)),
+        ]))
+    }
+
     func testTerminalSchemaPublishesOnlyCanonicalCommandField() {
         guard case let .object(tool)? = NativeMCPTerminalStore.toolDefinitions.first(where: {
             guard case let .object(fields) = $0 else { return false }
@@ -198,7 +213,11 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         }
         XCTAssertNil(properties["common"])
         XCTAssertNotNil(properties["command"])
-        XCTAssertEqual(parameters["required"], NativeJSONValue.array([.string("command")]))
+        XCTAssertNotNil(properties["purpose"])
+        XCTAssertEqual(
+            parameters["required"],
+            NativeJSONValue.array([.string("purpose"), .string("command")])
+        )
     }
 
     func testWorkerKeepsMonitoringAfterBootstrapPollingBecomesIdle() async throws {

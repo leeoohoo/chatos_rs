@@ -22,6 +22,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var isPerformingAction = false
     @Published private(set) var pluginOperationIDs: Set<String> = []
     @Published private(set) var pluginErrorMessages: [String: String] = [:]
+    @Published private(set) var isInspectingCustomPlugin = false
+    @Published private(set) var isInstallingCustomPlugin = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var notice: String?
 
@@ -41,6 +43,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var actionGeneration: Int64 = 0
     private var pluginActionTasks: [String: Task<Void, Never>] = [:]
     private var pluginActionRequestIDs: [String: UUID] = [:]
+    private var customPluginTask: Task<Void, Never>?
     private var lifecycleGeneration: UInt64 = 0
     private var signedOutSuspensionTask: Task<Void, Never>?
     private var signedOutSuspensionGeneration: UInt64 = 0
@@ -64,6 +67,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         pluginRefreshTask?.cancel()
         actionTask?.cancel()
         pluginActionTasks.values.forEach { $0.cancel() }
+        customPluginTask?.cancel()
     }
 
     func activate(
@@ -575,6 +579,96 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             capabilitiesChanged: true
         ) {
             try await self.service.installPlugin(id: id)
+        }
+    }
+
+    func inspectCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectCustomMCP(draft)
+        }
+    }
+
+    func inspectLocalPlugin(
+        atPath path: String,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectLocalPlugin(atPath: path)
+        }
+    }
+
+    func installCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installCustomMCP(
+                draft,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    func installLocalPlugin(
+        atPath path: String,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installLocalPlugin(
+                atPath: path,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    private func runCustomPluginInspection(
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void,
+        operation: @escaping @Sendable () async throws -> LocalConnectorPluginInspection
+    ) {
+        customPluginTask?.cancel()
+        isInspectingCustomPlugin = true
+        customPluginTask = Task { [weak self] in
+            do {
+                let inspection = try await operation()
+                try Task.checkCancellation()
+                self?.isInspectingCustomPlugin = false
+                completion(.success(inspection))
+            } catch is CancellationError {
+                self?.isInspectingCustomPlugin = false
+            } catch {
+                self?.isInspectingCustomPlugin = false
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func runCustomPluginInstall(
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void,
+        operation: @escaping @Sendable () async throws -> Void
+    ) {
+        customPluginTask?.cancel()
+        isInstallingCustomPlugin = true
+        customPluginTask = Task { [weak self] in
+            do {
+                try await operation()
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.isInstallingCustomPlugin = false
+                self.notice = "自定义 Plugin 已完成复检并安装到本机。"
+                self.loadPlugins(forceRefresh: false)
+                self.pluginConfigurationChanged?()
+                completion(.success(()))
+            } catch is CancellationError {
+                self?.isInstallingCustomPlugin = false
+            } catch {
+                self?.isInstallingCustomPlugin = false
+                completion(.failure(error))
+            }
         }
     }
 

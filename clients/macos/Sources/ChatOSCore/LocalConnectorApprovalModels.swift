@@ -10,6 +10,7 @@ public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Eq
     public var id: String
     public var requestID: String
     public var command: String
+    public var purpose: String?
     public var cwd: String
     public var source: String
     public var risk: String
@@ -21,6 +22,7 @@ public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Eq
         id: String,
         requestID: String,
         command: String,
+        purpose: String? = nil,
         cwd: String,
         source: String,
         risk: String,
@@ -31,6 +33,7 @@ public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Eq
         self.id = id
         self.requestID = requestID
         self.command = command
+        self.purpose = purpose
         self.cwd = cwd
         self.source = source
         self.risk = risk
@@ -43,6 +46,7 @@ public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Eq
 public struct LocalConnectorApprovalHistoryEntry: Codable, Identifiable, Sendable, Equatable {
     public var id: String
     public var command: String
+    public var purpose: String?
     public var cwd: String
     public var source: String
     public var mode: LocalConnectorApprovalMode
@@ -54,6 +58,7 @@ public struct LocalConnectorApprovalHistoryEntry: Codable, Identifiable, Sendabl
     public init(
         id: String,
         command: String,
+        purpose: String? = nil,
         cwd: String,
         source: String,
         mode: LocalConnectorApprovalMode,
@@ -64,6 +69,7 @@ public struct LocalConnectorApprovalHistoryEntry: Codable, Identifiable, Sendabl
     ) {
         self.id = id
         self.command = command
+        self.purpose = purpose
         self.cwd = cwd
         self.source = source
         self.mode = mode

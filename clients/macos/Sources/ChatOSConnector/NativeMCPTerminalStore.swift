@@ -36,9 +36,15 @@ actor NativeMCPTerminalStore {
         [
             definition(
                 name: "execute_command",
-                description: "在当前项目中执行 command 指定的完整 shell 命令（不是操作说明）。前台默认最多等待 300 秒；长时间运行的命令应使用 background=true，再通过 process_poll 或 process_wait 跟踪。",
+                description: "在当前项目中执行 command 指定的完整 shell 命令。purpose 必须用面向用户的自然语言说明本次运行目的，供审批界面优先展示；不要在 purpose 中重复粘贴命令。前台默认最多等待 300 秒；长时间运行的命令应使用 background=true，再通过 process_poll 或 process_wait 跟踪。",
                 properties: [
                     "path": .object(["type": .string("string")]),
+                    "purpose": .object([
+                        "type": .string("string"),
+                        "minLength": .number(1),
+                        "maxLength": .number(Double(NativeLocalAgentTerminalCommandResolver.maximumPurposeCharacters)),
+                        "description": .string("向用户说明为什么需要运行这条命令，以及预期得到什么结果。使用简短自然语言，不要复制 shell 命令。"),
+                    ]),
                     "command": .object([
                         "type": .string("string"),
                         "minLength": .number(1),
@@ -54,7 +60,7 @@ actor NativeMCPTerminalStore {
                         maximum: Self.maximumForegroundTimeoutMilliseconds / 1_000
                     ),
                 ],
-                required: ["command"]
+                required: ["purpose", "command"]
             ),
             definition(
                 name: "get_recent_logs",

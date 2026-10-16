@@ -48,9 +48,16 @@ struct NativeConnectorStateStoreTests {
             workspaceID: "workspace-1", requestedPermissionsDescription: "项目命令",
             reuse: .exactRequest
         )
+        let exactDifferentPurpose = await service.approvalSessionScope(
+            base: "local-agent-terminal:conversation-1", command: "/bin/zsh",
+            arguments: ["-lc", "echo A"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", purpose: "执行另一项检查",
+            requestedPermissionsDescription: "项目命令", reuse: .exactRequest
+        )
 
         #expect(declaredA == declaredB)
         #expect(exactA != exactB)
+        #expect(exactA != exactDifferentPurpose)
     }
 
     @Test

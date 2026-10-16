@@ -78,7 +78,7 @@ public enum LocalAgentPromptTemplate: String, CaseIterable, Sendable {
             ["brief"]
         case .approvalUser:
             [
-                "source", "cwd", "operation", "requested_permissions", "risk_level",
+                "source", "cwd", "operation", "purpose", "requested_permissions", "risk_level",
                 "risk_reason",
             ]
         case .conversationRoleProjectTeam, .conversationRoleHumanAgentDirect,

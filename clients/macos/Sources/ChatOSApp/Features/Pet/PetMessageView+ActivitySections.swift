@@ -61,18 +61,27 @@ extension PetMessageView {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 9) {
-                    Label("审批内容", systemImage: "terminal")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Text(approval.command)
-                        .font(.system(size: 12, design: .monospaced))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(9)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            Color(nsColor: .textBackgroundColor).opacity(0.72),
-                            in: RoundedRectangle(cornerRadius: 8)
-                        )
+                    if let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !purpose.isEmpty {
+                        Label("运行目的", systemImage: "target")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(purpose)
+                            .font(.system(size: 13, weight: .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    DisclosureGroup("命令详情") {
+                        Text(approval.command)
+                            .font(.system(size: 11, design: .monospaced))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                Color(nsColor: .textBackgroundColor).opacity(0.72),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                    }
+                    .font(.system(size: 11, weight: .semibold))
                     Label(approval.cwd, systemImage: "folder")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)

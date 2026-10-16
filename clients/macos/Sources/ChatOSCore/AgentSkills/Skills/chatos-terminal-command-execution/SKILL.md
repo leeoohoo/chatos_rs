@@ -7,6 +7,8 @@ description: Start commands in a bound ChatOS project safely and choose foregrou
 
 Before `execute_command`, identify the intended result, project-relative working directory, expected duration, side effects, and observable success signal.
 
+Always set the required `purpose` argument to a concise, user-facing explanation of why the command is needed and what result it should produce. Do not copy the shell command into `purpose`, use vague text such as “run a command”, or hide material side effects.
+
 - Use foreground execution when the command should finish within the requested timeout and its final exit status is needed immediately.
 - Use `background=true` for servers, watchers, interactive programs, and work whose normal duration could exceed the foreground timeout. Preserve the returned `terminal_id` and continue with the observation Skill.
 - Set a custom timeout only from evidence about expected runtime. A timeout is not proof that the underlying task failed; inspect the returned status and logs before deciding whether to retry.

@@ -351,6 +351,19 @@ Windows 不在本轮实现，由后续开发者按以下不可拆分的协议一
 
 Windows 验收测试必须覆盖：一个包展开两个候选、只启动所选 component、跨 component 扩权失败、缺 component 失败、Release 漂移失败、旧包级 Task 失败，以及 authoring/executor 工具面互不越权。
 
+### 9.2 Windows 终端审批目的说明
+
+Windows 本轮同样不修改代码。后续开发者实施 W1 时还必须同步以下终端审批契约，使 macOS 与 Windows 的审批体验一致：
+
+- `terminal_exec` 增加必填字符串参数 `purpose`，去除首尾空白后必须为 1–500 字；描述必须面向用户说明运行原因和预期结果，禁止只写“执行命令”或复制原始命令。
+- JSON Schema、审批处理器和最终执行器都独立校验 `purpose`；缺失、全空白或超长时失败关闭，不执行命令。
+- `CommandApprovalRequest`、`ConnectorPendingApproval`、Companion Relay DTO 与审批审计记录携带 `purpose`。
+- 审批浮层优先展示“运行目的”，完整命令默认收进“命令详情”，工作目录、风险和审批理由继续独立展示。
+- AI 自动审批提示同时包含 `purpose` 和真实命令，使审批模型能够判断描述是否与实际操作一致；`purpose` 必须参与会话审批作用域摘要，避免同一命令被不同描述复用审批。
+- 测试必须覆盖 Schema 必填、空白/超长拒绝、审批卡片展示、Companion Relay 透传、目的与命令不一致时不得静默放行，以及旧任务缺少 `purpose` 时拒绝执行。
+
+Windows 建议涉及：`WindowsLocalAgentCapabilityCatalog.cs`、`WindowsLocalAgentToolApprovalHandler.cs`、`WindowsLocalAgentProjectToolExecutor.cs`、`ConnectorApprovalModels.cs`、`CommandApprovalCoordinator.cs`、`CompanionRelayHandler.cs` 和审批浮层视图。
+
 ## 10. 实施阶段与依赖
 
 | 阶段 | 内容 | 前置 | 完成判据 |
@@ -486,3 +499,59 @@ Windows 必须在 W1 完成后单独发布；不得通过保留包级选择或�
 - 任务只有在前置完成后才能领取；完成、阻塞和取消都有受校验的状态回写。
 - 创建器无法伪造执行状态，执行器无法修改规划结构。
 - IAM 现有计划完成备份和重构，不再以技术章节充当需求，也不再出现当前的高密度依赖墙。
+
+## 16. 用户自定义 MCP / Plugin 安装
+
+### 16.1 macOS 已实施范围
+
+客户端 Plugin 设置页增加“安装自定义…”入口，并明确分成两种来源：
+
+1. 固定版本 npm MCP：用户分别填写显示名、component key、npm 包名、精确版本、bin 名称和逐项参数。客户端不接受 tag、semver range、Git URL 或整段 shell command；npm 安装固定使用 `--ignore-scripts --omit=dev --save-exact`。
+2. 本地 ChatOS Plugin 文件夹：用户选择包含 `schemaVersion: 3` 的 `chatos.plugin.json` 的目录。客户端复制到暂存区后拒绝符号链接、硬链接、越界文件、无效 stdio executable 和没有工具的 MCP。
+
+两种来源统一执行以下安装事务：
+
+1. 在随机暂存目录构造完整 Plugin 快照。
+2. 计算所有安装文件的 SHA-256 清单。
+3. 在现有 macOS Seatbelt Plugin 沙箱中逐个启动 MCP component。
+4. 执行 MCP `initialize` 与 `tools/list`，展示真实 component 和工具清单。
+5. 基于安装文件、来源和完整工具 schema 计算确认指纹。
+6. 用户确认后重新构造、重新启动、重新读取工具；指纹不一致则拒绝安装。
+7. 只有复检一致才原子移动到正式 Plugin 目录并写入安装记录。
+8. Main Chat 复用现有 `pluginID + componentKey` 候选机制，可独立选择每个用户安装的 component；不会把整个包折叠为一个选择，也不会启动未选择的 component。
+9. 每次枚举和启动前重新验证逐文件哈希；文件漂移后失败关闭，不再向 Main Chat 暴露。
+
+自定义 npm MCP 当前不接受明文环境变量，避免 token 被写入 manifest、状态文件或审批记录。需要凭据的 MCP 后续必须使用 Keychain-backed secret reference，不得通过恢复明文 env 的方式实现。
+
+### 16.2 REA 验收样例
+
+真实集成样例固定为：
+
+- npm package：`rea-agents`
+- version：`6.5.0`
+- bin：`rea`
+- args：`mcp`
+- component key：`reverse-engineer-anything`
+
+集成测试必须证明：
+
+- 安装全程不执行 npm install scripts。
+- `initialize + tools/list` 返回至少 200 个真实工具，并包含 `binary_session`。
+- 预检与安装复检指纹一致后才能持久化。
+- 安装记录来源为 `custom_mcp`，逐文件完整性状态为 verified。
+- Main Chat component 发现返回独立的 `reverse-engineer-anything`。
+- Hopper、Ghidra、IDA 或 JADX 未配置属于运行依赖诊断，不得伪装为安装成功后的可用分析引擎，也不得由客户端静默安装。
+
+### 16.3 Windows 独立工作包（本轮不实现）
+
+Windows 开发者不得复制 macOS Seatbelt 代码或绕过预检；需实现等价语义：
+
+1. 在 Windows ACL 受限的随机暂存目录构造安装快照，拒绝 reparse point、junction、symlink、hard link 和 NTFS alternate data stream。
+2. npm 安装必须固定精确版本并禁用 lifecycle scripts。
+3. 通过 Windows Job Object 启动 MCP，限制子进程树、超时、输出大小和终止行为。
+4. 使用 AppContainer、受限 token 或等价主机边界禁止默认外网；不得直接以桌面用户完整权限运行预检 MCP。
+5. 使用与 macOS 相同的 canonical tool-schema fingerprint 和 `pluginID + componentKey` Main Chat 选择协议。
+6. 使用 DPAPI/Windows Credential Manager 实现后续 secret reference；禁止把凭据写入 manifest 或持久状态 JSON。
+7. 覆盖 REA 固定版本样例、指纹漂移、文件篡改、缺失 Node/npm、缺失分析引擎和卸载清理测试。
+
+Windows 工作包完成前，Windows UI 不展示一个实际无法提供同等安全边界的“自定义安装”按钮，也不增加任何兼容分支。

@@ -222,6 +222,9 @@ extension NativeLocalConnectorService {
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativePluginRuntimeError.invalidRequest("终端命令不能为空")
         }
+        guard let purpose = NativeLocalAgentTerminalCommandResolver.purpose(arguments) else {
+            throw NativePluginRuntimeError.invalidRequest("终端命令必须提供 1 至 500 字的运行目的")
+        }
         let cwd = try resolveDirectory(
             arguments["path"]?.jsonString ?? ".",
             relativeTo: projectRoot,
@@ -240,6 +243,8 @@ extension NativeLocalConnectorService {
             projectRoot: projectRoot,
             source: "local-agent-builtin-mcp",
             risk: risk,
+            purpose: purpose,
+            requestedPermissionsDescription: purpose,
             approvalScopeKey: "agent-project-terminal:\(resolvedProject.workspace.id)",
             workspaceID: resolvedProject.workspace.id
         )

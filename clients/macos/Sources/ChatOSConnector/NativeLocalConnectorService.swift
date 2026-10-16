@@ -443,6 +443,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 .init(
                     id: UUID().uuidString,
                     command: pending.command,
+                    purpose: pending.purpose,
                     cwd: pending.cwd,
                     source: pending.source,
                     mode: state.approvalMode,
@@ -457,6 +458,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,
+                purpose: pending.purpose,
                 cwd: pending.cwd,
                 source: pending.source,
                 risk: pending.risk,

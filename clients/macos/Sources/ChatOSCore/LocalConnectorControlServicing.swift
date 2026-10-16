@@ -53,6 +53,13 @@ public protocol LocalConnectorControlServicing: Sendable {
         expectedOwnerUserID: String
     ) async throws -> LocalConnectorPluginApplicationLaunch
     func installPlugin(id: String) async throws
+    func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection
+    func installCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        expectedFingerprint: String
+    ) async throws
+    func inspectLocalPlugin(atPath path: String) async throws -> LocalConnectorPluginInspection
+    func installLocalPlugin(atPath path: String, expectedFingerprint: String) async throws
     func uninstallPlugin(id: String) async throws
     func updatePluginEnabled(id: String, enabled: Bool) async throws
     func requestPluginPermission(pluginID: String, permissionID: String) async throws
@@ -67,6 +74,25 @@ public extension LocalConnectorControlServicing {
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] { [] }
     func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin] {
         try await fetchPlugins()
+    }
+
+    func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection {
+        throw URLError(.unsupportedURL)
+    }
+
+    func installCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        expectedFingerprint: String
+    ) async throws {
+        throw URLError(.unsupportedURL)
+    }
+
+    func inspectLocalPlugin(atPath path: String) async throws -> LocalConnectorPluginInspection {
+        throw URLError(.unsupportedURL)
+    }
+
+    func installLocalPlugin(atPath path: String, expectedFingerprint: String) async throws {
+        throw URLError(.unsupportedURL)
     }
 
     func launchPluginApplication(

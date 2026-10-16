@@ -533,6 +533,9 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeLocalAgentPlatformToolError.invalidField("command")
         }
+        guard NativeLocalAgentTerminalCommandResolver.purpose(arguments) != nil else {
+            throw NativeLocalAgentPlatformToolError.invalidField("purpose")
+        }
         let cwd = try Self.resolveDirectory(
             Self.string(arguments["path"]) ?? ".",
             projectRoot: root

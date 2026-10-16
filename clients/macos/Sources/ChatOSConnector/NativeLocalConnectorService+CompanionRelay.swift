@@ -331,6 +331,7 @@ extension NativeLocalConnectorService {
         return LocalConnectorCompanionApproval(
             id: approval.id,
             command: approval.command,
+            purpose: approval.purpose,
             context: context.isEmpty ? nil : context,
             source: approval.source,
             risk: approval.risk,

@@ -69,6 +69,79 @@ public enum LocalConnectorPluginInstallationIssue: String, Codable, Sendable, Eq
     case integrityCheckFailed = "integrity_check_failed"
 }
 
+public enum LocalConnectorPluginSource: String, Codable, Sendable, Equatable {
+    case marketplace
+    case customMCP = "custom_mcp"
+    case localPlugin = "local_plugin"
+}
+
+public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
+    public var displayName: String
+    public var description: String
+    public var componentKey: String
+    public var packageName: String
+    public var packageVersion: String
+    public var binaryName: String
+    public var arguments: [String]
+    public var environment: [String: String]
+
+    public init(
+        displayName: String,
+        description: String = "",
+        componentKey: String,
+        packageName: String,
+        packageVersion: String,
+        binaryName: String,
+        arguments: [String] = [],
+        environment: [String: String] = [:]
+    ) {
+        self.displayName = displayName
+        self.description = description
+        self.componentKey = componentKey
+        self.packageName = packageName
+        self.packageVersion = packageVersion
+        self.binaryName = binaryName
+        self.arguments = arguments
+        self.environment = environment
+    }
+}
+
+public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Sendable, Equatable {
+    public var componentKey: String
+    public var displayName: String
+    public var toolNames: [String]
+
+    public var id: String { componentKey }
+
+    public init(componentKey: String, displayName: String, toolNames: [String]) {
+        self.componentKey = componentKey
+        self.displayName = displayName
+        self.toolNames = toolNames
+    }
+}
+
+public struct LocalConnectorPluginInspection: Codable, Sendable, Equatable {
+    public var fingerprint: String
+    public var displayName: String
+    public var version: String
+    public var sourceSummary: String
+    public var components: [LocalConnectorPluginInspectionComponent]
+
+    public init(
+        fingerprint: String,
+        displayName: String,
+        version: String,
+        sourceSummary: String,
+        components: [LocalConnectorPluginInspectionComponent]
+    ) {
+        self.fingerprint = fingerprint
+        self.displayName = displayName
+        self.version = version
+        self.sourceSummary = sourceSummary
+        self.components = components
+    }
+}
+
 public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var pluginID: String
     public var packageName: String?
@@ -86,6 +159,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var hasUI: Bool?
     public var permissions: [LocalConnectorPluginPermission]
     public var installationIssue: LocalConnectorPluginInstallationIssue?
+    public var source: LocalConnectorPluginSource
 
     public var id: String { pluginID }
     public var requiresReinstall: Bool { installationIssue != nil }
@@ -106,7 +180,8 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         enabled: Bool,
         hasUI: Bool? = nil,
         permissions: [LocalConnectorPluginPermission] = [],
-        installationIssue: LocalConnectorPluginInstallationIssue? = nil
+        installationIssue: LocalConnectorPluginInstallationIssue? = nil,
+        source: LocalConnectorPluginSource = .marketplace
     ) {
         self.pluginID = pluginID
         self.packageName = packageName
@@ -124,6 +199,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.hasUI = hasUI
         self.permissions = permissions
         self.installationIssue = installationIssue
+        self.source = source
     }
 }
 

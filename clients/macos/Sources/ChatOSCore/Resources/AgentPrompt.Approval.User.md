@@ -2,6 +2,7 @@
 
 - source: {{source}}
 - cwd: {{cwd}}
+- user_facing_purpose: {{purpose}}
 - operation: {{operation}}
 - requested_permissions: {{requested_permissions}}
 - static_risk_level: {{risk_level}}

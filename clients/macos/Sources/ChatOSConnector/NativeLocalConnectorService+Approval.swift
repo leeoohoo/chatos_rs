@@ -19,6 +19,7 @@ extension NativeLocalConnectorService {
         projectRoot: URL,
         source: String,
         risk: NativeApprovalRisk,
+        purpose: String? = nil,
         requestedPermissionsDescription: String? = nil,
         approvalScopeKey: String? = nil,
         approvalSessionReuse: ApprovalSessionReuse = .exactRequest,
@@ -33,6 +34,7 @@ extension NativeLocalConnectorService {
                 cwd: cwd,
                 projectRoot: projectRoot,
                 workspaceID: workspaceID,
+                purpose: purpose,
                 requestedPermissionsDescription: requestedPermissionsDescription,
                 reuse: approvalSessionReuse
             )
@@ -42,6 +44,7 @@ extension NativeLocalConnectorService {
             publishApprovalEvent(.init(
                 requestID: requestID,
                 command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
                 cwd: cwd.path,
                 source: source,
                 risk: risk.level,
@@ -58,6 +61,7 @@ extension NativeLocalConnectorService {
             publishApprovalEvent(.init(
                 requestID: requestID,
                 command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
                 cwd: cwd.path,
                 source: source,
                 risk: risk.level,
@@ -76,6 +80,7 @@ extension NativeLocalConnectorService {
                 source: source,
                 risk: risk,
                 reason: risk.reason,
+                purpose: purpose,
                 approvalScopeKey: scopedApprovalKey
             )
         case .autoApproval:
@@ -88,6 +93,7 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 尚未配置模型。",
+                    purpose: purpose,
                     approvalScopeKey: scopedApprovalKey
                 )
             }
@@ -125,6 +131,7 @@ extension NativeLocalConnectorService {
                         projectRoot: projectRoot,
                         riskLevel: risk.level,
                         riskReason: risk.reason,
+                        purpose: purpose,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
                     model: resolvedModel,
@@ -143,6 +150,7 @@ extension NativeLocalConnectorService {
                         source: source,
                         risk: risk,
                         reason: reason,
+                        purpose: purpose,
                         approvalScopeKey: scopedApprovalKey
                     )
                 }
@@ -154,6 +162,7 @@ extension NativeLocalConnectorService {
                     publishApprovalEvent(.init(
                         requestID: requestID,
                         command: ([command] + arguments).joined(separator: " "),
+                        purpose: purpose,
                         cwd: cwd.path,
                         source: source,
                         risk: risk.level,
@@ -166,6 +175,7 @@ extension NativeLocalConnectorService {
                     publishApprovalEvent(.init(
                         requestID: requestID,
                         command: ([command] + arguments).joined(separator: " "),
+                        purpose: purpose,
                         cwd: cwd.path,
                         source: source,
                         risk: risk.level,
@@ -190,6 +200,7 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 不可用：\(error.localizedDescription)",
+                    purpose: purpose,
                     approvalScopeKey: scopedApprovalKey
                 )
             }
@@ -203,6 +214,7 @@ extension NativeLocalConnectorService {
         cwd: URL,
         projectRoot: URL,
         workspaceID: String?,
+        purpose: String? = nil,
         requestedPermissionsDescription: String?,
         reuse: ApprovalSessionReuse
     ) -> String {
@@ -213,6 +225,7 @@ extension NativeLocalConnectorService {
             projectRoot.standardizedFileURL.resolvingSymlinksInPath().path,
             cwd.standardizedFileURL.resolvingSymlinksInPath().path,
             base,
+            purpose ?? "",
             requestedPermissionsDescription ?? "",
         ]
         if reuse == .exactRequest {
@@ -234,6 +247,7 @@ extension NativeLocalConnectorService {
         source: String,
         risk: NativeApprovalRisk,
         reason: String?,
+        purpose: String?,
         approvalScopeKey: String?
     ) async -> NativeApprovalDecision {
         let id = UUID().uuidString
@@ -241,6 +255,7 @@ extension NativeLocalConnectorService {
             id: id,
             requestID: requestID,
             command: ([command] + arguments).joined(separator: " "),
+            purpose: purpose,
             cwd: cwd.path,
             source: source,
             risk: risk.level,

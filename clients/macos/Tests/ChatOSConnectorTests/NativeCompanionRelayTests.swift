@@ -95,6 +95,7 @@ final class NativeCompanionRelayTests: XCTestCase {
             id: "approval-1",
             requestID: "request-1",
             command: "git status",
+            purpose: "确认提交前有哪些文件发生变化",
             cwd: "/Users/alice/private/workspace/repository",
             source: "terminal",
             risk: "medium",
@@ -109,6 +110,7 @@ final class NativeCompanionRelayTests: XCTestCase {
         XCTAssertFalse(visible.context?.contains("/Users/alice") == true)
         XCTAssertEqual(visible.availableDecisions, ["accept", "acceptForSession", "decline"])
         XCTAssertEqual(visible.command, "git status")
+        XCTAssertEqual(visible.purpose, "确认提交前有哪些文件发生变化")
         XCTAssertEqual(visible.reason, "需要读取工作区状态")
     }
 

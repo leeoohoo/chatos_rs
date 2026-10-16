@@ -120,7 +120,10 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             ownerUserID: "user-1",
             invocation: Self.invocation(
                 toolName: "execute_command",
-                arguments: .object(["command": .string("pwd")]),
+                arguments: .object([
+                    "purpose": .string("确认联系人任务使用隔离的执行目录"),
+                    "command": .string("pwd"),
+                ]),
                 requiresApproval: true,
                 approvalStatus: "approved"
             )
