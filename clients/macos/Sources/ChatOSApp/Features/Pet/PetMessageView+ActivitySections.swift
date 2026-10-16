@@ -63,7 +63,7 @@ extension PetMessageView {
                 VStack(alignment: .leading, spacing: 9) {
                     if let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines),
                        !purpose.isEmpty {
-                        Label("运行目的", systemImage: "target")
+                        Label(model.localized("运行目的", english: "Purpose"), systemImage: "target")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                         Text(purpose)
