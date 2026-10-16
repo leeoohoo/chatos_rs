@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
 import { createRepository, type RuntimeContext, type SolutionRepository } from './repository';
 import { PlanGraph } from './PlanGraph';
+import { readyTaskIds, requirementPlanView } from '../../src/plan-view';
 
 type Area = 'overview' | 'requirements';
 type DirtyPart = 'requirements' | 'design' | 'plan' | 'workspace';
@@ -159,7 +160,7 @@ export function SolutionStudioApp() {
   const requirementsWithDesign = new Set(workspace.design.sections.flatMap((section) => section.requirementIds)).size;
   const requirementsWithTasks = new Set(workspace.executionPlan.tasks.flatMap((task) => task.requirementIds)).size;
   const doneCount = workspace.executionPlan.tasks.filter((task) => task.status === 'done').length;
-  const readyCount = workspace.executionPlan.tasks.filter((task) => task.status === 'planned' && task.dependsOn.every((id) => workspace.executionPlan.tasks.find((candidate) => candidate.id === id)?.status === 'done')).length;
+  const readyCount = readyTaskIds(workspace.executionPlan.tasks).length;
 
   function addRequirement(input: { title: string; description: string; priority: 'must' | 'should' | 'could'; parentRequirementId?: string; acceptanceCriteria: string[] }) {
     let id = '';
@@ -253,7 +254,7 @@ export function SolutionStudioApp() {
       {area === 'requirements' && <RequirementsView workspace={workspace} onAdd={() => setCreateModal({ kind: 'requirement' })} onOpen={openRequirement}/>}
     </main>
 
-    {activeRequirement && <RequirementSheet workspace={workspace} requirement={activeRequirement} tab={requirementPanelTab} selectedTaskId={selectedTaskId} onTab={setRequirementPanelTab} onSelectTask={setSelectedTaskId} onClose={() => { setActiveRequirementId(undefined); setSelectedTaskId(undefined); }} onAddDesign={() => setCreateModal({ kind: 'design', requirementId: activeRequirement.id })} onAddDesignBlock={(designId) => setCreateModal({ kind: 'designBlock', requirementId: activeRequirement.id, designId })} onAddTask={() => setCreateModal({ kind: 'task', requirementId: activeRequirement.id })} onUpdateDesign={(designId, updater) => updateWorkspace('design', (draft) => { const target = draft.design.sections.find((item) => item.id === designId); if (target) updater(target); })} onUpdateTask={updateTask} onPositionsChange={(positions) => updateWorkspace('plan', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}/>}
+    {activeRequirement && <RequirementSheet workspace={workspace} requirement={activeRequirement} tab={requirementPanelTab} selectedTaskId={selectedTaskId} onTab={setRequirementPanelTab} onSelectTask={setSelectedTaskId} onOpenRequirement={(id, taskId) => { openRequirement(id, 'plan'); setSelectedTaskId(taskId); }} onClose={() => { setActiveRequirementId(undefined); setSelectedTaskId(undefined); }} onAddDesign={() => setCreateModal({ kind: 'design', requirementId: activeRequirement.id })} onAddDesignBlock={(designId) => setCreateModal({ kind: 'designBlock', requirementId: activeRequirement.id, designId })} onAddTask={() => setCreateModal({ kind: 'task', requirementId: activeRequirement.id })} onUpdateDesign={(designId, updater) => updateWorkspace('design', (draft) => { const target = draft.design.sections.find((item) => item.id === designId); if (target) updater(target); })} onUpdateTask={updateTask} onPositionsChange={(positions) => updateWorkspace('workspace', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}/>}
     {createModal && <CreateModal state={createModal} workspace={workspace} onClose={() => setCreateModal(undefined)} onCreateRequirement={addRequirement} onCreateDesign={addDesignSection} onCreateDesignBlock={addDesignBlock} onCreateTask={addTask}/>}
     {markdownPreview && <MarkdownPreview title={markdownPreview.title} content={markdownPreview.content} onClose={() => setMarkdownPreview(undefined)} onNotify={notify} onCopyFile={async () => {
       const result = await repository.copyMarkdownFile(workspace.workspaceId);
@@ -399,14 +400,14 @@ function DesignBlockPreview({ block }: { block: DesignContentBlock }) {
   </section>;
 }
 
-function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, onSelectTask, onClose, onAddDesign, onAddDesignBlock, onAddTask, onUpdateDesign, onUpdateTask, onPositionsChange }: {
+export function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, onSelectTask, onOpenRequirement, onClose, onAddDesign, onAddDesignBlock, onAddTask, onUpdateDesign, onUpdateTask, onPositionsChange }: {
   workspace: SolutionWorkspace; requirement: RequirementItem; tab: RequirementPanelTab; selectedTaskId?: string;
   onTab: (tab: RequirementPanelTab) => void; onSelectTask: (id?: string) => void; onClose: () => void; onAddDesign: () => void; onAddDesignBlock: (designId: string) => void; onAddTask: () => void;
+  onOpenRequirement: (requirementId: string, taskId: string) => void;
   onUpdateDesign: (id: string, updater: (section: DesignSection) => void) => void; onUpdateTask: (id: string, updater: (task: ExecutionTask) => void) => void; onPositionsChange: (positions: Record<string, PlanNodePosition>) => void;
 }) {
   const designs = workspace.design.sections.filter((section) => section.requirementIds.includes(requirement.id));
   const design = designs.find((section) => section.id === requirement.selectedDesignSectionId) ?? designs[0];
-  const tasks = workspace.executionPlan.tasks.filter((task) => task.requirementIds.includes(requirement.id));
   const [activeBlockId, setActiveBlockId] = useState<string>();
   const [planScope, setPlanScope] = useState<'requirement' | 'complete'>('requirement');
   useEffect(() => {
@@ -417,25 +418,9 @@ function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, 
   const preferredBlock = design?.blocks?.find((block) => block.type !== 'text') ?? design?.blocks?.[0];
   useEffect(() => setActiveBlockId((current) => design?.blocks?.some((block) => block.id === current) ? current : preferredBlock?.id), [design?.id, blockIds, preferredBlock?.id]);
   const activeBlock = design?.blocks?.find((block) => block.id === activeBlockId) ?? preferredBlock;
-  const taskById = new Map(workspace.executionPlan.tasks.map((task) => [task.id, task]));
-  const scopedTaskIds = new Set(tasks.map((task) => task.id));
-  const dependencyQueue = tasks.flatMap((task) => task.dependsOn);
-  while (dependencyQueue.length > 0) {
-    const id = dependencyQueue.shift()!;
-    if (scopedTaskIds.has(id)) continue;
-    const dependency = taskById.get(id);
-    if (!dependency) continue;
-    scopedTaskIds.add(id);
-    dependencyQueue.push(...dependency.dependsOn);
-  }
-  const scopedTasks = workspace.executionPlan.tasks.filter((task) => scopedTaskIds.has(task.id)).map((task) => tasks.some((owned) => owned.id === task.id) ? task : { ...task, title: `支撑前置 · ${task.title}` });
-  const externalDependencyCount = scopedTasks.length - tasks.length;
-  const selectedTask = tasks.find((task) => task.id === selectedTaskId);
-  const directTaskIds = new Set(tasks.map((task) => task.id));
-  const directGraphTasks = tasks.map((task) => ({ ...task, dependsOn: task.dependsOn.filter((id) => directTaskIds.has(id)) }));
-  const graphTasks = planScope === 'complete' ? scopedTasks : directGraphTasks;
-  const scopedPlan = { ...workspace.executionPlan, tasks: graphTasks, positions: Object.fromEntries(graphTasks.flatMap((task) => workspace.executionPlan.positions[task.id] ? [[task.id, workspace.executionPlan.positions[task.id]]] : [])) };
-  const readyCount = tasks.filter((task) => task.status === 'planned' && task.dependsOn.every((id) => taskById.get(id)?.status === 'done')).length;
+  const { tasks, supportingTasks, primaryTaskIds, missingDependencyIds, plan: scopedPlan, readyCount } = requirementPlanView(workspace.executionPlan, requirement.id, planScope);
+  const externalDependencyCount = supportingTasks.length;
+  const selectedTask = workspace.executionPlan.tasks.find((task) => task.id === selectedTaskId);
   return <div className="requirement-sheet-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <aside className="requirement-sheet" role="dialog" aria-modal="true" aria-label={`${requirement.title} 详情`}>
       <header className="requirement-sheet-header"><div><span>{requirement.id}</span><h2>{requirement.title}</h2><p>{requirement.description}</p></div><button aria-label="关闭" onClick={onClose}>×</button></header>
@@ -461,15 +446,31 @@ function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, 
         </section> : <section className="scoped-plan">
           <div className="sheet-section-heading"><div><h3>这个需求怎么执行</h3><p>{design ? `当前基于「${design.title}」拆解任务与前置关系${externalDependencyCount ? `，另有 ${externalDependencyCount} 个跨需求前置` : ''}。` : '执行计划需要先完成这条需求的设计方案。'}</p></div><button className="button primary" disabled={!design} onClick={onAddTask}>＋ 新增任务</button></div>
           {!design ? <div className="plan-prerequisite"><span>1</span><div><strong>请先完成设计方案</strong><p>切换到“设计方案”，完成技术设计后再建立执行计划。</p></div><button onClick={() => onTab('design')}>去创建设计方案</button></div> : <>
-            {externalDependencyCount > 0 && <div className="plan-scope-toggle"><span>图中范围</span><div><button className={planScope === 'requirement' ? 'active' : ''} onClick={() => setPlanScope('requirement')}>本需求主线 · {tasks.length}</button><button className={planScope === 'complete' ? 'active' : ''} onClick={() => setPlanScope('complete')}>完整依赖 · {scopedTasks.length}</button></div></div>}
-            <div className="sheet-graph"><PlanGraph plan={scopedPlan} selectedTaskId={selectedTaskId} onSelect={(id) => onSelectTask(id && tasks.some((task) => task.id === id) ? id : undefined)} onPositionsChange={onPositionsChange}/></div>
+            {externalDependencyCount > 0 && <div className="plan-scope-toggle"><span>图中范围</span><div><button className={planScope === 'requirement' ? 'active' : ''} onClick={() => setPlanScope('requirement')}>本需求主线 · {tasks.length}</button><button className={planScope === 'complete' ? 'active' : ''} onClick={() => setPlanScope('complete')}>完整依赖 · {tasks.length + supportingTasks.length}</button></div></div>}
+            {supportingTasks.length > 0 && <details className="supporting-task-links"><summary>跨需求前置 · {supportingTasks.length}（按需展开）</summary><div aria-label="跨需求前置任务">{supportingTasks.map((task) => <button key={task.id} onClick={() => onSelectTask(task.id)}>{task.id} · {task.title}</button>)}</div></details>}
+            {missingDependencyIds.length > 0 && <p className="plan-dependency-warning" role="alert">前置任务不存在：{missingDependencyIds.join('、')}。请修复计划引用；这些任务不会被视为已完成。</p>}
+            <div className="sheet-graph"><PlanGraph plan={scopedPlan} sourcePlan={workspace.executionPlan} primaryTaskIds={primaryTaskIds} selectedTaskId={selectedTaskId} onSelect={onSelectTask} onPositionsChange={onPositionsChange}/></div>
             <TaskList tasks={tasks} readyCount={readyCount} onSelect={onSelectTask}/>
-            {selectedTask && <div className="sheet-task-editor"><TaskInspector task={selectedTask} tasks={tasks} requirements={[requirement]} sections={[design]} onClose={() => onSelectTask(undefined)} onUpdate={(updater) => onUpdateTask(selectedTask.id, updater)} onDelete={() => {}}/></div>}
+            {selectedTask && <div className="sheet-task-editor">{primaryTaskIds.has(selectedTask.id) ? <TaskInspector task={selectedTask} tasks={workspace.executionPlan.tasks} requirements={workspace.requirements.items} sections={workspace.design.sections} onClose={() => onSelectTask(undefined)} onUpdate={(updater) => onUpdateTask(selectedTask.id, updater)} onDelete={() => {}}/> : <SupportingTaskDetails task={selectedTask} workspace={workspace} onClose={() => onSelectTask(undefined)} onSelectTask={onSelectTask} onOpenRequirement={onOpenRequirement}/>}</div>}
           </>}
         </section>}
       </div>
     </aside>
   </div>;
+}
+
+function SupportingTaskDetails({ task, workspace, onClose, onSelectTask, onOpenRequirement }: {
+  task: ExecutionTask; workspace: SolutionWorkspace; onClose: () => void;
+  onSelectTask: (id: string) => void; onOpenRequirement: (requirementId: string, taskId: string) => void;
+}) {
+  const owners = workspace.requirements.items.filter((item) => task.requirementIds.includes(item.id));
+  return <aside className="inspector"><header><div><span>{task.id}</span><strong>跨需求支撑任务</strong></div><button aria-label="关闭任务详情" onClick={onClose}>×</button></header><div className="inspector-scroll supporting-task-details">
+    <h3>{task.title}</h3><p>{task.description}</p><p>状态：{taskStatusLabels[task.status]}</p>{task.blockedReason && <p>阻塞原因：{task.blockedReason}</p>}
+    <section><strong>所属需求</strong>{owners.map((owner) => <button key={owner.id} onClick={() => onOpenRequirement(owner.id, task.id)}>{owner.id} · {owner.title} ›</button>)}{owners.length === 0 && <p>尚未关联需求</p>}</section>
+    <section><strong>前置任务</strong>{task.dependsOn.map((id) => { const dependency = workspace.executionPlan.tasks.find((candidate) => candidate.id === id); return dependency ? <button key={id} onClick={() => onSelectTask(id)}>{id} · {dependency.title} · {taskStatusLabels[dependency.status]}</button> : <p key={id}>{id} · 前置不存在</p>; })}{task.dependsOn.length === 0 && <p>无</p>}</section>
+    <section><strong>预期输出</strong>{task.deliverables.map((item, index) => <p key={index}>{item}</p>)}</section>
+    <section><strong>验收标准</strong>{task.acceptanceCriteria.map((item, index) => <p key={index}>{item}</p>)}</section>
+  </div><footer><span>只读查看；进入所属需求后可编辑</span></footer></aside>;
 }
 
 function CreateModal({ state, workspace, onClose, onCreateRequirement, onCreateDesign, onCreateDesignBlock, onCreateTask }: {
@@ -514,7 +515,7 @@ function CreateModal({ state, workspace, onClose, onCreateRequirement, onCreateD
 }
 
 function TaskList({ tasks, readyCount, onSelect }: { tasks: ExecutionTask[]; readyCount: number; onSelect: (id: string) => void }) {
-  return <div className="task-list"><header><span>任务</span><span>阶段</span><span>前置</span><span>状态</span></header>{tasks.map((task) => <button key={task.id} onClick={() => onSelect(task.id)}><span><b>{task.id}</b><strong>{task.title}</strong></span><span>{task.phase || '—'}</span><span>{task.dependsOn.join(', ') || '无'}</span><em className={`task-status ${task.status}`}>{taskStatusLabels[task.status]}</em></button>)}{tasks.length === 0 && <div className="empty-list">还没有任务。添加第一个执行任务后，可设置前置关系。</div>}<footer>{readyCount} 个任务可以立即开始</footer></div>;
+  return <div className="task-list"><header><span>任务</span><span>阶段</span><span>前置</span><span>状态</span></header>{tasks.map((task) => <button key={task.id} onClick={() => onSelect(task.id)}><span><b>{task.id}</b><strong>{task.title}</strong></span><span>{task.phase || '—'}</span><span>{task.dependsOn.join(', ') || '无'}</span><em className={`task-status ${task.status}`}>{taskStatusLabels[task.status]}</em></button>)}{tasks.length === 0 && <div className="empty-list">还没有任务。添加第一个执行任务后，可设置前置关系。</div>}<footer>本需求 {readyCount} 个任务具备开始条件（按完整前置计算，不代表已启动执行）</footer></div>;
 }
 
 function TaskInspector({ task, tasks, requirements, sections, onClose, onUpdate, onDelete }: { task: ExecutionTask; tasks: ExecutionTask[]; requirements: Array<{ id: string; title: string }>; sections: Array<{ id: string; title: string }>; onClose: () => void; onUpdate: (updater: (task: ExecutionTask) => void) => void; onDelete: () => void }) {

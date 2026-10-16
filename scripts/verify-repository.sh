@@ -119,6 +119,21 @@ run_rust_tests() {
 run_native_platform() {
   case "$(uname -s)" in
     Darwin)
+      # These native integration tests launch the real Host. Without a prior Rust build
+      # XCTest silently skips them, leaving startup/IPC regressions undetected in CI.
+      (cd "$ROOT_DIR" && "${CARGO[@]}" build -p chatos_local_agent_host)
+      (cd "$ROOT_DIR" && "${CARGO[@]}" test -p chatos_client_storage --lib)
+      # Capability discovery must survive both text budgets and durable per-tool gates.
+      (cd "$ROOT_DIR" && "${CARGO[@]}" test -p chatos_agent_profiles -p chatos_local_agent_runtime -p chatos_ai_runtime -p chatos_mcp_runtime --lib)
+      export CHATOS_LOCAL_AGENT_HOST_PATH="$ROOT_DIR/target-shared/debug/chatos_local_agent_host"
+      export CHATOS_REQUIRE_NATIVE_HOST_TESTS=1
+      test -x "$CHATOS_LOCAL_AGENT_HOST_PATH"
+      # Check smoke-test requests against the real Browser catalog without opening
+      # Chrome or registering a native bridge in the user's profile.
+      (cd "$ROOT_DIR" && "${CARGO[@]}" build --manifest-path plugins/browser/Cargo.toml -p browser-cdp-cli)
+      export CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE="$ROOT_DIR/target-shared/debug/chatos-browser-cdp"
+      export CHATOS_BROWSER_CDP_CATALOG_PACKAGE_ROOT="$ROOT_DIR/plugins/browser/npm"
+      test -x "$CHATOS_BROWSER_CDP_CATALOG_EXECUTABLE"
       run_swiftpm build --package-path "$ROOT_DIR/clients/macos"
       run_swiftpm test --package-path "$ROOT_DIR/clients/macos" --no-parallel
       run_swiftpm build --package-path "$ROOT_DIR/plugins/computer-use"

@@ -4,6 +4,26 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentConversationCommandTests: XCTestCase {
+    func testRequirementSurveyNoticeHasNoInternalIDsOrRawAnswers() {
+        let pending = LocalAgentJSONValue.object([
+            "type": .string("requirement_survey_status"), "survey_title": .string("明确 MVP 目标"),
+            "status": .string("open"), "survey_id": .string("internal-id"),
+        ])
+        XCTAssertTrue(pending.conversationDisplayText.contains("明确 MVP 目标"))
+        XCTAssertTrue(pending.conversationDisplayText.contains("需求调研”填写并提交"))
+        XCTAssertFalse(pending.conversationDisplayText.contains("internal-id"))
+        let resolved = LocalAgentJSONValue.object([
+            "type": .string("requirement_survey_status"), "survey_title": .string("明确 MVP 目标"),
+            "status": .string("resolved"),
+        ])
+        XCTAssertTrue(resolved.conversationDisplayText.contains("已提交"))
+        let cancelled = LocalAgentJSONValue.object([
+            "type": .string("requirement_survey_status"), "survey_title": .string("明确 MVP 目标"),
+            "status": .string("cancelled"),
+        ])
+        XCTAssertTrue(cancelled.conversationDisplayText.contains("已取消"))
+        XCTAssertFalse(cancelled.conversationDisplayText.contains("填写并提交"))
+    }
     func testHistoryMapsEverySameTurnUserMessageIncludingAttachmentOnlyGuidance() async throws {
         let host = ConversationCommandHostStub()
         let service = NativeLocalAgentConversationService(
@@ -155,6 +175,39 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         ))
     }
 
+    func testTaskAskUserEventCreatesConversationPromptRealtimeSignal() throws {
+        let event = LocalAgentEventRecord(
+            cursor: 8,
+            eventID: "event-ask-user",
+            runID: "task-run-1",
+            eventType: "user_input_requested",
+            payload: .object([
+                "conversation_id": .string("conversation-1"),
+                "turn_id": .string("turn-1"),
+                "prompt": .object(["title": .string("请补充信息")]),
+            ]),
+            createdAtUnixMs: 1_000
+        )
+
+        let signal = try XCTUnwrap(
+            NativeLocalAgentConversationService.askUserPromptSignals(
+                [event],
+                conversationID: "conversation-1"
+            ).first
+        )
+
+        XCTAssertEqual(signal.eventID, "event-ask-user")
+        XCTAssertEqual(signal.eventSequence, 8)
+        XCTAssertEqual(signal.sessionID, "conversation-1")
+        XCTAssertEqual(signal.turnID, "turn-1")
+        XCTAssertEqual(signal.askUserPromptUpdate?.promptID, "local-ask:task-run-1")
+        XCTAssertEqual(signal.askUserPromptUpdate?.status, .pending)
+        XCTAssertTrue(NativeLocalAgentConversationService.askUserPromptSignals(
+            [event],
+            conversationID: "conversation-other"
+        ).isEmpty)
+    }
+
     func testTaskGraphTerminalDisplaysTheTaskExecutionFinalContent() {
         let value = LocalAgentJSONValue.object([
             "type": .string("task_graph_terminal"),
@@ -237,6 +290,30 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(reply.taskCallback?.sourceUserMessageID, "message-1")
     }
 
+    func testTaskCallbackPrefersEvidenceDispositionOverCoarseFailedStatus() throws {
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task_runner_callback::message-1::task-1::run-1",
+            conversationID: "conversation-1",
+            turnID: "turn-1",
+            ordinal: 2,
+            role: "assistant",
+            content: .string("我完成了一部分，但还有内容未核验。"),
+            metadata: .object([
+                "kind": .string("task_execution_callback"),
+                "task_runner_async": .object([
+                    "event": .string("task.failed"),
+                    "task_id": .string("task-1"),
+                    "status": .string("failed"),
+                    "display_status": .string("evidence_incomplete"),
+                ]),
+            ]),
+            createdAtUnixMs: 2
+        )
+        let reply = try XCTUnwrap(message.replyProjections(sourceUserMessageID: "message-1").first)
+        XCTAssertEqual(reply.taskCallback?.event, "task.failed")
+        XCTAssertEqual(reply.taskCallback?.status, "evidence_incomplete")
+    }
+
     func testLegacyTaskGraphTerminalExpandsIntoIndependentTaskCallbacks() {
         let message = LocalAgentConversationMessageRecord(
             messageID: "task-graph:graph-1:1",
@@ -283,6 +360,75 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         })
     }
 
+    func testAggregatedTaskGraphTerminalStaysOneMainChatReply() throws {
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task-graph:graph-2:1",
+            conversationID: "conversation-1",
+            turnID: "turn-1",
+            ordinal: 2,
+            role: "assistant",
+            content: .object([
+                "type": .string("task_graph_terminal"),
+                "notification_policy": .string("graph_summary"),
+                "summary": .string("全部 2 个任务均已完成。\n\n- 实现 [成功]\n- 验证 [成功]"),
+                "tasks": .array([
+                    .object([
+                        "task_id": .string("task-1"),
+                        "title": .string("实现"),
+                        "status": .string("succeeded"),
+                    ]),
+                    .object([
+                        "task_id": .string("task-2"),
+                        "title": .string("验证"),
+                        "status": .string("succeeded"),
+                    ]),
+                ]),
+            ]),
+            metadata: .object([
+                "kind": .string("task_graph_terminal"),
+                "notification_policy": .string("graph_summary"),
+            ]),
+            createdAtUnixMs: 2
+        )
+
+        XCTAssertEqual(message.content.conversationDisplayText, "全部 2 个任务均已完成。\n\n- 实现 [成功]\n- 验证 [成功]")
+        let replies = message.replyProjections(sourceUserMessageID: "message-1")
+        XCTAssertEqual(replies.count, 1)
+        XCTAssertEqual(replies[0].messageID, message.messageID)
+        XCTAssertNil(replies[0].taskCallback)
+        XCTAssertEqual(replies[0].text, message.content.conversationDisplayText)
+    }
+
+    func testProgressSummaryPrefersCompleteDeliveryOverPreviewAndStaysOneReply() throws {
+        let full = "# 完整报告\n\n" + String(repeating: "验证证据，不应截断。\n", count: 1800)
+            + "\n```python\nprint('ok')\n```\n最终结论"
+        let message = LocalAgentConversationMessageRecord(
+            messageID: "task-graph:progress:1", conversationID: "conversation-1", turnID: "turn-1",
+            ordinal: 5, role: "assistant",
+            content: .object([
+                "type": .string("task_graph_terminal"),
+                "notification_policy": .string("progress_summary"),
+                "summary": .string("短预览"), "delivery_text": .string(full),
+                "tasks": .array([.object(["task_id": .string("final"), "title": .string("综合")])]),
+            ]),
+            metadata: .object(["kind": .string("task_graph_terminal")]), createdAtUnixMs: 3
+        )
+        XCTAssertEqual(message.content.conversationDisplayText, full)
+        let replies = message.replyProjections(sourceUserMessageID: "message-1")
+        XCTAssertEqual(replies.count, 1)
+        XCTAssertEqual(replies[0].text, full)
+        XCTAssertNil(replies[0].taskCallback)
+        XCTAssertEqual(replies[0].messageID, message.messageID)
+    }
+
+    func testEmptyDeliveryFallsBackToLegacySummary() {
+        let value = LocalAgentJSONValue.object([
+            "type": .string("task_graph_terminal"), "delivery_text": .string(" \n "),
+            "summary": .string("旧汇总"), "tasks": .array([]),
+        ])
+        XCTAssertEqual(value.conversationDisplayText, "旧汇总")
+    }
+
     func testMainChatReplyPrecedesCallbacksAndUserCancellationRemainsVisible() {
         let date = Date(timeIntervalSince1970: 1)
         let callback: (String, String) -> ConversationAssistantReply = { id, status in
@@ -312,6 +458,22 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
             ["handoff", "task-running", "task-cancelled", "task-completed"]
         )
         XCTAssertNil(ordered.first?.taskCallback)
+    }
+
+    func testGraphDeliveryFollowsProgressAndRetryGenerationsKeepDurableOrder() {
+        let date = Date(timeIntervalSince1970: 1)
+        let plain: (String) -> ConversationAssistantReply = { id in
+            .init(message: .init(id: id, role: .assistant, text: id, createdAt: date))
+        }
+        let progress: (String) -> ConversationAssistantReply = { id in
+            .init(message: .init(id: id, role: .assistant, text: id, createdAt: date),
+                  taskCallback: .init(taskID: id, status: "completed"))
+        }
+        let replies = [progress("first-run"), plain("handoff"), plain("task-graph:graph:1"),
+                       progress("retry-run"), plain("task-graph:graph:2")]
+        let ordered = NativeLocalAgentConversationService.orderedConversationReplies(replies)
+        XCTAssertEqual(ordered.map(\.id), ["handoff", "first-run", "task-graph:graph:1", "retry-run", "task-graph:graph:2"])
+        XCTAssertNil(ordered.last?.taskCallback)
     }
 }
 

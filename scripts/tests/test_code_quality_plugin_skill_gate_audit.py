@@ -10,14 +10,14 @@ AUDITOR = REPOSITORY_ROOT / "scripts" / "audit-plugin-skill-gates.mjs"
 
 
 class PluginSkillGateAuditTests(unittest.TestCase):
-    def run_audit(self, tools):
+    def run_audit(self, tools, instructions="Choose the required workflow.", manifest_version=None):
         with tempfile.TemporaryDirectory(prefix="plugin-skill-audit-test-") as temporary:
             root = Path(temporary)
             (root / "skills" / "demo-router").mkdir(parents=True)
             (root / "skills" / "demo-leaf").mkdir(parents=True)
             (root / "skills" / "demo-router" / "SKILL.md").write_text(
                 "---\nname: demo-router\ndescription: Route demo work.\nmetadata:\n"
-                "  chatos.role: router\n---\n# Router\nChoose the required workflow.\n",
+                "  chatos.role: router\n---\n# Router\n" + instructions + "\n",
                 encoding="utf-8",
             )
             (root / "skills" / "demo-leaf" / "SKILL.md").write_text(
@@ -29,6 +29,7 @@ class PluginSkillGateAuditTests(unittest.TestCase):
                 json.dumps(
                     {
                         "name": "audit-fixture",
+                        **({"version": manifest_version} if manifest_version else {}),
                         "skills": ["./skills/demo-router", "./skills/demo-leaf"],
                     }
                 ),
@@ -141,6 +142,32 @@ class PluginSkillGateAuditTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("alias gate is weaker", result.stderr)
+
+    def test_rejects_obsolete_skill_control_names_in_packaged_instructions(self):
+        for name in ("skill_skill_activate", "skill_skill_list_resources", "skill_skill_read_resource"):
+            with self.subTest(name=name):
+                result = self.run_audit(
+                    [self.tool("demo_run", {"allOf": ["demo-router"]})],
+                    instructions=f"Call `{name}` before execution.",
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("obsolete Skill tool alias", result.stderr)
+
+    def test_rejects_redundant_resource_list_step(self):
+        result = self.run_audit(
+            [self.tool("demo_run", {"allOf": ["demo-router"]})],
+            instructions="After activation, call `agent_skill_list_resources`.",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("redundant resource-list call", result.stderr)
+
+    def test_checks_actual_mcp_version_instead_of_trusting_package_labels(self):
+        tools = [self.tool("demo_run", {"allOf": ["demo-router"]})]
+        matching = self.run_audit(tools, manifest_version="1")
+        self.assertEqual(matching.returncode, 0, matching.stderr)
+        stale = self.run_audit(tools, manifest_version="2")
+        self.assertNotEqual(stale.returncode, 0)
+        self.assertIn("MCP server version 1 differs from Manifest 2", stale.stderr)
 
 
 if __name__ == "__main__":

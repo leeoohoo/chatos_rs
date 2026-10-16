@@ -96,11 +96,13 @@ final class AppPastedImageNormalizerTests: XCTestCase {
     }
 
     private func makeTIFF(width: Int, height: Int) throws -> Data {
-        let image = NSImage(size: NSSize(width: width, height: height))
-        image.lockFocus()
-        NSColor.systemPurple.setFill()
-        NSRect(x: 0, y: 0, width: width, height: height).fill()
-        image.unlockFocus()
-        return try XCTUnwrap(image.tiffRepresentation)
+        // Pixel-budget fixtures must not depend on the current screen's
+        // backing scale (lockFocus renders 2x pixels on Retina displays).
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        return try XCTUnwrap(bitmap.representation(using: .tiff, properties: [:]))
     }
 }

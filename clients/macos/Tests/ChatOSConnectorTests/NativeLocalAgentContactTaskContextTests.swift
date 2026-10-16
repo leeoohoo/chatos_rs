@@ -42,6 +42,7 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         XCTAssertTrue(first.workspaceScopeID.hasPrefix("contact:"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.executionRootURL.path))
         XCTAssertTrue(first.toolAuthorization.allows("capability_search"))
+        XCTAssertEqual(first.toolAuthorization.ownedPaths, ["reports"])
         let approvalScope = NativeLocalAgentToolApprovalHandler.approvalScope(for: first)
         XCTAssertEqual(approvalScope.rootURL, first.executionRootURL)
         XCTAssertEqual(approvalScope.workspaceID, first.workspaceScopeID)
@@ -69,6 +70,49 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
         }
         XCTAssertTrue(entries.isEmpty)
 
+        let opened = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
+            toolName: "open_edit_session", arguments: .object([:])
+        ))
+        guard case let .object(openResult) = opened,
+              case let .object(editResult)? = openResult["result"],
+              case let .string(editID)? = editResult["session_id"] else {
+            return XCTFail("Task edit session did not open")
+        }
+        func stageArguments(_ path: String) -> LocalAgentJSONValue {
+            .object([
+                "session_id": .string(editID), "operations": .array([.object([
+                    "kind": .string("write"), "path": .string(path),
+                    "content": .string("Task report"), "expected_sha256": .null,
+                ])]),
+            ])
+        }
+        do {
+            _ = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
+                toolName: "stage_edit_batch", arguments: stageArguments("outside.txt")
+            ))
+            XCTFail("Task executor must pass frozen ownership to the editor")
+        } catch let error as NativeLocalAgentPlatformToolError {
+            XCTAssertEqual(error, .projectToolFailed)
+        }
+        _ = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
+            toolName: "stage_edit_batch", arguments: stageArguments("reports/result.txt")
+        ))
+        do {
+            _ = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
+                toolName: "commit_edit_session", arguments: .object(["session_id": .string(editID)])
+            ))
+            XCTFail("Task write commit requires durable approval")
+        } catch let error as NativeLocalAgentPlatformToolError {
+            XCTAssertEqual(error, .approvalRequired)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.executionRootURL.appendingPathComponent("reports/result.txt").path))
+        _ = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
+            toolName: "commit_edit_session", arguments: .object(["session_id": .string(editID)]),
+            requiresApproval: true, approvalStatus: "approved"
+        ))
+        XCTAssertEqual(try String(contentsOf: first.executionRootURL.appendingPathComponent("reports/result.txt"), encoding: .utf8), "Task report")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.executionRootURL.appendingPathComponent("outside.txt").path))
+
         let terminal = try await executor.execute(
             ownerUserID: "user-1",
             invocation: Self.invocation(
@@ -87,6 +131,29 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             [first.executionRootURL.path, "/private" + first.executionRootURL.path]
                 .contains(terminalPath)
         )
+
+        let attachmentRoot = root.appendingPathComponent("attachments", isDirectory: true)
+        let vault = NativeLocalAgentAttachmentVault(rootURL: attachmentRoot)
+        let bytes = Data(repeating: 0xff, count: 120_000)
+        let spec = try XCTUnwrap(vault.authorize([
+            .init(id: "attachment-1", name: "input.docx", mimeType: "application/octet-stream",
+                  kind: .file, origin: .pastedText, data: bytes),
+        ], ownerUserID: "user-1", conversationID: "conversation-1").first)
+        await host.setAttachment(spec)
+        let platform = NativeLocalAgentPlatformToolExecutor(
+            host: host, attachmentRootURL: attachmentRoot, projectTools: executor,
+            attachmentWorkspaceResolver: resolver
+        )
+        let imported = try await platform.execute(ownerUserID: "user-1", invocation: Self.invocation(
+            toolName: "local_attachment_read",
+            arguments: .object(["authorized_local_ref": .string(spec.authorizedLocalRef)])
+        ))
+        guard case let .object(importResult) = imported,
+              case let .string(relativePath)? = importResult["workspace_relative_path"] else {
+            return XCTFail("contact attachment import returned no file path")
+        }
+        XCTAssertEqual(try Data(contentsOf: first.executionRootURL.appendingPathComponent(relativePath)), bytes)
+        XCTAssertNil(importResult["content"])
     }
 
     private static func invocation(
@@ -101,6 +168,7 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             batchID: "batch-1",
             callID: "call-\(toolName)",
             toolName: toolName,
+            executionRoute: "platform",
             arguments: arguments,
             sideEffecting: requiresApproval,
             requiresApproval: requiresApproval,
@@ -125,6 +193,10 @@ private struct ContactTaskTicketProvider: LocalConnectorPairingTicketProviding {
 }
 
 private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
+    private var attachment: LocalAgentConversationAttachmentSpec?
+
+    func setAttachment(_ spec: LocalAgentConversationAttachmentSpec) { attachment = spec }
+
     func start(ownerUserID: String) async throws {}
     func stop() async {}
 
@@ -142,10 +214,11 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                     "profile_key": "task_execution",
                     "input": [
                         "source_conversation_id": "conversation-1",
+                        "owned_paths": ["reports"],
                         "tool_options": [
                             "requires_execution": true,
                             "enabled_builtin_kinds": [
-                                "CodeMaintainerRead", "TerminalController",
+                                "CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController",
                             ],
                             "plugin_hints": [["plugin_key": "browser-plugin"]],
                         ],
@@ -172,7 +245,7 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                     ],
                     "turns": [],
                     "messages": [],
-                    "attachments": [],
+                    "attachments": attachments(),
                 ],
             ])
         default:
@@ -182,5 +255,17 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
 
     private func response(_ object: Any) throws -> Data {
         try JSONSerialization.data(withJSONObject: object)
+    }
+
+    private func attachments() -> [[String: Any]] {
+        guard let attachment else { return [] }
+        return [[
+            "attachment_id": attachment.attachmentID, "conversation_id": "conversation-1",
+            "turn_id": "turn-1", "message_id": "message-1", "ordinal": 1,
+            "display_name": attachment.displayName, "media_type": attachment.mediaType,
+            "byte_size": attachment.byteSize, "sha256": attachment.sha256,
+            "authorized_local_ref": attachment.authorizedLocalRef,
+            "metadata": [:], "created_at_unix_ms": 1,
+        ]]
     }
 }

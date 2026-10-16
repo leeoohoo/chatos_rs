@@ -28,7 +28,10 @@ final class NativeApprovalAgentTests: XCTestCase {
         let calls = await model.calls
         XCTAssertEqual(calls, 11)
         let toolNames = await model.toolNames
-        XCTAssertEqual(Set(toolNames), Set(["read_file_raw", "read_file_range", "list_dir", "search_text", "approval_decision"]))
+        XCTAssertEqual(Set(toolNames), Set([
+            "read_file_raw", "read_file_range", "list_dir", "search_text",
+            "approval_decision", "tool_result_read",
+        ]))
     }
 
     func testMemoryProviderReceivesApprovalMessagesToolCallsAndResults() async throws {
@@ -53,6 +56,8 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertEqual(messages.map(\.role), [.system, .user, .assistant, .tool, .assistant, .tool])
         XCTAssertTrue(messages.first?.content.contains("managed approval prompt") == true)
         XCTAssertTrue(messages.first?.content.contains("# Command approval") == true)
+        XCTAssertTrue(messages[1].content.contains("AI 自动审批"))
+        XCTAssertTrue(messages[1].content.contains("不要仅为了让用户重复确认") == true)
         XCTAssertEqual(messages[2].toolCalls.first?.id, "read-1")
         XCTAssertEqual(messages[3].toolCallID, "read-1")
         XCTAssertEqual(messages[4].toolCalls.first?.id, "decision")

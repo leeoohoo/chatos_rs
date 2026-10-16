@@ -208,15 +208,12 @@ mod virtual_cursor_tests {
     }
 }
 
-pub(super) async fn read_title(
+pub(super) async fn read_page_state(
     backend: &dyn BrowserBackend,
     session_id: &BackendSessionId,
-) -> CoreResult<String> {
-    evaluate_value(backend, session_id, "document.title")
-        .await?
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| CoreError::Backend("document title is not a string".into()))
+) -> CoreResult<PageState> {
+    serde_json::from_value(evaluate_value(backend, session_id, PAGE_STATE_SCRIPT).await?)
+        .map_err(|error| CoreError::Backend(format!("invalid page state: {error}")))
 }
 
 pub(super) async fn wait_until_ready(

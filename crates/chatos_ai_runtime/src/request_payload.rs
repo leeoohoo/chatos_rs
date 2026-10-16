@@ -182,6 +182,9 @@ fn request_reasoning_effort(
     model: &str,
     thinking_level: Option<&str>,
 ) -> Option<String> {
+    if let Some(capability) = crate::model_reasoning::capabilities_for_model(model) {
+        return capability.normalized(thinking_level);
+    }
     let provider = normalize_provider(provider.unwrap_or("gpt"));
     let model = model.trim().to_ascii_lowercase();
     if provider == "kimi" {

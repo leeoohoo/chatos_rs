@@ -42,6 +42,14 @@ pub(crate) async fn delete_open_surveys_for_cancelled_run(
     database: &mut SqliteConnection,
     run_id: &str,
 ) -> Result<u64, ClientStorageError> {
+    // Cancellation removes open forms; don't leave their Main Chat notice asking
+    // for an answer that can no longer be submitted. Run reconciliation updates
+    // the source conversation version in this same cancellation transaction.
+    sqlx::query(
+        "UPDATE local_conversation_messages SET content_json = json_set(content_json, '$.status', 'cancelled') \
+         WHERE message_id IN (SELECT 'survey-status:' || survey_id FROM local_requirement_surveys \
+           WHERE source_run_id = ? AND status = 'open')"
+    ).bind(run_id).execute(&mut *database).await.db()?;
     Ok(sqlx::query(
         "DELETE FROM local_requirement_surveys WHERE source_run_id = ? AND status = 'open'",
     )
@@ -54,6 +62,34 @@ pub(crate) async fn delete_open_surveys_for_cancelled_run(
 
 #[async_trait]
 impl LocalRequirementSurveyStore for SqliteClientStorage {
+    async fn get_requirement_plan(
+        &self,
+        owner: &str,
+        survey: &str,
+        revision: Option<u64>,
+    ) -> Result<Option<chatos_local_agent_protocol::LocalRequirementPlan>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        super::requirement_plan_store::get(&mut connection, owner, survey, revision).await
+    }
+
+    async fn save_requirement_plan(
+        &self,
+        command: &IdempotentCommand,
+        save: &chatos_local_agent_protocol::SaveRequirementPlanCommand,
+        now: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalRequirementPlan, ClientStorageError> {
+        super::requirement_plan_store::save(self, command, save, now).await
+    }
+
+    async fn confirm_requirement_plan(
+        &self,
+        command: &IdempotentCommand,
+        confirm: &chatos_local_agent_protocol::ConfirmRequirementPlanCommand,
+        now: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalRequirementPlan, ClientStorageError> {
+        super::requirement_plan_store::confirm(self, command, confirm, now).await
+    }
+
     async fn create_requirement_survey(
         &self,
         command: &IdempotentCommand,
@@ -217,6 +253,13 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
                     "the survey source Run must be waiting_user before resolution".to_string(),
                 ));
             }
+            write_back_main_chat_survey_status(
+                &mut database,
+                &survey.survey_id,
+                true,
+                survey.updated_at_unix_ms,
+            )
+            .await?;
             sqlx::query(
                 "INSERT INTO local_agent_events(\
                    event_id, run_id, event_type, payload_json, created_at_unix_ms\
@@ -251,6 +294,51 @@ impl LocalRequirementSurveyStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut database, result).await
     }
+}
+
+pub(crate) async fn write_back_main_chat_survey_status(
+    database: &mut SqliteConnection,
+    survey_id: &str,
+    resolved: bool,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let row = sqlx::query(
+        "SELECT turn.turn_id, turn.conversation_id, survey.title \
+         FROM local_requirement_surveys survey \
+         JOIN local_agent_runs run ON run.run_id = survey.source_run_id \
+         JOIN local_conversation_turns turn ON turn.run_id = run.run_id \
+         WHERE survey.survey_id = ? AND run.profile_key = 'main_chat' \
+           AND run.owner_entity_type = 'conversation_turn' \
+           AND run.owner_entity_id = turn.turn_id \
+           AND turn.conversation_id = survey.source_conversation_id",
+    )
+    .bind(survey_id)
+    .fetch_optional(&mut *database)
+    .await
+    .db()?;
+    let Some(row) = row else { return Ok(()) };
+    let conversation_id: String = row.try_get("conversation_id").db()?;
+    let turn_id: String = row.try_get("turn_id").db()?;
+    let title: String = row.try_get("title").db()?;
+    let content = serde_json::json!({
+        "type": "requirement_survey_status", "survey_title": title,
+        "status": if resolved { "resolved" } else { "open" }
+    });
+    let message_id = format!("survey-status:{survey_id}");
+    let ordinal =
+        super::conversation_store::next_message_ordinal(database, &conversation_id).await?;
+    sqlx::query(
+        "INSERT INTO local_conversation_messages(\
+         message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, created_at_unix_ms) \
+         VALUES(?, ?, ?, ?, 'assistant', ?, ?, ?) \
+         ON CONFLICT(message_id) DO UPDATE SET content_json = excluded.content_json"
+    ).bind(message_id).bind(&conversation_id).bind(turn_id).bind(ordinal)
+        .bind(serde_json::to_string(&content)?)
+        .bind(serde_json::json!({"kind": "requirement_survey_status", "survey_id": survey_id}).to_string())
+        .bind(now_unix_ms).execute(&mut *database).await.db()?;
+    sqlx::query("UPDATE local_conversations SET version = version + 1, updated_at_unix_ms = ? WHERE conversation_id = ?")
+        .bind(now_unix_ms).bind(conversation_id).execute(&mut *database).await.db()?;
+    Ok(())
 }
 
 async fn ensure_source_context(

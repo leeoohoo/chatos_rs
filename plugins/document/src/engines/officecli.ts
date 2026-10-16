@@ -5,6 +5,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { DocumentError } from '../errors.js';
+import { officeCliFailure } from './diagnostics.js';
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_VERSION = '1.0.144';
@@ -65,6 +66,11 @@ async function runRaw(binaryPath: string, args: string[], cwd: string, timeout: 
       cwd,
       env: {
         ...process.env,
+        // OfficeCLI discovers Chrome via PATH but does not set user-data-dir.
+        // Our immutable launcher pins the headless profile to the isolated cache.
+        ...(process.platform === 'darwin' && process.env.CHATOS_PLUGIN_SANDBOX === 'macos-seatbelt'
+          ? { PATH: `${path.join(packageRoot, 'bin', 'browser')}${path.delimiter}${process.env.PATH ?? ''}` }
+          : {}),
         OFFICECLI_SKIP_UPDATE: '1',
         OFFICECLI_NO_AUTO_INSTALL: '1',
         OFFICECLI_NO_AUTO_RESIDENT: '1',
@@ -77,11 +83,7 @@ async function runRaw(binaryPath: string, args: string[], cwd: string, timeout: 
     });
     return result.stdout;
   } catch (error) {
-    const value = error as NodeJS.ErrnoException & { killed?: boolean; signal?: string };
-    if (value.killed || value.signal === 'SIGTERM') {
-      throw new DocumentError('ENGINE_TIMEOUT', 'OfficeCLI exceeded the operation timeout.');
-    }
-    throw new DocumentError('ENGINE_ERROR', 'OfficeCLI could not complete the requested document operation.');
+    throw officeCliFailure(error);
   }
 }
 

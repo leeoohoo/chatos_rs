@@ -1,0 +1,16 @@
+{
+  "models": [
+    {
+      "model": "gpt-5.6-sol",
+      "levels": ["low", "medium", "high", "xhigh", "max"],
+      "defaultLevel": "medium",
+      "legacyAliases": {"none": "low", "off": "low", "disabled": "low", "minimal": "low"}
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "levels": ["low", "medium", "high", "xhigh", "max"],
+      "defaultLevel": "medium",
+      "legacyAliases": {"none": "low", "off": "low", "disabled": "low", "minimal": "low"}
+    }
+  ]
+}

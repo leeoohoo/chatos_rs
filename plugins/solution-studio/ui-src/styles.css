@@ -484,6 +484,17 @@ textarea::placeholder, input::placeholder { color: var(--tertiary); }
 .plan-node.status-done { opacity: .76; border-color: color-mix(in srgb, var(--green) 42%, var(--border)); }
 .plan-node.status-blocked { border-color: color-mix(in srgb, var(--orange) 58%, var(--border)); }
 .plan-node.status-in_progress { border-color: color-mix(in srgb, var(--blue) 56%, var(--border)); }
+.plan-node.is-supporting { border-style: dashed; }
+.supporting-task-links { margin-bottom: 12px; font-size: 11px; color: var(--secondary); }
+.supporting-task-links summary { width: fit-content; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--control); cursor: pointer; font-weight: 650; }
+.supporting-task-links > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.supporting-task-links button, .supporting-task-details button { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-solid); color: var(--accent); text-align: left; }
+.supporting-task-details h3 { font-size: 14px; }
+.supporting-task-details p { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.supporting-task-details section { margin-top: 18px; }
+.supporting-task-details section strong { display: block; margin-bottom: 8px; }
+.supporting-task-details button { display: block; width: 100%; margin: 6px 0; font-size: 11px; }
+.plan-dependency-warning { color: var(--orange); font-size: 12px; line-height: 1.6; }
 .plan-node > header { display: flex; align-items: center; justify-content: space-between; }
 .plan-node > header span { color: var(--accent); font-size: 9px; font-weight: 720; }
 .plan-node > header em { padding: 3px 6px; border-radius: 6px; background: var(--control); color: var(--secondary); font-size: 8px; font-style: normal; font-weight: 650; }

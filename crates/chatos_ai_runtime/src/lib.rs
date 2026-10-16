@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod mcp_executor;
 pub mod memory_context;
 pub mod model_config;
+pub mod model_reasoning;
 pub mod request;
 pub mod request_payload;
 pub mod response_parse;

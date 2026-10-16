@@ -188,7 +188,11 @@ enum NativePluginPermissionInspector {
             arguments: [command],
             environment: [
                 "CHATOS_PLUGIN_DATA_DIR": diagnosticURL.path,
-                "TMPDIR": diagnosticURL.path,
+                // NativePluginProcessEnvironment deliberately ignores a bare TMPDIR override.
+                // Bind the diagnostics directory as the isolated cache root so standard
+                // temporary-directory APIs (including Node's os.tmpdir()) resolve to a path
+                // that is writable inside the Plugin sandbox.
+                "CHATOS_PLUGIN_CACHE_DIR": diagnosticURL.path,
                 "VISUAL_COMPUTER_USE_MANAGED_APP_ROOT": diagnosticURL
                     .appendingPathComponent("managed-app", isDirectory: true).path,
                 "OPEN_COMPUTER_USE_MANAGED_APP_ROOT": diagnosticURL
@@ -268,7 +272,7 @@ enum NativePluginPermissionInspector {
                 as: UTF8.self
             ).trimmingCharacters(in: .whitespacesAndNewlines)
             throw NativeConnectorError.pluginInstallation(
-                detail.isEmpty ? "Plugin 权限检测失败" : detail
+                detail.isEmpty ? "Plugin 权限检测失败（退出码 \(exitCode)）" : detail
             )
         }
         return outputSnapshot.data

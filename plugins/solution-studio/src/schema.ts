@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readyTaskIds } from './plan-view.js';
 
 export type SourceMode = 'existing-project' | 'greenfield';
 export type DocumentStatus = 'draft' | 'review' | 'approved';
@@ -390,7 +391,16 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
   if (workspace.requirements.items.length === 0) issues.push({ code: 'requirements_empty', message: '至少需要一条结构化需求。', path: 'requirements.items', blocking: true });
   if (workspace.design.sections.length === 0) issues.push({ code: 'design_empty', message: '设计方案至少需要一个章节。', path: 'design.sections', blocking: true });
   if (workspace.design.sections.length > 0 && !workspace.design.blocks?.some((block) => block.type === 'text')) issues.push({ code: 'project_design_missing', message: '项目总体设计缺少技术基线文档。', path: 'design.blocks', blocking: true });
-  if (workspace.design.sections.length > 0 && !workspace.design.blocks?.some((block) => block.type === 'architecture')) issues.push({ code: 'project_architecture_missing', message: '项目总体设计缺少总体架构图。', path: 'design.blocks', blocking: true });
+  if (workspace.design.sections.length > 0
+    && isDevelopmentProject(workspace.projectProfile?.projectType)
+    && !workspace.design.blocks?.some((block) => block.type === 'architecture')) {
+    issues.push({
+      code: 'project_architecture_missing',
+      message: '开发项目的总体设计缺少总体架构图。',
+      path: 'design.blocks',
+      blocking: true
+    });
+  }
   if (workspace.executionPlan.tasks.length === 0) issues.push({ code: 'plan_empty', message: '执行计划至少需要一个任务。', path: 'executionPlan.tasks', blocking: true });
 
   for (const requirement of workspace.requirements.items) {
@@ -464,10 +474,6 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
   }
   if (topologicalOrder.length !== workspace.executionPlan.tasks.length) issues.push({ code: 'dependency_cycle', message: '执行计划包含循环依赖，无法计算执行顺序。', path: 'executionPlan.tasks', blocking: true });
 
-  const doneIds = new Set(workspace.executionPlan.tasks.filter((task) => task.status === 'done').map((task) => task.id));
-  const readyTaskIds = workspace.executionPlan.tasks
-    .filter((task) => task.status === 'planned' && task.dependsOn.every((id) => doneIds.has(id)))
-    .map((task) => task.id);
   const designedRequirements = new Set(workspace.design.sections.flatMap((section) => section.requirementIds));
   const plannedRequirements = new Set(workspace.executionPlan.tasks.flatMap((task) => task.requirementIds));
   const blocking = issues.some((issue) => issue.blocking);
@@ -477,7 +483,7 @@ export function validateWorkspace(workspace: SolutionWorkspace): WorkspaceValida
     ready: !blocking && approved,
     issues,
     topologicalOrder,
-    readyTaskIds,
+    readyTaskIds: readyTaskIds(workspace.executionPlan.tasks),
     traceability: { requirementCount: requirementIds.size, requirementsWithDesign: designedRequirements.size, requirementsWithTasks: plannedRequirements.size }
   };
 }

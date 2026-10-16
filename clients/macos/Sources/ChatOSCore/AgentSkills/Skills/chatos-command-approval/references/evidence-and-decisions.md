@@ -18,6 +18,8 @@ Deny destructive, privilege-expanding, obfuscated, scope-escaping, or clearly un
 
 Ask when a missing choice or authority could materially change the decision. Name the ambiguity and the information needed.
 
+Do not ask merely to reconfirm an authorization fact already supplied by the trusted host. For example, an installed Browser Plugin with an explicitly paired Chrome extension, selected for the current task, may open a task-owned tab group when the host states that unrelated existing tabs are not exposed. Judge that bounded operation directly. A request to access an unrelated existing tab without an explicit share remains a genuine authorization gap.
+
 ## Remember allow
 
 Use `remember_allow=true` only when the approval can safely apply to the same narrow operation pattern. Never remember a broad shell, arbitrary arguments, mutable script, elevated permission, or unclear target.

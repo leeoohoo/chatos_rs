@@ -12,6 +12,13 @@ test('package contains manifests, built UI, runtime entries, and finished skills
   assert.equal(manifest.name, 'solution-studio');
   assert.equal(manifest.mcpServers, './.mcp.json');
   const chatosManifest = JSON.parse(await readFile('chatos.plugin.json', 'utf8'));
+  const packageManifest = JSON.parse(await readFile('package.json', 'utf8'));
+  const lockManifest = JSON.parse(await readFile('package-lock.json', 'utf8'));
+  assert.equal(manifest.version, packageManifest.version);
+  assert.equal(chatosManifest.version, packageManifest.version);
+  assert.equal(lockManifest.version, packageManifest.version);
+  assert.equal(lockManifest.packages[''].version, packageManifest.version);
+  assert.ok(packageManifest.files.includes('!dist/chatos-artifacts/'), 'release packages must not embed previous plugin tarballs');
   assert.deepEqual(chatosManifest.runtimeContext.optional, ['project.id', 'workspace.id', 'workspace.root']);
   const files = ['skills/solution-studio/SKILL.md', 'skills/solution-discovery/SKILL.md', 'skills/solution-design/SKILL.md', 'skills/solution-execution-plan/SKILL.md', 'skills/solution-validation/SKILL.md'];
   for (const file of files) assert.doesNotMatch(await readFile(file, 'utf8'), /TODO|\[TODO:/);
@@ -31,6 +38,7 @@ test('packaged runtime starts without node_modules', async () => {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'solution-studio-data-'));
   const port = await availablePort();
   await Promise.all([
+    cp('package.json', path.join(packageRoot, 'package.json')),
     cp('bin', path.join(packageRoot, 'bin'), { recursive: true }),
     cp('dist', path.join(packageRoot, 'dist'), { recursive: true }),
     cp('ui', path.join(packageRoot, 'ui'), { recursive: true })

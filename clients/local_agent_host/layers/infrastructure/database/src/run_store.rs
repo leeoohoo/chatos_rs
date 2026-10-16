@@ -42,7 +42,11 @@ impl LocalAgentRunStore for SqliteClientStorage {
         run_id: &str,
     ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
-        Self::fetch_run_on(&mut connection, run_id).await
+        let mut run = Self::fetch_run_on(&mut connection, run_id).await?;
+        if let Some(run) = run.as_mut() {
+            super::task_followup_gate::attach_context(&mut connection, run).await?;
+        }
+        Ok(run)
     }
 
     async fn get_run_for_owner(
@@ -134,7 +138,10 @@ impl LocalAgentRunStore for SqliteClientStorage {
                  WHERE owner_user_id = ? AND iteration < max_iterations AND (\
                     status IN ('queued', 'model_ready', 'continuation_ready') OR \
                     (status = 'retry_scheduled' AND next_attempt_at_unix_ms <= ?)\
-                 ) ORDER BY created_at_unix_ms, run_id LIMIT 1",
+                 ) AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+                   WHERE local_agent_runs.owner_entity_type = 'task' \
+                     AND f.task_id = local_agent_runs.owner_entity_id AND f.state IN ('pending','held')) \
+                 ORDER BY created_at_unix_ms, run_id LIMIT 1",
             )
             .bind(owner_user_id)
             .bind(now_unix_ms)
@@ -187,10 +194,11 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .await
             .db()?;
-            let run = Self::fetch_run_on(&mut connection, &run_id)
+            let mut run = Self::fetch_run_on(&mut connection, &run_id)
                 .await
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+            super::task_followup_gate::attach_context(&mut connection, &mut run).await?;
             if candidate_status == "queued" && run.owner_entity_type == "task" {
                 let task_started = sqlx::query(
                     "UPDATE local_tasks SET status = 'running', version = version + 1, \
@@ -244,6 +252,9 @@ impl LocalAgentRunStore for SqliteClientStorage {
             "SELECT MIN(deadline) FROM (\
                SELECT MIN(next_attempt_at_unix_ms) AS deadline FROM local_agent_runs \
                  WHERE owner_user_id = ? AND status = 'retry_scheduled' \
+                   AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+                     WHERE local_agent_runs.owner_entity_type = 'task' \
+                       AND f.task_id = local_agent_runs.owner_entity_id AND f.state IN ('pending','held')) \
                UNION ALL \
                SELECT MIN(claim_until_unix_ms) AS deadline FROM local_agent_runs \
                  WHERE owner_user_id = ? AND status = 'model_running' \
@@ -275,6 +286,9 @@ impl LocalAgentRunStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
+            let guarded =
+                super::task_followup_gate::guard_final(&mut connection, transition).await?;
+            let transition = &guarded;
             let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = ?, model_attempt = ?, version = version + 1, \
                  claim_token = NULL, claim_until_unix_ms = NULL, next_attempt_at_unix_ms = ?, \
@@ -344,6 +358,12 @@ impl LocalAgentRunStore for SqliteClientStorage {
             )
             .await?;
             conversation_lifecycle::reconcile_conversation_after_run(
+                &mut connection,
+                &run,
+                transition.occurred_at_unix_ms,
+            )
+            .await?;
+            super::requirement_plan_store::capture_source_reply(
                 &mut connection,
                 &run,
                 transition.occurred_at_unix_ms,

@@ -1,4 +1,5 @@
 import ChatOSCore
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -9,7 +10,21 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 41
+    static let version = 42
+}
+
+public enum NativeLocalAgentConcurrencyPolicy {
+    public static let minimum = 1
+    public static let maximum = 16
+
+    public static var adaptiveDefault: Int {
+        let processorBased = max(1, ProcessInfo.processInfo.activeProcessorCount / 2)
+        return min(maximum, processorBased)
+    }
+
+    public static func validated(_ value: Int) -> Int? {
+        (minimum...maximum).contains(value) ? value : nil
+    }
 }
 
 public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
@@ -22,6 +37,7 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
     public let memoryBaseURL: URL?
     public let memorySourceID: String?
     public let memoryTimeoutMilliseconds: Int
+    public let maximumConcurrentWorkItems: Int
 
     public init(
         executableURL: URL,
@@ -33,7 +49,8 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
             NativeLocalAgentPlatformToolCatalog.approvalExemptToolNames,
         memoryBaseURL: URL? = nil,
         memorySourceID: String? = nil,
-        memoryTimeoutMilliseconds: Int = 30_000
+        memoryTimeoutMilliseconds: Int = 30_000,
+        maximumConcurrentWorkItems: Int = NativeLocalAgentConcurrencyPolicy.adaptiveDefault
     ) {
         self.executableURL = executableURL
         self.databaseURL = databaseURL
@@ -44,12 +61,16 @@ public struct NativeLocalAgentHostConfiguration: Sendable, Equatable {
         self.memoryBaseURL = memoryBaseURL
         self.memorySourceID = memorySourceID
         self.memoryTimeoutMilliseconds = memoryTimeoutMilliseconds
+        self.maximumConcurrentWorkItems = maximumConcurrentWorkItems
     }
 }
 
 public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private let configuration: NativeLocalAgentHostConfiguration
     private var managedProcess: ManagedLocalAgentHostProcess?
+    private var credentialFingerprint: Data?
+    private var workersEnabled = false
+    private var launchGeneration: UInt64 = 0
     public private(set) var activeOwnerUserID: String?
 
     public init(configuration: NativeLocalAgentHostConfiguration) {
@@ -105,12 +126,52 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         )
     }
 
+    /// A catalog refresh must not terminate durable work restored at startup. Identical
+    /// credentials reuse the worker. Changed credentials take effect on the next normal
+    /// startup, rather than guessing whether a concurrently claiming worker is idle.
+    public func refreshCredentials(
+        ownerUserID: String,
+        credentialEnvironment: [String: String]
+    ) async throws {
+        try Self.validate(ownerUserID: ownerUserID)
+        try Self.validate(credentialEnvironment: credentialEnvironment)
+        if managedProcess?.process.isRunning == true, workersEnabled {
+            guard activeOwnerUserID == ownerUserID else {
+                throw NativeLocalAgentHostError.ownerMismatch
+            }
+            guard credentialFingerprint == Self.fingerprint(credentialEnvironment) else {
+                throw NativeLocalAgentCredentialRefreshDeferred()
+            }
+            return
+        }
+        try await launch(
+            ownerUserID: ownerUserID,
+            credentialEnvironment: credentialEnvironment,
+            workersEnabled: true
+        )
+    }
+
+    private static func fingerprint(_ environment: [String: String]) -> Data {
+        // Length prefixes prevent ambiguous key/value concatenation. Only a digest is
+        // retained by the lifecycle; credentials are neither persisted nor logged here.
+        var hash = SHA256()
+        for name in environment.keys.sorted() {
+            for value in [name, environment[name]!] {
+                var length = UInt64(value.utf8.count).bigEndian
+                withUnsafeBytes(of: &length) { hash.update(data: Data($0)) }
+                hash.update(data: Data(value.utf8))
+            }
+        }
+        return Data(hash.finalize())
+    }
+
     private func launch(
         ownerUserID: String,
         credentialEnvironment: [String: String],
         workersEnabled: Bool
     ) async throws {
         stopLocked()
+        let generation = launchGeneration
         do {
             let configuration = configuration
             let managed = try await Task.detached(priority: .userInitiated) {
@@ -121,8 +182,14 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                     workersEnabled: workersEnabled
                 )
             }.value
+            guard generation == launchGeneration, !Task.isCancelled else {
+                managed.terminate()
+                throw CancellationError()
+            }
             managedProcess = managed
             activeOwnerUserID = ownerUserID
+            self.workersEnabled = workersEnabled
+            credentialFingerprint = Self.fingerprint(credentialEnvironment)
             managed.installTerminationHandler { [weak self] identity, processIdentifier in
                 Task {
                     await self?.processDidTerminate(
@@ -132,7 +199,7 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                 }
             }
         } catch {
-            stopLocked()
+            if generation == launchGeneration { stopLocked() }
             throw error
         }
     }
@@ -193,6 +260,9 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     }
 
     private func stopLocked() {
+        launchGeneration &+= 1
+        credentialFingerprint = nil
+        workersEnabled = false
         activeOwnerUserID = nil
         managedProcess?.terminate()
         managedProcess = nil
@@ -201,6 +271,8 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     private func processDidTerminate(identity: UUID, processIdentifier: Int32) {
         guard let managedProcess, managedProcess.identity == identity else { return }
         activeOwnerUserID = nil
+        credentialFingerprint = nil
+        workersEnabled = false
         self.managedProcess = nil
         managedProcess.closeAfterExit()
         NotificationCenter.default.post(
@@ -214,6 +286,8 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
         guard self.managedProcess?.identity == managedProcess.identity else { return }
         let processIdentifier = managedProcess.process.processIdentifier
         activeOwnerUserID = nil
+        credentialFingerprint = nil
+        workersEnabled = false
         self.managedProcess = nil
         managedProcess.terminate()
         NotificationCenter.default.post(
@@ -251,6 +325,12 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
                 throw NativeLocalAgentHostError.invalidCredentialEnvironment
             }
         }
+    }
+}
+
+public struct NativeLocalAgentCredentialRefreshDeferred: LocalizedError, Sendable {
+    public var errorDescription: String? {
+        NSLocalizedString("连接凭据已更新。为避免中断当前执行，请在任务完成后重新打开应用以应用新配置。", comment: "Deferred model credential refresh")
     }
 }
 

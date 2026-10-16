@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 /// Recheck stop-before-replace under the graph creation write transaction.
 /// The earlier application check alone can race a user retry of the old task.
-pub(super) async fn validate_cancelled_sources(
+pub(super) async fn validate_stopped_sources(
     connection: &mut SqliteConnection,
     graph: &CreateTaskGraphCommand,
 ) -> Result<(), ClientStorageError> {
@@ -52,9 +52,9 @@ pub(super) async fn validate_cancelled_sources(
                 .db()?
                 .ok_or_else(|| ClientStorageError::NotFound(id.into()))?;
             let status: String = row.try_get("status").db()?;
-            if status != "cancelled" {
+            if !matches!(status.as_str(), "cancelled" | "failed" | "succeeded") {
                 return Err(ClientStorageError::Conflict(format!(
-                    "superseded task is no longer cancelled: {id}"
+                    "superseded task became active again: {id}"
                 )));
             }
         }

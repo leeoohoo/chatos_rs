@@ -438,6 +438,19 @@ extension NativePluginRuntimeTests {
         #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }
 
+    @Test("sandbox paths canonicalize an existing symlink before a missing app directory")
+    func sandboxCanonicalizesMissingDescendants() {
+        let temporaryRoot = FileManager.default.temporaryDirectory.path
+        let missingApp = URL(fileURLWithPath: temporaryRoot, isDirectory: true)
+            .appendingPathComponent("chatos-missing-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("managed-app", isDirectory: true).path
+        let canonicalRoot = NativePluginSandboxProfile.canonicalPath(temporaryRoot)
+        let canonicalApp = NativePluginSandboxProfile.canonicalPath(missingApp)
+        #expect(canonicalApp == canonicalRoot + "/" +
+            URL(fileURLWithPath: missingApp).deletingLastPathComponent().lastPathComponent +
+            "/managed-app")
+    }
+
     @Test("Document Tools may launch an installed browser for offline visual verification")
     func documentPluginLaunchSupportsVisualVerification() throws {
         let root = FileManager.default.temporaryDirectory

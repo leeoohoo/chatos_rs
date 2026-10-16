@@ -6,19 +6,22 @@ public struct ConversationSendCommand: Sendable, Equatable {
     public var content: String
     public var attachments: [ConversationAttachmentDraft]
     public var reasoningEnabled: Bool?
+    public var explicitCapabilitySelection: ConversationExplicitCapabilitySelection?
 
     public init(
         sessionID: String,
         turnID: String,
         content: String,
         attachments: [ConversationAttachmentDraft] = [],
-        reasoningEnabled: Bool? = nil
+        reasoningEnabled: Bool? = nil,
+        explicitCapabilitySelection: ConversationExplicitCapabilitySelection? = nil
     ) {
         self.sessionID = sessionID
         self.turnID = turnID
         self.content = content
         self.attachments = attachments
         self.reasoningEnabled = reasoningEnabled
+        self.explicitCapabilitySelection = explicitCapabilitySelection
     }
 }
 

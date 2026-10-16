@@ -59,14 +59,48 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
         XCTAssertEqual(putCount, 1)
     }
 
-    private func bootstrapResult() -> NativeLocalAgentBootstrapResult {
+    func testRepairsPersistedUnsupportedLevelsWithoutLosingRemoteBinding() async throws {
+        for (selected, enabled, expected) in [("none", false, "low"), ("minimal", true, "low"), ("max", true, "max")] {
+            let host = RuntimeSettingsHostStub()
+            await host.seedLegacySettings(level: selected, enabled: enabled)
+            let service = NativeLocalAgentConversationRuntimeSettingsService(host: host)
+            try await service.configure(ownerUserID: "user-1", bootstrap: bootstrapResult(firstModel: "gpt-6.1-sol"))
+            let settings = try await service.fetchSettings(sessionID: "conversation-1")
+            XCTAssertEqual(settings.selectedThinkingLevel, expected)
+            XCTAssertTrue(settings.reasoningEnabled)
+            XCTAssertEqual(settings.remoteConnectionID, "remote-1")
+            let selection = try await service.resolveSelection(sessionID: "conversation-1")
+            XCTAssertEqual(selection.settings.selectedThinkingLevel, expected)
+            let count = await host.putCount()
+            XCTAssertEqual(count, selected == "max" ? 0 : 1)
+        }
+    }
+
+    func testMandatoryReasoningModelDefaultsAndDisableRequestStayValid() async throws {
+        let host = RuntimeSettingsHostStub()
+        let service = NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        try await service.configure(ownerUserID: "user-1", bootstrap: bootstrapResult(firstModel: "gpt-6.1-sol"))
+        let initial = try await service.fetchSettings(sessionID: "conversation-1")
+        XCTAssertEqual(initial.selectedThinkingLevel, "medium")
+        let disabled = try await service.updateReasoning(sessionID: "conversation-1", enabled: false)
+        XCTAssertEqual(disabled.selectedThinkingLevel, "low")
+        XCTAssertTrue(disabled.reasoningEnabled)
+        let max = try await service.updateReasoningLevel(sessionID: "conversation-1", level: "max", enabled: true)
+        XCTAssertEqual(max.selectedThinkingLevel, "max")
+        let options = try await service.fetchAvailableModels()
+        XCTAssertEqual(options[0].thinkingLevels, ["low", "medium", "high", "xhigh", "max"])
+        XCTAssertEqual(NativeLocalConnectorService.thinkingLevels(provider: "gpt", model: "gpt-6.1-sol"),
+                       options[0].thinkingLevels)
+    }
+
+    private func bootstrapResult(firstModel: String = "first") -> NativeLocalAgentBootstrapResult {
         let first = LocalAgentModelConfigSnapshot(
             ownerUserID: "user-1",
             modelConfigRef: "model-1",
             modelConfigRevision: "revision-1",
             credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_1",
             baseURL: "https://example.test/v1",
-            model: "first",
+            model: firstModel,
             provider: "openai",
             supportsResponses: true,
             thinkingLevel: "medium"
@@ -87,7 +121,7 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
                 .init(
                     id: "model-1",
                     displayName: "First",
-                    modelName: "first",
+                    modelName: firstModel,
                     provider: "openai",
                     thinkingLevel: "medium",
                     supportsReasoning: true,
@@ -114,6 +148,13 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
 private actor RuntimeSettingsHostStub: LocalAgentHostClientServicing {
     private var settings: [String: Any]?
     private var puts = 0
+
+    func seedLegacySettings(level: String, enabled: Bool) {
+        settings = ["owner_user_id": "user-1", "conversation_id": "conversation-1",
+                    "selected_model_config_ref": "model-1", "selected_model_config_revision": "revision-1",
+                    "selected_thinking_level": level, "reasoning_enabled": enabled,
+                    "remote_connection_id": "remote-1", "version": UInt64(8), "updated_at_unix_ms": Int64(8_000)]
+    }
 
     func start(ownerUserID: String) async throws {}
 

@@ -4,8 +4,8 @@
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, HostCommand, HostRequestEnvelope, HostResult,
-    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalAgentToolCommitResult, LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord,
+    LocalAgentToolOutcome, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
 use serde_json::json;
@@ -89,6 +89,7 @@ pub struct LocalToolScheduler {
     lease_duration_ms: u64,
     include_tool_names: Option<Vec<String>>,
     exclude_tool_names: Vec<String>,
+    execution_route: Option<LocalAgentToolExecutionRoute>,
 }
 
 impl LocalToolScheduler {
@@ -119,6 +120,7 @@ impl LocalToolScheduler {
             lease_duration_ms: 300_000,
             include_tool_names: None,
             exclude_tool_names: Vec::new(),
+            execution_route: None,
         })
     }
 
@@ -136,6 +138,11 @@ impl LocalToolScheduler {
         &self.owner_user_id
     }
 
+    pub fn with_execution_route(mut self, execution_route: LocalAgentToolExecutionRoute) -> Self {
+        self.execution_route = Some(execution_route);
+        self
+    }
+
     pub fn with_tool_filter(
         mut self,
         include_tool_names: Option<Vec<String>>,
@@ -147,6 +154,7 @@ impl LocalToolScheduler {
             lease_duration_ms: self.lease_duration_ms,
             include_tool_names: include_tool_names.clone(),
             exclude_tool_names: exclude_tool_names.clone(),
+            execution_route: self.execution_route.clone(),
         }
         .validate()?;
         self.include_tool_names = include_tool_names;
@@ -165,6 +173,7 @@ impl LocalToolScheduler {
                     lease_duration_ms: self.lease_duration_ms,
                     include_tool_names: self.include_tool_names.clone(),
                     exclude_tool_names: self.exclude_tool_names.clone(),
+                    execution_route: self.execution_route.clone(),
                 }),
             ))
             .await?;
@@ -173,24 +182,27 @@ impl LocalToolScheduler {
             HostResult::ToolClaim { claim: None } => return Ok(ToolSchedulerTick::Idle),
             _ => return Err(LocalToolSchedulerError::UnexpectedResult("claim")),
         };
-        let outcome = match self.tools.executor_for(&claim.invocation.tool_name) {
-            Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {
-                None => return Ok(ToolSchedulerTick::Idle),
-                Some(Ok(outcome)) => outcome,
-                Some(Err(error)) if claim.invocation.side_effecting => {
-                    LocalAgentToolOutcome::NeedsReview {
-                        reason: "side-effecting tool returned an unknown result".to_string(),
-                        detail: json!({"error": error}),
+        let outcome = match claim.preflight_outcome.clone() {
+            Some(outcome) => outcome,
+            None => match self.tools.executor_for(&claim.invocation.tool_name) {
+                Some(executor) => match self.execute_with_heartbeat(executor, &claim).await? {
+                    None => return Ok(ToolSchedulerTick::Idle),
+                    Some(Ok(outcome)) => outcome,
+                    Some(Err(error)) if claim.invocation.side_effecting => {
+                        LocalAgentToolOutcome::NeedsReview {
+                            reason: "side-effecting tool returned an unknown result".to_string(),
+                            detail: json!({"error": error}),
+                        }
                     }
-                }
-                Some(Err(error)) => LocalAgentToolOutcome::Failed {
-                    error,
-                    detail: json!({"phase": "local_tool_execution"}),
+                    Some(Err(error)) => LocalAgentToolOutcome::Failed {
+                        error,
+                        detail: json!({"phase": "local_tool_execution"}),
+                    },
                 },
-            },
-            None => LocalAgentToolOutcome::NeedsReview {
-                reason: "local tool executor is not registered".to_string(),
-                detail: json!({"tool_name": claim.invocation.tool_name}),
+                None => LocalAgentToolOutcome::NeedsReview {
+                    reason: "local tool executor is not registered".to_string(),
+                    detail: json!({"tool_name": claim.invocation.tool_name}),
+                },
             },
         };
         let committed = self

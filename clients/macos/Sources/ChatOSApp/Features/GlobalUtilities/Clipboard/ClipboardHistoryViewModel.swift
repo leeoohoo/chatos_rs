@@ -134,7 +134,7 @@ final class ClipboardHistoryViewModel: ObservableObject {
             }
             guard !Task.isCancelled, let decoded else { return }
             self?.cacheThumbnail(
-                NSImage(cgImage: decoded.image, size: .zero),
+                decoded.makeNSImage(),
                 for: entry.id
             )
         }

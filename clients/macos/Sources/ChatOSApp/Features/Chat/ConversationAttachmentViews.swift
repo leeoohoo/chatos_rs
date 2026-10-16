@@ -251,7 +251,7 @@ private struct LocalAttachmentImage: View {
                     return decoded
                 }
                 guard !Task.isCancelled else { return }
-                image = NSImage(cgImage: decoded.image, size: .zero)
+                image = decoded.makeNSImage()
             } catch {
                 if !Task.isCancelled { loadFailed = true }
             }

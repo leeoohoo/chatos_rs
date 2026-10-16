@@ -7,22 +7,27 @@ import { strFromU8, unzipSync, zipSync, strToU8 } from 'fflate';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { build } from 'esbuild';
 
-const projectRoot = path.resolve(import.meta.dirname, '..');
+const fixtureRoot = path.resolve(import.meta.dirname, '..');
+const projectRoot = process.env.CHATOS_PLUGIN_TEST_PACKAGE_ROOT || fixtureRoot;
 const launcher = path.join(projectRoot, 'bin', 'chatos-document-mcp');
+// Reuse the production decoder: format/dimension checks alone miss invisible text.
+const pngBundle = await build({
+  entryPoints: [path.join(fixtureRoot, 'src', 'render', 'png.ts')],
+  bundle: true, platform: 'node', format: 'esm', write: false
+});
+const { decodePng } = await import(`data:text/javascript;base64,${Buffer.from(pngBundle.outputFiles[0].text).toString('base64')}`);
 
 async function withClient(workspace, callback) {
   const artifact = await mkdtemp(path.join(os.tmpdir(), 'document-mcp-artifacts-'));
-  const workspaceEnv = workspace ? { CHATOS_WORKSPACE: workspace } : {};
+  const environment = { ...process.env, CHATOS_PLUGIN_ARTIFACT_DIR: artifact, CHATOS_PLUGIN_ROOT: projectRoot };
+  if (workspace) environment.CHATOS_WORKSPACE = workspace;
+  else delete environment.CHATOS_WORKSPACE;
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [launcher, 'mcp'],
-    env: {
-      ...process.env,
-      ...workspaceEnv,
-      CHATOS_PLUGIN_ARTIFACT_DIR: artifact,
-      CHATOS_PLUGIN_ROOT: projectRoot
-    },
+    env: environment,
     stderr: process.env.DOCUMENT_MCP_DEBUG === '1' ? 'inherit' : 'pipe'
   });
   const client = new Client({ name: 'document-mcp-test', version: '1.0.0' });
@@ -255,9 +260,32 @@ test('creates and edits validated Office artifacts with typed operations', async
         outputName: 'created.docx',
         locale: 'en-US',
         operations: [
-          { type: 'word_add_paragraph', text: 'Created by Document MCP' },
-          { type: 'word_add_heading', level: 1, text: 'Annual Report' },
-          { type: 'word_add_list_item', text: 'First item', ordered: false },
+          {
+            type: 'word_set_document_layout',
+            pageSize: 'a4',
+            marginTop: '1.8cm',
+            marginBottom: '1.8cm',
+            marginLeft: '2cm',
+            marginRight: '2cm'
+          },
+          {
+            type: 'word_define_style',
+            id: 'ResumeSection',
+            name: 'Resume Section',
+            basedOn: 'Normal',
+            font: 'Arial',
+            size: '12pt',
+            color: '17365D',
+            bold: true,
+            keepNext: true,
+            spaceBefore: '8pt',
+            spaceAfter: '3pt'
+          },
+          { type: 'word_add_paragraph', text: 'Created by Document MCP', font: 'Arial', size: '10.5pt', lineSpacing: '1.25x' },
+          { type: 'word_add_heading', level: 1, text: 'Annual Report', color: '17365D', keepNext: true },
+          { type: 'word_add_paragraph', text: 'Experience', style: 'ResumeSection' },
+          { type: 'word_add_list_item', text: 'First item', ordered: false, hangingIndent: '0.5cm', spaceAfter: '2pt' },
+          { type: 'word_add_header_footer', location: 'footer', field: 'page', align: 'right', size: '9pt', color: '666666' },
           {
             type: 'word_add_table',
             rows: [
@@ -294,6 +322,13 @@ test('creates and edits validated Office artifacts with typed operations', async
     assert.match(createdXml, /First item/);
     assert.match(createdXml, /North/);
     assert.match(createdXml, /<w:tbl/);
+    assert.match(createdXml, /<w:pgSz/);
+    assert.match(createdXml, /<w:pgMar/);
+    assert.match(createdXml, /w:val="ResumeSection"/);
+    const stylesXml = strFromU8(createdZip['word/styles.xml']);
+    assert.match(stylesXml, /w:styleId="ResumeSection"/);
+    assert.match(stylesXml, /17365D/);
+    assert.ok(Object.keys(createdZip).some((name) => name.startsWith('word/footer')));
 
     const inspectedCreated = await client.callTool({
       name: 'document_inspect',
@@ -301,6 +336,35 @@ test('creates and edits validated Office artifacts with typed operations', async
     });
     assert.equal(inspectedCreated.isError, false, JSON.stringify(inspectedCreated.structuredContent));
     assert.equal(inspectedCreated.structuredContent.source.relativePath, 'created.docx');
+    assert.equal(inspectedCreated.structuredContent.structure.headings, 1);
+    assert.equal(inspectedCreated.structuredContent.structure.listItems, 1);
+    assert.equal(inspectedCreated.structuredContent.structure.footers, 1);
+    assert.ok(inspectedCreated.structuredContent.structure.paragraphStyles.includes('ResumeSection'));
+    assert.equal(inspectedCreated.structuredContent.structure.pageLayoutTwips.marginTop, '1020');
+
+    const previewWithMissingPage = await client.callTool({
+      name: 'document_render',
+      arguments: { inputPath: 'created.docx', outputPrefix: 'docx-page-check', pages: [3, 2, 1], viewportWidth: 800, viewportHeight: 900 }
+    });
+    assert.equal(previewWithMissingPage.isError, false, JSON.stringify(previewWithMissingPage.structuredContent));
+    assert.equal(previewWithMissingPage.structuredContent.renderStatus, 'needs_review');
+    assert.deepEqual(previewWithMissingPage.structuredContent.pages.map((page) => page.page), [2, 1]);
+    assert.deepEqual(previewWithMissingPage.structuredContent.modelPreview.pages, [2, 1]);
+    assert.equal(previewWithMissingPage.content.filter((part) => part.type === 'image').length, 2);
+    assert.equal(previewWithMissingPage.structuredContent.skippedPages[0].page, 3);
+    assert.equal(previewWithMissingPage.structuredContent.skippedPages[0].code, 'REQUESTED_PAGE_EMPTY_OR_UNAVAILABLE');
+    assert.equal(Object.hasOwn(previewWithMissingPage.structuredContent.source, 'pages'), false);
+    await assert.rejects(readFile(path.join(artifact, 'docx-page-check-page-0003.png')), { code: 'ENOENT' });
+    const previewManifest = JSON.parse(await readFile(path.join(artifact, 'docx-page-check-render-manifest.json'), 'utf8'));
+    assert.deepEqual(previewManifest.skippedPages, previewWithMissingPage.structuredContent.skippedPages);
+    const validateMissingPage = await client.callTool({
+      name: 'document_validate',
+      arguments: { inputPath: 'created.docx', renderPages: [3], viewportWidth: 800, viewportHeight: 900 }
+    });
+    assert.equal(validateMissingPage.isError, false, JSON.stringify(validateMissingPage.structuredContent));
+    assert.equal(validateMissingPage.structuredContent.valid, false);
+    assert.equal(validateMissingPage.structuredContent.checks.at(-1).status, 'needs_review');
+    assert.equal(validateMissingPage.structuredContent.checks.at(-1).pages[0].nonEmpty, false);
 
     await copyFile(createdPath, path.join(workspace, 'two-page.docx'));
     const convertedDocx = await client.callTool({
@@ -472,6 +536,7 @@ test('creates and edits validated Office artifacts with typed operations', async
         outputName: 'created.pptx',
         operations: [
           { type: 'presentation_add_slide', title: 'Q4 Report', background: '1A1A2E' },
+          { type: 'presentation_set_text', slide: 1, shape: 1, text: 'Q4 Report', color: '#F8FAFC', size: 32 },
           {
             type: 'presentation_add_textbox',
             slide: 1,
@@ -479,7 +544,9 @@ test('creates and edits validated Office artifacts with typed operations', async
             x: '2cm',
             y: '5cm',
             width: '10cm',
-            height: '2cm'
+            height: '2cm',
+            color: 'F8FAFC',
+            size: '18pt'
           },
           { type: 'presentation_add_slide', title: 'Second Slide' },
           { type: 'presentation_add_slide', title: 'Third Slide' }
@@ -488,6 +555,17 @@ test('creates and edits validated Office artifacts with typed operations', async
     });
     assert.equal(presentation.isError, false, JSON.stringify(presentation.structuredContent));
     const presentationPath = path.join(artifact, 'created.pptx');
+    const presentationZip = unzipSync(await readFile(presentationPath));
+    const firstSlide = strFromU8(presentationZip['ppt/slides/slide1.xml']);
+    const textRuns = [...firstSlide.matchAll(/<a:r>([\s\S]*?)<\/a:r>/g)].map((match) => match[1]);
+    for (const [text, size] of [['Q4 Report', '3200'], ['Revenue grew 25%', '1800']]) {
+      const run = textRuns.find((xml) => xml.includes(`<a:t>${text}</a:t>`));
+      assert.ok(run, `Missing text run: ${text}`);
+      assert.match(run, new RegExp(`sz="${size}"`));
+      // OfficeCLI may encode solid text as two equal gradient stops.
+      const colors = [...run.matchAll(/<a:srgbClr val="([A-Fa-f0-9]+)"/g)].map((match) => match[1]);
+      assert.ok(colors.length > 0 && colors.every((color) => color === 'F8FAFC'), `${text} must preserve explicit readable text color`);
+    }
     await copyFile(presentationPath, path.join(workspace, 'created.pptx'));
 
     const convertedPresentation = await client.callTool({
@@ -519,10 +597,47 @@ test('creates and edits validated Office artifacts with typed operations', async
     assert.equal(rendered.structuredContent.pages[0].relativePath, 'slides-preview-page-0001.png');
     assert.equal(rendered.structuredContent.pages[0].width, 800);
     assert.equal(rendered.structuredContent.pages[0].height, 600);
+    assert.deepEqual(rendered.structuredContent.modelPreview.pages, [1]);
+    const renderedImages = rendered.content.filter((part) => part.type === 'image');
+    assert.equal(renderedImages.length, 1);
+    assert.equal(renderedImages[0].mimeType, 'image/png');
+    assert.deepEqual(
+      [...Buffer.from(renderedImages[0].data, 'base64').subarray(0, 8)],
+      [137, 80, 78, 71, 13, 10, 26, 10]
+    );
+    assert.equal(JSON.stringify(rendered.structuredContent).includes('iVBOR'), false);
     assert.deepEqual(
       [...(await readFile(path.join(artifact, 'slides-preview-page-0001.png'))).subarray(0, 8)],
       [137, 80, 78, 71, 13, 10, 26, 10]
     );
+    const preview = decodePng(await readFile(path.join(artifact, 'slides-preview-page-0001.png')));
+    const background = [...preview.data.subarray(0, 4)];
+    assert.ok(background.every((value, channel) => Math.abs(value - [26, 26, 46, 255][channel]) <= 2),
+      'Fixture background must remain dark (allow renderer color rounding)');
+    // These regions contain only the fixture's title and body, not viewer margins.
+    function lightPixels(top, bottom) {
+      let count = 0;
+      for (let y = top; y < bottom; y += 1) {
+        for (let x = 30; x < 400; x += 1) {
+          const offset = (y * preview.width + x) * 4;
+          if (preview.data[offset] > 200 && preview.data[offset + 1] > 200
+              && preview.data[offset + 2] > 200 && preview.data[offset + 3] > 240) count += 1;
+        }
+      }
+      return count;
+    }
+    assert.ok(lightPixels(10, 80) > 100, 'Title must render visibly on the dark background');
+    assert.ok(lightPixels(100, 160) > 30, 'Body must render visibly on the dark background');
+
+    const invalidPresentationStyle = await client.callTool({
+      name: 'office_create',
+      arguments: { format: 'pptx', outputName: 'invalid-style.pptx', operations: [
+        { type: 'presentation_add_slide', title: 'Invalid' },
+        { type: 'presentation_set_text', slide: 1, shape: 1, text: 'Invalid', color: 'not-a-color' }
+      ] }
+    });
+    assert.equal(invalidPresentationStyle.isError, true);
+    assert.equal(await readFile(path.join(artifact, 'invalid-style.pptx')).then(() => true, () => false), false);
 
     const validated = await client.callTool({
       name: 'document_validate',
@@ -559,6 +674,25 @@ test('creates and edits validated Office artifacts with typed operations', async
     assert.equal(rearrangedText.structuredContent.sections.length, 2);
     assert.match(rearrangedText.structuredContent.sections[0].text, /Third Slide/);
     assert.match(rearrangedText.structuredContent.sections[1].text, /Second Slide/);
+  });
+});
+
+test('rejects list text that already contains a visible marker', async () => {
+  await withClient(undefined, async (client) => {
+    for (const [text, ordered] of [['• 重复项目符号', false], ['• 重复项目符号', true], ['1. 重复编号', false], ['1、重复编号', true], ['- 重复项目符号', true]]) {
+      const response = await client.callTool({
+        name: 'office_create',
+        arguments: {
+          format: 'docx',
+          outputName: 'duplicate-marker.docx',
+          locale: 'zh-CN',
+          operations: [{ type: 'word_add_list_item', text, ordered }]
+        }
+      });
+      assert.equal(response.isError, true);
+      assert.equal(response.structuredContent.error.code, 'INVALID_ARGUMENT');
+      assert.match(response.structuredContent.error.message, /without a list marker/);
+    }
   });
 });
 

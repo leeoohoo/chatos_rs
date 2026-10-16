@@ -50,7 +50,7 @@ public enum BundledAgentSkillLoader {
             descriptor: descriptor,
             description: frontmatterValue("description", in: instructions) ?? "",
             instructions: instructions,
-            resourcePaths: try resourcePaths(in: directory, beneath: root)
+            resourcePaths: try resourcePaths(in: directory)
         )
     }
 
@@ -58,7 +58,7 @@ public enum BundledAgentSkillLoader {
         skillName: String,
         relativePath: String,
         offset: Int = 0,
-        maximumCharacters: Int = 12_000
+        maximumCharacters: Int = ProgressiveSkillFileLoader.maximumPageCharacters
     ) throws -> ProgressiveSkillFileLoader.TextPage {
         let document = try load(named: skillName)
         let normalized = try ProgressiveSkillFileLoader.normalizedRelativePath(relativePath)
@@ -117,19 +117,25 @@ public enum BundledAgentSkillLoader {
         }.first
     }
 
-    private static func resourcePaths(in directory: URL, beneath root: URL) throws -> [String] {
+    private static func resourcePaths(in directory: URL) throws -> [String] {
+        let references = directory.appendingPathComponent("references", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: references.path) else { return [] }
+        try ProgressiveSkillFileLoader.validateDirectory(
+            references,
+            beneath: directory
+        )
         guard let enumerator = FileManager.default.enumerator(
-            at: directory,
+            at: references,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
             options: [.skipsHiddenFiles]
         ) else { return [] }
         var paths: [String] = []
-        for case let url as URL in enumerator where url.lastPathComponent != "SKILL.md" {
+        for case let url as URL in enumerator {
             let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             guard values.isRegularFile == true, values.isSymbolicLink != true else { continue }
             _ = try ProgressiveSkillFileLoader.readRegularFile(
                 url,
-                beneath: root,
+                beneath: directory,
                 maximumBytes: 1_024 * 1_024
             )
             paths.append(try ProgressiveSkillFileLoader.relativePath(of: url, beneath: directory))

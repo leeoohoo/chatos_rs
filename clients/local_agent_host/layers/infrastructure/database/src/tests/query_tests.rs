@@ -69,6 +69,7 @@ async fn idle_claim_polls_do_not_persist_command_receipts() {
             "idle-tool-event",
             None,
             &[],
+            None,
         )
         .await
         .expect("empty Tool claim");

@@ -79,6 +79,14 @@ pub(super) async fn resume_conversation_turn(
             now_unix_ms,
         )
         .await?;
+        super::task_followup_gate::begin_review(
+            &mut connection,
+            &turn.conversation_id,
+            &current.run_id,
+            &turn.message_id,
+            now_unix_ms,
+        )
+        .await?;
         increment_conversation_version(
             &mut connection,
             &turn.conversation_id,
@@ -234,6 +242,14 @@ pub(super) async fn guide_conversation_turn(
         .execute(&mut *connection)
         .await
         .db()?;
+        super::task_followup_gate::begin_review(
+            &mut connection,
+            &turn.conversation_id,
+            &current.run_id,
+            &turn.message_id,
+            now_unix_ms,
+        )
+        .await?;
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET \
              status = CASE WHEN status IN (\

@@ -78,6 +78,20 @@ public actor NativeLocalAgentConversationService:
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
         )
+        var messageMetadata: [String: LocalAgentJSONValue] = [
+            "source": .string("native_main_chat"),
+            "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
+        ]
+        if let selection = command.explicitCapabilitySelection {
+            var explicitSelection: [String: LocalAgentJSONValue] = [
+                "kind": .string(selection.kind.rawValue),
+                "display_name": .string(selection.displayName),
+            ]
+            if let pluginKey = selection.pluginKey {
+                explicitSelection["plugin_key"] = .string(pluginKey)
+            }
+            messageMetadata["explicit_capability_selection"] = .object(explicitSelection)
+        }
         let result = try await client.startTurn(.init(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID,
@@ -86,10 +100,7 @@ public actor NativeLocalAgentConversationService:
             messageID: messageID,
             runID: "run_\(UUID().uuidString.lowercased())",
             message: command.content,
-            messageMetadata: .object([
-                "source": .string("native_main_chat"),
-                "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
-            ]),
+            messageMetadata: .object(messageMetadata),
             attachments: attachments,
             modelConfigRef: runtimeSelection.modelSnapshot.modelConfigRef,
             modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
@@ -258,6 +269,12 @@ public actor NativeLocalAgentConversationService:
                                 conversationID: sessionID,
                                 knownRunIDs: observedRunIDs
                             ) else { continue }
+                            for signal in Self.askUserPromptSignals(
+                                events,
+                                conversationID: sessionID
+                            ) {
+                                continuation.yield(signal)
+                            }
                         }
 
                         let detail = try await client.get(
@@ -359,6 +376,39 @@ public actor NativeLocalAgentConversationService:
         }
     }
 
+    static func askUserPromptSignals(
+        _ events: [LocalAgentEventRecord],
+        conversationID: String
+    ) -> [ConversationRealtimeSignal] {
+        events.compactMap { event in
+            guard event.eventType == "user_input_requested",
+                  case let .object(payload)? = event.payload,
+                  case let .string(eventConversationID)? = payload["conversation_id"],
+                  eventConversationID == conversationID else { return nil }
+            let turnID: String? = if case let .string(value)? = payload["turn_id"] {
+                value
+            } else {
+                nil
+            }
+            return ConversationRealtimeSignal(
+                eventID: event.eventID,
+                eventSequence: event.cursor,
+                sessionID: conversationID,
+                turnID: turnID,
+                kind: .updated,
+                eventName: event.eventType,
+                timestamp: timestamp(unixMilliseconds: event.createdAtUnixMs),
+                askUserPromptUpdate: AskUserPromptRealtimeUpdate(
+                    promptID: "local-ask:\(event.runID)",
+                    sessionID: conversationID,
+                    turnID: turnID,
+                    action: "created",
+                    status: .pending
+                )
+            )
+        }
+    }
+
     private static func timestamp(unixMilliseconds: Int64) -> String {
         ISO8601DateFormatter().string(
             from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000)
@@ -440,9 +490,15 @@ public actor NativeLocalAgentConversationService:
     static func orderedConversationReplies(
         _ replies: [ConversationAssistantReply]
     ) -> [ConversationAssistantReply] {
-        let mainChat = replies.filter { $0.taskCallback == nil }
-        let callbacks = replies.filter { $0.taskCallback != nil }
-        return mainChat + callbacks
+        // Keep the handoff acknowledgement first, but preserve durable ordinal
+        // order among progress messages and graph deliveries. Graph delivery IDs
+        // are minted by the Host (task-graph:<graph>:<generation>), not user text.
+        let isAsyncTaskReply: (ConversationAssistantReply) -> Bool = {
+            $0.taskCallback != nil || $0.id.hasPrefix("task-graph:")
+        }
+        let mainChat = replies.filter { !isAsyncTaskReply($0) }
+        let taskReplies = replies.filter(isAsyncTaskReply)
+        return mainChat + taskReplies
     }
 
     private func mapMessage(

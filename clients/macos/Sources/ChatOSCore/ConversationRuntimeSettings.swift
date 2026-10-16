@@ -1,3 +1,5 @@
+import ChatOSModelCapabilities
+
 public struct ConversationRuntimeSettings: Sendable, Equatable {
     public var selectedModelID: String?
     public var selectedModelName: String?
@@ -42,9 +44,10 @@ public struct ConversationModelOption: Sendable, Equatable, Identifiable {
         self.displayName = displayName
         self.modelName = modelName
         self.provider = provider
-        self.thinkingLevel = thinkingLevel
-        self.supportsReasoning = supportsReasoning
-        self.thinkingLevels = thinkingLevels
+        let capability = ModelReasoningCapabilities.forModel(modelName)
+        self.thinkingLevel = capability.map { $0.normalized(thinkingLevel) ?? $0.defaultLevel } ?? thinkingLevel
+        self.supportsReasoning = capability != nil || supportsReasoning
+        self.thinkingLevels = capability?.levels ?? thinkingLevels
     }
 }
 

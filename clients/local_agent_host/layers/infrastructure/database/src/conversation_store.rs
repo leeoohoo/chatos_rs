@@ -167,7 +167,33 @@ impl LocalConversationStore for SqliteClientStorage {
                     "conversation Run ownership does not match the Turn".to_string(),
                 ));
             }
-            Self::insert_run_on(&mut connection, run).await?;
+            let mut bound_run = run.clone();
+            if let Some(resource) = conversation.resource.as_ref().filter(|resource| {
+                resource.kind == chatos_local_agent_protocol::LocalConversationResourceKind::Project
+            }) {
+                if let Some(plan) = super::requirement_plan_store::latest_for_project(
+                    &mut connection,
+                    &turn.owner_user_id,
+                    &resource.resource_id,
+                )
+                .await?
+                {
+                    let input = bound_run.input.as_object_mut().ok_or_else(|| {
+                        ClientStorageError::InvalidState(
+                            "Main Chat input must be an object when binding a plan".into(),
+                        )
+                    })?;
+                    input.insert("requirement_plan".into(), serde_json::to_value(plan)?);
+                }
+            }
+            if serde_json::to_vec(&bound_run.input)?.len()
+                > chatos_local_agent_protocol::LOCAL_AGENT_MAX_INPUT_BYTES
+            {
+                return Err(ClientStorageError::InvalidState(
+                    "Main Chat input with bound plan exceeds its byte limit".into(),
+                ));
+            }
+            Self::insert_run_on(&mut connection, &bound_run).await?;
             sqlx::query(
                 "INSERT INTO local_conversation_turns(\
                  turn_id, conversation_id, user_message_id, run_id, status, \
@@ -190,6 +216,14 @@ impl LocalConversationStore for SqliteClientStorage {
                 &turn.message,
                 &turn.message_metadata,
                 &turn.attachments,
+                now_unix_ms,
+            )
+            .await?;
+            super::task_followup_gate::begin_review(
+                &mut connection,
+                &turn.conversation_id,
+                &turn.run_id,
+                &turn.message_id,
                 now_unix_ms,
             )
             .await?;
@@ -246,7 +280,7 @@ impl LocalConversationStore for SqliteClientStorage {
                     .into_iter()
                     .filter(|record| record.message_id == turn.message_id)
                     .collect(),
-                run: run.clone(),
+                run: bound_run,
             };
             Self::record_receipt(&mut connection, command, &started, now_unix_ms).await?;
             Ok(started)

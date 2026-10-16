@@ -11,11 +11,13 @@ The current implementation exposes 15 policy-annotated tools:
 - `spreadsheet_read_range`, `spreadsheet_write_range`, and `spreadsheet_manage_sheets` for bounded typed cell and worksheet operations
 - `pdf_merge`, `pdf_extract_pages`, `pdf_transform`, `pdf_form_list`, and `pdf_form_fill`
 
-The Office operation whitelist includes Word paragraphs, headings, lists, tables and paragraph formatting; typed spreadsheet cells and sheet management; and PowerPoint slide/textbox creation, text updates, slide reordering/deletion, and bounded slide properties.
+The Office operation whitelist includes Word page layout, reusable styles, paragraphs, headings, lists, tables, phrase formatting, headers/footers, and detailed paragraph typography; typed spreadsheet cells and sheet management; and PowerPoint slide/textbox creation, text updates, slide reordering/deletion, and bounded slide properties. Word list operations reject text that already contains a visible list marker to prevent duplicated bullets or numbers.
 
-PDF pages are rendered by the bundled PDFium WebAssembly module. Office pages are rendered one at a time by the pinned OfficeCLI HTML renderer. A render call creates individual PNG artifacts plus a JSON manifest with dimensions, hashes, engine information, and warnings.
+PDF pages are rendered by the bundled PDFium WebAssembly module. Office pages are rendered one at a time by the pinned OfficeCLI HTML renderer. A render call creates individual PNG artifacts plus a JSON manifest with dimensions, hashes, engine information, and warnings. It also returns the first two requested pages as standard MCP image content so the model can directly inspect the current visual result; inline previews are resized to stay within the ChatOS transient-image budget and base64 data is never persisted in structured results.
 
 The implementation enforces a 100 MiB input limit, at most 50 rendered pages per call, bounded DPI/viewports and a 100-million-pixel total render limit.
+
+DOCX requests can produce a uniform viewer canvas when a page is unavailable. `document_render` reports these entries in `skippedPages` with `REQUESTED_PAGE_EMPTY_OR_UNAVAILABLE` and `renderStatus: "needs_review"`, without publishing them as normal pages or inferring page count. `document_validate` also reports the requested render check as requiring review instead of passing it. This conservative check retains sparse pages and intentional blank paper pages with visible boundaries; it does not determine Word's native pagination.
 
 `document_convert` renders Office content with the pinned OfficeCLI HTML preview engine and assembles the PNG pages into a PDF with `pdf-lib`. The result is explicitly reported as `conversionMode: "raster"`, `searchableText: false`, and `layoutFidelity: "preview"`. DOCX converts up to the first 50 pages, PPTX supports selected slide order, and XLSX creates one page per selected worksheet (including an explicit blank page for an empty sheet). Presentations or workbooks with more than 50 slides/sheets require an explicit selection of at most 50 items.
 

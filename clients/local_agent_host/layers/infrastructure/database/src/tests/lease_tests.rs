@@ -4,6 +4,116 @@
 use super::*;
 
 #[tokio::test]
+async fn returned_tool_errors_are_not_durable_success_facts() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    storage
+        .create_run(
+            &command("create-skill-facts", "create"),
+            &run(1_000),
+            "created",
+        )
+        .await
+        .expect("create");
+    for (index, result) in [
+        serde_json::json!({"is_error": true, "content": "rejected"}),
+        serde_json::json!({"isError": true, "content": "remote rejected"}),
+        serde_json::json!({"is_error": false, "isError": true}),
+        serde_json::json!({"is_error": false, "content": {"skill_ref": "valid"}}),
+        serde_json::json!({"activated": true, "skill_ref": "legacy-shared"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let skill_ref = format!("skill-{index}");
+        sqlx::query(
+            "INSERT INTO local_agent_tool_invocations(\
+             invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+             side_effecting, requires_approval, approval_status, status, result_json, \
+             version, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, 'run-1', 'batch-1', ?, 'agent_skill_activate', ?, \
+             0, 0, 'not_required', 'succeeded', ?, 1, 1000, 1000)",
+        )
+        .bind(format!("activation-{index}"))
+        .bind(format!("call-{index}"))
+        .bind(serde_json::json!({"skill_ref": skill_ref}).to_string())
+        .bind(result.to_string())
+        .execute(&storage.pool)
+        .await
+        .expect("insert legacy fact");
+        assert_eq!(
+            storage
+                .has_successful_tool_invocation_argument(
+                    "run-1",
+                    "agent_skill_activate",
+                    "skill_ref",
+                    &skill_ref
+                )
+                .await
+                .expect("check fact"),
+            index >= 3
+        );
+        assert_eq!(
+            storage
+                .latest_successful_tool_invocation_result(
+                    "user-1",
+                    "run-1",
+                    "agent_skill_activate",
+                    "skill_ref",
+                    &skill_ref,
+                    None
+                )
+                .await
+                .expect("result fact")
+                .is_some(),
+            index >= 3
+        );
+    }
+    assert_eq!(
+        storage
+            .successful_tool_invocation_count("run-1", "agent_skill_activate")
+            .await
+            .expect("count"),
+        2
+    );
+    assert_eq!(
+        storage
+            .successful_tool_invocation_argument_values(
+                "user-1",
+                "run-1",
+                "agent_skill_activate",
+                "skill_ref"
+            )
+            .await
+            .expect("restore"),
+        vec!["skill-3", "skill-4"]
+    );
+    assert!(storage
+        .successful_tool_invocation_argument_values(
+            "user-2",
+            "run-1",
+            "agent_skill_activate",
+            "skill_ref"
+        )
+        .await
+        .expect("foreign restore")
+        .is_empty());
+    assert!(storage
+        .latest_successful_tool_invocation_result(
+            "user-2",
+            "run-1",
+            "agent_skill_activate",
+            "skill_ref",
+            "skill-3",
+            None
+        )
+        .await
+        .expect("foreign result fact")
+        .is_none());
+}
+
+#[tokio::test]
 async fn expired_claim_cannot_commit_a_late_step() {
     let storage = SqliteClientStorage::connect_memory()
         .await
@@ -226,7 +336,7 @@ async fn version_two_database_migrates_through_conversation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 29);
+    assert_eq!(schema_version, 32);
     let memory_tenant_indexes: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
          AND name = 'local_memory_outbox_tenant_runnable'",

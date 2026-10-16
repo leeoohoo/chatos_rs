@@ -144,6 +144,34 @@ final class ConversationSessionViewModelTests: XCTestCase {
         withExtendedLifetime((conversationCancellable, composerCancellable)) {}
     }
 
+    func testComposerCapabilitySelectionIsForwardedAndClearedAfterSend() async throws {
+        let commandService = ConversationCommandServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            commandService: commandService
+        )
+        viewModel.draft = "帮我整理成一份正式文档"
+        viewModel.selectedCapability = .plugin(
+            key: "document-plugin",
+            displayName: "Document"
+        )
+
+        viewModel.sendDraft()
+
+        try await waitUntil {
+            await commandService.commands().count == 1 && !viewModel.isSending
+        }
+        let commands = await commandService.commands()
+        let command = try XCTUnwrap(commands.first)
+        XCTAssertEqual(
+            command.explicitCapabilitySelection,
+            .plugin(key: "document-plugin", displayName: "Document")
+        )
+        XCTAssertNil(viewModel.selectedCapability)
+    }
+
     func testReconnectReconcileRefreshesConversationHistory() async throws {
         let remoteService = ConversationRemoteServiceStub()
         let realtimeService = ConversationRealtimeServiceStub()
@@ -355,6 +383,65 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
     }
 
+    func testPromptFocusWaitsForPromptRefreshBeforeNavigating() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+
+        let focusTask = Task {
+            await viewModel.focusAfterRefreshingAskUserPrompts(
+                turnID: "turn-1",
+                promptID: "prompt-1",
+                taskID: "task-1",
+                runID: "run-1"
+            )
+        }
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        XCTAssertNil(viewModel.focusRequest)
+
+        await promptService.resumeDelayedFetch()
+        await focusTask.value
+
+        XCTAssertEqual(viewModel.focusRequest?.turnID, "turn-1")
+        XCTAssertEqual(viewModel.focusRequest?.promptID, "prompt-1")
+        XCTAssertEqual(viewModel.focusRequest?.taskID, "task-1")
+        XCTAssertEqual(viewModel.focusRequest?.runID, "run-1")
+    }
+
+    func testActivateRefreshesAskUserPromptsMissedWhileConversationWasInactive() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            await promptService.fetchCallCount() == 1
+        }
+
+        viewModel.activate()
+
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        let fetchCallCount = await promptService.fetchCallCount()
+        XCTAssertEqual(fetchCallCount, 2)
+        await promptService.resumeDelayedFetch()
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,
@@ -377,6 +464,32 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
     }
+}
+
+private actor ConversationCommandServiceStub: ConversationCommandServicing {
+    private var recordedCommands: [ConversationSendCommand] = []
+
+    func sendNewTurn(_ command: ConversationSendCommand) async throws -> ConversationCommandAck {
+        recordedCommands.append(command)
+        return ConversationCommandAck(
+            accepted: true,
+            turnID: command.turnID,
+            userMessageID: "message-1"
+        )
+    }
+
+    func sendGuidance(_ command: ConversationSendCommand) async throws -> ConversationCommandAck {
+        recordedCommands.append(command)
+        return ConversationCommandAck(
+            accepted: true,
+            turnID: command.turnID,
+            userMessageID: "message-1"
+        )
+    }
+
+    func stopTurn(conversationID: String, turnID: String?) async throws {}
+
+    func commands() -> [ConversationSendCommand] { recordedCommands }
 }
 
 private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
@@ -420,6 +533,8 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
     }
 
     func hasDelayedFetch() -> Bool { delayedFetchContinuation != nil }
+
+    func fetchCallCount() -> Int { fetchCount }
 
     func resumeDelayedFetch() {
         delayedFetchContinuation?.resume()

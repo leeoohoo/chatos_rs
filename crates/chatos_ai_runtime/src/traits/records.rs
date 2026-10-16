@@ -7,7 +7,6 @@ use serde_json::{Map, Value};
 
 use chatos_mcp_runtime::ToolResult;
 
-const MEMORY_TOOL_CONTENT_MAX_CHARS: usize = 262_144;
 const OMITTED_BINARY_PREFIX: &str = "[binary omitted from memory";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -319,22 +318,10 @@ fn memory_safe_tool_content(content: &str) -> String {
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         let value = memory_safe_tool_value(value);
         if let Ok(encoded) = serde_json::to_string(&value) {
-            return bound_memory_tool_content(encoded.as_str());
+            return encoded;
         }
     }
-    bound_memory_tool_content(content)
-}
-
-fn bound_memory_tool_content(content: &str) -> String {
-    if content.chars().count() <= MEMORY_TOOL_CONTENT_MAX_CHARS {
-        return content.to_string();
-    }
-    let mut bounded = content
-        .chars()
-        .take(MEMORY_TOOL_CONTENT_MAX_CHARS)
-        .collect::<String>();
-    bounded.push_str("\n[tool output truncated for memory persistence]");
-    bounded
+    content.to_string()
 }
 
 fn memory_safe_tool_value(value: Value) -> Value {

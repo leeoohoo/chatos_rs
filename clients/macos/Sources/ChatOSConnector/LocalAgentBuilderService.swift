@@ -74,7 +74,7 @@ public struct LocalAgentBuilderService: Sendable {
                 supportsReasoning: model.supportsReasoning,
                 defaultThinkingLevel: model.taskThinkingLevel,
                 thinkingLevels: model.supportsReasoning
-                    ? LocalAgentThinkingLevelCatalog.values(provider: model.provider)
+                    ? LocalAgentThinkingLevelCatalog.values(provider: model.provider, model: model.modelName)
                     : []
             )
         }.sorted {

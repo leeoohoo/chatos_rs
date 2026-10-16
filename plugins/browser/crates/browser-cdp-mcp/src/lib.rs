@@ -148,6 +148,16 @@ async fn call_tool(
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if !arguments.is_object() {
+        return Err(CoreError::InvalidRequest(
+            "arguments must be a JSON object".into(),
+        ));
+    }
+    // Validate before session resolution or any browser/backend work. Otherwise
+    // an empty navigate call hides its missing URL behind a session error.
+    if name == "browser_navigate" {
+        validate_navigation_arguments(&arguments)?;
+    }
     let max_chars = params
         .pointer("/_meta/chatos~1toolResultMaxChars")
         .and_then(Value::as_u64)

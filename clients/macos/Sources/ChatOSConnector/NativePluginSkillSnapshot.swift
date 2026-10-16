@@ -102,7 +102,7 @@ enum NativePluginSkillSnapshotLoader {
             throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源不在固定快照中")
         }
         let kind = descriptorObject["kind"]?.jsonString ?? "other"
-        guard kind == "reference" || kind == "schema" || kind == "other" else {
+        guard kind == "reference" else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源不是可读取的文本资源")
         }
         let resourceURL = validated.collectionURL
@@ -124,7 +124,10 @@ enum NativePluginSkillSnapshotLoader {
         guard offset >= 0, offset <= characters.count else {
             throw NativePluginRuntimeError.invalidRequest("Plugin Skill 资源 offset 无效")
         }
-        let limit = min(max(maximumCharacters, 1), 64_000)
+        let limit = min(
+            max(maximumCharacters, 1),
+            ProgressiveSkillFileLoader.maximumPageCharacters
+        )
         let end = min(offset + limit, characters.count)
         return .object([
             "skill_id": .string(componentKey),
@@ -251,8 +254,18 @@ enum NativePluginSkillSnapshotLoader {
         installationURL: URL,
         fileManager: FileManager
     ) throws -> [NativeJSONValue] {
+        let referencesURL = collectionURL.appendingPathComponent(
+            "references",
+            isDirectory: true
+        )
+        guard fileManager.fileExists(atPath: referencesURL.path) else { return [] }
+        try ProgressiveSkillFileLoader.validateDirectory(
+            referencesURL,
+            beneath: collectionURL,
+            fileManager: fileManager
+        )
         guard let enumerator = fileManager.enumerator(
-            at: collectionURL,
+            at: referencesURL,
             includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         ) else {
@@ -261,7 +274,6 @@ enum NativePluginSkillSnapshotLoader {
         var totalBytes = 0
         var resources: [NativeJSONValue] = []
         for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent == "SKILL.md" { continue }
             let values = try fileURL.resourceValues(forKeys: [
                 .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey,
             ])
@@ -286,7 +298,7 @@ enum NativePluginSkillSnapshotLoader {
                 "relative_path": .string(relativePath),
                 "sha256": .string(NativePluginHash.sha256(data)),
                 "size_bytes": .number(Double(data.count)),
-                "kind": .string(resourceKindV2(relativePath)),
+                "kind": .string("reference"),
             ]))
         }
         return resources.sorted {
@@ -295,16 +307,6 @@ enum NativePluginSkillSnapshotLoader {
         }
     }
 
-    private static func resourceKindV2(_ relativePath: String) -> String {
-        switch relativePath.split(separator: "/").first.map(String.init) ?? "" {
-        case "references": return "reference"
-        case "scripts": return "script"
-        case "assets": return "asset"
-        case _ where relativePath.hasSuffix(".json") || relativePath.hasSuffix(".schema.json"):
-            return "schema"
-        default: return "other"
-        }
-    }
     private static func componentKeyFromPath(_ path: String, fallback: String, index: Int) -> String {
         let candidate = path
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))

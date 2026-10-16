@@ -259,6 +259,7 @@ async fn model_and_tool_workers_claim_only_their_active_account() {
                     lease_duration_ms: 10_000,
                     include_tool_names: None,
                     exclude_tool_names: Vec::new(),
+                    execution_route: None,
                 }),
             ))
             .await

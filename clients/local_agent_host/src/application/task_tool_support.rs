@@ -70,13 +70,23 @@ pub(super) fn task_for_agent_tool(
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned),
     );
-    let mut value = json!({
+    json!({
         "id": task.task_id,
         "title": task.title,
         "description": input.and_then(|input| input.get("description")).cloned().unwrap_or(Value::Null),
         "objective": input.and_then(|input| input.get("objective")).cloned().unwrap_or(Value::Null),
+        "expected_outputs": input.and_then(|input| input.get("expected_outputs")).cloned().unwrap_or_else(|| json!([])),
+        "acceptance_criteria": input.and_then(|input| input.get("acceptance_criteria")).cloned().unwrap_or_else(|| json!([])),
+        "acceptance_report_version": task.input.get("acceptance_report_version"),
+        "final_response_max_chars": task.input.get("final_response_max_chars"),
+        "graph_goal": input.and_then(|input| input.get("graph_goal")).cloned().unwrap_or(Value::Null),
+        "decomposition_rationale": input.and_then(|input| input.get("decomposition_rationale")).cloned().unwrap_or(Value::Null),
+        "graph_notification_policy": input.and_then(|input| input.get("graph_notification_policy")).cloned().unwrap_or(Value::Null),
+        "notification_milestone": input.and_then(|input| input.get("notification_milestone")).cloned().unwrap_or(Value::Bool(false)),
+        "final_delivery": input.and_then(|input| input.get("final_delivery")).cloned().unwrap_or(Value::Bool(false)),
         "input_payload": input.and_then(|input| input.get("input_payload")).cloned().unwrap_or(Value::Null),
         "status": task_status_for_agent(task),
+        "followup_review_state": task.input.get("followup_review_state"),
         "priority": input.and_then(|input| input.get("priority")).cloned().unwrap_or_else(|| Value::from(0)),
         "tags": input.and_then(|input| input.get("tags")).cloned().unwrap_or_else(|| json!([])),
         "result_summary": task.result_summary.clone(),
@@ -88,9 +98,7 @@ pub(super) fn task_for_agent_tool(
         "supersedes_task_ids": input.and_then(|input| input.get("supersedes_task_ids")).cloned().unwrap_or_else(|| json!([])),
         "created_at": unix_ms_rfc3339(task.created_at_unix_ms),
         "updated_at": unix_ms_rfc3339(task.updated_at_unix_ms),
-    });
-    compact_agent_tool_payload(&mut value);
-    value
+    })
 }
 
 pub(super) fn tasks_for_agent_tool(tasks: &[LocalTaskRecord]) -> Value {
@@ -238,45 +246,6 @@ pub(super) fn task_status_for_agent(task: &LocalTaskRecord) -> &'static str {
         LocalTaskStatus::Failed => "failed",
         LocalTaskStatus::Cancelled => "cancelled",
         LocalTaskStatus::Blocked => "blocked",
-    }
-}
-
-fn compact_agent_tool_payload(value: &mut Value) {
-    match value {
-        Value::Array(items) => items.iter_mut().for_each(compact_agent_tool_payload),
-        Value::Object(object) => {
-            let keys = object.keys().cloned().collect::<Vec<_>>();
-            let mut truncated_fields = Vec::new();
-            for key in keys {
-                let Some(item) = object.get_mut(&key) else {
-                    continue;
-                };
-                let limit = match key.as_str() {
-                    "result_summary" => 2_400,
-                    "objective" | "description" | "error_message" => 6_000,
-                    _ => 12_000,
-                };
-                if let Value::String(text) = item {
-                    let mut chars = text.chars();
-                    let prefix = chars.by_ref().take(limit).collect::<String>();
-                    if chars.next().is_some() {
-                        *text = format!(
-                            "{prefix}\n… [truncated; use the task/run detail APIs for the full record]"
-                        );
-                        truncated_fields.push(Value::String(key));
-                    }
-                } else {
-                    compact_agent_tool_payload(item);
-                }
-            }
-            if !truncated_fields.is_empty() {
-                object.insert(
-                    "_truncated_fields".to_string(),
-                    Value::Array(truncated_fields),
-                );
-            }
-        }
-        _ => {}
     }
 }
 
@@ -492,6 +461,8 @@ pub(super) fn attach_dependency_context_payload(
 pub(super) fn task_prompt(
     objective: &str,
     description: &str,
+    expected_outputs: &[String],
+    acceptance_criteria: &[String],
     input_payload: &Value,
 ) -> Result<String, String> {
     let objective = objective.trim();
@@ -513,6 +484,26 @@ pub(super) fn task_prompt(
         });
         prompt.push_str(description);
     }
+    append_task_contract_list(
+        &mut prompt,
+        if english {
+            "Expected Outputs"
+        } else {
+            "预期输出"
+        },
+        expected_outputs,
+        "expected_outputs",
+    )?;
+    append_task_contract_list(
+        &mut prompt,
+        if english {
+            "Acceptance Criteria"
+        } else {
+            "验收标准"
+        },
+        acceptance_criteria,
+        "acceptance_criteria",
+    )?;
     if !input_payload.is_null() {
         prompt.push_str(if english {
             "\n\nInput Data:\n"
@@ -530,6 +521,37 @@ pub(super) fn task_prompt(
         "\n\n[项目检查最低证据契约]\n当目标要求检查、审查、评估、了解或总结真实项目时，不得只依据 README 或架构文档结束。至少读取并交叉核对构建或包管理清单、源码入口、具有代表性的核心实现，以及测试或 CI 配置；结果必须列出实际作为证据的文件和检查，并说明尚未验证的部分。若本轮提供终端或构建工具，且用户关注当前行为或正确性，应执行与目标相称的验证。证据充分后及时结束，不得扩展无关工作。\n\n[输出语言规则]\n所有用户可见文本使用用户要求或当前任务所使用的语言；代码标识符、命令、路径、API 和产品名保持原样。"
     });
     Ok(prompt)
+}
+
+fn append_task_contract_list(
+    prompt: &mut String,
+    heading: &str,
+    values: &[String],
+    field: &str,
+) -> Result<(), String> {
+    if values.is_empty() {
+        return Err(format!("{field} must contain at least one item"));
+    }
+    prompt.push_str("\n\n");
+    prompt.push_str(heading);
+    prompt.push_str(":\n");
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(format!("{field} cannot contain an empty item"));
+        }
+        prompt.push_str("- ");
+        prompt.push_str(value);
+        prompt.push('\n');
+    }
+    Ok(())
+}
+
+pub(super) fn validate_nonempty_text(value: &str, field: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field} cannot be empty"));
+    }
+    Ok(())
 }
 
 pub(super) fn validated_builtin_kinds(

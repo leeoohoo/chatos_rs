@@ -139,7 +139,10 @@ extension AppModel {
         localAgentControlPlaneOwnerUserID = nil
         localAgentControlPlaneBootstrapOwnerUserID = nil
         localAgentHostError = nil
-        guard let localAgentHost else { return }
+        guard let localAgentHost else {
+            localAgentHostError = localized("本地任务组件缺失，请重新安装应用。", english: "The local Task component is missing. Please reinstall the app.")
+            return
+        }
         let localAgentEventHub = localAgentEventHub
         let pendingShutdown = localAgentHostShutdownTask
         localAgentHostLifecycleTask = Task { [weak self] in
@@ -299,7 +302,7 @@ extension AppModel {
               localAgentCrashRecoveryAttempts < 5,
               let ownerUserID = authenticatedUserID else {
             if localAgentCrashRecoveryAttempts >= 5 {
-                localAgentHostError = "Local Agent Host repeatedly exited and could not recover."
+                localAgentHostError = NSLocalizedString("本地任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
             }
             return
         }
@@ -421,6 +424,11 @@ extension AppModel {
                     return
                 } catch {
                     guard authenticatedUserID == ownerUserID else { return }
+                    if error is NativeLocalAgentCredentialRefreshDeferred {
+                        localAgentControlPlaneBootstrapOwnerUserID = nil
+                        localAgentHostError = error.localizedDescription
+                        return
+                    }
                     guard attempt == retryDelays.indices.last else { continue }
                     localAgentControlPlaneBootstrapOwnerUserID = nil
                     localAgentHostError = error.localizedDescription

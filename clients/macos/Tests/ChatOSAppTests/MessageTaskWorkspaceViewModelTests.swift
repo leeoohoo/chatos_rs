@@ -5,6 +5,12 @@ import XCTest
 
 @MainActor
 final class MessageTaskWorkspaceViewModelTests: XCTestCase {
+    func testFollowupReviewAndConfirmationRemainActiveForRefresh() {
+        XCTAssertTrue(MessageTask(id: "task", title: "Task", status: "reviewing_followup").isActive)
+        XCTAssertTrue(MessageTask(id: "task", title: "Task", status: "waiting_confirmation").isActive)
+        XCTAssertFalse(MessageTask(id: "task", title: "Task", status: "cancelled").isActive)
+    }
+
     func testEmptyGraphWithMessageLookupStartsAutomaticRetryState() async {
         let service = MessageTaskGraphServiceStub(graphs: [.empty])
         let viewModel = makeViewModel(service: service)

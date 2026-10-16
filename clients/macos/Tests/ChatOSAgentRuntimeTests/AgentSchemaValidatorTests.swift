@@ -3,6 +3,20 @@ import Foundation
 import XCTest
 
 final class AgentSchemaValidatorTests: XCTestCase {
+    func testNullableTypesPreserveConcreteConstraintsAndRejectUnsupportedUnions() throws {
+        let schema = Data(#"{"type":"object","properties":{"offset":{"type":["integer","null"],"minimum":0}},"additionalProperties":false}"#.utf8)
+        for arguments in ["{}", #"{"offset":null}"#, #"{"offset":0}"#] {
+            XCTAssertNoThrow(try AgentSchemaValidator.validate(arguments: arguments, schema: schema))
+        }
+        for arguments in [#"{"offset":-1}"#, #"{"offset":1.5}"#, #"{"offset":true}"#, #"{"offset":"0"}"#] {
+            XCTAssertThrowsError(try AgentSchemaValidator.validate(arguments: arguments, schema: schema))
+        }
+        for types in [#"["string","integer"]"#, #"["null","unknown"]"#, #"["null","string","integer"]"#] {
+            XCTAssertThrowsError(try AgentSchemaValidator.validate(arguments: "null",
+                schema: Data("{\"type\":\(types)}".utf8)))
+        }
+    }
+
     func testDefaultAnnotationDoesNotRejectAnOtherwiseValidArgument() throws {
         let schema = Data(
             #"{"type":"object","properties":{"include_terminal":{"type":"boolean","default":false}},"additionalProperties":false}"#.utf8

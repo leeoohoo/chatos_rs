@@ -15,6 +15,8 @@ All mutations belong to one run-scoped edit session:
 
 `stage_edit_batch` does not write project files, and a successful stage is not completion. `commit_edit_session` may reject concurrent changes; re-read and deliberately restage instead of weakening the precondition. Keep related edits atomic, but do not mix unrelated cleanup into the transaction.
 
+For a durable Task with nonempty `owned_paths`, edit only those exact paths or their descendants. The client freezes this range into the edit session and rejects an out-of-range batch before staging it. Do not delete an ancestor, route through a symbolic-link directory, or expand scope to work around a rejection; return the missing work to the orchestrator so it can revise the Task graph. An omitted or empty range uses the whole bound workspace and its conservative write lock.
+
 After commit, verify the observable result with project reads and proportionate tests. Never claim a committed edit compiled, rendered, migrated, or deployed unless that separate verification occurred.
 
 Read [references/transactions-and-conflicts.md](references/transactions-and-conflicts.md) for operation selection, multi-file batches, conflicts, deletions, cancellation, and positive/negative examples.

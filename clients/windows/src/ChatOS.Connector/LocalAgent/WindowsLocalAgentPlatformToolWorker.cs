@@ -210,7 +210,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                         .ToHashSet(StringComparer.Ordinal)
                         .OrderBy(name => name, StringComparer.Ordinal)
                         .ToArray(),
-                    ["create_task", "create_tasks_with_prerequisites"]), source.Token)
+                    ["create_task", "create_tasks_with_prerequisites", "resolve_task_followup"]), source.Token)
                     .ConfigureAwait(false);
                 if (result.Type != "tool_claim") throw new InvalidDataException("Invalid tool claim result.");
                 if (result.Claim is { } claim)

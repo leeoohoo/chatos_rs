@@ -3,39 +3,34 @@ import { createPortal } from 'react-dom';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { Background, BackgroundVariant, Controls, Handle, MarkerType, MiniMap, Position, ReactFlow, useReactFlow, type NodeProps } from '@xyflow/react';
 import type { ExecutionPlan, ExecutionTask, PlanNodePosition } from '../../src/schema';
+import { readyTaskIds, visibleDependencyEdges } from '../../src/plan-view';
 
-type TaskNodeData = { task: ExecutionTask; ready: boolean };
+type TaskNodeData = { task: ExecutionTask; ready: boolean; supporting: boolean; hiddenDependencies: string[] };
 const elk = new ELK();
 const NODE_WIDTH = 288;
 const NODE_HEIGHT = 176;
 const COLLISION_GAP = 20;
 
 function statusLabel(task: ExecutionTask, ready: boolean) {
-  if (ready) return '可以开始';
+  if (ready) return '具备开始条件';
   return ({ planned: '等待前置', in_progress: '进行中', blocked: '已阻塞', done: '已完成', cancelled: '已取消' } as const)[task.status];
 }
 
 function TaskNode({ data, selected }: NodeProps) {
-  const { task, ready } = data as unknown as TaskNodeData;
-  return <article className={`plan-node status-${task.status} ${ready ? 'is-ready' : ''} ${selected ? 'selected' : ''}`}>
+  const { task, ready, supporting, hiddenDependencies } = data as unknown as TaskNodeData;
+  return <article title={task.blockedReason || (hiddenDependencies.length ? `图外前置：${hiddenDependencies.join('、')}` : task.description)} className={`plan-node status-${task.status} ${supporting ? 'is-supporting' : ''} ${ready ? 'is-ready' : ''} ${selected ? 'selected' : ''}`}>
     <Handle type="target" position={Position.Left} className="plan-handle" />
     <header><span>{task.id}</span><em>{statusLabel(task, ready)}</em></header>
     <strong>{task.title}</strong>
-    <p>{task.description || '尚未补充任务说明'}</p>
-    <footer><span>{task.phase || '未分阶段'}</span><span>{task.dependsOn.length} 个前置</span><span>{task.acceptanceCriteria.length} 条验收</span></footer>
+    <p>{hiddenDependencies.length ? `图外前置：${hiddenDependencies.join('、')}（查看完整依赖）` : task.blockedReason || task.description || '尚未补充任务说明'}</p>
+    <footer><span>{supporting ? '跨需求支撑' : task.phase || '未分阶段'}</span><span>{task.dependsOn.length} 个前置</span><span>{task.acceptanceCriteria.length} 条验收</span></footer>
     <Handle type="source" position={Position.Right} className="plan-handle" />
   </article>;
 }
 
 const nodeTypes = { taskNode: TaskNode };
 
-function readyIds(plan: ExecutionPlan): Set<string> {
-  const done = new Set(plan.tasks.filter((task) => task.status === 'done').map((task) => task.id));
-  return new Set(plan.tasks.filter((task) => task.status === 'planned' && task.dependsOn.every((id) => done.has(id))).map((task) => task.id));
-}
-
 async function automaticPositions(plan: ExecutionPlan): Promise<Record<string, PlanNodePosition>> {
-  const taskIds = new Set(plan.tasks.map((task) => task.id));
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: {
@@ -50,7 +45,7 @@ async function automaticPositions(plan: ExecutionPlan): Promise<Record<string, P
       'elk.layered.nodePlacement.favorStraightEdges': 'true'
     },
     children: plan.tasks.map((task) => ({ id: task.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
-    edges: plan.tasks.flatMap((task) => task.dependsOn.filter((dependency) => taskIds.has(dependency)).map((dependency) => ({ id: `${dependency}->${task.id}`, sources: [dependency], targets: [task.id] })))
+    edges: visibleDependencyEdges(plan.tasks).map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }))
   });
   return Object.fromEntries((graph.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
 }
@@ -70,8 +65,10 @@ function positionsOverlap(plan: ExecutionPlan, transientPositions: Record<string
   return false;
 }
 
-export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }: {
+export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, onSelect, onPositionsChange }: {
   plan: ExecutionPlan;
+  sourcePlan: ExecutionPlan;
+  primaryTaskIds: Set<string>;
   selectedTaskId?: string;
   onSelect: (taskId?: string) => void;
   onPositionsChange: (positions: Record<string, PlanNodePosition>) => void;
@@ -80,7 +77,9 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
   const [transientPositions, setTransientPositions] = useState<Record<string, PlanNodePosition>>({});
   const [expanded, setExpanded] = useState(false);
   const { fitView } = useReactFlow();
-  const ready = useMemo(() => readyIds(plan), [plan]);
+  const ready = useMemo(() => new Set(readyTaskIds(sourcePlan.tasks)), [sourcePlan]);
+  const readyCount = [...primaryTaskIds].filter((id) => ready.has(id)).length;
+  const visibleIds = new Set(plan.tasks.map((task) => task.id));
   const missingPositions = plan.tasks.some((task) => !plan.positions[task.id] && !transientPositions[task.id]);
   const overlappingPositions = positionsOverlap(plan, transientPositions);
   const taskSignature = plan.tasks.map((task) => task.id).sort().join('|');
@@ -117,16 +116,14 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
     type: 'taskNode',
     position: transientPositions[task.id] ?? plan.positions[task.id] ?? { x: (index % 3) * (NODE_WIDTH + 90), y: Math.floor(index / 3) * (NODE_HEIGHT + 72) },
     selected: task.id === selectedTaskId,
-    data: { task, ready: ready.has(task.id) }
+    data: { task, ready: ready.has(task.id), supporting: !primaryTaskIds.has(task.id), hiddenDependencies: task.dependsOn.filter((id) => !visibleIds.has(id)) }
   }));
-  const edges = plan.tasks.flatMap((task) => task.dependsOn.map((dependency) => ({
-    id: `${dependency}->${task.id}`,
-    source: dependency,
-    target: task.id,
+  const edges = visibleDependencyEdges(plan.tasks).map((edge) => ({
+    ...edge,
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed, width: 17, height: 17 },
     className: 'plan-edge'
-  })));
+  }));
 
   async function relayout() {
     if (layouting || plan.tasks.length === 0) return;
@@ -141,7 +138,7 @@ export function PlanGraph({ plan, selectedTaskId, onSelect, onPositionsChange }:
 
   const graph = <section className={`plan-graph-shell ${expanded ? 'is-expanded' : ''}`}>
     <div className="plan-graph-toolbar">
-      <div><strong>依赖关系图</strong><span>{ready.size} 个任务可以开始</span></div>
+      <div><strong>依赖关系图</strong><span>本需求 {readyCount} 个任务具备开始条件</span></div>
       <div className="plan-graph-actions"><button onClick={() => void relayout()} disabled={layouting}>{layouting ? '正在整理…' : '自动整理'}</button><button onClick={() => setExpanded((value) => !value)}>{expanded ? '退出全屏' : '全屏'}</button></div>
     </div>
     <div className="plan-graph-canvas">

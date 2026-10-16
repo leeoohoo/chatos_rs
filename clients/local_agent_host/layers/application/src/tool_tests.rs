@@ -6,8 +6,9 @@ use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
     CancelRunCommand, ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand,
     CommitToolCommand, CreateRunCommand, GetRunCommand, HostCommand, HostRequestEnvelope,
-    HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim, LocalAgentToolOutcome,
-    RenewToolClaimCommand, ResumeRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    HostResult, LocalAgentRunClaim, LocalAgentToolCall, LocalAgentToolClaim,
+    LocalAgentToolExecutionRoute, LocalAgentToolOutcome, RenewToolClaimCommand, ResumeRunCommand,
+    LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::sync::atomic::AtomicI64;
@@ -101,6 +102,7 @@ async fn prepare_claimed_tool(
                 lease_duration_ms: 1_000,
                 include_tool_names: None,
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         ))
         .await;
@@ -146,6 +148,7 @@ async fn expired_read_only_tool_is_requeued() {
                 lease_duration_ms: 1_000,
                 include_tool_names: None,
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         ))
         .await;
@@ -308,6 +311,7 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
                 lease_duration_ms: 10_000,
                 include_tool_names: Some(vec!["create_task".to_string()]),
                 exclude_tool_names: Vec::new(),
+                execution_route: Some(LocalAgentToolExecutionRoute::Shared),
             }),
         ))
         .await;
@@ -325,7 +329,8 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
                 worker_id: "native-worker".to_string(),
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
-                exclude_tool_names: vec!["create_task".to_string()],
+                exclude_tool_names: Vec::new(),
+                execution_route: Some(LocalAgentToolExecutionRoute::Platform),
             }),
         ))
         .await;
@@ -334,6 +339,14 @@ async fn tool_claim_filters_partition_reserved_and_platform_tools() {
         result => panic!("unexpected result: {result:?}"),
     };
     assert_eq!(platform.invocation.tool_name, "read_file");
+    assert_eq!(
+        reserved.invocation.execution_route,
+        LocalAgentToolExecutionRoute::Shared
+    );
+    assert_eq!(
+        platform.invocation.execution_route,
+        LocalAgentToolExecutionRoute::Platform
+    );
 }
 
 #[tokio::test]

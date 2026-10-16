@@ -34,6 +34,7 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     /// durable capability store; this map only lets wake/offline restore select the right one.
     var localAgentCapabilityRevisionsByModelConfigID: [String: String]?
     var localAgentPromptBundleVersion: Int64?
+    var localAgentTaskSkillChecksum: String?
 
     static let empty = NativeConnectorPersistentState()
 }

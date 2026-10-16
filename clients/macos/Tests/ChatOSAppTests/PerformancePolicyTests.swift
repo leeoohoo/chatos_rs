@@ -126,15 +126,29 @@ struct PerformancePolicyTests {
             "user_input_requested",
         ]))
         #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: [
+            "requirement_survey_waiting",
+        ]))
+        #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: [
             "requirement_survey_resolved",
         ]))
         #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: [
             "run_cancelled",
         ]))
-        #expect(!RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: [
+        #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: [
             "continuation_requested",
             "run_succeeded",
         ]))
+        #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: ["run_failed"]))
+        #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: ["requirement_plan_saved"]))
+        #expect(RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: ["requirement_plan_confirmed"]))
+        #expect(!RequirementSurveyMonitoringPolicy.shouldRefresh(forEventTypes: ["tool_invocation_claimed"]))
+    }
+
+    @Test("confirmed requirement plans explain the no-auto-run boundary and offer a next step")
+    func confirmedRequirementPlanHasExplicitNextStep() {
+        #expect(RequirementPlanConfirmationPresentation.confirmedTitle == "方案已确认，本次不会自动执行任何任务")
+        #expect(RequirementPlanConfirmationPresentation.confirmedDetail.contains("需要评审、生成文档或开始实施时"))
+        #expect(RequirementPlanConfirmationPresentation.returnToConversationTitle == "返回原对话，安排下一步")
     }
 
     @Test("notepad refreshes from mutations and Agent tool events with a low-frequency fallback")

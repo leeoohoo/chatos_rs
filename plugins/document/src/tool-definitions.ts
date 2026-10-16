@@ -1,222 +1,4 @@
-const officeOperationSchema = {
-  oneOf: [
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_add_paragraph' },
-        text: { type: 'string', maxLength: 20000 },
-        pageBreakBefore: { type: 'boolean', default: false }
-      },
-      required: ['type', 'text'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_replace_text' },
-        find: { type: 'string', minLength: 1, maxLength: 2000 },
-        replace: { type: 'string', maxLength: 20000 }
-      },
-      required: ['type', 'find', 'replace'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_add_heading' },
-        level: { type: 'integer', minimum: 1, maximum: 6 },
-        text: { type: 'string', maxLength: 20000 },
-        pageBreakBefore: { type: 'boolean', default: false }
-      },
-      required: ['type', 'level', 'text'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_add_list_item' },
-        text: { type: 'string', maxLength: 20000 },
-        ordered: { type: 'boolean', default: false },
-        level: { type: 'integer', minimum: 0, maximum: 8, default: 0 }
-      },
-      required: ['type', 'text'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_add_table' },
-        rows: {
-          type: 'array',
-          minItems: 1,
-          maxItems: 50,
-          items: {
-            type: 'array',
-            minItems: 1,
-            maxItems: 20,
-            items: {
-              oneOf: [
-                { type: 'string', maxLength: 5000 },
-                { type: 'number' },
-                { type: 'boolean' }
-              ]
-            }
-          }
-        },
-        style: {
-          type: 'string',
-          enum: ['medium1', 'medium2', 'medium3', 'medium4', 'light1', 'light2', 'light3', 'dark1', 'dark2', 'none'],
-          default: 'medium2'
-        }
-      },
-      required: ['type', 'rows'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'word_set_paragraph_format' },
-        paragraph: { type: 'integer', minimum: 1, maximum: 100000 },
-        align: { type: 'string', enum: ['left', 'center', 'right', 'justify'] },
-        style: { type: 'string', minLength: 1, maxLength: 128 },
-        bold: { type: 'boolean' },
-        italic: { type: 'boolean' }
-      },
-      required: ['type', 'paragraph'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'spreadsheet_set_cell' },
-        sheet: { type: 'string', minLength: 1, maxLength: 31, default: 'Sheet1' },
-        address: { type: 'string', pattern: '^[A-Za-z]{1,3}[1-9][0-9]{0,6}$' },
-        value: {
-          oneOf: [
-            { type: 'string', maxLength: 20000 },
-            { type: 'number' },
-            { type: 'boolean' }
-          ]
-        },
-        formula: { type: 'string', maxLength: 8000 }
-      },
-      required: ['type', 'address'],
-      oneOf: [{ required: ['value'] }, { required: ['formula'] }],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'spreadsheet_add_sheet' },
-        name: { type: 'string', minLength: 1, maxLength: 31 },
-        tabColor: { type: 'string', pattern: '^[0-9A-Fa-f]{6}$' },
-        hidden: { type: 'boolean' }
-      },
-      required: ['type', 'name'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'spreadsheet_rename_sheet' },
-        sheet: { type: 'string', minLength: 1, maxLength: 31 },
-        name: { type: 'string', minLength: 1, maxLength: 31 }
-      },
-      required: ['type', 'sheet', 'name'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'spreadsheet_delete_sheet' },
-        sheet: { type: 'string', minLength: 1, maxLength: 31 }
-      },
-      required: ['type', 'sheet'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'spreadsheet_set_sheet_properties' },
-        sheet: { type: 'string', minLength: 1, maxLength: 31 },
-        hidden: { type: 'boolean' },
-        tabColor: { type: 'string', pattern: '^[0-9A-Fa-f]{6}$' },
-        freeze: {
-          type: 'string',
-          pattern: '^(?:[A-Za-z]{1,3}[1-9][0-9]{0,6}|none)$'
-        }
-      },
-      required: ['type', 'sheet'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_add_slide' },
-        title: { type: 'string', maxLength: 2000 },
-        background: { type: 'string', pattern: '^[0-9A-Fa-f]{6}$' }
-      },
-      required: ['type'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_add_textbox' },
-        slide: { type: 'integer', minimum: 1, maximum: 10000 },
-        text: { type: 'string', maxLength: 20000 },
-        x: { type: 'string', maxLength: 24 },
-        y: { type: 'string', maxLength: 24 },
-        width: { type: 'string', maxLength: 24 },
-        height: { type: 'string', maxLength: 24 }
-      },
-      required: ['type', 'slide', 'text', 'x', 'y', 'width', 'height'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_set_text' },
-        slide: { type: 'integer', minimum: 1, maximum: 10000 },
-        shape: { type: 'integer', minimum: 1, maximum: 100000 },
-        text: { type: 'string', maxLength: 20000 }
-      },
-      required: ['type', 'slide', 'shape', 'text'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_delete_slide' },
-        slide: { type: 'integer', minimum: 1, maximum: 10000 }
-      },
-      required: ['type', 'slide'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_move_slide' },
-        slide: { type: 'integer', minimum: 1, maximum: 10000 },
-        position: { type: 'integer', minimum: 1, maximum: 10000 }
-      },
-      required: ['type', 'slide', 'position'],
-      additionalProperties: false
-    },
-    {
-      type: 'object',
-      properties: {
-        type: { const: 'presentation_set_slide_properties' },
-        slide: { type: 'integer', minimum: 1, maximum: 10000 },
-        background: { type: 'string', pattern: '^[0-9A-Fa-f]{6}$' },
-        hidden: { type: 'boolean' },
-        name: { type: 'string', minLength: 1, maxLength: 500 }
-      },
-      required: ['type', 'slide'],
-      additionalProperties: false
-    }
-  ]
-} as const;
+import { officeOperationSchema } from './office/schema.js';
 
 export const TOOL_DEFINITIONS_BASE = [
   {
@@ -278,7 +60,7 @@ export const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'document_render',
-    description: 'Render up to 50 selected pages from a DOCX, XLSX, PPTX, or PDF as individual PNG artifacts plus a JSON manifest.',
+    description: 'Render selected document pages as PNG artifacts and a JSON manifest. The first two available pages are returned as inline images for visual inspection. DOCX uniform canvases are reported in skippedPages and require review; they do not establish page count. Render later pages in another call.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -399,7 +181,7 @@ export const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'document_validate',
-    description: 'Validate document structure, reopen it with the format engine, and optionally render up to 10 pages for bounded visual verification.',
+    description: 'Validate document structure, reopen it with the format engine, and optionally check up to 10 rendered pages for technical readability. Uniform DOCX canvases require review. This does not perform visual approval; call document_render and inspect its inline images.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -541,13 +323,19 @@ export const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'office_create',
-    description: 'Create a downloadable managed DOCX, XLSX, or PPTX artifact. The result is not written into the project workspace; use its returned relativePath for follow-up document tools in the same session.',
+    description: 'Create a downloadable managed DOCX, XLSX, or PPTX artifact with typed operations. Word operations support page layout, reusable styles, paragraph/list typography, text-range formatting, tables, and headers/footers. Render the result before delivery. The result is not written into the project workspace; use its returned relativePath for follow-up document tools in the same session.',
     inputSchema: {
       type: 'object',
       properties: {
         format: { type: 'string', enum: ['docx', 'xlsx', 'pptx'] },
         outputName: { type: 'string', minLength: 1, maxLength: 200 },
-        locale: { type: 'string', minLength: 2, maxLength: 32, default: 'en-US' },
+        locale: {
+          type: 'string',
+          minLength: 2,
+          maxLength: 32,
+          default: 'auto',
+          description: 'BCP-47 locale, or auto to infer a safe default from document text (for example zh-CN for Chinese).'
+        },
         operations: { type: 'array', maxItems: 500, items: officeOperationSchema }
       },
       required: ['format', 'outputName', 'operations'],
@@ -564,7 +352,7 @@ export const TOOL_DEFINITIONS_BASE = [
   },
   {
     name: 'office_edit_batch',
-    description: 'Copy a workspace or current-session DOCX, XLSX, or PPTX, apply typed edits atomically, and create a new downloadable managed artifact.',
+    description: 'Copy a workspace or current-session DOCX, XLSX, or PPTX, apply typed edits atomically, and create a new downloadable managed artifact. Word edits can change page layout, styles, paragraph/list typography, text-range formatting, tables, and headers/footers. Render every visually changed page before delivery.',
     inputSchema: {
       type: 'object',
       properties: {

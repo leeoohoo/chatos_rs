@@ -103,6 +103,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         ))
         .await
@@ -183,6 +184,7 @@ async fn approval_gate_blocks_claim_and_persists_approve_or_reject() {
                 lease_duration_ms: 10_000,
                 include_tool_names: None,
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         ))
         .await

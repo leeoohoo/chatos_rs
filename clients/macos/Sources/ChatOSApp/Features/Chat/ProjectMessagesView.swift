@@ -18,6 +18,13 @@ struct ProjectMessagesView: View {
                     projectRootPath: model.workspaceProject(id: projectID)?.rootPath
                 )
                 .frame(minWidth: 620)
+                .toolbar {
+                    Button {
+                        model.selection = .requirementSurveys
+                    } label: {
+                        Label(model.localized("需求调研", english: "Requirement Surveys"), systemImage: "list.clipboard.fill")
+                    }
+                }
             } else if model.isPreparingProjectConversation(projectID: projectID) {
                 VStack(spacing: 12) {
                     ProgressView()

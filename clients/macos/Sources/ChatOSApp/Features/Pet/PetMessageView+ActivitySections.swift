@@ -200,6 +200,13 @@ extension PetMessageView {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
+            if let error = cancellationErrors[activity.id] {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 if activity.kind == .succeeded || activity.kind == .cancelled {
                     Button("知道了") {
@@ -229,7 +236,9 @@ extension PetMessageView {
                            : (canLoadTask(activity)
                               ? model.localized("查看执行过程", english: "View Execution Process")
                               : model.localized("打开详情", english: "Open Details"))) {
-                        if canLoadTask(activity) {
+                        if activity.route.requirementSurveyID != nil {
+                            onOpen(activity)
+                        } else if canLoadTask(activity) {
                             showTaskProcess(activity)
                         } else {
                             onOpen(activity)

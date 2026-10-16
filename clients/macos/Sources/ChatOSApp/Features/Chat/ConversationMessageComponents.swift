@@ -73,16 +73,7 @@ struct AssistantReplyView: View {
                     markdown: reply.message.text,
                     allowsTextSelection: true
                 )
-                .environment(\.openURL, petFileOpenAction)
             }
-        }
-    }
-
-    private var petFileOpenAction: OpenURLAction {
-        OpenURLAction { url in
-            model.openPetFileLink(url, projectRootPath: projectRootPath)
-                ? .handled
-                : .systemAction
         }
     }
 
@@ -129,7 +120,6 @@ struct TaskAgentReplyView: View {
                     markdown: reply.message.text,
                     allowsTextSelection: true
                 )
-                .environment(\.openURL, petFileOpenAction)
                 HStack(spacing: 14) {
                     inspectorButton(
                         title: "执行过程",
@@ -143,14 +133,6 @@ struct TaskAgentReplyView: View {
                     )
                 }
             }
-        }
-    }
-
-    private var petFileOpenAction: OpenURLAction {
-        OpenURLAction { url in
-            model.openPetFileLink(url, projectRootPath: projectRootPath)
-                ? .handled
-                : .systemAction
         }
     }
 
@@ -182,6 +164,9 @@ struct TaskAgentReplyView: View {
     private func statusTitle(_ status: String?) -> String {
         switch status?.lowercased() {
         case "succeeded", "completed", "success": "已完成"
+        case "execution_failed": "执行失败"
+        case "acceptance_failed": "未通过验收"
+        case "evidence_incomplete": "部分完成，待核验"
         case "failed": "失败"
         case "blocked": "阻塞"
         case "running", "processing", "in_progress": "执行中"
@@ -192,6 +177,8 @@ struct TaskAgentReplyView: View {
     private func statusColor(_ status: String?) -> Color {
         switch status?.lowercased() {
         case "succeeded", "completed", "success": .green
+        case "execution_failed", "acceptance_failed": .red
+        case "evidence_incomplete": .orange
         case "failed": .red
         case "blocked": .orange
         case "running", "processing", "in_progress": AppPalette.ai

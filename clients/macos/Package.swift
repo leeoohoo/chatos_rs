@@ -26,12 +26,14 @@ let package = Package(
             publicHeadersPath: "include"
         ),
         .target(name: "ChatOSNetworking"),
+        .target(name: "ChatOSModelCapabilities", resources: [.process("Resources")]),
         .target(
             name: "ChatOSAgentRuntime",
-            dependencies: ["ChatOSNetworking"]
+            dependencies: ["ChatOSNetworking", "ChatOSModelCapabilities"]
         ),
         .target(
             name: "ChatOSCore",
+            dependencies: ["ChatOSModelCapabilities"],
             resources: [
                 .process("Resources"),
                 .copy("AgentSkills/Skills"),
@@ -50,6 +52,7 @@ let package = Package(
                 "ChatOSAgentRuntime",
                 "ChatOSNetworking",
                 "ChatOSProcessRuntime",
+                "ChatOSModelCapabilities",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             linkerSettings: [

@@ -15,8 +15,8 @@ pub struct ToolResultModelBudgetLimits {
     pub total_max_chars: usize,
 }
 
-pub const DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS: usize = 40_000;
-pub const DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS: usize = 200_000;
+pub const DEFAULT_TOOL_RESULT_MODEL_MAX_CHARS: usize = 160_000;
+pub const DEFAULT_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS: usize = 800_000;
 pub const TOOL_RESULT_MODEL_MAX_CHARS_ENV: &str = "AI_RUNTIME_TOOL_RESULT_MODEL_MAX_CHARS";
 pub const TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS_ENV: &str =
     "AI_RUNTIME_TOOL_RESULTS_MODEL_TOTAL_MAX_CHARS";
@@ -53,7 +53,7 @@ impl ToolResultModelBudget {
         } else {
             ("total_budget", self.remaining_total_chars)
         };
-        let truncated = truncate_tool_result_for_model(
+        let bounded = tool_result_budget_error(
             tool_name,
             content,
             content_chars,
@@ -63,8 +63,8 @@ impl ToolResultModelBudget {
         );
         self.remaining_total_chars = self
             .remaining_total_chars
-            .saturating_sub(truncated.chars().count());
-        truncated
+            .saturating_sub(bounded.chars().count());
+        bounded
     }
 }
 
@@ -118,7 +118,7 @@ fn env_usize(key: &str, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
-fn truncate_tool_result_for_model(
+fn tool_result_budget_error(
     tool_name: &str,
     content: &str,
     content_chars: usize,
@@ -126,37 +126,22 @@ fn truncate_tool_result_for_model(
     reason: &str,
     max_chars: usize,
 ) -> String {
-    if max_chars == 0 {
-        return String::new();
-    }
     let tool_name = tool_name.trim();
     let tool_display = if tool_name.is_empty() {
         "unknown"
     } else {
         tool_name
     };
-    let marker = format!(
-        "\n...[tool_result_truncated tool={tool_display} original_chars={content_chars} original_bytes={content_bytes} reason={reason}]...\n"
-    );
-    let marker_chars = marker.chars().count();
-    if marker_chars >= max_chars {
-        // A tiny remaining batch budget cannot fit the diagnostic marker.
-        // Preserve actual tool content rather than spending the final bytes on
-        // an incomplete marker that tells the model nothing useful.
-        return content.chars().take(max_chars).collect();
-    }
-
-    let excerpt_chars = max_chars - marker_chars;
-    let head_chars = (excerpt_chars * 3 / 5).max(1);
-    let tail_chars = excerpt_chars.saturating_sub(head_chars);
-    let head: String = content.chars().take(head_chars).collect();
-    let tail: String = content
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{head}{marker}{tail}")
+    let _ = content;
+    serde_json::json!({
+        "error": "tool_result_budget_exceeded",
+        "tool": tool_display,
+        "original_chars": content_chars,
+        "original_bytes": content_bytes,
+        "reason": reason,
+        "available_chars": max_chars,
+        "content_preserved": false,
+        "guidance": "No partial head/tail excerpt was supplied. Use explicit pagination, a managed artifact, or a durable tool_result_read reference."
+    })
+    .to_string()
 }

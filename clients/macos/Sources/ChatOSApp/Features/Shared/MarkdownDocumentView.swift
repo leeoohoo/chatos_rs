@@ -195,6 +195,7 @@ struct MarkdownReaderView: View {
 /// fragments (especially a fenced SVG block) can enter an AttributeGraph invalidation loop.
 /// NSTextView owns selection and wrapping without involving those overlays.
 private struct MarkdownNativeTextView: NSViewRepresentable {
+    @Environment(\.openURL) private var openURL
     let source: String
     let blocks: [MarkdownBlock]
     let allowsTextSelection: Bool
@@ -205,6 +206,7 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: MarkdownLayoutTextView, context: Context) {
+        textView.linkHandler = { openURL($0) }
         textView.setDocument(
             source: source,
             blocks: blocks,
@@ -229,6 +231,7 @@ private struct MarkdownNativeTextView: NSViewRepresentable {
 }
 
 private struct MarkdownNativeScrollView: NSViewRepresentable {
+    @Environment(\.openURL) private var openURL
     let source: String
     let blocks: [MarkdownBlock]
     let allowsTextSelection: Bool
@@ -240,6 +243,7 @@ private struct MarkdownNativeScrollView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: MarkdownScrollContainerView, context: Context) {
+        scrollView.linkHandler = { openURL($0) }
         scrollView.setDocument(
             source: source,
             blocks: blocks,
@@ -301,6 +305,10 @@ enum MarkdownLayoutGeometry {
 @MainActor
 private final class MarkdownScrollContainerView: NSScrollView {
     private let markdownTextView = MarkdownLayoutTextView()
+    var linkHandler: ((URL) -> Void)? {
+        get { markdownTextView.linkHandler }
+        set { markdownTextView.linkHandler = newValue }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -365,7 +373,8 @@ private final class MarkdownScrollContainerView: NSScrollView {
 }
 
 @MainActor
-private final class MarkdownLayoutTextView: NSTextView {
+final class MarkdownLayoutTextView: NSTextView {
+    var linkHandler: ((URL) -> Void)?
     private static let imageCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 32
@@ -386,6 +395,7 @@ private final class MarkdownLayoutTextView: NSTextView {
         storage.addLayoutManager(layoutManager)
         layoutManager.addTextContainer(container)
         super.init(frame: .zero, textContainer: container)
+        delegate = self
 
         drawsBackground = false
         isEditable = false

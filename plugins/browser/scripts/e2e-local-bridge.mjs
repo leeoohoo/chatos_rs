@@ -4,6 +4,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
+import {withChromeSession} from './chrome-verification-contract.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensionId = process.env.CHATOS_BROWSER_EXTENSION_ID;
@@ -73,17 +74,15 @@ async function main() {
     throw new Error(`Extension pairing failed: ${connected}`);
   }
 
-  const opened = await mcp.callTool('browser_session_open', {mode: 'chrome_extension'});
-  const browserSessionId = opened.browser_session_id;
-  const evaluated = await mcp.callTool('browser_cdp_send', {
-    browser_session_id: browserSessionId,
-    method: 'Runtime.evaluate',
-    params: {expression: "document.title = 'Bridge E2E'; document.title", returnByValue: true}
+  await withChromeSession(mcp.callTool.bind(mcp), 'Browser Bridge E2E', async () => {
+    const evaluated = await mcp.callTool('browser_cdp_send', {
+      method: 'Runtime.evaluate',
+      params: {expression: "document.title = 'Bridge E2E'; document.title", returnByValue: true}
+    });
+    if (evaluated.result?.value !== 'Bridge E2E') {
+      throw new Error(`Unexpected CDP result: ${JSON.stringify(evaluated)}`);
+    }
   });
-  if (evaluated.result?.value !== 'Bridge E2E') {
-    throw new Error(`Unexpected CDP result: ${JSON.stringify(evaluated)}`);
-  }
-  await mcp.callTool('browser_session_close', {browser_session_id: browserSessionId});
   await mcp.request('shutdown', {});
   process.stdout.write(`Self-managed Browser Bridge E2E passed\nExtension: ${extensionTarget.url}\n`);
   } finally {

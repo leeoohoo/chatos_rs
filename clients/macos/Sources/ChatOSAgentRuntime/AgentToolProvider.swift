@@ -33,6 +33,14 @@ public struct AgentToolProviderRegistry: Sendable {
         guard let provider = providersByToolName[call.name] else {
             return .failure("工具不可用：\(call.name)")
         }
+        guard let definition = definitions.first(where: { $0.name == call.name }) else {
+            return .failure("工具定义不可用：\(call.name)")
+        }
+        do {
+            try AgentExternalToolSchemaValidator.validate(arguments: call.arguments, schema: definition.schema)
+        } catch {
+            return .failure("\(call.name)：\(error.localizedDescription)")
+        }
         return try await provider.execute(call)
     }
 }

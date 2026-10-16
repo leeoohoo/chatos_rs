@@ -74,6 +74,13 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         )
 
         try validateMemoryConfiguration(configuration)
+        guard NativeLocalAgentConcurrencyPolicy.validated(
+            configuration.maximumConcurrentWorkItems
+        ) != nil else {
+            throw NativeLocalAgentHostError.invalidConfiguration(
+                "Local Agent Host concurrency is outside the supported range."
+            )
+        }
         guard (1...300_000).contains(configuration.requestTimeoutMilliseconds) else {
             throw NativeLocalAgentHostError.invalidConfiguration(
                 "Local Agent Host request timeout must be between 1 and 300000 milliseconds."
@@ -415,6 +422,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         var arguments = [
             "--database", database.path,
             "--owner-user-id", ownerUserID,
+            "--max-concurrent-work-items", String(configuration.maximumConcurrentWorkItems),
         ]
         if let baseURL = configuration.memoryBaseURL,
            let sourceID = configuration.memorySourceID {

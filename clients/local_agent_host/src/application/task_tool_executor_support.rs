@@ -37,20 +37,23 @@ impl LocalTaskToolExecutor {
                 }),
             ))
             .await;
-        let snapshot = match result {
-            Ok(HostResult::CapabilityPolicySnapshot { snapshot }) => snapshot,
-            // Compatibility for tasks created by client builds predating the
-            // internal policy snapshot. They retain their explicit selection.
-            Err(_) => return Ok(RequiredTaskPolicy::default()),
-            Ok(other) => return Err(format!("unexpected Task policy response: {other:?}")),
-        };
-        snapshot
-            .instructions
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()
-            .map_err(|error| format!("invalid required Task policy snapshot: {error}"))
-            .map(Option::unwrap_or_default)
+        if matches!(
+            &result,
+            Err(chatos_local_agent_runtime::LocalAgentRuntimeError::Storage(
+                chatos_local_agent_ports::ClientStorageError::NotFound(_)
+            ))
+        ) && self
+            .runtime
+            .skill_bundle_for_run(&parent.run_id)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("required Task policy is missing for this Skill-enabled Run; refresh capabilities before creating work".into());
+        }
+        let mut policy = decode_task_policy(result)?;
+        policy.bind_explicit_selection(parent)?;
+        Ok(policy)
     }
 
     pub(super) async fn create_graph(
@@ -78,6 +81,38 @@ impl LocalTaskToolExecutor {
         conversation_id: &str,
         supersedes_task_ids: &[String],
     ) -> Result<Option<LocalTaskGraph>, String> {
+        let message_id = parent
+            .input
+            .pointer("/task_followup_review/review_message_id")
+            .and_then(Value::as_str);
+        let same_message = |graph: &LocalTaskGraph| {
+            graph.tasks.iter().any(|task| {
+                task.input
+                    .get("followup_message_id")
+                    .and_then(Value::as_str)
+                    == message_id
+            })
+        };
+        if parent.input.pointer("/task_followup_review/pending") == Some(&Value::Bool(true)) {
+            return Err("task_followup_review_required before creating or reusing work".into());
+        }
+        if let Some(tasks) = parent
+            .input
+            .pointer("/task_followup_review/tasks")
+            .and_then(Value::as_array)
+        {
+            for task in tasks
+                .iter()
+                .filter(|task| task["review_state"] == "cancelled")
+            {
+                if !supersedes_task_ids
+                    .iter()
+                    .any(|id| Some(id.as_str()) == task["task_id"].as_str())
+                {
+                    return Err("replacement must declare cancelled supersedes_task_ids".into());
+                }
+            }
+        }
         if !supersedes_task_ids.is_empty() {
             if supersedes_task_ids.len() > 50 {
                 return Err("supersedes_task_ids must contain at most 50 ids".to_string());
@@ -93,7 +128,12 @@ impl LocalTaskToolExecutor {
                     .await
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| format!("superseded task not found: {task_id}"))?;
-                if task.status != LocalTaskStatus::Cancelled {
+                if !matches!(
+                    task.status,
+                    LocalTaskStatus::Cancelled
+                        | LocalTaskStatus::Failed
+                        | LocalTaskStatus::Succeeded
+                ) {
                     return Err(format!(
                         "superseded task must be cancelled before replacement: {task_id}"
                     ));
@@ -112,22 +152,24 @@ impl LocalTaskToolExecutor {
                 .map_err(|error| error.to_string())?;
             // Preserve model retry deduplication for the replacement itself.
             return Ok(existing.filter(|graph| {
-                graph.tasks.iter().any(|task| {
-                    matches!(
-                        task.status,
-                        LocalTaskStatus::Pending
-                            | LocalTaskStatus::Ready
-                            | LocalTaskStatus::Running
-                    ) && task
-                        .input
-                        .get("supersedes_task_ids")
-                        .and_then(Value::as_array)
-                        .is_some_and(|ids| {
-                            let ids = ids.iter().filter_map(Value::as_str).collect::<HashSet<_>>();
-                            ids.len() == unique.len()
-                                && unique.iter().all(|id| ids.contains(id.as_str()))
-                        })
-                })
+                same_message(graph)
+                    && graph.tasks.iter().any(|task| {
+                        matches!(
+                            task.status,
+                            LocalTaskStatus::Pending
+                                | LocalTaskStatus::Ready
+                                | LocalTaskStatus::Running
+                        ) && task
+                            .input
+                            .get("supersedes_task_ids")
+                            .and_then(Value::as_array)
+                            .is_some_and(|ids| {
+                                let ids =
+                                    ids.iter().filter_map(Value::as_str).collect::<HashSet<_>>();
+                                ids.len() == unique.len()
+                                    && unique.iter().all(|id| ids.contains(id.as_str()))
+                            })
+                    })
             }));
         }
         self.runtime
@@ -138,6 +180,7 @@ impl LocalTaskToolExecutor {
             )
             .await
             .map_err(|error| error.to_string())
+            .map(|graph| graph.filter(same_message))
     }
 
     pub(super) async fn cancel_task(
@@ -283,5 +326,71 @@ impl LocalTaskToolExecutor {
             }
         }
         Ok(())
+    }
+}
+
+fn decode_task_policy(
+    result: Result<HostResult, chatos_local_agent_runtime::LocalAgentRuntimeError>,
+) -> Result<RequiredTaskPolicy, String> {
+    let snapshot = match result {
+        Ok(HostResult::CapabilityPolicySnapshot { snapshot }) => snapshot,
+        // Only actual absence is the legacy compatibility case. Storage failure or a
+        // corrupt existing snapshot must never silently discard required restrictions.
+        Err(chatos_local_agent_runtime::LocalAgentRuntimeError::Storage(
+            chatos_local_agent_ports::ClientStorageError::NotFound(_),
+        )) => return Ok(RequiredTaskPolicy::default()),
+        Err(error) => return Err(error.to_string()),
+        Ok(other) => return Err(format!("unexpected Task policy response: {other:?}")),
+    };
+    let instructions = snapshot
+        .instructions
+        .as_deref()
+        .ok_or("required Task policy snapshot has no instructions")?;
+    serde_json::from_str(instructions)
+        .map_err(|error| format!("invalid required Task policy snapshot: {error}"))
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use chatos_local_agent_ports::ClientStorageError;
+    use chatos_local_agent_runtime::LocalAgentRuntimeError;
+    #[test]
+    fn only_missing_policy_uses_legacy_defaults() {
+        assert!(decode_task_policy(Err(LocalAgentRuntimeError::Storage(
+            ClientStorageError::NotFound("legacy".into())
+        )))
+        .is_ok());
+        for error in [
+            ClientStorageError::Database("unavailable".into()),
+            ClientStorageError::InvalidState("corrupt".into()),
+            ClientStorageError::Conflict("conflict".into()),
+        ] {
+            assert!(decode_task_policy(Err(LocalAgentRuntimeError::Storage(error))).is_err());
+        }
+        assert!(
+            decode_task_policy(Err(LocalAgentRuntimeError::Clock("unavailable".into()))).is_err()
+        );
+    }
+    #[test]
+    fn existing_policy_must_have_valid_instructions() {
+        for instructions in [
+            None,
+            Some("invalid json"),
+            Some("null"),
+            Some("{\"unknown\":true}"),
+        ] {
+            assert!(decode_task_policy(Ok(HostResult::CapabilityPolicySnapshot {
+                snapshot: chatos_local_agent_protocol::LocalCapabilityPolicySnapshot {
+                    owner_user_id: "user-1".into(),
+                    profile_key: "task_policy_internal".into(),
+                    capability_policy_revision: "revision-1".into(),
+                    instructions: instructions.map(str::to_string),
+                    prefixed_input_items: vec![],
+                    tools: vec![],
+                }
+            }))
+            .is_err());
+        }
     }
 }

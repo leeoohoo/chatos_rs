@@ -1,17 +1,19 @@
 import Foundation
 
 enum NativeLocalAgentTerminalCommandResolver {
+    // `common` is a legacy command alias, not a human-readable summary. Keep it for
+    // frozen old Runs, but use the same canonical command for approval and execution.
     static func resolve(_ arguments: [String: LocalAgentJSONValue]) -> String? {
         firstNonEmpty(
-            string(arguments["common"]),
-            string(arguments["command"])
+            string(arguments["command"]),
+            string(arguments["common"])
         )
     }
 
     static func resolve(_ arguments: [String: NativeJSONValue]) -> String? {
         firstNonEmpty(
-            arguments["common"]?.jsonString,
-            arguments["command"]?.jsonString
+            arguments["command"]?.jsonString,
+            arguments["common"]?.jsonString
         )
     }
 

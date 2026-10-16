@@ -7,7 +7,7 @@ import { resolveWorkspaceFile } from '../security/paths.js';
 import { boundedInteger, renderPageNumbers } from '../render/document.js';
 import { openOfficeWithEngine, renderOfficePages, OFFICECLI_VERSION } from '../render/office.js';
 import { openPdfWithPdfium, renderPdfPages, PDFIUM_VERSION } from '../render/pdfium.js';
-import { inspectPng } from '../render/png.js';
+import { inspectPng, isUniformPng } from '../render/png.js';
 
 function validatePng(bytes: Buffer): { width: number; height: number; nonEmpty: boolean } {
   return { ...inspectPng(bytes), nonEmpty: true };
@@ -80,9 +80,16 @@ export async function validateDocument(args: Record<string, unknown>): Promise<R
         );
         const results = [] as Array<Record<string, unknown>>;
         for (const target of targets) {
-          results.push({ page: target.page, ...validatePng(await readFile(target.outputPath)) });
+          const bytes = await readFile(target.outputPath);
+          const unavailable = format === 'docx' && isUniformPng(bytes);
+          results.push({
+            page: target.page,
+            ...validatePng(bytes),
+            ...(unavailable ? { nonEmpty: false, status: 'needs_review', code: 'REQUESTED_PAGE_EMPTY_OR_UNAVAILABLE' } : {})
+          });
+          if (unavailable) warnings.push(`Page ${target.page}: REQUESTED_PAGE_EMPTY_OR_UNAVAILABLE. A uniform canvas cannot verify a document page; the requested page may be out of range.`);
         }
-        checks.push({ name: 'render', status: 'passed', pages: results });
+        checks.push({ name: 'render', status: results.some((page) => page.nonEmpty === false) ? 'needs_review' : 'passed', pages: results });
         warnings.push('Office validation uses the cross-platform HTML renderer; installed fonts can affect layout.');
       } finally {
         await rm(temporaryDirectory, { recursive: true, force: true });
@@ -90,10 +97,16 @@ export async function validateDocument(args: Record<string, unknown>): Promise<R
     }
   }
 
+  if (pages.length > 0) {
+    warnings.push('Rendered-page validation checks technical readability only. Use document_render and inspect its inline images for visual approval.');
+  }
+
   return {
     ok: true,
     operation: 'document_validate',
-    valid: true,
+    valid: checks.every((check) => check.status === 'passed'),
+    validationScope: 'technical',
+    visualReviewStatus: 'not_performed',
     format,
     source: inspection.source,
     ...(exactPageCount === undefined ? {} : { exactPageCount }),

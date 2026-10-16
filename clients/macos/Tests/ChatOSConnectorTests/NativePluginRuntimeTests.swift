@@ -346,9 +346,10 @@ struct NativePluginRuntimeTests {
             ])
         )
 
-        #expect(summary.contains("用户现有的 Google Chrome"))
+        #expect(summary.contains("用户已主动配对的 Google Chrome"))
         #expect(summary.contains("今日 AI 新闻"))
         #expect(summary.contains("原生标签组"))
+        #expect(summary.contains("不会枚举或控制其他现有标签页"))
         #expect(!summary.contains("内容摘要"))
     }
 
@@ -415,8 +416,43 @@ struct NativePluginRuntimeTests {
             requiredPermissions: ["browser.chrome.attach"]
         )
 
-        #expect(description.contains("用户已配对的 Google Chrome"))
+        #expect(description.contains("用户已主动配对 Chrome 扩展"))
+        #expect(description.contains("当前任务也已选择 Browser 能力"))
+        #expect(description.contains("不会枚举或控制其他现有标签页"))
         #expect(description.contains("browser.chrome.attach"))
+    }
+
+    @Test
+    func pairedChromeSessionOpenHasNarrowDeterministicAutoApprovalBoundary() {
+        let pairedReason = NativeLocalConnectorService.deterministicAutoApprovalReason(
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            toolName: "browser_session_open",
+            arguments: .object([
+                "mode": .string("chrome_extension"),
+                "session_name": .string("插件验收-20261014"),
+            ]),
+            requiredPermissions: ["browser.chrome.attach"]
+        )
+
+        #expect(pairedReason?.contains("已配对 Chrome") == true)
+        #expect(NativeLocalConnectorService.deterministicAutoApprovalReason(
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            toolName: "browser_session_open",
+            arguments: .object(["mode": .string("managed")]),
+            requiredPermissions: ["browser.managed.launch"]
+        ) == nil)
+        #expect(NativeLocalConnectorService.deterministicAutoApprovalReason(
+            componentKey: "untrusted-browser-component",
+            toolName: "browser_session_open",
+            arguments: .object(["mode": .string("chrome_extension")]),
+            requiredPermissions: ["browser.chrome.attach"]
+        ) == nil)
+        #expect(NativeLocalConnectorService.deterministicAutoApprovalReason(
+            componentKey: NativeBrowserPluginIdentity.componentKey,
+            toolName: "browser_session_open",
+            arguments: .object(["mode": .string("chrome_extension")]),
+            requiredPermissions: ["browser.chrome.attach", "browser.page.control"]
+        ) == nil)
     }
 
     @Test
@@ -439,6 +475,30 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
+    func rawCDPApprovalEvaluationSummaryKeepsCompleteSafeExpression() {
+        let expression = "JSON.stringify({session:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='会话管理').length,ticket:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='应用票据管理').length,role:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='角色').length})"
+        let displaySummary = NativeLocalConnectorService.safeArgumentSummary(
+            toolName: "browser_cdp_send",
+            arguments: .object([
+                "method": .string("Runtime.evaluate"),
+                "params": .object(["expression": .string(expression)]),
+            ])
+        )
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "browser_cdp_send",
+            arguments: .object([
+                "method": .string("Runtime.evaluate"),
+                "params": .object(["expression": .string(expression)]),
+            ])
+        )
+
+        #expect(!displaySummary.contains(expression))
+        #expect(evaluationSummary.contains(expression))
+        #expect(evaluationSummary.contains("应用票据管理"))
+        #expect(evaluationSummary.contains("角色"))
+    }
+
+    @Test
     func rawCDPApprovalSummaryRedactsCredentialReadingExpressions() {
         let summary = NativeLocalConnectorService.safeArgumentSummary(
             toolName: "browser_cdp_send",
@@ -452,6 +512,18 @@ struct NativePluginRuntimeTests {
 
         #expect(summary.contains("已隐藏敏感表达式"))
         #expect(!summary.contains("getItem"))
+
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "browser_cdp_send",
+            arguments: .object([
+                "method": .string("Runtime.evaluate"),
+                "params": .object([
+                    "expression": .string("localStorage.getItem('token')"),
+                ]),
+            ])
+        )
+        #expect(evaluationSummary.contains("已隐藏敏感表达式"))
+        #expect(!evaluationSummary.contains("getItem"))
     }
 
 }

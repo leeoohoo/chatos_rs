@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -9,6 +10,7 @@ struct ChatOSApp: App {
             ChatOSSettingsSceneView(model: appDelegate.model)
                 .frame(minWidth: 1_180, minHeight: 760)
         }
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             ChatOSGlobalUtilityCommands(model: appDelegate.model)
         }
@@ -25,6 +27,7 @@ struct ChatOSMainSceneView: View {
             .environment(\.interfaceFontScale, model.interfaceFontScale)
             .dynamicTypeSize(model.interfaceDynamicTypeSize)
             .frame(minWidth: 1_100, minHeight: 720)
+            .background(CompactWindowChromeConfigurator())
     }
 }
 
@@ -37,6 +40,30 @@ private struct ChatOSSettingsSceneView: View {
             .environment(\.locale, model.interfaceLocale)
             .environment(\.interfaceFontScale, model.interfaceFontScale)
             .dynamicTypeSize(model.interfaceDynamicTypeSize)
+            .background(CompactWindowChromeConfigurator())
+    }
+}
+
+/// SwiftUI can recreate a scene's toolbar after the Scene-level style has been
+/// applied. Reassert the AppKit window chrome from inside the hosted hierarchy so
+/// navigation titles never turn the title and toolbar back into two separate rows.
+private struct CompactWindowChromeConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        configureWhenAttached(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        configureWhenAttached(nsView)
+    }
+
+    private func configureWhenAttached(_ view: NSView) {
+        DispatchQueue.main.async {
+            guard let window = view.window else { return }
+            window.toolbarStyle = .unifiedCompact
+            window.titleVisibility = .hidden
+        }
     }
 }
 

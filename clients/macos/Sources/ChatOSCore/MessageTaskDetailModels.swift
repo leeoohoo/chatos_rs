@@ -49,6 +49,7 @@ public struct MessageTaskLastRunSummary: Sendable, Equatable {
     public var resultSummary: String?
     public var reportContent: String?
     public var errorMessage: String?
+    public var acceptanceReport: MessageTaskAcceptanceReport?
     public var startedAt: Date?
     public var finishedAt: Date?
 
@@ -60,7 +61,8 @@ public struct MessageTaskLastRunSummary: Sendable, Equatable {
         reportContent: String? = nil,
         errorMessage: String? = nil,
         startedAt: Date? = nil,
-        finishedAt: Date? = nil
+        finishedAt: Date? = nil,
+        acceptanceReport: MessageTaskAcceptanceReport? = nil
     ) {
         self.id = id
         self.status = status
@@ -70,6 +72,7 @@ public struct MessageTaskLastRunSummary: Sendable, Equatable {
         self.errorMessage = errorMessage
         self.startedAt = startedAt
         self.finishedAt = finishedAt
+        self.acceptanceReport = acceptanceReport
     }
 }
 
@@ -86,7 +89,8 @@ public extension MessageTask {
             reportContent: run.reportContent,
             errorMessage: run.errorMessage,
             startedAt: run.startedAt,
-            finishedAt: run.finishedAt
+            finishedAt: run.finishedAt,
+            acceptanceReport: run.acceptanceReport
         )
         return copy
     }

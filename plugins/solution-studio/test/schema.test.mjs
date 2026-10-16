@@ -41,6 +41,29 @@ test('validates traceability, topological order, and ready tasks', () => {
   assert.deepEqual(result.traceability, { requirementCount: 1, requirementsWithDesign: 1, requirementsWithTasks: 1 });
 });
 
+test('non-development planning does not require a decorative project architecture diagram', () => {
+  const workspace = completeWorkspace();
+  workspace.projectProfile.projectType = '线下活动策划';
+  workspace.projectProfile.deliveryForm = '活动实施方案';
+  workspace.projectProfile.targetPlatforms = ['线下门店'];
+  workspace.design.blocks = workspace.design.blocks.filter((block) => block.type !== 'architecture');
+
+  const result = validateWorkspace(workspace);
+
+  assert.equal(result.valid, true);
+  assert.equal(result.issues.some((issue) => issue.code === 'project_architecture_missing'), false);
+});
+
+test('development planning still requires a project architecture diagram', () => {
+  const workspace = completeWorkspace();
+  workspace.design.blocks = workspace.design.blocks.filter((block) => block.type !== 'architecture');
+
+  const result = validateWorkspace(workspace);
+
+  assert.equal(result.valid, false);
+  assert.ok(result.issues.some((issue) => issue.code === 'project_architecture_missing'));
+});
+
 test('detects dependency cycles without treating canvas order as execution order', () => {
   const workspace = completeWorkspace();
   workspace.executionPlan.tasks[0].dependsOn = ['T-002'];

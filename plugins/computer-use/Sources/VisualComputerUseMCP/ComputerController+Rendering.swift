@@ -375,11 +375,46 @@ extension ComputerController {
     static func applicationDTO(
         _ application: NSRunningApplication?
     ) -> ActiveApplicationDTO {
-        ActiveApplicationDTO(
+        let processIdentifier = application?.processIdentifier
+        return ActiveApplicationDTO(
             name: application?.localizedName,
             bundleIdentifier: application?.bundleIdentifier,
-            processIdentifier: application?.processIdentifier
+            processIdentifier: processIdentifier,
+            windowTitle: processIdentifier.flatMap(frontmostWindowTitle)
         )
+    }
+
+    static func frontmostWindowTitle(processIdentifier: Int32) -> String? {
+        guard let raw = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            CGWindowID(0)
+        ) as? [[String: Any]] else {
+            return nil
+        }
+        return frontmostWindowTitle(
+            processIdentifier: processIdentifier,
+            windowInfo: raw
+        )
+    }
+
+    static func frontmostWindowTitle(
+        processIdentifier: Int32,
+        windowInfo: [[String: Any]]
+    ) -> String? {
+        for window in windowInfo {
+            guard let ownerPID = window[kCGWindowOwnerPID as String] as? NSNumber,
+                  ownerPID.int32Value == processIdentifier,
+                  let layer = window[kCGWindowLayer as String] as? NSNumber,
+                  layer.intValue == 0,
+                  let title = window[kCGWindowName as String] as? String else {
+                continue
+            }
+            let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return nil
     }
 
     static func mouseButton(

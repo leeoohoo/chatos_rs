@@ -4,6 +4,7 @@ import Foundation
 public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     private let client: NativeLocalAgentRuntimeClient
     private let eventHub: NativeLocalAgentEventHub
+    private let surveyClient: NativeLocalAgentRequirementSurveyClient
     private var ownerUserID: String?
 
     public init(
@@ -11,6 +12,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         eventHub: NativeLocalAgentEventHub? = nil
     ) {
         self.client = NativeLocalAgentRuntimeClient(host: host)
+        self.surveyClient = NativeLocalAgentRequirementSurveyClient(host: host)
         self.eventHub = eventHub ?? NativeLocalAgentEventHub(host: host)
     }
 
@@ -42,13 +44,20 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             limit: UInt32(max(1, min(100, limit)))
         )
         let pages = try await (active, terminal)
+        let waitingRunIDs = Set(pages.0.runs.filter { $0.status == "waiting_user" }.map(\.runID))
+        let openSurveys = waitingRunIDs.isEmpty ? [] : try await surveyClient.list(
+            ownerUserID: ownerUserID, status: .open
+        )
+        let surveysByRun = Dictionary(openSurveys.filter {
+            $0.ownerUserID == ownerUserID && waitingRunIDs.contains($0.sourceRunID)
+        }.map { ($0.sourceRunID, $0) }, uniquingKeysWith: { first, _ in first })
         return (pages.0.runs + pages.1.runs)
             .filter { run in
                 !Self.isTerminal(run.status)
                     || Self.date(run.updatedAtUnixMs) >= recentCutoff
             }
             .prefix(max(1, limit))
-            .map(Self.activity)
+            .map { Self.activity($0, survey: surveysByRun[$0.runID]) }
     }
 
     public func apply(
@@ -98,7 +107,7 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         ownerUserID
     }
 
-    private static func activity(_ run: LocalAgentRunRecord) -> PetActivity {
+    private static func activity(_ run: LocalAgentRunRecord, survey: LocalAgentHostRequirementSurvey?) -> PetActivity {
         let source: PetActivitySource = run.profileKey == "main_chat" ? .chat : .taskExecution
         let conversationID = string("conversation_id", in: run.input)
             ?? string("source_conversation_id", in: run.input)
@@ -112,14 +121,16 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
             id: "local-run:\(run.runID)",
             source: source,
             kind: kind,
-            title: source == .chat ? "本地对话" : "本地任务",
-            detail: detail(run),
+            title: survey?.title ?? (source == .chat ? "本地对话" : "本地任务"),
+            detail: survey == nil ? detail(run) : "请填写需求调研，帮助我理解你的目标和想法。",
             route: .init(
+                projectID: survey?.projectResourceID,
                 conversationID: conversationID,
                 turnID: turnID,
-                promptID: run.status == "waiting_user" ? "local-ask:\(run.runID)" : nil,
+                promptID: run.status == "waiting_user" && survey == nil ? "local-ask:\(run.runID)" : nil,
                 taskID: taskID,
-                runID: run.runID
+                runID: run.runID,
+                requirementSurveyID: survey?.id
             ),
             eventID: "local-run:\(run.runID):\(run.version)",
             eventSequence: Int64(clamping: run.version),
@@ -144,6 +155,9 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
 
     private static func detail(_ run: LocalAgentRunRecord) -> String? {
         if let outcome = run.terminalOutcome {
+            if string("reason_code", in: outcome) == "execution_interrupted" {
+                return NativeLocalAgentMessageTaskGraphService.executionError(outcome)
+            }
             return string("error", in: outcome)
                 ?? string("text", in: outcome)
                 ?? string("reason", in: outcome)

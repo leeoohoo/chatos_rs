@@ -4,6 +4,37 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
+    func testExecutionInterruptionHasLocalizedReasonWithoutTreatingItAsModelOutput() {
+        let reason = NativeLocalAgentMessageTaskGraphService.executionError(.object([
+            "reason_code": .string("execution_interrupted"), "error": .string("internal English diagnostic")
+        ]))
+        XCTAssertEqual(reason, NSLocalizedString("任务执行意外中断，无法确认当前步骤的结果。请先检查执行记录，再决定是否重试，避免重复操作。", comment: ""))
+        XCTAssertEqual(NativeLocalAgentMessageTaskGraphService.executionError(.object([
+            "reason": .string("Missing required input")
+        ])), "Missing required input")
+        XCTAssertNil(NativeLocalAgentMessageTaskGraphService.executionError(.object([
+            "content": .string("Normal final response")
+        ])))
+    }
+
+    func testFollowupGateHasVisibleStatusWithoutChangingTerminalTaskFact() throws {
+        for (status, review, expected) in [
+            ("running", "pending", "reviewing_followup"),
+            ("pending", "held", "waiting_confirmation"),
+            ("running", "released", "running"),
+            ("cancelled", "pending", "cancelled"),
+        ] {
+            let json: [String: Any] = [
+                "graph_id": "graph", "owner_user_id": "user", "source_entity_type": "conversation_turn",
+                "source_entity_id": "turn", "task_id": "task", "title": "Task",
+                "model_config_ref": "model", "input": ["followup_review_state": review],
+                "status": status, "version": 1, "created_at_unix_ms": 1, "updated_at_unix_ms": 2,
+            ]
+            let task = try JSONDecoder().decode(LocalAgentTaskRecord.self, from: JSONSerialization.data(withJSONObject: json))
+            XCTAssertEqual(NativeLocalAgentMessageTaskGraphService.taskDisplayStatus(task), expected)
+        }
+    }
+
     func testMapsTurnTaskGraphAndCancelsWithCurrentVersion() async throws {
         let host = LocalTaskHostStub()
         let service = NativeLocalAgentMessageTaskGraphService(host: host)

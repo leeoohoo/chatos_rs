@@ -33,6 +33,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
 const NAVIGATION_TIMEOUT: Duration = Duration::from_secs(15);
 const VIRTUAL_CURSOR_ID: &str = "__chatos_virtual_mouse__";
 const VIRTUAL_CURSOR_MOVE_MS: u64 = 280;
+const PAGE_STATE_SCRIPT: &str = "({url: location.href, title: document.title, ready_state: document.readyState, document_id: String(performance.timeOrigin)})";
 const VIRTUAL_CURSOR_CLICK_HOLD_MS: u64 = 240;
 const VIRTUAL_CURSOR_MARKUP: &str = r##"<style>
   :host { color-scheme: light; }
@@ -97,7 +98,15 @@ const SNAPSHOT_SCRIPT: &str = r#"(() => {
     return `body > ${parts.join(' > ')}`;
   };
   const roleFor = (el) => el.getAttribute('role') || ({A:'link',BUTTON:'button',INPUT:'textbox',TEXTAREA:'textbox',SELECT:'combobox',IMG:'img',H1:'heading',H2:'heading',H3:'heading'}[el.tagName] || 'generic');
-  return [...document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],h1,h2,h3')]
+  const safeHref = (el) => {
+    if (el.tagName !== 'A' || !el.hasAttribute('href')) return null;
+    try {
+      const url = new URL(el.href, location.href);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+      return url.href;
+    } catch { return null; }
+  };
+  const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],h1,h2,h3,p,time,li')]
     .filter(el => {
       const style = getComputedStyle(el);
       const rect = el.getBoundingClientRect();
@@ -108,10 +117,14 @@ const SNAPSHOT_SCRIPT: &str = r#"(() => {
       role: roleFor(el),
       name: el.getAttribute('aria-label') || el.getAttribute('alt') || el.getAttribute('title') || (el.innerText || el.value || '').trim().slice(0, 300),
       value: typeof el.value === 'string' ? el.value.slice(0, 300) : null,
+      href: safeHref(el),
       tag: el.tagName.toLowerCase(),
       selector: selectorFor(el),
       disabled: !!el.disabled
     }));
+  const text = (document.querySelector('main,article') || document.body)?.innerText || '';
+  return {url: location.href, title: document.title, ready_state: document.readyState,
+    document_id: String(performance.timeOrigin), text: text.slice(0, 20000), text_truncated: text.length > 20000, nodes};
 })()"#;
 
 #[derive(Debug, Error)]
@@ -157,6 +170,33 @@ pub struct SnapshotNode {
     pub name: String,
     pub value: Option<String>,
     pub disabled: bool,
+    pub href: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PageState {
+    pub url: String,
+    pub title: String,
+    pub ready_state: String,
+    pub document_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PageSnapshot {
+    #[serde(flatten)]
+    pub page: PageState,
+    pub text: String,
+    pub text_truncated: bool,
+    pub nodes: Vec<SnapshotNode>,
+}
+
+#[derive(Deserialize)]
+struct RawPageSnapshot {
+    #[serde(flatten)]
+    page: PageState,
+    text: String,
+    text_truncated: bool,
+    nodes: Vec<RawSnapshotNode>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,6 +212,8 @@ struct RawSnapshotNode {
     name: String,
     #[serde(default)]
     value: Option<String>,
+    #[serde(default)]
+    href: Option<String>,
     selector: String,
     #[serde(default)]
     disabled: bool,
@@ -191,6 +233,9 @@ struct ElementReference {
     tab_id: String,
     generation: u64,
     selector: String,
+    href: Option<String>,
+    page_url: String,
+    document_id: String,
 }
 
 struct BrowserSession {
@@ -345,7 +390,17 @@ impl BrowserRuntime {
 
     pub async fn tabs(&self, browser_session_id: &str) -> CoreResult<Vec<TabSummary>> {
         let session = self.session(browser_session_id).await?;
-        let session = session.lock().await;
+        let mut session = session.lock().await;
+        let targets = session.backend.list_targets().await?;
+        for tab in session.tabs.values_mut() {
+            if let Some(target) = targets.iter().find(|target| target.id == tab.backend_target_id) {
+                tab.url = target.url.clone();
+                tab.title = target.title.clone();
+            } else {
+                tab.url = None;
+                tab.title = None;
+            }
+        }
         let mut tabs = session
             .tabs
             .values()
@@ -449,6 +504,8 @@ impl BrowserRuntime {
         let session = self.session(browser_session_id).await?;
         let mut session = session.lock().await;
         let (tab_id, backend_session_id) = session.tab_session(tab_id)?;
+        // Invalidate before the command, including timeout/error cases.
+        session.invalidate_refs();
         let result = session
             .backend
             .send_command(
@@ -458,23 +515,23 @@ impl BrowserRuntime {
                 timeout.min(Duration::from_secs(60)),
             )
             .await?;
-        wait_until_ready(session.backend.as_ref(), &backend_session_id, timeout).await?;
-        let title = read_title(session.backend.as_ref(), &backend_session_id)
-            .await
-            .ok();
-        if let Some(tab) = session.tabs.get_mut(&tab_id) {
-            tab.url = Some(url.to_owned());
-            tab.title = title;
+        if let Some(error) = result.get("errorText").and_then(Value::as_str) {
+            return Err(CoreError::Backend(format!("navigation rejected: {error}")));
         }
-        session.invalidate_refs();
-        Ok(result)
+        wait_until_ready(session.backend.as_ref(), &backend_session_id, timeout).await?;
+        let page = read_page_state(session.backend.as_ref(), &backend_session_id).await?;
+        if let Some(tab) = session.tabs.get_mut(&tab_id) {
+            tab.url = Some(page.url.clone());
+            tab.title = Some(page.title.clone());
+        }
+        Ok(json!({"navigation": result, "page": page, "refs_invalidated": true}))
     }
 
     pub async fn snapshot(
         &self,
         browser_session_id: &str,
         tab_id: Option<&str>,
-    ) -> CoreResult<Vec<SnapshotNode>> {
+    ) -> CoreResult<PageSnapshot> {
         let session = self.session(browser_session_id).await?;
         let mut session = session.lock().await;
         let (tab_id, backend_session_id) = session.tab_session(tab_id)?;
@@ -484,12 +541,16 @@ impl BrowserRuntime {
             SNAPSHOT_SCRIPT,
         )
         .await?;
-        let nodes: Vec<RawSnapshotNode> = serde_json::from_value(value)
+        let raw: RawPageSnapshot = serde_json::from_value(value)
             .map_err(|error| CoreError::Backend(format!("invalid snapshot response: {error}")))?;
         session.invalidate_refs();
         let generation = session.ref_generation;
-        let mut snapshots = Vec::with_capacity(nodes.len());
-        for node in nodes {
+        if let Some(tab) = session.tabs.get_mut(&tab_id) {
+            tab.url = Some(raw.page.url.clone());
+            tab.title = Some(raw.page.title.clone());
+        }
+        let mut snapshots = Vec::with_capacity(raw.nodes.len());
+        for node in raw.nodes {
             let reference = opaque_id("ref");
             session.element_refs.insert(
                 reference.clone(),
@@ -497,6 +558,9 @@ impl BrowserRuntime {
                     tab_id: tab_id.clone(),
                     generation,
                     selector: node.selector,
+                    href: node.href.clone(),
+                    page_url: raw.page.url.clone(),
+                    document_id: raw.page.document_id.clone(),
                 },
             );
             snapshots.push(SnapshotNode {
@@ -505,9 +569,10 @@ impl BrowserRuntime {
                 name: node.name,
                 value: node.value,
                 disabled: node.disabled,
+                href: node.href,
             });
         }
-        Ok(snapshots)
+        Ok(PageSnapshot { page: raw.page, text: raw.text, text_truncated: raw.text_truncated, nodes: snapshots })
     }
 
     pub async fn find(
@@ -519,6 +584,7 @@ impl BrowserRuntime {
         let snapshot = self.snapshot(browser_session_id, None).await?;
         let query = query.to_lowercase();
         Ok(snapshot
+            .nodes
             .into_iter()
             .filter(|node| {
                 node.name.to_lowercase().contains(&query)
@@ -535,8 +601,60 @@ impl BrowserRuntime {
     }
 
     pub async fn click(&self, browser_session_id: &str, reference: &str) -> CoreResult<Value> {
-        let (backend, backend_session_id, selector) =
+        let (backend, backend_session_id, selector, href, mode) =
             self.resolve_ref(browser_session_id, reference).await?;
+        let before = read_page_state(backend.as_ref(), &backend_session_id).await?;
+        // chrome.debugger can lose the response to Input.dispatchMouseEvent when
+        // mouseReleased immediately navigates the tab. A safe href came from the
+        // exact current snapshot/ref, so following it is both provenance-preserving
+        // and more reliable than retrying an ambiguously timed-out mouse click.
+        if mode == BrowserMode::ChromeExtension {
+            if let Some(href) = href {
+                validate_navigation_url(&href)
+                    .map_err(|error| CoreError::InvalidRequest(error.to_string()))?;
+                self.session(browser_session_id).await?.lock().await.invalidate_refs();
+                let navigation = backend
+                    .send_command(
+                        Some(&backend_session_id),
+                        "Page.navigate",
+                        json!({ "url": href }),
+                        COMMAND_TIMEOUT,
+                    )
+                    .await?;
+                if let Some(error) = navigation.get("errorText").and_then(Value::as_str) {
+                    return Err(CoreError::Backend(format!("navigation rejected: {error}")));
+                }
+                let deadline = Instant::now() + Duration::from_millis(1200);
+                let mut after = None;
+                loop {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    if let Ok(page) = read_page_state(backend.as_ref(), &backend_session_id).await {
+                        let changed = page.url != before.url || page.document_id != before.document_id;
+                        let ready = page.ready_state == "complete";
+                        after = Some(page);
+                        if (changed && ready) || Instant::now() >= deadline { break; }
+                    } else if Instant::now() >= deadline { break; }
+                }
+                if let Some(page) = &after {
+                    let session = self.session(browser_session_id).await?;
+                    let mut session = session.lock().await;
+                    if let Some(tab) = session.tabs.values_mut().find(|tab| tab.backend_session_id.0 == backend_session_id.0) {
+                        tab.url = Some(page.url.clone());
+                        tab.title = Some(page.title.clone());
+                    }
+                }
+                let navigated = after.as_ref().map(|page| page.url != before.url || page.document_id != before.document_id);
+                return Ok(json!({
+                    "clicked": true,
+                    "interaction": "follow_snapshot_link",
+                    "before": before,
+                    "after": after,
+                    "navigated": navigated,
+                    "refs_invalidated": true,
+                    "next_action": "Take a fresh browser_snapshot; if the page is still loading, wait and snapshot again."
+                }));
+            }
+        }
         let selector = serde_json::to_string(&selector).unwrap();
         let point = evaluate_value(
             backend.as_ref(),
@@ -564,6 +682,7 @@ impl BrowserRuntime {
             )
             .await;
 
+        self.session(browser_session_id).await?.lock().await.invalidate_refs();
         backend
             .send_command(
                 Some(&backend_session_id),
@@ -620,7 +739,30 @@ impl BrowserRuntime {
                 COMMAND_TIMEOUT,
             )
             .await?;
-        Ok(Value::Bool(true))
+        // Allow asynchronous navigation/SPA changes to begin. Failure to observe
+        // the result is not failure to dispatch: callers must not repeat a write.
+        let deadline = Instant::now() + Duration::from_millis(1200);
+        let mut after = None;
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(page) = read_page_state(backend.as_ref(), &backend_session_id).await {
+                let changed = page.url != before.url || page.document_id != before.document_id;
+                let ready = page.ready_state == "complete";
+                after = Some(page);
+                if (changed && ready) || Instant::now() >= deadline { break; }
+            } else if Instant::now() >= deadline { break; }
+        }
+        if let Some(page) = &after {
+            let session = self.session(browser_session_id).await?;
+            let mut session = session.lock().await;
+            if let Some(tab) = session.tabs.values_mut().find(|tab| tab.backend_session_id.0 == backend_session_id.0) {
+                tab.url = Some(page.url.clone());
+                tab.title = Some(page.title.clone());
+            }
+        }
+        let navigated = after.as_ref().map(|page| page.url != before.url || page.document_id != before.document_id);
+        Ok(json!({"clicked": true, "before": before, "after": after, "navigated": navigated,
+            "refs_invalidated": true, "next_action": "Take a fresh browser_snapshot; if the page is still loading, wait and snapshot again. Do not repeat a consequential click just because observation is pending."}))
     }
 
     async fn persist_virtual_cursor(
@@ -668,7 +810,7 @@ impl BrowserRuntime {
         text: &str,
         clear: bool,
     ) -> CoreResult<Value> {
-        let (backend, backend_session_id, selector) =
+        let (backend, backend_session_id, selector, _, _) =
             self.resolve_ref(browser_session_id, reference).await?;
         let selector = serde_json::to_string(&selector).unwrap();
         let text = serde_json::to_string(text).unwrap();

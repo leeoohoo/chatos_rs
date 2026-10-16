@@ -323,6 +323,131 @@ final class AgentLoopSafetyTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.4)
     }
 
+    func testNineteenThousandCharacterToolResultIsPassedToTheNextModelStepIntact() async throws {
+        let content = String(repeating: "方案", count: 9_980) + "终"
+        XCTAssertEqual(content.unicodeScalars.count, 19_961)
+        let model = ScriptModel([
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "solution", name: "work", arguments: #"{"step":1}"#)]
+            ),
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "finish-solution", name: "finish", arguments: "{}")]
+            ),
+        ])
+
+        let result = try await run(model) { call in
+            call.name == "work" ? .init(content) : .init("done")
+        }
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.receipts["solution"]?.content, content)
+        let secondRequest = await model.requests[1]
+        let visible = try XCTUnwrap(
+            secondRequest.first(where: { $0.toolCallID == "solution" })?.content
+        )
+        XCTAssertEqual(visible, content)
+        XCTAssertFalse(visible.contains("truncated"))
+        XCTAssertFalse(visible.contains("tool_result_reference"))
+    }
+
+    func testOversizedUnicodeToolResultIsDurableAndReconstructableByScalarOffset() async throws {
+        // Swift Character.count is only 80,001 here, while Rust char/count and this protocol
+        // intentionally use 160,002 Unicode scalar values. This locks the cross-runtime unit.
+        let content = String(repeating: "e\u{301}", count: 80_001)
+        let totalCharacters = content.unicodeScalars.count
+        XCTAssertEqual(totalCharacters, 160_002)
+        XCTAssertEqual(content.count, 80_001)
+        var responses: [AgentMessage] = [
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "large", name: "work", arguments: #"{"step":1}"#)]
+            ),
+        ]
+        for offset in stride(from: 0, to: totalCharacters, by: 8_000) {
+            responses.append(.init(
+                role: .assistant,
+                toolCalls: [.init(
+                    id: "page-\(offset)",
+                    name: "tool_result_read",
+                    arguments: "{\"source_call_id\":\"large\",\"offset\":\(offset),\"limit\":8000}"
+                )]
+            ))
+        }
+        responses.append(.init(
+            role: .assistant,
+            toolCalls: [.init(id: "finish-large", name: "finish", arguments: "{}")]
+        ))
+        let model = ScriptModel(responses)
+
+        let result = try await run(model) { call in
+            call.name == "work" ? .init(content) : .init("done")
+        }
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.receipts["large"]?.content, content)
+        let firstFollowUp = await model.requests[1]
+        let referenceText = try XCTUnwrap(
+            firstFollowUp.first(where: { $0.toolCallID == "large" })?.content
+        )
+        let reference = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(referenceText.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(reference["type"] as? String, "tool_result_reference")
+        XCTAssertEqual(reference["total_chars"] as? Int, totalCharacters)
+        XCTAssertEqual(reference["read_tool"] as? String, "tool_result_read")
+        XCTAssertFalse(referenceText.contains("truncated"))
+
+        var rebuilt = ""
+        var expectedOffset = 0
+        var expectedSHA: String?
+        while expectedOffset < totalCharacters {
+            let receipt = try XCTUnwrap(result.receipts["page-\(expectedOffset)"])
+            let page = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(receipt.content.utf8)) as? [String: Any]
+            )
+            XCTAssertEqual(page["offset"] as? Int, expectedOffset)
+            XCTAssertEqual(page["total_chars"] as? Int, totalCharacters)
+            let pageContent = try XCTUnwrap(page["content"] as? String)
+            rebuilt += pageContent
+            expectedOffset += pageContent.unicodeScalars.count
+            let pageSHA = try XCTUnwrap(page["sha256"] as? String)
+            expectedSHA = expectedSHA ?? pageSHA
+            XCTAssertEqual(pageSHA, expectedSHA)
+        }
+        XCTAssertEqual(rebuilt, content)
+        XCTAssertEqual(expectedSHA, reference["sha256"] as? String)
+    }
+
+    func testCumulativeToolBatchUsesReferenceBeforeEightHundredThousandCharacters() async throws {
+        let content = String(repeating: "x", count: 140_000)
+        let calls = (0..<6).map {
+            AgentToolCall(id: "batch-\($0)", name: "work", arguments: "{\"step\":\($0)}")
+        }
+        let model = ScriptModel([
+            .init(role: .assistant, toolCalls: calls),
+            .init(
+                role: .assistant,
+                toolCalls: [.init(id: "finish-batch", name: "finish", arguments: "{}")]
+            ),
+        ])
+
+        let result = try await run(model) { call in
+            call.name == "work" ? .init(content) : .init("done")
+        }
+
+        let secondRequest = await model.requests[1]
+        let visible = secondRequest.filter { $0.role == .tool && $0.toolCallID?.hasPrefix("batch-") == true }
+        XCTAssertEqual(visible.count, 6)
+        XCTAssertTrue(visible.prefix(5).allSatisfy { $0.content == content })
+        XCTAssertTrue(visible[5].content.contains("tool_result_reference"))
+        XCTAssertFalse(visible[5].content.contains("truncated"))
+        for index in 0..<6 {
+            XCTAssertEqual(result.receipts["batch-\(index)"]?.content, content)
+        }
+    }
+
     private var base: AgentRunCheckpoint { .init(scope: "test", messages: [.init(role: .user, content: "test")]) }
     private func run(_ model: ScriptModel, execute: @escaping AgentRuntime.Executor) async throws -> AgentRunCheckpoint {
         try await AgentRuntime().run(checkpoint: base, scope: base.scope, policy: .init(), model: model, tools: runtimeTestTools, execute: execute)

@@ -18,11 +18,20 @@ mod memory;
 mod notepad;
 mod plugin;
 mod remote_connection;
+mod requirement_plan;
 mod requirement_survey;
 mod response;
 mod run_query;
+mod skill;
 mod task;
+mod task_acceptance;
+mod task_followup;
 mod tool;
+
+pub use task_acceptance::{
+    completed_task_acceptance_report, validate_task_acceptance_report,
+    validate_task_final_response_limit,
+};
 
 pub use artifact::{
     CreateArtifactCommand, DeleteArtifactCommand, GetArtifactDataCommand, ListArtifactsCommand,
@@ -68,6 +77,11 @@ pub use remote_connection::{
     ListRemoteConnectionsCommand, LocalRemoteAuthenticationType, LocalRemoteConnection,
     LocalRemoteConnectionSpec, LocalRemoteHostKeyPolicy, UpdateRemoteConnectionCommand,
 };
+pub use requirement_plan::{
+    ConfirmRequirementPlanCommand, GetRequirementPlanCommand, LocalRequirementPlan,
+    SaveRequirementPlanCommand, LOCAL_REQUIREMENT_PLAN_MAX_BYTES,
+    LOCAL_REQUIREMENT_PLAN_SAVE_TOOL_NAME,
+};
 pub use requirement_survey::{
     CreateRequirementSurveyCommand, GetRequirementSurveyCommand, ListRequirementSurveysCommand,
     LocalRequirementSurvey, LocalRequirementSurveyQuestion, LocalRequirementSurveyResolution,
@@ -79,11 +93,22 @@ pub use response::{HostError, HostResponseEnvelope, HostResult};
 pub use run_query::{
     ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunSummary,
 };
+pub use skill::{
+    GetRunSkillActivationsCommand, LocalDiscoveredToolSkillGate, LocalSkillArgumentSelector,
+    LocalSkillBundleSnapshot, LocalSkillDocumentSnapshot, LocalSkillResourceSnapshot,
+    LocalToolSkillActivationPolicy, LocalToolSkillBindingSnapshot,
+    LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME, LOCAL_AGENT_SKILL_READ_RESOURCE_TOOL_NAME,
+    LOCAL_SKILL_BUNDLE_PROFILE_KEY, LOCAL_TASK_SKILL_BUNDLE_PROFILE_KEY, MAX_SKILL_BINDINGS,
+    MAX_SKILL_BUNDLE_BYTES, MAX_SKILL_DOCUMENTS, MAX_SKILL_RESOURCES_PER_DOCUMENT,
+};
+pub use task_followup::{ResolveTaskFollowupCommand, TaskFollowupAction, TaskFollowupDecision};
 
 pub use task::{
-    CancelTaskCommand, CreateTaskGraphCommand, GetMessageTaskGraphCommand, GetTaskGraphCommand,
-    GetTaskRunsCommand, ListTaskGraphsCommand, LocalMessageTaskGraph, LocalMessageTaskGraphEdge,
-    LocalMessageTaskGraphNode, LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope,
+    local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
+    resolve_local_task_graph_notification_policy, CancelTaskCommand, CreateTaskGraphCommand,
+    GetMessageTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand, ListTaskGraphsCommand,
+    LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalMessageTaskGraphNode,
+    LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphNotificationPolicy,
     LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
     LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
 };
@@ -91,11 +116,11 @@ pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, DecideToolApprovalCommand,
     ListPendingToolApprovalsCommand, LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult,
     LocalAgentToolApprovalStatus, LocalAgentToolBatch, LocalAgentToolCall, LocalAgentToolClaim,
-    LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
-    LocalAgentToolStatus, RenewToolClaimCommand,
+    LocalAgentToolCommitResult, LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord,
+    LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 41;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 42;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -131,6 +156,8 @@ pub enum HostCommand {
     PutCapabilityPolicySnapshot(PutCapabilityPolicySnapshotCommand),
     GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
     GetLatestCapabilityPolicySnapshot(GetLatestCapabilityPolicySnapshotCommand),
+    GetRunSkillActivations(GetRunSkillActivationsCommand),
+    GetRunSkillBundle(GetRunCommand),
     CreateRun(CreateRunCommand),
     GetRun(GetRunCommand),
     ListRuns(ListRunsCommand),
@@ -152,6 +179,7 @@ pub enum HostCommand {
     GetMessageTaskGraph(GetMessageTaskGraphCommand),
     GetTaskRuns(GetTaskRunsCommand),
     CancelTask(CancelTaskCommand),
+    ResolveTaskFollowup(ResolveTaskFollowupCommand),
     RetryTask(RetryTaskCommand),
     RestartTask(RestartTaskCommand),
     PutPluginInstallation(PutPluginInstallationCommand),
@@ -192,6 +220,9 @@ pub enum HostCommand {
     ListRequirementSurveys(ListRequirementSurveysCommand),
     GetRequirementSurvey(GetRequirementSurveyCommand),
     ResolveRequirementSurvey(ResolveRequirementSurveyCommand),
+    GetRequirementPlan(GetRequirementPlanCommand),
+    SaveRequirementPlan(SaveRequirementPlanCommand),
+    ConfirmRequirementPlan(ConfirmRequirementPlanCommand),
 }
 
 impl HostCommand {
@@ -205,6 +236,8 @@ impl HostCommand {
             Self::PutCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetLatestCapabilityPolicySnapshot(command) => command.validate(),
+            Self::GetRunSkillActivations(command) => command.validate(),
+            Self::GetRunSkillBundle(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
             Self::GetRun(command) => command.validate(),
             Self::ListRuns(command) => command.validate(),
@@ -226,6 +259,7 @@ impl HostCommand {
             Self::GetMessageTaskGraph(command) => command.validate(),
             Self::GetTaskRuns(command) => command.validate(),
             Self::CancelTask(command) => command.validate(),
+            Self::ResolveTaskFollowup(command) => command.validate(),
             Self::RetryTask(command) => command.validate(),
             Self::RestartTask(command) => command.validate(),
             Self::PutPluginInstallation(command) => command.validate(),
@@ -266,6 +300,9 @@ impl HostCommand {
             Self::ListRequirementSurveys(command) => command.validate(),
             Self::GetRequirementSurvey(command) => command.validate(),
             Self::ResolveRequirementSurvey(command) => command.validate(),
+            Self::GetRequirementPlan(command) => command.validate(),
+            Self::SaveRequirementPlan(command) => command.validate(),
+            Self::ConfirmRequirementPlan(command) => command.validate(),
         }
     }
 }

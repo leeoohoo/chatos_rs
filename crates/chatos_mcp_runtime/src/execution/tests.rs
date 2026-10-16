@@ -9,6 +9,57 @@ use serde_json::json;
 use super::{execute_tool_calls_parallel, execute_tool_calls_stream};
 use crate::{ToolCallContext, ToolResultCallback};
 
+#[test]
+fn failed_external_result_strips_binary_and_trace_but_keeps_diagnosis() {
+    let result = super::external_tool_failure_from_value(
+        "call-1".into(),
+        "external".into(),
+        None,
+        Some(
+            &json!({"code": "missing_input", "message": "supply query", "trace": "private trace",
+            "nested": {"stackTrace": "internal frames", "data": "secret binary"},
+            "_model_input": [{"image_url": "data:image/png;base64,AAA"}]}),
+        ),
+        "native_tool_reported_error",
+        Some(200),
+    );
+    assert!(result.content.contains("supply query"));
+    assert!(result.content.contains("missing_input"));
+    for excluded in [
+        "private trace",
+        "internal frames",
+        "secret binary",
+        "base64",
+    ] {
+        assert!(!result.content.contains(excluded));
+    }
+    assert!(result.transient_model_input.is_none());
+    assert!(!result.fatal_error);
+    assert!(result.content.chars().count() <= 200);
+}
+
+#[test]
+fn provider_error_flag_is_not_overridden_by_success_status_or_false_alias() {
+    let result = super::external_tool_result_from_value(
+        "call".into(),
+        "test".into(),
+        None,
+        &json!({"isError": false, "is_error": true, "content": "rejected"}),
+        None,
+    );
+    assert!(result.is_error && !result.success);
+    assert_eq!(result.content, "rejected");
+    let success = super::external_tool_result_from_value(
+        "call".into(),
+        "test".into(),
+        None,
+        &json!({"is_error": false, "text": "activated"}),
+        None,
+    );
+    assert!(success.success && !success.is_error);
+    assert_eq!(success.content, "activated");
+}
+
 #[tokio::test]
 async fn sequential_execution_emits_stream_and_final_results() {
     let callback_count = Arc::new(AtomicUsize::new(0));

@@ -2,6 +2,7 @@ import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {withChromeSession, createVerificationTabs} from './chrome-verification-contract.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const extensionId = process.env.CHATOS_BROWSER_EXTENSION_ID;
@@ -45,38 +46,20 @@ try {
     clientInfo: {name: 'verify-current-chrome', version: '0.1.2'}
   });
 
-  const deadline = Date.now() + 30_000;
-  let session;
-  let lastError;
-  while (Date.now() < deadline && !session) {
-    try {
-      session = await callTool('browser_session_open', {
-        mode: 'chrome_extension',
-        session_name: 'Browser MCP 标签组验收'
-      });
-    } catch (error) {
-      lastError = error;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-  if (!session) throw lastError ?? new Error('Browser extension did not connect');
-
-  const first = await callTool('browser_tab_new', {
-    browser_session_id: session.browser_session_id,
-    url: 'https://example.com/?browser-mcp-verification=one'
+  await withChromeSession(callTool, 'Browser MCP 标签组验收', async session => {
+    const tabs = await createVerificationTabs(callTool);
+    process.stdout.write(`${JSON.stringify({phase: 'ready', session, tabs})}\n`);
+    await new Promise(resolve => {
+      const finish = () => {
+        clearTimeout(timeout);
+        process.stdin.off('data', finish);
+        resolve();
+      };
+      const timeout = setTimeout(finish, 60_000);
+      process.stdin.once('data', finish);
+    });
   });
-  const second = await callTool('browser_tab_new', {
-    browser_session_id: session.browser_session_id,
-    url: 'https://example.com/?browser-mcp-verification=two'
-  });
-  process.stdout.write(`${JSON.stringify({phase: 'ready', session, tabs: [first, second]})}\n`);
-
-  await Promise.race([
-    new Promise(resolve => process.stdin.once('data', resolve)),
-    new Promise(resolve => setTimeout(resolve, 60_000))
-  ]);
-  await callTool('browser_session_close', {browser_session_id: session.browser_session_id});
-  process.stdout.write(`${JSON.stringify({phase: 'closed', browser_session_id: session.browser_session_id})}\n`);
+  process.stdout.write(`${JSON.stringify({phase: 'closed'})}\n`);
   await request('shutdown', {});
 } finally {
   child.kill('SIGTERM');
@@ -95,7 +78,10 @@ function request(method, params) {
         if (message.error) reject(new Error(message.error.message ?? JSON.stringify(message.error)));
         else resolve(message.result);
       },
-      reject
+      reject: error => {
+        clearTimeout(timeout);
+        reject(error);
+      }
     });
     child.stdin.write(`${JSON.stringify({jsonrpc: '2.0', id, method, params})}\n`);
   });

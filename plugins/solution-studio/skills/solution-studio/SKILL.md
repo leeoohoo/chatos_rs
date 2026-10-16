@@ -21,7 +21,11 @@ Build the active ChatOS project's single coherent plan whose requirements, desig
 6. Call `solution_finalize` after the last mutation, using the current workspace revision, the actual delivery scope, and every visual block promised in this request. This re-reads the canonical workspace, verifies the named blocks, and registers the internal Markdown artifact. A planning mutation leaves a pending completion requirement; do not report success until finalization returns the matching completion proof.
 7. Report the saved artifact honestly: list the document statuses and concrete requirement/design/task counts, and say whether SVG previews were actually rendered. A generation turn finishing is not the same as the project plan being approved or its execution tasks being completed.
 
-The Skills define the happy path; the completion proof is only a guard against accidental false success. Do not aim merely to satisfy validation. Aim to leave the user with a readable, substantive plan whose promised content is already visible inside Solution Studio.
+The Skills define the happy path; the completion proof is only a guard against accidental false success. Do not aim merely to satisfy validation or produce an acyclic graph. Aim to leave the user with a readable, substantive plan whose promised content is already visible inside Solution Studio. Before finalizing, inspect the execution plan per requirement: shared technical foundations must not be mapped onto every business requirement, and a requirement must not open into a wall of mechanical subtasks or synthetic stage gates.
+
+## Intermediate validation is a work list
+
+Successful requirement upserts can return `validation.valid: false` with `design_empty`, `plan_empty`, or requirement-without-design/task issues. These describe documents you have not written yet; they are not tool failures, missing capabilities, or reasons to end the Task. For an end-to-end request, continue in this same Run: activate `solution-design`, read its schema, save the substantive design; activate `solution-execution-plan`, save all requested tasks and dependencies; then validate, repair, and finalize. A Skill activation alone does not create its document. An unfinished draft or the absence of later-stage content is not a blocker. If a tool genuinely fails, correct its explicit diagnostics within the authorized scope before reporting the precise unresolved failure.
 
 Read [references/workspace-schema.md](references/workspace-schema.md) before writing a complete workspace document.
 
@@ -33,7 +37,7 @@ Read [references/workspace-schema.md](references/workspace-schema.md) before wri
 - Do not confuse the Solution Studio `workspaceId` with `scope.connectorWorkspaceId`: the former identifies the project's single planning document; the latter identifies the ChatOS connector workspace carrying the project root.
 - Use stable IDs: `E-*` for evidence, `R-*` for requirements, `D-000-B-*` for project-level design blocks, `D-*` for requirement designs, `D-*-B-*` for typed design blocks, `ADR-*` for decisions, and `T-*` for tasks.
 - The requirements document contains the project background and total requirements before its structured child requirements.
-- The design document contains one project-level technical baseline and overall architecture. Each requirement then owns exactly one detailed design section and one execution-plan slice. Alternatives belong in design decisions, not parallel solution sections.
+- For development projects, the design document contains one project-level technical baseline and overall architecture. Non-development plans need a project-level written approach but must not add a decorative software architecture diagram. Each requirement owns exactly one detailed design section and one execution-plan slice. Alternatives belong in design decisions, not parallel solution sections.
 - Treat `tasks[].dependsOn` as the only source of execution order. Never encode order only in prose or canvas positions.
 - Do not claim that plan generation authorizes implementation. A plan records work; it does not perform it.
 - Keep the plugin self-contained: design SVG and the execution DAG are rendered only from this workspace's own data, with no cross-plugin references or dependencies.

@@ -41,6 +41,7 @@ impl LocalAgentRuntime {
                     })?;
                 validate_thinking_level(
                     &snapshot.provider,
+                    &snapshot.model,
                     command.selected_thinking_level.as_deref(),
                     command.reasoning_enabled,
                 )?;
@@ -57,6 +58,7 @@ impl LocalAgentRuntime {
 
 fn validate_thinking_level(
     provider: &str,
+    model: &str,
     level: Option<&str>,
     reasoning_enabled: bool,
 ) -> Result<(), LocalAgentRuntimeError> {
@@ -69,6 +71,15 @@ fn validate_thinking_level(
     let Some(level) = normalized else {
         return Ok(());
     };
+    if let Some(capability) = chatos_ai_runtime::model_reasoning::capabilities_for_model(model) {
+        return if reasoning_enabled && capability.levels.iter().any(|accepted| accepted == level) {
+            Ok(())
+        } else {
+            Err(LocalAgentRuntimeError::InvalidRequest(format!(
+                "selected_thinking_level is not supported by model {model}"
+            )))
+        };
+    }
     let normalized_provider = provider.trim().to_ascii_lowercase();
     let provider = match normalized_provider.as_str() {
         "openai" | "gpt" => "gpt",
@@ -100,6 +111,26 @@ mod tests {
         LOCAL_AGENT_PROTOCOL_VERSION,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn model_specific_levels_reject_invalid_efforts_and_allow_max() {
+        for provider in ["gpt", "openai_compatible", "my_api"] {
+            for level in ["low", "medium", "high", "xhigh", "max"] {
+                assert!(
+                    validate_thinking_level(provider, "gpt-6.1-sol", Some(level), true).is_ok()
+                );
+            }
+            for level in ["none", "minimal", "auto"] {
+                assert!(validate_thinking_level(
+                    provider,
+                    "gpt-6.1-sol",
+                    Some(level),
+                    level != "none"
+                )
+                .is_err());
+            }
+        }
+    }
 
     fn request(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
         HostRequestEnvelope {

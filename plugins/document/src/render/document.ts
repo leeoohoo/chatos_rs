@@ -11,10 +11,21 @@ import { EXCLUSIVE_COPY_FLAG, resolveArtifactPaths, type ArtifactPaths } from '.
 import { resolveWorkspaceFile } from '../security/paths.js';
 import { renderOfficePages, OFFICECLI_VERSION } from './office.js';
 import { renderPdfPages, PDFIUM_VERSION } from './pdfium.js';
-import { inspectPng } from './png.js';
+import { inspectPng, isUniformPng, resizePng } from './png.js';
 
 const SUPPORTED_EXTENSIONS = new Set(['.docx', '.xlsx', '.pptx', '.pdf']);
 const SAFE_PREFIX = /^[\p{L}\p{N}][\p{L}\p{N}._ ()-]{0,149}$/u;
+const MODEL_PREVIEW_MAX_IMAGES = 2;
+const MODEL_PREVIEW_MAX_BYTES_PER_IMAGE = 900 * 1024;
+
+function modelPreview(bytes: Buffer): Buffer | undefined {
+  if (bytes.length <= MODEL_PREVIEW_MAX_BYTES_PER_IMAGE) return bytes;
+  for (const edge of [1400, 1200, 1000, 800, 640, 480]) {
+    const resized = resizePng(bytes, edge, edge);
+    if (resized.length <= MODEL_PREVIEW_MAX_BYTES_PER_IMAGE) return resized;
+  }
+  return undefined;
+}
 
 export function renderPageNumbers(value: unknown, maximum = MAX_RENDER_PAGES): number[] {
   if (value === undefined) return [1];
@@ -127,6 +138,10 @@ export async function renderDocument(args: Record<string, unknown>): Promise<Rec
 
     let totalPixels = 0;
     const renderedPages = [] as Array<Record<string, unknown>>;
+    const modelImages = [] as Array<{ label: string; data: string; mimeType: 'image/png' }>;
+    const modelPreviewPages: number[] = [];
+    const skippedPages: Array<{ page: number; code: string; reason: string }> = [];
+    const publishedPagePaths: ArtifactPaths[] = [];
     for (const [index, item] of pagePaths.entries()) {
       const bytes = await readFile(item.temporaryPath);
       const dimensions = inspectPng(bytes);
@@ -134,6 +149,15 @@ export async function renderDocument(args: Record<string, unknown>): Promise<Rec
       if (totalPixels > MAX_RENDER_TOTAL_PIXELS) {
         throw new DocumentError('VALIDATION_FAILED', 'Rendered pages exceeded the total pixel limit.');
       }
+      if (extension === '.docx' && isUniformPng(bytes)) {
+        skippedPages.push({
+          page: pages[index] as number,
+          code: 'REQUESTED_PAGE_EMPTY_OR_UNAVAILABLE',
+          reason: 'The renderer returned a uniform canvas without a visible document page. The requested page may be out of range; no page count is inferred.'
+        });
+        continue;
+      }
+      publishedPagePaths.push(item);
       renderedPages.push({
         page: pages[index],
         relativePath: item.outputName,
@@ -142,12 +166,27 @@ export async function renderDocument(args: Record<string, unknown>): Promise<Rec
         sha256: await sha256File(item.temporaryPath),
         ...dimensions
       });
+      if (modelImages.length < MODEL_PREVIEW_MAX_IMAGES) {
+        const preview = modelPreview(bytes);
+        if (preview) {
+          const page = pages[index] as number;
+          modelImages.push({ label: `page-${page}`, data: preview.toString('base64'), mimeType: 'image/png' });
+          modelPreviewPages.push(page);
+        }
+      }
     }
 
     const sourceSha256 = await sha256File(source.absolutePath);
     const warnings = extension === '.pdf'
       ? []
       : ['Office pages are rendered with the cross-platform HTML renderer; installed fonts can affect layout.'];
+    for (const skipped of skippedPages) warnings.push(`Page ${skipped.page}: ${skipped.code}. ${skipped.reason}`);
+    if (modelPreviewPages.length < Math.min(renderedPages.length, MODEL_PREVIEW_MAX_IMAGES)) {
+      warnings.push('One or more rendered pages exceeded the inline model-preview budget; use the PNG artifacts to inspect them.');
+    }
+    if (renderedPages.length > MODEL_PREVIEW_MAX_IMAGES) {
+      warnings.push(`Only the first ${MODEL_PREVIEW_MAX_IMAGES} rendered pages are returned inline to the model; render later pages in another call.`);
+    }
     const manifest = {
       schemaVersion: 1,
       operation: 'document_render',
@@ -163,12 +202,14 @@ export async function renderDocument(args: Record<string, unknown>): Promise<Rec
         ? { dpi }
         : { viewportWidth, viewportHeight, renderMode: 'html' },
       pages: renderedPages,
+      requestedPages: pages,
+      skippedPages,
       warnings
     };
     await writeFile(manifestPaths.temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     const manifestSize = (await lstat(manifestPaths.temporaryPath)).size;
     const manifestSha256 = await sha256File(manifestPaths.temporaryPath);
-    await publishAll(allPaths);
+    await publishAll([...publishedPagePaths, manifestPaths]);
     return {
       ok: true,
       operation: 'document_render',
@@ -176,13 +217,22 @@ export async function renderDocument(args: Record<string, unknown>): Promise<Rec
       source: manifest.source,
       engine,
       pages: renderedPages,
+      requestedPages: pages,
+      skippedPages,
+      renderStatus: skippedPages.length > 0 ? 'needs_review' : 'rendered',
+      modelPreview: {
+        pages: modelPreviewPages,
+        inlineImageCount: modelImages.length,
+        maximumImagesPerCall: MODEL_PREVIEW_MAX_IMAGES
+      },
       manifest: {
         relativePath: manifestPaths.outputName,
         mimeType: 'application/json',
         size: manifestSize,
         sha256: manifestSha256
       },
-      warnings
+      warnings,
+      __images: modelImages
     };
   } finally {
     await Promise.all(allPaths.map((item) => rm(item.temporaryPath, { force: true })));

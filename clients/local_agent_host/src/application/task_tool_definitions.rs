@@ -10,6 +10,7 @@ pub const CREATE_TASKS_TOOL: &str = "create_tasks_with_prerequisites";
 pub const CANCEL_TASK_TOOL: &str = "cancel_task";
 pub const WAIT_FOR_TASK_COMPLETION_TOOL: &str = "wait_for_task_completion";
 pub const GET_TASK_DEPENDENCY_GRAPH_TOOL: &str = "get_task_dependency_graph";
+pub const RESOLVE_TASK_FOLLOWUP_TOOL: &str = "resolve_task_followup";
 pub const TASK_BUILTIN_KIND_VALUES: [&str; 8] = [
     "AskUser",
     "CodeMaintainerRead",
@@ -29,7 +30,7 @@ const TASK_SELECTABLE_BUILTIN_KIND_VALUES: [&str; 7] = [
     "RequirementSurveyWrite",
     "Notepad",
 ];
-pub const TASK_TOOL_NAMES: [&str; 7] = [
+pub const TASK_TOOL_NAMES: [&str; 8] = [
     LIST_TASKS_TOOL,
     GET_TASK_TOOL,
     CREATE_TASK_TOOL,
@@ -37,6 +38,7 @@ pub const TASK_TOOL_NAMES: [&str; 7] = [
     CANCEL_TASK_TOOL,
     WAIT_FOR_TASK_COMPLETION_TOOL,
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
+    RESOLVE_TASK_FOLLOWUP_TOOL,
 ];
 pub const TASK_READ_ONLY_TOOLS: [&str; 4] = [
     LIST_TASKS_TOOL,
@@ -44,8 +46,12 @@ pub const TASK_READ_ONLY_TOOLS: [&str; 4] = [
     WAIT_FOR_TASK_COMPLETION_TOOL,
     GET_TASK_DEPENDENCY_GRAPH_TOOL,
 ];
-pub const TASK_APPROVAL_EXEMPT_TOOLS: [&str; 3] =
-    [CREATE_TASK_TOOL, CREATE_TASKS_TOOL, CANCEL_TASK_TOOL];
+pub const TASK_APPROVAL_EXEMPT_TOOLS: [&str; 4] = [
+    CREATE_TASK_TOOL,
+    CREATE_TASKS_TOOL,
+    CANCEL_TASK_TOOL,
+    RESOLVE_TASK_FOLLOWUP_TOOL,
+];
 
 pub fn task_model_tools() -> Vec<Value> {
     vec![
@@ -85,12 +91,15 @@ pub fn task_model_tools() -> Vec<Value> {
         json!({
             "type": "function",
             "name": CREATE_TASK_TOOL,
-            "description": "Create one durable local task for the current conversation/project. Use this whenever answering requires inspecting project files, using execution tools, or doing tracked work; never ask the user to re-upload an already bound project. The Rust Local Agent Host binds, persists, schedules, and writes the result back locally.",
+            "description": "Create one coherent durable local task for the current conversation/project. Use this only when splitting would not enable useful concurrency, specialization, ownership, or independent acceptance. The Rust Local Agent Host binds, persists, schedules, and writes the result back locally.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "minLength": 1},
                     "objective": {"type": "string", "minLength": 1},
+                    "expected_outputs": task_contract_list_schema("Concrete artifacts, decisions, reports, or verified changes this Task must return."),
+                    "acceptance_criteria": task_contract_list_schema("Observable, evidence-based conditions that must be true before this Task can be reported complete."),
+                    "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
                     "description": {"type": "string"},
                     "input_payload": {},
                     "priority": {"type": "integer"},
@@ -110,6 +119,7 @@ pub fn task_model_tools() -> Vec<Value> {
                         "description": "Whether this Task needs command execution, tests, builds, Git operations, or file mutation. Project reads remain available without an execution workspace."
                     },
                     "enabled_builtin_kinds": builtin_kind_selection_schema(),
+                    "notepad_user_request_quote": notepad_user_request_quote_schema(),
                     "external_mcp_config_ids": {
                         "type": "array",
                         "maxItems": 0,
@@ -117,80 +127,43 @@ pub fn task_model_tools() -> Vec<Value> {
                         "description": "External MCP configurations are not locally selectable yet; send an empty array."
                     },
                     "plugin_hints": plugin_hints_schema(),
+                    "owned_paths": task_owned_paths_schema(),
                     "prerequisite_task_ids": prerequisite_task_ids_schema(),
                     "supersedes_task_ids": supersedes_task_ids_schema(),
                     "schedule": task_schedule_schema()
                 },
-                "required": ["title", "objective", "requires_execution", "enabled_builtin_kinds"],
+                "required": ["title", "objective", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
                 "additionalProperties": false
             }
         }),
         json!({
             "type": "function",
             "name": CREATE_TASKS_TOOL,
-            "description": "Create a durable local task graph for the current conversation/project. Use investigation, implementation and review stages when prerequisites are needed instead of asking the user to provide the bound project again. Each task uses a unique client_ref and prerequisite_refs may only reference tasks in this call.",
+            "description": "Create a durable local multi-Task graph for a compound outcome. Use distinct deliverables, specialist needs, safe parallel work, real prerequisite stages, or independent verification as decomposition boundaries. Each Task uses a unique client_ref and prerequisite_refs may only reference Tasks in this call.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "supersedes_task_ids": supersedes_task_ids_schema(),
+                    "graph_goal": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "decomposition_rationale": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8000,
+                        "description": "Why these Tasks have distinct outputs or ownership and how the graph enables specialization, concurrency, dependencies, or independent acceptance."
+                    },
+                    "notification_policy": graph_notification_policy_schema(),
+                    "final_delivery_ref": {
+                        "type": "string", "minLength": 1,
+                        "description": "Optional client_ref of the final synthesis/delivery Task. It must depend directly or transitively on every other Task. Its full user-facing result is delivered once to Main Chat instead of excerpts of all reports."
+                    },
                     "tasks": {
                         "type": "array",
-                        "minItems": 1,
+                        "minItems": 2,
                         "maxItems": 50,
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "client_ref": {"type": "string", "minLength": 1},
-                                "title": {"type": "string", "minLength": 1},
-                                "objective": {"type": "string", "minLength": 1},
-                                "description": {"type": "string"},
-                                "input_payload": {},
-                                "priority": {"type": "integer"},
-                                "tags": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "uniqueItems": true
-                                },
-                                "default_model_config_id": {
-                                    "type": "string",
-                                    "minLength": 1,
-                                    "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
-                                },
-                                "thinking_level": thinking_level_override_schema(),
-                                "requires_execution": {"type": "boolean"},
-                                "enabled_builtin_kinds": builtin_kind_selection_schema(),
-                                "external_mcp_config_ids": {
-                                    "type": "array",
-                                    "maxItems": 0,
-                                    "items": {"type": "string"}
-                                },
-                                "plugin_hints": plugin_hints_schema(),
-                                "owned_paths": {
-                                    "type": "array",
-                                    "maxItems": 200,
-                                    "items": {"type": "string", "minLength": 1},
-                                    "uniqueItems": true
-                                },
-                                "prerequisite_refs": {
-                                    "type": "array",
-                                    "items": {"type": "string", "minLength": 1},
-                                    "uniqueItems": true
-                                },
-                                "context_refs": {
-                                    "type": "array",
-                                    "items": {"type": "string", "minLength": 1},
-                                    "uniqueItems": true,
-                                    "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling."
-                                },
-                                "prerequisite_task_ids": prerequisite_task_ids_schema(),
-                                "schedule": task_schedule_schema()
-                            },
-                            "required": ["client_ref", "title", "objective", "requires_execution", "enabled_builtin_kinds"],
-                            "additionalProperties": false
-                        }
+                        "items": create_task_item_schema()
                     }
                 },
-                "required": ["tasks"],
+                "required": ["graph_goal", "decomposition_rationale", "tasks"],
                 "additionalProperties": false
             }
         }),
@@ -231,7 +204,18 @@ pub fn task_model_tools() -> Vec<Value> {
                 "additionalProperties": false
             }
         }),
+        super::task_followup_tool::definition(),
     ]
+}
+
+fn task_contract_list_schema(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 50,
+        "items": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "description": description
+    })
 }
 
 fn supersedes_task_ids_schema() -> Value {
@@ -255,7 +239,16 @@ fn builtin_kind_selection_schema() -> Value {
         "type": "array",
         "items": {"type": "string", "enum": TASK_SELECTABLE_BUILTIN_KIND_VALUES},
         "uniqueItems": true,
-        "description": "Select only the minimum local capabilities required by this Task. AskUser is added automatically when required by policy; CodeMaintainerWrite implies CodeMaintainerRead; RequirementSurveyWrite implies RequirementSurveyRead."
+        "description": "Select only capabilities explicitly required by the user's requested deliverable or named input. Never add a capability because it might be useful for scratch work or generic persistence. In particular, select Notepad only when the user explicitly requests a Notepad record or identifies an existing note as input. AskUser is added automatically when required by policy; CodeMaintainerWrite implies CodeMaintainerRead; RequirementSurveyWrite implies RequirementSurveyRead."
+    })
+}
+
+fn notepad_user_request_quote_schema() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 500,
+        "description": "Required only when enabled_builtin_kinds contains Notepad and Notepad was not explicitly selected in the UI. Copy an exact phrase from the current user message that asks to record/save something in Notepad or identifies an existing note as input. Do not paraphrase and do not use generic task text as evidence."
     })
 }
 
@@ -272,6 +265,86 @@ fn plugin_hints_schema() -> Value {
             "required": ["plugin_key"],
             "additionalProperties": false
         }
+    })
+}
+
+fn graph_notification_policy_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["progress_summary", "all_tasks", "milestones", "graph_summary"],
+        "default": "progress_summary",
+        "description": "progress_summary (default) shows a short per-Run status message at actual execution start, updates it at completion/failure/block/cancel, then delivers one full final result. graph_summary is opt-in quiet mode; milestones emits marked milestones, failures/blockers and a final summary; all_tasks preserves legacy Task callbacks."
+    })
+}
+
+fn create_task_item_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "client_ref": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "objective": {"type": "string", "minLength": 1},
+            "expected_outputs": task_contract_list_schema("Concrete artifacts, decisions, reports, or verified changes owned by this Task."),
+            "acceptance_criteria": task_contract_list_schema("Observable, evidence-based completion conditions for this Task."),
+            "final_response_max_chars": {"type":"integer", "minimum":1, "maximum":32000, "description":"Optional explicit maximum for the entire final user-facing response, counted in Unicode scalar values including whitespace, punctuation and Markdown. Set this when the user requires a bounded textual delivery; not a file-content limit."},
+            "description": {"type": "string"},
+            "input_payload": {},
+            "priority": {"type": "integer"},
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "uniqueItems": true
+            },
+            "default_model_config_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Optional explicit local model configuration id for this Task. When omitted, inherit the model selected for the current Main Chat."
+            },
+            "thinking_level": thinking_level_override_schema(),
+            "requires_execution": {"type": "boolean"},
+            "enabled_builtin_kinds": builtin_kind_selection_schema(),
+            "notepad_user_request_quote": notepad_user_request_quote_schema(),
+            "external_mcp_config_ids": {
+                "type": "array",
+                "maxItems": 0,
+                "items": {"type": "string"}
+            },
+            "plugin_hints": plugin_hints_schema(),
+            "owned_paths": task_owned_paths_schema(),
+            "notification_milestone": notification_milestone_schema(),
+            "prerequisite_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
+            },
+            "context_refs": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true,
+                "description": "Non-blocking context relationships to other client_ref values. They are preserved for explanation and graph display but never delay scheduling."
+            },
+            "prerequisite_task_ids": prerequisite_task_ids_schema(),
+            "schedule": task_schedule_schema()
+        },
+        "required": ["client_ref", "title", "objective", "expected_outputs", "acceptance_criteria", "requires_execution", "enabled_builtin_kinds"],
+        "additionalProperties": false
+    })
+}
+
+fn task_owned_paths_schema() -> Value {
+    json!({
+        "type": "array", "maxItems": 200,
+        "items": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "uniqueItems": true,
+        "description": "Normalized project-relative files or directories this Task may mutate through built-ins or Plugins. Independent writers must use disjoint paths; add a prerequisite when two Tasks may touch the same file. For CodeMaintainerWrite, an omitted or empty list claims the whole project. Plugin-only Tasks with no known project-file mutation may use an empty list and are isolated by Plugin runtime."
+    })
+}
+
+fn notification_milestone_schema() -> Value {
+    json!({
+        "type": "boolean",
+        "default": false,
+        "description": "Under milestones policy, publish this Task's start and terminal result as an important user-visible milestone."
     })
 }
 

@@ -20,8 +20,8 @@ Use Browser CDP for goal-oriented work in a real or managed Chrome session. User
 
 ## Route only what is needed
 
-- Activate `browser-navigation` for URL selection, search, redirects, tabs, and navigation recovery.
-- Activate `browser-interaction` for clicking, typing, forms, scrolling, and stale-ref recovery.
+- Activate `browser-navigation` for URL selection, search, redirects, tabs, clicking observed navigation links/menus, and recovery. Never infer article URLs from titles or snippets.
+- Activate `browser-interaction` for typing, forms, consequential clicks, scrolling, and stale-ref recovery. Ordinary link navigation does not require an additional interaction leaf.
 - Activate `browser-observation-verification` for snapshots, screenshots, extraction, and completion evidence.
 - Activate `browser-network-debugging` for console, requests, WebSocket, HAR, interception, or raw CDP diagnostics.
 - Activate `browser-file-transfer` for uploads, downloads, chooser handling, and artifact delivery.
@@ -30,10 +30,10 @@ Activate only leaves that change the execution decisions for the current request
 
 ## Platform Skill protocol
 
-1. Activate this router with `skill_skill_activate` using its catalog `skill_ref`.
+1. Activate this router through the host's advertised Skill tool using its catalog `skill_ref`. In Main Chat and Task Execution, use `agent_skill_activate`.
 2. Choose the smallest leaf from the routing list above and activate it.
 3. Call Browser tools with navigation, observation, interaction, or diagnostic arguments only. ChatOS validates active Skills and supplies user, project, device, workspace, browser-session, and authentication context internally.
-4. Read a leaf reference only through `skill_skill_list_resources` and `skill_skill_read_resource` with that leaf's activation reference and evidence.
+4. In Main Chat and Task Execution, use the resource paths returned by activation and read only a relevant leaf reference through `agent_skill_read_resource` with the same exact `skill_ref` and a declared `relative_path`. If the activation result is unavailable after resume, activate the same exact ref again. Activation evidence is host-managed; never invent it or call an unadvertised alias. Other host surfaces use their advertised Skill tools and schemas.
 
 ## MCP tool directory
 

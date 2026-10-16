@@ -1,3 +1,4 @@
+import ChatOSAgentRuntime
 import ChatOSCore
 import CryptoKit
 import Foundation
@@ -7,17 +8,20 @@ public struct NativeLocalAgentExternalMCPTool: Sendable, Equatable {
   public let upstreamName: String
   public let description: String
   public let inputSchema: LocalAgentJSONValue
+  public let remoteSkillGate: LocalAgentJSONValue?
 
   public init(
     publicName: String,
     upstreamName: String,
     description: String,
-    inputSchema: LocalAgentJSONValue
+    inputSchema: LocalAgentJSONValue,
+    remoteSkillGate: LocalAgentJSONValue? = nil
   ) {
     self.publicName = publicName
     self.upstreamName = upstreamName
     self.description = description
     self.inputSchema = inputSchema
+    self.remoteSkillGate = remoteSkillGate
   }
 }
 
@@ -25,6 +29,27 @@ public struct NativeLocalAgentExternalMCPTool: Sendable, Equatable {
 /// deliberately remain in the native process and are never published to the
 /// Rust Host capability or persisted in its SQLite database.
 public struct NativeLocalAgentExternalMCPConfig: Sendable, Equatable {
+  static let skillName = "chatos-external-mcp"
+  var skillProviderID: String { "chatos.external-mcp:\(resourceID)" }
+  func skillBindingID() throws -> String { "external-mcp:\(resourceID):\(try catalogSHA256())" }
+
+  // Credentials are transient and can rotate without retargeting a frozen tool.
+  // Freeze endpoint identity and actual tool metadata, publishing only the digest.
+  func catalogSHA256() throws -> String {
+    let value: LocalAgentJSONValue = .object([
+      "resource_id": .string(resourceID), "server_name": .string(serverName),
+      "endpoint": .string(url.absoluteString),
+      "tools": .array(tools.sorted { $0.publicName < $1.publicName }.map { tool in
+        .object(["public_name": .string(tool.publicName), "upstream_name": .string(tool.upstreamName),
+                 "description": .string(tool.description), "input_schema": tool.inputSchema,
+                 "remote_skill_gate": tool.remoteSkillGate ?? .null])
+      }),
+    ])
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = try encoder.encode(value)
+    return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+  }
   public let resourceID: String
   public let serverName: String
   public let url: URL
@@ -60,11 +85,13 @@ actor NativeLocalAgentExternalMCPExecutor {
   ]
 
   private let runtime: NativeLocalAgentRuntimeClient
+  private let skills: NativeLocalAgentToolClient
   private let session: URLSession
   private var routes: [String: Route] = [:]
 
   init(host: any LocalAgentHostClientServicing, session: URLSession = .shared) {
     runtime = .init(host: host)
+    skills = .init(host: host)
     self.session = session
   }
 
@@ -84,14 +111,14 @@ actor NativeLocalAgentExternalMCPExecutor {
 
   func reset() { routes.removeAll(keepingCapacity: false) }
 
-  func contains(_ toolName: String) -> Bool { routes[toolName] != nil }
-
   func execute(
     ownerUserID: String,
     invocation: LocalAgentToolInvocationRecord
   ) async throws -> LocalAgentJSONValue {
     guard let route = routes[invocation.toolName] else {
-      throw NativeLocalAgentExternalMCPError.unsupportedTool
+      // Offline restore preserves frozen schemas, not transient endpoint credentials.
+      // This is a known preflight rejection, not an uncertain remote side effect.
+      return Self.rejection("external_mcp_runtime_unavailable")
     }
     let run = try await runtime.run(ownerUserID: ownerUserID, runID: invocation.runID)
     guard run.ownerUserID == ownerUserID,
@@ -101,12 +128,46 @@ actor NativeLocalAgentExternalMCPExecutor {
     else {
       throw NativeLocalAgentExternalMCPError.invalidRunContext
     }
-    let selected = Set(rawIDs.compactMap { value -> String? in
-      guard case .string(let id) = value else { return nil }
+    let ids = try rawIDs.map { value -> String in
+      guard case .string(let id) = value, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw NativeLocalAgentExternalMCPError.invalidRunContext
+      }
       return id
-    })
+    }
+    let selected = Set(ids)
+    guard selected.count == ids.count else { throw NativeLocalAgentExternalMCPError.invalidRunContext }
     guard selected.contains(route.config.resourceID) else {
       throw NativeLocalAgentExternalMCPError.capabilityNotSelected
+    }
+    if route.tool.remoteSkillGate != nil {
+      return Self.rejection("external_mcp_skill_instructions_unavailable")
+    }
+    if let bundle = try await skills.skillBundle(ownerUserID: ownerUserID, runID: invocation.runID),
+       bundle.schemaVersion >= 2 {
+      guard let binding = bundle.toolSkillBindings.first(where: {
+        $0.providerID == route.config.skillProviderID && $0.toolNames.contains(invocation.toolName)
+      }), binding.bindingID == (try route.config.skillBindingID()) else {
+        return Self.rejection("external_mcp_snapshot_changed")
+      }
+      let activated = try await skills.activatedSkillRefs(ownerUserID: ownerUserID, runID: invocation.runID)
+      let required = Set([binding.routerSkillRef, binding.specialistSkillRef]).subtracting(activated)
+      guard required.isEmpty else {
+        return .object(["is_error": .bool(true), "content": .object([
+          "error": .string("skill_activation_required"),
+          "required_skill_refs": .array(required.sorted().map(LocalAgentJSONValue.string)),
+        ])])
+      }
+    }
+    do {
+      try AgentExternalToolSchemaValidator.validate(
+        arguments: String(decoding: JSONEncoder().encode(invocation.arguments), as: UTF8.self),
+        schema: JSONEncoder().encode(route.tool.inputSchema)
+      )
+    } catch {
+      return .object(["is_error": .bool(true), "content": .object([
+        "error": .string("external_mcp_invalid_arguments"),
+        "message": .string(error.localizedDescription),
+      ])])
     }
     var request = URLRequest(url: route.config.url)
     request.httpMethod = "POST"
@@ -152,11 +213,21 @@ actor NativeLocalAgentExternalMCPExecutor {
     guard case .object(let object) = payload else {
       throw NativeLocalAgentExternalMCPError.invalidResponse
     }
-    if object["error"] != nil { throw NativeLocalAgentExternalMCPError.remoteFailure }
+    if let error = object["error"], error != .null {
+      // A returned JSON-RPC error is a known failure, unlike an interrupted
+      // transport whose side effects may be unknown. Preserve its diagnosis.
+      return .object(["is_error": .bool(true), "content": .object([
+        "error": .string("external_mcp_rpc_error"), "detail": error,
+      ])])
+    }
     guard let result = object["result"] else {
       throw NativeLocalAgentExternalMCPError.invalidResponse
     }
     return result
+  }
+
+  private static func rejection(_ code: String) -> LocalAgentJSONValue {
+    .object(["is_error": .bool(true), "content": .object(["error": .string(code)])])
   }
 
   private static func validate(_ config: NativeLocalAgentExternalMCPConfig) throws {
@@ -172,6 +243,14 @@ actor NativeLocalAgentExternalMCPExecutor {
     else {
       throw NativeLocalAgentExternalMCPError.invalidConfiguration
     }
+    _ = try config.catalogSHA256()
+    guard config.tools.count <= 200,
+      Set(config.tools.map(\.publicName)).count == config.tools.count,
+      Set(config.tools.map(\.upstreamName)).count == config.tools.count,
+      config.tools.allSatisfy({ tool in
+        tool.publicName.hasPrefix("external_mcp__") && tool.publicName.utf8.count <= 256 && !tool.upstreamName.isEmpty
+          && { if case .object = tool.inputSchema { return true }; return false }()
+      }) else { throw NativeLocalAgentExternalMCPError.invalidConfiguration }
     for (rawName, value) in config.headers {
       let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !name.isEmpty,

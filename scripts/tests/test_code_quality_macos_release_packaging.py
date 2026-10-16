@@ -45,6 +45,14 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
         self.assertIn("Release ChatOS binary contains a Debug build path", verify)
         self.assertIn("codesign --verify --deep --strict", verify)
 
+    def test_dmg_checksum_is_portable_between_machines(self) -> None:
+        dmg = self.read(MACOS_SCRIPTS / "package-release-dmg.sh")
+
+        self.assertIn('DMG_FILENAME="ChatOS-$VERSION-macOS-$ARCH.dmg"', dmg)
+        self.assertIn('cd "$OUTPUT_DIR"', dmg)
+        self.assertIn('shasum -a 256 "$DMG_FILENAME"', dmg)
+        self.assertNotIn('shasum -a 256 "$DMG_PATH"', dmg)
+
 
 if __name__ == "__main__":
     unittest.main()

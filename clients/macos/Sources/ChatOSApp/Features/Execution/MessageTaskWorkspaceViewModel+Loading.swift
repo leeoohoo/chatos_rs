@@ -319,7 +319,8 @@ extension MessageTask {
     }
 
     var isActive: Bool {
-        ["pending", "queued", "ready", "running", "processing", "in_progress", "doing"]
+        ["pending", "queued", "ready", "running", "processing", "in_progress", "doing",
+         "reviewing_followup", "waiting_confirmation"]
             .contains(normalizedStatus)
     }
 }

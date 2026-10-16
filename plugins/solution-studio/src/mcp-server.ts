@@ -198,7 +198,10 @@ function blockingIssuesForScope(issues: ValidationIssue[], scope: string): Valid
   const planCodes = new Set(['plan_empty', 'requirement_without_task', 'stale_plan', 'unknown_dependency', 'self_dependency', 'dependency_cycle', 'task_without_acceptance', 'unknown_design_section']);
   const designCodes = new Set(['design_empty', 'project_design_missing', 'project_architecture_missing', 'design_section_document_missing', 'design_section_visual_missing', 'requirement_without_design', 'stale_design', 'multiple_designs_per_requirement', 'design_link_mismatch', 'invalid_selected_design']);
   return issues.filter((issue) => issue.blocking && (
-    scope === 'full' || scope === 'plan' || (scope === 'design' && !planCodes.has(issue.code)) || (scope === 'requirements' && !planCodes.has(issue.code) && !designCodes.has(issue.code))
+    scope === 'full'
+      || (scope === 'plan' && !designCodes.has(issue.code))
+      || (scope === 'design' && !planCodes.has(issue.code))
+      || (scope === 'requirements' && !planCodes.has(issue.code) && !designCodes.has(issue.code))
   ));
 }
 
@@ -300,6 +303,19 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
 }
 
 function result(value: Record<string, unknown>, isError = false) {
+  if (!isError && value.validation && !value.completionProof) {
+    const validation = value.validation as { issues: ValidationIssue[] };
+    const codes = new Set(validation.issues.filter(issue => issue.blocking).map(issue => issue.code));
+    value.continuation = {
+      kind: 'authoring-work-remaining',
+      instruction: 'Successful persistence is not final delivery. Validation gaps describe remaining authoring/repair work, not a terminal Task failure. Continue only the stages required by the user; do not expand a requirements-only request into a full plan.',
+      suggestedActions: [
+        ...(codes.has('design_empty') || codes.has('stale_design') ? [{ skill: 'solution-design', tool: 'solution_upsert_design', when: 'Design or full planning is requested', reason: 'Author or refresh the design against the current requirements revision.' }] : []),
+        ...(codes.has('plan_empty') || codes.has('stale_plan') ? [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }] : []),
+        { skill: 'solution-validation', tool: 'solution_finalize', when: 'All requested content is saved, rendered where required, and its scoped validation gaps are repaired', reason: 'Finalize the actual requested scope at the current workspace revision.' }
+      ]
+    };
+  }
   const response: Record<string, unknown> = {
     content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     structuredContent: value,
@@ -320,7 +336,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: 'chatos-solution-studio', version: '0.1.9' }, { capabilities: { tools: {} } });
+const server = new Server({ name: 'chatos-solution-studio', version: '0.1.15' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

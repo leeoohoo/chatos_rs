@@ -347,7 +347,9 @@ dependencies = [
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
  "chatos_mcp_runtime",
+ "chrono",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
  "uuid",
 ]
@@ -461,12 +463,15 @@ dependencies = [
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",
  "chatos_local_agent_runtime",
+ "chatos_mcp_runtime",
  "chrono",
+ "futures",
  "libc",
  "memory_engine_sdk",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror",
  "tokio",
  "uuid",
@@ -490,6 +495,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -498,6 +504,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chatos_ai_runtime",
  "chatos_client_storage",
  "chatos_local_agent_ports",
  "chatos_local_agent_protocol",

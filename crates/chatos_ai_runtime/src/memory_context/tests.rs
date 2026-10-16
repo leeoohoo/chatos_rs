@@ -465,7 +465,7 @@ fn compose_response_to_input_items_skips_orphan_tool_calls() {
 }
 
 #[test]
-fn compose_response_to_input_items_preserves_large_tool_output_head_and_tail() {
+fn compose_response_to_input_items_rejects_unpaged_overflow_without_damaged_excerpt() {
     let response = ComposeContextResponse {
         thread_id: "thread-1".to_string(),
         blocks: Vec::new(),
@@ -503,7 +503,7 @@ fn compose_response_to_input_items_preserves_large_tool_output_head_and_tail() {
                 external_record_id: None,
                 role: "tool".to_string(),
                 record_type: "message".to_string(),
-                content: "x".repeat(45_000),
+                content: "x".repeat(160_001),
                 structured_payload: None,
                 metadata: Some(json!({
                     "tool_call_id": "call_1",
@@ -531,15 +531,17 @@ fn compose_response_to_input_items_preserves_large_tool_output_head_and_tail() {
         .and_then(|value| value.as_str())
         .unwrap_or_default();
 
-    assert!(output.contains("tool_result_truncated"));
-    assert!(output.contains("code.read_file"));
-    assert!(output.starts_with('x'));
-    assert!(output.ends_with('x'));
-    assert!(output.chars().count() <= 40_000);
+    let diagnostic: Value = serde_json::from_str(output).expect("valid overflow diagnostic");
+    assert_eq!(diagnostic["error"], "tool_result_budget_exceeded");
+    assert_eq!(diagnostic["tool"], "code.read_file");
+    assert_eq!(diagnostic["original_chars"], 160_001);
+    assert_eq!(diagnostic["content_preserved"], false);
+    assert!(!output.contains("tool_result_truncated"));
+    assert!(!output.starts_with('x'));
 }
 
 #[test]
-fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
+fn compose_response_to_input_items_keeps_oldest_output_and_rejects_later_overflow() {
     let tool_call_record = |record_id: &str, call_id: &str, created_at: &str| EngineRecord {
         id: record_id.to_string(),
         thread_id: "thread-1".to_string(),
@@ -624,9 +626,12 @@ fn compose_response_to_input_items_keeps_oldest_tool_output_prefix_stable() {
         outputs.get("call_old").copied(),
         Some("{\"count\":3,\"tasks\":[\"older-task-state\"]}")
     );
-    assert!(outputs
-        .get("call_new")
-        .is_some_and(|output| { output.starts_with("{\"cou") && output.chars().count() == 5 }));
+    let diagnostic: Value = serde_json::from_str(outputs["call_new"]).expect("overflow JSON");
+    assert_eq!(diagnostic["error"], "tool_result_budget_exceeded");
+    assert_eq!(diagnostic["reason"], "total_budget");
+    assert_eq!(diagnostic["available_chars"], 5);
+    assert_eq!(diagnostic["content_preserved"], false);
+    assert!(!outputs["call_new"].starts_with("{\"cou"));
 }
 
 #[test]

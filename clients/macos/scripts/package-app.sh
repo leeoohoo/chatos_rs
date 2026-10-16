@@ -110,6 +110,12 @@ if [[ ! -d "$CORE_RESOURCE_BUNDLE" ]]; then
   exit 1
 fi
 cp -R "$CORE_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
+MODEL_RESOURCE_BUNDLE="$BIN_DIR/ChatOSSwift_ChatOSModelCapabilities.bundle"
+if [[ ! -d "$MODEL_RESOURCE_BUNDLE" ]]; then
+  echo "Model reasoning capability resource bundle not found at $MODEL_RESOURCE_BUNDLE" >&2
+  exit 1
+fi
+cp -R "$MODEL_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
 set_plist_string "ChatOSBuildConfiguration" "$BUILD_CONFIGURATION"
 set_plist_string "ChatOSBuildGitCommit" "$BUILD_GIT_COMMIT"

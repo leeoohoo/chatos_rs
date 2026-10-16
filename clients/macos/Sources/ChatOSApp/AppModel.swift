@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding {
     @Published var selection: SidebarSelection?
+    @Published var requestedRequirementSurvey: RequirementSurveyNavigationTarget?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var isNotepadPresented = false
     @Published var navigationSplitVisibility: NavigationSplitViewVisibility = .all
@@ -272,7 +273,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 projects: localProjectsService,
                 connector: localConnectorService,
                 remoteConnectionProvider: remoteConnectionService,
-                eventHub: eventHub
+                eventHub: eventHub,
+                maximumConcurrentClaims: RuntimeConfiguration
+                    .localAgentMaximumConcurrentWorkItems
             )
             localAgentRuntimeSettingsService = settings
             localAgentEventHub = eventHub
@@ -558,6 +561,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         }
         localConnectorControl.setServicePreparationTask(connectorServicePreparationTask)
         localConnectorControl.setModelConfigurationChangedHandler { [weak self] in
+            guard let self, let ownerUserID = authenticatedUserID else { return }
+            refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+        }
+        localConnectorControl.setPluginConfigurationChangedHandler { [weak self] in
             guard let self, let ownerUserID = authenticatedUserID else { return }
             refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
         }

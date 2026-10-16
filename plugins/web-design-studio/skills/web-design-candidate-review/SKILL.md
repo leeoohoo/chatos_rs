@@ -12,7 +12,7 @@ Inspect every Candidate and Diff PNG returned by `web_design_execute_step`. Judg
 Use `web_design_control_plan`:
 
 - `accept` commits the reviewed Candidate. If it is the handoff Step, the program also completes the artboard and returns a compact checkpoint.
-- `reject` records the visual reason and discards the Candidate. Then call `web_design_execute_step` with corrected operations.
+- `reject` records the visual reason and discards the Candidate. This is a recoverable design iteration, not a failed user Task. Use its current Plan revision and returned next action to call `web_design_execute_step` again in this Run with concretely corrected operations. Rejected nodes are not in the canonical Scene: query the current Scene before patching IDs, and reinsert discarded construction with its corrected styles/layout. Inspect the new Candidate and Diff before accepting it. Never accept poor output just to close the gate, or stop merely because the first Candidate was rejected.
 - `skip` is only for an optional Step.
 - `rollback` restores only the latest accepted Step when safe.
 - `pause` and `resume` act at safe Step boundaries.

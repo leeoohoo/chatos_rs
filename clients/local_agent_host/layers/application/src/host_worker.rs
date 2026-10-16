@@ -25,6 +25,21 @@ impl LocalAgentRuntime {
         Ok(self.store.get_tool_invocation(invocation_id).await?)
     }
 
+    /// Trusted owner/Run-scoped lookup for the Host-owned progressive result
+    /// reader. This stays off the native IPC surface.
+    #[doc(hidden)]
+    pub async fn get_completed_tool_invocation_for_run_call_for_host_worker(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        call_id: &str,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, LocalAgentRuntimeError> {
+        Ok(self
+            .store
+            .get_completed_tool_invocation_for_run_call(owner_user_id, run_id, call_id)
+            .await?)
+    }
+
     #[doc(hidden)]
     pub async fn successful_tool_invocation_count_for_host_worker(
         &self,

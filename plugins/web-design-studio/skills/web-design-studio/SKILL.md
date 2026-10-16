@@ -61,6 +61,8 @@ Do not activate every leaf at startup. Tool gates state which leaf is required.
 7. Activate `web-design-candidate-review`. Inspect every returned Candidate and Diff image. Mechanical layout success is necessary but not sufficient. Use `web_design_control_plan` to accept or reject the reviewed Candidate explicitly.
 8. Continue the returned next action. Accepting the handoff Step automatically completes that artboard and returns a compact context checkpoint. Move to the next semantic artboard only then, unless the user asks to pause.
 
+Run this loop through authorized corrections, Design Gate and handoff in the same Task. A first rejected Candidate, missing later Steps, or `taskCompletionAllowed: false` is a work list, not a terminal error. Report an incomplete outcome only for an actual unresolved tool/environment failure after safe concrete repair, denied authority, cancellation, exhausted budget, or a consequential missing user decision. State that specific cause; do not mistake your own unfinished design for a blocker.
+
 ## Visual quality bar
 
 Accept only when the screenshot demonstrates the intended improvement:

@@ -114,6 +114,7 @@ async fn ask_user_tool_waits_and_resumes_with_the_original_tool_call() {
                 lease_duration_ms: 30_000,
                 include_tool_names: Some(vec![ASK_USER_CHOICES_TOOL.to_string()]),
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         ))
         .await
@@ -171,6 +172,8 @@ async fn ask_user_tool_waits_and_resumes_with_the_original_tool_call() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload["prompt"]["tool_call_id"], "ask-call-1");
     assert_eq!(events[0].payload["prompt"]["kind"], "choice");
+    assert_eq!(events[0].payload["conversation_id"], "conversation-1");
+    assert_eq!(events[0].payload["turn_id"], "turn-1");
 
     let resumed = runtime
         .try_handle(request(

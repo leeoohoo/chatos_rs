@@ -16,6 +16,121 @@ pub fn to_text_and_structured_result(result: &Value) -> (String, Option<Value>) 
     to_text_and_structured_result_inner(result, false, tool_result_text_max_chars())
 }
 
+/// Project a failed external result into model-visible diagnostics, not its binary
+/// attachments or internal traces. The original payload remains in the tool ledger.
+pub(crate) fn external_tool_error_text(
+    result: Option<&Value>,
+    error: &str,
+    max_chars: Option<usize>,
+) -> String {
+    let limit = max_chars.unwrap_or_else(tool_result_text_max_chars).max(1);
+    let detail = result
+        .and_then(|value| diagnostic_payload(value, 0))
+        .map(|value| diagnostic_text(&value))
+        .filter(|text| !text.trim().is_empty());
+    let error = error.trim();
+    let content = match (error.is_empty(), detail) {
+        (true, Some(detail)) => detail,
+        (false, Some(detail)) if detail.trim() != error => format!("{error}\n{detail}"),
+        (false, _) => error.to_owned(),
+        (true, None) => "tool execution failed".to_owned(),
+    };
+    truncate_tool_text(&content, limit)
+}
+
+fn diagnostic_payload(value: &Value, depth: usize) -> Option<Value> {
+    if depth >= 16 || value.is_null() {
+        return None;
+    }
+    match value {
+        Value::Object(object) => {
+            if object
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| {
+                    matches!(
+                        kind,
+                        "image"
+                            | "audio"
+                            | "resource"
+                            | "resource_link"
+                            | "input_image"
+                            | "input_audio"
+                    )
+                })
+            {
+                return None;
+            }
+            let fields: serde_json::Map<String, Value> = object
+                .iter()
+                .filter_map(|(key, value)| {
+                    if matches!(
+                        key.as_str(),
+                        "data"
+                            | "blob"
+                            | "base64"
+                            | "image_url"
+                            | "audio_url"
+                            | "_model_input"
+                            | TRANSIENT_MODEL_INPUT_FIELD
+                            | "trace"
+                            | "stack"
+                            | "stackTrace"
+                            | "stack_trace"
+                            | "backtrace"
+                    ) {
+                        return None;
+                    }
+                    diagnostic_payload(value, depth + 1).map(|value| (key.clone(), value))
+                })
+                .collect();
+            (!fields.is_empty()).then_some(Value::Object(fields))
+        }
+        Value::Array(values) => {
+            let values: Vec<Value> = values
+                .iter()
+                .filter_map(|value| diagnostic_payload(value, depth + 1))
+                .collect();
+            (!values.is_empty()).then_some(Value::Array(values))
+        }
+        _ => Some(value.clone()),
+    }
+}
+
+fn diagnostic_text(value: &Value) -> String {
+    if let Some(text) = value.as_str() {
+        return text.to_owned();
+    }
+    if let Some(content) = value.get("content") {
+        if let Some(items) = content.as_array() {
+            let text = items
+                .iter()
+                .filter_map(|item| {
+                    (item.get("type").and_then(Value::as_str) == Some("text"))
+                        .then(|| {
+                            item.get("text")
+                                .or_else(|| item.get("value"))
+                                .and_then(Value::as_str)
+                        })
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.trim().is_empty() {
+                return text;
+            }
+        } else {
+            return diagnostic_text(content);
+        }
+    }
+    for key in ["text", "value", "_structured_result", "structuredContent"] {
+        if let Some(payload) = value.get(key) {
+            return diagnostic_text(payload);
+        }
+    }
+    value.to_string()
+}
+
 pub fn to_text_and_structured_result_with_transient(result: &Value) -> (String, Option<Value>) {
     to_text_and_structured_result_inner(result, true, tool_result_text_max_chars())
 }
@@ -214,10 +329,13 @@ fn tool_result_text_max_chars() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(16_000)
+        .unwrap_or(160_000)
 }
 
 pub fn truncate_tool_text(text: &str, max_chars: usize) -> String {
+    if let Some(diagnostic) = capability_description_budget_error(text, max_chars) {
+        return diagnostic;
+    }
     if max_chars == 0 {
         return String::new();
     }
@@ -226,24 +344,81 @@ pub fn truncate_tool_text(text: &str, max_chars: usize) -> String {
         return text.to_string();
     }
 
-    let marker = format!("\n...[truncated {} chars]...\n", total - max_chars);
-    let marker_chars = marker.chars().count();
-    if marker_chars >= max_chars {
-        return text.chars().take(max_chars).collect();
+    serde_json::json!({
+        "error": "tool_result_budget_exceeded",
+        "original_chars": total,
+        "budget_chars": max_chars,
+        "content_preserved": false,
+        "guidance": "The tool result was not returned as a damaged head/tail excerpt. Use the tool's offset/limit pagination, a managed artifact, or the Host tool_result_read reference when available."
+    })
+    .to_string()
+}
+
+/// Machine-readable capability definitions must never become damaged JSON.
+/// Small definitions pass through; over-budget definitions get a recoverable,
+/// explicit diagnostic rather than a surviving unrelated head/tail tool list.
+pub fn capability_description_budget_error(text: &str, max_chars: usize) -> Option<String> {
+    if text.chars().count() <= max_chars {
+        return None;
+    }
+    let value: Value = serde_json::from_str(text).ok()?;
+    let descriptor = value
+        .get("content")
+        .filter(|v| v.is_object())
+        .unwrap_or(&value);
+    if descriptor
+        .get("binding_schema_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+        && descriptor.get("disclosure_version").and_then(Value::as_u64) != Some(2)
+    {
+        return None;
+    }
+    let plugin = descriptor.get("plugin_option").and_then(Value::as_str)?;
+    Some(serde_json::json!({
+        "error":"capability_description_budget_exceeded",
+        "plugin_option":plugin,
+        "response_chars":text.chars().count(),
+        "budget_chars":max_chars,
+        "guidance":"No tool schema was truncated. Use capability_describe with query or smaller limit for an index, then a single tool_option. For a paged schema use its next_schema_offset. Follow only parameters advertised by this Run. If these fields are unavailable, create a new Run with the current capability policy; there is no fallback to full-catalog disclosure. Do not guess missing arguments or substitute unrelated raw tools."
+    }).to_string())
+}
+
+#[cfg(test)]
+mod capability_budget_tests {
+    use super::*;
+
+    #[test]
+    fn machine_catalog_overflow_is_valid_explicit_error_not_a_broken_definition() {
+        for wrapped in [false, true] {
+            let descriptor = serde_json::json!({"binding_schema_version":1,"plugin_option":"plugin_1",
+                "provider_id":"plugin:test","tools":[{"name":"browser_navigate",
+                    "input_schema":{"description":"中😀".repeat(15_000)}}]});
+            let value = if wrapped {
+                serde_json::json!({"content":descriptor,"is_error":false})
+            } else {
+                descriptor
+            };
+            let output = truncate_tool_text(&value.to_string(), 16_000);
+            let error: Value = serde_json::from_str(&output).expect("valid JSON diagnostic");
+            assert_eq!(error["error"], "capability_description_budget_exceeded");
+            assert_eq!(error["plugin_option"], "plugin_1");
+            assert!(output.chars().count() < 16_000);
+            assert!(!output.contains("...[truncated"));
+        }
     }
 
-    let head_chars = ((max_chars - marker_chars) * 3 / 5).max(1);
-    let tail_chars = (max_chars - marker_chars).saturating_sub(head_chars);
-    let head: String = text.chars().take(head_chars).collect();
-    let tail: String = text
-        .chars()
-        .rev()
-        .take(tail_chars)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{}{}{}", head, marker, tail)
+    #[test]
+    fn small_pages_are_preserved_and_unrelated_overflow_is_an_explicit_error() {
+        let page = serde_json::json!({"disclosure_version":2,"plugin_option":"plugin_1",
+            "view":"tool","tools":[{"input_schema":{"type":"object"}}]})
+        .to_string();
+        assert_eq!(truncate_tool_text(&page, 16_000), page);
+        let overflow: Value =
+            serde_json::from_str(&truncate_tool_text(&"x".repeat(20_000), 16_000)).unwrap();
+        assert_eq!(overflow["error"], "tool_result_budget_exceeded");
+        assert_eq!(overflow["original_chars"], 20_000);
+    }
 }
 
 #[cfg(test)]

@@ -217,6 +217,27 @@ final class LocalConnectorControlCenterViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isPerformingAction)
     }
 
+    func testPluginCapabilityChangesRefreshLocalAgentCatalog() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        var refreshCount = 0
+        viewModel.setPluginConfigurationChangedHandler {
+            refreshCount += 1
+        }
+
+        viewModel.installPlugin(id: "document")
+        try await waitUntil { refreshCount == 1 }
+
+        viewModel.setPluginEnabled(id: "document", enabled: false)
+        try await waitUntil { refreshCount == 2 }
+
+        viewModel.uninstallPlugin(id: "document")
+        try await waitUntil { refreshCount == 3 }
+
+        let mutationCount = await service.pluginMutationCount()
+        XCTAssertEqual(mutationCount, 3)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -258,6 +279,7 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     private var delayedModelCatalogContinuation: CheckedContinuation<Void, Never>?
     private var modelCatalogItems: [LocalConnectorModelConfig] = []
     private var delayedPairingContinuation: CheckedContinuation<Void, Never>?
+    private var pluginMutations = 0
     private var delayedSuspensionContinuation: CheckedContinuation<Void, Never>?
     private var shouldDelayNextPairing = false
     private var shouldDelayNextSuspension = false
@@ -422,11 +444,12 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
         requestedPluginRefreshFlags.append(refresh)
         return []
     }
-    func installPlugin(id: String) async throws { throw StubError.unimplemented }
-    func uninstallPlugin(id: String) async throws { throw StubError.unimplemented }
-    func updatePluginEnabled(id: String, enabled: Bool) async throws { throw StubError.unimplemented }
+    func installPlugin(id: String) async throws { pluginMutations += 1 }
+    func uninstallPlugin(id: String) async throws { pluginMutations += 1 }
+    func updatePluginEnabled(id: String, enabled: Bool) async throws { pluginMutations += 1 }
 
     func pluginRefreshFlags() -> [Bool] { requestedPluginRefreshFlags }
+    func pluginMutationCount() -> Int { pluginMutations }
 
     private static func historyEntry(id: String) -> LocalConnectorCommandHistoryEntry {
         .init(

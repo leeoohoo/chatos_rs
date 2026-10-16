@@ -92,17 +92,17 @@ final class PetMessagePanel: NSPanel {
     var onTextInputFocusRequest: ((NSResponder) -> Void)?
 
     override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+    override var canBecomeMain: Bool {
+        !styleMask.contains(.nonactivatingPanel)
+    }
 
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
         let accepted = super.makeFirstResponder(responder)
         guard accepted, let responder, responder is NSTextView else { return accepted }
 
-        // A non-activating pet panel can become key while another application
-        // remains active. That is enough for raw key events, but macOS input
-        // methods only present their candidate UI for the active application.
-        // Wait until AppKit has completed the responder change before asking
-        // the controller to activate ChatOS around this specific text input.
+        // Focus can arrive through click-through or keyboard navigation. Defer
+        // the callback until AppKit has completed the responder change so the
+        // non-activating panel can verify and retain key focus.
         DispatchQueue.main.async { [weak self, weak responder] in
             guard let self, let responder, self.firstResponder === responder else { return }
             self.onTextInputFocusRequest?(responder)
@@ -116,24 +116,15 @@ final class PetMessagePanel: NSPanel {
         } else {
             nil
         }
-        if event.type == .leftMouseDown, !isKeyWindow {
+        if let clickedTextInput, let onTextInputFocusRequest {
+            // A non-activating panel can become key without making its app
+            // active. Establish that key/responder relationship before AppKit
+            // dispatches the click to the editor.
+            onTextInputFocusRequest(clickedTextInput)
+        } else if event.type == .leftMouseDown, !isKeyWindow {
             makeKey()
         }
         super.sendEvent(event)
-        guard let clickedTextInput else { return }
-
-        // The editor can remain first responder while another application is
-        // active. In that case AppKit does not call makeFirstResponder again,
-        // so focus-change observation alone cannot start the activating input
-        // window. Treat an actual click inside NSTextView as an explicit input
-        // request and defer the window handoff until this mouse event finishes.
-        DispatchQueue.main.async { [weak self, weak clickedTextInput] in
-            guard let self,
-                  let clickedTextInput,
-                  clickedTextInput.window === self,
-                  self.firstResponder === clickedTextInput else { return }
-            self.onTextInputFocusRequest?(clickedTextInput)
-        }
     }
 
     func textInputResponder(at windowPoint: NSPoint) -> NSTextView? {
@@ -304,6 +295,9 @@ enum PetOverlayPanelFactory {
         acceptsKeyboardInput: Bool = false
     ) -> NSPanel {
         let contentRect = NSRect(origin: .zero, size: size)
+        // Apple defines this style as a panel that can take key focus while
+        // leaving the owning application inactive. That is what lets Quick
+        // Chat accept text without leaving the user's current application.
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
         let panel: NSPanel = acceptsKeyboardInput
             ? PetMessagePanel(
@@ -327,9 +321,8 @@ enum PetOverlayPanelFactory {
         panel.animationBehavior = .utilityWindow
         panel.isMovable = true
         panel.isMovableByWindowBackground = false
-        // SwiftUI's TextEditor does not reliably advertise that a borderless
-        // non-activating panel needs key status. The interactive message panel
-        // therefore takes key status on click while the pet panel stays passive.
+        // Interactive panels explicitly take key status on click while the pet
+        // panel stays passive.
         panel.becomesKeyOnlyIfNeeded = !acceptsKeyboardInput
         return panel
     }
@@ -346,10 +339,11 @@ enum PetOverlayPanelFactory {
         panel.hasShadow = false
         panel.isReleasedWhenClosed = false
         panel.hidesOnDeactivate = false
-        panel.level = .popUpMenu
+        panel.level = .floating
         panel.animationBehavior = .utilityWindow
         panel.collectionBehavior = [
             .canJoinAllSpaces,
+            .canJoinAllApplications,
             .fullScreenAuxiliary,
             .transient,
             .ignoresCycle,
@@ -430,7 +424,7 @@ enum PetOverlaySizing {
         case .waitingForUser:
             height = 470
         case .succeeded, .cancelled:
-            height = min(345, 235 + (completedTaskCount > 1 ? 110 : 0))
+            height = completedTaskCount > 1 ? 280 : 160
         }
         return NSSize(width: PetOverlayLayout.expandedMessageWidth, height: height)
     }

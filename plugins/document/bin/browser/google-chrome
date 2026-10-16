@@ -1,0 +1,21 @@
+#!/bin/sh
+# OfficeCLI's implicit headless profile uses macOS shared temporary storage.
+# Pin every render to its own profile within the host-granted Plugin cache.
+set -eu
+: "${CHATOS_PLUGIN_CACHE_DIR:?Missing isolated Plugin cache}"
+browser_bin=''
+for candidate in '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' '/Applications/Chromium.app/Contents/MacOS/Chromium' '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'; do
+  if [ -x "$candidate" ]; then browser_bin="$candidate"; break; fi
+done
+if [ -z "$browser_bin" ]; then
+  echo 'No supported installed Chromium browser is available.' >&2
+  exit 69
+fi
+mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
+render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/render.XXXXXXXX")
+cleanup() {
+  # mktemp resolved this exact per-render directory; never remove the cache root.
+  /bin/rm -rf -- "$render_profile"
+}
+trap cleanup EXIT
+"$browser_bin" "--user-data-dir=$render_profile" --no-first-run --no-default-browser-check "$@"

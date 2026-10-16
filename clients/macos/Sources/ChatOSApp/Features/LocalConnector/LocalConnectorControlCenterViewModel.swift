@@ -46,6 +46,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var signedOutSuspensionGeneration: UInt64 = 0
     private var servicePreparationTask: Task<Void, Never>?
     private var modelConfigurationChanged: (@MainActor @Sendable () -> Void)?
+    private var pluginConfigurationChanged: (@MainActor @Sendable () -> Void)?
 
     init(
         service: any LocalConnectorControlServicing
@@ -84,6 +85,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func setModelConfigurationChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) { modelConfigurationChanged = handler }
+    func setPluginConfigurationChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) { pluginConfigurationChanged = handler }
     func refreshStatus(
         pairIfNeeded: Bool = false,
         expectedOwnerUserID: String? = nil,
@@ -569,25 +571,32 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         performPluginAction(
             id: id,
             successNotice: "Plugin 已完成校验并安装到本机。",
-            onSuccess: onSuccess
+            onSuccess: onSuccess,
+            capabilitiesChanged: true
         ) {
             try await self.service.installPlugin(id: id)
         }
     }
 
     func uninstallPlugin(id: String) {
-        performPluginAction(id: id, successNotice: "Plugin 已卸载。") {
+        performPluginAction(
+            id: id,
+            successNotice: "Plugin 已卸载。",
+            capabilitiesChanged: true
+        ) {
             try await self.service.uninstallPlugin(id: id)
         }
     }
 
     func setPluginEnabled(id: String, enabled: Bool) {
-        performAction(successNotice: enabled ? "Plugin 已启用。" : "Plugin 已停用。") {
+        performAction(successNotice: enabled ? "Plugin 已启用。" : "Plugin 已停用。") { [weak self] in
+            guard let self else { return }
             try await self.service.updatePluginEnabled(id: id, enabled: enabled)
             try Task.checkCancellation()
             let nextPlugins = try await self.service.fetchPlugins()
             try Task.checkCancellation()
             self.plugins = nextPlugins
+            self.pluginConfigurationChanged?()
         }
     }
 
@@ -753,6 +762,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         successNotice: String,
         onSuccess: (@MainActor () -> Void)? = nil,
         forceRefreshPluginsAfterOperation: Bool = false,
+        capabilitiesChanged: Bool = false,
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
         pluginActionTasks[id]?.cancel()
@@ -777,6 +787,9 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                       pluginActionRequestIDs[id] == requestID else { return }
                 plugins = nextPlugins
                 notice = successNotice
+                if capabilitiesChanged {
+                    pluginConfigurationChanged?()
+                }
                 onSuccess?()
             } catch is CancellationError {
                 return

@@ -52,6 +52,7 @@ fn invocation(index: u32, tool_name: &str, arguments: Value) -> LocalAgentToolIn
         batch_id: format!("notepad-batch-{index}"),
         call_id: format!("notepad-call-{index}"),
         tool_name: tool_name.to_string(),
+        execution_route: chatos_local_agent_protocol::LocalAgentToolExecutionRoute::Shared,
         arguments,
         side_effecting: matches!(
             tool_name,

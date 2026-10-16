@@ -7,7 +7,10 @@ use chatos_ai_runtime::{
     tool_call::{clone_tool_call_arguments, extract_tool_call_id, extract_tool_call_name},
     AiRuntimeResult, AiSingleStepOutcome, ContextualTurnRequest, ContextualTurnRunner,
 };
-use chatos_local_agent_protocol::{LocalAgentRunClaim, LocalAgentStepOutcome, LocalAgentToolCall};
+use chatos_local_agent_protocol::{
+    completed_task_acceptance_report, validate_task_acceptance_report, LocalAgentRunClaim,
+    LocalAgentStepOutcome, LocalAgentToolCall,
+};
 use chatos_local_agent_runtime::LocalAgentProfile;
 use chatos_mcp_runtime::ToolResult;
 use serde_json::{json, Value};
@@ -209,6 +212,40 @@ fn reduce_ai_step_outcome_for_claim(
 ) -> Result<LocalAgentStepOutcome, String> {
     if claim.run.profile_key == "task_execution"
         && claim.run.owner_entity_type == "task"
+        && claim
+            .run
+            .input
+            .get("acceptance_report_version")
+            .and_then(Value::as_u64)
+            == Some(1)
+    {
+        if let (AiSingleStepOutcome::Final(response), Some(report)) = (
+            &outcome,
+            completed_task_acceptance_report(claim.run.continuation_input.as_ref()),
+        ) {
+            validate_task_acceptance_report(&claim.run.input, report)?;
+            // Do not let a second model response rewrite an already-checked deliverable.
+            let mut output = response_value(response.clone());
+            output["content"] = report["final_response"].clone();
+            output["task_acceptance"] = report.clone();
+            return Ok(LocalAgentStepOutcome::Succeed { output });
+        }
+    }
+    if selected_plugin_task_handoff_required(claim) {
+        if let AiSingleStepOutcome::Final(response) = outcome {
+            return Ok(LocalAgentStepOutcome::Continue {
+                checkpoint: response_checkpoint(
+                    response,
+                    Some(json!({
+                        "reason": "selected_plugin_task_handoff_required",
+                        "input_items": [selected_plugin_task_handoff_required_message()]
+                    })),
+                ),
+            });
+        }
+    }
+    if claim.run.profile_key == "task_execution"
+        && claim.run.owner_entity_type == "task"
         && !task_outcome_reported(claim.run.continuation_input.as_ref())
     {
         return match outcome {
@@ -225,6 +262,44 @@ fn reduce_ai_step_outcome_for_claim(
         };
     }
     reduce_ai_step_outcome(outcome, now_unix_ms, tool_safety)
+}
+
+fn selected_plugin_task_handoff_required(claim: &LocalAgentRunClaim) -> bool {
+    claim.run.profile_key == "main_chat"
+        && claim
+            .run
+            .input
+            .pointer("/explicit_capability_selection/kind")
+            .and_then(Value::as_str)
+            == Some("plugin")
+        && !claim
+            .run
+            .continuation_input
+            .as_ref()
+            .and_then(|value| value.get("invocations"))
+            .and_then(Value::as_array)
+            .is_some_and(|invocations| {
+                invocations.iter().any(|invocation| {
+                    invocation.get("tool_name").and_then(Value::as_str)
+                        == Some("wait_for_task_completion")
+                        && invocation.get("status").and_then(Value::as_str) == Some("succeeded")
+                        && invocation
+                            .get("result")
+                            .and_then(|result| result.get("accepted"))
+                            .and_then(Value::as_bool)
+                            == Some(true)
+                })
+            })
+}
+
+fn selected_plugin_task_handoff_required_message() -> Value {
+    message_item(
+        "system",
+        Value::String(
+            "[Selected Plugin Task Handoff Required]\nThe previous response cannot finish this Main Chat turn because the user explicitly selected a Plugin and no durable Task handoff has been accepted. Call `create_task` now for the user's requested deliverable; the Host will bind the exact selected Plugin. Do not answer the request in Main Chat and do not ask clarification questions here. Enable Ask User on the Task when task-local blocking details may be needed, so the Task can ask there. After arranging the Task, call `wait_for_task_completion` exactly once."
+                .to_string(),
+        ),
+    )
 }
 
 fn task_outcome_reported(continuation: Option<&Value>) -> bool {
@@ -249,7 +324,7 @@ fn task_outcome_report_required_message() -> Value {
     message_item(
         "system",
         Value::String(
-            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Call `task_run_process_report_outcome` now exactly once with `status` set to `succeeded`, `failed`, or `blocked` and a short concrete `reason`. Do not call any other tool. After that tool succeeds, provide the final user-facing response without doing more work."
+            "[Task Outcome Required]\nThe previous response cannot finish this run because no explicit task outcome was reported. Check the bound Task criteria before calling `task_run_process_report_outcome`. For acceptance_report_version=1 include one acceptance_checks entry per criterion (zero-based index, passed/failed/not_verified, concrete evidence) and the exact final_response. Report succeeded only when all Task criteria pass; otherwise fix within scope or report failed/blocked. Obey final_response_max_chars including Markdown and whitespace. After an accepted report, use no more tools; the Host delivers its checked final_response unchanged."
                 .to_string(),
         ),
     )
@@ -482,8 +557,63 @@ mod tests {
     }
 
     #[test]
-    fn task_final_without_reported_outcome_continues_with_required_guidance() {
-        let claim = LocalAgentRunClaim {
+    fn composer_selected_plugin_cannot_finish_before_task_handoff() {
+        let mut claim = task_claim();
+        claim.run.owner_entity_type = "conversation_turn".to_string();
+        claim.run.owner_entity_id = "turn-1".to_string();
+        claim.run.profile_key = "main_chat".to_string();
+        claim.run.input = json!({
+            "message": "帮我设计咖啡店活动网页首屏",
+            "explicit_capability_selection": {
+                "kind": "plugin",
+                "plugin_key": "web-design-plugin",
+                "display_name": "Web Design Studio"
+            }
+        });
+
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10_000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .expect("reduce selected Plugin final");
+
+        let LocalAgentStepOutcome::Continue { checkpoint } = outcome else {
+            panic!("selected Plugin must dispatch a Task before Main Chat can finish")
+        };
+        assert_eq!(
+            checkpoint["continuation"]["reason"],
+            "selected_plugin_task_handoff_required"
+        );
+        let guidance = checkpoint["continuation"]["input_items"][0]["content"]
+            .as_str()
+            .expect("corrective guidance");
+        assert!(guidance.contains("create_task"));
+        assert!(guidance.contains("Ask User"));
+        assert!(!guidance.contains("Requirement Survey"));
+
+        claim.run.continuation_input = Some(json!({
+            "invocations": [{
+                "tool_name": "wait_for_task_completion",
+                "status": "succeeded",
+                "result": {"accepted": true}
+            }]
+        }));
+        assert!(matches!(
+            reduce_ai_step_outcome_for_claim(
+                AiSingleStepOutcome::Final(response(None)),
+                &claim,
+                10_000,
+                &ConservativeToolSafetyPolicy,
+            )
+            .expect("reduce handed-off Plugin final"),
+            LocalAgentStepOutcome::Succeed { .. }
+        ));
+    }
+
+    fn task_claim() -> LocalAgentRunClaim {
+        LocalAgentRunClaim {
             worker_id: "worker".to_string(),
             claim_token: "token".to_string(),
             run: chatos_local_agent_protocol::LocalAgentRunRecord {
@@ -511,7 +641,12 @@ mod tests {
                 created_at_unix_ms: 1,
                 updated_at_unix_ms: 2,
             },
-        };
+        }
+    }
+
+    #[test]
+    fn task_final_without_reported_outcome_continues_with_required_guidance() {
+        let claim = task_claim();
 
         let outcome = reduce_ai_step_outcome_for_claim(
             AiSingleStepOutcome::Final(response(None)),
@@ -543,5 +678,38 @@ mod tests {
                 "result": {"reported": true}
             }]
         }))));
+    }
+
+    #[test]
+    fn structured_final_delivers_checked_text_not_a_later_model_rewrite() {
+        let mut claim = task_claim();
+        claim.run.input = json!({"acceptance_report_version":1,"acceptance_criteria":["Evidence-based review"],"final_response_max_chars":100});
+        let report = json!({"reported":true,"status":"succeeded","reason":"Review completed; artifact still needs repairs","final_response":"Review complete: the artifact fails its content requirements.","acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Compared the artifact against the requested criteria"}]});
+        claim.run.continuation_input = Some(
+            json!({"invocations":[{"tool_name":"task_run_process_report_outcome","status":"succeeded","result":report}]}),
+        );
+        let mut rewritten = response(None);
+        rewritten.content = "x".repeat(500);
+        let outcome = reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(rewritten),
+            &claim,
+            10000,
+            &ConservativeToolSafetyPolicy,
+        )
+        .unwrap();
+        let LocalAgentStepOutcome::Succeed { output } = outcome else {
+            panic!("expected completed review")
+        };
+        assert_eq!(output["content"], report["final_response"]);
+        assert_eq!(output["task_acceptance"]["status"], "succeeded");
+        claim.run.continuation_input.as_mut().unwrap()["invocations"][0]["result"]
+            ["acceptance_checks"][0]["status"] = json!("not_verified");
+        assert!(reduce_ai_step_outcome_for_claim(
+            AiSingleStepOutcome::Final(response(None)),
+            &claim,
+            10000,
+            &ConservativeToolSafetyPolicy
+        )
+        .is_err());
     }
 }

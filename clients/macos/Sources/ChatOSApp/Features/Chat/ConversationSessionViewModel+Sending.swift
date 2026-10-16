@@ -5,6 +5,7 @@ extension ConversationSessionViewModel {
     func sendDraft() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let outgoingAttachments = attachments
+        let outgoingCapability = selectedCapability
         guard (!text.isEmpty || !outgoingAttachments.isEmpty), !isSending else { return }
         guard let commandService else {
             sendError = "聊天发送服务尚未连接。"
@@ -12,6 +13,10 @@ extension ConversationSessionViewModel {
         }
 
         if let activeTurn = turns.last(where: { $0.status == .streaming }) {
+            guard outgoingCapability == nil else {
+                sendError = "当前轮次仍在执行。请等待结束或停止后，再用所选能力发起新任务。"
+                return
+            }
             sendGuidance(
                 text,
                 attachments: outgoingAttachments,
@@ -19,7 +24,12 @@ extension ConversationSessionViewModel {
                 using: commandService
             )
         } else {
-            sendNewTurn(text, attachments: outgoingAttachments, using: commandService)
+            sendNewTurn(
+                text,
+                attachments: outgoingAttachments,
+                explicitCapabilitySelection: outgoingCapability,
+                using: commandService
+            )
         }
     }
 
@@ -54,6 +64,7 @@ extension ConversationSessionViewModel {
     private func sendNewTurn(
         _ text: String,
         attachments: [ConversationAttachmentDraft],
+        explicitCapabilitySelection: ConversationExplicitCapabilitySelection? = nil,
         using service: any ConversationCommandServicing
     ) {
         let turn = makeOptimisticTurn(text, attachments: attachments)
@@ -79,14 +90,20 @@ extension ConversationSessionViewModel {
                         turnID: turn.id,
                         content: text,
                         attachments: attachments,
-                        reasoningEnabled: reasoningEnabled
+                        reasoningEnabled: reasoningEnabled,
+                        explicitCapabilitySelection: explicitCapabilitySelection
                     )
                 )
                 refreshLatestSilently()
             } catch {
                 await historyStore.discardOptimisticTurn(sessionID: sessionID, turnID: turn.id)
                 await refreshSnapshot()
-                restoreDraft(text, attachments: attachments, error: error)
+                restoreDraft(
+                    text,
+                    attachments: attachments,
+                    explicitCapabilitySelection: explicitCapabilitySelection,
+                    error: error
+                )
             }
             isSending = false
         }
@@ -96,6 +113,7 @@ extension ConversationSessionViewModel {
         draft = ""
         attachments = []
         attachmentError = nil
+        selectedCapability = nil
         sendError = nil
         isSending = true
     }
@@ -103,6 +121,7 @@ extension ConversationSessionViewModel {
     private func restoreDraft(
         _ text: String,
         attachments: [ConversationAttachmentDraft],
+        explicitCapabilitySelection: ConversationExplicitCapabilitySelection? = nil,
         error: Error
     ) {
         if draft.isEmpty { draft = text }
@@ -111,6 +130,9 @@ extension ConversationSessionViewModel {
             contentsOf: attachments.filter { !currentIDs.contains($0.id) },
             at: 0
         )
+        if selectedCapability == nil {
+            selectedCapability = explicitCapabilitySelection
+        }
         sendError = error.localizedDescription
     }
 

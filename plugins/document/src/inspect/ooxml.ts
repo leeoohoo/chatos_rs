@@ -20,6 +20,7 @@ function safeArchiveName(name: string): boolean {
 function shouldRead(name: string): boolean {
   return ALWAYS_READ.has(name)
     || name === 'word/document.xml'
+    || name === 'word/styles.xml'
     || name === 'xl/workbook.xml'
     || name === 'ppt/presentation.xml';
 }
@@ -105,10 +106,33 @@ export function inspectOoxml(data: Uint8Array, extension: string): {
 
   if (kind === 'docx') {
     const documentXml = xml(entries, 'word/document.xml');
+    const stylesXml = xml(entries, 'word/styles.xml');
     if (!documentXml) throw new DocumentError('INVALID_DOCUMENT', 'The DOCX document body is missing or too large to inspect.');
+    const paragraphStyles = attributeValues(documentXml, 'w:pStyle', 'w:val');
+    const pageWidth = attributeValues(documentXml, 'w:pgSz', 'w:w')[0];
+    const pageHeight = attributeValues(documentXml, 'w:pgSz', 'w:h')[0];
+    const marginTop = attributeValues(documentXml, 'w:pgMar', 'w:top')[0];
+    const marginBottom = attributeValues(documentXml, 'w:pgMar', 'w:bottom')[0];
+    const marginLeft = attributeValues(documentXml, 'w:pgMar', 'w:left')[0];
+    const marginRight = attributeValues(documentXml, 'w:pgMar', 'w:right')[0];
     structure = {
       paragraphs: countTags(documentXml, 'w:p'),
       tables: countTags(documentXml, 'w:tbl'),
+      headings: paragraphStyles.filter((style) => /^Heading[1-6]$/i.test(style)).length,
+      listItems: countTags(documentXml, 'w:numPr'),
+      sections: countTags(documentXml, 'w:sectPr'),
+      headers: names.filter((name) => /^word\/header\d+\.xml$/i.test(name)).length,
+      footers: names.filter((name) => /^word\/footer\d+\.xml$/i.test(name)).length,
+      paragraphStyles: [...new Set(paragraphStyles)].slice(0, 100),
+      definedStyles: attributeValues(stylesXml, 'w:style', 'w:styleId').slice(0, 200),
+      pageLayoutTwips: {
+        ...(pageWidth ? { width: pageWidth } : {}),
+        ...(pageHeight ? { height: pageHeight } : {}),
+        ...(marginTop ? { marginTop } : {}),
+        ...(marginBottom ? { marginBottom } : {}),
+        ...(marginLeft ? { marginLeft } : {}),
+        ...(marginRight ? { marginRight } : {})
+      },
       embeddedMediaFiles: names.filter((name) => name.startsWith('word/media/')).length
     };
     mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';

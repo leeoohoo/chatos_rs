@@ -100,7 +100,7 @@ struct MediaStudioImagePreview: View {
                     throw MediaStudioImageLoader.ImageError.invalidImage
                 }
                 try Task.checkCancellation()
-                image = NSImage(cgImage: prepared.image, size: .zero)
+                image = prepared.makeNSImage()
             } catch {
                 guard !Task.isCancelled else { return }
                 errorMessage = error.localizedDescription

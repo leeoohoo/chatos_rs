@@ -11,15 +11,18 @@ actor NativeLocalAgentPluginToolExecutor {
     }
 
     private let connector: NativeLocalConnectorService
+    private let skillActivationClient: NativeLocalAgentToolClient?
     private let idleExpiration: Duration
     private var sessions: [String: Session] = [:]
     private var expirationTasks: [String: Task<Void, Never>] = [:]
 
     init(
         connector: NativeLocalConnectorService,
+        host: (any LocalAgentHostClientServicing)? = nil,
         idleExpiration: Duration = .seconds(300)
     ) {
         self.connector = connector
+        skillActivationClient = host.map(NativeLocalAgentToolClient.init(host:))
         self.idleExpiration = idleExpiration
     }
 
@@ -98,9 +101,20 @@ actor NativeLocalAgentPluginToolExecutor {
             projectContext: context.applicationContext,
             executionRootURL: context.executionRootURL,
             workspaceScopeID: context.workspaceScopeID,
+            builtinCapabilities: context.toolAuthorization.brokerBuiltinCapabilities,
             pluginIDs: context.toolAuthorization.isLegacyUnrestricted
                 ? nil
-                : context.toolAuthorization.pluginKeys.sorted()
+                : context.toolAuthorization.pluginKeys.sorted(),
+            pluginReleaseSnapshots: context.toolAuthorization.pluginReleaseSnapshots,
+            productSkillBundle: try await skillActivationClient?.skillBundle(
+                ownerUserID: ownerUserID,
+                runID: runID
+            ),
+            selectedExternalMCPIDs: context.toolAuthorization.externalMCPConfigIDs,
+            preactivatedSkillRefs: try await skillActivationClient?.activatedSkillRefs(
+                ownerUserID: ownerUserID,
+                runID: runID
+            ) ?? []
         )
         sessions[runID] = .init(
             ownerUserID: ownerUserID,

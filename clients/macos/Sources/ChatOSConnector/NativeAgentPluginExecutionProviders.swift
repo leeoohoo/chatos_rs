@@ -315,10 +315,17 @@ extension NativeLocalConnectorService {
             kind: .progress,
             runID: runContext.runID,
             stage: audit.stage,
-            detail: String(audit.detail.prefix(16_000)),
+            detail: Self.agentBuiltinAuditDetailPreview(audit.detail),
             assetUpdateSuggestions: [],
             nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
         )
+    }
+
+    static func agentBuiltinAuditDetailPreview(_ detail: String) -> String {
+        let maximumCharacters = 16_000
+        guard detail.count > maximumCharacters else { return detail }
+        let marker = "\n[…进度详情为预览；完整工具结果请通过对应分页读取工具或交付文件查看。]"
+        return String(detail.prefix(maximumCharacters - marker.count)) + marker
     }
 
     func cancelAgentBuiltinTools(runID: String) async {

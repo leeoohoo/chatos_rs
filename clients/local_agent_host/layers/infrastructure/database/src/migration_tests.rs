@@ -100,7 +100,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
     assert!(backup_path
         .file_name()
         .and_then(|value| value.to_str())
-        .is_some_and(|name| name.contains(".pre-migration-v18-to-v29-")));
+        .is_some_and(|name| name.contains(".pre-migration-v18-to-v32-")));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -181,7 +181,7 @@ async fn version_nineteen_discards_ownerless_control_plane_snapshots() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 29);
+    assert_eq!(schema_version, 32);
 
     storage.pool.close().await;
     drop(storage);
@@ -245,7 +245,23 @@ async fn version_twenty_nine_backfills_failed_conversation_messages() {
     let mut connection = SqliteConnection::connect_with(&options)
         .await
         .expect("open version 28 database");
-    sqlx::query("DELETE FROM client_schema_migrations WHERE version = 29")
+    sqlx::query("DROP TABLE local_requirement_plans")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 32 table");
+    sqlx::query("DROP TABLE local_task_followup_reviews")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 30 table");
+    sqlx::query("DROP INDEX local_agent_tool_invocations_route_claimable")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 31 route index");
+    sqlx::query("ALTER TABLE local_agent_tool_invocations DROP COLUMN execution_route")
+        .execute(&mut connection)
+        .await
+        .expect("remove version 31 route column");
+    sqlx::query("DELETE FROM client_schema_migrations WHERE version >= 29")
         .execute(&mut connection)
         .await
         .expect("rewind schema version");
@@ -338,7 +354,7 @@ async fn version_twenty_nine_backfills_failed_conversation_messages() {
             .fetch_one(&migrated.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 29);
+    assert_eq!(schema_version, 32);
 
     migrated.pool.close().await;
     drop(migrated);

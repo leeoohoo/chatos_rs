@@ -335,6 +335,7 @@ async fn tool_recovery_is_owner_scoped() {
             "event-claim-user-1-tool",
             None,
             &[],
+            None,
         )
         .await
         .expect("claim user-1 tool")

@@ -77,8 +77,8 @@ struct ReasoningLevelControl: View {
             .frame(height: 28)
 
             Text(model.localized(
-                "可选档位由当前模型的厂商能力决定",
-                english: "Available levels are determined by the current model provider"
+                "只显示当前模型支持的推理档位",
+                english: "Only reasoning levels supported by the current model are shown"
             ))
             .appFont(.caption2)
             .foregroundStyle(.secondary)

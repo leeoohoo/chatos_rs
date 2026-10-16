@@ -2,302 +2,6 @@ import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
-/// Starts already-installed stdio MCP plugins directly from the client for one local Agent run.
-/// It deliberately bypasses relay request signing because there is no remote caller: account,
-/// project, Agent and plugin selection have already been fixed by local application state.
-extension NativeLocalConnectorService {
-    public func installedAgentPlugins(
-        ownerUserID: String
-    ) async throws -> [NativeInstalledAgentPlugin] {
-        guard state.user?.id == ownerUserID else {
-            throw NativePluginRuntimeError.invalidRequest("本机 Plugin 不属于当前账户")
-        }
-        await repairLegacyPluginIntegrityRecordsIfNeeded()
-        return (state.installedPluginRecords ?? [:]).values.compactMap { record in
-            guard state.pluginPreferences[record.pluginID] ?? true,
-                  NativePluginInstallationIntegrity.status(record: record) == .verified,
-                  let manifest = try? Self.agentPluginManifest(record: record) else { return nil }
-            return .init(
-                id: record.pluginID,
-                pluginKey: record.pluginKey,
-                displayName: manifest.interface?.displayName ?? manifest.name,
-                description: manifest.description,
-                componentCount: manifest.mcpServers.count
-            )
-        }.sorted {
-            if $0.displayName != $1.displayName {
-                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-            }
-            return $0.id < $1.id
-        }
-    }
-
-    public func makeAgentPluginToolProviders(
-        ownerUserID: String,
-        runContext: LocalAgentChatRunContext,
-        pluginIDs: [String],
-        projectContext: LocalConnectorPluginApplicationContext
-    ) async throws -> [any AgentToolProvider] {
-        try await makeAgentPluginSkillToolProviders(
-            ownerUserID: ownerUserID,
-            runContext: runContext,
-            pluginIDs: pluginIDs,
-            projectContext: projectContext
-        ).map { $0 as any AgentToolProvider }
-    }
-
-    func makeAgentPluginSkillToolProviders(
-        ownerUserID: String,
-        runContext: LocalAgentChatRunContext,
-        pluginIDs: [String],
-        projectContext: LocalConnectorPluginApplicationContext,
-        fallbackWorkspaceID: String? = nil,
-        fallbackWorkspaceRootURL: URL? = nil,
-        executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat
-    ) async throws -> [NativeAgentPluginToolProvider] {
-        guard state.user?.id == ownerUserID,
-              runContext.ownerUserID == ownerUserID,
-              let deviceID = state.deviceID else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前账户或项目不匹配")
-        }
-        let resolvedProject: NativeResolvedProjectPath?
-        if let rawProjectRoot = projectContext.projectRoot {
-            guard projectContext.projectID == runContext.projectID else {
-                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 与当前项目不匹配")
-            }
-            resolvedProject = try resolveProjectPath(rawProjectRoot)
-        } else {
-            guard projectContext.projectID == nil,
-                  runContext.projectID.hasPrefix("direct:") else {
-                throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少项目上下文")
-            }
-            resolvedProject = nil
-        }
-        guard let workspaceRootURL = resolvedProject?.absoluteURL ?? fallbackWorkspaceRootURL,
-              let workspaceID = resolvedProject?.workspace.id ?? fallbackWorkspaceID else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少工作目录")
-        }
-        let selectedPluginIDs = Array(Set(pluginIDs)).sorted()
-        guard selectedPluginIDs.count <= 100 else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent 选择的 Plugin 数量无效")
-        }
-        var providers: [NativeAgentPluginToolProvider] = []
-        for pluginID in selectedPluginIDs {
-            guard state.pluginPreferences[pluginID] ?? true,
-                  let record = state.installedPluginRecords?[pluginID] else {
-                throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin 未安装或已停用：\(pluginID)")
-            }
-            let manifest = try Self.agentPluginManifest(record: record)
-            let installationURL = URL(
-                fileURLWithPath: record.installationPath,
-                isDirectory: true
-            )
-            let skillSnapshot = try PluginSkillSnapshot.load(
-                installationRoot: installationURL,
-                relativeSkillDirectories: manifest.skills.map(\.path)
-            )
-            let skillSession = PluginToolSkillSession(snapshot: skillSnapshot)
-            let permissionSnapshot = Set(manifest.permissions.map(\.permission))
-            for componentKey in manifest.mcpServers.keys.sorted() {
-                let adapterSessionID = "agent-" + UUID().uuidString.lowercased()
-                if componentKey == NativeBrowserPluginIdentity.componentKey {
-                    await browserExtensionPairingRuntime.stop()
-                }
-                let launch = try NativePluginManifestLoader.prepare(
-                    record: record,
-                    manifest: manifest,
-                    componentKey: componentKey,
-                    serverKey: componentKey,
-                    adapterSessionID: adapterSessionID,
-                    ownerUserID: ownerUserID,
-                    deviceID: deviceID,
-                    workspaceID: workspaceID,
-                    workspaceRoot: workspaceRootURL,
-                    projectID: projectContext.projectID,
-                    projectName: projectContext.projectName,
-                    permissionSnapshot: permissionSnapshot,
-                    runtimeRootURL: pluginRuntimeRootURL
-                )
-                let client = NativePluginStdioClient(launch: launch)
-                do {
-                    try await client.start()
-                    let initialized = try await client.initialize()
-                    let tools = try Self.validatedAgentPluginTools(initialized.tools)
-                    let identity = NativePluginRuntimeStore.Identity(
-                        runID: runContext.runID,
-                        pluginID: pluginID,
-                        releaseID: record.releaseID,
-                        version: record.version,
-                        artifactSHA256: record.artifactSHA256,
-                        componentKey: componentKey,
-                        adapterSessionID: adapterSessionID,
-                        projectID: projectContext.projectID,
-                        requiresExclusiveExecution: launch.server.requiresExclusiveExecution
-                    )
-                    await pluginRuntimeStore.insert(
-                        identity: identity,
-                        client: client,
-                        tools: tools,
-                        permissionSnapshot: permissionSnapshot,
-                        displayName: launch.displayName,
-                        visualSessionURL: launch.visualSessionURL,
-                        artifactURL: launch.artifactURL,
-                        projectRootURL: workspaceRootURL,
-                        workspaceID: workspaceID
-                    )
-                    await pluginRuntimeStore.bindOwner(
-                        .init(
-                            conversationID: runContext.roomID,
-                            sourceUserMessageID: runContext.triggerMessageID,
-                            taskID: runContext.deliveryID,
-                            taskRunID: runContext.runID,
-                            taskTitle: "\(executionPresentation.taskTitlePrefix) · \(launch.displayName)"
-                        ),
-                        adapterSessionID: adapterSessionID
-                    )
-                    do {
-                        providers.append(try NativeAgentPluginToolProvider(
-                            service: self,
-                            runtimeStore: pluginRuntimeStore,
-                            identity: identity,
-                            tools: tools,
-                            displayName: launch.displayName,
-                            ownerUserID: ownerUserID,
-                            projectRootURL: workspaceRootURL,
-                            workspaceID: workspaceID,
-                            permissionSnapshot: permissionSnapshot,
-                            executionPresentation: executionPresentation,
-                            pluginSkillSnapshot: skillSnapshot,
-                            pluginSkillSession: skillSession
-                        ))
-                    } catch {
-                        _ = await pluginRuntimeStore.cancel(
-                            adapterSessionID: adapterSessionID,
-                            invocationID: nil
-                        )
-                        throw error
-                    }
-                } catch {
-                    await client.terminate()
-                    try? FileManager.default.removeItem(at: launch.visualSessionURL)
-                    throw error
-                }
-            }
-        }
-        return providers
-    }
-    /// Creates a compact, run-scoped capability broker. It exposes only discovery/invocation
-    /// tools to the model and starts a concrete Plugin only after the Agent selects it.
-    public func makeAgentCapabilityToolProvider(
-        ownerUserID: String,
-        runContext: LocalAgentChatRunContext,
-        projectContext: LocalConnectorPluginApplicationContext,
-        executionPlan: LocalAgentTodoExecutionPlan
-    ) async throws -> any AgentToolProvider {
-        guard state.user?.id == ownerUserID,
-              runContext.ownerUserID == ownerUserID,
-              projectContext.projectID == runContext.projectID,
-              let projectRoot = projectContext.projectRoot else {
-            throw NativePluginRuntimeError.invalidRequest("本地 Agent 能力目录与当前账户或项目不匹配")
-        }
-        guard runContext.lane == .executor else {
-            throw NativePluginRuntimeError.invalidRequest("通讯线程不能装配项目文件、终端或 Plugin 能力")
-        }
-        try executionPlan.validate()
-        let resolvedProject = try resolveProjectPath(projectRoot)
-        let installed = try await installedAgentPlugins(ownerUserID: ownerUserID)
-        let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
-        let selectedPlugins = try executionPlan.plugins.map { selection in
-            guard let plugin = installedByID[selection.pluginID] else {
-                throw NativePluginRuntimeError.invalidRequest(
-                    "Todo 所需 Plugin「\(selection.displayName)」已经卸载或停用，请由通讯线程调整任务计划。"
-                )
-            }
-            return plugin
-        }
-        return NativeAgentCapabilityToolProvider(
-            service: self,
-            ownerUserID: ownerUserID,
-            runContext: runContext,
-            projectContext: projectContext,
-            resolvedProject: resolvedProject,
-            builtinCapabilities: Set(executionPlan.builtinCapabilities),
-            installedPlugins: selectedPlugins
-        )
-    }
-    func approveAgentPluginTool(
-        callID: String,
-        componentKey: String,
-        toolName: String,
-        arguments: NativeJSONValue,
-        policy: NativePluginToolPolicy,
-        projectRootURL: URL,
-        workspaceID: String,
-        executionPresentation: NativeAgentPluginExecutionPresentation
-    ) async -> Bool {
-        guard policy.approvalMode == "per_call" else { return true }
-        let summary = Self.safeArgumentSummary(toolName: toolName, arguments: arguments)
-        let requiredPermissions = policy.requiredPermissions(for: arguments)
-        let decision = await approvalDecision(
-            requestID: callID,
-            command: "agent_plugin:\(componentKey) · \(toolName)",
-            arguments: [summary],
-            cwd: projectRootURL,
-            projectRoot: projectRootURL,
-            source: executionPresentation.approvalSource,
-            risk: .init(
-                level: policy.riskLevel,
-                reason: "\(executionPresentation.approvalReasonPrefix)：\(summary)"
-            ),
-            requestedPermissionsDescription: Self.permissionDescription(
-                toolName: toolName,
-                requiredPermissions: requiredPermissions
-            ),
-            approvalScopeKey: "agent-plugin:\(componentKey):\(toolName):\(requiredPermissions.sorted().joined(separator: ","))",
-            workspaceID: workspaceID
-        )
-        if case .approve = decision { return true }
-        return false
-    }
-
-    private static func agentPluginManifest(
-        record: NativeInstalledPluginRecord
-    ) throws -> NativePluginManifest {
-        let url = URL(fileURLWithPath: record.installationPath, isDirectory: true)
-            .appendingPathComponent("chatos.plugin.json")
-        let manifest = try NativePluginManifestLoader.loadManifest(from: url)
-        guard manifest.schemaVersion == 3,
-              manifest.version == record.version,
-              !manifest.mcpServers.isEmpty else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin 没有可用于 Agent 的 MCP 组件")
-        }
-        return manifest
-    }
-
-    private static func validatedAgentPluginTools(
-        _ tools: [NativeJSONValue]
-    ) throws -> [NativeJSONValue] {
-        guard (1...200).contains(tools.count) else {
-            throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 工具数量无效")
-        }
-        var names = Set<String>()
-        for tool in tools {
-            guard let object = tool.jsonObject,
-                  let name = object["name"]?.jsonString?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !name.isEmpty,
-                  names.insert(name).inserted,
-                  object["inputSchema"]?.jsonObject != nil else {
-                throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 工具定义无效")
-            }
-        }
-        return tools.sorted {
-            ($0.jsonObject?["name"]?.jsonString ?? "")
-                < ($1.jsonObject?["name"]?.jsonString ?? "")
-        }
-    }
-}
-
 actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     static let searchToolName = NativeAgentCapabilityBrokerToolCatalog.searchToolName
     static let describeToolName = NativeAgentCapabilityBrokerToolCatalog.describeToolName
@@ -324,6 +28,11 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
 
     private struct SelectionArguments: Decodable {
         let pluginOption: String
+        let toolOption: String?
+        let query: String?
+        let offset: Int?
+        let limit: Int?
+        let schemaOffset: Int?
     }
 
     private struct InvokeArguments: Decodable {
@@ -333,16 +42,14 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     }
 
     private struct SkillActivationArguments: Decodable {
-        let pluginOption: String
-        let skillName: String
+        let skillRef: String
     }
 
     private struct SkillResourceArguments: Decodable {
-        let pluginOption: String
-        let skillName: String
+        let skillRef: String
         let relativePath: String
         let offset: Int?
-        let limit: Int?
+        let maxChars: Int?
     }
 
     private let service: NativeLocalConnectorService
@@ -355,9 +62,14 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>
     private let executionPresentation: NativeAgentPluginExecutionPresentation
     private let fallbackToSelectedOptions: Bool
+    private let invokeBuiltinsThroughBroker: Bool
+    private let productSkillBundle: LocalAgentSkillBundleSnapshot?
+    private let selectedExternalMCPIDs: Set<String>
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
+    private var describedToolsByOption: [String: Set<String>] = [:]
+    private var disclosedSkillNamesByOption: [String: Set<String>] = [:]
     private var activatedSkillNamesByOption: [String: Set<String>] = [:]
     private var pluginSkillSnapshotsByOption: [String: PluginSkillSnapshot] = [:]
     private var pluginSkillSessionsByOption: [String: PluginToolSkillSession] = [:]
@@ -373,7 +85,11 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability>,
         installedPlugins: [NativeInstalledAgentPlugin],
         executionPresentation: NativeAgentPluginExecutionPresentation = .agentGroupChat,
-        fallbackToSelectedOptions: Bool = false
+        fallbackToSelectedOptions: Bool = false,
+        invokeBuiltinsThroughBroker: Bool = true,
+        productSkillBundle: LocalAgentSkillBundleSnapshot? = nil,
+        selectedExternalMCPIDs: Set<String> = [],
+        preactivatedSkillRefs: Set<String> = []
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
@@ -385,15 +101,18 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.builtinCapabilities = builtinCapabilities
         self.executionPresentation = executionPresentation
         self.fallbackToSelectedOptions = fallbackToSelectedOptions
-        let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty ? [] : [
+        self.invokeBuiltinsThroughBroker = invokeBuiltinsThroughBroker
+        self.productSkillBundle = productSkillBundle
+        self.selectedExternalMCPIDs = selectedExternalMCPIDs
+        let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty && productSkillBundle == nil ? [] : [
             .init(
                 token: "builtin_1",
-                name: "ChatOS 项目文件与终端",
-                description: "本 Todo 已批准的项目基础能力：\(builtinCapabilities.map(\.rawValue).sorted().joined(separator: ", "))。真实项目路径由客户端绑定。",
+                name: builtinCapabilities.isEmpty ? "ChatOS Skill Runtime" : "ChatOS 项目文件与终端",
+                description: "当前执行已授权的基础能力：\(builtinCapabilities.map(\.rawValue).sorted().joined(separator: ", "))。Skill 加载不增加执行权限，真实工作目录由客户端绑定。",
                 kind: .builtIn
             ),
         ]
-        self.options = builtinOptions + installedPlugins.enumerated().map { offset, plugin in
+        let options = builtinOptions + installedPlugins.enumerated().map { offset, plugin in
             .init(
                 token: "plugin_\(offset + 1)",
                 name: plugin.displayName,
@@ -401,6 +120,32 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 kind: .plugin(plugin)
             )
         }
+        self.options = options
+        var restored: [String: Set<String>] = [:]
+        for skillRef in preactivatedSkillRefs {
+            let productPrefix = "product-skill:"
+            if skillRef.hasPrefix(productPrefix) {
+                let skillName = String(skillRef.dropFirst(productPrefix.count))
+                if !skillName.isEmpty,
+                   let option = options.first(where: { option in
+                       if case .builtIn = option.kind { return true }
+                       return false
+                   }) {
+                    restored[option.token, default: []].insert(skillName)
+                }
+                continue
+            }
+            let prefix = "plugin-skill:"
+            guard skillRef.hasPrefix(prefix) else { continue }
+            let payload = String(skillRef.dropFirst(prefix.count))
+            guard let separator = payload.firstIndex(of: ":") else { continue }
+            let optionToken = String(payload[..<separator])
+            let skillName = String(payload[payload.index(after: separator)...])
+            guard !skillName.isEmpty,
+                  options.contains(where: { $0.token == optionToken }) else { continue }
+            restored[optionToken, default: []].insert(skillName)
+        }
+        activatedSkillNamesByOption = restored
     }
 
     func definitions() async throws -> [AgentToolDefinition] {
@@ -414,6 +159,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             throw CancellationError()
         } catch NativePluginRuntimeError.cancelled {
             throw CancellationError()
+        } catch NativeAgentCapabilityDisclosure.Failure.invalidArguments {
+            return .failure("能力描述参数无效。读取目录时 tool_option 和 schema_offset 必须省略或传 null，例如 {\"plugin_option\":\"plugin_1\",\"query\":\"browser_session_open\",\"tool_option\":null,\"schema_offset\":null}（plugin_option 使用搜索结果中的实际选项）。读取工具详情时使用目录返回的精确 tool_option，query 省略或传 null；schema_offset 仅用于工具明确返回的 schema 分页。不要填写占位字符。")
         } catch let error as NativePluginRuntimeError {
             return .failure(NativeAgentPluginFailurePresenter.message(
                 for: error,
@@ -467,8 +214,14 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let registry = try await registry(for: option)
             var names: [String: String] = [:]
             var requiredSkillNames = Set<String>()
+            if case .builtIn = option.kind {
+                requiredSkillNames.formUnion(availableRuntimeProductSkillNames)
+            }
             let visibleDefinitions = registry.definitions.filter {
-                skillBinding(for: $0)?.activationPolicy != .controlPlane
+                skillBinding(for: $0)?.activationPolicy != .controlPlane && (
+                    invocationMode(for: option) != "direct_task_tool"
+                        || NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0.name)
+                )
             }
             let tools = try visibleDefinitions.enumerated().map { offset, definition in
                 let token = "tool_\(offset + 1)"
@@ -483,7 +236,11 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                     description: redact(definition.description),
                     inputSchema: schema,
                     effect: definition.effect.rawValue,
-                    requiredSkills: toolSkills
+                    requiredSkillRefs: toolSkills.map {
+                        skillReference(named: $0, for: option)
+                    },
+                    invocationMode: invocationMode(for: option),
+                    skillGate: try canonicalSkillGate(for: definition, option: option, skillNames: toolSkills)
                 )
             }
             toolNamesByOption[option.token] = names
@@ -491,49 +248,74 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             for name in requiredSkillNames.sorted() {
                 skills.append(try await skillSummary(named: name, for: option))
             }
-            return try outcome(DescribeResponse(
+            let descriptor = DescribeResponse(
+                bindingSchemaVersion: 1,
+                providerID: {
+                    switch option.kind {
+                    case .builtIn: ProductToolProviderID.capabilityBroker
+                    case .plugin(let plugin): "plugin:\(plugin.id)"
+                    }
+                }(),
                 pluginOption: option.token,
                 name: option.name,
                 tools: tools,
                 skills: skills
-            ))
+            )
+            let result = try NativeAgentCapabilityDisclosure.response(
+                descriptor, toolOption: arguments.toolOption, query: arguments.query,
+                offset: arguments.offset ?? 0, limit: arguments.limit ?? 8,
+                schemaOffset: arguments.schemaOffset
+            )
+            recordDisclosedSkills(from: result, for: option)
+            if result.jsonObject?["view"]?.jsonString == "tool", let token = arguments.toolOption {
+                describedToolsByOption[option.token, default: []].insert(token)
+            }
+            let rendered = try outcome(result)
+            return .init(rendered.content, isError: result.jsonObject?["view"]?.jsonString == "error")
 
         case Self.activateSkillToolName:
             let arguments = try decode(SkillActivationArguments.self, from: call.arguments)
-            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
-                return .failure("能力选项无效或已经过期，请重新搜索。")
-            }
+            let selection = try resolveSkillSelection(skillRef: arguments.skillRef)
+            let option = selection.option
             let registry = try await registry(for: option)
             var available: Set<String> = []
+            if case .builtIn = option.kind {
+                available.formUnion(availableRuntimeProductSkillNames)
+            }
             for definition in registry.definitions {
                 available.formUnion(try catalogSkillNames(for: definition))
             }
-            guard available.contains(arguments.skillName) else {
+            guard available.contains(selection.skillName) else {
                 return .failure("这个 Skill 不属于当前能力或当前可信执行计划。")
             }
-            let document = try await activateSkill(named: arguments.skillName, for: option)
+            if case .plugin = option.kind,
+               activatedSkillNamesByOption[option.token]?.contains(selection.skillName) != true,
+               disclosedSkillNamesByOption[option.token]?.contains(selection.skillName) != true {
+                return .failure(
+                    "请先用 capability_describe 查看当前工具，并只激活返回的精确 skill_ref。"
+                )
+            }
+            let document = try await activateSkill(named: selection.skillName, for: option)
             return try outcome(SkillActivationResponse(
-                pluginOption: option.token,
-                skillName: arguments.skillName,
+                skillRef: selection.skillRef,
                 instructions: document.instructions,
                 resources: document.resourcePaths
             ))
 
         case Self.readSkillResourceToolName:
             let arguments = try decode(SkillResourceArguments.self, from: call.arguments)
-            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
-                return .failure("请先激活当前能力列出的 Skill，再读取它的参考资料。")
-            }
+            let selection = try resolveSkillSelection(skillRef: arguments.skillRef)
+            let option = selection.option
             let page = try await readSkillResource(
                 for: option,
-                skillName: arguments.skillName,
+                skillName: selection.skillName,
                 relativePath: arguments.relativePath,
                 offset: arguments.offset ?? 0,
-                maximumCharacters: arguments.limit ?? 12_000
+                maximumCharacters: arguments.maxChars
+                    ?? ProgressiveSkillFileLoader.maximumPageCharacters
             )
             return try outcome(SkillResourceResponse(
-                pluginOption: arguments.pluginOption,
-                skillName: arguments.skillName,
+                skillRef: selection.skillRef,
                 relativePath: arguments.relativePath,
                 content: page.content,
                 offset: page.offset,
@@ -551,6 +333,14 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             guard arguments.arguments.jsonObject != nil else {
                 return .failure("能力工具参数必须是 JSON 对象。")
             }
+            if invocationMode(for: option) == "direct_task_tool" {
+                return .failure(
+                    "本地 Task 内置能力请通过原生工具 `\(toolName)` 直接调用，以应用 Task 审批、项目范围和进程归属校验；capability_invoke 仅执行 Plugin。"
+                )
+            }
+            guard describedToolsByOption[option.token, default: []].contains(arguments.toolOption) else {
+                return .failure("请先用 capability_describe 的 plugin_option + tool_option 读取所选工具的完整定义；目录索引不能代替工具 schema。")
+            }
             let registry = try await registry(for: option)
             guard let definition = registry.definitions.first(where: {
                 $0.name == toolName
@@ -564,8 +354,11 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 option: option
             )
             guard missing.isEmpty else {
+                let missingRefs = missing.map {
+                    skillReference(named: $0, for: option)
+                }
                 return .failure(
-                    "调用此工具前必须先激活 Skill：\(missing.joined(separator: ", "))。"
+                    "调用此工具前必须先激活 Skill：\(missingRefs.joined(separator: ", "))。"
                 )
             }
             let result = try await registry.execute(.init(
@@ -590,15 +383,21 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let providers: [any AgentToolProvider]
         switch option.kind {
         case .builtIn:
-            guard let resolvedProject else {
-                throw NativePluginRuntimeError.invalidRequest("当前会话没有绑定项目能力")
+            if !invokeBuiltinsThroughBroker {
+                providers = [NativeLocalTaskBuiltinDiscoveryProvider(
+                    allowedCapabilities: builtinCapabilities
+                )]
+            } else {
+                guard let resolvedProject else {
+                    throw NativePluginRuntimeError.invalidRequest("当前会话没有绑定项目能力")
+                }
+                providers = [NativeAgentBuiltinToolProvider(
+                    service: service,
+                    runContext: runContext,
+                    resolvedProject: resolvedProject,
+                    allowedCapabilities: builtinCapabilities
+                )]
             }
-            providers = [NativeAgentBuiltinToolProvider(
-                service: service,
-                runContext: runContext,
-                resolvedProject: resolvedProject,
-                allowedCapabilities: builtinCapabilities
-            )]
         case let .plugin(plugin):
             let pluginProviders = try await service.makeAgentPluginSkillToolProviders(
                 ownerUserID: ownerUserID,
@@ -614,14 +413,67 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             }
             pluginSkillSnapshotsByOption[option.token] = first.pluginSkillSnapshot
             pluginSkillSessionsByOption[option.token] = first.pluginSkillSession
+            for skillName in activatedSkillNamesByOption[option.token, default: []].sorted() {
+                _ = try await first.pluginSkillSession.activate(named: skillName)
+            }
             providers = pluginProviders.map { $0 as any AgentToolProvider }
         }
         let registry = try await AgentToolProviderRegistry(providers: providers)
+        if case .builtIn = option.kind {
+            let available = Set(try registry.definitions.flatMap { definition in
+                if !invokeBuiltinsThroughBroker,
+                   !NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains(definition.name) {
+                    return [String]()
+                }
+                return try catalogSkillNames(for: definition)
+            }).union(availableRuntimeProductSkillNames)
+            activatedSkillNamesByOption[option.token] =
+                activatedSkillNamesByOption[option.token, default: []].intersection(available)
+        }
         registries[option.token] = registry
         return registry
     }
 
+    private func invocationMode(for option: CapabilityOption) -> String {
+        if case .builtIn = option.kind, !invokeBuiltinsThroughBroker {
+            return "direct_task_tool"
+        }
+        return "capability_invoke"
+    }
+
+    private func canonicalSkillGate(
+        for definition: AgentToolDefinition,
+        option: CapabilityOption,
+        skillNames: [String]
+    ) throws -> NativeJSONValue {
+        guard let data = definition.pluginSkillGate else {
+            return .object(["all_of": .array(skillNames.map {
+                .string(skillReference(named: $0, for: option))
+            })])
+        }
+        let gate = try PluginToolSkillGate.decode(data)
+        var result: [String: NativeJSONValue] = [
+            "all_of": .array(gate.allOf.map { .string(skillReference(named: $0, for: option)) }),
+        ]
+        if let selector = gate.selectByArgument {
+            result["select_by_argument"] = .object([
+                "pointer": .string(selector.pointer),
+                "map": .object(selector.map.mapValues { .string(skillReference(named: $0, for: option)) }),
+            ])
+        }
+        return .object(result)
+    }
+
     private func catalogSkillNames(for definition: AgentToolDefinition) throws -> [String] {
+        if let bundle = productSkillBundle,
+           let providerID = definition.providerID,
+           [ProductToolProviderID.projectRead, ProductToolProviderID.projectWrite, ProductToolProviderID.terminal].contains(providerID) {
+            guard let binding = bundle.toolSkillBindings.first(where: {
+                $0.toolNames.contains(definition.name)
+            }), binding.activationPolicy != .controlPlane else { return [] }
+            return Array(Set([binding.routerSkillRef, binding.specialistSkillRef]))
+                .map { String($0.dropFirst("product-skill:".count)) }.sorted()
+        }
         guard let binding = skillBinding(for: definition),
               binding.activationPolicy != .controlPlane else {
             guard let gateData = definition.pluginSkillGate else { return [] }
@@ -634,10 +486,20 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         named name: String,
         for option: CapabilityOption
     ) async throws -> SkillSummary {
+        let skillRef = skillReference(named: name, for: option)
         switch option.kind {
         case .builtIn:
+            if let document = try frozenProductDocument(named: name) {
+                return .init(
+                    skillRef: document.skillRef,
+                    name: document.name,
+                    role: document.role,
+                    description: document.description
+                )
+            }
             let document = try BundledAgentSkillLoader.load(named: name)
             return .init(
+                skillRef: skillRef,
                 name: name,
                 role: document.descriptor.role.rawValue,
                 description: document.description
@@ -648,8 +510,84 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
             }
             let document = try snapshot.document(named: name)
-            return .init(name: name, role: document.role, description: document.description)
+            return .init(
+                skillRef: skillRef,
+                name: name,
+                role: document.role,
+                description: document.description
+            )
         }
+    }
+
+    private func skillReference(named name: String, for option: CapabilityOption) -> String {
+        switch option.kind {
+        case .builtIn:
+            "product-skill:\(name)"
+        case .plugin:
+            "plugin-skill:\(option.token):\(name)"
+        }
+    }
+
+    private func recordDisclosedSkills(
+        from response: NativeJSONValue,
+        for option: CapabilityOption
+    ) {
+        guard case .plugin = option.kind,
+              let object = response.jsonObject,
+              object["view"]?.jsonString != "error" else { return }
+        let prefix = "plugin-skill:\(option.token):"
+        let names = object["skills"]?.jsonArray?.compactMap { value -> String? in
+            guard let skillRef = value.jsonObject?["skill_ref"]?.jsonString,
+                  skillRef.hasPrefix(prefix) else { return nil }
+            let name = String(skillRef.dropFirst(prefix.count))
+            return name.isEmpty ? nil : name
+        } ?? []
+        disclosedSkillNamesByOption[option.token, default: []].formUnion(names)
+    }
+
+    private func resolveSkillSelection(
+        skillRef rawSkillRef: String
+    ) throws -> (option: CapabilityOption, skillName: String, skillRef: String) {
+        let skillRef = rawSkillRef.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedOption: CapabilityOption
+        let resolvedName: String
+        let productPrefix = "product-skill:"
+        let pluginPrefix = "plugin-skill:"
+        if skillRef.hasPrefix(productPrefix) {
+            let name = String(skillRef.dropFirst(productPrefix.count))
+            guard !name.isEmpty,
+                  let option = options.first(where: { option in
+                      if case .builtIn = option.kind { return true }
+                      return false
+                  }) else {
+                throw NativePluginRuntimeError.invalidRequest("Skill 引用无效或已经过期")
+            }
+            resolvedName = name
+            resolvedOption = option
+        } else if skillRef.hasPrefix(pluginPrefix) {
+            let payload = String(skillRef.dropFirst(pluginPrefix.count))
+            guard let separator = payload.firstIndex(of: ":") else {
+                throw NativePluginRuntimeError.invalidRequest("Skill 引用无效或已经过期")
+            }
+            let optionToken = String(payload[..<separator])
+            let name = String(payload[payload.index(after: separator)...])
+            guard !optionToken.isEmpty, !name.isEmpty,
+                  let option = options.first(where: { option in
+                      guard case .plugin = option.kind else { return false }
+                      return option.token == optionToken
+                  }) else {
+                throw NativePluginRuntimeError.invalidRequest("Skill 引用无效或已经过期")
+            }
+            resolvedName = name
+            resolvedOption = option
+        } else {
+            throw NativePluginRuntimeError.invalidRequest("Skill 引用无效或已经过期")
+        }
+        return (
+            resolvedOption,
+            resolvedName,
+            skillReference(named: resolvedName, for: resolvedOption)
+        )
     }
 
     private func activateSkill(
@@ -661,6 +599,10 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     ) {
         switch option.kind {
         case .builtIn:
+            if let document = try frozenProductDocument(named: name) {
+                activatedSkillNamesByOption[option.token, default: []].insert(name)
+                return (document.instructions, document.resources.map(\.relativePath))
+            }
             let document = try BundledAgentSkillLoader.load(named: name)
             activatedSkillNamesByOption[option.token, default: []].insert(name)
             return (document.instructions, document.resourcePaths)
@@ -670,6 +612,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 throw NativePluginRuntimeError.invalidRequest("Plugin Skill 固定快照不可用")
             }
             let document = try await session.activate(named: name)
+            activatedSkillNamesByOption[option.token, default: []].insert(name)
             return (document.instructions, document.resourcePaths)
         }
     }
@@ -683,9 +626,28 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     ) async throws -> ProgressiveSkillFileLoader.TextPage {
         switch option.kind {
         case .builtIn:
+            _ = try await registry(for: option)
             guard activatedSkillNamesByOption[option.token]?.contains(skillName) == true else {
                 throw NativePluginRuntimeError.invalidRequest(
                     "请先激活当前能力列出的 Skill，再读取它的参考资料。"
+                )
+            }
+            if let document = try frozenProductDocument(named: skillName) {
+                guard let resource = document.resources.first(where: {
+                    $0.relativePath == relativePath
+                }) else {
+                    throw NativePluginRuntimeError.invalidRequest("Skill 固定快照中不存在该资源")
+                }
+                let scalars = Array(resource.content.unicodeScalars)
+                guard offset >= 0, offset <= scalars.count, maximumCharacters > 0 else {
+                    throw ProgressiveSkillFileLoader.LoaderError.invalidOffset
+                }
+                let end = offset + min(maximumCharacters, scalars.count - offset)
+                return .init(
+                    content: String(String.UnicodeScalarView(scalars[offset..<end])),
+                    offset: offset,
+                    nextOffset: end < scalars.count ? end : nil,
+                    truncated: end < scalars.count
                 )
             }
             return try BundledAgentSkillLoader.readResource(
@@ -725,6 +687,27 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         let required = Set(try catalogSkillNames(for: definition))
         let activated = activatedSkillNamesByOption[option.token] ?? []
         return required.subtracting(activated).sorted()
+    }
+
+    private func frozenProductDocument(named name: String) throws -> LocalAgentSkillDocumentSnapshot? {
+        guard let bundle = productSkillBundle else { return nil }
+        guard let document = bundle.documents.first(where: {
+            $0.skillRef == "product-skill:\(name)" && $0.name == name
+        }) else {
+            throw NativePluginRuntimeError.invalidRequest("Skill 不属于当前 Run 的 Product 固定快照")
+        }
+        return document
+    }
+
+    private var availableRuntimeProductSkillNames: Set<String> {
+        Set(productSkillBundle?.toolSkillBindings
+            .filter { binding in
+                binding.activationPolicy == .runBound || selectedExternalMCPIDs.contains(where: {
+                    binding.providerID == "chatos.external-mcp:\($0)"
+                })
+            }
+            .flatMap { [$0.routerSkillRef, $0.specialistSkillRef] }
+            .map { String($0.dropFirst("product-skill:".count)) } ?? [])
     }
 
     private func skillBinding(for definition: AgentToolDefinition) -> ToolSkillBinding? {

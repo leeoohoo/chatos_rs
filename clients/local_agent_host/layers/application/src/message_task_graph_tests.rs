@@ -153,6 +153,24 @@ async fn message_graph_restores_server_task_runner_root_and_cross_turn_semantics
     .await;
     let version = cancel_turn(&runtime, &old_turn).await;
     let _current_turn = start_turn(&runtime, "conversation-1", "turn-current", version).await;
+    runtime
+        .try_handle(request(
+            "review-current",
+            HostCommand::ResolveTaskFollowup(
+                chatos_local_agent_protocol::ResolveTaskFollowupCommand {
+                    owner_user_id: "user-1".into(),
+                    run_id: "run-turn-current".into(),
+                    review_message_id: "message-turn-current".into(),
+                    decisions: vec![chatos_local_agent_protocol::TaskFollowupDecision {
+                        task_id: "task-old".into(),
+                        action: chatos_local_agent_protocol::TaskFollowupAction::Continue,
+                        reason: "Keep prior work as prerequisite".into(),
+                    }],
+                },
+            ),
+        ))
+        .await
+        .expect("review old prerequisite before new work");
 
     create_conversation(&runtime, "conversation-2").await;
     let _other_turn = start_turn(&runtime, "conversation-2", "turn-other", 1).await;

@@ -5,7 +5,7 @@ import Testing
 @MainActor
 @Suite("Pet overlay panel focus behavior")
 struct PetOverlayPanelFactoryTests {
-    @Test("Quick Chat remains non-activating while accepting keyboard input")
+    @Test("Quick Chat remains visible without activating the foreground app")
     func quickChatPanelSupportsInputMethods() {
         let panel = PetOverlayPanelFactory.makePanel(
             size: NSSize(width: 420, height: 500),
@@ -16,10 +16,12 @@ struct PetOverlayPanelFactoryTests {
         #expect(panel.canBecomeKey)
         #expect(panel.styleMask.contains(.nonactivatingPanel))
         #expect(!panel.becomesKeyOnlyIfNeeded)
+        #expect(!panel.hidesOnDeactivate)
+        #expect(panel.level == .floating)
     }
 
-    @Test("Quick Chat requests application activation only after text input receives focus")
-    func quickChatActivatesForFocusedTextInput() async {
+    @Test("Quick Chat requests key focus for focused text input")
+    func quickChatRequestsKeyFocusForFocusedTextInput() async {
         let panel = PetOverlayPanelFactory.makePanel(
             size: NSSize(width: 420, height: 500),
             acceptsKeyboardInput: true
@@ -45,19 +47,22 @@ struct PetOverlayPanelFactoryTests {
         }
     }
 
-    @Test("Focused pet input uses a panel born as an activating window")
-    func activeInputPanelSupportsSystemInputMethods() {
+    @Test("Activating input panel joins the foreground application's window set")
+    func activeInputPanelJoinsForegroundApplication() {
         let panel = PetOverlayPanelFactory.makeActiveInputPanel(
             size: NSSize(width: 420, height: 500)
         )
 
         #expect(panel.canBecomeKey)
+        #expect(panel.canBecomeMain)
         #expect(!panel.styleMask.contains(.nonactivatingPanel))
-        #expect(!panel.becomesKeyOnlyIfNeeded)
-        #expect(!panel.hidesOnDeactivate)
         #expect(panel.collectionBehavior.contains(.canJoinAllSpaces))
+        #expect(panel.collectionBehavior.contains(.canJoinAllApplications))
+        #expect(panel.collectionBehavior.contains(.fullScreenAuxiliary))
         #expect(panel.collectionBehavior.contains(.transient))
-        #expect(panel.level == .popUpMenu)
+        #expect(!panel.ignoresMouseEvents)
+        #expect(panel.alphaValue == 1)
+        #expect(panel.level == .floating)
     }
 
     @Test("Quick Chat recognizes clicks inside an already-focused text editor")

@@ -38,7 +38,7 @@ struct LocalConnectorModelsView: View {
                     models: catalog.items,
                     drafts: $taskDrafts
                 )
-            } else {
+            } else if viewModel.isLoading {
                 LocalConnectorCard(
                     model.localized("模型配置", english: "Model Configuration"),
                     systemImage: "brain.head.profile"
@@ -48,6 +48,48 @@ struct LocalConnectorModelsView: View {
                         english: "Loading the complete model configuration…"
                     ))
                         .frame(maxWidth: .infinity, minHeight: 260)
+                }
+            } else if let error = viewModel.errorMessage {
+                LocalConnectorCard(
+                    model.localized("模型配置", english: "Model Configuration"),
+                    systemImage: "wifi.exclamationmark"
+                ) {
+                    ContentUnavailableView {
+                        Label(
+                            model.localized("无法读取模型配置", english: "Unable to load model configuration"),
+                            systemImage: "wifi.exclamationmark"
+                        )
+                    } description: {
+                        Text(error)
+                            .textSelection(.enabled)
+                    } actions: {
+                        Button(model.localized("重试", english: "Retry")) {
+                            viewModel.loadModels(refresh: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 260)
+                }
+            } else {
+                LocalConnectorCard(
+                    model.localized("模型配置", english: "Model Configuration"),
+                    systemImage: "brain.head.profile"
+                ) {
+                    ContentUnavailableView {
+                        Label(
+                            model.localized("尚未读取模型配置", english: "Model configuration not loaded"),
+                            systemImage: "brain.head.profile"
+                        )
+                    } description: {
+                        Text(model.localized(
+                            "重新读取 ChatOS 中的模型与供应商配置。",
+                            english: "Reload models and provider settings from ChatOS."
+                        ))
+                    } actions: {
+                        Button(model.localized("读取配置", english: "Load Configuration")) {
+                            viewModel.loadModels(refresh: false)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 260)
                 }
             }
         }

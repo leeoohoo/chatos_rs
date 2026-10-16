@@ -145,21 +145,11 @@ public actor ProductToolSkillSession {
         return .init(skillRef: skillRef, document: document)
     }
 
-    public func resourcePaths(skillRef: String) throws -> [String] {
-        guard activatedReferences.contains(skillRef) else {
-            throw SessionError.skillNotActivated(skillRef)
-        }
-        guard let document = documentsByReference[skillRef] else {
-            throw SessionError.unavailableSkill(skillRef)
-        }
-        return document.resourcePaths
-    }
-
     public func readResource(
         skillRef: String,
         relativePath: String,
         offset: Int = 0,
-        maximumCharacters: Int = 12_000
+        maximumCharacters: Int = ProgressiveSkillFileLoader.maximumPageCharacters
     ) throws -> ProgressiveSkillFileLoader.TextPage {
         guard activatedReferences.contains(skillRef) else {
             throw SessionError.skillNotActivated(skillRef)

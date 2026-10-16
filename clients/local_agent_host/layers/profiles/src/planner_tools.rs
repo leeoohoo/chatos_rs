@@ -46,6 +46,13 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
             })
             .collect::<Result<HashSet<_>, _>>()?,
     };
+    let skill_controls_enabled = plugins_enabled
+        || !external_mcps.is_empty()
+        || enabled.contains("CodeMaintainerRead")
+        || enabled.contains("RequirementSurveyRead")
+        || (requires_execution && enabled.contains("RequirementSurveyWrite"))
+        || (requires_execution
+            && (enabled.contains("CodeMaintainerWrite") || enabled.contains("TerminalController")));
     let has_attachments = input
         .get("attachments")
         .and_then(Value::as_array)
@@ -74,6 +81,9 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
             if name.starts_with("task_run_process_") {
                 return Some(tool);
             }
+            if name == "tool_result_read" {
+                return Some(tool);
+            }
             if name.starts_with("ask_user_") {
                 return enabled.contains("AskUser").then_some(tool);
             }
@@ -81,9 +91,15 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                 return has_attachments.then_some(tool);
             }
             if name.starts_with("notepad_") {
-                return enabled.contains("Notepad").then_some(tool);
+                let notepad_enabled = enabled.contains("Notepad");
+                let is_write =
+                    matches!(name.as_str(), "notepad_create_note" | "notepad_update_note");
+                // A Plugin Task must deliver through its selected Plugin. If a note is
+                // also an explicit deliverable, Main Chat creates a separate downstream
+                // Notepad Task instead of giving the Plugin worker a writable fallback.
+                return (notepad_enabled && !(plugins_enabled && is_write)).then_some(tool);
             }
-            if name.starts_with("requirement_survey_") {
+            if name.starts_with("requirement_survey_") || name == "requirement_plan_save" {
                 return (enabled.contains("RequirementSurveyRead")
                     || (requires_execution && enabled.contains("RequirementSurveyWrite")))
                 .then_some(tool);
@@ -126,8 +142,15 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                 return (requires_execution && enabled.contains("TerminalController"))
                     .then_some(tool);
             }
-            if name.starts_with("capability_") {
-                return plugins_enabled.then_some(tool);
+            if matches!(
+                name.as_str(),
+                "capability_search"
+                    | "capability_describe"
+                    | "capability_invoke"
+                    | "agent_skill_activate"
+                    | "agent_skill_read_resource"
+            ) {
+                return skill_controls_enabled.then_some(tool);
             }
             if name.starts_with("remote_connection_controller_") {
                 return (has_bound_remote_connection

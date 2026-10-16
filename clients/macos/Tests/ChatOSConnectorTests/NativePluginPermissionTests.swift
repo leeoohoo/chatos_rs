@@ -297,6 +297,100 @@ extension NativePluginRuntimeTests {
         #expect(permissions[3].requestLabel == "去开启")
     }
 
+    @Test("plugin permission diagnostics receive a writable isolated temporary directory")
+    func pluginPermissionDiagnosticsUseWritableTemporaryDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        let diagnostic = root.deletingLastPathComponent()
+            .appendingPathComponent("diagnostic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: diagnostic)
+        }
+        let launcher = bin.appendingPathComponent("open-computer-use")
+        try Data("""
+        #!/bin/sh
+        # check-permissions
+        test "$TMPDIR" = "$CHATOS_PLUGIN_CACHE_DIR" || exit 41
+        report="$TMPDIR/visual-computer-use-doctor-test.json"
+        printf '%s' '{}' > "$report" || exit 42
+        rm "$report"
+        printf '%s\\n' '{"permissions":[]}'
+        """.utf8).write(to: launcher)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: launcher.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(#"{"schemaVersion":3,"name":"open-computer-use","version":"1.0.0"}"#.utf8)
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-diagnostic-temp",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "d", count: 64),
+            installationPath: root.path,
+            installedAt: "2026-10-14T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: root,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
+        )
+
+        let data = try NativePluginPermissionInspector.runLauncherBlocking(
+            record: record,
+            manifest: manifest,
+            command: "check-permissions",
+            timeout: 5,
+            diagnosticDirectory: diagnostic
+        )
+
+        let response = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect((response?["permissions"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test("installed Computer Use permission probe works inside the plugin sandbox when requested")
+    func installedComputerUsePermissionProbe() throws {
+        guard let installationPath = ProcessInfo.processInfo.environment[
+            "CHATOS_TEST_INSTALLED_COMPUTER_USE_PATH"
+        ], !installationPath.isEmpty else { return }
+        let installation = URL(fileURLWithPath: installationPath, isDirectory: true)
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data(contentsOf: installation.appendingPathComponent("chatos.plugin.json"))
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "installed-computer-use-diagnostic",
+            releaseID: "installed-release",
+            version: manifest.version,
+            artifactSHA256: String(repeating: "f", count: 64),
+            installationPath: installation.path,
+            installedAt: "2026-10-14T00:00:00Z",
+            packageFileSHA256: try NativePluginInstallationIntegrity.snapshot(
+                installationURL: installation,
+                maximumFiles: 20_000,
+                maximumBytes: 512 * 1_024 * 1_024
+            )
+        )
+        let diagnostic = FileManager.default.temporaryDirectory
+            .appendingPathComponent("computer-use-live-probe-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: diagnostic) }
+
+        let data = try NativePluginPermissionInspector.runLauncherBlocking(
+            record: record,
+            manifest: manifest,
+            command: "check-permissions",
+            timeout: 25,
+            diagnosticDirectory: diagnostic
+        )
+        let response = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect((response?["permissions"] as? [[String: Any]])?.count == 2)
+    }
+
     @Test("plugin permission snapshots merge concurrent diagnostics and allow forced refresh")
     func pluginPermissionSnapshotMergesConcurrentDiagnostics() async throws {
         let root = FileManager.default.temporaryDirectory

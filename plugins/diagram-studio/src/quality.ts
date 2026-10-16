@@ -265,7 +265,12 @@ export function inspectDiagramQuality(
   const aspectRatio = bounds.height > 0 && bounds.width > 0
     ? Math.max(bounds.width / bounds.height, bounds.height / bounds.width)
     : 1;
-  const maximumAspectRatio = document.kind === 'architecture' && profile === 'architecture-overview' ? 4 : 5.5;
+  const isLinearFlowchart = document.kind === 'flowchart' && maxFanOut <= 1 && maxFanIn <= 1;
+  const maximumAspectRatio = document.kind === 'architecture' && profile === 'architecture-overview'
+    ? 4
+    : isLinearFlowchart
+      ? 8
+      : 5.5;
   if (document.kind !== 'mindmap' && components.length >= 6 && aspectRatio > maximumAspectRatio) {
     warnings.push({
       code: 'extreme_aspect_ratio',

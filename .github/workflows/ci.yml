@@ -164,6 +164,10 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
           swift --version
 
+      - name: Setup Rust for macOS Local Agent startup tests
+        if: runner.os == 'macOS'
+        uses: dtolnay/rust-toolchain@1.94.0
+
       - name: Verify native platform contracts
         shell: bash
         run: bash scripts/verify-repository.sh native-platform
@@ -171,6 +175,30 @@ jobs:
       - name: Audit Computer Use Plugin Skill gates
         if: runner.os == 'macOS'
         run: npm --prefix plugins/computer-use run audit:skill-gates
+
+      - name: Setup Node for native Document sandbox regression
+        if: runner.os == 'macOS'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: plugins/document/package-lock.json
+
+      - name: Prepare Document renderer on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' ]; then
+            brew install --cask google-chrome
+          fi
+          npm --prefix plugins/document ci
+          npm --prefix plugins/document run vendor:fetch:current
+          npm --prefix plugins/document run sbom:generate
+
+      - name: Render an unpacked Document package inside the Native sandbox
+        if: runner.os == 'macOS'
+        run: bash clients/evals/native-document-sandbox-smoke.sh
 
   browser-plugin:
     name: Browser plugin (Rust)

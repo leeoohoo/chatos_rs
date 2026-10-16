@@ -100,6 +100,13 @@ extension AppModel {
             openGlobalSearchSettings(tab: .approvals)
             return
         }
+        if let surveyID = activity?.route.requirementSurveyID,
+           let ownerUserID = localProjectOwnerUserID {
+            requestedRequirementSurvey = .init(ownerUserID: ownerUserID, surveyID: surveyID)
+            selection = .requirementSurveys
+            showMainWindow()
+            return
+        }
 
         var targetConversation: ConversationSessionViewModel?
         if let projectID = activity?.route.projectID,
@@ -123,16 +130,18 @@ extension AppModel {
             }
         }
 
-        if let route = activity?.route {
-            targetConversation?.focus(
-                turnID: route.turnID,
-                promptID: route.promptID,
-                taskID: route.taskID,
-                runID: route.runID
-            )
-        }
-
         showMainWindow()
+
+        if let route = activity?.route, let targetConversation {
+            Task { [weak targetConversation] in
+                await targetConversation?.focusAfterRefreshingAskUserPrompts(
+                    turnID: route.turnID,
+                    promptID: route.promptID,
+                    taskID: route.taskID,
+                    runID: route.runID
+                )
+            }
+        }
     }
 
     func openGlobalSearchProject(_ projectID: String) {
@@ -140,6 +149,28 @@ extension AppModel {
         selection = .project(projectID)
         projectTab = .messages
         showMainWindow()
+    }
+
+    @discardableResult
+    func openConversation(_ conversationID: String) -> Bool {
+        if let project = projects.first(where: { $0.conversationID == conversationID }) {
+            selection = .project(project.id)
+            projectTab = .messages
+            let target = conversation(for: conversationID)
+            projectConversation = target
+            target.activate()
+            showMainWindow()
+            return true
+        }
+        if let contact = contacts.first(where: { $0.conversationID == conversationID }) {
+            selection = .contact(contact.id)
+            let target = conversation(for: conversationID)
+            contactConversation = target
+            target.activate()
+            showMainWindow()
+            return true
+        }
+        return false
     }
 
     func openGlobalSearchContact(_ contactID: String) {

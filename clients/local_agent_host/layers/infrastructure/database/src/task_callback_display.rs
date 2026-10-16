@@ -3,12 +3,31 @@
 
 use serde_json::Value;
 
+#[cfg(test)]
 pub(super) fn callback_content(
     _title: &str,
     objective: &str,
     event: &str,
     terminal_outcome: Option<&Value>,
     english: bool,
+) -> String {
+    callback_content_with_status(
+        _title,
+        objective,
+        event,
+        terminal_outcome,
+        english,
+        "failed",
+    )
+}
+
+pub(super) fn callback_content_with_status(
+    _title: &str,
+    objective: &str,
+    event: &str,
+    terminal_outcome: Option<&Value>,
+    english: bool,
+    display_status: &str,
 ) -> String {
     let detail = user_visible_callback_detail(objective, event, terminal_outcome, english)
         .map(|(_, detail)| detail);
@@ -18,6 +37,12 @@ pub(super) fn callback_content(
     let headline = if english {
         match event {
             "task.run.started" => "I've started working on it.".to_string(),
+            "task.failed" if display_status == "evidence_incomplete" => {
+                "I completed part of this, but couldn't verify everything yet.".to_string()
+            }
+            "task.failed" if display_status == "acceptance_failed" => {
+                "The result didn't meet all the requirements.".to_string()
+            }
             "task.failed" => "I couldn't complete this.".to_string(),
             "task.blocked" => "I can't continue yet.".to_string(),
             "task.cancelled" => "I've stopped working on it.".to_string(),
@@ -26,6 +51,12 @@ pub(super) fn callback_content(
     } else {
         match event {
             "task.run.started" => "我已经开始处理了。".to_string(),
+            "task.failed" if display_status == "evidence_incomplete" => {
+                "我完成了一部分，但还有内容未核验。".to_string()
+            }
+            "task.failed" if display_status == "acceptance_failed" => {
+                "结果未达到全部要求。".to_string()
+            }
             "task.failed" => "我这次没有处理完成。".to_string(),
             "task.blocked" => "我暂时还无法继续处理。".to_string(),
             "task.cancelled" => "我已经停下来了。".to_string(),
@@ -110,7 +141,102 @@ fn visible_detail_with_source(value: &Value) -> Option<(&'static str, String)> {
         .map(|detail| ("report", detail.to_string()))
 }
 
+// Deliver only the model's user-facing output, never the whole outcome/checkpoint.
+// Unlike a lifecycle preview this retains Markdown, code and the complete report.
+pub(super) fn full_delivery_detail(value: &Value, english: bool) -> Option<String> {
+    let object = value.as_object()?;
+    let report = object.get("report").and_then(|value| {
+        value
+            .as_str()
+            .or_else(|| value.get("content").and_then(Value::as_str))
+    });
+    let detail = ["content", "answer", "text"]
+        .iter()
+        .find_map(|key| {
+            object
+                .get(*key)
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+        })
+        .or(report.filter(|s| !s.trim().is_empty()))
+        .or_else(|| object.get("result_summary").and_then(Value::as_str))?;
+    let lines = detail
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let lower = trimmed.to_ascii_lowercase();
+            if callback_detail_line_is_internal(&lower)
+                || lower.starts_with("[task outcome")
+                || lower.starts_with("[tool boundary")
+                || lower.starts_with("reasoning:")
+                || lower.starts_with("tool_calls:")
+                || lower.contains("invocation_id")
+                || lower.contains("claim_token")
+                || line_exposes_secret(trimmed)
+            {
+                return None;
+            }
+            let safe = if line
+                .split_whitespace()
+                .any(|token| looks_like_uuid(token.trim_matches(['`', ',', '.', ';', ':'])))
+            {
+                strip_internal_identifiers(line)
+            } else {
+                line.to_string()
+            };
+            Some(replace_internal_terms(&safe, english))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let detail = lines.trim();
+    (!detail.is_empty()).then(|| detail.to_string())
+}
+
+pub(super) fn progress_callback_content_with_status(
+    title: &str,
+    event: &str,
+    english: bool,
+    display_status: &str,
+) -> String {
+    let title = sanitize_visible_detail(title, english)
+        .map(|value| truncate_chars(&value.replace('\n', " "), 180))
+        .unwrap_or_else(|| if english { "Task" } else { "任务" }.to_string());
+    let state = match (english, event) {
+        (true, "task.run.started") => "Started",
+        (true, "task.completed") => "Completed",
+        (true, "task.failed") if display_status == "evidence_incomplete" => {
+            "Partially complete; not fully verified"
+        }
+        (true, "task.failed") if display_status == "acceptance_failed" => "Requirements not met",
+        (true, "task.failed") if display_status == "execution_failed" => "Execution failed",
+        (true, "task.failed") => "Not completed",
+        (true, "task.blocked") => "Blocked — attention required",
+        (true, "task.cancelled") => "Cancelled",
+        (false, "task.run.started") => "已开始",
+        (false, "task.completed") => "已完成",
+        (false, "task.failed") if display_status == "evidence_incomplete" => "部分完成，尚未核验",
+        (false, "task.failed") if display_status == "acceptance_failed" => "未通过验收",
+        (false, "task.failed") if display_status == "execution_failed" => "执行失败",
+        (false, "task.failed") => "未完成",
+        (false, "task.blocked") => "阻塞，需要处理",
+        (false, "task.cancelled") => "已取消",
+        _ => "…",
+    };
+    if english {
+        format!("{state}: {title}")
+    } else {
+        format!("{state}：{title}")
+    }
+}
+
 pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<String> {
+    if value == "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation." {
+        return Some(if english {
+            value.to_string()
+        } else {
+            "任务执行意外中断，无法确认当前步骤的结果。请先检查执行记录，再决定是否重试，避免重复操作。".to_string()
+        });
+    }
     let lower = value.to_ascii_lowercase();
     if upstream_connection_interrupted(&lower) {
         let retry_count = callback_retry_count(value);
@@ -409,9 +535,11 @@ fn normalize_detail_spacing(value: &str) -> String {
 
 fn summarize_completion_detail(value: &str, english: bool) -> Option<String> {
     const MAX_LINES: usize = 3;
+    const MAX_MANAGED_ARTIFACT_LINKS: usize = 8;
     const MAX_LINE_CHARS: usize = 180;
     const MAX_TOTAL_CHARS: usize = 420;
-    let mut lines = Vec::new();
+    let mut preview_lines = Vec::new();
+    let mut managed_artifact_links = Vec::new();
     for raw_line in value.lines() {
         let line = raw_line
             .trim()
@@ -421,18 +549,43 @@ fn summarize_completion_detail(value: &str, english: bool) -> Option<String> {
         if line.is_empty() || callback_summary_heading(line) || callback_summary_noise(line) {
             continue;
         }
-        let line = truncate_chars(line, MAX_LINE_CHARS);
-        if !lines.contains(&line) {
-            lines.push(line);
+        if let Some(link) = managed_artifact_markdown_link(line) {
+            let link = link.to_string();
+            if managed_artifact_links.len() < MAX_MANAGED_ARTIFACT_LINKS
+                && !managed_artifact_links.contains(&link)
+            {
+                managed_artifact_links.push(link);
+            }
+            continue;
         }
-        if lines.len() == MAX_LINES {
-            break;
+        if preview_lines.len() < MAX_LINES {
+            let line = truncate_chars(line, MAX_LINE_CHARS);
+            if !preview_lines.contains(&line) {
+                preview_lines.push(line);
+            }
         }
     }
-    if lines.is_empty() {
+    if preview_lines.is_empty() && managed_artifact_links.is_empty() {
         return Some(completion_receipt(english));
     }
-    Some(truncate_chars(&lines.join("\n"), MAX_TOTAL_CHARS))
+    if !managed_artifact_links.is_empty() {
+        // Delivery links can appear after several title/metadata lines. Scan the
+        // complete final response and put every bounded managed link first so a
+        // lifecycle preview cannot turn a successful file delivery into an
+        // unreachable filename-only receipt.
+        managed_artifact_links.extend(preview_lines);
+        return Some(managed_artifact_links.join("\n"));
+    }
+    Some(truncate_chars(&preview_lines.join("\n"), MAX_TOTAL_CHARS))
+}
+
+fn managed_artifact_markdown_link(value: &str) -> Option<&str> {
+    let destination_marker = "](chatos-plugin-artifacts/";
+    let destination_start = value.find(destination_marker)?;
+    let label_start = value[..destination_start].rfind('[')?;
+    let destination_body_start = destination_start + destination_marker.len();
+    let destination_end = destination_body_start + value[destination_body_start..].find(')')? + 1;
+    Some(&value[label_start..destination_end])
 }
 
 fn callback_summary_heading(value: &str) -> bool {

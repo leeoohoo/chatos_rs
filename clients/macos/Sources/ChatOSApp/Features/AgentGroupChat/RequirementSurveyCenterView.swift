@@ -6,8 +6,12 @@ enum RequirementSurveyMonitoringPolicy {
     static let consistencyCheckInterval = Duration.seconds(300)
     private static let refreshEventTypes: Set<String> = [
         "user_input_requested",
+        "requirement_survey_waiting",
         "requirement_survey_resolved",
+        "requirement_plan_saved", "requirement_plan_confirmed",
         "run_cancelled",
+        "run_succeeded", "run_failed", "run_needs_review", "run_paused",
+        "continuation_requested",
     ]
 
     static func shouldRefresh(for events: [LocalAgentEventRecord]) -> Bool {
@@ -34,6 +38,12 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
     private var debouncedRefreshTask: Task<Void, Never>?
     private var isRefreshInFlight = false
     private var needsRefresh = false
+    private var openedSurveyID: String?
+
+    func includeOpenedSurvey(_ survey: LocalAgentHostRequirementSurvey) {
+        openedSurveyID = survey.id
+        if !surveys.contains(where: { $0.id == survey.id }) { surveys.append(survey) }
+    }
 
     init(
         ownerUserID: String,
@@ -122,7 +132,14 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
         repeat {
             needsRefresh = false
             do {
-                surveys = try await client.list(ownerUserID: ownerUserID).sorted {
+                var loaded = try await client.list(ownerUserID: ownerUserID)
+                // Deep links can target forms outside the bounded recent list. Fetch
+                // that exact form rather than keeping a stale, possibly cancelled copy.
+                if let openedSurveyID, !loaded.contains(where: { $0.id == openedSurveyID }),
+                   let opened = try? await client.get(ownerUserID: ownerUserID, surveyID: openedSurveyID) {
+                    loaded.append(opened)
+                }
+                surveys = loaded.sorted {
                     ($0.createdAtUnixMs, $0.id) > ($1.createdAtUnixMs, $1.id)
                 }
                 errorMessage = nil
@@ -159,7 +176,14 @@ private final class RequirementSurveyCenterViewModel: ObservableObject {
 }
 
 struct RequirementSurveyCenterView: View {
+    private let ownerUserID: String
+    private let client: NativeLocalAgentRequirementSurveyClient
+    private let eventHub: NativeLocalAgentEventHub
     let projects: [ResourceItem]
+    @Binding private var navigationTarget: RequirementSurveyNavigationTarget?
+    @State private var projectPath: [String] = []
+    @State private var focusedSurveyID: String?
+    @State private var navigationError: String?
     @StateObject private var viewModel: RequirementSurveyCenterViewModel
     @State private var projectPage = 0
     @State private var projectPageSize = 20
@@ -168,9 +192,14 @@ struct RequirementSurveyCenterView: View {
         ownerUserID: String,
         projects: [ResourceItem],
         client: NativeLocalAgentRequirementSurveyClient,
-        eventHub: NativeLocalAgentEventHub
+        eventHub: NativeLocalAgentEventHub,
+        navigationTarget: Binding<RequirementSurveyNavigationTarget?> = .constant(nil)
     ) {
         self.projects = projects
+        self.ownerUserID = ownerUserID
+        self.client = client
+        self.eventHub = eventHub
+        _navigationTarget = navigationTarget
         _viewModel = StateObject(wrappedValue: RequirementSurveyCenterViewModel(
             ownerUserID: ownerUserID,
             client: client,
@@ -179,7 +208,7 @@ struct RequirementSurveyCenterView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $projectPath) {
             ZStack {
                 LinearGradient(
                     colors: [Color(nsColor: .windowBackgroundColor), AppPalette.ai.opacity(0.045)],
@@ -196,14 +225,14 @@ struct RequirementSurveyCenterView: View {
                             ContentUnavailableView {
                                 Label("暂无项目", systemImage: "folder")
                             } description: {
-                                Text("创建项目后，可以在这里查看本地任务发起的需求调研。")
+                                Text("创建项目后，可以在这里查看主聊天或本地任务发起的需求调研。")
                             }
                             .frame(maxWidth: .infinity, minHeight: 360)
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
                         } else {
                             HStack(alignment: .firstTextBaseline) {
                                 Text("项目").appFont(.title2.weight(.semibold))
-                                Text("选择项目查看本地任务的调研记录")
+                                Text("选择项目查看主聊天与任务的调研记录")
                                     .appFont(.caption)
                                     .foregroundStyle(.secondary)
                                 Spacer()
@@ -236,7 +265,10 @@ struct RequirementSurveyCenterView: View {
                             submittingSurveyIDs: viewModel.submittingSurveyIDs,
                             showsNavigationBackButton: true,
                             heading: project.title,
-                            explanation: "本地任务需要你补充信息时会在这里暂停。提交答案后，Local Agent Host 会原子保存答案并恢复原 Run。",
+                            explanation: "填写调研，帮助 AI 理解你的目标、偏好和限制。提交后，AI 会根据你的回答整理需求与后续方案。",
+                            requestedSurveyID: focusedSurveyID,
+                            followUpClient: client,
+                            eventHub: eventHub,
                             onSubmit: viewModel.submit
                         )
                         .navigationTitle(project.title)
@@ -252,16 +284,17 @@ struct RequirementSurveyCenterView: View {
             }
         }
         .task { await viewModel.activate() }
+        .task(id: navigationTarget?.id) { await openRequestedSurvey() }
         .alert(
             "需求调研错误",
             isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
+                get: { viewModel.errorMessage != nil || navigationError != nil },
+                set: { if !$0 { viewModel.errorMessage = nil; navigationError = nil } }
             )
         ) {
-            Button("好", role: .cancel) { viewModel.errorMessage = nil }
+            Button("好", role: .cancel) { viewModel.errorMessage = nil; navigationError = nil }
         } message: {
-            Text(viewModel.errorMessage ?? "")
+            Text(navigationError ?? viewModel.errorMessage ?? "")
         }
     }
 
@@ -285,13 +318,13 @@ struct RequirementSurveyCenterView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("需求调研").appFont(.largeTitle.weight(.bold))
-                Text("由 Local Agent Host 持久化；答案提交后直接恢复对应的本地任务")
+                Text("了解你的需求，整理目标与后续方案")
                     .appFont(.body)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 20)
             surveyMetric(value: open, title: "待填写", color: AppPalette.ai)
-            surveyMetric(value: resolved, title: "已恢复", color: .green)
+            surveyMetric(value: resolved, title: "已提交", color: .green)
         }
         .padding(24)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -324,7 +357,7 @@ struct RequirementSurveyCenterView: View {
                 .frame(width: 42, height: 42)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(project.title).appFont(.headline).lineLimit(1)
-                    Text(surveys.isEmpty ? "暂无本地任务调研" : "共 \(surveys.count) 张调研单")
+                    Text(surveys.isEmpty ? "暂无需求调研" : "共 \(surveys.count) 张调研单")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -333,7 +366,7 @@ struct RequirementSurveyCenterView: View {
             }
             HStack(spacing: 8) {
                 statusBadge("\(open) 待填写", color: AppPalette.ai, isActive: open > 0)
-                statusBadge("\(resolved) 已恢复", color: .green, isActive: resolved > 0)
+                statusBadge("\(resolved) 已提交", color: .green, isActive: resolved > 0)
             }
             if viewModel.isLoading && surveys.isEmpty { ProgressView().controlSize(.small) }
         }
@@ -351,5 +384,25 @@ struct RequirementSurveyCenterView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(isActive ? color.opacity(0.1) : AppPalette.inputSurface.opacity(0.7), in: Capsule())
+    }
+
+    @MainActor
+    private func openRequestedSurvey() async {
+        guard let target = navigationTarget, target.ownerUserID == ownerUserID else { return }
+        do {
+            let survey = try await client.get(ownerUserID: ownerUserID, surveyID: target.surveyID)
+            guard !Task.isCancelled, navigationTarget == target else { return }
+            guard projects.contains(where: { $0.id == survey.projectResourceID }) else {
+                throw CocoaError(.fileReadNoSuchFile)
+            }
+            viewModel.includeOpenedSurvey(survey)
+            focusedSurveyID = survey.id
+            projectPath = [survey.projectResourceID]
+            navigationTarget = nil
+        } catch {
+            guard !Task.isCancelled, navigationTarget == target else { return }
+            navigationError = "这张调研暂时无法打开，请刷新列表后重试。"
+            navigationTarget = nil
+        }
     }
 }

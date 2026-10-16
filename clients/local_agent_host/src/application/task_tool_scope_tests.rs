@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
+use super::task_tools::preparation_error;
 use super::{
     LocalAgentRuntime, LocalTaskToolExecutor, LocalToolExecutor, CANCEL_TASK_TOOL,
-    CREATE_TASK_TOOL, GET_TASK_DEPENDENCY_GRAPH_TOOL, GET_TASK_TOOL, LIST_TASKS_TOOL,
-    WAIT_FOR_TASK_COMPLETION_TOOL,
+    CREATE_TASKS_TOOL, CREATE_TASK_TOOL, GET_TASK_DEPENDENCY_GRAPH_TOOL, GET_TASK_TOOL,
+    LIST_TASKS_TOOL, WAIT_FOR_TASK_COMPLETION_TOOL,
 };
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
@@ -18,6 +19,9 @@ use std::sync::Arc;
 
 #[path = "task_revision_tests.rs"]
 mod revisions;
+
+#[path = "task_followup_tool_tests.rs"]
+mod followup;
 
 fn envelope(command_id: &str, command: HostCommand) -> HostRequestEnvelope {
     HostRequestEnvelope {
@@ -72,7 +76,7 @@ async fn add_project_conversation(
         .expect("start conversation turn");
 }
 
-async fn runtime_with_project_conversations() -> Arc<LocalAgentRuntime> {
+pub(super) async fn runtime_with_project_conversations() -> Arc<LocalAgentRuntime> {
     let storage = Arc::new(
         SqliteClientStorage::connect_memory()
             .await
@@ -103,14 +107,42 @@ fn invocation(
     invocation_id: &str,
     run_id: &str,
     tool_name: &str,
-    arguments: Value,
+    mut arguments: Value,
 ) -> LocalAgentToolInvocationRecord {
+    if let Some(object) = arguments.as_object_mut() {
+        if tool_name == CREATE_TASK_TOOL {
+            object
+                .entry("expected_outputs")
+                .or_insert_with(|| json!(["Test output"]));
+            object
+                .entry("acceptance_criteria")
+                .or_insert_with(|| json!(["Test expectation is satisfied"]));
+        } else if tool_name == CREATE_TASKS_TOOL {
+            object
+                .entry("graph_goal")
+                .or_insert_with(|| json!("Complete the test graph"));
+            object
+                .entry("decomposition_rationale")
+                .or_insert_with(|| json!("The test Tasks own distinct outputs."));
+            if let Some(tasks) = object.get_mut("tasks").and_then(Value::as_array_mut) {
+                for task in tasks {
+                    if let Some(task) = task.as_object_mut() {
+                        task.entry("expected_outputs")
+                            .or_insert_with(|| json!(["Task output"]));
+                        task.entry("acceptance_criteria")
+                            .or_insert_with(|| json!(["Task expectation is satisfied"]));
+                    }
+                }
+            }
+        }
+    }
     LocalAgentToolInvocationRecord {
         invocation_id: invocation_id.to_string(),
         run_id: run_id.to_string(),
         batch_id: format!("batch-{invocation_id}"),
         call_id: format!("call-{invocation_id}"),
         tool_name: tool_name.to_string(),
+        execution_route: chatos_local_agent_protocol::LocalAgentToolExecutionRoute::Shared,
         arguments,
         side_effecting: matches!(tool_name, CREATE_TASK_TOOL | CANCEL_TASK_TOOL),
         requires_approval: false,
@@ -216,7 +248,8 @@ async fn main_chat_task_tools_query_and_mutate_only_the_current_project_scope() 
             json!({"task_id": other_task_id}),
         ))
         .await
-        .expect_err("another project's Task must stay hidden");
+        .expect("cross-project rejection is a known result");
+    let cross_project_error = preparation_error(cross_project_error);
     assert!(cross_project_error.contains("task not found"));
 
     let dependency_graph = succeeded_output(
@@ -275,7 +308,8 @@ async fn task_query_rejects_invalid_paging_before_touching_storage() {
             json!({"limit": 501}),
         ))
         .await
-        .expect_err("oversized Task page must be rejected");
+        .expect("oversized query is a known rejection");
+    let error = preparation_error(error);
     assert!(error.contains("invalid task query"));
 }
 
@@ -308,6 +342,7 @@ async fn task_tools_require_the_main_chat_conversation_context() {
             json!({"path": "README.md"}),
         ))
         .await
-        .expect_err("Main Chat must not execute a project tool directly");
+        .expect("unsupported tool rejection has no side effects");
+    let error = preparation_error(error);
     assert!(error.contains("unsupported local Task tool"));
 }

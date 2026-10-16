@@ -212,112 +212,8 @@ pub trait LocalAgentRunStore: Send + Sync {
     async fn health_check(&self) -> Result<(), ClientStorageError>;
 }
 
-#[async_trait]
-pub trait LocalAgentTaskStore: Send + Sync {
-    async fn create_task_graph(
-        &self,
-        command: &IdempotentCommand,
-        graph: &CreateTaskGraphCommand,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-
-    async fn get_task_graph(
-        &self,
-        owner_user_id: &str,
-        graph_id: &str,
-    ) -> Result<Option<LocalTaskGraph>, ClientStorageError>;
-
-    async fn list_task_graphs(
-        &self,
-        owner_user_id: &str,
-        scope: LocalTaskGraphListScope,
-        source_entity_type: Option<&str>,
-        source_entity_id: Option<&str>,
-        before_updated_at_unix_ms: Option<i64>,
-        before_graph_id: Option<&str>,
-        limit: u32,
-    ) -> Result<LocalTaskGraphPage, ClientStorageError>;
-
-    async fn list_task_runs(
-        &self,
-        owner_user_id: &str,
-        task_id: &str,
-        limit: u32,
-    ) -> Result<Vec<LocalAgentRunRecord>, ClientStorageError>;
-
-    async fn list_tasks_for_conversation(
-        &self,
-        owner_user_id: &str,
-        conversation_id: &str,
-        status: Option<LocalTaskStatus>,
-        keyword: Option<&str>,
-        tag: Option<&str>,
-        scheduled_only: Option<bool>,
-        parent_task_id: Option<&str>,
-        source_run_id: Option<&str>,
-        limit: u32,
-        offset: u32,
-    ) -> Result<Vec<LocalTaskRecord>, ClientStorageError>;
-
-    async fn get_task_for_conversation(
-        &self,
-        owner_user_id: &str,
-        conversation_id: &str,
-        task_id: &str,
-    ) -> Result<Option<LocalTaskRecord>, ClientStorageError>;
-
-    async fn start_next_task_run(
-        &self,
-        owner_user_id: &str,
-        run_id: &str,
-        event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
-
-    async fn start_next_task_run_for_graph(
-        &self,
-        owner_user_id: &str,
-        graph_id: &str,
-        run_id: &str,
-        event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError>;
-
-    #[allow(clippy::too_many_arguments)]
-    async fn cancel_task(
-        &self,
-        command: &IdempotentCommand,
-        owner_user_id: &str,
-        task_id: &str,
-        expected_version: Option<u64>,
-        reason: &str,
-        replacement_task_ids: &[String],
-        run_event_id: &str,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-
-    async fn retry_task(
-        &self,
-        command: &IdempotentCommand,
-        owner_user_id: &str,
-        task_id: &str,
-        expected_version: u64,
-        retry_instruction: Option<&str>,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-
-    #[allow(clippy::too_many_arguments)]
-    async fn restart_task(
-        &self,
-        command: &IdempotentCommand,
-        owner_user_id: &str,
-        task_id: &str,
-        expected_version: u64,
-        reason: &str,
-        run_event_prefix: &str,
-        now_unix_ms: i64,
-    ) -> Result<LocalTaskGraph, ClientStorageError>;
-}
+mod task_store_port;
+pub use task_store_port::LocalAgentTaskStore;
 
 #[async_trait]
 pub trait LocalAgentToolStore: Send + Sync {
@@ -326,11 +222,49 @@ pub trait LocalAgentToolStore: Send + Sync {
         invocation_id: &str,
     ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
 
+    /// Resolves one completed source call inside the active owner's Run.
+    /// This is the only lookup used by progressive tool-result reads; callers
+    /// cannot cross owner or Run boundaries with a model-supplied call id.
+    async fn get_completed_tool_invocation_for_run_call(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        call_id: &str,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
     async fn successful_tool_invocation_count(
         &self,
         run_id: &str,
         tool_name: &str,
     ) -> Result<u64, ClientStorageError>;
+
+    async fn has_successful_tool_invocation_argument(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> Result<bool, ClientStorageError>;
+
+    async fn successful_tool_invocation_argument_values(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+    ) -> Result<Vec<String>, ClientStorageError>;
+
+    /// Trusted, owner/Run-scoped facts only; never model-provided descriptions.
+    #[allow(clippy::too_many_arguments)]
+    async fn latest_successful_tool_invocation_result(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+        described_tool_option: Option<&str>,
+    ) -> Result<Option<Value>, ClientStorageError>;
 
     async fn recover_expired_tool_claims(
         &self,
@@ -361,6 +295,7 @@ pub trait LocalAgentToolStore: Send + Sync {
         event_id: &str,
         include_tool_names: Option<&[String]>,
         exclude_tool_names: &[String],
+        execution_route: Option<chatos_local_agent_protocol::LocalAgentToolExecutionRoute>,
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError>;
 
     #[allow(clippy::too_many_arguments)]
@@ -732,6 +667,27 @@ pub trait LocalAgentArtifactStore: Send + Sync {
 
 #[async_trait]
 pub trait LocalRequirementSurveyStore: Send + Sync {
+    async fn get_requirement_plan(
+        &self,
+        owner_user_id: &str,
+        survey_id: &str,
+        revision: Option<u64>,
+    ) -> Result<Option<chatos_local_agent_protocol::LocalRequirementPlan>, ClientStorageError>;
+
+    async fn save_requirement_plan(
+        &self,
+        command: &IdempotentCommand,
+        save: &chatos_local_agent_protocol::SaveRequirementPlanCommand,
+        now_unix_ms: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalRequirementPlan, ClientStorageError>;
+
+    async fn confirm_requirement_plan(
+        &self,
+        command: &IdempotentCommand,
+        confirm: &chatos_local_agent_protocol::ConfirmRequirementPlanCommand,
+        now_unix_ms: i64,
+    ) -> Result<chatos_local_agent_protocol::LocalRequirementPlan, ClientStorageError>;
+
     async fn create_requirement_survey(
         &self,
         command: &IdempotentCommand,

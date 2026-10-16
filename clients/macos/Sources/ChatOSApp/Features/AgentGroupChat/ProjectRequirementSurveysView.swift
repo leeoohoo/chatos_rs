@@ -7,7 +7,10 @@ struct ProjectRequirementSurveysView: View {
     let submittingSurveyIDs: Set<String>
     var showsNavigationBackButton = false
     var heading = "需求调研"
-    var explanation = "本地任务需要补充信息时会暂停并创建调研单。"
+    var explanation = "主聊天或本地任务需要补充信息时会暂停并创建调研单。"
+    var requestedSurveyID: String? = nil
+    var followUpClient: NativeLocalAgentRequirementSurveyClient? = nil
+    var eventHub: NativeLocalAgentEventHub? = nil
     let onSubmit: (
         LocalAgentHostRequirementSurvey,
         [String: LocalAgentJSONValue]
@@ -22,15 +25,23 @@ struct ProjectRequirementSurveysView: View {
     }
 
     var body: some View {
-        if let survey = surveys.first(where: { $0.id == selectedSurveyID }) {
-            RequirementSurveyDetailView(
-                survey: survey,
-                isSubmitting: submittingSurveyIDs.contains(survey.id),
-                onBack: { selectedSurveyID = nil },
-                onSubmit: onSubmit
-            )
-        } else {
-            surveyList
+        Group {
+            if let survey = surveys.first(where: { $0.id == selectedSurveyID }) {
+                RequirementSurveyDetailView(
+                    survey: survey,
+                    isSubmitting: submittingSurveyIDs.contains(survey.id),
+                    followUpClient: followUpClient,
+                    eventHub: eventHub,
+                    onBack: { selectedSurveyID = nil },
+                    onSubmit: onSubmit
+                )
+            } else {
+                surveyList
+            }
+        }
+        .onAppear { if let requestedSurveyID { selectedSurveyID = requestedSurveyID } }
+        .onChange(of: requestedSurveyID) { _, value in
+            if let value { selectedSurveyID = value }
         }
     }
 
@@ -50,7 +61,7 @@ struct ProjectRequirementSurveysView: View {
                         ContentUnavailableView {
                             Label("暂无需求调研", systemImage: "list.clipboard")
                         } description: {
-                            Text("本项目的 Local Agent Task 还没有发起调研。")
+                            Text("本项目的主聊天或本地任务还没有发起调研。")
                         }
                         .frame(maxWidth: .infinity, minHeight: 320)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
@@ -62,7 +73,7 @@ struct ProjectRequirementSurveysView: View {
                             surveyGrid(open)
                         }
                         if !resolved.isEmpty {
-                            sectionTitle("已恢复任务", count: resolved.count, color: .green)
+                            sectionTitle("已提交", count: resolved.count, color: .green)
                                 .padding(.top, open.isEmpty ? 0 : 8)
                             surveyGrid(resolved)
                         }
@@ -116,7 +127,7 @@ struct ProjectRequirementSurveysView: View {
             HStack(spacing: 10) {
                 metric(surveys.count, "全部调研", color: .blue)
                 metric(open, "待你填写", color: AppPalette.ai)
-                metric(resolved, "已恢复任务", color: .green)
+                metric(resolved, "已提交", color: .green)
             }
         }
         .padding(22)

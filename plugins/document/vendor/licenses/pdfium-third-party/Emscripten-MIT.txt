@@ -57,7 +57,7 @@ the following conditions:
     Neither the names of Mozilla,
     nor the names of its contributors may be used to endorse
     or promote products derived from this Software without specific prior
-    written permission.
+    written permission. 
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
@@ -99,3 +99,4 @@ system/lib/libc/musl/COPYRIGHT
 The third_party/ subdirectory contains code with other licenses. None of it is
 used by default, but certain options use it (e.g., the optional closure compiler
 flag will run closure compiler from third_party/).
+

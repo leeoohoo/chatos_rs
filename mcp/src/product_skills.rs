@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::SystemMcpProductSkillBinding;
-
 const PRODUCT_SKILL_ROOT: &str = "product-skill:";
-pub const PRODUCT_SKILL_RUNTIME_RESOURCE_ID: &str = "chatos_product_skill_runtime";
-pub const PRODUCT_SKILL_RUNTIME_SERVER_NAME: &str = "product_skill";
-pub const PRODUCT_SKILL_LIST_RESOURCES_TOOL: &str = "list_resources";
-pub const PRODUCT_SKILL_READ_RESOURCE_TOOL: &str = "read_resource";
-const PRODUCT_SKILL_RUNTIME_SKILLS: &[&str] = &["chatos-skill-runtime"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductSkillResource {
@@ -168,10 +160,48 @@ static PRODUCT_SKILLS: &[ProductSkillDocument] = &[
     ),
     skill!(
         "chatos-async-task-orchestration",
-        [resource!(
-            "chatos-async-task-orchestration",
-            "references/capabilities-lifecycle-and-recovery.md"
-        )]
+        [
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/acceptance-examples-and-antipatterns.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/capabilities-and-plugins.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/complexity-and-decomposition.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/design-and-creative.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/documents-presentations-and-media.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/followups-cancellation-and-recovery.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/graph-patterns-and-dependencies.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/research-data-and-operations.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/software-engineering.md"
+            ),
+            resource!(
+                "chatos-async-task-orchestration",
+                "references/writing-content-and-marketing.md"
+            ),
+        ]
     ),
 ];
 
@@ -185,78 +215,6 @@ pub fn product_skill_document(name: &str) -> Option<ProductSkillDocument> {
 
 pub fn product_skill_documents() -> &'static [ProductSkillDocument] {
     PRODUCT_SKILLS
-}
-
-pub fn product_skill_runtime_binding(tool_name: &str) -> Option<SystemMcpProductSkillBinding> {
-    match tool_name.trim() {
-        PRODUCT_SKILL_LIST_RESOURCES_TOOL | PRODUCT_SKILL_READ_RESOURCE_TOOL => {
-            Some(SystemMcpProductSkillBinding {
-                binding_id: "product-skill.control-plane",
-                primary_skill: "chatos-skill-runtime",
-                required_skills: PRODUCT_SKILL_RUNTIME_SKILLS,
-                coverage_revision: 1,
-            })
-        }
-        _ => None,
-    }
-}
-
-pub fn product_skill_runtime_tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": PRODUCT_SKILL_LIST_RESOURCES_TOOL,
-            "description": "List the supporting resources for one product-skill Skill already bound to this Runtime Session. This never activates an unbound Skill or expands permissions.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "skill_ref": {
-                        "type": "string",
-                        "description": "Exact product-skill: reference disclosed in protected Skill context."
-                    }
-                },
-                "required": ["skill_ref"],
-                "additionalProperties": false
-            },
-            "annotations": {"readOnlyHint": true}
-        }),
-        json!({
-            "name": PRODUCT_SKILL_READ_RESOURCE_TOOL,
-            "description": "Read one paginated supporting resource from a product Skill already bound to this Runtime Session. First list resources and pass back the exact path and content hash.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "skill_ref": {
-                        "type": "string",
-                        "description": "Exact product-skill: reference disclosed in protected Skill context."
-                    },
-                    "relative_path": {
-                        "type": "string",
-                        "description": "Exact relative resource path returned by list_resources."
-                    },
-                    "content_sha256": {
-                        "type": "string",
-                        "pattern": "^[0-9a-f]{64}$",
-                        "description": "Exact content hash returned by list_resources."
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "default": 0,
-                        "description": "Unicode character offset returned by the previous page."
-                    },
-                    "max_chars": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 20000,
-                        "default": 12000
-                    }
-                },
-                "required": ["skill_ref", "relative_path", "content_sha256"],
-                "additionalProperties": false
-            },
-            "annotations": {"readOnlyHint": true}
-        }),
-    ]
 }
 
 fn sha256(value: &str) -> String {
@@ -334,30 +292,24 @@ mod tests {
     }
 
     #[test]
+    fn task_orchestration_bundle_tracks_the_current_split_resources() {
+        let document = product_skill_document("chatos-async-task-orchestration")
+            .expect("task orchestration Skill");
+        assert_eq!(document.resources.len(), 10);
+        assert!(document
+            .resource("references/capabilities-and-plugins.md")
+            .is_some());
+        assert!(document
+            .resource("references/capabilities-lifecycle-and-recovery.md")
+            .is_none());
+    }
+
+    #[test]
     fn product_skill_lookup_is_exact_after_outer_whitespace() {
         let document = product_skill_document(" chatos-terminal ").expect("terminal Skill");
         assert_eq!(document.name, "chatos-terminal");
         assert_eq!(document.skill_ref(), "product-skill:chatos-terminal");
         assert!(product_skill_document("CHATOS-terminal").is_none());
         assert!(document.resource("references/missing.md").is_none());
-    }
-
-    #[test]
-    fn product_skill_control_tools_are_read_only_and_bound() {
-        let tools = product_skill_runtime_tool_definitions();
-        assert_eq!(tools.len(), 2);
-        for tool in tools {
-            let name = tool["name"].as_str().expect("tool name");
-            assert_eq!(
-                tool.pointer("/annotations/readOnlyHint"),
-                Some(&json!(true))
-            );
-            assert_eq!(
-                product_skill_runtime_binding(name)
-                    .expect("control binding")
-                    .primary_skill,
-                "chatos-skill-runtime"
-            );
-        }
     }
 }

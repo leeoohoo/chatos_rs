@@ -20,9 +20,25 @@ use crate::planner_tools::task_scoped_tools;
 pub const MAIN_CHAT_PROFILE_KEY: &str = "main_chat";
 pub const TASK_EXECUTION_PROFILE_KEY: &str = "task_execution";
 
-const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
+fn runtime_clock_context() -> Value {
+    let now = chrono::Local::now();
+    message_item(
+        "system",
+        Value::String(
+            json!({
+                "type": "runtime_clock_context",
+                "current_date": now.format("%Y-%m-%d").to_string(),
+                "current_time": now.to_rfc3339(),
+                "timezone": "host-local",
+                "utc_offset": now.format("%:z").to_string(),
+                "current_time_utc": now.with_timezone(&chrono::Utc).to_rfc3339()
+            })
+            .to_string(),
+        ),
+    )
+}
 
-const MAIN_CHAT_TASK_REVISION_INSTRUCTIONS: &str = "[Latest User Intent and Executing Work]\nBefore arranging work or answering a follow-up that adds, changes, replaces, or cancels requirements, use list_tasks and get_task to inspect related non-terminal tasks in this conversation. Compare their actual objectives with the latest user message, including same-turn guidance. A verbal acknowledgement does not update an executing task. If requirements conflict or replace earlier work, call cancel_task on the affected tasks first and verify its result before claiming they stopped. Inspect get_task_dependency_graph and stop affected downstream work too; do not stop unrelated tasks. For a clear correction, create corrected work only after the affected old tasks are confirmed cancelled, passing their ids as supersedes_task_ids, and include the full revised objective and the need to inspect existing side effects. For an explicit stop, cancel without creating replacement work. For an ambiguous target or correction, ask for clarification; do not broadly cancel. Status inquiries and unrelated requests must not cancel tasks. Preserve old execution history. Cancellation prevents further durable execution but cannot undo already-completed files, external operations, or an in-flight external call; never promise rollback. Confirm what actually changed or stopped based on tool results. Never close a handoff while new guidance remains unhandled.";
+const TASK_EXECUTION_WORKSPACE_INSTRUCTIONS: &str = "[Local Workspace Boundary]\nWhen local project tools are available, path `.` is the authoritative root currently bound to this conversation. Treat the entries returned by `list_dir` for `.` as the root contents. Never replace that root with a child directory merely because its name appears to match the task or project; descend into a child only when the user's request requires inspecting that child, and keep root-relative paths and the distinction between the bound root and nested directories explicit in the final answer.";
 
 /// A model runtime resolved for one step. This type is deliberately neither
 /// serializable nor debuggable because `model_config` may contain credentials.
@@ -235,10 +251,16 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
         )?;
         if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
             capabilities.tools = task_scoped_tools(capabilities.tools, &claim.run.input)?;
+        } else if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            capabilities.tools = main_chat_scoped_tools(capabilities.tools, &claim.run.input);
         }
         capabilities
             .prefixed_input_items
             .extend(self.local_prefixed_input_items.clone());
+        // Refresh even for resumed Tasks; page text is not the runtime clock.
+        capabilities
+            .prefixed_input_items
+            .push(runtime_clock_context());
         let configured_instructions = merge_instructions(
             capabilities.instructions,
             transient.model_config.instructions,
@@ -248,17 +270,147 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
                 Some(TASK_EXECUTION_WORKSPACE_INSTRUCTIONS.to_string()),
                 configured_instructions,
             )
-        } else if self.profile_key == MAIN_CHAT_PROFILE_KEY {
-            merge_instructions(
-                Some(MAIN_CHAT_TASK_REVISION_INSTRUCTIONS.to_string()),
-                configured_instructions,
-            )
         } else {
             configured_instructions
         };
         let (mut current_input_items, reason) = durable_step_input(claim, self.initial_text_field)?;
+        if transient.model_config.supports_images == Some(false) {
+            // Do not let an image-producing tool turn a text-only model request
+            // into an invalid gateway call or imply that this model saw pixels.
+            for item in &mut current_input_items {
+                if let Some(parts) = item.get_mut("content").and_then(Value::as_array_mut) {
+                    parts.retain(|part| {
+                        !matches!(
+                            part.get("type").and_then(Value::as_str),
+                            Some("input_image" | "image_url")
+                        )
+                    });
+                    if parts.is_empty() {
+                        parts.push(json!({"type":"input_text", "text":"Image input withheld: the configured model does not support images."}));
+                    }
+                }
+            }
+            capabilities.prefixed_input_items.push(message_item("system", Value::String(
+                "[Model image capability] This Run's configured model explicitly does not support images. Image parts are not sent to this model. For image-dependent work, explain this specific limitation and ask for an image-capable model or an authorized OCR alternative. Do not claim to have seen an image or create a Task merely to bypass this limitation.".into()
+            )));
+        }
+        if self.profile_key == TASK_EXECUTION_PROFILE_KEY
+            && claim
+                .run
+                .input
+                .get("acceptance_report_version")
+                .and_then(Value::as_u64)
+                == Some(1)
+        {
+            // Program-owned frozen data is available even after history truncation.
+            capabilities.prefixed_input_items.push(message_item(
+                "user",
+                Value::String(
+                    json!({
+                        "type":"task_acceptance_contract",
+                        "acceptance_report_version":1,
+                        "expected_outputs":claim.run.input.get("expected_outputs"),
+                        "acceptance_criteria":claim.run.input.get("acceptance_criteria"),
+                        "final_response_max_chars":claim.run.input.get("final_response_max_chars"),
+                        "source_user_message":claim.run.input.get("source_user_message")
+                    })
+                    .to_string(),
+                ),
+            ));
+        }
+        if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
+            if let Some(selected_plugins) = claim
+                .run
+                .input
+                .pointer("/tool_options/plugin_hints")
+                .and_then(Value::as_array)
+                .filter(|plugins| !plugins.is_empty())
+            {
+                // The selected Plugin is program-owned Task scope, not a soft model hint.
+                // Repeat it on every step so memory truncation or a tempting built-in
+                // cannot silently change the requested delivery surface.
+                capabilities.prefixed_input_items.push(message_item(
+                    "system",
+                    Value::String(
+                        json!({
+                            "type": "task_selected_plugin_contract",
+                            "selected_plugins": selected_plugins,
+                            "delivery_route": "selected_plugin_required",
+                            "guidance": "The selected Plugin is the required primary delivery route for this Task. Discover, describe, activate, and invoke it. Built-in project reads may supply evidence. Notepad may only read an existing note explicitly bound as input; this Plugin Task cannot create or update notes or use Notepad as scratch storage. Do not report success until the selected Plugin has persisted and verified the requested deliverable."
+                        })
+                        .to_string(),
+                    ),
+                ));
+            }
+        }
+        if self.profile_key == MAIN_CHAT_PROFILE_KEY {
+            if let Some(selection) = claim.run.input.get("explicit_capability_selection") {
+                let kind = selection.get("kind").and_then(Value::as_str);
+                let contract = match kind {
+                    Some("plugin") => Some(json!({
+                        "type": "user_selected_capability_contract",
+                        "selection": selection,
+                        "delivery_route": "selected_plugin_required",
+                        "guidance": "The user explicitly selected this Plugin in the composer. Create the requested durable Task with this exact Plugin as its required delivery route. Do not ask the user for a Plugin key or version, do not substitute Notepad or an ordinary file, and do not claim completion in Main Chat. The Host independently freezes and enforces the selected Plugin on every created Task."
+                    })),
+                    Some("requirement_survey") => Some(json!({
+                        "type": "user_selected_capability_contract",
+                        "selection": selection,
+                        "delivery_route": "requirement_survey_direct",
+                        "guidance": "The user explicitly selected Requirement Survey in the composer. Activate the requirement-discovery Skill and call requirement_survey_create directly in Main Chat. Do not create a survey placeholder Task and do not dispatch dependent work before the submitted answers and confirmed proposal."
+                    })),
+                    _ => None,
+                };
+                if let Some(contract) = contract {
+                    capabilities
+                        .prefixed_input_items
+                        .push(message_item("system", Value::String(contract.to_string())));
+                }
+            }
+        }
+        if self.profile_key == TASK_EXECUTION_PROFILE_KEY {
+            if let Some(instructions) = claim
+                .run
+                .input
+                .get("retry_instructions")
+                .and_then(Value::as_array)
+                .filter(|instructions| !instructions.is_empty())
+            {
+                capabilities.prefixed_input_items.push(message_item(
+                    "user",
+                    Value::String(
+                        json!({
+                            "type": "task_retry_context",
+                            "instructions": instructions,
+                            "fresh_evidence_required": true,
+                            "guidance": "This is a fresh Task retry. Treat conclusions and tool outputs from earlier Runs as historical only. Re-execute every read or validation needed to address the retry instructions. Do not repeat a previous blocker unless fresh evidence from this Run still demonstrates it."
+                        })
+                        .to_string(),
+                    ),
+                ));
+            }
+        }
+        let pending_review = claim.run.input.get("task_followup_review");
+        if let Some(plan) = claim.run.input.get("requirement_plan") {
+            // Frozen program-owned context is sent on every step independently of
+            // conversation memory truncation. Plan prose remains user/task data.
+            capabilities.prefixed_input_items.push(message_item(
+                "user",
+                Value::String(
+                    json!({"type": "requirement_plan_context", "plan": plan}).to_string(),
+                ),
+            ));
+        }
+        if let Some(review) = pending_review {
+            // Program-owned facts only. New Runs get behavior from their frozen Product Skill.
+            capabilities
+                .prefixed_input_items
+                .push(message_item("system", Value::String(review.to_string())));
+        }
         let async_handoff_confirmed = self.profile_key == MAIN_CHAT_PROFILE_KEY
             && completed_async_task_handoff(claim.run.continuation_input.as_ref())
+            && !pending_review
+                .is_some_and(|review| review.get("pending").and_then(Value::as_bool) == Some(true))
             && !claim.run.continuation_input.as_ref().is_some_and(|value| {
                 value
                     .get("guidance")
@@ -276,8 +428,7 @@ impl LocalAiStepPlanner for ControlPlaneLocalAiStepPlanner {
             current_input_items.push(message_item(
                 "system",
                 Value::String(
-                    "[Continued Work Accepted]\n`wait_for_task_completion` has succeeded and the requested work is continuing independently. Do not call any tool, inspect execution status, wait for completion, or claim that the requested work is finished. Immediately respond in the contact's first-person voice with one concise, natural sentence saying that you have started working on the request, then end the turn. Do not mention tasks, Task Runner, background work, callbacks, tool calls, handoffs, or any internal execution structure to the user."
-                        .to_string(),
+                    json!({"type": "continued_work_accepted", "accepted": true}).to_string(),
                 ),
             ));
         } else if task_outcome_reported {
@@ -359,6 +510,26 @@ fn merge_local_tools(
     });
     controlled.extend(merged_local);
     Ok(controlled)
+}
+
+fn main_chat_scoped_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
+    let explicitly_selected_plugin = input
+        .pointer("/explicit_capability_selection/kind")
+        .and_then(Value::as_str)
+        == Some("plugin");
+    if explicitly_selected_plugin {
+        // The composer selection is already the user's delivery decision. A
+        // Requirement Survey is a different explicit surface, not a preflight
+        // substitute for dispatching the selected Plugin Task. Any missing
+        // task-local detail can be requested by that Task through Ask User.
+        tools.retain(|tool| {
+            tool_name(tool).is_none_or(|name| {
+                !name.starts_with("requirement_survey_")
+                    && !name.starts_with("requirement_plan_")
+            })
+        });
+    }
+    tools
 }
 
 fn merge_task_selection_schema(local: &mut Value, controlled: &Value) {
@@ -470,7 +641,13 @@ fn apply_run_thinking_level(config: &mut ModelRuntimeConfig, input: &Value) -> R
     } else {
         "none"
     };
-    config.thinking_level = normalize_thinking_level(&config.provider, Some(requested))?;
+    config.thinking_level = if let Some(capability) =
+        chatos_ai_runtime::model_reasoning::capabilities_for_model(&config.model)
+    {
+        capability.normalized(Some(requested))
+    } else {
+        normalize_thinking_level(&config.provider, Some(requested))?
+    };
     Ok(())
 }
 
@@ -543,6 +720,12 @@ fn durable_step_input(
             }
             "user_resume".to_string()
         }
+        Some(value)
+            if value.get("type").and_then(Value::as_str) == Some("requirement_survey_resolved") =>
+        {
+            history.push(requirement_survey_output_item(&response_items, value)?);
+            "requirement_survey_resolved".to_string()
+        }
         Some(value) if value.get("type").and_then(Value::as_str) == Some("guidance") => {
             "user_guidance".to_string()
         }
@@ -602,9 +785,19 @@ fn local_user_item(text: Option<&str>, attachments: &[Value]) -> Result<Value, S
     content.push(json!({
         "type": "input_text",
         "text": format!(
-            "Local attachments are available only through authorized local tools. \
-             Treat each authorized_local_ref as an opaque capability and verify sha256 \
-             before using content. Attachment manifest: {manifest}"
+            "Attachment contents have not been loaded yet. Use the run-bound \
+             local_attachment_read tool: when delivery=model is advertised, it supplies \
+             a complete verified image directly; delivery=content is for bounded text \
+             reads. Follow the current tool schema, not an assumed platform capability. \
+             By default, answer attached-image questions, translation and short reply \
+             drafting directly when image input is available, without creating a Task \
+             or using desktop automation merely for attachment access. An explicit \
+             user request for a background Task still requires Task orchestration; \
+             direct attachment access does not replace that requested workflow. \
+             Task delivery=workspace imports the file; rely on visual \
+             content only when actual image input is supplied. A manifest, checksum or \
+             file path alone is not visual evidence. Treat each \
+             authorized_local_ref as an opaque capability. Attachment manifest: {manifest}"
         )
     }));
     Ok(message_item("user", Value::Array(content)))
@@ -716,6 +909,31 @@ fn ask_user_output_item(response_items: &[Value], input: &Value) -> Result<Value
         "type": "function_call_output",
         "call_id": call_id,
         "output": output.to_string()
+    }))
+}
+
+fn requirement_survey_output_item(
+    response_items: &[Value],
+    input: &Value,
+) -> Result<Value, String> {
+    let call_id = response_items
+        .iter()
+        .rev()
+        .find_map(|item| {
+            (item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("name").and_then(Value::as_str) == Some("requirement_survey_create"))
+            .then(|| item.get("call_id").and_then(Value::as_str))
+            .flatten()
+        })
+        .ok_or_else(|| "Requirement Survey resume has no matching function call".to_string())?;
+    let answers = input
+        .get("answers")
+        .filter(|value| value.is_object())
+        .ok_or_else(|| "Requirement Survey resume requires submitted answers".to_string())?;
+    Ok(json!({
+        "type": "function_call_output", "call_id": call_id,
+        "output": json!({"status": "resolved", "survey_id": input.get("survey_id"),
+            "answers": answers}).to_string()
     }))
 }
 
