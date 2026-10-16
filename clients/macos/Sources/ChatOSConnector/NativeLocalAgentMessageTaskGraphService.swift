@@ -114,9 +114,16 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let offset = max(0, eventOffset)
         let limit = max(1, min(100, eventLimit))
         let selected = page.events.dropFirst(offset).prefix(limit)
+        var mappedRun = mapRun(run)
+        if mappedRun.errorMessage == nil, run.status == "needs_review" {
+            mappedRun.errorMessage = try? await needsReviewError(
+                ownerUserID: owner,
+                runID: run.runID
+            )
+        }
         return MessageTaskRunDetail(
             task: task,
-            run: mapRun(run),
+            run: mappedRun,
             events: selected.map(mapEvent),
             eventsTotal: page.events.count,
             eventsHasMore: page.events.count > offset + selected.count
@@ -365,7 +372,14 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         if let run = try await client.runs(ownerUserID: owner, taskID: task.taskID).first {
-            mapped = mapped.merging(run: mapRun(run))
+            var mappedRun = mapRun(run)
+            if mappedRun.errorMessage == nil, run.status == "needs_review" {
+                mappedRun.errorMessage = try? await needsReviewError(
+                    ownerUserID: owner,
+                    runID: run.runID
+                )
+            }
+            mapped = mapped.merging(run: mappedRun)
             mapped.processLog = try? await processLog(ownerUserID: owner, runID: run.runID)
         }
         return mapped
@@ -509,6 +523,28 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         return log
+    }
+
+    static func needsReviewError(from events: [LocalAgentEventRecord]) -> String? {
+        events.sorted(by: { $0.cursor > $1.cursor }).lazy.compactMap { event -> String? in
+            guard event.eventType == "tool_invocation_completed",
+                  case let .object(payload)? = event.payload,
+                  case let .string(status)? = payload["status"],
+                  status == "needs_review",
+                  case let .string(error)? = payload["error"] else { return nil }
+            return error.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }.first
+    }
+
+    private func needsReviewError(ownerUserID: String, runID: String) async throws -> String? {
+        let page = try await client.events(
+            ownerUserID: ownerUserID,
+            runID: runID,
+            limit: 20,
+            eventType: "tool_invocation_completed",
+            newestFirst: true
+        )
+        return Self.needsReviewError(from: page.events)
     }
 
     private func mapEvent(_ event: LocalAgentEventRecord) -> MessageTaskRunEvent {

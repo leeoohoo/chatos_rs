@@ -139,8 +139,16 @@ pub(super) async fn write_back_terminal_task_run(
             "reason": outcome.reason,
         })
     });
+    let review_detail = if run.status == LocalAgentRunStatus::NeedsReview {
+        needs_review_tool_detail(connection, &run.run_id).await?
+    } else {
+        None
+    };
     let terminal_outcome = if run.status == LocalAgentRunStatus::NeedsReview {
-        run.terminal_outcome.as_ref().or(reported_detail.as_ref())
+        run.terminal_outcome
+            .as_ref()
+            .or(reported_detail.as_ref())
+            .or(review_detail.as_ref())
     } else if matches!(event, "task.failed" | "task.blocked") {
         reported_detail.as_ref().or(run.terminal_outcome.as_ref())
     } else {
@@ -383,6 +391,14 @@ async fn write_back_terminal_task_callbacks(
                 "reason": outcome.reason,
             })
         });
+        let review_detail = if let Some(run) = run
+            .as_ref()
+            .filter(|run| run.status == LocalAgentRunStatus::NeedsReview)
+        {
+            needs_review_tool_detail(connection, &run.run_id).await?
+        } else {
+            None
+        };
         let terminal_outcome = if run
             .as_ref()
             .is_some_and(|run| run.status == LocalAgentRunStatus::NeedsReview)
@@ -390,6 +406,7 @@ async fn write_back_terminal_task_callbacks(
             run.as_ref()
                 .and_then(|run| run.terminal_outcome.as_ref())
                 .or(reported_detail.as_ref())
+                .or(review_detail.as_ref())
         } else if matches!(event, "task.failed" | "task.blocked") {
             reported_detail
                 .as_ref()
@@ -489,6 +506,14 @@ async fn graph_task_summaries(
                 "reason": outcome.reason,
             })
         });
+        let review_detail = if let Some(run) = run
+            .as_ref()
+            .filter(|run| run.status == LocalAgentRunStatus::NeedsReview)
+        {
+            needs_review_tool_detail(connection, &run.run_id).await?
+        } else {
+            None
+        };
         let event = match status {
             LocalTaskStatus::Succeeded => "task.completed",
             LocalTaskStatus::Failed => "task.failed",
@@ -507,6 +532,7 @@ async fn graph_task_summaries(
             run.as_ref()
                 .and_then(|run| run.terminal_outcome.as_ref())
                 .or(reported_detail.as_ref())
+                .or(review_detail.as_ref())
         } else if matches!(status, LocalTaskStatus::Failed | LocalTaskStatus::Blocked) {
             reported_detail
                 .as_ref()
@@ -540,6 +566,31 @@ async fn graph_task_summaries(
         }));
     }
     Ok(tasks)
+}
+
+async fn needs_review_tool_detail(
+    connection: &mut SqliteConnection,
+    run_id: &str,
+) -> Result<Option<Value>, ClientStorageError> {
+    let row = sqlx::query(
+        "SELECT tool_name, error_text FROM local_agent_tool_invocations \
+         WHERE run_id = ? AND status = 'needs_review' \
+         ORDER BY updated_at_unix_ms DESC, created_at_unix_ms DESC, rowid DESC LIMIT 1",
+    )
+    .bind(run_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    let Some(row) = row else { return Ok(None) };
+    let tool_name: String = row.try_get("tool_name").db()?;
+    let error: Option<String> = row.try_get("error_text").db()?;
+    let error = error
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "The operation result could not be confirmed.".to_string());
+    Ok(Some(json!({
+        "reason": format!("{tool_name}: {error}"),
+    })))
 }
 
 fn graph_delivery_text(status: LocalTaskGraphStatus, tasks: &[Value], english: bool) -> String {
@@ -708,6 +759,13 @@ async fn callback_source(
         let source_message_content: Value = serde_json::from_str(&source_message_content)?;
         let task_input_json: String = row.try_get("input_json").db()?;
         let task_input: Value = serde_json::from_str(&task_input_json)?;
+        let task_title: String = row.try_get("title").db()?;
+        let task_objective = task_input
+            .get("objective")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let replacement_task_ids_json: String = row.try_get("replacement_task_ids_json").db()?;
         let graph_task_count = usize::try_from(row.try_get::<i64, _>("graph_task_count").db()?)
             .map_err(|_| {
@@ -725,13 +783,8 @@ async fn callback_source(
         Ok(CallbackSource {
             graph_id: row.try_get("graph_id").db()?,
             task_id: row.try_get("task_id").db()?,
-            task_title: row.try_get("title").db()?,
-            task_objective: task_input
-                .get("objective")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .trim()
-                .to_string(),
+            task_title: task_title.clone(),
+            task_objective: task_objective.clone(),
             task_status: row.try_get("status").db()?,
             task_version: u64::try_from(row.try_get::<i64, _>("version").db()?).map_err(|_| {
                 ClientStorageError::InvalidState("invalid Task version".to_string())
@@ -741,7 +794,11 @@ async fn callback_source(
             turn_id: row.try_get("turn_id").db()?,
             source_user_message_id: row.try_get("user_message_id").db()?,
             source_run_id: row.try_get("source_run_id").db()?,
-            prefers_english: !contains_cjk(&source_message_content),
+            prefers_english: callback_prefers_english(
+                &source_message_content,
+                &task_title,
+                &task_objective,
+            ),
             cancel_reason: row.try_get("cancel_reason").db()?,
             replacement_task_ids: serde_json::from_str(&replacement_task_ids_json)?,
             cancelled_because_task_id: row.try_get("cancelled_because_task_id").db()?,
@@ -759,6 +816,12 @@ async fn callback_source(
         })
     })
     .transpose()
+}
+
+fn callback_prefers_english(source_message: &Value, title: &str, objective: &str) -> bool {
+    !contains_cjk(source_message)
+        && !contains_cjk(&Value::String(title.to_string()))
+        && !contains_cjk(&Value::String(objective.to_string()))
 }
 
 #[allow(clippy::too_many_arguments)]

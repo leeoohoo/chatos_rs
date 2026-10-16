@@ -773,6 +773,26 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWorkerReturnsRecoverableSideEffectingValidationErrorToModel() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: RecoverablePlatformToolExecutor(),
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        var outcomeType: LocalAgentJSONValue?
+        for _ in 0..<100 where outcomeType == nil {
+            outcomeType = try await host.committedOutcomeType()
+            if outcomeType == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        XCTAssertEqual(outcomeType, .string("failed"))
+        await worker.reset()
+    }
+
     func testWorkerCommitsSharedPreflightDenialWithoutExecutingNativeTool() async throws {
         let host = PlatformToolHostStub(mode: .preflightDeniedClaim)
         let executor = CountingPlatformToolExecutor()
@@ -919,6 +939,17 @@ private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecutin
         invocation: LocalAgentToolInvocationRecord
     ) async throws -> LocalAgentJSONValue {
         throw CocoaError(.fileReadCorruptFile)
+    }
+}
+
+private struct RecoverablePlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        throw NativeLocalAgentPlatformToolError.projectToolRejected(
+            "文本匹配数量不符合预期：期望 4，实际 3"
+        )
     }
 }
 

@@ -668,7 +668,9 @@ public actor NativeLocalAgentPlatformToolWorker {
         "tool_name": .string(claim.invocation.toolName),
         "phase": .string("native_platform_execution"),
       ])
-      return claim.invocation.sideEffecting
+      let requiresReview = claim.invocation.sideEffecting
+        && (error as? NativeLocalAgentPlatformToolError)?.isKnownPreEffectFailure != true
+      return requiresReview
         ? .needsReview(reason: summary, detail: detail)
         : .failed(error: summary, detail: detail)
     }
@@ -713,6 +715,7 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
   case invalidRunContext
   case attachmentNotAuthorized
   case projectUnavailable
+  case projectToolRejected(String)
   case projectToolFailed
   case approvalRequired
   case capabilityNotSelected
@@ -725,9 +728,23 @@ enum NativeLocalAgentPlatformToolError: LocalizedError, Equatable {
     case .invalidRunContext: "The local platform tool Run context is invalid."
     case .attachmentNotAuthorized: "The attachment is not authorized for this conversation."
     case .projectUnavailable: "The local project is unavailable for this conversation."
+    case .projectToolRejected(let reason): reason
     case .projectToolFailed: "The local project tool arguments or state are invalid."
     case .approvalRequired: "The local project change requires approval before execution."
     case .capabilityNotSelected: "This Task did not select the requested local capability."
+    }
+  }
+
+  /// These failures are known to occur before a native mutation is committed. They are
+  /// ordinary tool results that the model can correct, not evidence of an unknown side effect.
+  var isKnownPreEffectFailure: Bool {
+    switch self {
+    case .projectToolFailed:
+      false
+    case .unsupportedTool, .invalidArguments, .invalidField, .invalidRunContext,
+         .attachmentNotAuthorized, .projectUnavailable, .projectToolRejected,
+         .approvalRequired, .capabilityNotSelected:
+      true
     }
   }
 }

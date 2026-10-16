@@ -537,6 +537,12 @@ final class MarkdownLayoutTextView: NSTextView {
 enum MarkdownAttributedRenderer {
     private static let inlineIntentKey = NSAttributedString.Key("NSInlinePresentationIntent")
 
+    private static let codeBlockBackgroundColor = adaptiveColor(light: 0.965, dark: 0.145)
+    private static let inlineCodeBackgroundColor = adaptiveColor(light: 0.93, dark: 0.22)
+    private static let tableHeaderBackgroundColor = adaptiveColor(light: 0.92, dark: 0.22)
+    private static let tableAlternateBackgroundColor = adaptiveColor(light: 0.975, dark: 0.17)
+    private static let subtleBorderColor = adaptiveColor(light: 0.82, dark: 0.34)
+
     static func render(
         _ blocks: [MarkdownBlock],
         loadedImages: [String: NSImage] = [:]
@@ -620,8 +626,30 @@ enum MarkdownAttributedRenderer {
             }
 
         case let .code(language, content):
+            let table = NSTextTable()
+            table.numberOfColumns = 1
+            table.layoutAlgorithm = .fixedLayoutAlgorithm
+            table.collapsesBorders = true
+            table.setContentWidth(100, type: .percentageValueType)
+            let block = NSTextTableBlock(
+                table: table,
+                startingRow: 0,
+                rowSpan: 1,
+                startingColumn: 0,
+                columnSpan: 1
+            )
+            block.setWidth(10, type: .absoluteValueType, for: .padding)
+            block.setWidth(1, type: .absoluteValueType, for: .border)
+            block.setBorderColor(subtleBorderColor)
+            block.backgroundColor = codeBlockBackgroundColor
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.textBlocks = [block]
+            paragraph.lineSpacing = 3
+            paragraph.paragraphSpacing = 0
+            let code = NSMutableAttributedString()
             if let language, !language.isEmpty {
-                result.append(NSAttributedString(
+                code.append(NSAttributedString(
                     string: language.uppercased() + "\n",
                     attributes: baseAttributes(
                         font: .systemFont(ofSize: 10, weight: .semibold),
@@ -629,19 +657,19 @@ enum MarkdownAttributedRenderer {
                     )
                 ))
             }
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = 3
-            paragraph.paragraphSpacingBefore = 6
-            paragraph.paragraphSpacing = 6
-            result.append(NSAttributedString(
-                string: content,
+            code.append(NSAttributedString(
+                string: content.hasSuffix("\n") ? content : content + "\n",
                 attributes: [
                     .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
                     .foregroundColor: NSColor.labelColor,
-                    .backgroundColor: NSColor.textBackgroundColor.withAlphaComponent(0.65),
-                    .paragraphStyle: paragraph,
                 ]
             ))
+            code.addAttribute(
+                .paragraphStyle,
+                value: paragraph,
+                range: NSRange(location: 0, length: code.length)
+            )
+            result.append(code)
 
         case .divider:
             result.append(NSAttributedString(
@@ -688,11 +716,11 @@ enum MarkdownAttributedRenderer {
                 block.verticalAlignment = .topAlignment
                 block.setWidth(6, type: .absoluteValueType, for: .padding)
                 block.setWidth(0.5, type: .absoluteValueType, for: .border)
-                block.setBorderColor(NSColor.separatorColor.withAlphaComponent(0.7))
+                block.setBorderColor(subtleBorderColor)
                 if rowIndex == 0 {
-                    block.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.82)
+                    block.backgroundColor = tableHeaderBackgroundColor
                 } else if rowIndex.isMultiple(of: 2) {
-                    block.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.28)
+                    block.backgroundColor = tableAlternateBackgroundColor
                 }
 
                 let paragraph = NSMutableParagraphStyle()
@@ -748,7 +776,7 @@ enum MarkdownAttributedRenderer {
                 resolvedFont = .monospacedSystemFont(ofSize: font.pointSize, weight: .regular)
                 result.addAttribute(
                     .backgroundColor,
-                    value: NSColor.textBackgroundColor.withAlphaComponent(0.65),
+                    value: inlineCodeBackgroundColor,
                     range: range
                 )
             } else {
@@ -778,6 +806,13 @@ enum MarkdownAttributedRenderer {
             .foregroundColor: color,
             .paragraphStyle: paragraph,
         ]
+    }
+
+    private static func adaptiveColor(light: CGFloat, dark: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(calibratedWhite: isDark ? dark : light, alpha: 1)
+        }
     }
 }
 extension View {

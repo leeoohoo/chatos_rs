@@ -494,6 +494,16 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             return .init(native: result)
         } catch let error as NativeLocalAgentPlatformToolError {
             throw error
+        } catch let error as NativeMCPCodeWriteError {
+            // Staging and pre-commit validation failures have no filesystem side effect.
+            // Return the actionable diagnostic to the model so it can re-read and retry
+            // instead of escalating an ordinary patch mismatch to Human review.
+            if case .commitFailed = error {
+                throw NativeLocalAgentPlatformToolError.projectToolFailed
+            }
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                error.errorDescription ?? "The project edit was rejected before commit."
+            )
         } catch {
             // Tool and filesystem errors may contain real local paths or staged content.
             // Collapse them before the result crosses IPC and becomes model-visible.

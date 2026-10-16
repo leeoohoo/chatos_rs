@@ -173,6 +173,26 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertFalse(log?.contains("failed entry") == true)
     }
 
+    func testNeedsReviewErrorSurfacesLatestToolFailure() throws {
+        let events = try JSONDecoder().decode(
+            [LocalAgentEventRecord].self,
+            from: JSONSerialization.data(withJSONObject: [
+                invocationEvent(cursor: 1, status: "needs_review", error: "older failure"),
+                invocationEvent(cursor: 2, status: "failed", error: "ordinary failure"),
+                invocationEvent(
+                    cursor: 3,
+                    status: "needs_review",
+                    error: "文本匹配数量不符合预期：期望 4，实际 3"
+                ),
+            ])
+        )
+
+        XCTAssertEqual(
+            NativeLocalAgentMessageTaskGraphService.needsReviewError(from: events),
+            "文本匹配数量不符合预期：期望 4，实际 3"
+        )
+    }
+
     private func processEvent(
         cursor: Int,
         operation: String,
@@ -194,6 +214,17 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
                     ],
                 ]],
             ],
+            "created_at_unix_ms": cursor,
+        ]
+    }
+
+    private func invocationEvent(cursor: Int, status: String, error: String) -> [String: Any] {
+        [
+            "cursor": cursor,
+            "event_id": "invocation-event-\(cursor)",
+            "run_id": "run-task-2",
+            "event_type": "tool_invocation_completed",
+            "payload": ["status": status, "error": error],
             "created_at_unix_ms": cursor,
         ]
     }

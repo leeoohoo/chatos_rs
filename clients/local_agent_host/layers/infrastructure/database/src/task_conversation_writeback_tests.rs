@@ -65,6 +65,20 @@ fn completed_callback_preserves_the_original_objective_fallback() {
 }
 
 #[test]
+fn short_choice_keeps_the_task_language_for_progress_callbacks() {
+    assert!(!super::callback_prefers_english(
+        &json!({"text": "A"}),
+        "初始化并实现全新 IAM 工程基础",
+        "创建项目工程",
+    ));
+    assert!(super::callback_prefers_english(
+        &json!({"text": "A"}),
+        "Initialize IAM foundation",
+        "Create the project",
+    ));
+}
+
+#[test]
 fn completed_callback_keeps_managed_artifact_markdown_link_clickable() {
     let artifact_link = "[下载《收工提醒实施计划》](chatos-plugin-artifacts/agent-7766819f-98e3-45c7-9c2f-1754e080c9fa/pa_ae358dcf1e4140a3bbc01e78c61d4ce1/%E6%94%B6%E5%B7%A5%E6%8F%90%E9%86%92-V1-%E5%9B%9B%E4%BB%BB%E5%8A%A1%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92-solution-dc645096.md)";
     let content = super::callback_content(
