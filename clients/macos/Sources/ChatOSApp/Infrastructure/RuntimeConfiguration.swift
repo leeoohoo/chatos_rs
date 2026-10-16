@@ -19,6 +19,16 @@ enum RuntimeConfiguration {
 
     static var localConnectorCloudBaseURL: URL { deployment.connectorBaseURL }
 
+    static var localAgentMaximumConcurrentWorkItems: Int {
+        let configured = nonEmptyEnvironmentValue("CHATOS_LOCAL_AGENT_MAX_CONCURRENCY")
+            .flatMap(Int.init)
+            ?? (Bundle.main.object(
+                forInfoDictionaryKey: "ChatOSLocalAgentMaxConcurrency"
+            ) as? NSNumber)?.intValue
+        return configured.flatMap(NativeLocalAgentConcurrencyPolicy.validated)
+            ?? NativeLocalAgentConcurrencyPolicy.adaptiveDefault
+    }
+
     static var nativeConnectorStateURL: URL {
         let root = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -57,7 +67,8 @@ enum RuntimeConfiguration {
             executableURL: executable,
             databaseURL: database,
             memoryBaseURL: memoryBaseURL,
-            memorySourceID: nonEmptyEnvironmentValue("CHATOS_MEMORY_SOURCE_ID") ?? "chatos"
+            memorySourceID: nonEmptyEnvironmentValue("CHATOS_MEMORY_SOURCE_ID") ?? "chatos",
+            maximumConcurrentWorkItems: localAgentMaximumConcurrentWorkItems
         )
     }
 

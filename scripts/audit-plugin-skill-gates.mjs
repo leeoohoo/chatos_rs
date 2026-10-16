@@ -106,6 +106,12 @@ async function loadSkills(manifest, manifestPath) {
     if (!description || match[2].trim() === '') {
       throw new Error(`Skill must have a description and instructions: ${documentPath}`);
     }
+    if (/\bskill_skill_(?:activate|list_resources|read_resource)\b/.test(match[2])) {
+      throw new Error(`Skill ${name} instructs an obsolete Skill tool alias; use host-advertised tools and the Main Chat/Task agent_skill protocol`);
+    }
+    if (/\bagent_skill_list_resources\b/.test(match[2])) {
+      throw new Error(`Skill ${name} instructs a redundant resource-list call; activation already returns the declared resource catalog`);
+    }
     if (path.basename(path.dirname(documentPath)) !== name) {
       throw new Error(`Skill name must match its directory: ${name}`);
     }
@@ -128,9 +134,14 @@ function send(child, message) {
   child.stdin.write(`${JSON.stringify(message)}\n`);
 }
 
-async function listMcpTools({ command, cwd, timeoutMs }, temporaryRoot) {
+async function listMcpTools({ command, cwd, timeoutMs }, temporaryRoot, expectedVersion) {
   const environment = {
     ...process.env,
+    // Catalog audits must not register a Chrome bridge or replace a user's
+    // managed Computer Use app merely by starting a packaged MCP launcher.
+    CHATOS_BROWSER_EXTENSION_ID: '',
+    VISUAL_COMPUTER_USE_MANAGED_APP_ROOT: path.join(temporaryRoot, 'computer-use'),
+    OPEN_COMPUTER_USE_MANAGED_APP_ROOT: path.join(temporaryRoot, 'computer-use'),
     CHATOS_CONTEXT_SCOPE: 'project',
     CHATOS_CONTEXT_SCOPE_ID: 'plugin-skill-audit-scope',
     CHATOS_PLUGIN_ARTIFACT_DIR: path.join(temporaryRoot, 'artifacts'),
@@ -144,6 +155,7 @@ async function listMcpTools({ command, cwd, timeoutMs }, temporaryRoot) {
     SOLUTION_STUDIO_DATA_DIR: path.join(temporaryRoot, 'solution'),
     WEB_DESIGN_STUDIO_DATA_DIR: path.join(temporaryRoot, 'web-design')
   };
+  delete environment.CHATOS_BROWSER_BRIDGE_ENDPOINT;
   await mkdir(environment.CHATOS_WORKSPACE, { recursive: true });
   await mkdir(environment.CHATOS_PLUGIN_ARTIFACT_DIR, { recursive: true });
   const child = spawn(command[0], command.slice(1), {
@@ -202,7 +214,10 @@ async function listMcpTools({ command, cwd, timeoutMs }, temporaryRoot) {
       jsonrpc: '2.0', id: 1, method: 'initialize',
       params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'chatos-plugin-skill-audit', version: '1.0.0' } }
     });
-    await waitFor(1);
+    const initialized = await waitFor(1);
+    if (expectedVersion && initialized?.serverInfo?.version !== expectedVersion) {
+      throw new Error(`MCP server version ${initialized?.serverInfo?.version ?? '(missing)'} differs from Manifest ${expectedVersion}`);
+    }
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
     send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const result = await waitFor(2);
@@ -316,7 +331,7 @@ async function main() {
   const skills = await loadSkills(manifest, options.manifestPath);
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'chatos-plugin-skill-audit-'));
   try {
-    const tools = await listMcpTools(options, temporaryRoot);
+    const tools = await listMcpTools(options, temporaryRoot, manifest.version);
     auditTools(tools, skills);
     const digest = createHash('sha256')
       .update([...skills].map(([name, item]) => `${name}:${item.sha256}`).sort().join('\n'))

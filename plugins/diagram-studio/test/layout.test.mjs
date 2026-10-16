@@ -109,6 +109,31 @@ endif
   assert.equal(branches.every((edge) => edge.targetHandle?.startsWith('top')), true);
 });
 
+test('a bounded linear business flow remains deliverable in a readable vertical layout', async () => {
+  const source = `@startuml
+start
+:到店;
+:排队;
+:点单;
+:取餐;
+:入座;
+stop
+@enduml`;
+  const imported = plantUmlToDiagram(source, {
+    documentId: 'linear-customer-arrival',
+    kind: 'flowchart'
+  });
+  const laidOut = await layoutDiagram(imported, 'DOWN', 'balanced');
+  const report = inspectDiagramQuality(laidOut, 'balanced');
+
+  assert.equal(report.metrics.maxFanOut, 1);
+  assert.equal(report.metrics.maxFanIn, 1);
+  assert.ok(report.metrics.aspectRatio > 5.5, 'fixture must cover the former global cutoff');
+  assert.ok(report.metrics.aspectRatio <= 8, 'bounded linear flow should remain readable');
+  assert.equal(report.ready, true, JSON.stringify(report));
+  assert.ok(!report.warnings.some((warning) => warning.code === 'extreme_aspect_ratio'));
+});
+
 test('cyclic architecture dependencies keep stable layered boundary columns', async () => {
   const source = `@startuml
 left to right direction

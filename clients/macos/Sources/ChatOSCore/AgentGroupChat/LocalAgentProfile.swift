@@ -1,4 +1,5 @@
 import Foundation
+import ChatOSModelCapabilities
 
 public enum LocalAgentProfileStatus: String, Codable, Sendable {
     case active, archived
@@ -240,8 +241,11 @@ public enum LocalAgentThinkingLevelCatalog {
         "auto", "none", "minimal", "low", "medium", "high", "xhigh", "max",
     ])
 
-    public static func values(provider: String?) -> [String] {
-        switch normalizedProvider(provider) {
+    public static func values(provider: String?, model: String? = nil) -> [String] {
+        if let model, let capability = ModelReasoningCapabilities.forModel(model) {
+            return ["auto"] + capability.levels
+        }
+        return switch normalizedProvider(provider) {
         case "deepseek": ["auto", "none", "high", "max"]
         case "kimi", "kimik2", "moonshot": ["auto", "none"]
         case "glm", "zhipu", "zai": ["auto", "none", "low", "medium", "high", "xhigh"]

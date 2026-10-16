@@ -4,6 +4,47 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentRequirementSurveyClientTests: XCTestCase {
+    func testFollowUpReadsExactSourceRunAndOnlyFinalUserReply() async throws {
+        for main in [true, false] {
+            let host = RequirementSurveyHostStub(main: main, runStatus: "succeeded")
+            let client = NativeLocalAgentRequirementSurveyClient(host: host)
+            let result = try await client.resolve(ownerUserID: "user-1", surveyID: "survey-1", expectedVersion: 1, answers: [:])
+            let followUp = try await client.followUp(ownerUserID: "user-1", survey: result.survey)
+            XCTAssertEqual(followUp, .completed("## 需求方案\n交付虚构原型，分阶段验收。"))
+            let command = try await host.lastCommand()
+            XCTAssertEqual(command["type"], .string("get_run"))
+            XCTAssertEqual(command["run_id"], .string("run-1"))
+            XCTAssertEqual(command["owner_user_id"], .string("user-1"))
+        }
+    }
+
+    func testSubmissionDoesNotImplyCompletedProposalAndFailuresStayVisible() async throws {
+        let cases: [(String, RequirementSurveyFollowUp)] = [
+            ("continuation_ready", .processing), ("model_running", .processing),
+            ("waiting_user", .waitingForInput), ("needs_review", .needsReview),
+            ("failed", .failed), ("cancelled", .cancelled),
+        ]
+        for (status, expected) in cases {
+            let host = RequirementSurveyHostStub(runStatus: status)
+            let client = NativeLocalAgentRequirementSurveyClient(host: host)
+            let result = try await client.resolve(ownerUserID: "user-1", surveyID: "survey-1", expectedVersion: 1, answers: [:])
+            let followUp = try await client.followUp(ownerUserID: "user-1", survey: result.survey)
+            XCTAssertEqual(followUp, expected)
+        }
+    }
+
+    func testFollowUpRejectsCrossOwnerAndMismatchedConversation() async throws {
+        for wrongOwner in [true, false] {
+            let host = RequirementSurveyHostStub(mismatchedConversation: !wrongOwner)
+            let client = NativeLocalAgentRequirementSurveyClient(host: host)
+            let result = try await client.resolve(ownerUserID: "user-1", surveyID: "survey-1", expectedVersion: 1, answers: [:])
+            do {
+                _ = try await client.followUp(ownerUserID: wrongOwner ? "other-user" : "user-1", survey: result.survey)
+                XCTFail("Mismatched source should be rejected")
+            } catch { XCTAssertTrue(error is NativeLocalAgentHostError) }
+        }
+    }
+
     func testListsAndDecodesAllQuestionKinds() async throws {
         let host = RequirementSurveyHostStub()
         let client = NativeLocalAgentRequirementSurveyClient(host: host)
@@ -58,6 +99,15 @@ final class NativeLocalAgentRequirementSurveyClientTests: XCTestCase {
 
 private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
     private var commands: [Data] = []
+    private let main: Bool
+    private let runStatus: String
+    private let mismatchedConversation: Bool
+
+    init(main: Bool = false, runStatus: String = "continuation_ready", mismatchedConversation: Bool = false) {
+        self.main = main
+        self.runStatus = runStatus
+        self.mismatchedConversation = mismatchedConversation
+    }
 
     func start(ownerUserID: String) async throws {}
     func stop() async {}
@@ -66,6 +116,21 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
+        case "get_run":
+            return try json(["type": "run", "run": [
+                "run_id": "run-1", "owner_user_id": "user-1",
+                "owner_entity_type": main ? "conversation_turn" : "task",
+                "owner_entity_id": main ? "turn-1" : "task-1",
+                "profile_key": main ? "main_chat" : "task_execution",
+                "input": [main ? "conversation_id" : "source_conversation_id": mismatchedConversation ? "other-conversation" : "conversation-1"],
+                "status": runStatus, "version": 4,
+                "terminal_outcome": [
+                    "content": "## 需求方案\n交付虚构原型，分阶段验收。",
+                    "request_input_items": [["content": "INTERNAL_TRACE_DO_NOT_DISPLAY"]],
+                    "error": "INTERNAL_ERROR_DO_NOT_DISPLAY",
+                ],
+                "created_at_unix_ms": 1, "updated_at_unix_ms": 4,
+            ]])
         case "list_requirement_surveys":
             return try json(["type": "requirement_surveys", "surveys": [survey(resolved: false)]])
         case "get_requirement_survey":
@@ -107,7 +172,7 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
             "project_resource_id": "project-1",
             "source_conversation_id": "conversation-1",
             "source_run_id": "run-1",
-            "source_task_id": "task-1",
+            "source_task_id": main ? NSNull() : "task-1",
             "title": "Confirm local scope",
             "description": "Choose how to continue",
             "questions": [

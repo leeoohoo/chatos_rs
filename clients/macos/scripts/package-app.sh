@@ -104,12 +104,23 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$TOOLS_DIR" "$RIPGREP_NOTICE_DIR" "$SWIFTTERM_NOTICE_DIR" "$PET_DIR" "$EN_LOCALIZATION_DIR" "$ZH_HANS_LOCALIZATION_DIR"
 cp "$EXECUTABLE" "$MACOS_DIR/ChatOSSwift"
 cp "$LOCAL_AGENT_HOST" "$MACOS_DIR/chatos_local_agent_host"
-CORE_RESOURCE_BUNDLE="$BIN_DIR/ChatOSSwift_ChatOSCore.bundle"
-if [[ ! -d "$CORE_RESOURCE_BUNDLE" ]]; then
-  echo "ChatOSCore resource bundle not found at $CORE_RESOURCE_BUNDLE" >&2
-  exit 1
-fi
-cp -R "$CORE_RESOURCE_BUNDLE" "$RESOURCES_DIR/"
+copy_swift_resource_bundle() {
+  local bundle_name=$1
+  local source_bundle="$BIN_DIR/$bundle_name"
+  if [[ ! -d "$source_bundle" ]]; then
+    echo "Swift resource bundle not found at $source_bundle" >&2
+    exit 1
+  fi
+
+  # Resource bundles belong under Contents/Resources in a signed macOS app.
+  # Product code resolves this location explicitly because SwiftPM's native
+  # accessor otherwise checks the sealed app root and its build-machine path.
+  cp -R "$source_bundle" "$RESOURCES_DIR/"
+}
+
+copy_swift_resource_bundle "ChatOSSwift_ChatOSCore.bundle"
+copy_swift_resource_bundle "ChatOSSwift_ChatOSModelCapabilities.bundle"
+copy_swift_resource_bundle "SwiftTerm_SwiftTerm.bundle"
 cp "$PROJECT_DIR/Support/ChatOSSwift-Info.plist" "$CONTENTS_DIR/Info.plist"
 set_plist_string "ChatOSBuildConfiguration" "$BUILD_CONFIGURATION"
 set_plist_string "ChatOSBuildGitCommit" "$BUILD_GIT_COMMIT"

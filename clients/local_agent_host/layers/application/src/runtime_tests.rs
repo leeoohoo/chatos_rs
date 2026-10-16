@@ -4,7 +4,9 @@
 use super::*;
 use chatos_client_storage::SqliteClientStorage;
 use chatos_local_agent_protocol::{
-    ClaimNextRunCommand, CommitStepCommand, CreateRunCommand, LOCAL_AGENT_PROTOCOL_VERSION,
+    ClaimNextRunCommand, ClaimNextToolCommand, CommitStepCommand, CommitToolCommand,
+    CreateRunCommand, CreateTaskGraphCommand, GetTaskGraphCommand, LocalAgentToolCall,
+    LocalTaskSpec, LocalTaskStatus, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde_json::Value;
 
@@ -205,4 +207,146 @@ async fn task_execution_cannot_finish_before_reporting_its_outcome() {
         .error
         .as_ref()
         .is_some_and(|error| error.message.contains("must report its outcome")));
+}
+
+#[tokio::test]
+async fn commit_preserves_checked_delivery_and_failed_blocked_task_status() {
+    for status in ["succeeded", "failed", "blocked"] {
+        let storage = Arc::new(SqliteClientStorage::connect_memory().await.unwrap());
+        let runtime = LocalAgentRuntime::with_clock(storage, Arc::new(|| Ok(10_000)));
+        runtime.initialize("user-1").await.unwrap();
+        runtime.try_handle(envelope("create", HostCommand::CreateTaskGraph(CreateTaskGraphCommand {
+            graph_id:"graph-1".into(),owner_user_id:"user-1".into(),source_entity_type:"test".into(),source_entity_id:"test-1".into(),
+            tasks:vec![LocalTaskSpec { task_id:"task-1".into(),title:"Review".into(),profile_key:"task_execution".into(),model_config_ref:"model-1".into(),model_config_revision:"revision-1".into(),capability_policy_revision:"policy-1".into(),input:json!({"prompt":"Review","acceptance_report_version":1,"acceptance_criteria":["Review completed"],"final_response_max_chars":80}),max_iterations:8 }],dependencies:vec![]
+        }))).await.unwrap();
+        runtime
+            .start_next_task_run("user-1")
+            .await
+            .unwrap()
+            .unwrap();
+        let HostResult::Claim { claim: Some(claim) } = runtime
+            .try_handle(envelope(
+                "claim",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".into(),
+                    worker_id: "worker".into(),
+                    lease_duration_ms: 10000,
+                }),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("claim")
+        };
+        runtime
+            .try_handle(envelope(
+                "wait",
+                HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".into(),
+                    run_id: claim.run.run_id.clone(),
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForTool {
+                        batch_id: "batch".into(),
+                        tool_calls: vec![LocalAgentToolCall {
+                            call_id: "call".into(),
+                            tool_name: "task_run_process_report_outcome".into(),
+                            arguments: json!({"status":status,"reason":"Review result"}),
+                            side_effecting: false,
+                            requires_approval: false,
+                        }],
+                        checkpoint: json!({}),
+                    },
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::ToolClaim { claim: Some(tool) } = runtime
+            .try_handle(envelope(
+                "tool",
+                HostCommand::ClaimNextTool(ClaimNextToolCommand {
+                    owner_user_id: "user-1".into(),
+                    worker_id: "tools".into(),
+                    lease_duration_ms: 10000,
+                    include_tool_names: None,
+                    exclude_tool_names: vec![],
+                    execution_route: None,
+                }),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("tool claim")
+        };
+        let report = json!({"reported":true,"status":status,"reason":"Review result","final_response":"Review complete: the reviewed artifact has defects.","acceptance_checks":[{"criterion_index":0,"status":if status=="succeeded" {"passed"} else {"not_verified"},"evidence":"Compared the requested review criteria"}]});
+        runtime
+            .try_handle(envelope(
+                "report",
+                HostCommand::CommitTool(CommitToolCommand {
+                    owner_user_id: "user-1".into(),
+                    invocation_id: tool.invocation.invocation_id,
+                    claim_token: tool.claim_token,
+                    expected_version: tool.invocation.version,
+                    outcome: LocalAgentToolOutcome::Succeeded {
+                        output: report.clone(),
+                    },
+                }),
+            ))
+            .await
+            .unwrap();
+        let HostResult::Claim { claim: Some(claim) } = runtime
+            .try_handle(envelope(
+                "final-claim",
+                HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".into(),
+                    worker_id: "worker".into(),
+                    lease_duration_ms: 10000,
+                }),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("final claim")
+        };
+        let finish = |content: Value| {
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".into(),
+                run_id: claim.run.run_id.clone(),
+                claim_token: claim.claim_token.clone(),
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::Succeed {
+                    output: json!({"content":content}),
+                },
+            })
+        };
+        assert!(runtime
+            .try_handle(envelope("rewrite", finish(json!("Unchecked rewrite"))))
+            .await
+            .is_err());
+        runtime
+            .try_handle(envelope("finish", finish(report["final_response"].clone())))
+            .await
+            .unwrap();
+        let HostResult::TaskGraph { graph } = runtime
+            .try_handle(envelope(
+                "graph",
+                HostCommand::GetTaskGraph(GetTaskGraphCommand {
+                    owner_user_id: "user-1".into(),
+                    graph_id: "graph-1".into(),
+                }),
+            ))
+            .await
+            .unwrap()
+        else {
+            panic!("graph")
+        };
+        assert_eq!(
+            graph.tasks[0].status,
+            match status {
+                "succeeded" => LocalTaskStatus::Succeeded,
+                "failed" => LocalTaskStatus::Failed,
+                _ => LocalTaskStatus::Blocked,
+            }
+        );
+    }
 }

@@ -20,6 +20,20 @@ struct NativeResolvedProjectPath: Sendable {
 }
 
 extension NativeLocalConnectorService {
+    public func conversationFileRoot(
+        ownerUserID: String, conversationID: String, projectRootPath: String?
+    ) throws -> URL {
+        guard state.user?.id == ownerUserID, !conversationID.isEmpty else {
+            throw NativeConnectorError.workspaceUnavailable
+        }
+        if let projectRootPath {
+            return try resolveProjectPath(projectRootPath).absoluteURL
+        }
+        return try taskExecutionConversationRoot(
+            ownerUserID: ownerUserID, conversationID: conversationID
+        )
+    }
+
     func resolveProjectPath(_ rawPath: String) throws -> NativeResolvedProjectPath {
         let value = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { throw NativeConnectorError.workspaceUnavailable }

@@ -7,6 +7,29 @@ struct NativeMCPCodeWriteScope: Hashable, Sendable {
     let runID: String
 }
 
+enum NativeMCPCodeWriteOwnership {
+    static func validate(_ paths: [String]) throws -> [String] {
+        guard paths.count <= 200, Set(paths).count == paths.count else {
+            throw NativeMCPCodeWriteError.invalidArguments("owned_paths 范围无效")
+        }
+        for path in paths {
+            let components = path.split(separator: "/", omittingEmptySubsequences: false)
+            let first = components.first.map(String.init) ?? ""
+            let drive = Array(first.utf8)
+            guard !path.isEmpty, path.utf8.count <= 4096,
+                  path == path.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !path.hasPrefix("~"), !path.contains("\\"), !path.contains("\u{0}"),
+                  components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+                  !(drive.count >= 2 && drive[1] == 58 && (
+                      (65...90).contains(drive[0]) || (97...122).contains(drive[0])
+                  )) else {
+                throw NativeMCPCodeWriteError.invalidArguments("owned_paths 必须是规范化的相对路径")
+            }
+        }
+        return paths.sorted()
+    }
+}
+
 actor NativeMCPCodeWriteStore {
     private static let maximumWriteBytes = 2 * 1_024 * 1_024
     private static let editSessionTTL: TimeInterval = 6 * 60 * 60
@@ -84,11 +107,20 @@ actor NativeMCPCodeWriteStore {
         name: String,
         arguments: [String: NativeJSONValue],
         scope: NativeMCPCodeWriteScope,
-        projectRoot: URL
+        projectRoot: URL,
+        ownedPaths: [String] = []
     ) throws -> NativeJSONValue {
+        let paths = try NativeMCPCodeWriteOwnership.validate(ownedPaths)
+        if name != "open_edit_session", let id = arguments.string("session_id"),
+           let session = sessions[id], session.scope == scope {
+            guard session.ownedPaths == paths,
+                  session.projectRoot.path == projectRoot.standardizedFileURL.resolvingSymlinksInPath().path else {
+                throw NativeMCPCodeWriteError.sessionUnavailable
+            }
+        }
         switch name {
         case "open_edit_session":
-            return open(arguments: arguments, scope: scope, projectRoot: projectRoot)
+            return try open(arguments: arguments, scope: scope, projectRoot: projectRoot, ownedPaths: paths)
         case "stage_edit_batch":
             return try stage(arguments: arguments, scope: scope)
         case "commit_edit_session":
@@ -112,13 +144,18 @@ actor NativeMCPCodeWriteStore {
     private func open(
         arguments: [String: NativeJSONValue],
         scope: NativeMCPCodeWriteScope,
-        projectRoot: URL
-    ) -> NativeJSONValue {
+        projectRoot: URL,
+        ownedPaths: [String]
+    ) throws -> NativeJSONValue {
         pruneExpiredSessions(now: Date())
         let fresh = arguments.bool("fresh") ?? false
         if !fresh,
            let existingID = sessionByScope[scope],
            let existing = sessions[existingID] {
+            guard existing.ownedPaths == ownedPaths,
+                  existing.projectRoot.path == projectRoot.standardizedFileURL.resolvingSymlinksInPath().path else {
+                throw NativeMCPCodeWriteError.sessionUnavailable
+            }
             return sessionResult(existing, reused: true)
         }
         if let existingID = sessionByScope.removeValue(forKey: scope) {
@@ -128,6 +165,7 @@ actor NativeMCPCodeWriteStore {
             id: UUID().uuidString,
             scope: scope,
             projectRoot: projectRoot.standardizedFileURL.resolvingSymlinksInPath(),
+            ownedPaths: ownedPaths,
             purpose: arguments.string("purpose"),
             files: [:],
             stagedOperationCount: 0,
@@ -191,6 +229,9 @@ actor NativeMCPCodeWriteStore {
             throw NativeMCPCodeWriteError.sessionUnavailable
         }
         let changed = session.files.values.filter(\.hasChanges).sorted { $0.path < $1.path }
+        for state in changed {
+            try validateOwnership(state.path, ownedPaths: session.ownedPaths)
+        }
         try validateCurrentBaselines(changed, root: session.projectRoot)
 
         guard !changed.isEmpty else {
@@ -262,6 +303,7 @@ actor NativeMCPCodeWriteStore {
     ) throws -> StageResult {
         let kind = try requiredString(operation, "kind")
         let path = try normalizePath(requiredString(operation, "path"))
+        try validateOwnership(path, ownedPaths: session.ownedPaths)
         try validateNoPathOverlap(path, kind: kind, files: session.files)
         var state = try stateForOperation(path: path, operation: operation, session: session)
         var match: NativeJSONValue?
@@ -426,9 +468,12 @@ actor NativeMCPCodeWriteStore {
         guard contains(canonicalParent, root: canonicalRoot) else {
             throw NativeMCPCodeWriteError.pathOutsideProject
         }
+        guard canonicalParent.path == parent.path else {
+            throw NativeMCPCodeWriteError.symbolicLink
+        }
         if FileManager.default.fileExists(atPath: candidate.path) {
             let canonical = candidate.resolvingSymlinksInPath().standardizedFileURL
-            guard canonical == candidate, contains(canonical, root: canonicalRoot) else {
+            guard canonical.path == candidate.path, contains(canonical, root: canonicalRoot) else {
                 throw NativeMCPCodeWriteError.symbolicLink
             }
         } else if !permitsMissingLeaf {
@@ -448,6 +493,14 @@ actor NativeMCPCodeWriteStore {
             throw NativeMCPCodeWriteError.pathOutsideProject
         }
         return components.joined(separator: "/")
+    }
+
+    private func validateOwnership(_ path: String, ownedPaths: [String]) throws {
+        guard ownedPaths.isEmpty || ownedPaths.contains(where: {
+            path == $0 || path.hasPrefix($0 + "/")
+        }) else {
+            throw NativeMCPCodeWriteError.invalidArguments("修改路径不属于当前 Task 的 owned_paths：\(path)")
+        }
     }
 
     private func contains(_ url: URL, root: URL) -> Bool {
@@ -584,6 +637,7 @@ private struct EditSession: Sendable {
     let id: String
     let scope: NativeMCPCodeWriteScope
     let projectRoot: URL
+    let ownedPaths: [String]
     let purpose: String?
     var files: [String: FileState]
     var stagedOperationCount: Int

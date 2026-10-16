@@ -74,6 +74,61 @@ struct PetQuickActionSizingTests {
     }
 }
 
+@Suite("Pet completed activity sizing")
+@MainActor
+struct PetCompletedActivitySizingTests {
+    @Test("fits a single completed activity without excess empty space")
+    func singleCompletionUsesCompactHeight() {
+        let store = PetOverlayStore()
+        let activity = PetActivity(
+            id: "completed-1",
+            source: .taskExecution,
+            kind: .succeeded,
+            title: "本地对话"
+        )
+        store.apply(.upsert(activity))
+        let interactionState = PetOverlayInteractionState()
+        interactionState.selectedActivityID = activity.id
+
+        let size = PetOverlaySizing.expandedMessageSize(
+            scope: .primary,
+            store: store,
+            interactionState: interactionState
+        )
+
+        #expect(size.height == 160)
+    }
+
+    @Test("keeps room for multiple completed task rows")
+    func multipleCompletionsUseListHeight() {
+        let store = PetOverlayStore()
+        let first = PetActivity(
+            id: "completed-1",
+            source: .taskExecution,
+            kind: .succeeded,
+            title: "本地对话"
+        )
+        let second = PetActivity(
+            id: "completed-2",
+            source: .taskBoard,
+            kind: .succeeded,
+            title: "另一个任务"
+        )
+        store.apply(.upsert(first))
+        store.apply(.upsert(second))
+        let interactionState = PetOverlayInteractionState()
+        interactionState.selectedActivityID = first.id
+
+        let size = PetOverlaySizing.expandedMessageSize(
+            scope: .primary,
+            store: store,
+            interactionState: interactionState
+        )
+
+        #expect(size.height == 280)
+    }
+}
+
 @Suite("Pet task inspector placement")
 struct PetTaskInspectorPlacementTests {
     @Test("places the inspector to the left and shifts the conversation when needed")

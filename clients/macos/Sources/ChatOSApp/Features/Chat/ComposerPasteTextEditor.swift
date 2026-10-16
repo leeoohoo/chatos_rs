@@ -249,6 +249,13 @@ private final class ComposerNativeTextView: NSTextView {
     var onLayoutChanged: (() -> Void)?
     var onCommand: ((ComposerTextCommand) -> Bool)?
 
+    // Apple documents acceptsFirstMouse(for:) as the click-through hook for a
+    // control in an inactive window. The pet's non-activating chat panel needs
+    // its first click to reach the editor and begin application activation.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCommandPaste = event.type == .keyDown

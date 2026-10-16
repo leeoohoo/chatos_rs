@@ -228,8 +228,16 @@ function readDiagnostics(executablePath) {
   const result = spawnSync(executablePath, ["--doctor-output", outputPath], {
     encoding: "utf8",
   });
+  if (result.error) {
+    fail(`Visual Computer Use doctor could not start: ${result.error.message}`);
+  }
   if (result.stderr) process.stderr.write(result.stderr);
-  if (result.status !== 0) process.exit(result.status ?? 1);
+  if (result.signal) {
+    fail(`Visual Computer Use doctor stopped by signal ${result.signal}.`);
+  }
+  if (result.status !== 0) {
+    fail(`Visual Computer Use doctor exited with status ${result.status}.`);
+  }
 
   let diagnostics;
   try {

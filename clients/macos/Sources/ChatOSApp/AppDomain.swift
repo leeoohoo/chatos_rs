@@ -1,5 +1,6 @@
 import ChatOSCore
 import CoreGraphics
+import Foundation
 
 enum SidebarSelection: Hashable {
     case contact(String)
@@ -12,6 +13,12 @@ enum SidebarSelection: Hashable {
     case pluginApplication(String, String)
     case terminal(String)
     case remote(String)
+}
+
+struct RequirementSurveyNavigationTarget: Equatable {
+    let id = UUID()
+    let ownerUserID: String
+    let surveyID: String
 }
 
 enum ProjectWorkspaceTab: String, CaseIterable, Identifiable {

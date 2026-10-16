@@ -18,6 +18,13 @@ mod tests {
     }
 
     #[test]
+    fn following_observed_links_does_not_require_an_extra_interaction_leaf() {
+        assert_eq!(browser_skill_for_tool("browser_click"), "browser-navigation");
+        assert_eq!(browser_skill_for_tool("browser_fill_form"), "browser-interaction");
+        assert_eq!(browser_skill_for_tool("browser_snapshot"), "browser-observation-verification");
+    }
+
+    #[test]
     fn every_tool_has_policy_metadata() {
         for tool in tool_catalog() {
             assert!(tool.pointer("/_meta/chatos~1requiredPermissions").is_some());
@@ -66,6 +73,33 @@ mod tests {
                 tool["name"]
             );
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_navigation_is_rejected_before_session_or_backend_work() {
+        let runtime = Arc::new(BrowserRuntime::new(vec![], std::env::temp_dir()));
+        for (arguments, expected) in [
+            (json!({}), "url must be a non-empty string"),
+            (json!({"url": 12}), "url must be a non-empty string"),
+            (json!({"url": ""}), "url must be a non-empty string"),
+            (json!({"url": "  "}), "url must be a non-empty string"),
+            (json!({"url": "https://example.test", "tab_id": false}), "tab_id must be a non-empty string"),
+            (json!({"url": "https://example.test", "timeout_ms": "100"}), "timeout_ms must be an integer"),
+            (json!({"url": "https://example.test", "timeout_ms": 0}), "timeout_ms must be an integer"),
+            (json!([]), "arguments must be a JSON object"),
+        ] {
+            for bound in [None, Some("bound-session".to_string())] {
+                let response = dispatch(runtime.clone(), Arc::new(Mutex::new(bound)), json!(1), "tools/call",
+                    json!({"name": "browser_navigate", "arguments": arguments})).await;
+                assert_eq!(response.pointer("/result/isError"), Some(&json!(true)));
+                let text = response.pointer("/result/content/0/text").and_then(Value::as_str).unwrap();
+                assert!(text.contains(expected), "{text}");
+                assert!(!text.contains("session not found"), "must not reach backend");
+            }
+        }
+        let response = dispatch(runtime, Arc::new(Mutex::new(None)), json!(1), "tools/call",
+            json!({"name": "browser_navigate", "arguments": {"url": "https://example.test"}})).await;
+        assert!(response.pointer("/result/content/0/text").and_then(Value::as_str).unwrap().contains("call browser_session_open first"));
     }
 
     #[tokio::test]

@@ -22,6 +22,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var isPerformingAction = false
     @Published private(set) var pluginOperationIDs: Set<String> = []
     @Published private(set) var pluginErrorMessages: [String: String] = [:]
+    @Published private(set) var isInspectingCustomPlugin = false
+    @Published private(set) var isInstallingCustomPlugin = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var notice: String?
 
@@ -41,11 +43,13 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var actionGeneration: Int64 = 0
     private var pluginActionTasks: [String: Task<Void, Never>] = [:]
     private var pluginActionRequestIDs: [String: UUID] = [:]
+    private var customPluginTask: Task<Void, Never>?
     private var lifecycleGeneration: UInt64 = 0
     private var signedOutSuspensionTask: Task<Void, Never>?
     private var signedOutSuspensionGeneration: UInt64 = 0
     private var servicePreparationTask: Task<Void, Never>?
     private var modelConfigurationChanged: (@MainActor @Sendable () -> Void)?
+    private var pluginConfigurationChanged: (@MainActor @Sendable () -> Void)?
 
     init(
         service: any LocalConnectorControlServicing
@@ -63,6 +67,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         pluginRefreshTask?.cancel()
         actionTask?.cancel()
         pluginActionTasks.values.forEach { $0.cancel() }
+        customPluginTask?.cancel()
     }
 
     func activate(
@@ -84,6 +89,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func setModelConfigurationChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) { modelConfigurationChanged = handler }
+    func setPluginConfigurationChangedHandler(_ handler: (@MainActor @Sendable () -> Void)?) { pluginConfigurationChanged = handler }
     func refreshStatus(
         pairIfNeeded: Bool = false,
         expectedOwnerUserID: String? = nil,
@@ -569,25 +575,144 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         performPluginAction(
             id: id,
             successNotice: "Plugin 已完成校验并安装到本机。",
-            onSuccess: onSuccess
+            onSuccess: onSuccess,
+            capabilitiesChanged: true
         ) {
             try await self.service.installPlugin(id: id)
         }
     }
 
+    func inspectCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectCustomMCP(draft)
+        }
+    }
+
+    func inspectLocalPlugin(
+        atPath path: String,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectLocalPlugin(atPath: path)
+        }
+    }
+
+    func inspectPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectPluginSource(source)
+        }
+    }
+
+    func installCustomMCP(
+        _ draft: LocalConnectorCustomMCPDraft,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installCustomMCP(
+                draft,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    func installLocalPlugin(
+        atPath path: String,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installLocalPlugin(
+                atPath: path,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    func installPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installPluginSource(
+                source,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    private func runCustomPluginInspection(
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void,
+        operation: @escaping @Sendable () async throws -> LocalConnectorPluginInspection
+    ) {
+        customPluginTask?.cancel()
+        isInspectingCustomPlugin = true
+        customPluginTask = Task { [weak self] in
+            do {
+                let inspection = try await operation()
+                try Task.checkCancellation()
+                self?.isInspectingCustomPlugin = false
+                completion(.success(inspection))
+            } catch is CancellationError {
+                self?.isInspectingCustomPlugin = false
+            } catch {
+                self?.isInspectingCustomPlugin = false
+                completion(.failure(error))
+            }
+        }
+    }
+
+    private func runCustomPluginInstall(
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void,
+        operation: @escaping @Sendable () async throws -> Void
+    ) {
+        customPluginTask?.cancel()
+        isInstallingCustomPlugin = true
+        customPluginTask = Task { [weak self] in
+            do {
+                try await operation()
+                try Task.checkCancellation()
+                guard let self else { return }
+                self.isInstallingCustomPlugin = false
+                self.notice = "自定义 Plugin 已完成复检并安装到本机。"
+                self.loadPlugins(forceRefresh: false)
+                self.pluginConfigurationChanged?()
+                completion(.success(()))
+            } catch is CancellationError {
+                self?.isInstallingCustomPlugin = false
+            } catch {
+                self?.isInstallingCustomPlugin = false
+                completion(.failure(error))
+            }
+        }
+    }
+
     func uninstallPlugin(id: String) {
-        performPluginAction(id: id, successNotice: "Plugin 已卸载。") {
+        performPluginAction(
+            id: id,
+            successNotice: "Plugin 已卸载。",
+            capabilitiesChanged: true
+        ) {
             try await self.service.uninstallPlugin(id: id)
         }
     }
 
     func setPluginEnabled(id: String, enabled: Bool) {
-        performAction(successNotice: enabled ? "Plugin 已启用。" : "Plugin 已停用。") {
+        performAction(successNotice: enabled ? "Plugin 已启用。" : "Plugin 已停用。") { [weak self] in
+            guard let self else { return }
             try await self.service.updatePluginEnabled(id: id, enabled: enabled)
             try Task.checkCancellation()
             let nextPlugins = try await self.service.fetchPlugins()
             try Task.checkCancellation()
             self.plugins = nextPlugins
+            self.pluginConfigurationChanged?()
         }
     }
 
@@ -753,6 +878,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         successNotice: String,
         onSuccess: (@MainActor () -> Void)? = nil,
         forceRefreshPluginsAfterOperation: Bool = false,
+        capabilitiesChanged: Bool = false,
         _ operation: @escaping @MainActor () async throws -> Void
     ) {
         pluginActionTasks[id]?.cancel()
@@ -777,6 +903,9 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                       pluginActionRequestIDs[id] == requestID else { return }
                 plugins = nextPlugins
                 notice = successNotice
+                if capabilitiesChanged {
+                    pluginConfigurationChanged?()
+                }
                 onSuccess?()
             } catch is CancellationError {
                 return

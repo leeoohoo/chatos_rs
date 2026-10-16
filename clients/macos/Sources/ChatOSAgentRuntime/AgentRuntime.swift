@@ -1,6 +1,12 @@
+import CryptoKit
 import Foundation
 
 public struct AgentRuntime: Sendable {
+    private static let toolResultReadToolName = "tool_result_read"
+    private static let inlineToolResultMaximumCharacters = 160_000
+    private static let inlineToolResultBatchMaximumCharacters = 800_000
+    private static let toolResultReadMaximumCharacters = 8_000
+
     public typealias RetrySleeper = @Sendable (Duration) async throws -> Void
     private let retrySleeper: RetrySleeper
 
@@ -25,7 +31,11 @@ public struct AgentRuntime: Sendable {
     ) async throws -> AgentRunCheckpoint {
         try policy.validate()
         guard initial.scope == scope else { throw AgentRuntimeError.scopeMismatch }
-        guard Set(tools.map(\.name)).count == tools.count else { throw AgentRuntimeError.invalidResponse }
+        guard Set(tools.map(\.name)).count == tools.count,
+              !tools.contains(where: { $0.name == Self.toolResultReadToolName }) else {
+            throw AgentRuntimeError.invalidResponse
+        }
+        let modelTools = tools + [Self.toolResultReadDefinition]
         if let inFlight = initial.inFlightCallID, !initial.pendingCalls.contains(where: { $0.id == inFlight }) {
             throw AgentRuntimeError.invalidResponse
         }
@@ -33,7 +43,7 @@ public struct AgentRuntime: Sendable {
         if state.status == .completed { return state }
         let started = Date()
         let elapsedBefore = state.elapsedSeconds
-        let registry = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0) })
+        let registry = Dictionary(uniqueKeysWithValues: modelTools.map { ($0.name, $0) })
         let contextPolicy = policy.context ?? AgentContextPolicy()
         // Memory Engine is composed once at the start of this run/resume. New
         // messages are appended locally for the rest of the model/tool loop so
@@ -75,7 +85,7 @@ public struct AgentRuntime: Sendable {
                 if let contextProvider, let memory = state.memory,
                    memory.syncedMessageCount < state.messages.count {
                     let synced = try await contextProvider.prepare(
-                        checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                        checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
                         deadline: deadline, synchronizeOnly: true,
                         shouldPause: { false }, record: record
                     )
@@ -104,7 +114,7 @@ public struct AgentRuntime: Sendable {
                 }
                 if let completion = state.completionResult {
                     if let contextProvider {
-                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                        let synced = try await contextProvider.prepare(checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
                             deadline: deadline, synchronizeOnly: true, shouldPause: shouldPause, record: record)
                         state = synced.checkpoint
                     } else if state.memory != nil { throw AgentContextError.unavailable }
@@ -131,7 +141,11 @@ public struct AgentRuntime: Sendable {
                         state.inFlightCallID = call.id
                         try await emit("tool_started", call.name) // Durable before execution.
                         do {
-                            outcome = try await withAgentTimeout(seconds: remainingTime()) { try await execute(call) }
+                            if call.name == Self.toolResultReadToolName {
+                                outcome = Self.readToolResult(call: call, receipts: state.receipts)
+                            } else {
+                                outcome = try await withAgentTimeout(seconds: remainingTime()) { try await execute(call) }
+                            }
                         } catch {
                             if error is CancellationError { throw error }
                             let interruption = if let runtimeError = error as? AgentRuntimeError,
@@ -150,18 +164,32 @@ public struct AgentRuntime: Sendable {
                         }
                     } else { outcome = .failure("工具不可用：\(call.name)。请选择本次提供的工具。") }
 
-                    // Results are bounded references/summaries, never media blobs or unbounded file contents.
-                    if outcome.content.count > 16_000 { outcome.content = String(outcome.content.prefix(16_000)) + "\n[工具结果已截断，请缩小读取范围]" }
+                    // Keep the complete result in the durable checkpoint receipt. Only the model
+                    // projection is replaced with a reference when the per-result or current
+                    // tool-batch budget is exceeded; tool_result_read pages the preserved receipt.
+                    let persistedOutcome = outcome
+                    let currentBatchCharacters = state.messages.reversed()
+                        .prefix(while: { $0.role == .tool })
+                        .reduce(into: 0) { total, message in
+                            total = total.saturatingAdding(message.content.unicodeScalars.count)
+                        }
+                    outcome = Self.modelVisibleOutcome(
+                        outcome,
+                        call: call,
+                        currentBatchCharacters: currentBatchCharacters
+                    )
                     let signature = fingerprint(call)
                     if state.observations[signature] == outcome.content { outcome.madeProgress = false }
                     state.observations[signature] = outcome.content
-                    state.receipts[call.id] = outcome
+                    state.receipts[call.id] = persistedOutcome
                     state.callFingerprints[call.id] = signature
                     state.inFlightCallID = nil
                     state.messages.append(.init(role: .tool, content: outcome.content, toolCallID: call.id))
                     state.pendingCalls.removeFirst()
                     if outcome.madeProgress && !outcome.isError { state.noProgressRounds = 0 }
-                    if definition?.effect == .terminal && !outcome.isError { state.completionResult = outcome.content }
+                    if definition?.effect == .terminal && !persistedOutcome.isError {
+                        state.completionResult = persistedOutcome.content
+                    }
                     try await emit(outcome.isError ? "tool_rejected" : "tool_completed", "\(call.name)：\(outcome.content.prefix(400))")
                     continue
                 }
@@ -179,7 +207,7 @@ public struct AgentRuntime: Sendable {
                 if let contextProvider {
                     if activeModelMessages == nil {
                         let prepared = try await contextProvider.prepare(
-                            checkpoint: snapshot(state), tools: tools, policy: contextPolicy,
+                            checkpoint: snapshot(state), tools: modelTools, policy: contextPolicy,
                             deadline: deadline, shouldPause: shouldPause, record: record
                         )
                         state = prepared.checkpoint
@@ -206,7 +234,7 @@ public struct AgentRuntime: Sendable {
                             try await withAgentInactivityTimeout(seconds: inactivityTimeout) { markActivity in
                                 try await model.stream(
                                     messages: requestMessages,
-                                    tools: tools,
+                                    tools: modelTools,
                                     timeout: inactivityTimeout,
                                     onEvent: { event in
                                         telemetry.record(event)
@@ -282,6 +310,114 @@ public struct AgentRuntime: Sendable {
     static func retryDelaySeconds(forRetry retryNumber: Int) -> Int {
         guard retryNumber > 0 else { return 1 }
         return min(16, 1 << min(retryNumber - 1, 4))
+    }
+
+    private static let toolResultReadDefinition = AgentToolDefinition(
+        name: toolResultReadToolName,
+        description: "分页读取当前 Agent Run 中已完整保存的超大工具结果。按照 next_offset 连续读取并校验 sha256。",
+        schema: Data(#"{"type":"object","properties":{"source_call_id":{"type":"string","minLength":1},"offset":{"type":"integer","minimum":0,"default":0},"limit":{"type":"integer","minimum":1,"maximum":8000,"default":8000}},"required":["source_call_id"],"additionalProperties":false}"#.utf8),
+        effect: .readOnly
+    )
+
+    private struct ToolResultReadArguments: Decodable {
+        let sourceCallID: String
+        let offset: Int?
+        let limit: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case sourceCallID = "source_call_id"
+            case offset
+            case limit
+        }
+    }
+
+    private static func modelVisibleOutcome(
+        _ outcome: AgentToolOutcome,
+        call: AgentToolCall,
+        currentBatchCharacters: Int
+    ) -> AgentToolOutcome {
+        let characters = outcome.content.unicodeScalars.count
+        guard characters > inlineToolResultMaximumCharacters
+                || currentBatchCharacters.saturatingAdding(characters)
+                    > inlineToolResultBatchMaximumCharacters else {
+            return outcome
+        }
+        let descriptor: [String: Any] = [
+            "type": "tool_result_reference",
+            "source_call_id": call.id,
+            "source_tool_name": call.name,
+            "total_chars": characters,
+            "sha256": sha256(outcome.content),
+            "read_tool": toolResultReadToolName,
+            "max_page_chars": toolResultReadMaximumCharacters,
+            "complete": false,
+            "guidance": "完整结果已保存在当前 Agent Run。请从 offset=0 开始调用 tool_result_read，按 next_offset 顺序拼接 content，直到 complete=true，并校验 sha256。源结果没有被静默截断。",
+        ]
+        return .init(
+            canonicalJSONString(descriptor),
+            madeProgress: outcome.madeProgress,
+            isError: outcome.isError
+        )
+    }
+
+    private static func readToolResult(
+        call: AgentToolCall,
+        receipts: [String: AgentToolOutcome]
+    ) -> AgentToolOutcome {
+        guard let data = call.arguments.data(using: .utf8),
+              let arguments = try? JSONDecoder().decode(ToolResultReadArguments.self, from: data) else {
+            return .failure("tool_result_read 参数无效。")
+        }
+        guard arguments.sourceCallID != call.id else {
+            return .failure("tool_result_read 不能读取自身尚未完成的结果。")
+        }
+        guard let source = receipts[arguments.sourceCallID] else {
+            return .failure("当前 Agent Run 中不存在这个 source_call_id。")
+        }
+        let offset = arguments.offset ?? 0
+        let limit = arguments.limit ?? toolResultReadMaximumCharacters
+        let scalars = source.content.unicodeScalars
+        let totalCharacters = scalars.count
+        guard offset >= 0, offset <= totalCharacters,
+              limit > 0, limit <= toolResultReadMaximumCharacters else {
+            return .failure("tool_result_read 的 offset 或 limit 超出允许范围。")
+        }
+        let endOffset = min(totalCharacters, offset.saturatingAdding(limit))
+        let start = scalars.index(scalars.startIndex, offsetBy: offset)
+        let end = scalars.index(start, offsetBy: endOffset - offset)
+        let complete = endOffset == totalCharacters
+        let page: [String: Any] = [
+            "source_call_id": arguments.sourceCallID,
+            "content": String(scalars[start..<end]),
+            "offset": offset,
+            "returned_chars": endOffset - offset,
+            "next_offset": complete ? NSNull() : endOffset,
+            "total_chars": totalCharacters,
+            "sha256": sha256(source.content),
+            "complete": complete,
+        ]
+        return .init(canonicalJSONString(page))
+    }
+
+    private static func sha256(_ content: String) -> String {
+        SHA256.hash(data: Data(content.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func canonicalJSONString(_ value: [String: Any]) -> String {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else {
+            return #"{"error":"tool_result_reference_encoding_failed"}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+private extension Int {
+    func saturatingAdding(_ other: Int) -> Int {
+        let (result, overflow) = addingReportingOverflow(other)
+        return overflow ? .max : result
     }
 }
 

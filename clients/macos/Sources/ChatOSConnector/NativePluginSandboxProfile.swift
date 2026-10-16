@@ -278,15 +278,24 @@ enum NativePluginSandboxProfile {
     }
 
     static func canonicalPath(_ path: String) -> String {
-        var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
-        return path.withCString { pointer -> String in
-            guard realpath(pointer, &resolved) != nil else {
-                return URL(fileURLWithPath: path).standardizedFileURL.path
+        var candidate = URL(fileURLWithPath: path).standardizedFileURL
+        var missingComponents: [String] = []
+        while true {
+            var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
+            if candidate.path.withCString({ realpath($0, &resolved) }) != nil {
+                let ancestor = String(
+                    decoding: resolved.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+                    as: UTF8.self
+                )
+                return missingComponents.reversed().reduce(ancestor) { partial, component in
+                    URL(fileURLWithPath: partial, isDirectory: true)
+                        .appendingPathComponent(component).path
+                }
             }
-            return String(
-                decoding: resolved.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
-                as: UTF8.self
-            )
+            let parent = candidate.deletingLastPathComponent()
+            guard parent.path != candidate.path else { return candidate.path }
+            missingComponents.append(candidate.lastPathComponent)
+            candidate = parent
         }
     }
 

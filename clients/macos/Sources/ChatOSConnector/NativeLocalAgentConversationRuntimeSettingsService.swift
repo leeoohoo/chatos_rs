@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSModelCapabilities
 import Foundation
 
 public struct NativeLocalAgentConversationRuntimeSelection: Sendable, Equatable {
@@ -116,7 +117,7 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
         let current = try await ensureSettings(sessionID: sessionID)
         let snapshot = try snapshot(for: current)
         let option = try option(for: snapshot.modelConfigRef)
-        let normalized = normalizedThinkingLevel(level, provider: snapshot.provider)
+        let normalized = normalizedThinkingLevel(level, snapshot: snapshot)
         guard option.thinkingLevels.contains(normalized),
               enabled == (normalized != "none") else {
             throw NativeLocalAgentConversationRuntimeSettingsError.unsupportedThinkingLevel
@@ -142,10 +143,11 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
     ) async throws -> LocalAgentConversationRuntimeSettings {
         let context = try requireContext()
         do {
-            return try await client.get(
+            let stored = try await client.get(
                 ownerUserID: context.ownerUserID,
                 conversationID: sessionID
             )
+            return try await reconcileModelReasoning(stored)
         } catch let error as NativeLocalAgentHostError {
             guard case let .hostError(code, _, _) = error, code == "not_found" else {
                 throw error
@@ -184,16 +186,31 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
         remoteConnectionID: String?,
         reasoningEnabled: Bool
     ) async throws -> LocalAgentConversationRuntimeSettings {
-        try await client.put(.init(
+        let capability = ModelReasoningCapabilities.forModel(snapshot.model)
+        let level = capability.map { $0.normalized(selectedThinkingLevel) ?? $0.defaultLevel }
+            ?? selectedThinkingLevel
+        return try await client.put(.init(
             ownerUserID: current.ownerUserID,
             conversationID: current.conversationID,
             selectedModelConfigRef: snapshot.modelConfigRef,
             selectedModelConfigRevision: snapshot.modelConfigRevision,
-            selectedThinkingLevel: selectedThinkingLevel,
+            selectedThinkingLevel: level,
             remoteConnectionID: remoteConnectionID,
-            reasoningEnabled: reasoningEnabled,
+            reasoningEnabled: capability != nil || reasoningEnabled,
             expectedVersion: current.version
         ))
+    }
+
+    private func reconcileModelReasoning(
+        _ stored: LocalAgentConversationRuntimeSettings
+    ) async throws -> LocalAgentConversationRuntimeSettings {
+        let snapshot = try snapshot(for: stored)
+        guard let capability = ModelReasoningCapabilities.forModel(snapshot.model) else { return stored }
+        let level = capability.normalized(stored.reasoningEnabled ? stored.selectedThinkingLevel : "none")
+            ?? capability.defaultLevel
+        guard stored.selectedThinkingLevel != level || !stored.reasoningEnabled else { return stored }
+        return try await put(current: stored, snapshot: snapshot, selectedThinkingLevel: level,
+                             remoteConnectionID: stored.remoteConnectionID, reasoningEnabled: true)
     }
 
     private func snapshot(
@@ -222,7 +239,7 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
         option: ConversationModelOption
     ) -> String {
         if let selected = current.selectedThinkingLevel {
-            let level = normalizedThinkingLevel(selected, provider: snapshot.provider)
+            let level = normalizedThinkingLevel(selected, snapshot: snapshot)
             if level != "none", option.thinkingLevels.contains(level) {
                 return level
             }
@@ -237,13 +254,19 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
     }
 
     private func defaultLevel(for snapshot: LocalAgentModelConfigSnapshot) -> String {
+        if let capability = ModelReasoningCapabilities.forModel(snapshot.model) {
+            return capability.normalized(snapshot.thinkingLevel) ?? capability.defaultLevel
+        }
         guard let level = snapshot.thinkingLevel else { return "none" }
-        return normalizedThinkingLevel(level, provider: snapshot.provider)
+        return normalizedThinkingLevel(level, snapshot: snapshot)
     }
 
-    private func normalizedThinkingLevel(_ level: String, provider: String) -> String {
+    private func normalizedThinkingLevel(_ level: String, snapshot: LocalAgentModelConfigSnapshot) -> String {
+        if let capability = ModelReasoningCapabilities.forModel(snapshot.model) {
+            return capability.normalized(level) ?? level
+        }
         let level = level.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let provider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let provider = snapshot.provider.trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased().replacingOccurrences(of: "-", with: "_")
         switch level {
         case "off", "disabled", "none":

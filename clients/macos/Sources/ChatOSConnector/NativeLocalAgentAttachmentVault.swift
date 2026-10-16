@@ -31,6 +31,7 @@ struct NativeLocalAgentAttachmentVault: Sendable {
     static let referencePrefix = "local-attachment:"
     static let maximumAttachmentBytes = 20 * 1_024 * 1_024
     static let maximumReadBytes = 64 * 1_024
+    static let maximumInlineReadBytes = 2 * 1_024
 
     let rootURL: URL
     private let integrityCache = NativeLocalAgentAttachmentIntegrityCache()
@@ -87,6 +88,30 @@ struct NativeLocalAgentAttachmentVault: Sendable {
                 offset: offset,
                 limit: limit
             )
+        }.value
+    }
+
+    func verifiedData(
+        _ record: LocalAgentConversationAttachmentRecord,
+        ownerUserID: String,
+        conversationID: String
+    ) async throws -> Data {
+        try await Task.detached(priority: .utility) {
+            let file = try validatedFileURL(record, ownerUserID: ownerUserID, conversationID: conversationID)
+            let handle = try FileHandle(forReadingFrom: file)
+            defer { try? handle.close() }
+            let before = try Self.signature(fileDescriptor: handle.fileDescriptor, sha256: record.sha256.lowercased())
+            guard before.byteSize == record.byteSize else {
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            }
+            let data = try handle.read(upToCount: Self.maximumAttachmentBytes + 1) ?? Data()
+            guard data.count == Int(record.byteSize),
+                  data.count <= Self.maximumAttachmentBytes,
+                  Self.sha256(data) == record.sha256.lowercased(),
+                  try Self.signature(fileDescriptor: handle.fileDescriptor, sha256: record.sha256.lowercased()) == before else {
+                throw NativeLocalAgentAttachmentVaultError.integrityMismatch
+            }
+            return data
         }.value
     }
 

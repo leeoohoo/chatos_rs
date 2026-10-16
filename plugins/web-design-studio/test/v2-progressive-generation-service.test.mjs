@@ -12,7 +12,7 @@ import { SceneDocumentStore } from '../dist/v2-scene-store.test.mjs';
 
 const documentId = 'website-progressive';
 
-async function environment(mode = 'auto-current-page') {
+async function environment(mode = 'auto-current-page', verifyCandidate) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'web-design-progressive-service-'));
   const repositories = {
     plans: new GenerationPlanStore(root),
@@ -27,8 +27,9 @@ async function environment(mode = 'auto-current-page') {
       if (requestedId !== documentId) throw new Error('Document is outside the runtime scope.');
       return { name: 'Progressive website' };
     },
-    async verifyCandidate({ candidateDocument }) {
-      return { ...verification(candidateDocument.revision), __images: [{ label: 'candidate', data: 'cG5n', mimeType: 'image/png' }] };
+    async verifyCandidate(input) {
+      if (verifyCandidate) return verifyCandidate(input);
+      return { ...verification(input.candidateDocument.revision), __images: [{ label: 'candidate', data: 'cG5n', mimeType: 'image/png' }] };
     },
     async captureVisualInputs({ revision }) {
       return visualInputs(revision);
@@ -235,6 +236,118 @@ test('guided mode keeps one verified candidate outside the Scene until explicit 
     const accepted = await service.acceptStep(documentId, prepared.plan.revision, 'home-structure', 'attempt:guided-home-structure');
     assert.equal(accepted.status, 'committed');
     assert.equal((await repositories.scenes.read(documentId)).revision, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a rejected candidate can be safely patched on retry without widening the step scope', async () => {
+  const { root, repositories, service } = await environment();
+  try {
+    const planned = await service.planPage({
+      documentId,
+      expectedPlanRevision: 1,
+      pageId: 'home',
+      design: design(),
+      steps: steps()
+    });
+    const first = await service.executeStep({
+      documentId,
+      expectedPlanRevision: planned.plan.revision,
+      requestId: 'rejected-home-structure',
+      operations: [{ op: 'insert-node', parentId: 'root:home', index: 0, node: heroSection() }]
+    });
+    const rejected = await service.rejectStep(
+      documentId,
+      first.plan.revision,
+      'home-structure',
+      first.candidate.attemptId,
+      'The hero needs a clearer label.'
+    );
+    assert.equal(rejected.recovery.sourceAttemptId, first.candidate.attemptId);
+    assert.equal(indexSceneDocument(await repositories.scenes.read(documentId)).has('section:hero'), false);
+
+    const repaired = await service.executeStep({
+      documentId,
+      expectedPlanRevision: rejected.plan.revision,
+      stepId: 'home-structure',
+      requestId: 'repaired-home-structure',
+      operations: [{
+        op: 'update-node',
+        nodeId: 'section:hero',
+        patches: [{ path: ['name'], value: 'Clear coffee hero' }]
+      }]
+    });
+    assert.equal(repaired.status, 'awaiting-review');
+    assert.equal(repaired.retrySourceAttemptId, first.candidate.attemptId);
+    assert.equal(indexSceneDocument(await repositories.scenes.read(documentId)).has('section:hero'), false);
+
+    const accepted = await service.acceptStep(
+      documentId,
+      repaired.plan.revision,
+      'home-structure',
+      repaired.candidate.attemptId
+    );
+    assert.equal(accepted.status, 'committed');
+    const scene = await repositories.scenes.read(documentId);
+    assert.equal(indexSceneDocument(scene).get('section:hero').node.name, 'Clear coffee hero');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a mechanically failed candidate can be safely patched on retry without widening the step scope', async () => {
+  let verificationCount = 0;
+  const { root, repositories, service } = await environment('auto-current-page', async ({ candidateDocument }) => {
+    verificationCount += 1;
+    if (verificationCount === 1) {
+      return {
+        ...verification(candidateDocument.revision),
+        passed: false,
+        qualitySummary: 'Mobile calibration overflowed.',
+        issueIds: ['calibration:390:hero-cta:render-overflow'],
+        error: {
+          code: 'layout_error',
+          message: 'Candidate rendering or layout calibration failed at 390px.',
+          retryable: true,
+          issueIds: ['calibration:390:hero-cta:render-overflow']
+        }
+      };
+    }
+    return verification(candidateDocument.revision);
+  });
+  try {
+    const planned = await service.planPage({
+      documentId,
+      expectedPlanRevision: 1,
+      pageId: 'home',
+      design: design(),
+      steps: steps()
+    });
+    const failed = await service.executeStep({
+      documentId,
+      expectedPlanRevision: planned.plan.revision,
+      requestId: 'failed-home-structure',
+      operations: [{ op: 'insert-node', parentId: 'root:home', index: 0, node: heroSection() }]
+    });
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.error.code, 'layout_error');
+    assert.equal(indexSceneDocument(await repositories.scenes.read(documentId)).has('section:hero'), false);
+
+    const repaired = await service.executeStep({
+      documentId,
+      expectedPlanRevision: failed.plan.revision,
+      stepId: 'home-structure',
+      requestId: 'repaired-failed-home-structure',
+      operations: [{
+        op: 'update-node',
+        nodeId: 'section:hero',
+        patches: [{ path: ['name'], value: 'Calibrated coffee hero' }]
+      }]
+    });
+    assert.equal(repaired.status, 'awaiting-review');
+    assert.equal(repaired.retrySourceAttemptId, 'attempt:failed-home-structure');
+    assert.equal(indexSceneDocument(await repositories.scenes.read(documentId)).has('section:hero'), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -14,8 +14,7 @@ fn browser_skill_for_tool(name: &str) -> &'static str {
     if name == "browser_snapshot" || name == "browser_find" || name == "browser_screenshot" {
         return "browser-observation-verification";
     }
-    if name == "browser_click"
-        || name == "browser_type"
+    if name == "browser_type"
         || name == "browser_fill_form"
         || name == "browser_press"
         || name == "browser_scroll"
@@ -154,6 +153,27 @@ fn required_string(value: &Value, name: &str) -> Result<String, CoreError> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| CoreError::InvalidRequest(format!("{name} must be a non-empty string")))
+}
+
+fn validate_navigation_arguments(arguments: &Value) -> Result<(), CoreError> {
+    let url = required_string(arguments, "url")?;
+    if url.trim().is_empty() {
+        return Err(CoreError::InvalidRequest("url must be a non-empty string".into()));
+    }
+    for key in ["tab_id", "browser_session_id"] {
+        if arguments.get(key).is_some() {
+            let value = required_string(arguments, key)?;
+            if value.trim().is_empty() {
+                return Err(CoreError::InvalidRequest(format!("{key} must be a non-empty string")));
+            }
+        }
+    }
+    if let Some(timeout) = arguments.get("timeout_ms") {
+        if !timeout.as_u64().is_some_and(|value| (1..=60_000).contains(&value)) {
+            return Err(CoreError::InvalidRequest("timeout_ms must be an integer between 1 and 60000".into()));
+        }
+    }
+    Ok(())
 }
 
 async fn resolve_browser_session_id(

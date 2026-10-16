@@ -13,7 +13,8 @@ fi
 
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO_PLIST")
 OUTPUT_DIR="$PROJECT_DIR/BundleArtifacts"
-DMG_PATH="$OUTPUT_DIR/ChatOS-$VERSION-macOS-$ARCH.dmg"
+DMG_FILENAME="ChatOS-$VERSION-macOS-$ARCH.dmg"
+DMG_PATH="$OUTPUT_DIR/$DMG_FILENAME"
 CHECKSUM_PATH="$DMG_PATH.sha256"
 STAGING_DIR=$(mktemp -d "${TMPDIR:-/tmp}/chatos-macos-release.XXXXXX")
 
@@ -44,7 +45,10 @@ hdiutil create \
   -format UDZO \
   -ov \
   "$DMG_PATH"
-shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+(
+  cd "$OUTPUT_DIR"
+  shasum -a 256 "$DMG_FILENAME" > "$DMG_FILENAME.sha256"
+)
 
 print -r -- "$DMG_PATH"
 print -r -- "$CHECKSUM_PATH"

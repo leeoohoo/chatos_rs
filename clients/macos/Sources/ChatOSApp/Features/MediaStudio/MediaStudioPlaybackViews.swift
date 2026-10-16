@@ -85,7 +85,7 @@ enum GeneratedMediaAssetImageCache {
             )
         }
         guard let decoded else { return nil }
-        let image = NSImage(cgImage: decoded.image, size: .zero)
+        let image = decoded.makeNSImage()
         cache.setObject(image, forKey: key as NSString, cost: decoded.memoryCost)
         return image
     }

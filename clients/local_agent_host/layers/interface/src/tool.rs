@@ -6,6 +6,34 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentToolExecutionRoute {
+    Shared,
+    Platform,
+}
+
+impl LocalAgentToolExecutionRoute {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Shared => "shared",
+            Self::Platform => "platform",
+        }
+    }
+}
+
+impl std::str::FromStr for LocalAgentToolExecutionRoute {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "shared" => Ok(Self::Shared),
+            "platform" => Ok(Self::Platform),
+            _ => Err(format!("unknown Local Agent tool execution route: {value}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LocalAgentToolCall {
     pub call_id: String,
@@ -148,6 +176,10 @@ pub struct ClaimNextToolCommand {
     pub include_tool_names: Option<Vec<String>>,
     #[serde(default)]
     pub exclude_tool_names: Vec<String>,
+    /// Worker-owned routing boundary. External callers cannot use this field to claim
+    /// Host-owned work; the coordinator overwrites it with `platform`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_route: Option<LocalAgentToolExecutionRoute>,
 }
 
 impl ClaimNextToolCommand {
@@ -310,6 +342,7 @@ pub struct LocalAgentToolInvocationRecord {
     pub batch_id: String,
     pub call_id: String,
     pub tool_name: String,
+    pub execution_route: LocalAgentToolExecutionRoute,
     pub arguments: Value,
     pub side_effecting: bool,
     pub requires_approval: bool,
@@ -332,6 +365,11 @@ pub struct LocalAgentToolClaim {
     pub worker_id: String,
     pub claim_token: String,
     pub invocation: LocalAgentToolInvocationRecord,
+    /// Shared-runtime preflight decision. Native workers must commit this outcome without
+    /// executing the platform tool, so Skill gates cannot be bypassed by leaving Rust's
+    /// in-process tool scheduler.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_outcome: Option<LocalAgentToolOutcome>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -358,6 +396,7 @@ mod tests {
             lease_duration_ms: 10_000,
             include_tool_names: Some(vec!["create_task".to_string()]),
             exclude_tool_names: vec!["create_task".to_string()],
+            execution_route: None,
         };
         assert!(overlap.validate().is_err());
 
@@ -367,6 +406,7 @@ mod tests {
             lease_duration_ms: 10_000,
             include_tool_names: None,
             exclude_tool_names: vec!["read_file".to_string(), "read_file".to_string()],
+            execution_route: None,
         };
         assert!(duplicates.validate().is_err());
     }

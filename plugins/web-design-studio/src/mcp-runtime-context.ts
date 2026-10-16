@@ -84,6 +84,7 @@ export function webDesignToolSkills(name: string): string[] {
   if (name === 'web_design_control_plan' || name === 'web_design_capture_page' || name === 'web_design_capture_region'
     || name === 'web_design_compare_snapshots' || name === 'web_design_inspect_at_point'
     || name === 'web_design_prepare_annotation_task') return ['web-design-candidate-review'];
+  if (name === 'web_design_export_handoff') return ['web-design-validation-export'];
   if (name === 'web_design_replace_document'
     || name === 'web_design_insert_section' || name === 'web_design_apply_page_template') {
     return ['web-design-components', 'web-design-responsive-layout', 'web-design-visual-system'];
@@ -105,6 +106,7 @@ export const SCENE_V3_TOOL_NAMES = new Set([
   'web_design_execute_step', 'web_design_control_plan',
   'web_design_list_documents', 'web_design_create_document',
   'web_design_get_catalog', 'web_design_search_catalog', 'web_design_get_component_contract',
+  'web_design_export_handoff',
   'web_design_list_requests'
 ]);
 

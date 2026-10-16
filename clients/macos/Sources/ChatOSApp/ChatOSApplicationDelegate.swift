@@ -135,7 +135,9 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = "ChatOS"
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 1_100, height: 720)
+        window.toolbarStyle = .unifiedCompact
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         installTitlebarActions(in: window)
@@ -168,7 +170,9 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         window.title = model.localized("设置", english: "Settings")
+        window.titleVisibility = .hidden
         window.minSize = NSSize(width: 1_180, height: 760)
+        window.toolbarStyle = .unifiedCompact
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed

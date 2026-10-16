@@ -16,6 +16,12 @@ interface ArtifactCandidate {
   sha256: string;
 }
 
+interface ToolImagePayload {
+  label: string;
+  data: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/webp';
+}
+
 function artifactCandidates(value: unknown): ArtifactCandidate[] {
   const candidates: ArtifactCandidate[] = [];
   const seen = new Set<string>();
@@ -64,13 +70,18 @@ function artifactCandidates(value: unknown): ArtifactCandidate[] {
 }
 
 function jsonResult(value: Record<string, unknown>, isError = false) {
+  const sourceImages = Array.isArray(value.__images) ? value.__images as ToolImagePayload[] : [];
+  const { __images: _discardedImages, ...structuredContent } = value;
   const result: Record<string, unknown> = {
-    content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
-    structuredContent: value,
+    content: [
+      { type: 'text' as const, text: JSON.stringify(structuredContent, null, 2) },
+      ...sourceImages.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))
+    ],
+    structuredContent,
     isError
   };
   if (!isError) {
-    const candidates = artifactCandidates(value);
+    const candidates = artifactCandidates(structuredContent);
     if (candidates.length > 0) {
       result._meta = { 'chatos/artifacts': candidates };
     }

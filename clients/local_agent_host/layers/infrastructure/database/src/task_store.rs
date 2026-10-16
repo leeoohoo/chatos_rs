@@ -22,6 +22,8 @@ pub(super) const SCOPED_TASK_SELECT: &str =
      t.max_iterations, t.status, t.active_run_id, t.version, \
      t.created_at_unix_ms, t.updated_at_unix_ms, g.owner_user_id, \
      g.source_entity_type, g.source_entity_id, \
+     (SELECT f.state FROM local_task_followup_reviews f WHERE f.task_id = t.task_id) \
+       AS followup_review_state, \
      (SELECT r.terminal_outcome_json FROM local_agent_runs r \
         WHERE r.owner_user_id = g.owner_user_id \
           AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
@@ -48,6 +50,14 @@ pub(super) const SCOPED_TASK_SELECT: &str =
 
 #[async_trait]
 impl LocalAgentTaskStore for SqliteClientStorage {
+    async fn resolve_task_followup(
+        &self,
+        command: &IdempotentCommand,
+        review: &chatos_local_agent_protocol::ResolveTaskFollowupCommand,
+        now_unix_ms: i64,
+    ) -> Result<serde_json::Value, ClientStorageError> {
+        super::task_followup_resolution::resolve(self, command, review, now_unix_ms).await
+    }
     async fn create_task_graph(
         &self,
         command: &IdempotentCommand,
@@ -61,9 +71,16 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
-            super::task_replacement_validation::validate_cancelled_sources(&mut connection, graph)
+            super::task_followup_gate::guard_creation(&mut connection, graph).await?;
+            super::task_replacement_validation::validate_stopped_sources(&mut connection, graph)
                 .await?;
-            insert_graph(&mut connection, graph, now_unix_ms)
+            let mut frozen_graph = graph.clone();
+            super::requirement_plan_store::freeze_for_graph(&mut connection, &mut frozen_graph)
+                .await?;
+            frozen_graph
+                .validate()
+                .map_err(ClientStorageError::InvalidState)?;
+            insert_graph(&mut connection, &frozen_graph, now_unix_ms)
                 .await
                 .db()?;
             let created = fetch_graph(&mut connection, &graph.graph_id)
@@ -268,7 +285,16 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let has_ready_task = sqlx::query_scalar::<_, i64>(
             "SELECT 1 FROM local_tasks t \
              JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             WHERE g.owner_user_id = ? AND t.status = 'ready' \
+             WHERE g.owner_user_id = ? \
+             AND (t.status = 'ready' OR (t.status = 'pending' \
+               AND NOT EXISTS (SELECT 1 FROM local_task_dependencies d \
+                 JOIN local_tasks p ON p.task_id = d.prerequisite_task_id \
+                 WHERE d.task_id = t.task_id AND p.status <> 'succeeded') \
+               AND NOT EXISTS (SELECT 1 FROM local_task_external_dependencies d \
+                 JOIN local_tasks p ON p.task_id = d.prerequisite_task_id \
+                 WHERE d.task_id = t.task_id AND p.status <> 'succeeded'))) \
+             AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+               WHERE f.task_id = t.task_id AND f.state IN ('pending','held')) \
              AND t.active_run_id IS NULL LIMIT 1",
         )
         .bind(owner_user_id)
@@ -304,7 +330,14 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         let has_ready_task = sqlx::query_scalar::<_, i64>(
             "SELECT 1 FROM local_tasks t \
              JOIN local_task_graphs g ON g.graph_id = t.graph_id \
-             WHERE g.owner_user_id = ? AND t.graph_id = ? AND t.status = 'ready' \
+             WHERE g.owner_user_id = ? AND t.graph_id = ? \
+             AND (t.status = 'ready' OR (t.status = 'pending' \
+               AND NOT EXISTS (SELECT 1 FROM local_task_dependencies d \
+                 JOIN local_tasks p ON p.task_id = d.prerequisite_task_id \
+                 WHERE d.task_id = t.task_id AND p.status <> 'succeeded') \
+               AND NOT EXISTS (SELECT 1 FROM local_task_external_dependencies d \
+                 JOIN local_tasks p ON p.task_id = d.prerequisite_task_id \
+                 WHERE d.task_id = t.task_id AND p.status <> 'succeeded'))) \
              AND t.active_run_id IS NULL LIMIT 1",
         )
         .bind(owner_user_id)
@@ -535,6 +568,8 @@ async fn insert_graph(
         .await
         .db()?;
     }
+    super::task_lifecycle::propagate_blocked(connection, &graph.graph_id, now_unix_ms).await?;
+    super::task_lifecycle::unlock_satisfied(connection, &graph.graph_id, now_unix_ms).await?;
     Ok(())
 }
 
@@ -604,6 +639,8 @@ pub(super) async fn fetch_graph(
         "SELECT t.task_id, t.graph_id, t.title, t.profile_key, t.model_config_ref, \
          t.model_config_revision, t.capability_policy_revision, t.input_json, t.max_iterations, \
          t.status, t.active_run_id, t.version, t.created_at_unix_ms, t.updated_at_unix_ms, \
+         (SELECT f.state FROM local_task_followup_reviews f WHERE f.task_id = t.task_id) \
+           AS followup_review_state, \
          (SELECT r.terminal_outcome_json FROM local_agent_runs r \
             WHERE r.owner_user_id = g.owner_user_id \
               AND r.owner_entity_type = 'task' AND r.owner_entity_id = t.task_id \
@@ -668,7 +705,6 @@ async fn fetch_graph_for_owner(
 }
 
 fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
-    let input: String = row.try_get("input_json").db()?;
     let status: String = row.try_get("status").db()?;
     Ok(LocalTaskRecord {
         graph_id: row.try_get("graph_id").db()?,
@@ -681,7 +717,7 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
         model_config_ref: row.try_get("model_config_ref").db()?,
         model_config_revision: row.try_get("model_config_revision").db()?,
         capability_policy_revision: row.try_get("capability_policy_revision").db()?,
-        input: serde_json::from_str(&input)?,
+        input: super::task_followup_gate::task_input(&row)?,
         max_iterations: u32::try_from(row.try_get::<i64, _>("max_iterations").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
@@ -695,7 +731,6 @@ fn decode_task(row: SqliteRow, graph: &SqliteRow) -> Result<LocalTaskRecord, Cli
 }
 
 fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageError> {
-    let input: String = row.try_get("input_json").db()?;
     let status: String = row.try_get("status").db()?;
     Ok(LocalTaskRecord {
         graph_id: row.try_get("graph_id").db()?,
@@ -708,7 +743,7 @@ fn decode_scoped_task(row: SqliteRow) -> Result<LocalTaskRecord, ClientStorageEr
         model_config_ref: row.try_get("model_config_ref").db()?,
         model_config_revision: row.try_get("model_config_revision").db()?,
         capability_policy_revision: row.try_get("capability_policy_revision").db()?,
-        input: serde_json::from_str(&input)?,
+        input: super::task_followup_gate::task_input(&row)?,
         max_iterations: u32::try_from(row.try_get::<i64, _>("max_iterations").db()?)
             .map_err(|_| ClientStorageError::InvalidState("invalid max_iterations".to_string()))?,
         status: LocalTaskStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,

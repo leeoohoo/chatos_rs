@@ -27,7 +27,7 @@ import {
 } from './generation-guides.js';
 
 const SERVER_NAME = 'chatos-diagram-studio';
-const SERVER_VERSION = '0.4.5';
+const SERVER_VERSION = '0.4.9';
 const store = new DiagramDocumentStore();
 const scopeKey = runtimeDataScopeFingerprint(store.rootDirectory);
 const generationScopeKey = runtimeGenerationScopeFingerprint(store.rootDirectory);
@@ -350,7 +350,8 @@ const TOOL_DEFINITIONS = [
       type: 'object',
       properties: {
         documentId: { type: 'string', minLength: 1, maxLength: 128 },
-        format: { type: 'string', enum: ['json', 'svg', 'plantuml'] }
+        format: { type: 'string', enum: ['json', 'svg', 'plantuml'] },
+        fileName: { type: 'string', minLength: 1, maxLength: 240, description: 'Optional exact managed artifact filename. It must be a basename and use the extension required by format.' }
       },
       required: ['documentId', 'format'],
       additionalProperties: false
@@ -703,7 +704,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     case 'diagram_export': {
       const document = await store.readInScope(String(argumentsValue.documentId), scopeKey);
       const format = argumentsValue.format === 'svg' ? 'svg' : argumentsValue.format === 'plantuml' ? 'plantuml' : 'json';
-      return await writeExportArtifact(document, format);
+      return await writeExportArtifact(document, format, typeof argumentsValue.fileName === 'string' ? argumentsValue.fileName : undefined);
     }
     default:
       throw new Error(`Unknown Diagram Studio tool: ${name}`);

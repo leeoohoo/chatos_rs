@@ -15,6 +15,19 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 244, max: 290)
         } detail: {
             detail
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let error = model.localAgentHostError {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("本地任务服务提示", systemImage: "exclamationmark.triangle")
+                                .appFont(.callout.weight(.semibold))
+                            Text(error).appFont(.caption)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(.orange.opacity(0.08))
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     GlobalApprovalOverlayHost(viewModel: model.localConnectorControl)
                         .padding(18)
@@ -87,12 +100,13 @@ struct RootView: View {
                         ownerUserID: ownerUserID,
                         projects: model.projects,
                         client: requirementSurveyClient,
-                        eventHub: localAgentEventHub
+                        eventHub: localAgentEventHub,
+                        navigationTarget: $model.requestedRequirementSurvey
                     )
                     .id(ownerUserID)
                 } else {
                     ContentUnavailableView(
-                        model.localized("本地 Agent Host 不可用", english: "Local Agent Host unavailable"),
+                        model.localized("需求调研暂不可用", english: "Requirement surveys unavailable"),
                         systemImage: "externaldrive.badge.exclamationmark"
                     )
                 }

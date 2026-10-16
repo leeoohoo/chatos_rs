@@ -36,6 +36,22 @@ if (packageMetadata.version !== manifest.version) {
 
 run("./scripts/build-macos-app.sh", []);
 
+// A locally built single-architecture app must not advertise every Mac.
+const architectures = run(
+  "/usr/bin/lipo",
+  ["-archs", "dist/Visual Computer Use.app/Contents/MacOS/visual-computer-use-mcp"],
+  { capture: true },
+).split(/\s+/);
+const binaryPlatforms = architectures.map(architecture => {
+  if (architecture === "arm64") return "macos-arm64";
+  if (architecture === "x86_64") return "macos-x64";
+  throw new Error(`Unsupported app architecture: ${architecture}`);
+}).sort();
+const declaredPlatforms = [...(manifest.dependencies?.supportedPlatforms ?? [])].sort();
+if (JSON.stringify(binaryPlatforms) !== JSON.stringify(declaredPlatforms)) {
+  throw new Error("Manifest supportedPlatforms must match the packaged app architectures.");
+}
+
 const appVersion = run(
   "/usr/libexec/PlistBuddy",
   [

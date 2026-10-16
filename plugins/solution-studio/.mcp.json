@@ -1,8 +1,12 @@
 {
   "mcpServers": {
-    "solution-studio-mcp": {
+    "solution-authoring-mcp": {
       "command": "chatos-solution-studio",
-      "args": ["mcp"]
+      "args": ["mcp-authoring"]
+    },
+    "solution-executor-mcp": {
+      "command": "chatos-solution-studio",
+      "args": ["mcp-executor"]
     }
   }
 }

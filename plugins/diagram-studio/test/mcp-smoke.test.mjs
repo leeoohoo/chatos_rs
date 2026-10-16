@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -15,14 +15,17 @@ const checklistByKind = {
   mindmap: ['single_central_topic', 'branches_are_mutually_distinct', 'parent_child_relationships_are_hierarchical', 'labels_are_concise', 'depth_is_bounded', 'overloaded_branches_are_split', 'independent_subjects_are_separate_maps', 'evidence_is_mapped']
 };
 
+const packageRoot = process.env.CHATOS_PLUGIN_TEST_PACKAGE_ROOT || path.resolve(import.meta.dirname, '..');
+
 test('MCP enforces Skill-gated permits, injected scope, and idempotent generated diagrams', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'diagram-studio-test-'));
   const client = new Client({ name: 'diagram-studio-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ['dist/mcp-server.mjs', 'mcp'],
+    args: [path.join(packageRoot, 'bin/chatos-diagram-studio'), 'mcp'],
     env: {
       ...process.env,
+      CHATOS_PLUGIN_ROOT: packageRoot,
       DIAGRAM_STUDIO_DATA_DIR: path.join(root, 'data'),
       CHATOS_PLUGIN_ARTIFACT_DIR: path.join(root, 'artifacts'),
       CHATOS_CONTEXT_SCOPE: 'project',
@@ -196,6 +199,16 @@ left side
     const exported = await call(client, 'diagram_export', { documentId: committed.document.documentId, format: 'plantuml' });
     assert.equal(exported.mimeType, 'text/vnd.plantuml');
     assert.match(exported.sha256, /^[a-f0-9]{64}$/);
+
+    const exactSvgName = '插件最终验收-五步流程-复测.svg';
+    const exportedSvg = await call(client, 'diagram_export', {
+      documentId: committed.document.documentId,
+      format: 'svg',
+      fileName: exactSvgName
+    });
+    assert.equal(exportedSvg.relativePath, exactSvgName);
+    assert.ok(exportedSvg.size > 0);
+    assert.match(await readFile(path.join(root, 'artifacts', exactSvgName), 'utf8'), /^<svg\b/);
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

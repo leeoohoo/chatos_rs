@@ -61,6 +61,97 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
   return value;
 }
 
+function optionalEnum(value: unknown, field: string, allowed: readonly string[]): string | undefined {
+  if (value === undefined) return undefined;
+  const text = stringValue(value, field, 64);
+  if (!allowed.includes(text)) {
+    throw new DocumentError('INVALID_ARGUMENT', `${field} must be one of: ${allowed.join(', ')}.`);
+  }
+  return text;
+}
+
+function wordLength(value: unknown, field: string): string {
+  const text = stringValue(value, field, 24);
+  if (!/^[0-9]+(?:\.[0-9]+)?(?:cm|mm|in|pt)$/.test(text)) {
+    throw new DocumentError('INVALID_ARGUMENT', `${field} must be a non-negative length such as 1.8cm or 6pt.`);
+  }
+  return text;
+}
+
+function fontSize(value: unknown, field: string): string | number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 1 && value <= 96) return value;
+  const text = stringValue(value, field, 12);
+  if (!/^[0-9]+(?:\.[0-9]+)?pt$/.test(text)) {
+    throw new DocumentError('INVALID_ARGUMENT', `${field} must be between 1 and 96 points.`);
+  }
+  const numeric = Number.parseFloat(text);
+  if (numeric < 1 || numeric > 96) throw new DocumentError('INVALID_ARGUMENT', `${field} must be between 1 and 96 points.`);
+  return text;
+}
+
+function wordColor(value: unknown, field: string): string {
+  const color = stringValue(value, field, 7).replace(/^#/, '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(color)) throw new DocumentError('INVALID_ARGUMENT', `${field} must be a 6-digit hex color.`);
+  return color;
+}
+
+const WORD_BOOLEAN_FORMATS = [
+  'bold', 'italic', 'keepNext', 'keepLines', 'widowControl', 'pageBreakBefore'
+] as const;
+const WORD_LENGTH_FORMATS = [
+  'spaceBefore', 'spaceAfter', 'firstLineIndent', 'hangingIndent', 'indent', 'rightIndent'
+] as const;
+
+function wordFormattingProps(item: JsonObject, fieldPrefix: string): JsonObject {
+  const props: JsonObject = {};
+  const align = optionalEnum(item.align, `${fieldPrefix}.align`, ['left', 'center', 'right', 'justify', 'distribute']);
+  if (align !== undefined) props.align = align;
+  if (item.style !== undefined) props.style = stringValue(item.style, `${fieldPrefix}.style`, 128);
+  if (item.font !== undefined) props.font = stringValue(item.font, `${fieldPrefix}.font`, 128);
+  if (item.size !== undefined) props.size = fontSize(item.size, `${fieldPrefix}.size`);
+  if (item.color !== undefined) props.color = wordColor(item.color, `${fieldPrefix}.color`);
+  if (item.fill !== undefined) props.fill = wordColor(item.fill, `${fieldPrefix}.fill`);
+  if (item.lineSpacing !== undefined) {
+    const spacing = stringValue(item.lineSpacing, `${fieldPrefix}.lineSpacing`, 16);
+    if (!/^[0-9]+(?:\.[0-9]+)?(?:x|pt)$/.test(spacing)) {
+      throw new DocumentError('INVALID_ARGUMENT', `${fieldPrefix}.lineSpacing must be a multiplier such as 1.25x or a point size such as 14pt.`);
+    }
+    props.lineSpacing = spacing;
+  }
+  const lineRule = optionalEnum(item.lineRule, `${fieldPrefix}.lineRule`, ['auto', 'exact', 'atLeast']);
+  if (lineRule !== undefined) props.lineRule = lineRule;
+  for (const key of WORD_LENGTH_FORMATS) {
+    if (item[key] !== undefined) props[key] = wordLength(item[key], `${fieldPrefix}.${key}`);
+  }
+  for (const key of WORD_BOOLEAN_FORMATS) {
+    const value = optionalBoolean(item[key], `${fieldPrefix}.${key}`);
+    if (value !== undefined) props[key] = value;
+  }
+  return props;
+}
+
+function wordTextFormattingProps(item: JsonObject, fieldPrefix: string): JsonObject {
+  const props: JsonObject = {};
+  for (const key of ['bold', 'italic', 'underline'] as const) {
+    const value = optionalBoolean(item[key], `${fieldPrefix}.${key}`);
+    if (value !== undefined) props[key] = value;
+  }
+  if (item.font !== undefined) props.font = stringValue(item.font, `${fieldPrefix}.font`, 128);
+  if (item.size !== undefined) props.size = fontSize(item.size, `${fieldPrefix}.size`);
+  if (item.color !== undefined) props.color = wordColor(item.color, `${fieldPrefix}.color`);
+  return props;
+}
+
+function assertPlainListText(text: string, ordered: boolean, field: string): void {
+  const marker = /^\s*(?:[•●▪◦‣·]\s*|[-*]\s+|(?:\d+|[A-Za-z])[.)]\s+|\d+、\s*)/;
+  if (marker.test(text)) {
+    throw new DocumentError(
+      'INVALID_ARGUMENT',
+      `${field} must contain plain item text without a list marker; Word generates the ${ordered ? 'number' : 'bullet'} automatically.`
+    );
+  }
+}
+
 function wordTableData(value: unknown, field: string): string {
   if (!Array.isArray(value) || value.length < 1 || value.length > 50) {
     throw new DocumentError('INVALID_ARGUMENT', `${field} must contain between 1 and 50 rows.`);
@@ -101,15 +192,52 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
     }
     const item = operation as JsonObject;
     const type = stringValue(item.type, `operations[${index}].type`, 64);
+    const fieldPrefix = `operations[${index}]`;
+    if (type === 'word_set_document_layout' && format === 'docx') {
+      const props: JsonObject = {};
+      const pageSize = optionalEnum(item.pageSize, `${fieldPrefix}.pageSize`, ['a4', 'letter']);
+      const orientation = optionalEnum(item.orientation, `${fieldPrefix}.orientation`, ['portrait', 'landscape']) ?? 'portrait';
+      if (pageSize !== undefined) {
+        const dimensions = pageSize === 'a4' ? ['21cm', '29.7cm'] : ['8.5in', '11in'];
+        props.pageWidth = orientation === 'portrait' ? dimensions[0] : dimensions[1];
+        props.pageHeight = orientation === 'portrait' ? dimensions[1] : dimensions[0];
+      }
+      if (item.orientation !== undefined) props.orientation = orientation;
+      for (const key of ['marginTop', 'marginBottom', 'marginLeft', 'marginRight', 'marginHeader', 'marginFooter'] as const) {
+        if (item[key] !== undefined) props[key] = wordLength(item[key], `${fieldPrefix}.${key}`);
+      }
+      if (item.columns !== undefined) props.columns = positiveInteger(item.columns, `${fieldPrefix}.columns`, 4);
+      if (Object.keys(props).length === 0) {
+        throw new DocumentError('INVALID_ARGUMENT', 'word_set_document_layout requires at least one layout property.');
+      }
+      return { command: 'set', path: '/', props };
+    }
+    if (type === 'word_define_style' && format === 'docx') {
+      const id = stringValue(item.id, `${fieldPrefix}.id`, 64);
+      if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(id)) {
+        throw new DocumentError('INVALID_ARGUMENT', `${fieldPrefix}.id must be a safe Word style identifier.`);
+      }
+      const styleType = optionalEnum(item.styleType, `${fieldPrefix}.styleType`, ['paragraph', 'character']) ?? 'paragraph';
+      const formatting = wordFormattingProps(item, fieldPrefix);
+      delete formatting.style;
+      const props: JsonObject = {
+        id,
+        name: stringValue(item.name, `${fieldPrefix}.name`, 128),
+        type: styleType,
+        ...formatting
+      };
+      if (item.basedOn !== undefined) props.basedOn = stringValue(item.basedOn, `${fieldPrefix}.basedOn`, 128);
+      if (item.next !== undefined) props.next = stringValue(item.next, `${fieldPrefix}.next`, 128);
+      return { command: 'add', parent: '/styles', type: 'style', props };
+    }
     if (type === 'word_add_paragraph' && format === 'docx') {
-      const pageBreakBefore = optionalBoolean(item.pageBreakBefore, `operations[${index}].pageBreakBefore`);
       return {
         command: 'add',
         parent: '/body',
         type: 'paragraph',
         props: {
-          text: stringValue(item.text, `operations[${index}].text`),
-          ...(pageBreakBefore === undefined ? {} : { pageBreakBefore })
+          text: stringValue(item.text, `${fieldPrefix}.text`),
+          ...wordFormattingProps(item, fieldPrefix)
         }
       };
     }
@@ -124,28 +252,31 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
       };
     }
     if (type === 'word_add_heading' && format === 'docx') {
-      const level = positiveInteger(item.level, `operations[${index}].level`, 6);
-      const pageBreakBefore = optionalBoolean(item.pageBreakBefore, `operations[${index}].pageBreakBefore`);
+      const level = positiveInteger(item.level, `${fieldPrefix}.level`, 6);
+      const formatting = wordFormattingProps(item, fieldPrefix);
       return {
         command: 'add',
         parent: '/body',
         type: 'paragraph',
         props: {
-          text: stringValue(item.text, `operations[${index}].text`),
+          text: stringValue(item.text, `${fieldPrefix}.text`),
           style: `Heading${level}`,
-          ...(pageBreakBefore === undefined ? {} : { pageBreakBefore })
+          ...formatting
         }
       };
     }
     if (type === 'word_add_list_item' && format === 'docx') {
-      const ordered = optionalBoolean(item.ordered, `operations[${index}].ordered`) ?? false;
-      const level = item.level === undefined ? 0 : positiveInteger((item.level as number) + 1, `operations[${index}].level`, 9) - 1;
+      const ordered = optionalBoolean(item.ordered, `${fieldPrefix}.ordered`) ?? false;
+      const level = item.level === undefined ? 0 : positiveInteger((item.level as number) + 1, `${fieldPrefix}.level`, 9) - 1;
+      const text = stringValue(item.text, `${fieldPrefix}.text`);
+      assertPlainListText(text, ordered, `${fieldPrefix}.text`);
       return {
         command: 'add',
         parent: '/body',
         type: 'paragraph',
         props: {
-          text: stringValue(item.text, `operations[${index}].text`),
+          text,
+          ...wordFormattingProps(item, fieldPrefix),
           listStyle: ordered ? 'ordered' : 'bullet',
           numLevel: level
         }
@@ -165,23 +296,40 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
     }
     if (type === 'word_set_paragraph_format' && format === 'docx') {
       const paragraph = positiveInteger(item.paragraph, `operations[${index}].paragraph`, 100_000);
-      const props: JsonObject = {};
-      if (item.align !== undefined) {
-        const align = stringValue(item.align, `operations[${index}].align`, 16);
-        if (!['left', 'center', 'right', 'justify'].includes(align)) {
-          throw new DocumentError('INVALID_ARGUMENT', 'Word paragraph alignment is not allowed.');
-        }
-        props.align = align;
-      }
-      if (item.style !== undefined) props.style = stringValue(item.style, `operations[${index}].style`, 128);
-      const bold = optionalBoolean(item.bold, `operations[${index}].bold`);
-      const italic = optionalBoolean(item.italic, `operations[${index}].italic`);
-      if (bold !== undefined) props.bold = bold;
-      if (italic !== undefined) props.italic = italic;
+      const props = wordFormattingProps(item, fieldPrefix);
       if (Object.keys(props).length === 0) {
         throw new DocumentError('INVALID_ARGUMENT', 'word_set_paragraph_format requires at least one format property.');
       }
       return { command: 'set', path: `/body/p[${paragraph}]`, props };
+    }
+    if (type === 'word_format_text' && format === 'docx') {
+      const paragraph = positiveInteger(item.paragraph, `${fieldPrefix}.paragraph`, 100_000);
+      const props = {
+        find: stringValue(item.find, `${fieldPrefix}.find`, 2_000),
+        ...wordTextFormattingProps(item, fieldPrefix)
+      };
+      if (Object.keys(props).length === 1) {
+        throw new DocumentError('INVALID_ARGUMENT', 'word_format_text requires at least one text format property.');
+      }
+      return { command: 'set', path: `/body/p[${paragraph}]`, props };
+    }
+    if (type === 'word_add_header_footer' && format === 'docx') {
+      const location = optionalEnum(item.location, `${fieldPrefix}.location`, ['header', 'footer']);
+      if (!location) throw new DocumentError('INVALID_ARGUMENT', `${fieldPrefix}.location is required.`);
+      const props: JsonObject = {
+        type: optionalEnum(item.kind, `${fieldPrefix}.kind`, ['default', 'first', 'even']) ?? 'default',
+        ...wordTextFormattingProps(item, fieldPrefix)
+      };
+      const align = optionalEnum(item.align, `${fieldPrefix}.align`, ['left', 'center', 'right', 'justify', 'distribute']);
+      if (align !== undefined) props.align = align;
+      if (item.text !== undefined) props.text = stringValue(item.text, `${fieldPrefix}.text`, 2_000);
+      if (item.field !== undefined) {
+        props.field = optionalEnum(item.field, `${fieldPrefix}.field`, ['page', 'numpages', 'date', 'author', 'title', 'time', 'filename']);
+      }
+      if (props.text === undefined && props.field === undefined) {
+        throw new DocumentError('INVALID_ARGUMENT', 'word_add_header_footer requires text or a field.');
+      }
+      return { command: 'add', parent: '/', type: location, props };
     }
     if (type === 'spreadsheet_set_cell' && format === 'xlsx') {
       const sheet = sheetName(item.sheet ?? 'Sheet1');
@@ -249,7 +397,9 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
           x: dimension(item.x, `operations[${index}].x`),
           y: dimension(item.y, `operations[${index}].y`),
           width: dimension(item.width, `operations[${index}].width`),
-          height: dimension(item.height, `operations[${index}].height`)
+          height: dimension(item.height, `operations[${index}].height`),
+          ...(item.color === undefined ? {} : { textFill: wordColor(item.color, `${fieldPrefix}.color`) }),
+          ...(item.size === undefined ? {} : { size: fontSize(item.size, `${fieldPrefix}.size`) })
         }
       };
     }
@@ -259,7 +409,11 @@ export function translateOperations(format: OfficeFormat, operations: unknown, m
       return {
         command: 'set',
         path: `/slide[${slide}]/shape[${shape}]`,
-        props: { text: stringValue(item.text, `operations[${index}].text`) }
+        props: {
+          text: stringValue(item.text, `operations[${index}].text`),
+          ...(item.color === undefined ? {} : { textFill: wordColor(item.color, `${fieldPrefix}.color`) }),
+          ...(item.size === undefined ? {} : { size: fontSize(item.size, `${fieldPrefix}.size`) })
+        }
       };
     }
     if (type === 'presentation_delete_slide' && format === 'pptx') {

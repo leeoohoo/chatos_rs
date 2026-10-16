@@ -14,9 +14,7 @@ import { RevisionConflictError, SolutionWorkspaceStore } from './store.js';
 import { readHostRuntimeContext } from './runtime-context.js';
 
 const { host, port } = readPluginLocalHttpEndpoint({
-  defaultPort: 4198,
-  legacyHostEnvironmentKey: 'SOLUTION_STUDIO_HOST',
-  legacyPortEnvironmentKey: 'SOLUTION_STUDIO_PORT'
+  defaultPort: 4198
 });
 const store = new SolutionWorkspaceStore();
 const runtimeContext = readHostRuntimeContext();
@@ -52,8 +50,7 @@ app.post('/api/workspaces', async (request, response, next) => {
   try {
     const title = typeof request.body?.title === 'string' ? request.body.title : '未命名方案';
     const mode: SourceMode = request.body?.sourceMode === 'greenfield' ? 'greenfield' : 'existing-project';
-    const artifactKey = typeof request.body?.artifactKey === 'string' ? request.body.artifactKey : undefined;
-    const workspace = await store.create(title, mode, artifactKey);
+    const workspace = await store.create(title, mode);
     publishChange();
     response.status(201).json(workspace);
   } catch (error) { next(error); }
@@ -81,7 +78,7 @@ app.post('/api/workspaces/:workspaceId/markdown/copy-file', async (request, resp
   try {
     if (process.platform !== 'darwin') throw new Error('当前系统暂不支持把文件直接复制到剪贴板。');
     const workspace = await store.read(request.params.workspaceId);
-    const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? process.env.SOLUTION_STUDIO_EXPORT_DIR ?? path.join(os.tmpdir(), 'solution-studio-exports'));
+    const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? path.join(os.tmpdir(), 'solution-studio-exports'));
     await fs.mkdir(directory, { recursive: true });
     const fileName = safeMarkdownName(workspace.title);
     const filePath = path.join(directory, fileName);
@@ -103,9 +100,43 @@ app.put('/api/workspaces/:workspaceId', async (request, response, next) => {
     const workspace: unknown = request.body?.workspace;
     assertSolutionWorkspace(workspace);
     if (workspace.workspaceId !== request.params.workspaceId) throw new Error('Workspace identity mismatch.');
+    const current = await store.read(workspace.workspaceId);
+    const currentById = new Map(current.executionPlan.tasks.map((task) => [task.id, task]));
+    if (JSON.stringify(workspace.executionPlan.statusEvents) !== JSON.stringify(current.executionPlan.statusEvents)) {
+      throw new Error('Workbench 不能修改任务状态历史，请使用任务执行器。');
+    }
+    for (const task of workspace.executionPlan.tasks) {
+      const previous = currentById.get(task.id);
+      if (!previous && task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
+      if (previous && (task.status !== previous.status || task.blockedReason !== previous.blockedReason)) {
+        throw new Error(`Workbench 不能修改任务 ${task.id} 的执行状态，请使用任务执行器。`);
+      }
+    }
+    const proposedById = new Map(workspace.executionPlan.tasks.map((task) => [task.id, task]));
+    for (const previous of current.executionPlan.tasks.filter((task) => task.status !== 'planned')) {
+      const proposed = proposedById.get(previous.id);
+      if (!proposed) throw new Error(`任务 ${previous.id} 已进入 ${previous.status}，Workbench 不能删除。`);
+      const { status: _previousStatus, blockedReason: _previousReason, ...previousDefinition } = previous;
+      const { status: _proposedStatus, blockedReason: _proposedReason, ...proposedDefinition } = proposed;
+      if (JSON.stringify(previousDefinition) !== JSON.stringify(proposedDefinition)) {
+        throw new Error(`任务 ${previous.id} 已进入 ${previous.status}，Workbench 不能修改其定义或依赖。`);
+      }
+    }
     const validation = validateWorkspace(workspace);
-    if (validation.issues.some((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle'].includes(issue.code))) {
-      throw new Error(validation.issues.filter((issue) => issue.blocking).map((issue) => issue.message).join(' '));
+    const rejectedCodes = new Set([
+      'unknown_module',
+      'unknown_dependency',
+      'self_dependency',
+      'dependency_cycle',
+      'redundant_dependency',
+      'unknown_parent_requirement',
+      'self_parent_requirement',
+      'requirement_hierarchy_cycle',
+      'parent_module_mismatch'
+    ]);
+    const rejectedIssues = validation.issues.filter((issue) => rejectedCodes.has(issue.code));
+    if (rejectedIssues.length > 0) {
+      throw new Error(rejectedIssues.map((issue) => issue.message).join(' '));
     }
     const saved = await store.replace(workspace, expectedRevision);
     publishChange();

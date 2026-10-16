@@ -5,6 +5,8 @@ public enum ProductToolProviderID {
     public static let commandApproval = "chatos.auxiliary.command-approval"
     public static let capabilityBroker = "chatos.local.capability-broker"
     public static let localAgentChat = "chatos.local.agent-chat"
+    public static let mainChatTask = "chatos.local.main-chat-task"
+    public static let requirementSurvey = "chatos.local.requirement-survey"
     public static let localProjectTeam = "chatos.local.project-team"
     public static let projectRead = "chatos.builtin.project-read"
     public static let projectWrite = "chatos.builtin.project-write"
@@ -24,6 +26,8 @@ public enum ProductToolSkillBindingID {
     public static let todoExecution = "agent-chat.todo-execution"
     public static let teamKnowledge = "agent-chat.team-knowledge"
     public static let projectDashboard = "agent-chat.project-dashboard"
+    public static let taskOrchestration = "main-chat.task-orchestration"
+    public static let requirementDiscovery = "project.requirement-discovery"
     public static let projectTeamCatalog = "project-team.catalog"
     public static let projectTeamProposal = "project-team.proposal"
     public static let projectRead = "project-files.read"
@@ -63,8 +67,8 @@ public extension ToolSkillCoverageCatalog {
                     id: ProductToolSkillBindingID.capabilityBroker,
                     providerID: ProductToolProviderID.capabilityBroker,
                     toolNames: [
-                        "capability_search", "capability_describe", "capability_skill_activate",
-                        "capability_skill_read_resource", "capability_invoke",
+                        "capability_search", "capability_describe", "agent_skill_activate",
+                        "agent_skill_read_resource", "capability_invoke",
                     ],
                     routerSkillName: "chatos-capability-discovery",
                     specialistSkillName: "chatos-capability-discovery",
@@ -82,15 +86,35 @@ public extension ToolSkillCoverageCatalog {
                     activationPolicy: .runBound
                 ),
                 .init(
+                    id: ProductToolSkillBindingID.taskOrchestration,
+                    providerID: ProductToolProviderID.mainChatTask,
+                    toolNames: [
+                        "list_tasks", "get_task", "create_task",
+                        "create_tasks_with_prerequisites", "cancel_task",
+                        "wait_for_task_completion", "get_task_dependency_graph",
+                        "resolve_task_followup",
+                    ],
+                    routerSkillName: "chatos-async-task-orchestration",
+                    specialistSkillName: "chatos-async-task-orchestration",
+                    activationPolicy: .onDemand
+                ),
+                .init(
                     id: ProductToolSkillBindingID.agentSkillControlPlane,
                     providerID: ProductToolProviderID.localAgentChat,
                     toolNames: [
-                        "agent_skill_activate", "agent_skill_list_resources",
-                        "agent_skill_read_resource",
+                        "agent_skill_activate", "agent_skill_read_resource",
                     ],
                     routerSkillName: "chatos-skill-runtime",
                     specialistSkillName: "chatos-skill-runtime",
                     activationPolicy: .controlPlane
+                ),
+                .init(
+                    id: ProductToolSkillBindingID.requirementDiscovery,
+                    providerID: ProductToolProviderID.requirementSurvey,
+                    toolNames: ["requirement_survey_create", "requirement_plan_save"],
+                    routerSkillName: "chatos-requirement-discovery",
+                    specialistSkillName: "chatos-requirement-discovery",
+                    activationPolicy: .onDemand
                 ),
                 .init(
                     id: ProductToolSkillBindingID.relayContext,

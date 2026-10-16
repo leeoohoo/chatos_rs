@@ -5,6 +5,106 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentHostLifecycleTests: XCTestCase {
+    func testCredentialRefreshReusesWorkerAndDefersChangedCredentialsWithoutStoppingIt() async throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let executable = ProcessInfo.processInfo.environment["CHATOS_LOCAL_AGENT_HOST_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {
+                XCTFail("Required native Host integration executable is missing")
+                throw NativeLocalAgentHostError.notRunning
+            }
+            throw XCTSkip("Build chatos_local_agent_host before running the native lifecycle test")
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-refresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: executable, databaseURL: root.appendingPathComponent("agent.sqlite3")
+        ))
+        do {
+            try await lifecycle.startForBootstrap(ownerUserID: "user-1")
+            let bootstrapPID = await lifecycle.processIdentifier
+            let workspace = NativeLocalAgentWorkspaceService(host: lifecycle)
+            await workspace.configure(ownerUserID: "user-1")
+            let initialRelations = try await workspace.fetchWorkspaceRelations()
+            XCTAssertEqual(initialRelations.contacts.map(\.id), [
+                NativeLocalAgentWorkspaceService.mainContact.id,
+                NativeLocalAgentWorkspaceService.pluginInstallerContact.id,
+            ])
+            XCTAssertEqual(initialRelations.conversations.count, 2)
+            let credentialStore = NativeLocalAgentModelCredentialStore(rootURL: root.appendingPathComponent("credentials"))
+            let modelSnapshots = ["test", "historical"].map { model in
+                LocalAgentModelConfigSnapshot(ownerUserID: "user-1", modelConfigRef: model,
+                    modelConfigRevision: "revision-1", credentialRef: "env:\(credentialStore.environmentVariable(modelConfigRef: model))",
+                    baseURL: "https://example.invalid/v1", model: model, provider: "test", supportsResponses: true)
+            }
+            for model in ["test", "historical"] {
+                try credentialStore.saveWithoutUserInteraction("test-only-value", ownerUserID: "user-1", modelConfigRef: model)
+            }
+            var credentials = try NativeLocalAgentCredentialEnvironment.restoredModels(modelSnapshots, ownerUserID: "user-1", store: credentialStore)
+            credentials["CHATOS_MEMORY_ACCESS_TOKEN"] = "test-memory-value"
+            try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: credentials)
+            let workerPID = await lifecycle.processIdentifier
+            XCTAssertNotNil(workerPID)
+            XCTAssertNotEqual(workerPID, bootstrapPID)
+            for _ in 0..<3 {
+                var refreshed = try NativeLocalAgentCredentialEnvironment.restoredModels(modelSnapshots, ownerUserID: "user-1", store: credentialStore)
+                // Online catalog only selects test; historical stays for frozen Runs.
+                refreshed["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "test-only-value"
+                refreshed["CHATOS_MEMORY_ACCESS_TOKEN"] = "test-memory-value"
+                XCTAssertEqual(refreshed, credentials)
+                try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: refreshed)
+                let reusedPID = await lifecycle.processIdentifier
+                XCTAssertEqual(reusedPID, workerPID)
+                let restoredRelations = try await workspace.fetchWorkspaceRelations()
+                XCTAssertEqual(restoredRelations.contacts, initialRelations.contacts)
+                XCTAssertEqual(
+                    restoredRelations.conversations.map(\.id).sorted(),
+                    initialRelations.conversations.map(\.id).sorted()
+                )
+            }
+            var rotatedModel = credentials
+            rotatedModel["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "rotated-value"
+            var rotatedMemory = credentials
+            rotatedMemory["CHATOS_MEMORY_ACCESS_TOKEN"] = "rotated-memory-value"
+            var missingMemory = credentials
+            missingMemory.removeValue(forKey: "CHATOS_MEMORY_ACCESS_TOKEN")
+            var addedModel = credentials
+            addedModel["CHATOS_LOCAL_AGENT_MODEL_NEW"] = "new-test-value"
+            for changed in [rotatedModel, rotatedMemory, missingMemory, addedModel] {
+                do {
+                    try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: changed)
+                    XCTFail("Changed credentials must not replace an active worker")
+                } catch {
+                    XCTAssertTrue(error is NativeLocalAgentCredentialRefreshDeferred)
+                }
+                let stillRunningPID = await lifecycle.processIdentifier
+                XCTAssertEqual(stillRunningPID, workerPID)
+            }
+            do {
+                try await lifecycle.refreshCredentials(ownerUserID: "user-2", credentialEnvironment: credentials)
+                XCTFail("Refresh must not switch accounts")
+            } catch {
+                XCTAssertEqual(error as? NativeLocalAgentHostError, .ownerMismatch)
+            }
+            let client = NativeLocalAgentConversationClient(host: lifecycle)
+            _ = try await client.list(ownerUserID: "user-1")
+            await lifecycle.stop()
+            try await lifecycle.refreshCredentials(ownerUserID: "user-1", credentialEnvironment: ["CHATOS_LOCAL_AGENT_MODEL_TEST": "rotated-value"])
+            let nextPID = await lifecycle.processIdentifier
+            XCTAssertNotNil(nextPID)
+            XCTAssertNotEqual(nextPID, workerPID)
+            await lifecycle.stop()
+        } catch {
+            await lifecycle.stop()
+            throw error
+        }
+    }
+
     func testStandardErrorDrainStopsMonitoringAtEOF() async throws {
         let pipe = Pipe()
         let reader = pipe.fileHandleForReading
@@ -39,6 +139,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let executable = configured ?? repository
             .appendingPathComponent("target-shared/debug/chatos_local_agent_host")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {
+                XCTFail("Required native Host integration executable is missing")
+                throw NativeLocalAgentHostError.notRunning
+            }
             throw XCTSkip("Build chatos_local_agent_host before running the native lifecycle test")
         }
         let root = FileManager.default.temporaryDirectory
@@ -141,7 +245,9 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let bootstrap = NativeLocalAgentBootstrapResult(
             modelSnapshots: [model],
             modelOptions: [modelOption],
-            capabilitySnapshot: capabilities
+            capabilitySnapshot: capabilities,
+            capabilitySnapshotsByModelConfigRef: ["model-1": capabilities],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: ["model-1": capabilities]
         )
         try await runtimeSettings.configure(ownerUserID: "user-1", bootstrap: bootstrap)
         try await conversationService.configure(
@@ -151,7 +257,12 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let acknowledgement = try await conversationService.sendNewTurn(.init(
             sessionID: "conversation-1",
             turnID: "turn-1",
-            content: "hello locally"
+            content: "hello locally",
+            explicitCapabilitySelection: .plugin(
+                key: "document-plugin",
+                componentKey: "document-mcp",
+                displayName: "Document"
+            )
         ))
         XCTAssertTrue(acknowledgement.accepted)
         let runtime = NativeLocalAgentRuntimeClient(host: lifecycle)
@@ -168,6 +279,14 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         }
         XCTAssertEqual(runtimeInput["selected_thinking_level"], .string("medium"))
         XCTAssertEqual(runtimeInput["reasoning_enabled"], .bool(true))
+        XCTAssertEqual(
+            runInput["explicit_capability_selection"],
+            .object([
+                "kind": .string("plugin"),
+                "plugin_key": .string("document-plugin"),
+                "display_name": .string("Document"),
+            ])
+        )
         let latestEventCursor = try await runtime.latestEventCursor(ownerUserID: "user-1")
         XCTAssertGreaterThan(latestEventCursor, 0)
         let waitingForEvents = Task {
@@ -353,7 +472,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             approvalExemptToolNames: ["approve_b", "approve_a"],
             memoryBaseURL: URL(string: "https://gateway.example/api/memory")!,
             memorySourceID: "local_agent",
-            memoryTimeoutMilliseconds: 12_345
+            memoryTimeoutMilliseconds: 12_345,
+            maximumConcurrentWorkItems: 7
         )
         let arguments = ManagedLocalAgentHostProcess.arguments(
             configuration: configuration,
@@ -363,6 +483,8 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertTrue(arguments.contains("https://gateway.example/api/memory"))
         XCTAssertTrue(arguments.contains("local_agent"))
         XCTAssertTrue(arguments.contains("12345"))
+        XCTAssertTrue(arguments.contains("--max-concurrent-work-items"))
+        XCTAssertTrue(arguments.contains("7"))
         XCTAssertFalse(arguments.contains("memory-secret"))
         XCTAssertFalse(arguments.contains("--disable-workers"))
         XCTAssertEqual(arguments.last, "--stdio")

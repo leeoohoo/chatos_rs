@@ -62,11 +62,7 @@ struct SettingsView: View {
     private var detail: some View {
         VStack(spacing: 0) {
             if selection.connectorTab != nil {
-                if let error = model.localConnectorControl.errorMessage {
-                    banner(error, image: "exclamationmark.triangle.fill", tint: .orange)
-                } else if let notice = model.localConnectorControl.notice {
-                    banner(notice, image: "checkmark.circle.fill", tint: .green)
-                }
+                ConnectorSettingsBanner(viewModel: model.localConnectorControl)
             }
             selectedDetail
                 .workspaceFill(alignment: .topLeading)
@@ -326,6 +322,20 @@ struct SettingsView: View {
         selection = section
         model.consumeConnectorSettingsRequest()
     }
+}
+
+private struct ConnectorSettingsBanner: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var viewModel: LocalConnectorControlCenterViewModel
+
+    @ViewBuilder
+    var body: some View {
+        if let error = viewModel.errorMessage {
+            banner(error, image: "exclamationmark.triangle.fill", tint: .orange)
+        } else if let notice = viewModel.notice {
+            banner(notice, image: "checkmark.circle.fill", tint: .green)
+        }
+    }
 
     private func banner(_ text: String, image: String, tint: Color) -> some View {
         HStack(spacing: 9) {
@@ -335,7 +345,7 @@ struct SettingsView: View {
             Button(
                 model.localized("关闭", english: "Dismiss"),
                 systemImage: "xmark",
-                action: model.localConnectorControl.clearMessages
+                action: viewModel.clearMessages
             )
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)

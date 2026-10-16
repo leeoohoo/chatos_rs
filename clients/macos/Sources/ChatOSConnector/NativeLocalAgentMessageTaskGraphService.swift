@@ -11,6 +11,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private let beforeRetry: @Sendable (String) async -> Void
     private let afterRetry: @Sendable () async -> Void
     private var ownerUserID: String?
+    private var terminalRunCache: [String: (Date?, MessageTaskRun)] = [:]
 
     public init(
         host: any LocalAgentHostClientServicing,
@@ -24,11 +25,13 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     }
 
     public func configure(ownerUserID: String) {
+        if self.ownerUserID != ownerUserID { terminalRunCache.removeAll() }
         self.ownerUserID = ownerUserID
     }
 
     public func reset() {
         ownerUserID = nil
+        terminalRunCache.removeAll()
     }
 
     public func fetchGraph(
@@ -36,10 +39,28 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         lookup: MessageTaskLookup?
     ) async throws -> MessageTaskGraphSnapshot {
         if let graph = try await messageGraph(lookup: lookup) {
-            return mapMessageGraph(graph, messageID: messageID, lookup: lookup)
+            return await addingTerminalResults(mapMessageGraph(graph, messageID: messageID, lookup: lookup))
         }
         let graphs = try await matchingGraphs(lookup: lookup)
-        return mapGraphs(graphs, messageID: messageID, lookup: lookup)
+        return await addingTerminalResults(mapGraphs(graphs, messageID: messageID, lookup: lookup))
+    }
+
+    private func addingTerminalResults(_ snapshot: MessageTaskGraphSnapshot) async -> MessageTaskGraphSnapshot {
+        guard let owner = ownerUserID else { return snapshot }
+        var result = snapshot
+        if terminalRunCache.count > 500 { terminalRunCache.removeAll() }
+        for index in result.nodes.indices {
+            let task = result.nodes[index].task
+            guard ["succeeded", "completed", "failed", "blocked"].contains(task.status ?? "") else { continue }
+            if let cached = terminalRunCache[task.id], cached.0 == task.updatedAt {
+                result.nodes[index].task = task.merging(run: cached.1)
+            } else if let run = try? await client.runs(ownerUserID: owner, taskID: task.id).first {
+                let mapped = mapRun(run)
+                result.nodes[index].task = task.merging(run: mapped)
+                terminalRunCache[task.id] = (task.updatedAt, mapped)
+            }
+        }
+        return result
     }
 
     public func fetchTask(
@@ -93,9 +114,16 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let offset = max(0, eventOffset)
         let limit = max(1, min(100, eventLimit))
         let selected = page.events.dropFirst(offset).prefix(limit)
+        var mappedRun = mapRun(run)
+        if mappedRun.errorMessage == nil, run.status == "needs_review" {
+            mappedRun.errorMessage = try? await needsReviewError(
+                ownerUserID: owner,
+                runID: run.runID
+            )
+        }
         return MessageTaskRunDetail(
             task: task,
-            run: mapRun(run),
+            run: mappedRun,
             events: selected.map(mapEvent),
             eventsTotal: page.events.count,
             eventsHasMore: page.events.count > offset + selected.count
@@ -344,7 +372,14 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         if let run = try await client.runs(ownerUserID: owner, taskID: task.taskID).first {
-            mapped = mapped.merging(run: mapRun(run))
+            var mappedRun = mapRun(run)
+            if mappedRun.errorMessage == nil, run.status == "needs_review" {
+                mappedRun.errorMessage = try? await needsReviewError(
+                    ownerUserID: owner,
+                    runID: run.runID
+                )
+            }
+            mapped = mapped.merging(run: mappedRun)
             mapped.processLog = try? await processLog(ownerUserID: owner, runID: run.runID)
         }
         return mapped
@@ -360,7 +395,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             title: task.title,
             description: Self.string("description", in: task.input),
             objective: Self.string("objective", in: task.input),
-            status: task.status == "ready" && task.activeRunID != nil ? "queued" : task.status,
+            status: Self.taskDisplayStatus(task),
             defaultModelConfigID: task.modelConfigRef,
             thinkingLevel: Self.taskThinkingLevel(in: task.input),
             lastRunID: task.activeRunID,
@@ -380,6 +415,17 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         )
     }
 
+    static func taskDisplayStatus(_ task: LocalAgentTaskRecord) -> String {
+        if ["pending", "ready", "running"].contains(task.status) {
+            switch Self.string("followup_review_state", in: task.input) {
+            case "pending": return "reviewing_followup"
+            case "held": return "waiting_confirmation"
+            default: break
+            }
+        }
+        return task.status == "ready" && task.activeRunID != nil ? "queued" : task.status
+    }
+
     private func mapRun(_ run: LocalAgentRunRecord) -> MessageTaskRun {
         let modelOutput = run.terminalOutcome.flatMap(Self.modelOutput)
         return MessageTaskRun(
@@ -388,13 +434,23 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             status: run.status,
             modelPhaseStatus: run.status,
             startedAt: Self.date(run.createdAtUnixMs),
-            finishedAt: Self.isTerminal(run.status) ? Self.date(run.updatedAtUnixMs) : nil,
+            finishedAt: (Self.isTerminal(run.status) || run.status == "needs_review") ? Self.date(run.updatedAtUnixMs) : nil,
             resultSummary: modelOutput,
             reportContent: run.terminalOutcome.flatMap {
                 Self.string("report", in: $0) ?? Self.modelOutput($0)
             },
-            errorMessage: run.terminalOutcome.flatMap { Self.string("error", in: $0) }
+            errorMessage: run.terminalOutcome.flatMap(Self.executionError),
+            acceptanceReport: run.terminalOutcome.flatMap {
+                Self.value("task_acceptance", in: $0).flatMap { MessageTaskAcceptanceReport.decode(json: Self.json($0)) }
+            }
         )
+    }
+
+    static func executionError(_ outcome: LocalAgentJSONValue) -> String? {
+        if string("reason_code", in: outcome) == "execution_interrupted" {
+            return NSLocalizedString("任务执行意外中断，无法确认当前步骤的结果。请先检查执行记录，再决定是否重试，避免重复操作。", comment: "Interrupted task execution")
+        }
+        return string("error", in: outcome) ?? string("reason", in: outcome)
     }
 
     private static func modelOutput(_ outcome: LocalAgentJSONValue) -> String? {
@@ -467,6 +523,28 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             }
         }
         return log
+    }
+
+    static func needsReviewError(from events: [LocalAgentEventRecord]) -> String? {
+        events.sorted(by: { $0.cursor > $1.cursor }).lazy.compactMap { event -> String? in
+            guard event.eventType == "tool_invocation_completed",
+                  case let .object(payload)? = event.payload,
+                  case let .string(status)? = payload["status"],
+                  status == "needs_review",
+                  case let .string(error)? = payload["error"] else { return nil }
+            return error.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        }.first
+    }
+
+    private func needsReviewError(ownerUserID: String, runID: String) async throws -> String? {
+        let page = try await client.events(
+            ownerUserID: ownerUserID,
+            runID: runID,
+            limit: 20,
+            eventType: "tool_invocation_completed",
+            newestFirst: true
+        )
+        return Self.needsReviewError(from: page.events)
     }
 
     private func mapEvent(_ event: LocalAgentEventRecord) -> MessageTaskRunEvent {

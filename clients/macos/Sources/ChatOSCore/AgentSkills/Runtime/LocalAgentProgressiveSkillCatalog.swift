@@ -3,6 +3,8 @@ import Foundation
 /// Shared filesystem contract for Plugin Skills and product-bundled Skills. It keeps both
 /// surfaces on the same path, regular-file, symlink and pagination rules.
 public enum ProgressiveSkillFileLoader {
+    public static let maximumPageCharacters = 160_000
+
     public struct TextPage: Sendable, Equatable {
         public let content: String
         public let offset: Int
@@ -129,7 +131,7 @@ public enum ProgressiveSkillFileLoader {
     ) throws -> TextPage {
         let characters = Array(text)
         guard offset >= 0, offset <= characters.count else { throw LoaderError.invalidOffset }
-        let limit = min(max(maximumCharacters, 1), 64_000)
+        let limit = min(max(maximumCharacters, 1), maximumPageCharacters)
         let end = min(offset + limit, characters.count)
         return .init(
             content: String(characters[offset..<end]),

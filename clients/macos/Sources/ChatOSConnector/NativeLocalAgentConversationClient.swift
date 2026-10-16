@@ -108,6 +108,26 @@ extension LocalAgentJSONValue {
         case let .array(values):
             return values.map(displayText).filter { !$0.isEmpty }.joined(separator: "\n")
         case let .object(values):
+            if case .string("requirement_survey_status")? = values["type"],
+               let title = values["survey_title"]?.trimmedString {
+                if values["status"] == .string("resolved") {
+                    return "需求调研已提交：\(title)。将根据你的回答整理需求与后续方案。"
+                }
+                if values["status"] == .string("cancelled") {
+                    return "需求调研已取消：\(title)。本轮不再等待填写。"
+                }
+                return "已发起需求调研：\(title)。请在左侧“需求调研”填写并提交，帮助我了解你的目标和想法；提交后整理需求与后续方案。"
+            }
+            if case .string("task_graph_terminal")? = values["type"],
+               let delivery = values["delivery_text"]?.trimmedString {
+                return delivery
+            }
+            if case .string("task_graph_terminal")? = values["type"],
+               let summaryValue = values["summary"] {
+                let summary = displayText(from: summaryValue)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !summary.isEmpty { return summary }
+            }
             if case .string("task_graph_terminal")? = values["type"],
                case let .array(tasks)? = values["tasks"] {
                 return taskGraphText(tasks)
@@ -172,6 +192,13 @@ struct LocalAgentConversationReplyProjection: Sendable, Equatable {
 }
 
 extension LocalAgentConversationMessageRecord {
+    var taskGraphTerminalGraphID: String? {
+        guard let contentObject = content.objectValue,
+              contentObject["type"]?.stringValue == "task_graph_terminal" else { return nil }
+        return metadata.objectValue?["graph_id"]?.trimmedString
+            ?? contentObject["graph_id"]?.trimmedString
+    }
+
     func replyProjections(sourceUserMessageID: String) -> [LocalAgentConversationReplyProjection] {
         if let callback = taskCallbackReference(sourceUserMessageID: sourceUserMessageID) {
             return [LocalAgentConversationReplyProjection(
@@ -189,10 +216,19 @@ extension LocalAgentConversationMessageRecord {
                 taskCallback: nil
             )]
         }
+        if let summary = contentObject["delivery_text"]?.trimmedString
+            ?? contentObject["summary"]?.trimmedString {
+            return [LocalAgentConversationReplyProjection(
+                messageID: messageID,
+                text: summary,
+                taskCallback: nil
+            )]
+        }
         let callbacks = tasks.compactMap { task -> LocalAgentConversationReplyProjection? in
             guard let values = task.objectValue,
                   let taskID = values["task_id"]?.trimmedString else { return nil }
             let status = values["status"]?.trimmedString
+            let displayStatus = values["display_status"]?.trimmedString
             let text = values["terminal_outcome"]?.conversationDisplayText
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let fallback = values["title"]?.trimmedString ?? taskID
@@ -202,7 +238,7 @@ extension LocalAgentConversationMessageRecord {
                 taskCallback: TaskExecutionCallbackReference(
                     taskID: taskID,
                     event: Self.terminalEvent(status),
-                    status: Self.callbackStatus(status),
+                    status: Self.callbackStatus(displayStatus ?? status),
                     sourceSessionID: conversationID,
                     sourceTurnID: turnID,
                     sourceUserMessageID: sourceUserMessageID
@@ -225,7 +261,8 @@ extension LocalAgentConversationMessageRecord {
               let taskRunner = metadataObject["task_runner_async"]?.objectValue,
               let taskID = taskRunner["task_id"]?.trimmedString else { return nil }
         let event = taskRunner["event"]?.trimmedString
-        let status = taskRunner["status"]?.trimmedString
+        let status = taskRunner["display_status"]?.trimmedString
+            ?? taskRunner["status"]?.trimmedString
         return TaskExecutionCallbackReference(
             taskID: taskID,
             runID: taskRunner["run_id"]?.trimmedString,
@@ -240,6 +277,7 @@ extension LocalAgentConversationMessageRecord {
 
     private static func callbackStatus(_ status: String?, event: String? = nil) -> String? {
         switch status?.lowercased() {
+        case "execution_failed", "acceptance_failed", "evidence_incomplete": return status?.lowercased()
         case "completed", "succeeded", "success", "done": return "completed"
         case "failed", "error": return "failed"
         case "blocked": return "blocked"

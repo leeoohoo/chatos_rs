@@ -1,3 +1,4 @@
+import ChatOSCore
 import SwiftUI
 
 struct ResourceSidebar: View {
@@ -16,8 +17,12 @@ struct ResourceSidebar: View {
                     resourceRow(
                         title: contact.title,
                         subtitle: contact.subtitle,
-                        systemImage: "person.crop.circle.fill",
-                        tint: .secondary
+                        systemImage: contact.id == WorkspaceSystemContact.pluginInstallerID
+                            ? "puzzlepiece.extension.fill"
+                            : "person.crop.circle.fill",
+                        tint: contact.id == WorkspaceSystemContact.pluginInstallerID
+                            ? .purple
+                            : .secondary
                     )
                     .tag(SidebarSelection.contact(contact.id))
                 }

@@ -14,6 +14,20 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(names.contains("chatos-remote-connection"))
         XCTAssertTrue(names.contains("chatos-capability-discovery"))
         XCTAssertTrue(names.contains("chatos-compact-communication"))
+        let compact = try BundledAgentSkillLoader.load(named: "chatos-compact-communication")
+        XCTAssertTrue(
+            compact.resourcePaths.isEmpty,
+            "Files beside SKILL.md are package-private; only references/ may be model-readable"
+        )
+        XCTAssertTrue(names.contains("chatos-async-task-orchestration"))
+        for name in ["chatos-main-chat-invariants", "chatos-task-execution-invariants"] {
+            let policy = try BundledAgentSkillLoader.load(named: name)
+            XCTAssertEqual(policy.descriptor.role, .policy)
+            XCTAssertTrue(policy.resourcePaths.isEmpty)
+        }
+        let external = try BundledAgentSkillLoader.load(named: "chatos-external-mcp")
+        XCTAssertEqual(external.resourcePaths, ["references/errors-and-recovery.md", "references/scenarios-and-verification.md"])
+        XCTAssertTrue(external.instructions.contains("external_mcp__"))
 
         for binding in ToolSkillCoverageCatalog.product.bindings {
             XCTAssertTrue(names.contains(binding.routerSkillName), binding.id)
@@ -58,6 +72,45 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             ["references/commands-and-transfers.md"]
         )
         XCTAssertTrue(remoteConnection.instructions.contains("program-bound"))
+
+        let taskOrchestration = try BundledAgentSkillLoader.load(
+            named: "chatos-async-task-orchestration"
+        )
+        XCTAssertEqual(taskOrchestration.resourcePaths.count, 10)
+        XCTAssertFalse(taskOrchestration.instructions.contains("single_task_rationale"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("do not strengthen"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("screenshots, snapshots"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("durable requirements/solution/implementation plans"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("Do not answer only in Main Chat"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("substitute a project Markdown file"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("Do not select `Notepad` merely because"))
+        XCTAssertTrue(taskOrchestration.instructions.contains("separate downstream Notepad Task"))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "Never call `cancel_task` for a `failed`, `succeeded`, or `cancelled` Task"
+        ))
+        let capabilities = try BundledAgentSkillLoader.readResource(
+            skillName: taskOrchestration.descriptor.name,
+            relativePath: "references/capabilities-and-plugins.md"
+        )
+        XCTAssertTrue(capabilities.content.contains("solution-planning Plugin"))
+        XCTAssertTrue(capabilities.content.contains("explicitly asked for that file form"))
+        XCTAssertTrue(capabilities.content.contains("Never select it for scratch work"))
+        XCTAssertTrue(capabilities.content.contains("Do not give writable Notepad to the Plugin Task"))
+        let recovery = try BundledAgentSkillLoader.readResource(
+            skillName: taskOrchestration.descriptor.name,
+            relativePath: "references/followups-cancellation-and-recovery.md"
+        )
+        XCTAssertTrue(recovery.content.contains(
+            "A `failed`, `succeeded`, or `cancelled` Task is already terminal"
+        ))
+        XCTAssertTrue(recovery.content.contains(
+            "create the replacement directly"
+        ))
+        let decomposition = try BundledAgentSkillLoader.readResource(
+            skillName: taskOrchestration.descriptor.name,
+            relativePath: "references/complexity-and-decomposition.md"
+        )
+        XCTAssertTrue(decomposition.content.contains("independently verifiable"))
     }
 
     func testTerminalBindingsCoverEveryDeclaredToolExactlyOnce() {
@@ -82,11 +135,14 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(report.issues.isEmpty)
     }
 
-    func testProductCatalogCoversRegisteredFamiliesWithoutToolOverlap() {
+    func testProductCatalogCoversRegisteredFamiliesWithProviderScopedOverlap() {
         let bindings = ToolSkillCoverageCatalog.product.bindings
         let providerTools = bindings.flatMap { binding in
             binding.toolNames.map { binding.providerID + ":" + $0 }
         }
+        let providersByToolName = Dictionary(grouping: bindings.flatMap { binding in
+            binding.toolNames.map { (toolName: $0, providerID: binding.providerID) }
+        }, by: \.toolName)
         let nativeBuiltinTools = bindings.filter {
             $0.providerID.hasPrefix("chatos.builtin.")
         }.flatMap(\.toolNames)
@@ -95,11 +151,21 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             $0.providerID == ProductToolProviderID.localAgentChat
         }.flatMap(\.toolNames)
 
-        XCTAssertEqual(providerTools.count, 77)
-        XCTAssertEqual(Set(providerTools).count, 77)
+        XCTAssertEqual(providerTools.count, 86)
+        XCTAssertEqual(Set(providerTools).count, 86)
+        // The two agent_skill_* names are intentionally shared by Main Chat and the
+        // Task Execution capability broker; provider identity selects their source.
+        for toolName in [
+            "agent_skill_activate", "agent_skill_read_resource",
+        ] {
+            XCTAssertEqual(
+                Set(providersByToolName[toolName, default: []].map(\.providerID)),
+                [ProductToolProviderID.localAgentChat, ProductToolProviderID.capabilityBroker]
+            )
+        }
         XCTAssertEqual(nativeBuiltinTools.count, 26)
-        XCTAssertEqual(localAgentChatTools.count, 33)
-        XCTAssertEqual(Set(localAgentChatTools).count, 33)
+        XCTAssertEqual(localAgentChatTools.count, 32)
+        XCTAssertEqual(Set(localAgentChatTools).count, 32)
         XCTAssertEqual(
             bindings.filter {
                 $0.providerID == ProductToolProviderID.capabilityBroker
@@ -112,6 +178,23 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             }?.activationPolicy,
             .runBound
         )
+    }
+
+    func testMainChatTaskBindingCoversAllEightHostTools() {
+        let expected = Set([
+            "list_tasks", "get_task", "create_task",
+            "create_tasks_with_prerequisites", "cancel_task",
+            "wait_for_task_completion", "get_task_dependency_graph",
+            "resolve_task_followup",
+        ])
+        let binding = ToolSkillCoverageCatalog.product.binding(
+            providerID: ProductToolProviderID.mainChatTask,
+            skillBindingID: ProductToolSkillBindingID.taskOrchestration
+        )
+
+        XCTAssertEqual(binding?.toolNames, expected)
+        XCTAssertEqual(binding?.activationPolicy, .onDemand)
+        XCTAssertEqual(binding?.specialistSkillName, "chatos-async-task-orchestration")
     }
 
     func testProductSkillSessionRestrictsDiscoveryAndRequiresActivation() async throws {

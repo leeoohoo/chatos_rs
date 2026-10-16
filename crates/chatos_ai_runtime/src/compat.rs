@@ -15,7 +15,33 @@ pub struct UsageSnapshot {
 }
 
 pub fn cap_tool_output_for_input(raw: &str) -> String {
-    truncate_text_preserve_head_and_tail(raw, tool_output_item_max_chars())
+    let budget = tool_output_item_max_chars();
+    chatos_mcp_runtime::capability_description_budget_error(raw, budget)
+        .unwrap_or_else(|| tool_output_budget_error(raw, budget))
+}
+
+#[cfg(test)]
+mod capability_budget_tests {
+    use super::*;
+
+    #[test]
+    fn final_request_budget_does_not_cut_tool_schemas_into_head_and_tail() {
+        let page = serde_json::json!({"content":{"disclosure_version":2,"binding_schema_version":1,
+            "plugin_option":"plugin_1","view":"tool","tools":[{"name":"browser_navigate",
+                "input_schema":{"type":"object","description":"x".repeat(7_000)}}]}})
+        .to_string();
+        assert_eq!(cap_tool_output_for_input(&page), page);
+        let oversized = page.replace(&"x".repeat(7_000), &"x".repeat(170_000));
+        let input = serde_json::json!([{"type":"function_call_output","call_id":"describe","output":oversized}]);
+        let transformed = truncate_function_call_outputs_in_input(&input).unwrap();
+        let output: Value =
+            serde_json::from_str(transformed[0]["output"].as_str().unwrap()).unwrap();
+        assert_eq!(output["error"], "capability_description_budget_exceeded");
+        assert!(!transformed[0]["output"]
+            .as_str()
+            .unwrap()
+            .contains("...truncated"));
+    }
 }
 
 pub fn truncate_function_call_outputs_in_input(input: &Value) -> Option<Value> {
@@ -136,10 +162,10 @@ fn tool_output_item_max_chars() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(12_000)
+        .unwrap_or(160_000)
 }
 
-fn truncate_text_preserve_head_and_tail(raw: &str, max_chars: usize) -> String {
+fn tool_output_budget_error(raw: &str, max_chars: usize) -> String {
     if max_chars == 0 {
         return String::new();
     }
@@ -149,25 +175,14 @@ fn truncate_text_preserve_head_and_tail(raw: &str, max_chars: usize) -> String {
         return raw.to_string();
     }
 
-    let marker = format!("\n[...truncated {} chars...]\n", total - max_chars);
-    let marker_chars = marker.chars().count();
-    if marker_chars >= max_chars {
-        return raw.chars().take(max_chars).collect();
-    }
-
-    let keep_chars = max_chars - marker_chars;
-    let keep_head = ((keep_chars * 2) / 5).max(1);
-    let keep_tail = keep_chars.saturating_sub(keep_head);
-    let head: String = raw.chars().take(keep_head).collect();
-    let tail: String = raw
-        .chars()
-        .rev()
-        .take(keep_tail)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    format!("{head}{marker}{tail}")
+    serde_json::json!({
+        "error": "tool_result_budget_exceeded",
+        "original_chars": total,
+        "budget_chars": max_chars,
+        "content_preserved": false,
+        "guidance": "No partial head/tail excerpt was supplied. Use explicit pagination, a managed artifact, or a durable tool_result_read reference."
+    })
+    .to_string()
 }
 
 fn usage_value_i64(value: &Value, key: &str) -> Option<i64> {
@@ -261,7 +276,7 @@ mod tests {
 
     #[test]
     fn truncates_large_function_call_output_items() {
-        let long_output = "a".repeat(20_000);
+        let long_output = "a".repeat(170_000);
         let input = json!([
             {
                 "type": "function_call_output",
@@ -276,8 +291,8 @@ mod tests {
             .get("output")
             .and_then(|value| value.as_str())
             .unwrap_or("");
-        assert!(text.len() < 20_000);
-        assert!(text.contains("truncated"));
+        assert!(text.len() < 170_000);
+        assert!(text.contains("tool_result_budget_exceeded"));
     }
 
     #[test]

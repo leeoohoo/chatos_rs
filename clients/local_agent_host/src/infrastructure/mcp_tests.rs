@@ -18,6 +18,7 @@ fn invocation(tool_name: &str) -> LocalAgentToolInvocationRecord {
         batch_id: "batch-1".to_string(),
         call_id: "call-1".to_string(),
         tool_name: tool_name.to_string(),
+        execution_route: chatos_local_agent_protocol::LocalAgentToolExecutionRoute::Platform,
         arguments: json!({"path": "README.md"}),
         side_effecting: false,
         requires_approval: false,

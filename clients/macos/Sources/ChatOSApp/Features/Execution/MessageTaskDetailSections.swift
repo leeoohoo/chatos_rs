@@ -2,11 +2,39 @@ import ChatOSCore
 import SwiftUI
 
 struct MessageTaskDetailSections: View {
+    @EnvironmentObject private var model: AppModel
     let task: MessageTask
     var isLoadingModelOutput = false
     var allowsTextSelection = true
 
     var body: some View {
+        if let conversationID = task.sourceSessionID {
+            sections.conversationFileLinks(conversationID: conversationID)
+        } else {
+            sections
+        }
+    }
+
+    @ViewBuilder
+    private var sections: some View {
+        if let report = task.lastRun?.acceptanceReport {
+            TaskDetailDisclosureSection(title: "验收结果", defaultExpanded: true) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TaskDetailMarkdownText(text: report.reason, allowsTextSelection: allowsTextSelection)
+                    ForEach(report.checks, id: \.criterionIndex) { check in
+                        TaskDetailNamedText(label: "\(check.criterionIndex + 1). \(check.status == "passed" ? "已通过" : check.status == "failed" ? "未通过" : "未核验")",
+                            value: check.evidence, allowsTextSelection: allowsTextSelection)
+                    }
+                    Text("验收依据来自执行者报告；不等同于浏览器或工具运行状态。")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        if let error = task.lastRun?.errorMessage, !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            TaskDetailDisclosureSection(title: "阻塞或失败原因", defaultExpanded: true) {
+                TaskDetailMarkdownText(text: error, allowsTextSelection: allowsTextSelection)
+            }
+        }
         modelOutputSection
 
         if let summary = distinctResultSummary {
@@ -31,6 +59,22 @@ struct MessageTaskDetailSections: View {
                     value: task.description ?? "-",
                     allowsTextSelection: allowsTextSelection
                 )
+            }
+        }
+
+        if let plan = MessageTaskRequirementPlan.decode(inputPayloadJSON: task.inputPayloadJSON) {
+            TaskDetailDisclosureSection(title: "引用的需求方案") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text(plan.snapshot.title)
+                        Spacer()
+                        Text("方案版本")
+                        Text(String(plan.snapshot.revision)).monospacedDigit()
+                    }
+                    Text("这是创建任务时固定的已确认方案，重试仍使用此版本。")
+                        .foregroundStyle(.secondary)
+                    TaskDetailMarkdownText(text: plan.snapshot.markdown, allowsTextSelection: allowsTextSelection)
+                }
             }
         }
 
@@ -100,8 +144,12 @@ struct MessageTaskDetailSections: View {
                 )
             } else if isActiveTask {
                 HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("本次运行仍在执行，模型输出将在完成后显示。")
+                    if ["reviewing_followup", "waiting_confirmation"].contains(task.normalizedStatus) {
+                        Image(systemName: "pause.circle")
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(executionPendingMessage)
                         .appFont(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -222,7 +270,16 @@ struct MessageTaskDetailSections: View {
     }
 
     private var isActiveTask: Bool {
-        task.normalizedStatus == "queued" || task.normalizedStatus == "running"
+        ["queued", "running", "reviewing_followup", "waiting_confirmation"]
+            .contains(task.normalizedStatus)
+    }
+
+    private var executionPendingMessage: String {
+        switch task.normalizedStatus {
+        case "reviewing_followup": model.localized("后续执行已暂停，正在审查追加要求。", english: "Further execution is paused while the follow-up is reviewed.")
+        case "waiting_confirmation": model.localized("后续执行已暂停，等待你确认要求。", english: "Further execution is paused awaiting your confirmation.")
+        default: model.localized("本次运行仍在执行，模型输出将在完成后显示。", english: "This run is still executing. Model output will appear when it finishes.")
+        }
     }
 
     private var creatorDisplayName: String {

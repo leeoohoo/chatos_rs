@@ -217,7 +217,7 @@ fn tool_catalog() -> Vec<Value> {
         ),
         tool(
             "browser_navigate",
-            "Navigate a tab to an HTTP, HTTPS, or about URL and wait for readiness.",
+            "Navigate to an exact user-provided, tool-returned, or previously verified URL and return the actual final page state. Never construct deep links from titles or snippets; click an existing page link ref instead.",
             object_schema(
                 vec![
                     session_prop(),
@@ -235,7 +235,7 @@ fn tool_catalog() -> Vec<Value> {
         ),
         tool(
             "browser_snapshot",
-            "Return a compact accessibility-oriented snapshot with opaque element refs.",
+            "Return real url/title/ready_state, bounded visible text with text_truncated, and nodes with fresh opaque refs and safe link hrefs. Empty nodes do not imply an empty page.",
             object_schema(
                 vec![session_prop(), string_prop("tab_id")],
                 &["browser_session_id"],
@@ -268,13 +268,13 @@ fn tool_catalog() -> Vec<Value> {
         ),
         tool(
             "browser_click",
-            "Click an element from the latest snapshot.",
+            "Click a fresh observed link/menu or authorized element. Invalidates all old refs and returns before/after page state and navigated (null if not observed). Snapshot again; do not repeat consequential clicks because observation is pending.",
             ref_schema(),
             &["browser.page.control"],
             "medium",
             "none",
             false,
-            10_000,
+            20_000,
         ),
         tool(
             "browser_type",

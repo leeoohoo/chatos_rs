@@ -325,7 +325,7 @@ private struct ProjectImagePreview: View {
                 loadFailed = true
                 return
             }
-            image = NSImage(cgImage: decoded.image, size: .zero)
+            image = decoded.makeNSImage()
         }
     }
 }

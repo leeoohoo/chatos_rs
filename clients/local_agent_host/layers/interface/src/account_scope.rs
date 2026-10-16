@@ -17,6 +17,8 @@ impl HostCommand {
             Self::PutCapabilityPolicySnapshot(command) => Some(&command.snapshot.owner_user_id),
             Self::GetCapabilityPolicySnapshot(command) => Some(&command.owner_user_id),
             Self::GetLatestCapabilityPolicySnapshot(command) => Some(&command.owner_user_id),
+            Self::GetRunSkillActivations(command) => Some(&command.owner_user_id),
+            Self::GetRunSkillBundle(command) => Some(&command.owner_user_id),
             Self::CreateRun(command) => Some(&command.owner_user_id),
             Self::GetRun(command) => Some(&command.owner_user_id),
             Self::ListRuns(command) => Some(&command.owner_user_id),
@@ -38,6 +40,7 @@ impl HostCommand {
             Self::GetMessageTaskGraph(command) => Some(&command.owner_user_id),
             Self::GetTaskRuns(command) => Some(&command.owner_user_id),
             Self::CancelTask(command) => Some(&command.owner_user_id),
+            Self::ResolveTaskFollowup(command) => Some(&command.owner_user_id),
             Self::RetryTask(command) => Some(&command.owner_user_id),
             Self::RestartTask(command) => Some(&command.owner_user_id),
             Self::PutPluginInstallation(command) => Some(&command.installation.owner_user_id),
@@ -78,6 +81,9 @@ impl HostCommand {
             Self::ListRequirementSurveys(command) => Some(&command.owner_user_id),
             Self::GetRequirementSurvey(command) => Some(&command.owner_user_id),
             Self::ResolveRequirementSurvey(command) => Some(&command.owner_user_id),
+            Self::GetRequirementPlan(command) => Some(&command.owner_user_id),
+            Self::SaveRequirementPlan(command) => Some(&command.owner_user_id),
+            Self::ConfirmRequirementPlan(command) => Some(&command.owner_user_id),
         }
     }
 }

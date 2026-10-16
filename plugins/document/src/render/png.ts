@@ -100,6 +100,25 @@ export interface DecodedPng {
   data: Buffer;
 }
 
+// A missing DOCX page is a uniform viewer canvas. Check every pixel so even
+// a sparse page is retained; a real blank paper page has a visible page edge.
+// This detects unavailable previews, not the document's actual page count.
+export function isUniformPng(bytes: Buffer): boolean {
+  const { data } = decodePng(bytes);
+  const minimum = [255, 255, 255];
+  const maximum = [0, 0, 0];
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = (data[offset + 3] as number) / 255;
+    for (let channel = 0; channel < 3; channel += 1) {
+      const value = Math.round((data[offset + channel] as number) * alpha + 255 * (1 - alpha));
+      minimum[channel] = Math.min(minimum[channel] as number, value);
+      maximum[channel] = Math.max(maximum[channel] as number, value);
+      if ((maximum[channel] as number) - (minimum[channel] as number) > 3) return false;
+    }
+  }
+  return true;
+}
+
 function paeth(left: number, above: number, upperLeft: number): number {
   const prediction = left + above - upperLeft;
   const leftDistance = Math.abs(prediction - left);
@@ -202,6 +221,25 @@ export function cropPng(image: DecodedPng, left: number, top: number, width: num
     image.data.copy(cropped, row * width * 4, sourceStart, sourceStart + width * 4);
   }
   return encodeRgbaPng(cropped, width, height);
+}
+
+export function resizePng(bytes: Buffer, maximumWidth: number, maximumHeight: number): Buffer {
+  const image = decodePng(bytes);
+  const scale = Math.min(1, maximumWidth / image.width, maximumHeight / image.height);
+  if (scale >= 1) return bytes;
+  const width = Math.max(1, Math.floor(image.width * scale));
+  const height = Math.max(1, Math.floor(image.height * scale));
+  const resized = Buffer.allocUnsafe(width * height * 4);
+  for (let row = 0; row < height; row += 1) {
+    const sourceY = Math.min(image.height - 1, Math.floor((row + 0.5) / scale));
+    for (let column = 0; column < width; column += 1) {
+      const sourceX = Math.min(image.width - 1, Math.floor((column + 0.5) / scale));
+      const sourceOffset = (sourceY * image.width + sourceX) * 4;
+      const targetOffset = (row * width + column) * 4;
+      image.data.copy(resized, targetOffset, sourceOffset, sourceOffset + 4);
+    }
+  }
+  return encodeRgbaPng(resized, width, height);
 }
 
 function differsFromBackground(data: Buffer, offset: number, background: readonly number[]): boolean {

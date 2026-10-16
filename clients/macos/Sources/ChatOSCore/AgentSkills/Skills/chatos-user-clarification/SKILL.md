@@ -7,6 +7,8 @@ description: Collect a blocking Human choice, structured fields, or both through
 
 Ask only for information that materially changes the next action or deliverable. Continue the original task after the response instead of merely restating it.
 
+When this Skill is available, a missing Human choice is a waiting-for-user state, not a terminal Task blocker. Ask as soon as the decision becomes necessary, preserve completed work, and resume the same Run from the answer. Do not emit a blocked outcome first, and do not ask about tool validation errors or technical failures that can be corrected autonomously.
+
 Choose the smallest matching form:
 
 - Use `prompt_choices` for a bounded single- or multi-choice decision.

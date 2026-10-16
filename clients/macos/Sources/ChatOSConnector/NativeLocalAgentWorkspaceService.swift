@@ -3,9 +3,15 @@ import Foundation
 
 public actor NativeLocalAgentWorkspaceService: WorkspaceRelationsRemoteServicing {
     public static let mainContact = WorkspaceContact(
-        id: "jiguli",
-        agentID: "jiguli",
+        id: WorkspaceSystemContact.mainID,
+        agentID: WorkspaceSystemContact.mainID,
         name: "叽咕狸",
+        status: "active"
+    )
+    public static let pluginInstallerContact = WorkspaceContact(
+        id: WorkspaceSystemContact.pluginInstallerID,
+        agentID: WorkspaceSystemContact.pluginInstallerID,
+        name: "插件安装助手",
         status: "active"
     )
 
@@ -27,25 +33,27 @@ public actor NativeLocalAgentWorkspaceService: WorkspaceRelationsRemoteServicing
     public func fetchWorkspaceRelations() async throws -> WorkspaceRelationsSnapshot {
         let ownerUserID = try requireOwner()
         var conversations = try await listAll(ownerUserID: ownerUserID)
-        if !conversations.contains(where: { $0.resource == .init(kind: .contact, resourceID: Self.mainContact.id) }) {
+        for contact in [Self.mainContact, Self.pluginInstallerContact] where !conversations.contains(where: {
+            $0.resource == .init(kind: .contact, resourceID: contact.id)
+        }) {
             do {
                 let created = try await client.create(
                     ownerUserID: ownerUserID,
                     conversationID: "conversation_\(UUID().uuidString.lowercased())",
-                    title: Self.mainContact.name,
-                    resource: .init(kind: .contact, resourceID: Self.mainContact.id)
+                    title: contact.name,
+                    resource: .init(kind: .contact, resourceID: contact.id)
                 )
                 conversations.append(created.conversation)
             } catch {
                 let refreshed = try await listAll(ownerUserID: ownerUserID)
                 guard refreshed.contains(where: {
-                    $0.resource == .init(kind: .contact, resourceID: Self.mainContact.id)
+                    $0.resource == .init(kind: .contact, resourceID: contact.id)
                 }) else { throw error }
                 conversations = refreshed
             }
         }
         return WorkspaceRelationsSnapshot(
-            contacts: [Self.mainContact],
+            contacts: [Self.mainContact, Self.pluginInstallerContact],
             conversations: conversations.compactMap(Self.mapConversation)
         )
     }
@@ -77,7 +85,7 @@ public actor NativeLocalAgentWorkspaceService: WorkspaceRelationsRemoteServicing
             title: record.title,
             projectID: resource.kind == .project ? resource.resourceID : nil,
             contactID: resource.kind == .contact ? resource.resourceID : mainContact.id,
-            contactAgentID: mainContact.agentID,
+            contactAgentID: resource.kind == .contact ? resource.resourceID : mainContact.agentID,
             messageCount: 0,
             updatedAt: Date(timeIntervalSince1970: Double(record.updatedAtUnixMs) / 1_000),
             isArchived: false

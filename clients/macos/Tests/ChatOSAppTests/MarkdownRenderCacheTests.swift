@@ -263,4 +263,25 @@ struct MarkdownRenderCacheTests {
         #expect(Set(tableBlocks.map(\.startingColumn)) == Set([0, 1]))
         #expect(!rendered.string.contains("│"))
     }
+
+    @Test @MainActor
+    func fencedCodeUsesPaddedNativeBlockInsteadOfGlyphBackground() {
+        let rendered = MarkdownAttributedRenderer.render([
+            .code(language: "bash", content: "./ci/verify.sh"),
+        ])
+        var blocks: [NSTextBlock] = []
+        var hasGlyphBackground = false
+        let range = NSRange(location: 0, length: rendered.length)
+        rendered.enumerateAttribute(.paragraphStyle, in: range) { value, _, _ in
+            guard let style = value as? NSParagraphStyle else { return }
+            blocks.append(contentsOf: style.textBlocks)
+        }
+        rendered.enumerateAttribute(.backgroundColor, in: range) { value, _, _ in
+            hasGlyphBackground = hasGlyphBackground || value != nil
+        }
+
+        #expect(rendered.string == "BASH\n./ci/verify.sh\n")
+        #expect(!blocks.isEmpty)
+        #expect(!hasGlyphBackground)
+    }
 }

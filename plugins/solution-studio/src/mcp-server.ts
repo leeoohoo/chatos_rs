@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -26,7 +26,6 @@ const gate = (...skills: string[]) => ({
 });
 
 const workspaceIdentityProperties = {
-  artifactKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$', description: 'Optional compatibility key. The active ChatOS project always owns exactly one planning workspace.' },
   title: { type: 'string', minLength: 1, maxLength: 240 },
   sourceMode: { type: 'string', enum: ['existing-project', 'greenfield'] }
 } as const;
@@ -41,7 +40,11 @@ const projectProfileSchema = {
   additionalProperties: false
 } as const;
 
-const TOOL_DEFINITIONS = [
+type MCPRole = 'authoring' | 'executor';
+const role = process.env.SOLUTION_STUDIO_MCP_ROLE as MCPRole;
+if (role !== 'authoring' && role !== 'executor') throw new Error('SOLUTION_STUDIO_MCP_ROLE must be authoring or executor.');
+
+const AUTHORING_TOOL_DEFINITIONS = [
   {
     name: 'solution_get_active_context',
     description: 'Read the injected project context and its single current project plan. Use this before creating or revising planning artifacts.',
@@ -50,8 +53,8 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'solution_get_workspace',
-    description: 'Read the current project plan, optionally checking it by workspaceId or legacy artifactKey.',
-    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, artifactKey: { type: 'string' } }, additionalProperties: false },
+    description: 'Read the current project plan, optionally checking it by workspaceId.',
+    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' } }, additionalProperties: false },
     _meta: gate()
   },
   {
@@ -94,20 +97,9 @@ const TOOL_DEFINITIONS = [
     _meta: gate('solution-execution-plan')
   },
   {
-    name: 'solution_update_task',
-    description: 'Apply a focused task status update with optimistic revision control. This does not execute the task or broaden authorization.',
-    inputSchema: {
-      type: 'object', properties: {
-        workspaceId: { type: 'string' }, expectedRevision: { type: 'integer', minimum: 0 }, taskId: { type: 'string' },
-        status: { type: 'string', enum: ['planned', 'in_progress', 'blocked', 'done', 'cancelled'] }, blockedReason: { type: 'string', maxLength: 4000 }
-      }, required: ['workspaceId', 'expectedRevision', 'taskId', 'status'], additionalProperties: false
-    },
-    _meta: gate('solution-execution-plan')
-  },
-  {
     name: 'solution_validate',
     description: 'Validate document completeness, requirement-to-design-to-task traceability, dependency integrity, topological order, and the current ready-to-execute task set.',
-    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, artifactKey: { type: 'string' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' } }, additionalProperties: false },
     _meta: gate('solution-validation')
   },
   {
@@ -133,6 +125,69 @@ const TOOL_DEFINITIONS = [
   }
 ] as const;
 
+const executorGate = () => ({
+  ...policy,
+  'chatos/skillGate': { allOf: ['solution-studio', 'solution-task-execution'] }
+});
+
+const executorIdentityProperties = {
+  workspaceId: { type: 'string' },
+  taskId: { type: 'string' },
+  expectedRevision: { type: 'integer', minimum: 0 }
+} as const;
+
+const EXECUTOR_TOOL_DEFINITIONS = [
+  {
+    name: 'solution_get_active_context',
+    description: 'Read the active project context and current Solution Studio workspace summary before selecting work.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    _meta: executorGate()
+  },
+  {
+    name: 'solution_get_workspace_summary',
+    description: 'Read the workspace summary, validation result, modules, and ready task IDs without exposing authoring mutations.',
+    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' } }, additionalProperties: false },
+    _meta: executorGate()
+  },
+  {
+    name: 'solution_list_tasks',
+    description: 'List executable task definitions. Filter by module, status, or ready state.',
+    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, moduleId: { type: 'string' }, status: { type: 'string', enum: ['planned', 'in_progress', 'blocked', 'done', 'cancelled'] }, readyOnly: { type: 'boolean' } }, additionalProperties: false },
+    _meta: executorGate()
+  },
+  {
+    name: 'solution_get_task',
+    description: 'Read one task, its prerequisites, acceptance criteria, and current execution state.',
+    inputSchema: { type: 'object', properties: { workspaceId: { type: 'string' }, taskId: { type: 'string' } }, required: ['workspaceId', 'taskId'], additionalProperties: false },
+    _meta: executorGate()
+  },
+  ...(['claim', 'resume', 'block', 'complete', 'cancel'] as const).map((action) => ({
+    name: `solution_${action}_task`,
+    description: ({
+      claim: 'Claim a ready planned task and move it to in_progress.',
+      resume: 'Resume a blocked task after its blocking condition is resolved.',
+      block: 'Mark an in-progress task blocked with a concrete reason.',
+      complete: 'Complete an in-progress task with a verification summary and optional evidence.',
+      cancel: 'Cancel a planned, in-progress, or blocked task with a concrete reason.'
+    } as const)[action],
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...executorIdentityProperties,
+        reason: { type: 'string', minLength: 1, maxLength: 4000 },
+        summary: { type: 'string', minLength: 1, maxLength: 12000 },
+        evidence: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 4000 }, maxItems: 64 }
+      },
+      required: ['workspaceId', 'taskId', 'expectedRevision', ...(['block', 'cancel'].includes(action) ? ['reason'] : []), ...(action === 'complete' ? ['summary'] : [])],
+      additionalProperties: false
+    },
+    _meta: executorGate()
+  }))
+] as const;
+
+const TOOL_DEFINITIONS = role === 'authoring' ? AUTHORING_TOOL_DEFINITIONS : EXECUTOR_TOOL_DEFINITIONS;
+const ALLOWED_TOOL_NAMES = new Set<string>(TOOL_DEFINITIONS.map((tool) => tool.name));
+
 function objectArguments(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Tool arguments must be an object.');
   return value as Record<string, unknown>;
@@ -144,10 +199,6 @@ function runtimeScope() {
 
 async function resolveWorkspace(argumentsValue: Record<string, unknown>) {
   if (typeof argumentsValue.workspaceId === 'string') return store.read(argumentsValue.workspaceId);
-  if (typeof argumentsValue.artifactKey === 'string') {
-    const workspace = await store.findByArtifactKey(argumentsValue.artifactKey);
-    if (workspace) return workspace;
-  }
   const current = await store.getCurrent();
   if (current) return current;
   throw new Error('The active ChatOS project does not have a Solution Studio plan yet.');
@@ -159,14 +210,10 @@ function effectiveSourceMode(value: unknown): SourceMode {
   return value;
 }
 
-function effectiveArtifactKey(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : 'project-plan';
-}
-
 async function exportWorkspace(workspaceId: string, format: 'json' | 'markdown') {
   const workspace = await store.read(workspaceId);
   const validation = validateWorkspace(workspace);
-  const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? process.env.SOLUTION_STUDIO_EXPORT_DIR ?? path.join(process.cwd(), 'exports'));
+  const directory = path.resolve(process.env.CHATOS_PLUGIN_ARTIFACT_DIR ?? path.join(process.cwd(), 'exports'));
   await fs.mkdir(directory, { recursive: true });
   const safeTitle = workspace.title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-').replace(/^-+|-+$/g, '') || workspace.workspaceId;
   const extension = format === 'json' ? 'solution.json' : 'md';
@@ -194,15 +241,90 @@ function normalizeDesignLinks(requirements: RequirementsDocument, design: Soluti
   }
 }
 
+function taskDefinition(task: ExecutionPlan['tasks'][number]) {
+  const { status: _status, blockedReason: _blockedReason, ...definition } = task;
+  return definition;
+}
+
+function protectedAuthoringPlan(current: ExecutionPlan, proposed: ExecutionPlan): ExecutionPlan {
+  if (proposed.statusEvents.length !== 0) throw new Error('方案创建器不能提交任务状态事件。');
+  const currentById = new Map(current.tasks.map((task) => [task.id, task]));
+  const proposedById = new Map(proposed.tasks.map((task) => [task.id, task]));
+  for (const task of proposed.tasks) {
+    const previous = currentById.get(task.id);
+    if (!previous && task.status !== 'planned') throw new Error(`新任务 ${task.id} 的状态必须是 planned。`);
+    if (previous && previous.status !== 'planned') {
+      if (JSON.stringify(taskDefinition(previous)) !== JSON.stringify(taskDefinition(task))) {
+        throw new Error(`任务 ${task.id} 已进入 ${previous.status}，方案创建器不能修改其定义或依赖。`);
+      }
+    }
+  }
+  for (const task of current.tasks) {
+    if (task.status !== 'planned' && !proposedById.has(task.id)) throw new Error(`任务 ${task.id} 已进入 ${task.status}，方案创建器不能删除。`);
+  }
+  return {
+    ...proposed,
+    tasks: proposed.tasks.map((task) => {
+      const previous = currentById.get(task.id);
+      return previous ? { ...task, status: previous.status, blockedReason: previous.blockedReason } : { ...task, status: 'planned', blockedReason: undefined };
+    }),
+    statusEvents: structuredClone(current.statusEvents)
+  };
+}
+
+type ExecutionAction = 'claim' | 'resume' | 'block' | 'complete' | 'cancel';
+
+function targetStatus(action: ExecutionAction): TaskStatus {
+  return action === 'block' ? 'blocked' : action === 'complete' ? 'done' : action === 'cancel' ? 'cancelled' : 'in_progress';
+}
+
+function applyExecutionAction(workspace: Awaited<ReturnType<typeof store.read>>, action: ExecutionAction, input: Record<string, unknown>) {
+  const task = workspace.executionPlan.tasks.find((candidate) => candidate.id === String(input.taskId));
+  if (!task) throw new Error(`Task not found: ${String(input.taskId)}`);
+  const allowed: Record<ExecutionAction, TaskStatus[]> = {
+    claim: ['planned'], resume: ['blocked'], block: ['in_progress'], complete: ['in_progress'], cancel: ['planned', 'in_progress', 'blocked']
+  };
+  if (!allowed[action].includes(task.status)) throw new Error(`任务 ${task.id} 不能从 ${task.status} 执行 ${action}。`);
+  if ((action === 'claim' || action === 'resume') && !task.dependsOn.every((id) => workspace.executionPlan.tasks.find((candidate) => candidate.id === id)?.status === 'done')) {
+    throw new Error(`任务 ${task.id} 的前置任务尚未全部完成，不能领取。`);
+  }
+  const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+  const summary = typeof input.summary === 'string' ? input.summary.trim() : '';
+  if ((action === 'block' || action === 'cancel') && !reason) throw new Error(`${action} 必须提供原因。`);
+  if (action === 'complete' && !summary) throw new Error('complete 必须提供完成摘要。');
+  const from = task.status;
+  const to = targetStatus(action);
+  task.status = to;
+  task.blockedReason = to === 'blocked' ? reason : undefined;
+  workspace.executionPlan.statusEvents.push({
+    id: `event-${randomUUID()}`,
+    taskId: task.id,
+    from,
+    to,
+    occurredAt: new Date().toISOString(),
+    runtimeSessionId: process.env.CHATOS_PLUGIN_RUNTIME_SESSION_ID ?? 'standalone-executor',
+    ...(reason ? { reason } : {}),
+    ...(summary ? { summary } : {}),
+    evidence: Array.isArray(input.evidence) ? input.evidence.map(String) : []
+  });
+  workspace.executionPlan.revision += 1;
+  workspace.executionPlan.updatedAt = new Date().toISOString();
+  return task;
+}
+
 function blockingIssuesForScope(issues: ValidationIssue[], scope: string): ValidationIssue[] {
   const planCodes = new Set(['plan_empty', 'requirement_without_task', 'stale_plan', 'unknown_dependency', 'self_dependency', 'dependency_cycle', 'task_without_acceptance', 'unknown_design_section']);
   const designCodes = new Set(['design_empty', 'project_design_missing', 'project_architecture_missing', 'design_section_document_missing', 'design_section_visual_missing', 'requirement_without_design', 'stale_design', 'multiple_designs_per_requirement', 'design_link_mismatch', 'invalid_selected_design']);
   return issues.filter((issue) => issue.blocking && (
-    scope === 'full' || scope === 'plan' || (scope === 'design' && !planCodes.has(issue.code)) || (scope === 'requirements' && !planCodes.has(issue.code) && !designCodes.has(issue.code))
+    scope === 'full'
+      || (scope === 'plan' && !designCodes.has(issue.code))
+      || (scope === 'design' && !planCodes.has(issue.code))
+      || (scope === 'requirements' && !planCodes.has(issue.code) && !designCodes.has(issue.code))
   ));
 }
 
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
+  if (!ALLOWED_TOOL_NAMES.has(name)) throw new Error(`Tool ${name} is not available in the ${role} MCP component.`);
   const input = objectArguments(rawArguments);
   switch (name) {
     case 'solution_get_active_context':
@@ -211,9 +333,29 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
       const workspace = await resolveWorkspace(input);
       return { workspace, validation: validateWorkspace(workspace) };
     }
+    case 'solution_get_workspace_summary': {
+      const workspace = await resolveWorkspace(input);
+      const validation = validateWorkspace(workspace);
+      return { workspace: workspaceSummary(workspace), modules: workspace.requirements.modules, validation };
+    }
+    case 'solution_list_tasks': {
+      const workspace = await resolveWorkspace(input);
+      const ready = new Set(validateWorkspace(workspace).readyTaskIds);
+      const tasks = workspace.executionPlan.tasks.filter((task) =>
+        (typeof input.moduleId !== 'string' || task.moduleId === input.moduleId)
+        && (typeof input.status !== 'string' || task.status === input.status)
+        && (input.readyOnly !== true || ready.has(task.id)));
+      return { workspace: workspaceSummary(workspace), tasks, readyTaskIds: tasks.filter((task) => ready.has(task.id)).map((task) => task.id) };
+    }
+    case 'solution_get_task': {
+      const workspace = await store.read(String(input.workspaceId));
+      const task = workspace.executionPlan.tasks.find((candidate) => candidate.id === String(input.taskId));
+      if (!task) throw new Error(`Task not found: ${String(input.taskId)}`);
+      return { workspace: workspaceSummary(workspace), task, prerequisiteTasks: task.dependsOn.map((id) => workspace.executionPlan.tasks.find((candidate) => candidate.id === id)).filter(Boolean) };
+    }
     case 'solution_upsert_requirements': {
       const requirements = input.requirements as RequirementsDocument;
-      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
+      const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
         workspace.description = String(input.description);
         workspace.projectProfile = structuredClone(input.projectProfile as ProjectProfile);
         workspace.requirements = { ...requirements, revision: workspace.requirements.revision + 1, updatedAt: new Date().toISOString() };
@@ -223,7 +365,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'solution_upsert_design': {
       const design = input.design as SolutionDesignDocument;
-      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
+      const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
         workspace.design = { ...design, revision: workspace.design.revision + 1, updatedAt: new Date().toISOString() };
         normalizeDesignLinks(workspace.requirements, workspace.design);
         return workspace;
@@ -250,26 +392,27 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
     }
     case 'solution_upsert_execution_plan': {
       const executionPlan = input.executionPlan as ExecutionPlan;
-      const result = await store.upsert(effectiveArtifactKey(input.artifactKey), String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
-        workspace.executionPlan = { ...executionPlan, revision: workspace.executionPlan.revision + 1, updatedAt: new Date().toISOString() };
+      const result = await store.upsert(String(input.title), effectiveSourceMode(input.sourceMode), (workspace) => {
+        workspace.executionPlan = { ...protectedAuthoringPlan(workspace.executionPlan, executionPlan), revision: workspace.executionPlan.revision + 1, updatedAt: new Date().toISOString() };
         const validation = validateWorkspace(workspace);
-        const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle'].includes(issue.code));
+        const dependencyIssues = validation.issues.filter((issue) => ['unknown_dependency', 'self_dependency', 'dependency_cycle', 'redundant_dependency'].includes(issue.code));
         if (dependencyIssues.length > 0) throw new Error(dependencyIssues.map((issue) => issue.message).join(' '));
         return workspace;
       });
       const validation = validateWorkspace(result.workspace);
       return { created: result.created, workspace: workspaceSummary(result.workspace), executionPlan: result.workspace.executionPlan, validation, completionRequirement: completionRequirement(result.workspace.workspaceId) };
     }
-    case 'solution_update_task': {
+    case 'solution_claim_task':
+    case 'solution_resume_task':
+    case 'solution_block_task':
+    case 'solution_complete_task':
+    case 'solution_cancel_task': {
       const workspace = await store.read(String(input.workspaceId));
-      const task = workspace.executionPlan.tasks.find((candidate) => candidate.id === String(input.taskId));
-      if (!task) throw new Error(`Task not found: ${String(input.taskId)}`);
-      task.status = input.status as TaskStatus;
-      task.blockedReason = typeof input.blockedReason === 'string' && input.blockedReason.trim() ? input.blockedReason.trim() : undefined;
-      workspace.executionPlan.revision += 1;
-      workspace.executionPlan.updatedAt = new Date().toISOString();
+      const action = name.slice('solution_'.length, -'_task'.length) as ExecutionAction;
+      const task = applyExecutionAction(workspace, action, input);
       const saved = await store.replace(workspace, Number(input.expectedRevision));
-      return { workspace: workspaceSummary(saved), task: saved.executionPlan.tasks.find((candidate) => candidate.id === task.id), validation: validateWorkspace(saved), completionRequirement: completionRequirement(saved.workspaceId) };
+      const validation = validateWorkspace(saved);
+      return { workspace: workspaceSummary(saved), task: saved.executionPlan.tasks.find((candidate) => candidate.id === task.id), readyTaskIds: validation.readyTaskIds, validation };
     }
     case 'solution_validate': {
       const workspace = await resolveWorkspace(input);
@@ -300,6 +443,19 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
 }
 
 function result(value: Record<string, unknown>, isError = false) {
+  if (role === 'authoring' && !isError && value.validation && !value.completionProof) {
+    const validation = value.validation as { issues: ValidationIssue[] };
+    const codes = new Set(validation.issues.filter(issue => issue.blocking).map(issue => issue.code));
+    value.continuation = {
+      kind: 'authoring-work-remaining',
+      instruction: 'Successful persistence is not final delivery. Validation gaps describe remaining authoring/repair work, not a terminal Task failure. Continue only the stages required by the user; do not expand a requirements-only request into a full plan.',
+      suggestedActions: [
+        ...(codes.has('design_empty') || codes.has('stale_design') ? [{ skill: 'solution-design', tool: 'solution_upsert_design', when: 'Design or full planning is requested', reason: 'Author or refresh the design against the current requirements revision.' }] : []),
+        ...(codes.has('plan_empty') || codes.has('stale_plan') ? [{ skill: 'solution-execution-plan', tool: 'solution_upsert_execution_plan', when: 'Execution planning is requested; after the design is coherent', reason: 'Author or refresh tasks and dependencies against the current design revision.' }] : []),
+        { skill: 'solution-validation', tool: 'solution_finalize', when: 'All requested content is saved, rendered where required, and its scoped validation gaps are repaired', reason: 'Finalize the actual requested scope at the current workspace revision.' }
+      ]
+    };
+  }
   const response: Record<string, unknown> = {
     content: [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     structuredContent: value,
@@ -320,7 +476,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: 'chatos-solution-studio', version: '0.1.9' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.0' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

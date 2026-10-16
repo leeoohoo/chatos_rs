@@ -27,6 +27,7 @@ struct ConversationTimelineView: View {
         }
         .workspaceFill()
         .background(Color(nsColor: .textBackgroundColor))
+        .conversationFileLinks(conversationID: conversation.sessionID, projectRootPath: projectRootPath)
     }
 }
 

@@ -159,14 +159,9 @@ extension LocalAgentChatToolProvider {
             schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
         ),
         .init(
-            name: agentSkillListResourcesToolName,
-            description: "列出已激活身份或产品 Skill 的详细参考资料；必须先调用 agent_skill_activate。 List detailed references for an activated run-scoped Skill.",
-            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240}},"required":["skill_ref"],"additionalProperties":false}"#.utf8)
-        ),
-        .init(
             name: agentSkillReadResourceToolName,
             description: "分页读取已激活身份或产品 Skill 的一项参考资料，只在当前决策需要时读取。 Read one activated Skill reference on demand with character pagination.",
-            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240},"relative_path":{"type":"string","minLength":1,"maxLength":1000},"offset":{"type":"integer","minimum":0},"max_chars":{"type":"integer","minimum":1,"maximum":64000}},"required":["skill_ref","relative_path"],"additionalProperties":false}"#.utf8)
+            schema: Data(#"{"type":"object","properties":{"skill_ref":{"type":"string","minLength":1,"maxLength":240},"relative_path":{"type":"string","minLength":1,"maxLength":1000},"offset":{"type":"integer","minimum":0},"max_chars":{"type":"integer","minimum":1,"maximum":160000,"default":160000}},"required":["skill_ref","relative_path"],"additionalProperties":false}"#.utf8)
         ),
         .init(
             name: todoGetContextToolName,

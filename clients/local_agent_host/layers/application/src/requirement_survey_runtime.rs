@@ -34,6 +34,30 @@ impl LocalAgentRuntime {
         command: HostCommand,
     ) -> Result<HostResult, LocalAgentRuntimeError> {
         match command {
+            HostCommand::GetRequirementPlan(command) => Ok(HostResult::RequirementPlan {
+                plan: self
+                    .store
+                    .get_requirement_plan(
+                        &command.owner_user_id,
+                        &command.survey_id,
+                        command.revision,
+                    )
+                    .await?,
+            }),
+            HostCommand::SaveRequirementPlan(command) => Ok(HostResult::RequirementPlan {
+                plan: Some(
+                    self.store
+                        .save_requirement_plan(idempotency, &command, self.now()?)
+                        .await?,
+                ),
+            }),
+            HostCommand::ConfirmRequirementPlan(command) => Ok(HostResult::RequirementPlan {
+                plan: Some(
+                    self.store
+                        .confirm_requirement_plan(idempotency, &command, self.now()?)
+                        .await?,
+                ),
+            }),
             HostCommand::CreateRequirementSurvey(command) => {
                 let survey = new_survey(command, self.now()?);
                 let survey = self

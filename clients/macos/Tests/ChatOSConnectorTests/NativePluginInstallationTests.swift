@@ -192,7 +192,13 @@ extension NativePluginRuntimeTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let skill = root.appendingPathComponent("skills/fixture-skill", isDirectory: true)
         let references = skill.appendingPathComponent("references", isDirectory: true)
+        let agents = skill.appendingPathComponent("agents", isDirectory: true)
+        let scripts = skill.appendingPathComponent("scripts", isDirectory: true)
+        let assets = skill.appendingPathComponent("assets", isDirectory: true)
         try FileManager.default.createDirectory(at: references, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let instructions = Data("""
         ---
@@ -205,6 +211,14 @@ extension NativePluginRuntimeTests {
         let guide = Data("# Guide\nUse fresh screenshots.\n".utf8)
         try instructions.write(to: skill.appendingPathComponent("SKILL.md"))
         try guide.write(to: references.appendingPathComponent("guide.md"))
+        try Data(#"{"internal":true}"#.utf8).write(
+            to: skill.appendingPathComponent("contract.json")
+        )
+        try Data("display_name: Internal".utf8).write(
+            to: agents.appendingPathComponent("openai.yaml")
+        )
+        try Data("#!/bin/sh".utf8).write(to: scripts.appendingPathComponent("helper.sh"))
+        try Data("binary".utf8).write(to: assets.appendingPathComponent("template.bin"))
         try Data("""
         {
           "schemaVersion": 3,
@@ -273,6 +287,7 @@ extension NativePluginRuntimeTests {
         ])
         let catalog = try #require(preparedObject["skills"]?.jsonArray?.first?.jsonObject)
         #expect(catalog["instructions"] == nil)
+        #expect(catalog["resources"] == .array([resource]))
 
         let activated = try NativePluginSkillSnapshotLoader.activateV2(
             record: record,
@@ -294,6 +309,16 @@ extension NativePluginRuntimeTests {
         let actualPage = try #require(resourceObject["content"]?.jsonString)
         #expect(actualPage == expectedPage)
         #expect(resourceObject["truncated"]?.jsonBool == true)
+        #expect(throws: NativePluginRuntimeError.self) {
+            try NativePluginSkillSnapshotLoader.readV2Resource(
+                record: record,
+                componentKey: "fixture-skill",
+                expectedSnapshot: expectedSnapshot,
+                relativePath: "contract.json",
+                offset: 0,
+                maximumCharacters: 160_000
+            )
+        }
     }
 
     @Test("installation status fails closed when executable is missing")

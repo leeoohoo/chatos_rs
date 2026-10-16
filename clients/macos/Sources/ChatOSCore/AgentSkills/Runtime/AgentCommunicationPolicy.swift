@@ -106,11 +106,11 @@ public enum LocalAgentCompactCommunicationSkill {
         case (.executor, .english): resource = "EXECUTOR.en"
         }
         let subdirectory = "Skills/chatos-compact-communication"
-        guard let url = Bundle.module.url(
+        guard let url = ChatOSCoreResourceBundle.bundle.url(
             forResource: resource,
             withExtension: "md",
             subdirectory: subdirectory
-        ) ?? Bundle.module.url(forResource: resource, withExtension: "md"),
+        ) ?? ChatOSCoreResourceBundle.bundle.url(forResource: resource, withExtension: "md"),
         let value = try? String(contentsOf: url, encoding: .utf8) else {
             fatalError("Bundled compact communication Skill is missing: \(resource)")
         }

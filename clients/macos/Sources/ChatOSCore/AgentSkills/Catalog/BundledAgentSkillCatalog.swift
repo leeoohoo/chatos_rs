@@ -20,6 +20,18 @@ public struct BundledAgentSkillDescriptor: Sendable, Equatable, Identifiable {
 public enum BundledAgentSkillCatalog {
     public static let skills: [BundledAgentSkillDescriptor] = [
         .init(
+            name: "chatos-main-chat-invariants",
+            role: .policy,
+            relativeDirectory: "chatos-main-chat-invariants",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-task-execution-invariants",
+            role: .policy,
+            relativeDirectory: "chatos-task-execution-invariants",
+            requiresFrontmatter: true
+        ),
+        .init(
             name: "chatos-compact-communication",
             role: .policy,
             relativeDirectory: "chatos-compact-communication",
@@ -29,6 +41,12 @@ public enum BundledAgentSkillCatalog {
             name: "chatos-skill-runtime",
             role: .policy,
             relativeDirectory: "chatos-skill-runtime",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-external-mcp",
+            role: .specialist,
+            relativeDirectory: "chatos-external-mcp",
             requiresFrontmatter: true
         ),
         .init(
@@ -101,6 +119,12 @@ public enum BundledAgentSkillCatalog {
             name: "chatos-user-clarification",
             role: .specialist,
             relativeDirectory: "chatos-user-clarification",
+            requiresFrontmatter: true
+        ),
+        .init(
+            name: "chatos-requirement-discovery",
+            role: .specialist,
+            relativeDirectory: "chatos-requirement-discovery",
             requiresFrontmatter: true
         ),
         .init(

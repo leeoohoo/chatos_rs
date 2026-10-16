@@ -1,12 +1,10 @@
-# Workspace document shapes
+# Workspace schema v2
 
-Use complete objects for each upsert. The active ChatOS project owns exactly one workspace envelope: one `projectProfile`, one `RequirementsDocument`, one `SolutionDesignDocument`, and one `ExecutionPlan`. Upserts revise those documents in place and must never create parallel project backgrounds or competing total plans.
+Use complete objects for each authoring upsert. The active ChatOS project owns exactly one v2 workspace envelope: one `projectProfile`, one `RequirementsDocument`, one `SolutionDesignDocument`, and one `ExecutionPlan`. The service owns workspace revision, timestamps, project binding, and execution status history.
 
-The service owns workspace-level revision and timestamps; still include the document header fields shown below because each document is independently versioned.
+There is no legacy conversion path. Do not send a v1 object, omit v2 fields, reconstruct deleted legacy data, or try to preserve an old status representation. Invalid legacy workspace files are discarded.
 
-The workspace envelope may contain a server-owned `hostProject` object with `projectId`, `projectName`, `connectorWorkspaceId`, and `contextScopeId`. Do not send or edit this object in upsert payloads. ChatOS injects the active project context at runtime and the service stamps the binding automatically. A Solution Studio `workspaceId` identifies the project's single planning document and is unrelated to the host `connectorWorkspaceId`. `artifactKey` and `sourceMode` remain optional compatibility fields; do not use them to branch the project into multiple plans. `solution_upsert_requirements` additionally requires the workspace `description` and complete `projectProfile` so the project overview cannot remain empty.
-
-All planning content is canonical only after it is stored here. Never write Solution Studio Markdown, SVG, or JSON deliverables into the host project directory. Large visual blocks may be persisted individually with `solution_upsert_design_block`; the tool still stores inline SVG in this workspace.
+The server-owned envelope includes `schemaVersion: 2`, `workspaceId`, `revision`, timestamps, and optionally `hostProject`. Do not send or edit `hostProject`. ChatOS injects active project context. Store all planning text and SVG in the workspace, never under the host project root.
 
 ## RequirementsDocument
 
@@ -25,17 +23,22 @@ All planning content is canonical only after it is stored here. Never write Solu
   "evidence": [
     { "id": "E-001", "label": "", "source": "path, symbol, document, or user brief", "note": "", "confidence": "verified" }
   ],
+  "modules": [
+    { "id": "MOD-CORE", "title": "Core business", "kind": "business", "description": "Ownership and boundary", "order": 0 }
+  ],
   "items": [
-    { "id": "R-001", "title": "", "description": "", "priority": "must", "acceptanceCriteria": [], "evidenceIds": ["E-001"], "selectedDesignSectionId": "D-001" },
-    { "id": "R-002", "parentRequirementId": "R-001", "title": "", "description": "", "priority": "must", "acceptanceCriteria": [], "evidenceIds": ["E-001"], "selectedDesignSectionId": "D-002" }
+    { "id": "R-001", "moduleId": "MOD-CORE", "kind": "capability", "title": "", "description": "", "priority": "must", "acceptanceCriteria": [], "evidenceIds": ["E-001"], "selectedDesignSectionId": "D-001" },
+    { "id": "R-002", "moduleId": "MOD-CORE", "kind": "quality", "parentRequirementId": "R-001", "title": "", "description": "", "priority": "should", "acceptanceCriteria": [], "evidenceIds": ["E-001"], "selectedDesignSectionId": "D-002" }
   ],
   "updatedAt": "ISO-8601 timestamp"
 }
 ```
 
-Allowed statuses are `draft`, `review`, and `approved`. Evidence confidence is `verified`, `user-stated`, or `assumption`. Requirement priority is shown to users as `高`, `中`, or `低`; encode these as `must`, `should`, or `could` respectively.
+Module kind is `foundation`, `business`, or `delivery`. Requirement kind is `capability`, `quality`, or `constraint`. A software project needs at least one business module. Every requirement references an existing module; parent and child requirements must share the same module. Modules are functional ownership boundaries, not schedule phases.
 
-The workspace-level `projectProfile` contains `background`, `overview`, `projectType`, `deliveryForm`, and `targetPlatforms`. It describes the project, not a requirement. `parentRequirementId` creates a requirement tree; omit it for a top-level requirement.
+Document status is `draft`, `review`, or `approved`. Evidence confidence is `verified`, `user-stated`, or `assumption`. Requirement priority is shown as `高`, `中`, or `低` and encoded as `must`, `should`, or `could`.
+
+The workspace-level `projectProfile` contains `background`, `overview`, `projectType`, `deliveryForm`, and `targetPlatforms`. `solution_upsert_requirements` also receives the workspace `description`.
 
 ## SolutionDesignDocument
 
@@ -46,21 +49,20 @@ The workspace-level `projectProfile` contains `background`, `overview`, `project
   "basedOnRequirementsRevision": 1,
   "summary": "",
   "blocks": [
-    { "id": "D-000-B-001", "type": "text", "title": "项目技术基线", "content": "Language, framework, UI, architecture, data, testing, build, and deployment choices" },
-    { "id": "D-000-B-002", "type": "architecture", "title": "总体技术架构", "content": "<svg viewBox=\"0 0 1200 800\">...</svg>" }
+    { "id": "D-000-B-001", "type": "text", "title": "Project technical baseline", "content": "Concrete technology and delivery choices" },
+    { "id": "D-000-B-002", "type": "architecture", "title": "Overall architecture", "content": "<svg viewBox=\"0 0 1200 800\">...</svg>" }
   ],
   "sections": [
     {
       "id": "D-001",
+      "moduleId": "MOD-CORE",
       "title": "",
-      "body": "Short candidate-solution summary",
+      "body": "Short decided-solution summary",
       "requirementIds": ["R-001"],
       "evidenceIds": ["E-001"],
       "blocks": [
-        { "id": "D-001-B-001", "type": "text", "title": "方案说明", "content": "Markdown" },
-        { "id": "D-001-B-002", "type": "architecture", "title": "系统架构", "content": "<svg viewBox=\"0 0 1200 800\">...</svg>" },
-        { "id": "D-001-B-003", "type": "flowchart", "title": "关键流程", "content": "<svg viewBox=\"0 0 1200 800\">...</svg>" },
-        { "id": "D-001-B-004", "type": "ui-svg", "title": "页面设计", "content": "<svg viewBox=\"0 0 1440 900\">...</svg>" }
+        { "id": "D-001-B-001", "type": "text", "title": "Detailed design", "content": "Markdown" },
+        { "id": "D-001-B-002", "type": "flowchart", "title": "Key flow", "content": "<svg viewBox=\"0 0 1200 800\">...</svg>" }
       ]
     }
   ],
@@ -73,7 +75,7 @@ The workspace-level `projectProfile` contains `background`, `overview`, `project
 }
 ```
 
-Top-level `design.blocks` contain the decided project technical baseline and overall architecture. Each requirement maps to exactly one `DesignSection`; its `blocks` contain the requirement-specific detailed design. `text` contains Markdown; `architecture`, `flowchart`, and `ui-svg` contain standalone SVG source without Markdown fences. `selectedDesignSectionId` links the requirement to its single design section for compatibility and traceability; it is not a user choice among alternatives.
+Top-level `blocks` contain the overall approach. Every requirement maps to exactly one decided `DesignSection` in the same module. `text` contains Markdown; `architecture`, `flowchart`, and `ui-svg` contain standalone inert SVG with a `viewBox`. Alternatives belong in `decisions`, not parallel sections.
 
 ## ExecutionPlan
 
@@ -86,6 +88,7 @@ Top-level `design.blocks` contain the decided project technical baseline and ove
   "tasks": [
     {
       "id": "T-001",
+      "moduleId": "MOD-CORE",
       "title": "",
       "description": "",
       "type": "task",
@@ -99,10 +102,21 @@ Top-level `design.blocks` contain the decided project technical baseline and ove
       "sourceReferences": []
     }
   ],
+  "statusEvents": [],
   "positions": {},
   "viewport": { "x": 0, "y": 0, "zoom": 1 },
   "updatedAt": "ISO-8601 timestamp"
 }
 ```
 
-Task type is `task`, `review`, or `milestone`. Task status is `planned`, `in_progress`, `blocked`, `done`, or `cancelled`; a blocked task may include `blockedReason`. `dependsOn` contains prerequisite task IDs. `positions` maps task IDs to `{ "x": number, "y": number }` and is presentation-only.
+Task type is `task`, `review`, or `milestone`. New authoring tasks must use status `planned`. `dependsOn` contains only direct prerequisites and must be acyclic and transitively reduced. Cross-module prerequisites are allowed and retain their original owning module.
+
+The authoring component must preserve existing task statuses and `statusEvents`. It cannot modify or delete a task after that task leaves `planned`. The executor exclusively performs these transitions:
+
+- `planned -> in_progress` with `solution_claim_task`, after all prerequisites are `done`;
+- `blocked -> in_progress` with `solution_resume_task`, after prerequisites remain `done`;
+- `in_progress -> blocked` with a reason;
+- `in_progress -> done` with a completion summary and optional evidence;
+- `planned | in_progress | blocked -> cancelled` with a reason.
+
+`done` and `cancelled` are terminal. They cannot be reopened. Each transition appends an immutable event containing `taskId`, `from`, `to`, `occurredAt`, `runtimeSessionId`, optional reason/summary, and evidence. `positions` and `viewport` are presentation state only and never define execution order.

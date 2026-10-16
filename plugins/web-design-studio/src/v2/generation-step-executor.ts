@@ -326,6 +326,29 @@ export async function prepareGenerationStep(
     const failure = verification.error ?? {
       code: 'quality_reject', message: verification.qualitySummary, retryable: true, issueIds: [...verification.issueIds]
     };
+    // Keep the uncommitted transaction available for a bounded retry. A layout or
+    // calibration failure can still return useful Candidate node ids, and the next
+    // repair may legitimately patch those ids before the complete replacement
+    // transaction is revalidated. The canonical Scene remains unchanged.
+    const failedCandidate: GenerationCandidateRecord = {
+      schemaVersion: 1,
+      candidateId: `candidate:${input.attemptId}`,
+      planId: plan.planId,
+      scope: structuredClone(input.scope),
+      pageId: input.pageId,
+      stepId: input.stepId,
+      attemptId: input.attemptId,
+      idempotencyKey: input.idempotencyKey,
+      baseRevision: document.revision,
+      transaction: structuredClone(transaction),
+      artifacts: structuredClone(verification.artifacts),
+      protectionConflicts: [],
+      qualitySummary: verification.qualitySummary,
+      issueIds: [...verification.issueIds],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    await repositories.candidates.create(failedCandidate);
     plan = await failAttempt(repositories, input.scope, plan.revision, input.pageId, input.stepId, input.attemptId, failure, verification.artifacts, timestamp);
     return { status: 'failed', plan, error: failure };
   }

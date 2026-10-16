@@ -2,11 +2,16 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{ClientStorageError, SqliteClientStorage, SqliteResultExt};
-use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
+use chatos_local_agent_protocol::{
+    local_task_runtime_write_scope, local_task_write_scope_overlap, LocalAgentRunRecord,
+    LocalAgentRunStatus,
+};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 
 const TASK_OUTCOME_REPORT_TOOL: &str = "task_run_process_report_outcome";
+const INLINE_PREREQUISITE_RESULT_MAX_CHARS: usize = 160_000;
 
 pub(super) struct ReportedTaskOutcome {
     pub status: String,
@@ -21,24 +26,80 @@ pub(super) async fn start_next_task_run(
     event_id: &str,
     now_unix_ms: i64,
 ) -> Result<Option<LocalAgentRunRecord>, ClientStorageError> {
-    let candidate = sqlx::query(
+    // Recover pending Tasks whose external prerequisites had already completed
+    // before creation (including records left by older Hosts).
+    let owner_graph: Option<String> = sqlx::query_scalar(
+        "SELECT graph_id FROM local_task_graphs WHERE owner_user_id = ? LIMIT 1",
+    )
+    .bind(owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?;
+    if let Some(owner_graph) = owner_graph {
+        propagate_blocked(connection, &owner_graph, now_unix_ms).await?;
+        unlock_satisfied(connection, &owner_graph, now_unix_ms).await?;
+    }
+    let candidates = sqlx::query(
         "SELECT t.task_id, t.graph_id, g.owner_user_id, t.profile_key, \
          t.model_config_ref, t.model_config_revision, t.capability_policy_revision, \
-         t.input_json, t.max_iterations, t.version FROM local_tasks t \
+         t.input_json, t.max_iterations, t.version, \
+         CASE \
+           WHEN source_conversation.resource_kind = 'project' \
+             AND source_conversation.resource_id IS NOT NULL \
+             THEN 'project:' || source_conversation.resource_id \
+           WHEN turn_conversation.resource_kind = 'project' \
+             AND turn_conversation.resource_id IS NOT NULL \
+             THEN 'project:' || turn_conversation.resource_id \
+           WHEN source_conversation.conversation_id IS NOT NULL \
+             THEN 'conversation:' || source_conversation.conversation_id \
+           WHEN turn_conversation.conversation_id IS NOT NULL \
+             THEN 'conversation:' || turn_conversation.conversation_id \
+           ELSE g.source_entity_type || ':' || g.source_entity_id \
+         END AS write_scope_key FROM local_tasks t \
          JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+         LEFT JOIN local_conversations source_conversation \
+           ON g.source_entity_type = 'conversation' \
+          AND source_conversation.conversation_id = g.source_entity_id \
+         LEFT JOIN local_conversation_turns source_turn \
+           ON g.source_entity_type = 'conversation_turn' \
+          AND source_turn.turn_id = g.source_entity_id \
+         LEFT JOIN local_conversations turn_conversation \
+           ON turn_conversation.conversation_id = source_turn.conversation_id \
          WHERE g.owner_user_id = ? AND (? IS NULL OR t.graph_id = ?) \
          AND t.status = 'ready' AND t.active_run_id IS NULL \
+         AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+           WHERE f.task_id = t.task_id AND f.state IN ('pending','held')) \
          AND (json_extract(t.input_json, '$.schedule.run_at_unix_ms') IS NULL \
               OR json_extract(t.input_json, '$.schedule.run_at_unix_ms') <= ?) \
-         ORDER BY t.created_at_unix_ms, t.task_id LIMIT 1",
+         ORDER BY t.created_at_unix_ms, t.task_id",
     )
     .bind(owner_user_id)
     .bind(graph_id)
     .bind(graph_id)
     .bind(now_unix_ms)
-    .fetch_optional(&mut *connection)
+    .fetch_all(&mut *connection)
     .await
     .db()?;
+    let active_write_scopes = active_write_scopes(connection, owner_user_id).await?;
+    let mut candidate = None;
+    for row in candidates {
+        let task_id: String = row.try_get("task_id").db()?;
+        let input_json: String = row.try_get("input_json").db()?;
+        let input: Value = serde_json::from_str(&input_json)?;
+        let write_scope = local_task_runtime_write_scope(&input, &task_id)
+            .map_err(ClientStorageError::InvalidState)?;
+        let scope_key: String = row.try_get("write_scope_key").db()?;
+        let blocked = write_scope.as_ref().is_some_and(|paths| {
+            active_write_scopes.iter().any(|active| {
+                active.scope_key == scope_key
+                    && local_task_write_scope_overlap(paths, &active.paths).is_some()
+            })
+        });
+        if !blocked {
+            candidate = Some(row);
+            break;
+        }
+    }
     let Some(candidate) = candidate else {
         return Ok(None);
     };
@@ -111,6 +172,63 @@ pub(super) async fn start_next_task_run(
     .await
     .db()?;
     SqliteClientStorage::fetch_run_on(connection, run_id).await
+}
+
+struct ActiveWriteScope {
+    scope_key: String,
+    paths: Vec<String>,
+}
+
+async fn active_write_scopes(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+) -> Result<Vec<ActiveWriteScope>, ClientStorageError> {
+    let rows = sqlx::query(
+        "SELECT t.task_id, t.input_json, \
+         CASE \
+           WHEN source_conversation.resource_kind = 'project' \
+             AND source_conversation.resource_id IS NOT NULL \
+             THEN 'project:' || source_conversation.resource_id \
+           WHEN turn_conversation.resource_kind = 'project' \
+             AND turn_conversation.resource_id IS NOT NULL \
+             THEN 'project:' || turn_conversation.resource_id \
+           WHEN source_conversation.conversation_id IS NOT NULL \
+             THEN 'conversation:' || source_conversation.conversation_id \
+           WHEN turn_conversation.conversation_id IS NOT NULL \
+             THEN 'conversation:' || turn_conversation.conversation_id \
+           ELSE g.source_entity_type || ':' || g.source_entity_id \
+         END AS write_scope_key FROM local_tasks t \
+         JOIN local_task_graphs g ON g.graph_id = t.graph_id \
+         LEFT JOIN local_conversations source_conversation \
+           ON g.source_entity_type = 'conversation' \
+          AND source_conversation.conversation_id = g.source_entity_id \
+         LEFT JOIN local_conversation_turns source_turn \
+           ON g.source_entity_type = 'conversation_turn' \
+          AND source_turn.turn_id = g.source_entity_id \
+         LEFT JOIN local_conversations turn_conversation \
+           ON turn_conversation.conversation_id = source_turn.conversation_id \
+         WHERE g.owner_user_id = ? AND t.active_run_id IS NOT NULL \
+           AND t.status IN ('ready','running')",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    let mut scopes = Vec::new();
+    for row in rows {
+        let task_id: String = row.try_get("task_id").db()?;
+        let input_json: String = row.try_get("input_json").db()?;
+        let input: Value = serde_json::from_str(&input_json)?;
+        if let Some(paths) = local_task_runtime_write_scope(&input, &task_id)
+            .map_err(ClientStorageError::InvalidState)?
+        {
+            scopes.push(ActiveWriteScope {
+                scope_key: row.try_get("write_scope_key").db()?,
+                paths,
+            });
+        }
+    }
+    Ok(scopes)
 }
 
 async fn task_input_with_prerequisites(
@@ -186,7 +304,8 @@ async fn task_input_with_prerequisites(
             .map(serde_json::from_str::<Value>)
             .transpose()?
             .unwrap_or(Value::Null);
-        let visible = visible_prerequisite_result(&outcome);
+        let visible = visible_prerequisite_result(&outcome, run_id.as_deref());
+        let acceptance_summary = prerequisite_acceptance_summary(&prerequisite_input, &outcome);
         text.push_str(&format!(
             "\n\n{}. [succeeded] {} / {}\n{}:\n{}",
             index + 1,
@@ -235,6 +354,9 @@ async fn task_input_with_prerequisites(
                 "\n结果摘要:\n任务已完成，但没有文本结果。"
             });
         }
+        if let Some(summary) = acceptance_summary.as_ref() {
+            text.push_str(&format!("\n[Task Acceptance Facts / 验收事实]\n{summary}"));
+        }
         contexts.push(json!({
             "task_id": prerequisite_id,
             "title": title,
@@ -243,6 +365,7 @@ async fn task_input_with_prerequisites(
             "run_id": run_id,
             "result_summary": visible.summary,
             "report_content": visible.report,
+            "acceptance_summary": acceptance_summary,
         }));
     }
     let current_heading = if english {
@@ -262,16 +385,49 @@ async fn task_input_with_prerequisites(
     serde_json::to_string(&input).map_err(Into::into)
 }
 
+fn prerequisite_acceptance_summary(input: &Value, outcome: &Value) -> Option<Value> {
+    if input
+        .get("acceptance_report_version")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return None;
+    }
+    let report = outcome.get("task_acceptance")?;
+    chatos_local_agent_protocol::validate_task_acceptance_report(input, report).ok()?;
+    let content = outcome.get("content")?.as_str()?;
+    if report.get("final_response")?.as_str()? != content {
+        return None;
+    }
+    // Recompute from the delivered text; model-authored evidence may estimate incorrectly.
+    let chars = content.chars().count();
+    let limit = input
+        .get("final_response_max_chars")
+        .and_then(Value::as_u64);
+    Some(json!({
+        "acceptance_report_version":1,
+        "worker_reported_status":report.get("status"),
+        "final_response_chars":chars,
+        "final_response_max_chars":limit,
+        "explicit_length_limit_passed":limit.map(|max| chars as u64 <= max),
+        "result_summary_is_complete_final_response":visible_prerequisite_result(outcome, None).summary.as_deref() == Some(content),
+        "content_verification":"worker_reported_not_independently_certified"
+    }))
+}
+
 struct VisiblePrerequisiteResult {
     summary: Option<String>,
     report: Option<String>,
 }
 
-fn visible_prerequisite_result(outcome: &Value) -> VisiblePrerequisiteResult {
+fn visible_prerequisite_result(
+    outcome: &Value,
+    source_run_id: Option<&str>,
+) -> VisiblePrerequisiteResult {
     let summary = ["result_summary", "content", "answer", "text", "error"]
         .iter()
         .find_map(|key| outcome.get(*key).and_then(Value::as_str))
-        .and_then(bounded_visible_text);
+        .and_then(|value| bounded_visible_text(value, source_run_id));
     let report = outcome
         .get("report")
         .and_then(|value| {
@@ -279,14 +435,33 @@ fn visible_prerequisite_result(outcome: &Value) -> VisiblePrerequisiteResult {
                 .as_str()
                 .or_else(|| value.get("content").and_then(Value::as_str))
         })
-        .and_then(bounded_visible_text)
+        .and_then(|value| bounded_visible_text(value, source_run_id))
         .filter(|report| summary.as_deref() != Some(report.as_str()));
     VisiblePrerequisiteResult { summary, report }
 }
 
-fn bounded_visible_text(value: &str) -> Option<String> {
+fn bounded_visible_text(value: &str, source_run_id: Option<&str>) -> Option<String> {
     let value = value.trim();
-    (!value.is_empty()).then(|| value.chars().take(32_000).collect())
+    if value.is_empty() {
+        return None;
+    }
+    let total_chars = value.chars().count();
+    if total_chars <= INLINE_PREREQUISITE_RESULT_MAX_CHARS || source_run_id.is_none() {
+        return Some(value.to_string());
+    }
+    Some(
+        json!({
+            "type": "task_result_reference",
+            "source_run_id": source_run_id,
+            "total_chars": total_chars,
+            "sha256": format!("{:x}", Sha256::digest(value.as_bytes())),
+            "read_tool": "tool_result_read",
+            "max_page_chars": 8_000,
+            "complete": false,
+            "guidance": "This prerequisite result is complete in its durable Run. Read it with tool_result_read from offset 0 until complete=true; concatenate content in offset order and verify sha256."
+        })
+        .to_string(),
+    )
 }
 
 fn contains_cjk(value: &str) -> bool {
@@ -411,13 +586,15 @@ pub(super) async fn reported_task_outcome(
 
 pub(super) async fn propagate_blocked(
     connection: &mut SqliteConnection,
-    _graph_id: &str,
+    graph_id: &str,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     loop {
         let updated = sqlx::query(
             "UPDATE local_tasks SET status = 'blocked', version = version + 1, \
              updated_at_unix_ms = ? WHERE status IN ('pending', 'ready') \
+             AND graph_id IN (SELECT graph_id FROM local_task_graphs WHERE owner_user_id = \
+               (SELECT owner_user_id FROM local_task_graphs WHERE graph_id = ?)) \
              AND (EXISTS (SELECT 1 FROM local_task_dependencies d \
                JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
                AND prerequisite.graph_id = d.graph_id \
@@ -429,6 +606,7 @@ pub(super) async fn propagate_blocked(
                AND prerequisite.status IN ('failed', 'cancelled', 'blocked')))",
         )
         .bind(now_unix_ms)
+        .bind(graph_id)
         .execute(&mut *connection)
         .await
         .db()?;
@@ -440,12 +618,14 @@ pub(super) async fn propagate_blocked(
 
 pub(super) async fn unlock_satisfied(
     connection: &mut SqliteConnection,
-    _graph_id: &str,
+    graph_id: &str,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     sqlx::query(
         "UPDATE local_tasks SET status = 'ready', version = version + 1, \
          updated_at_unix_ms = ? WHERE status = 'pending' \
+         AND graph_id IN (SELECT graph_id FROM local_task_graphs WHERE owner_user_id = \
+           (SELECT owner_user_id FROM local_task_graphs WHERE graph_id = ?)) \
          AND NOT EXISTS (SELECT 1 FROM local_task_dependencies d \
            JOIN local_tasks prerequisite ON prerequisite.task_id = d.prerequisite_task_id \
            AND prerequisite.graph_id = d.graph_id \
@@ -457,6 +637,7 @@ pub(super) async fn unlock_satisfied(
            AND prerequisite.status <> 'succeeded')",
     )
     .bind(now_unix_ms)
+    .bind(graph_id)
     .execute(&mut *connection)
     .await
     .db()?;

@@ -61,8 +61,8 @@ pub use stdio_policy::{
 };
 pub use task_types::TaskUpdatePatch;
 pub use text::{
-    inject_agent_builder_args, structured_result_payload, to_text_and_structured_result,
-    to_text_and_structured_result_with_transient,
+    capability_description_budget_error, inject_agent_builder_args, structured_result_payload,
+    to_text_and_structured_result, to_text_and_structured_result_with_transient,
     to_text_and_structured_result_with_transient_limit,
 };
 pub use types::{

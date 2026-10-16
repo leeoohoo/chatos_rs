@@ -719,7 +719,8 @@ function sameArtifactContent(left: DiagramDocument, right: DiagramDocument): boo
 
 export async function writeExportArtifact(
   document: DiagramDocument,
-  format: 'json' | 'svg' | 'plantuml'
+  format: 'json' | 'svg' | 'plantuml',
+  requestedFileName?: string
 ): Promise<{ relativePath: string; mimeType: string; size: number; sha256: string }> {
   const artifactDirectory = path.resolve(
     process.env.CHATOS_PLUGIN_ARTIFACT_DIR
@@ -729,7 +730,10 @@ export async function writeExportArtifact(
   await fs.mkdir(artifactDirectory, { recursive: true });
   const safeTitle = document.title.replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-').replace(/^-+|-+$/g, '') || document.documentId;
   const extension = format === 'json' ? 'diagram.json' : format === 'plantuml' ? 'puml' : 'svg';
-  const relativePath = `${safeTitle}-${document.documentId}.${extension}`;
+  const defaultFileName = `${safeTitle}-${document.documentId}.${extension}`;
+  const relativePath = requestedFileName === undefined
+    ? defaultFileName
+    : validateExportFileName(requestedFileName, extension);
   const body = format === 'json'
     ? `${JSON.stringify(document, null, 2)}\n`
     : format === 'plantuml'
@@ -743,4 +747,18 @@ export async function writeExportArtifact(
     size: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex')
   };
+}
+
+function validateExportFileName(fileName: string, extension: string): string {
+  if (fileName !== fileName.trim()
+    || fileName.length === 0
+    || fileName.length > 240
+    || fileName === '.'
+    || fileName === '..'
+    || fileName !== path.basename(fileName)
+    || /[\\/\u0000-\u001f\u007f]/u.test(fileName)
+    || !fileName.endsWith(`.${extension}`)) {
+    throw new Error(`fileName must be a safe basename ending in .${extension}.`);
+  }
+  return fileName;
 }

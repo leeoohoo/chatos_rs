@@ -39,6 +39,12 @@ impl LocalAgentRuntime {
             HostCommand::CancelTask(command) => Ok(HostResult::TaskGraph {
                 graph: self.cancel_task(idempotency, command).await?,
             }),
+            HostCommand::ResolveTaskFollowup(command) => Ok(HostResult::TaskFollowupReview {
+                review: self
+                    .store
+                    .resolve_task_followup(idempotency, &command, self.now()?)
+                    .await?,
+            }),
             HostCommand::RetryTask(command) => Ok(HostResult::TaskGraph {
                 graph: self.retry_task(idempotency, command).await?,
             }),

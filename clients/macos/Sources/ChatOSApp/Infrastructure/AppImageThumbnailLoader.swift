@@ -9,6 +9,19 @@ struct AppDecodedThumbnail: @unchecked Sendable {
     var memoryCost: Int {
         image.bytesPerRow * image.height
     }
+
+    @MainActor
+    func makeNSImage() -> NSImage {
+        // NSImage(cgImage:size:) can create a screen-scale-dependent
+        // representation. Keep the decoder's pixel bound and cache cost valid
+        // on Retina displays by installing one explicit bitmap representation.
+        let size = NSSize(width: image.width, height: image.height)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        bitmap.size = size
+        let result = NSImage(size: size)
+        result.addRepresentation(bitmap)
+        return result
+    }
 }
 
 enum AppImageThumbnailLoader {
@@ -202,7 +215,7 @@ enum AppLocalImageThumbnailCache {
             )
         }
         guard let decoded else { return nil }
-        let image = NSImage(cgImage: decoded.image, size: .zero)
+        let image = decoded.makeNSImage()
         cache.setObject(image, forKey: key as NSString, cost: decoded.memoryCost)
         return image
     }
@@ -294,7 +307,7 @@ enum AppImageDataThumbnailCache {
     ) async -> NSImage? {
         let decoded = await taskPool.value(for: cacheKey, operation: operation)
         guard let decoded else { return nil }
-        let image = NSImage(cgImage: decoded.image, size: .zero)
+        let image = decoded.makeNSImage()
         cache.setObject(image, forKey: cacheKey as NSString, cost: decoded.memoryCost)
         return image
     }

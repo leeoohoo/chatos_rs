@@ -2,6 +2,8 @@ import ChatOSCore
 import Foundation
 
 extension NativeLocalConnectorService {
+    static let approvalEvaluationMaximumCharacters = 160_000
+
     static func safeArgumentSummary(
         toolName: String,
         arguments: NativeJSONValue
@@ -10,7 +12,7 @@ extension NativeLocalConnectorService {
             let object = arguments.jsonObject ?? [:]
             let sessionName = object["session_name"]?.jsonString ?? "ChatOS Browser"
             if object["mode"]?.jsonString == "chrome_extension" {
-                return "连接用户现有的 Google Chrome：任务 \(sessionName)，新建页面进入同名原生标签组。"
+                return "连接用户已主动配对的 Google Chrome：任务 \(sessionName)，仅控制本任务新建页面和用户主动共享给 ChatOS 的页面；不会枚举或控制其他现有标签页。任务新建页面进入同名原生标签组。"
             }
             return "当前 Chrome 尚未授权，自动使用 ChatOS 隔离浏览器：任务 \(sessionName)。"
         }
@@ -33,6 +35,23 @@ extension NativeLocalConnectorService {
         let keys = arguments.jsonObject?.keys.sorted().joined(separator: ", ") ?? "参数"
         let digest = (try? NativePluginHash.canonicalSHA256(arguments).prefix(12)) ?? "unknown"
         return "字段：\(keys)；内容摘要：\(digest)"
+    }
+
+    static func safeApprovalEvaluationSummary(
+        toolName: String,
+        arguments: NativeJSONValue
+    ) -> String {
+        guard toolName == "browser_cdp_send" else {
+            return safeArgumentSummary(toolName: toolName, arguments: arguments)
+        }
+        let object = arguments.jsonObject ?? [:]
+        let method = object["method"]?.jsonString ?? "未知方法"
+        let target = object["target"]?.jsonString ?? "page"
+        let parameterKeys = object["params"]?.jsonObject?.keys.sorted().joined(separator: ", ")
+            ?? "无"
+        let expression = object["params"]?.jsonObject?["expression"]?.jsonString
+        let expressionSummary = safeCDPExpressionEvaluationSummary(expression)
+        return "向当前隔离浏览器发送 CDP 方法 \(method)，目标 \(target)，参数字段：\(parameterKeys)\(expressionSummary.map { "；完整表达式：\($0)" } ?? "")。"
     }
 
     static func browserSessionArguments(
@@ -69,12 +88,27 @@ extension NativeLocalConnectorService {
             if requiredPermissions.contains("browser.managed.launch") {
                 return "Chrome 扩展尚未授权，自动启动 ChatOS 隔离浏览器。所需权限：\(permissions)"
             }
-            return "连接用户已配对的 Google Chrome；任务新建页面会进入同名原生标签组。所需权限：\(permissions)"
+            return "用户已主动配对 Chrome 扩展，当前任务也已选择 Browser 能力。Browser Bridge 只向任务暴露本任务新建页面和用户主动共享给 ChatOS 的页面，不会枚举或控制其他现有标签页；任务新建页面会进入同名原生标签组。所需权限：\(permissions)"
         }
         if toolName.hasPrefix("browser_cdp_") {
             return "仅操作当前 ChatOS 隔离浏览器会话中的临时 CDP 连接。所需权限：\(permissions)"
         }
         return permissions.isEmpty ? "未声明额外权限。" : "所需权限：\(permissions)"
+    }
+
+    static func deterministicAutoApprovalReason(
+        componentKey: String,
+        toolName: String,
+        arguments: NativeJSONValue,
+        requiredPermissions: Set<String>
+    ) -> String? {
+        guard componentKey == NativeBrowserPluginIdentity.componentKey,
+              toolName == "browser_session_open",
+              arguments.jsonObject?["mode"]?.jsonString == "chrome_extension",
+              requiredPermissions == Set(["browser.chrome.attach"]) else {
+            return nil
+        }
+        return "已配对 Chrome，且 Browser Bridge 仅暴露本任务新建页和用户主动共享页；由宿主在既定权限边界内批准。"
     }
 
     static func toolPolicy(
@@ -150,6 +184,23 @@ extension NativeLocalConnectorService {
             return "已隐藏敏感表达式"
         }
         return String(expression.replacingOccurrences(of: "\n", with: " ").prefix(240))
+    }
+
+    private static func safeCDPExpressionEvaluationSummary(_ expression: String?) -> String? {
+        guard let expression = expression?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !expression.isEmpty else { return nil }
+        let sensitiveMarkers = [
+            "authorization", "bearer", "password", "passwd", "secret", "token",
+            "document.cookie", "localstorage", "sessionstorage",
+        ]
+        let normalized = expression.lowercased()
+        guard !sensitiveMarkers.contains(where: normalized.contains) else {
+            return "已隐藏敏感表达式"
+        }
+        let flattened = expression.replacingOccurrences(of: "\n", with: " ")
+        guard flattened.count > approvalEvaluationMaximumCharacters else { return flattened }
+        return String(flattened.prefix(approvalEvaluationMaximumCharacters))
+            + "…（仅审批评估摘要超过 160,000 字符，已安全截断）"
     }
 }
 

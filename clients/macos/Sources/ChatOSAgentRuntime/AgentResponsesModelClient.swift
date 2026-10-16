@@ -1,4 +1,5 @@
 import ChatOSNetworking
+import ChatOSModelCapabilities
 import Foundation
 
 /// Official OpenAI Responses adapter for native Agents.
@@ -141,9 +142,8 @@ public actor AgentResponsesModelClient: AgentModelClient {
         }
         if let maximumOutputTokens { payload["max_output_tokens"] = maximumOutputTokens }
         if let temperature { payload["temperature"] = temperature }
-        if let thinking = thinking?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !thinking.isEmpty, thinking.lowercased() != "auto" {
-            payload["reasoning"] = ["effort": thinking.lowercased()]
+        if let effort = ModelReasoningCapabilities.requestEffort(model: model, selected: thinking) {
+            payload["reasoning"] = ["effort": effort]
             payload["include"] = ["reasoning.encrypted_content"]
         }
 

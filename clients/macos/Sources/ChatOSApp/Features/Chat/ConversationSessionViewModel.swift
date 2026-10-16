@@ -6,6 +6,7 @@ final class ConversationComposerState: ObservableObject {
     @Published var draft = ""
     @Published var attachments: [ConversationAttachmentDraft] = []
     @Published var attachmentError: String?
+    @Published var selectedCapability: ConversationExplicitCapabilitySelection?
 }
 
 @MainActor
@@ -74,6 +75,11 @@ final class ConversationSessionViewModel: ObservableObject {
     var attachmentError: String? {
         get { composerState.attachmentError }
         set { composerState.attachmentError = newValue }
+    }
+
+    var selectedCapability: ConversationExplicitCapabilitySelection? {
+        get { composerState.selectedCapability }
+        set { composerState.selectedCapability = newValue }
     }
 
     let historyStore: any ConversationHistoryStoring
@@ -163,6 +169,9 @@ final class ConversationSessionViewModel: ObservableObject {
         guard !isActive else { return }
         isActive = true
         refreshLatestSilently()
+        Task { [weak self] in
+            await self?.refreshAskUserPrompts()
+        }
         startRealtime()
     }
 
@@ -366,6 +375,19 @@ final class ConversationSessionViewModel: ObservableObject {
             runID: runID
         )
         timelineObservationState.invalidate()
+    }
+
+    func focusAfterRefreshingAskUserPrompts(
+        turnID: String?,
+        promptID: String?,
+        taskID: String?,
+        runID: String?
+    ) async {
+        if promptID != nil {
+            await refreshAskUserPrompts()
+        }
+        guard !Task.isCancelled else { return }
+        focus(turnID: turnID, promptID: promptID, taskID: taskID, runID: runID)
     }
 
     func consumeFocusRequest(id: UUID) {

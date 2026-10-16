@@ -124,7 +124,7 @@ fn append_tool_results_supports_chat_and_responses_shapes() {
 }
 
 #[test]
-fn sanitize_tool_results_for_model_preserves_head_and_tail_of_large_content() {
+fn sanitize_tool_results_for_model_returns_explicit_overflow_instead_of_partial_content() {
     let results = vec![chatos_mcp_runtime::ToolResult {
         tool_call_id: "call_1".to_string(),
         name: "code.read_file".to_string(),
@@ -132,7 +132,7 @@ fn sanitize_tool_results_for_model_preserves_head_and_tail_of_large_content() {
         is_error: false,
         is_stream: false,
         conversation_turn_id: None,
-        content: "x".repeat(45_000),
+        content: "x".repeat(165_000),
         result: None,
         fatal_error: false,
         transient_model_input: None,
@@ -141,12 +141,11 @@ fn sanitize_tool_results_for_model_preserves_head_and_tail_of_large_content() {
     let sanitized = sanitize_tool_results_for_model(results);
     let content = sanitized[0].content.as_str();
 
-    assert!(content.contains("tool_result_truncated"));
+    assert!(content.contains("tool_result_budget_exceeded"));
     assert!(content.contains("code.read_file"));
     assert!(content.contains("per_result_limit"));
-    assert!(content.starts_with('x'));
-    assert!(content.ends_with('x'));
-    assert!(content.chars().count() <= 40_000);
+    assert!(!content.starts_with('x'));
+    assert!(!content.contains("tool_result_truncated"));
 }
 
 #[test]
@@ -193,13 +192,11 @@ fn oversized_result_does_not_consume_the_entire_batch_budget() {
     );
 
     assert_eq!(sanitized.len(), 2);
-    assert!(sanitized[0].content.starts_with('a'));
-    assert!(sanitized[0].content.ends_with('a'));
-    assert!(sanitized[1].content.starts_with('b'));
-    assert!(sanitized[1].content.ends_with('b'));
+    assert!(!sanitized[0].content.starts_with('a'));
+    assert!(!sanitized[1].content.starts_with('b'));
     assert!(sanitized
         .iter()
-        .all(|result| result.content.contains("tool_result_truncated")));
+        .all(|result| result.content.contains("tool_result_budget_exceeded")));
 }
 
 #[test]
@@ -381,7 +378,7 @@ fn build_tool_output_items_sanitizes_large_content() {
         is_error: false,
         is_stream: false,
         conversation_turn_id: None,
-        content: "x".repeat(45_000),
+        content: "x".repeat(165_000),
         result: None,
         fatal_error: false,
         transient_model_input: None,
@@ -393,7 +390,7 @@ fn build_tool_output_items_sanitizes_large_content() {
         .and_then(Value::as_str)
         .unwrap_or_default();
 
-    assert!(output.contains("tool_result_truncated"));
+    assert!(output.contains("tool_result_budget_exceeded"));
     assert!(output.contains("code.read_file"));
 }
 

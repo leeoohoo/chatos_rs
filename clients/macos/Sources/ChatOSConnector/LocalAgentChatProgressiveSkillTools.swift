@@ -18,13 +18,6 @@ actor LocalAgentProgressiveSkillSession {
         return skill
     }
 
-    func resources(skillRef: String) throws -> [LocalAgentProgressiveSkillResource] {
-        guard activatedRefs.contains(skillRef) else {
-            throw AgentGroupChatError.invalidField("skill_ref_not_activated")
-        }
-        return try boundSkill(skillRef).resources
-    }
-
     func read(
         skillRef: String,
         relativePath: String,
@@ -92,16 +85,6 @@ extension LocalAgentChatToolProvider {
         }
     }
 
-    struct ProductSkillResourceListResponse: Encodable {
-        let skillRef: String
-        let resources: [String]
-
-        enum CodingKeys: String, CodingKey {
-            case skillRef = "skill_ref"
-            case resources
-        }
-    }
-
     struct ProductSkillResourcePageResponse: Encodable {
         let skillRef: String
         let relativePath: String
@@ -163,16 +146,6 @@ extension LocalAgentChatToolProvider {
         }
     }
 
-    struct ProgressiveSkillResourceListResponse: Encodable {
-        let skillRef: String
-        let resources: [ProgressiveSkillResourceResponse]
-
-        enum CodingKeys: String, CodingKey {
-            case skillRef = "skill_ref"
-            case resources
-        }
-    }
-
     struct ProgressiveSkillResourcePageResponse: Encodable {
         let skillRef: String
         let relativePath: String
@@ -219,29 +192,15 @@ extension LocalAgentChatToolProvider {
         ))
     }
 
-    func listAgentSkillResources(_ call: AgentToolCall) async throws -> AgentToolOutcome {
-        let arguments = try Self.arguments(call)
-        let skillRef = try Self.requiredString(arguments, key: "skill_ref")
-        if ProductToolSkillSession.recognizes(skillRef: skillRef) {
-            let resources = try await productSkills.resourcePaths(skillRef: skillRef)
-            return try Self.outcome(ProductSkillResourceListResponse(
-                skillRef: skillRef,
-                resources: resources
-            ))
-        }
-        let resources = try await progressiveSkills.resources(skillRef: skillRef)
-        return try Self.outcome(ProgressiveSkillResourceListResponse(
-            skillRef: skillRef,
-            resources: resources.map(ProgressiveSkillResourceResponse.init)
-        ))
-    }
-
     func readAgentSkillResource(_ call: AgentToolCall) async throws -> AgentToolOutcome {
         let arguments = try Self.arguments(call)
         let skillRef = try Self.requiredString(arguments, key: "skill_ref")
         let path = try Self.requiredString(arguments, key: "relative_path")
         let offset = Int(try Self.optionalInteger(arguments, key: "offset") ?? 0)
-        let maxChars = Int(try Self.optionalInteger(arguments, key: "max_chars") ?? 32_000)
+        let maxChars = Int(
+            try Self.optionalInteger(arguments, key: "max_chars")
+                ?? Int64(ProgressiveSkillFileLoader.maximumPageCharacters)
+        )
         if ProductToolSkillSession.recognizes(skillRef: skillRef) {
             let page = try await productSkills.readResource(
                 skillRef: skillRef,

@@ -42,7 +42,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
     public static let projectDashboardGetToolName = "project_dashboard_get"
     public static let projectDashboardUpdateToolName = "project_dashboard_update"
     public static let agentSkillActivateToolName = "agent_skill_activate"
-    public static let agentSkillListResourcesToolName = "agent_skill_list_resources"
     public static let agentSkillReadResourceToolName = "agent_skill_read_resource"
     let store: any AgentGroupChatStore
     let context: LocalAgentChatRunContext
@@ -106,7 +105,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
                 Self.teamAssetListToolName,
                 Self.teamAssetGetToolName,
                 Self.agentSkillActivateToolName,
-                Self.agentSkillListResourcesToolName,
                 Self.agentSkillReadResourceToolName,
             ]
             return try await skillBoundDefinitions(
@@ -255,8 +253,6 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
             return try await updateProjectDashboard(call)
         case Self.agentSkillActivateToolName:
             return try await activateAgentSkill(call)
-        case Self.agentSkillListResourcesToolName:
-            return try await listAgentSkillResources(call)
         case Self.agentSkillReadResourceToolName:
             return try await readAgentSkillResource(call)
         default:
@@ -345,8 +341,7 @@ public struct LocalAgentChatToolProvider: AgentToolProvider, Sendable {
 
     private static func skillBindingID(for toolName: String) -> String? {
         switch toolName {
-        case agentSkillActivateToolName, agentSkillListResourcesToolName,
-             agentSkillReadResourceToolName:
+        case agentSkillActivateToolName, agentSkillReadResourceToolName:
             ProductToolSkillBindingID.agentSkillControlPlane
         case bootstrapToolName, workspaceSnapshotToolName, getTriggerToolName,
              listMembersToolName, readUnreadToolName, readAllUnreadToolName,

@@ -15,6 +15,37 @@ use super::{
 use crate::stream_parse::FinalizedStreamState;
 
 #[test]
+fn responses_effort_respects_model_contract_for_every_provider_and_preserves_max() {
+    for provider in ["gpt", "openai", "openai_compatible", "my_api"] {
+        for model in ["gpt-5.6-sol", "gpt-6.1-sol"] {
+            for (selected, expected) in [
+                ("none", "low"),
+                ("minimal", "low"),
+                ("low", "low"),
+                ("medium", "medium"),
+                ("high", "high"),
+                ("xhigh", "xhigh"),
+                ("max", "max"),
+            ] {
+                let payload = build_request_payload(
+                    AiTransport::Responses,
+                    json!([{"role": "user", "content": "你好"}]),
+                    model.into(),
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(provider.into()),
+                    Some(selected.into()),
+                    &AiRequestOptions::default(),
+                );
+                assert_eq!(payload.pointer("/reasoning/effort"), Some(&json!(expected)));
+            }
+        }
+    }
+}
+
+#[test]
 fn responses_payload_can_enable_server_side_compaction() {
     let payload = build_request_payload(
         AiTransport::Responses,

@@ -1,6 +1,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { RevisionConflictError, WebDesignDocumentStore } from './document-store.js';
 import { exportDocumentHtmlFiles } from './html-exporter.js';
 import { exportReactComponent } from './react-exporter.js';
@@ -23,6 +26,7 @@ import { jsonEncodedValueSchema, jsonScalarValueSchema, stringLiteralSchema } fr
 import { SceneQueryIndex, type SceneQuery } from './v2/scene-query.js';
 import { createSceneNodeBase, indexSceneDocument, type SceneDocument, type SceneNode, type SceneNodeType } from './v2/scene-schema.js';
 import { SceneDocumentStore, SceneRevisionConflictError } from './v2/scene-store.js';
+import { renderResponsiveSceneHandoff } from './v2/scene-handoff-exporter.js';
 import type { CreateGenerationStepInput, GenerationArtifact, GenerationDesignIntent } from './v2/generation-plan-schema.js';
 import type { SceneTransactionOperation } from './v2/scene-transaction.js';
 import {
@@ -69,7 +73,39 @@ import {
 } from './mcp-tool-helpers.js';
 
 const SERVER_NAME = 'chatos-web-design-studio';
-const SERVER_VERSION = '3.0.30';
+const SERVER_VERSION = '3.0.33';
+
+interface HandoffArtifactFile {
+  producerArtifactId: string;
+  relativePath: string;
+  displayName: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+}
+
+function safeArtifactBaseName(value: unknown, fallback: string): string {
+  const source = typeof value === 'string' ? value.trim().normalize('NFKC') : '';
+  const normalized = source.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '');
+  return (normalized || fallback).slice(0, 120);
+}
+
+async function writeHandoffArtifact(fileName: string, data: Buffer, mimeType: string): Promise<HandoffArtifactFile> {
+  const configured = process.env.CHATOS_PLUGIN_ARTIFACT_DIR?.trim();
+  if (!configured) throw new Error('CHATOS_PLUGIN_ARTIFACT_DIR is required for Web Design handoff export.');
+  const directory = path.resolve(configured);
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(path.join(directory, fileName), data);
+  const sha256 = createHash('sha256').update(data).digest('hex');
+  return {
+    producerArtifactId: `web_design_${sha256}`,
+    relativePath: fileName,
+    displayName: fileName,
+    mimeType,
+    size: data.length,
+    sha256
+  };
+}
 async function callTool(name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
   const argumentsValue = objectArguments(rawArguments);
   switch (name) {
@@ -107,6 +143,41 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
         String(argumentsValue.documentId), String(argumentsValue.pageId),
         typeof argumentsValue.viewportWidth === 'number' ? argumentsValue.viewportWidth : 1440
       );
+    case 'web_design_export_handoff': {
+      const documentId = String(argumentsValue.documentId);
+      const pageId = String(argumentsValue.pageId);
+      const planResult = await progressiveGenerationService().getPlan(documentId);
+      const plan = planResult.plan as { pages?: Array<{ pageId: string; status: string }> };
+      if (!plan.pages?.some((page) => page.pageId === pageId && page.status === 'completed')) {
+        throw new Error(`Scene page ${pageId} must complete its accepted handoff before export.`);
+      }
+      const desktopWidth = typeof argumentsValue.desktopWidth === 'number' ? argumentsValue.desktopWidth : 1440;
+      const mobileWidth = typeof argumentsValue.mobileWidth === 'number' ? argumentsValue.mobileWidth : 390;
+      const scene = await generationRepositories.scenes.read(documentId);
+      const rendered = renderResponsiveSceneHandoff(scene, pageId, desktopWidth, mobileWidth);
+      const desktopCapture = await generationVisualService().capturePage(documentId, pageId, desktopWidth);
+      const mobileCapture = await generationVisualService().capturePage(documentId, pageId, mobileWidth);
+      const desktopImage = desktopCapture.__images[0];
+      const mobileImage = mobileCapture.__images[0];
+      if (!desktopImage || !mobileImage) throw new Error('Web Design handoff preview capture did not return PNG data.');
+      const baseName = safeArtifactBaseName(argumentsValue.fileBaseName, pageId);
+      const files = [
+        await writeHandoffArtifact(`${baseName}.html`, Buffer.from(rendered.html, 'utf8'), 'text/html'),
+        await writeHandoffArtifact(`${baseName}-desktop.png`, Buffer.from(desktopImage.data, 'base64'), 'image/png'),
+        await writeHandoffArtifact(`${baseName}-mobile.png`, Buffer.from(mobileImage.data, 'base64'), 'image/png')
+      ];
+      return {
+        documentId,
+        pageId,
+        entryFile: files[0].displayName,
+        files,
+        verification: {
+          desktop: { viewportWidth: desktopWidth, height: rendered.desktopHeight },
+          mobile: { viewportWidth: mobileWidth, height: rendered.mobileHeight },
+          sourceRevision: scene.revision
+        }
+      };
+    }
     case 'web_design_capture_region':
       return generationVisualService().captureRegion({
         documentId: String(argumentsValue.documentId),
@@ -688,7 +759,7 @@ async function callTool(name: string, rawArguments: unknown): Promise<Record<str
 function result(value: Record<string, unknown>, isError = false) {
   const sourceImages = Array.isArray(value.__images) ? value.__images as ToolImagePayload[] : [];
   const { __images: _discardedImages, ...structuredContent } = value;
-  return {
+  const response: Record<string, unknown> = {
     content: [
       { type: 'text' as const, text: JSON.stringify(structuredContent) },
       ...sourceImages.map((image) => ({ type: 'image' as const, data: image.data, mimeType: image.mimeType }))
@@ -696,6 +767,24 @@ function result(value: Record<string, unknown>, isError = false) {
     structuredContent,
     isError
   };
+  if (!isError && Array.isArray(value.files)) {
+    const candidates = value.files.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+      const file = item as Partial<HandoffArtifactFile>;
+      if (!file.producerArtifactId || !file.relativePath || !file.displayName || !file.mimeType
+        || !Number.isSafeInteger(file.size) || !file.sha256) return [];
+      return [{
+        producer_artifact_id: file.producerArtifactId,
+        relative_path: file.relativePath,
+        display_name: file.displayName,
+        media_type: file.mimeType,
+        size_bytes: file.size,
+        sha256: file.sha256
+      }];
+    });
+    if (candidates.length > 0) response._meta = { 'chatos/artifacts': candidates };
+  }
+  return response;
 }
 
 async function runMcp(): Promise<void> {

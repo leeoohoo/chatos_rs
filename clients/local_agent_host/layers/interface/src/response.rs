@@ -10,7 +10,7 @@ use crate::{
     LocalMemorySyncStatus, LocalMessageTaskGraph, LocalModelConfigSnapshot, LocalNotepadImage,
     LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
     LocalPluginInstallationRecord, LocalRemoteConnection, LocalRequirementSurvey,
-    LocalRequirementSurveyResolution, LocalTaskGraph, LocalTaskGraphPage,
+    LocalRequirementSurveyResolution, LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage,
     LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,14 @@ pub enum HostResult {
     CapabilityPolicySnapshot {
         snapshot: LocalCapabilityPolicySnapshot,
     },
+    RunSkillActivations {
+        run_id: String,
+        skill_refs: Vec<String>,
+    },
+    RunSkillBundle {
+        run_id: String,
+        bundle: Option<LocalSkillBundleSnapshot>,
+    },
     Run {
         run: LocalAgentRunRecord,
     },
@@ -111,6 +119,9 @@ pub enum HostResult {
     TaskRuns {
         task_id: String,
         runs: Vec<LocalAgentRunRecord>,
+    },
+    TaskFollowupReview {
+        review: serde_json::Value,
     },
     PluginInstallation {
         installation: LocalPluginInstallationRecord,
@@ -188,6 +199,9 @@ pub enum HostResult {
     },
     RequirementSurveyResolved {
         resolution: Box<LocalRequirementSurveyResolution>,
+    },
+    RequirementPlan {
+        plan: Option<crate::LocalRequirementPlan>,
     },
 }
 

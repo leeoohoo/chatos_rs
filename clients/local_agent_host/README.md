@@ -14,7 +14,7 @@ The current milestone provides:
 - a durable Tool Invocation Ledger with per-call claims and results;
 - a durable Task DAG repository with atomic, idempotent graph creation;
 - query-derived Task Graph lifecycle status and per-Task Run history;
-- the seven Main Chat task tools (`list_tasks`, `get_task`, `create_task`, `create_tasks_with_prerequisites`, `cancel_task`, `wait_for_task_completion`, and `get_task_dependency_graph`);
+- the eight Main Chat task tools (`list_tasks`, `get_task`, `create_task`, `create_tasks_with_prerequisites`, `cancel_task`, `wait_for_task_completion`, `get_task_dependency_graph`, and `resolve_task_followup`);
 - a `chatos_ai_runtime` single-step Profile adapter and conservative tool-safety policy;
 - a local tool registry and one-invocation Tool Scheduler;
 - a client-owned MCP stdio process/session adapter with local tool discovery and execution;
@@ -91,9 +91,21 @@ File-backed storage performs `PRAGMA quick_check(1)` before and after schema mig
 
 Native clients may choose `LocalAgentHostAssembly::with_external_tool_worker`. In that mode Swift or C# claims and commits platform tools through IPC, while Rust still owns model scheduling plus the complete Main Chat task-tool boundary and wakes immediately after each native tool receipt. This keeps platform permissions and UI-bound tools in the native process without duplicating the Agent loop.
 
-Protocol v40 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. The Assembly's Rust worker claims the Host-owned Main Chat Task tools, Task process tools, and Ask User tools, while Coordinator IPC automatically excludes those reserved tools from native claims. Explicit overlapping filters are rejected.
+Protocol v40 retains the optional `include_tool_names` and `exclude_tool_names` Tool claim filters. SQLite v31 additionally persists an `execution_route` on every Tool Invocation: Host-owned tools and Main Chat `agent_skill_*` use `shared`, while Task Execution `agent_skill_*` and other native tools use `platform`. The Assembly's Rust worker claims only `shared`; Coordinator IPC forces external native claims to `platform` and rejects external commits for shared invocations. Route ownership, rather than a reserved-name list, therefore prevents workers from competing when Product and Plugin Skill providers expose the same model-visible tool names. Explicit overlapping name filters are still rejected.
 
 Protocol v40 also lets authenticated native-client configuration code publish and read immutable model and capability revisions through the same protected Host IPC connection. These commands contain only the non-secret DTOs defined by the interface layer; storage ports and SQLite remain below the application boundary. Command receipts make publication replay-safe and reject reuse of one command ID with different content.
+
+Product Skill bundles use separate immutable profiles: `skill_bundle_internal` for Main Chat and `task_skill_bundle_internal` for Task Execution, selected by each Run's frozen capability revision. Task bundles bind the broker, project read/write, and three terminal families; their tool lists intersect the actual Task catalog. Bootstrap includes both bundle checksums in the capability revision and injects the run-bound capability discovery instructions, while other Product Skills remain on-demand.
+
+New macOS Main Chat and Task instructions come directly from bundled `chatos-main-chat-invariants` and `chatos-task-execution-invariants` policy Skills, respectively. Each policy is frozen as a document in its profile's Product bundle and loaded automatically; it has no on-demand tool binding. Bootstrap no longer fetches or resolves remote behavior Prompts for these profiles, but still consumes account-scoped capability policy. The revision hashes both bundle identities, rendered catalogs, actual tool schemas and required Task policy. Local restore and missing-catalog fallback publish a new revision without rewriting old Run snapshots, preserve existing tools/policy and External MCP fingerprints, and reject remote tools whose trusted binding cannot be recovered. Supporting profiles are published before Main Chat and the model pointers are updated only after publication succeeds. Repeating an unchanged migration publishes nothing. Offline remote tools without transient runtime configuration return `external_mcp_runtime_unavailable` before HTTP. Other Agents' managed Prompts and the System Agents admin page remain in service.
+
+The account-scoped `get_run_skill_bundle` command returns the Run's frozen Product bundle (or `null` for legacy Runs). macOS uses it for Product instructions, resource manifests, and Unicode-scalar pagination instead of loading upgraded app resources into an old Run. `get_run_skill_activations` restores successful Product/Plugin activations after provider recreation; restored Product refs are limited to selected capabilities. Task builtin discovery is metadata-only and advertises `invocation_mode=direct_task_tool`: actual operations use the durable Task executor's approval and ownership checks. Task `capability_invoke` rejects builtins and continues to execute Plugins through their fixed-release provider.
+
+New Task bundles use schema 2. Shared preflight resolves Plugin `capability_invoke` against the latest successful owner/Run-scoped `capability_describe`, evaluates its canonical `skill_gate` (`all_of`, optional `select_by_argument`), and checks durable activation before native execution. Missing descriptions and invalid/unmapped selectors fail closed. Returned `is_error`/`isError` envelopes are not successful facts, including legacy ledger rows. Schema 1 and bundle-less Runs retain compatibility.
+
+macOS External MCP tools have per-configuration frozen Product bindings and progressively disclosed `chatos-external-mcp` guidance. Native execution checks endpoint/tool catalog identity and activation before HTTP; headers stay transient and may rotate independently. Server-owned business Skill documents are not yet supplied by the Gateway, so declared remote business gates are rejected rather than ignored. Task controls are available for effective builtin, Plugin, and External-only selections without granting unrelated capabilities.
+
+macOS Task file edit sessions enforce the `owned_paths` frozen into the Run: staging and commit allow only exact owned paths or descendants, reject ancestor deletion and symbolic-link parents, and cannot reuse a session with a different root or ownership policy. A rejected batch does not modify its existing staged state. Missing/empty ownership retains whole-workspace compatibility. Shared graph validation and runtime locks use conservative NFD/lowercase keys for common case and Unicode-normalization path aliases, without rewriting the actual paths.
 
 Main Chat conversations are written to the local SQLite fact source rather than a remote conversation runtime. Starting a Turn atomically creates the Turn, its user Message, and one queued `main_chat` Run owned by that Turn. A conversation version compare-and-swap rejects stale composers, while a partial unique index permits only one active Turn per conversation. Successful Runs append a deterministic assistant Message and close the Turn in the same transaction; failed or cancelled Runs close the Turn without inventing an assistant response. Historical server conversations are intentionally not migrated.
 
@@ -242,6 +254,18 @@ Transient model retries persist `model_attempt` in the Run itself and do not con
 `wait_events` performs a bounded long poll (at most 60 seconds) from a durable event cursor. External native Tool Workers wait for `tool_batch_requested`, then use `claim_next_tool` and `commit_tool`; timeout responses preserve the supplied cursor and contain an empty event page.
 
 ## Verification
+
+The isolated orchestration harness uses frozen client production Skills and the actual Main Chat planner, Task/Skill tools, and in-memory SQLite. It never registers business executors or runs the generated Tasks. See [evaluation instructions and Windows exporter contract](../docs/local-agent-task-orchestration-evaluation.md).
+
+```bash
+node clients/evals/task-orchestration/run.mjs --smoke --output /absolute/new-report.json
+node clients/evals/task-orchestration/run.mjs --list
+cargo test -p chatos_local_agent_host --example orchestration_eval
+```
+
+Offline replay verifies infrastructure, not model decomposition quality. Live planning is opt-in (`--live --case ID` or `--live --all`) with dedicated `CHATOS_EVAL_*` environment variables, bounded requests/timeouts and no automatic retries. Reports always require human semantic review.
+
+Task tools return a known `Failed` result for errors before their first mutation so Main Chat can repair contracts, capability selections, dependencies or follow-up parameters. Errors after graph creation/dispatch/cancellation begins remain conservative unknown results. Both single Tasks and graph nodes persist optional `owned_paths`; omission still claims the whole project. Missing policy snapshots retain compatibility defaults only for legacy Runs without a Skill bundle; Skill-enabled Runs with missing policy, storage failures or malformed existing policies fail closed.
 
 ```bash
 cargo test \

@@ -16,6 +16,7 @@ struct NativeApprovalAgentRequest: Sendable {
     var projectRoot: URL
     var riskLevel: String
     var riskReason: String?
+    var purpose: String? = nil
     var requestedPermissionsDescription: String?
 }
 
@@ -162,6 +163,7 @@ struct NativeApprovalAgent: Sendable {
                 "source": request.source,
                 "cwd": request.cwd,
                 "operation": ([request.command] + request.arguments).joined(separator: " "),
+                "purpose": request.purpose ?? "null",
                 "requested_permissions": request.requestedPermissionsDescription ?? "null",
                 "risk_level": request.riskLevel,
                 "risk_reason": request.riskReason ?? "无",

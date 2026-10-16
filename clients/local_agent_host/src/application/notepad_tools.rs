@@ -33,6 +33,11 @@ pub const NOTEPAD_READ_ONLY_TOOLS: [&str; 3] = [
     NOTEPAD_READ_NOTE_TOOL,
 ];
 
+/// Task-owned durable note writes are authorized by the bound Notepad capability.
+/// They remain side-effecting for crash recovery, but do not enter command approval.
+pub const NOTEPAD_APPROVAL_EXEMPT_TOOLS: [&str; 2] =
+    [NOTEPAD_CREATE_NOTE_TOOL, NOTEPAD_UPDATE_NOTE_TOOL];
+
 #[derive(Clone)]
 pub struct LocalNotepadToolExecutor {
     runtime: Arc<LocalAgentRuntime>,

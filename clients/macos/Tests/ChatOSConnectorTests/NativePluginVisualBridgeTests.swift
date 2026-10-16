@@ -137,6 +137,71 @@ extension NativePluginRuntimeTests {
         let relativePath = try #require(descriptor["workspace_relative_path"]?.jsonString)
         #expect(relativePath.hasPrefix("chatos-plugin-artifacts/adapter-1/pa_"))
         #expect((try Data(contentsOf: workspace.appendingPathComponent(relativePath))) == bytes)
+        let deliveryText = try #require(
+            registered.jsonObject?["content"]?.jsonArray?.first?.jsonObject?["text"]?.jsonString
+        )
+        #expect(deliveryText.contains("[report.docx](chatos-plugin-artifacts/adapter-1/"))
+        #expect(!deliveryText.contains("](report.docx)"))
+    }
+
+    @Test("managed delivery evidence is first and duplicated into structured content")
+    func managedDeliveryEvidenceIsModelVisible() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let workspace = root.appendingPathComponent("workspace", isDirectory: true)
+        let artifacts = root.appendingPathComponent("artifacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data("artifact".utf8)
+        try bytes.write(to: artifacts.appendingPathComponent("result.txt"))
+        let identity = NativePluginRuntimeStore.Identity(
+            runID: "run-visible",
+            pluginID: "plugin-visible",
+            releaseID: "release-visible",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "b", count: 64),
+            componentKey: "fixture-mcp",
+            adapterSessionID: "adapter-visible"
+        )
+        let registered = try NativePluginArtifactRegistrar.register(
+            result: .object([
+                "content": .array([.object([
+                    "type": .string("text"),
+                    "text": .string(String(repeating: "x", count: 20_000)),
+                ])]),
+                "structuredContent": .object(["ok": .bool(true)]),
+                "_meta": .object(["chatos/artifacts": .array([.object([
+                    "producer_artifact_id": .string("visible-1"),
+                    "relative_path": .string("result.txt"),
+                    "display_name": .string("result.txt"),
+                    "media_type": .string("text/plain"),
+                    "size_bytes": .number(Double(bytes.count)),
+                    "sha256": .string(NativePluginHash.sha256(bytes)),
+                ])])]),
+            ]),
+            identity: identity,
+            ownerUserID: "user-visible",
+            deviceID: "device-visible",
+            workspaceID: "workspace-visible",
+            workspaceRootURL: workspace,
+            artifactRootURL: artifacts,
+            permissionSnapshot: ["artifact.create"],
+            toolName: "fixture_export"
+        )
+
+        let firstText = try #require(
+            registered.jsonObject?["content"]?.jsonArray?.first?.jsonObject?["text"]?.jsonString
+        )
+        #expect(firstText.contains("[result.txt](chatos-plugin-artifacts/adapter-visible/"))
+        let delivery = try #require(
+            registered.jsonObject?["structuredContent"]?.jsonObject?["chatos_managed_delivery"]?.jsonObject
+        )
+        let link = try #require(delivery["links"]?.jsonArray?.first?.jsonObject)
+        #expect(link["workspace_relative_path"]?.jsonString?.hasPrefix(
+            "chatos-plugin-artifacts/adapter-visible/"
+        ) == true)
+        #expect(link["markdown"]?.jsonString?.contains("[result.txt](") == true)
     }
 
     @Test("Solution Studio Markdown artifacts are validated and persisted in the project")

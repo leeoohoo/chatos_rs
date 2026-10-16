@@ -11,6 +11,7 @@ public struct LocalConnectorApprovalEvent: Identifiable, Sendable, Equatable, Co
     public var id: String
     public var requestID: String
     public var command: String
+    public var purpose: String?
     public var cwd: String
     public var source: String
     public var risk: String
@@ -24,6 +25,7 @@ public struct LocalConnectorApprovalEvent: Identifiable, Sendable, Equatable, Co
         id: String = UUID().uuidString,
         requestID: String,
         command: String,
+        purpose: String? = nil,
         cwd: String,
         source: String,
         risk: String,
@@ -36,6 +38,7 @@ public struct LocalConnectorApprovalEvent: Identifiable, Sendable, Equatable, Co
         self.id = id
         self.requestID = requestID
         self.command = command
+        self.purpose = purpose
         self.cwd = cwd
         self.source = source
         self.risk = risk

@@ -13,10 +13,19 @@ import {
 import { GenerationCandidateStore, type GenerationCandidateRecord } from './generation-candidate-store.js';
 import { GenerationPlanStore } from './generation-plan-store.js';
 import { GenerationSoftProtectionStore } from './generation-soft-protection-store.js';
-import { createBlankSceneDocument, createSceneNodeBase, type SceneDocument, type SceneFrameNode } from './scene-schema.js';
+import {
+  createBlankSceneDocument,
+  createSceneNodeBase,
+  indexSceneDocument,
+  isSceneContainer,
+  isSceneSlotContainer,
+  type SceneDocument,
+  type SceneFrameNode,
+  type SceneNode
+} from './scene-schema.js';
 import { SceneDocumentStore } from './scene-store.js';
 import { commitGenerationStep, prepareGenerationStep } from './generation-step-executor.js';
-import type { SceneTransactionOperation } from './scene-transaction.js';
+import { applySceneTransaction, type SceneTransactionOperation } from './scene-transaction.js';
 
 export interface ProgressiveGenerationImage {
   label: string;
@@ -98,6 +107,35 @@ export interface ExecuteProgressiveStepInput {
 }
 
 const executableStepStatuses = new Set(['ready', 'retryable', 'rejected', 'stale', 'rolled-back']);
+
+function sceneNodeIds(root: SceneNode): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: SceneNode): void => {
+    ids.add(node.id);
+    if (isSceneContainer(node)) node.children.forEach(visit);
+    if (isSceneSlotContainer(node)) Object.values(node.slots).flat().forEach(visit);
+  };
+  visit(root);
+  return ids;
+}
+
+function insertedNodeIds(operations: SceneTransactionOperation[]): Set<string> {
+  const ids = new Set<string>();
+  for (const operation of operations) {
+    if (operation.op !== 'insert-node') continue;
+    for (const id of sceneNodeIds(operation.node)) ids.add(id);
+  }
+  return ids;
+}
+
+function referencedNodeIds(operations: SceneTransactionOperation[]): Set<string> {
+  const ids = new Set<string>();
+  for (const operation of operations) {
+    if ('nodeId' in operation && typeof operation.nodeId === 'string') ids.add(operation.nodeId);
+    if ('parentId' in operation && typeof operation.parentId === 'string') ids.add(operation.parentId);
+  }
+  return ids;
+}
 
 function isMissing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
@@ -561,6 +599,40 @@ export class ProgressiveGenerationService {
     if (!Array.isArray(input.operations) || input.operations.length === 0 || input.operations.length > 256 || serializedBytes > 262_144) {
       throw new Error('A generation step needs 1–256 focused Scene operations and must stay below 262144 bytes. Use insert-simple-tree for a large editable hierarchy.');
     }
+    let operations = structuredClone(input.operations);
+    let retrySourceAttemptId: string | undefined;
+    if (step.status === 'rejected' || step.status === 'retryable') {
+      const sourceAttempts = [...step.attempts].reverse().filter((attempt) =>
+        attempt.status === 'rejected' || attempt.status === 'failed'
+      );
+      for (const sourceAttempt of sourceAttempts) {
+        try {
+          const sourceCandidate = await this.options.repositories.candidates.read(scope, sourceAttempt.attemptId);
+          if (sourceCandidate.pageId === page.pageId
+            && sourceCandidate.stepId === step.stepId
+            && sourceCandidate.baseRevision === scene.revision) {
+            const candidateDocument = applySceneTransaction(scene, sourceCandidate.transaction).document;
+            const canonicalIds = indexSceneDocument(scene);
+            const candidateIds = indexSceneDocument(candidateDocument);
+            const insertedByRetry = insertedNodeIds(operations);
+            const needsSourceCandidate = [...referencedNodeIds(operations)].some((nodeId) =>
+              !canonicalIds.has(nodeId) && candidateIds.has(nodeId) && !insertedByRetry.has(nodeId)
+            );
+            if (needsSourceCandidate) {
+              operations = [
+                ...structuredClone(sourceCandidate.transaction.operations),
+                ...operations
+              ];
+              retrySourceAttemptId = sourceAttempt.attemptId;
+              break;
+            }
+          }
+        } catch (error) {
+          if (isMissing(error)) continue;
+          throw error;
+        }
+      }
+    }
     const requestId = requireIdentifier(input.requestId ?? randomUUID(), 'requestId');
     const attemptId = `attempt:${requestId}`;
     const idempotencyKey = `execute:${step.stepId}:${requestId}`;
@@ -578,7 +650,7 @@ export class ProgressiveGenerationService {
         transactionId,
         baseRevision: scene.revision,
         author: 'ai',
-        operations: structuredClone(input.operations)
+        operations: structuredClone(operations)
       }),
       verify: async ({ page: candidatePage, step: candidateStep, baseDocument, candidateDocument }) => {
         const verified = await this.options.verifyCandidate({
@@ -614,6 +686,7 @@ export class ProgressiveGenerationService {
       status: 'awaiting-review',
       plan: planSummary,
       candidate: this.candidateSummary(result.candidate),
+      ...(retrySourceAttemptId ? { retrySourceAttemptId } : {}),
       nextAction: {
         type: 'review-candidate-images',
         tool: 'web_design_control_plan',
@@ -721,8 +794,15 @@ export class ProgressiveGenerationService {
     const changed = await this.options.repositories.plans.apply(scope, expectedPlanRevision, {
       type: 'reject-step', pageId: page.pageId, stepId, attemptId, reason
     });
-    await this.options.repositories.candidates.remove(scope, attemptId).catch(() => undefined);
-    return { status: 'rejected', plan: summarizeGenerationPlanState(changed.plan) };
+    return {
+      status: 'rejected', plan: summarizeGenerationPlanState(changed.plan),
+      recovery: {
+        recoverable: true,
+        reason,
+        sourceAttemptId: attemptId,
+        instruction: 'The rejected Candidate was not committed. Continue this Task with the returned retry-step and current Plan revision. You may either reinsert the corrected subtree or patch nodes from this rejected Candidate; the plugin safely carries that Candidate forward only inside the same Step and revalidates the complete replacement transaction. Review the new images before acceptance. Rejection alone is not a terminal Task failure.'
+      }
+    };
   }
 
   async skipStep(documentId: string, expectedPlanRevision: number, stepId: string): Promise<Record<string, unknown>> {

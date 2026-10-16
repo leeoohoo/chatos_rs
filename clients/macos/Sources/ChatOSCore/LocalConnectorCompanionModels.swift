@@ -43,6 +43,7 @@ public struct LocalConnectorCompanionResource: Codable, Sendable, Equatable, Ide
 public struct LocalConnectorCompanionApproval: Codable, Sendable, Equatable, Identifiable {
     public var id: String
     public var command: String
+    public var purpose: String?
     public var context: String?
     public var source: String
     public var risk: String
@@ -53,6 +54,7 @@ public struct LocalConnectorCompanionApproval: Codable, Sendable, Equatable, Ide
     public init(
         id: String,
         command: String,
+        purpose: String? = nil,
         context: String?,
         source: String,
         risk: String,
@@ -62,6 +64,7 @@ public struct LocalConnectorCompanionApproval: Codable, Sendable, Equatable, Ide
     ) {
         self.id = id
         self.command = command
+        self.purpose = purpose
         self.context = context
         self.source = source
         self.risk = risk
@@ -71,7 +74,7 @@ public struct LocalConnectorCompanionApproval: Codable, Sendable, Equatable, Ide
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, command, context, source, risk, reason
+        case id, command, purpose, context, source, risk, reason
         case createdAt = "created_at"
         case availableDecisions = "available_decisions"
     }

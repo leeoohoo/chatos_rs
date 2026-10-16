@@ -17,9 +17,219 @@ use chatos_local_agent_protocol::{
 };
 use chatos_local_agent_runtime::{LocalAgentProfile, LocalAgentProfileRegistry};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Barrier;
 use uuid::Uuid;
 
 struct ModelProfile;
+
+struct ConcurrentSuccessProfile {
+    barrier: Arc<Barrier>,
+    started: Arc<AtomicUsize>,
+}
+
+struct ConcurrentToolExecutor {
+    barrier: Arc<Barrier>,
+    started: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl LocalToolExecutor for ConcurrentToolExecutor {
+    async fn execute_tool(
+        &self,
+        invocation: &LocalAgentToolInvocationRecord,
+    ) -> Result<LocalAgentToolOutcome, String> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        self.barrier.wait().await;
+        Ok(LocalAgentToolOutcome::Succeeded {
+            output: json!({"invocation_id": invocation.invocation_id}),
+        })
+    }
+}
+
+#[async_trait]
+impl LocalAgentProfile for ConcurrentSuccessProfile {
+    async fn execute_step(
+        &self,
+        claim: &LocalAgentRunClaim,
+    ) -> Result<LocalAgentStepOutcome, String> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        self.barrier.wait().await;
+        Ok(LocalAgentStepOutcome::Succeed {
+            output: json!({"run_id": claim.run.run_id}),
+        })
+    }
+}
+
+#[tokio::test]
+async fn coordinator_executes_independent_model_runs_concurrently() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    for index in 0..4 {
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: format!("create-concurrent-{index}"),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("run-concurrent-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("conversation-{index}"),
+                    profile_key: "concurrent".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": format!("work-{index}")}),
+                    max_iterations: 4,
+                }),
+            })
+            .await
+            .expect("create concurrent Run");
+    }
+    let started = Arc::new(AtomicUsize::new(0));
+    let mut profiles = LocalAgentProfileRegistry::new();
+    profiles
+        .register(
+            "concurrent",
+            ConcurrentSuccessProfile {
+                barrier: Arc::new(Barrier::new(4)),
+                started: Arc::clone(&started),
+            },
+        )
+        .expect("profile");
+    let scheduler =
+        LocalAgentScheduler::new(Arc::clone(&runtime), profiles, "user-1", "model-worker")
+            .expect("scheduler");
+    let coordinator =
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", Some(scheduler), None)
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(4)
+            .expect("four model slots");
+    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        coordinator.drain_ready_work(&shutdown_rx),
+    )
+    .await
+    .expect("four model Runs should reach the barrier together")
+    .expect("drain concurrent Runs");
+
+    assert_eq!(started.load(Ordering::SeqCst), 4);
+    for index in 0..4 {
+        let run = runtime
+            .get_run_for_host_worker(&format!("run-concurrent-{index}"))
+            .await
+            .expect("get Run")
+            .expect("persisted Run");
+        assert_eq!(run.status.as_str(), "succeeded");
+    }
+}
+
+#[tokio::test]
+async fn coordinator_executes_independent_tool_calls_concurrently() {
+    let storage = Arc::new(
+        SqliteClientStorage::connect_memory()
+            .await
+            .expect("storage"),
+    );
+    let runtime = Arc::new(LocalAgentRuntime::new(storage));
+    runtime.initialize("user-1").await.expect("initialize");
+    for index in 0..4 {
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: format!("create-tool-run-{index}"),
+                command: HostCommand::CreateRun(CreateRunCommand {
+                    run_id: format!("tool-run-{index}"),
+                    owner_user_id: "user-1".to_string(),
+                    owner_entity_type: "conversation".to_string(),
+                    owner_entity_id: format!("tool-conversation-{index}"),
+                    profile_key: "tool-test".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"message": format!("tool-work-{index}")}),
+                    max_iterations: 4,
+                }),
+            })
+            .await
+            .expect("create tool Run");
+        let HostResult::Claim { claim: Some(claim) } = runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: format!("claim-tool-run-{index}"),
+                command: HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                    owner_user_id: "user-1".to_string(),
+                    worker_id: "model-worker".to_string(),
+                    lease_duration_ms: 30_000,
+                }),
+            })
+            .await
+            .expect("claim tool Run")
+        else {
+            panic!("expected tool Run claim")
+        };
+        runtime
+            .try_handle(HostRequestEnvelope {
+                protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+                command_id: format!("wait-for-tool-{index}"),
+                command: HostCommand::CommitStep(CommitStepCommand {
+                    owner_user_id: "user-1".to_string(),
+                    run_id: claim.run.run_id,
+                    claim_token: claim.claim_token,
+                    expected_version: claim.run.version,
+                    outcome: LocalAgentStepOutcome::WaitForTool {
+                        batch_id: format!("tool-batch-{index}"),
+                        tool_calls: vec![LocalAgentToolCall {
+                            call_id: format!("tool-call-{index}"),
+                            tool_name: "concurrent_tool".to_string(),
+                            arguments: json!({"index": index}),
+                            side_effecting: false,
+                            requires_approval: false,
+                        }],
+                        checkpoint: json!({"index": index}),
+                    },
+                }),
+            })
+            .await
+            .expect("commit tool batch");
+    }
+    let started = Arc::new(AtomicUsize::new(0));
+    let mut tools = LocalToolRegistry::new();
+    tools
+        .register(
+            "concurrent_tool",
+            ConcurrentToolExecutor {
+                barrier: Arc::new(Barrier::new(4)),
+                started: Arc::clone(&started),
+            },
+        )
+        .expect("register concurrent tool");
+    let scheduler = LocalToolScheduler::new(Arc::clone(&runtime), tools, "user-1", "tool-worker")
+        .expect("tool scheduler");
+    let coordinator =
+        LocalAgentHostCoordinator::new(Arc::clone(&runtime), "user-1", None, Some(scheduler))
+            .expect("coordinator")
+            .with_maximum_concurrent_work_items(4)
+            .expect("four tool slots");
+    let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        coordinator.drain_ready_work(&shutdown_rx),
+    )
+    .await
+    .expect("four tool calls should reach the barrier together")
+    .expect("drain concurrent tools");
+
+    assert_eq!(started.load(Ordering::SeqCst), 4);
+}
 
 #[test]
 fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
@@ -52,6 +262,7 @@ fn read_only_ipc_does_not_wake_scheduler_or_signal_activity() {
         lease_duration_ms: 10_000,
         include_tool_names: None,
         exclude_tool_names: Vec::new(),
+        execution_route: None,
     });
     assert!(!command_wakes_scheduler(&tool_claim));
     assert_eq!(
@@ -286,6 +497,7 @@ async fn coordinator_rejects_external_commits_for_host_owned_tools() {
                 lease_duration_ms: 30_000,
                 include_tool_names: Some(vec!["create_task".to_string()]),
                 exclude_tool_names: Vec::new(),
+                execution_route: None,
             }),
         })
         .await
@@ -403,6 +615,7 @@ async fn coordinator_drains_model_tool_model_without_polling() {
             lease_duration_ms: 10_000,
             include_tool_names: None,
             exclude_tool_names: Vec::new(),
+            execution_route: None,
         }),
     };
     coordinator.route_external_tool_claim(&mut external_claim);
@@ -410,6 +623,10 @@ async fn coordinator_drains_model_tool_model_without_polling() {
         panic!("expected tool claim")
     };
     assert_eq!(routed.exclude_tool_names, vec!["create_task"]);
+    assert_eq!(
+        routed.execution_route,
+        Some(chatos_local_agent_protocol::LocalAgentToolExecutionRoute::Platform)
+    );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let wait_task = {
         let coordinator = Arc::clone(&coordinator);

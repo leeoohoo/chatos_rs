@@ -4,6 +4,138 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
+    func testBuiltinAuditLimitIsAnExplicitPreviewInsteadOfSilentTruncation() {
+        let detail = String(repeating: "路径", count: 9_000)
+
+        let preview = NativeLocalConnectorService.agentBuiltinAuditDetailPreview(detail)
+
+        XCTAssertEqual(preview.count, 16_000)
+        XCTAssertTrue(preview.contains("进度详情为预览"))
+        XCTAssertTrue(preview.contains("分页读取工具或交付文件"))
+        XCTAssertNotEqual(preview, String(detail.prefix(16_000)))
+    }
+
+    func testExternalOnlyTaskCanUseUnifiedSkillControlsWithoutBuiltinAccess() throws {
+        let authorization = try NativeLocalAgentTaskToolAuthorization.resolve([
+            "tool_options": .object([
+                "requires_execution": .bool(false), "enabled_builtin_kinds": .array([]),
+                "plugin_hints": .array([]), "external_mcp_config_ids": .array([.string("mcp-1")]),
+                "plugin_release_snapshots": .array([]),
+            ]),
+        ])
+        XCTAssertTrue(authorization.allows("agent_skill_activate"))
+        XCTAssertTrue(authorization.allows("agent_skill_read_resource"))
+        XCTAssertFalse(authorization.allows("execute_command"))
+        XCTAssertFalse(authorization.allows("read_file"))
+        for invalid: LocalAgentJSONValue in [.null, .array([.number(1)]), .array([.string("")]),
+            .array([.string("mcp-1"), .string("mcp-1")])] {
+            XCTAssertThrowsError(try NativeLocalAgentTaskToolAuthorization.resolve([
+                "tool_options": .object(["requires_execution": .bool(false), "enabled_builtin_kinds": .array([]),
+                    "external_mcp_config_ids": invalid]),
+            ]))
+        }
+    }
+    func testReturnedToolErrorCommitsFailureEvenForSideEffectingTool() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host), executor: ReturnedErrorPlatformToolExecutor(),
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+        await worker.wake()
+        for _ in 0..<200 {
+            if await host.commitCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let outcome = try await host.committedOutcomeType()
+        XCTAssertEqual(outcome, .string("failed"))
+        await worker.reset()
+    }
+
+    func testTaskWriteSessionEnforcesOwnedPathsAndCannotDowngradeScope() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("task-write-ownership-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NativeMCPCodeWriteStore()
+        let scope = NativeMCPCodeWriteScope(workspaceID: "workspace", sessionID: "conversation", runID: "run")
+        let paths = ["src", "standalone.txt"]
+        let opened = try await store.call(
+            name: "open_edit_session", arguments: [:], scope: scope, projectRoot: root, ownedPaths: paths
+        )
+        let id = try XCTUnwrap(opened.jsonObject?["result"]?.jsonObject?["session_id"]?.jsonString)
+        func write(_ path: String) -> NativeJSONValue {
+            .object(["kind": .string("write"), "path": .string(path),
+                     "content": .string("created"), "expected_sha256": .null])
+        }
+        for forbidden in ["src-other/file.txt", "other.txt", "../escape.txt"] {
+            do {
+                _ = try await store.call(
+                    name: "stage_edit_batch",
+                    arguments: ["session_id": .string(id), "operations": .array([
+                        write("src/not-staged.txt"), write(forbidden),
+                    ])],
+                    scope: scope, projectRoot: root, ownedPaths: paths
+                )
+                XCTFail("out-of-scope batch must be rejected: \(forbidden)")
+            } catch is NativeMCPCodeWriteError {}
+        }
+        _ = try await store.call(
+            name: "stage_edit_batch",
+            arguments: ["session_id": .string(id), "operations": .array([
+                write("src/nested/file.txt"), write("standalone.txt"),
+            ])],
+            scope: scope, projectRoot: root, ownedPaths: paths
+        )
+        do {
+            _ = try await store.call(
+                name: "commit_edit_session", arguments: ["session_id": .string(id)],
+                scope: scope, projectRoot: root
+            )
+            XCTFail("omitting frozen ownership must not broaden the session")
+        } catch is NativeMCPCodeWriteError {}
+        let committed = try await store.call(
+            name: "commit_edit_session", arguments: ["session_id": .string(id)],
+            scope: scope, projectRoot: root, ownedPaths: paths.reversed()
+        )
+        XCTAssertEqual(committed.jsonObject?["changed_target_count"], .number(2))
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("src/nested/file.txt"), encoding: .utf8), "created")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("standalone.txt").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("src/not-staged.txt").path))
+    }
+
+    func testTaskWriteOwnershipRejectsSymbolicLinkParentsAndParentDeletion() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("task-write-links-\(UUID().uuidString)", isDirectory: true)
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("owned"), withDestinationURL: actual)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = NativeMCPCodeWriteStore()
+        let scope = NativeMCPCodeWriteScope(workspaceID: "workspace", sessionID: "conversation", runID: "run")
+        let paths = ["owned", "actual/child.txt"]
+        let opened = try await store.call(
+            name: "open_edit_session", arguments: [:], scope: scope, projectRoot: root, ownedPaths: paths
+        )
+        let id = try XCTUnwrap(opened.jsonObject?["result"]?.jsonObject?["session_id"]?.jsonString)
+        for operation: NativeJSONValue in [
+            .object(["kind": .string("write"), "path": .string("owned/new.txt"),
+                     "content": .string("must not write"), "expected_sha256": .null]),
+            .object(["kind": .string("delete"), "path": .string("actual"), "expected_sha256": .null]),
+        ] {
+            do {
+                _ = try await store.call(
+                    name: "stage_edit_batch",
+                    arguments: ["session_id": .string(id), "operations": .array([operation])],
+                    scope: scope, projectRoot: root, ownedPaths: paths
+                )
+                XCTFail("alias writes and parent deletion must be rejected")
+            } catch is NativeMCPCodeWriteError {}
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: actual.appendingPathComponent("new.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: actual.path))
+    }
+
     func testTerminalCommandResolverSkipsBlankCompatibilityField() {
         XCTAssertEqual(
             NativeLocalAgentTerminalCommandResolver.resolve([
@@ -21,20 +153,115 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         )
     }
 
-    func testWorkerDoesNotKeepEventHubAliveBeforeWorkStarts() async throws {
+    func testTerminalCommandResolverPrefersCanonicalCommandOverLegacyAlias() {
+        // Approval presentation and both native execution paths share this resolver.
+        // An old model may mistake the legacy `common` field for a human summary.
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": LocalAgentJSONValue.string("只读项目、系统临时 SQLite"),
+                "command": .string("python3 -B -m unittest discover -s tests"),
+            ]),
+            "python3 -B -m unittest discover -s tests"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": NativeJSONValue.string("只读项目、系统临时 SQLite"),
+                "command": .string("python3 -B -m unittest discover -s tests"),
+            ]),
+            "python3 -B -m unittest discover -s tests"
+        )
+    }
+
+    func testTerminalCommandResolverPreservesLegacyOnlyPayloads() {
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "common": LocalAgentJSONValue.string("git status --short"),
+            ]),
+            "git status --short"
+        )
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.resolve([
+                "command": NativeJSONValue.string(" \n"),
+                "common": .string("git status --short"),
+            ]),
+            "git status --short"
+        )
+    }
+
+    func testTerminalPurposeIsTrimmedAndStrictlyBounded() {
+        XCTAssertEqual(
+            NativeLocalAgentTerminalCommandResolver.purpose([
+                "purpose": NativeJSONValue.string("  验证项目能否通过类型检查  "),
+            ]),
+            "验证项目能否通过类型检查"
+        )
+        XCTAssertNil(NativeLocalAgentTerminalCommandResolver.purpose([
+            "purpose": NativeJSONValue.string(" \n "),
+        ]))
+        XCTAssertNil(NativeLocalAgentTerminalCommandResolver.purpose([
+            "purpose": NativeJSONValue.string(String(repeating: "a", count: 501)),
+        ]))
+    }
+
+    func testTerminalSchemaPublishesOnlyCanonicalCommandField() {
+        guard case let .object(tool)? = NativeMCPTerminalStore.toolDefinitions.first(where: {
+            guard case let .object(fields) = $0 else { return false }
+            return fields["name"]?.jsonString == "execute_command"
+        }), case let .object(parameters)? = tool["inputSchema"],
+              case let .object(properties)? = parameters["properties"] else {
+            return XCTFail("missing terminal command schema")
+        }
+        XCTAssertNil(properties["common"])
+        XCTAssertNotNil(properties["command"])
+        XCTAssertNotNil(properties["purpose"])
+        XCTAssertEqual(
+            parameters["required"],
+            NativeJSONValue.array([.string("purpose"), .string("command")])
+        )
+    }
+
+    func testWorkerKeepsMonitoringAfterBootstrapPollingBecomesIdle() async throws {
         let host = PlatformToolHostStub(mode: .eventDrivenClaim)
         let eventHub = NativeLocalAgentEventHub(host: host)
         let worker = NativeLocalAgentPlatformToolWorker(
             client: .init(host: host),
             executor: FailingPlatformToolExecutor(),
             eventHub: eventHub,
-            workerID: "worker-1"
+            workerID: "worker-1",
+            activityWindow: .milliseconds(20)
         )
         await worker.configure(ownerUserID: "user-1")
-        try await Task.sleep(for: .milliseconds(150))
 
+        for _ in 0..<200 {
+            if await host.commitCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let commits = await host.commitCount()
         let eventListRequests = await host.eventListRequestCount()
-        XCTAssertEqual(eventListRequests, 0)
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThan(eventListRequests, 0)
+        await worker.reset()
+    }
+
+    func testWorkerReconcilesToolMaterializedShortlyAfterConfigure() async throws {
+        let host = PlatformToolHostStub(mode: .delayedClaim(emptyAttempts: 2))
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: FailingPlatformToolExecutor(),
+            workerID: "worker-1",
+            activityWindow: .seconds(1)
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await host.commitCount() == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let commits = await host.commitCount()
+        let attempts = await host.claimAttemptCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThan(attempts, 2)
         await worker.reset()
     }
 
@@ -87,12 +314,98 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWorkerReleasesRunResourcesFromTerminalEvent() async throws {
+        let host = PlatformToolHostStub(mode: .terminalEvent("run_succeeded"))
+        let eventHub = NativeLocalAgentEventHub(host: host)
+        let executor = RecordingPlatformToolExecutor()
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            eventHub: eventHub,
+            workerID: "worker-1",
+            activityWindow: .milliseconds(50)
+        )
+        await worker.configure(ownerUserID: "user-1")
+        await worker.wake()
+
+        for _ in 0..<200 {
+            if await executor.releasedRunIDs() == ["run-1"] { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let releasedRunIDs = await executor.releasedRunIDs()
+        let commitCount = await host.commitCount()
+        XCTAssertEqual(releasedRunIDs, ["run-1"])
+        XCTAssertEqual(commitCount, 0)
+        await worker.reset()
+    }
+
+    func testWorkerExecutesFourIndependentPlatformClaimsConcurrently() async throws {
+        let host = PlatformToolHostStub(mode: .concurrentClaims(4))
+        let executor = ConcurrentPlatformToolExecutor(target: 4)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            maximumConcurrentClaims: 4
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await executor.startedCount() == 4 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let started = await executor.startedCount()
+        XCTAssertEqual(started, 4)
+        for _ in 0..<200 {
+            if await host.commitCount() == 4 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let commits = await host.commitCount()
+        XCTAssertEqual(commits, 4)
+        await worker.reset()
+    }
+
+    func testWorkerRefillsCapacityWhenClaimArrivesDuringLongRunningExecution() async throws {
+        let host = PlatformToolHostStub(mode: .staggeredClaims)
+        let executor = ConcurrentPlatformToolExecutor(target: 2)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            maximumConcurrentClaims: 2
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await executor.startedCount() == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let firstStartedCount = await executor.startedCount()
+        XCTAssertEqual(firstStartedCount, 1)
+
+        await host.makeStaggeredClaimAvailable()
+        for _ in 0..<200 {
+            if await executor.startedCount() == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let finalStartedCount = await executor.startedCount()
+        XCTAssertEqual(finalStartedCount, 2)
+
+        for _ in 0..<200 {
+            if await host.commitCount() == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let commits = await host.commitCount()
+        XCTAssertEqual(commits, 2)
+        await worker.reset()
+    }
+
     func testPlatformToolPollingPolicyUsesOnlyActionableEvents() {
         XCTAssertEqual(NativeLocalAgentPlatformToolPollingPolicy.activityWindow, .seconds(15))
-        XCTAssertEqual(
-            NativeLocalAgentPlatformToolPollingPolicy.eventMonitoringWindow,
-            .seconds(300)
-        )
+        XCTAssertNil(NativeLocalAgentConcurrencyPolicy.validated(0))
+        XCTAssertEqual(NativeLocalAgentConcurrencyPolicy.validated(7), 7)
+        XCTAssertNil(NativeLocalAgentConcurrencyPolicy.validated(17))
         XCTAssertTrue(NativeLocalAgentPlatformToolPollingPolicy.shouldWake(forEventTypes: [
             "tool_batch_requested",
         ]))
@@ -104,6 +417,26 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             "tool_invocation_completed",
             "run_succeeded",
         ]))
+        XCTAssertTrue(
+            NativeLocalAgentPlatformToolPollingPolicy.shouldReleaseRunResources(
+                forEventType: "run_succeeded"
+            )
+        )
+        XCTAssertTrue(
+            NativeLocalAgentPlatformToolPollingPolicy.shouldReleaseRunResources(
+                forEventType: "run_failed"
+            )
+        )
+        XCTAssertTrue(
+            NativeLocalAgentPlatformToolPollingPolicy.shouldReleaseRunResources(
+                forEventType: "run_cancelled"
+            )
+        )
+        XCTAssertFalse(
+            NativeLocalAgentPlatformToolPollingPolicy.shouldReleaseRunResources(
+                forEventType: "tool_invocation_completed"
+            )
+        )
     }
 
     func testCapabilityCatalogPartitionsRustAndNativeTools() {
@@ -114,10 +447,15 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         }
         XCTAssertEqual(
             names,
-            NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames
+            NativeLocalAgentPlatformToolCatalog.mainChatTaskToolNames + NativeLocalAgentPlatformToolCatalog.mainChatCompanionTools.compactMap { value in
+                guard case let .object(tool) = value, case let .string(name)? = tool["name"] else { return nil }
+                return name
+            }
         )
-        XCTAssertFalse(names.contains("local_attachment_read"))
-        XCTAssertTrue(names.allSatisfy { !NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0) })
+        XCTAssertTrue(names.contains("local_attachment_read"))
+        XCTAssertTrue(names.filter { $0 != "local_attachment_read" }.allSatisfy {
+            !NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0)
+        })
         XCTAssertEqual(
             NativeLocalAgentPlatformToolCatalog.readOnlyToolNames,
             [
@@ -127,8 +465,10 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "remote_connection_controller_list_directory",
                 "remote_connection_controller_read_file",
                 "remote_connection_controller_test_connection",
+                "agent_skill_activate", "agent_skill_read_resource",
                 "capability_describe", "capability_search",
-                "capability_skill_activate", "capability_skill_read_resource",
+                "plugin_installer_search_npm", "plugin_installer_resolve_npm",
+                "plugin_installer_inspect_npm", "plugin_installer_inspect_source",
             ]
         )
         XCTAssertEqual(
@@ -146,8 +486,8 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "remote_connection_controller_download_file",
                 "remote_connection_controller_upload_file",
                 "local_attachment_read",
-                "capability_search", "capability_describe", "capability_skill_activate",
-                "capability_skill_read_resource", "capability_invoke",
+                "capability_search", "capability_describe", "agent_skill_activate",
+                "agent_skill_read_resource", "capability_invoke",
             ])
         )
         XCTAssertEqual(
@@ -155,6 +495,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             [
                 "open_edit_session", "stage_edit_batch", "abort_edit_session",
                 "capability_invoke",
+                "plugin_installer_install_npm", "plugin_installer_install_source",
             ]
         )
     }
@@ -163,14 +504,34 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         let readOnly = try NativeLocalAgentTaskToolAuthorization.resolve([
             "tool_options": .object([
                 "requires_execution": .bool(false),
-                "enabled_builtin_kinds": .array([.string("CodeMaintainerRead")]),
+                "enabled_builtin_kinds": .array([
+                    .string("CodeMaintainerRead"), .string("CodeMaintainerWrite"),
+                    .string("TerminalController"),
+                ]),
                 "plugin_hints": .array([]),
+                "plugin_release_snapshots": .array([]),
             ]),
         ])
         XCTAssertTrue(readOnly.allows("read_file"))
         XCTAssertFalse(readOnly.allows("commit_edit_session"))
         XCTAssertFalse(readOnly.allows("execute_command"))
-        XCTAssertFalse(readOnly.allows("capability_search"))
+        XCTAssertTrue(readOnly.allows("capability_search"))
+        XCTAssertEqual(readOnly.brokerBuiltinCapabilities, [.projectRead])
+        let scoped = try NativeLocalAgentTaskToolAuthorization.resolve([
+            "owned_paths": .array([.string("src"), .string("docs/report.md")]),
+            "tool_options": .object([
+                "requires_execution": .bool(true),
+                "enabled_builtin_kinds": .array([]),
+                "plugin_hints": .array([]),
+                "plugin_release_snapshots": .array([]),
+            ]),
+        ])
+        XCTAssertEqual(scoped.ownedPaths, ["docs/report.md", "src"])
+        for path in ["../outside", "/absolute", "src//file", "src\\file", "C:/repo", "src/./file"] {
+            XCTAssertThrowsError(try NativeLocalAgentTaskToolAuthorization.resolve([
+                "owned_paths": .array([.string(path)]),
+            ]))
+        }
 
         let execution = try NativeLocalAgentTaskToolAuthorization.resolve([
             "tool_options": .object([
@@ -180,13 +541,45 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                     .string("CodeMaintainerWrite"),
                     .string("TerminalController"),
                 ]),
-                "plugin_hints": .array([.object(["plugin_key": .string("browser")])]),
+                "plugin_hints": .array([.object([
+                    "plugin_key": .string("browser"),
+                    "component_key": .string("browser-cdp-mcp"),
+                ])]),
+                "plugin_release_snapshots": .array([.object([
+                    "plugin_key": .string("browser"),
+                    "component_key": .string("browser-cdp-mcp"),
+                    "plugin_id": .string("plugin-1"),
+                    "release_id": .string("release-1"),
+                    "version": .string("1.2.3"),
+                    "artifact_sha256": .string(String(repeating: "a", count: 64)),
+                ])]),
             ]),
         ])
         XCTAssertTrue(execution.allows("commit_edit_session"))
         XCTAssertTrue(execution.allows("execute_command"))
         XCTAssertTrue(execution.allows("capability_search"))
-        XCTAssertEqual(execution.pluginKeys, ["browser"])
+        XCTAssertEqual(
+            execution.brokerBuiltinCapabilities,
+            [.projectRead, .projectWrite, .terminal]
+        )
+        let browserSelection = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+            pluginKey: "browser",
+            componentKey: "browser-cdp-mcp"
+        )
+        XCTAssertEqual(execution.pluginSelectionIDs, [browserSelection])
+        XCTAssertEqual(
+            execution.pluginReleaseSnapshots[browserSelection]?.releaseID,
+            "release-1"
+        )
+
+        XCTAssertThrowsError(try NativeLocalAgentTaskToolAuthorization.resolve([
+            "tool_options": .object([
+                "requires_execution": .bool(true),
+                "enabled_builtin_kinds": .array([]),
+                "plugin_hints": .array([.object(["plugin_key": .string("browser")])]),
+                "plugin_release_snapshots": .array([]),
+            ]),
+        ]))
     }
 
     func testExecutorDispatchesTaskExecutionProjectTool() async throws {
@@ -202,6 +595,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             batchID: "batch-1",
             callID: "call-1",
             toolName: "read_file_raw",
+            executionRoute: "platform",
             arguments: .object(["path": .string("README.md")]),
             sideEffecting: false,
             requiresApproval: false,
@@ -345,6 +739,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             "cancel_task",
             "wait_for_task_completion",
             "get_task_dependency_graph",
+            "resolve_task_followup",
         ]))
     }
 
@@ -413,6 +808,49 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             }
         }
         XCTAssertEqual(outcomeType, .string("needs_review"))
+        await worker.reset()
+    }
+
+    func testWorkerReturnsRecoverableSideEffectingValidationErrorToModel() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: RecoverablePlatformToolExecutor(),
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        var outcomeType: LocalAgentJSONValue?
+        for _ in 0..<100 where outcomeType == nil {
+            outcomeType = try await host.committedOutcomeType()
+            if outcomeType == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        XCTAssertEqual(outcomeType, .string("failed"))
+        await worker.reset()
+    }
+
+    func testWorkerCommitsSharedPreflightDenialWithoutExecutingNativeTool() async throws {
+        let host = PlatformToolHostStub(mode: .preflightDeniedClaim)
+        let executor = CountingPlatformToolExecutor()
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1"
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        var outcomeType: LocalAgentJSONValue?
+        for _ in 0..<100 where outcomeType == nil {
+            outcomeType = try await host.committedOutcomeType()
+            if outcomeType == nil {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        XCTAssertEqual(outcomeType, .string("failed"))
+        let executionCount = await executor.executionCount()
+        XCTAssertEqual(executionCount, 0)
         await worker.reset()
     }
 
@@ -542,6 +980,54 @@ private struct FailingPlatformToolExecutor: NativeLocalAgentPlatformToolExecutin
     }
 }
 
+private struct RecoverablePlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        throw NativeLocalAgentPlatformToolError.projectToolRejected(
+            "文本匹配数量不符合预期：期望 4，实际 3"
+        )
+    }
+}
+
+private struct ReturnedErrorPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    func execute(ownerUserID: String, invocation: LocalAgentToolInvocationRecord) async throws -> LocalAgentJSONValue {
+        .object(["is_error": .bool(true), "content": .object(["error": .string("skill rejected")])])
+    }
+}
+
+private actor CountingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    private var count = 0
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        count += 1
+        return .object(["executed": .bool(true)])
+    }
+
+    func executionCount() -> Int { count }
+}
+
+private actor RecordingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    private var releasedRuns: [String] = []
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        .object(["executed": .bool(true)])
+    }
+
+    func release(runID: String) async {
+        releasedRuns.append(runID)
+    }
+
+    func releasedRunIDs() -> [String] { releasedRuns }
+}
+
 private actor DelayedPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
     private let delay: Duration
     private var cancelled = false
@@ -566,13 +1052,47 @@ private actor DelayedPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting
     func wasCancelled() -> Bool { cancelled }
 }
 
+private actor ConcurrentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {
+    private let target: Int
+    private var started = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(target: Int) {
+        self.target = target
+    }
+
+    func execute(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord
+    ) async throws -> LocalAgentJSONValue {
+        started += 1
+        if started == target {
+            let continuations = waiters
+            waiters.removeAll()
+            continuations.forEach { $0.resume() }
+        } else if started < target {
+            await withCheckedContinuation { continuation in
+                waiters.append(continuation)
+            }
+        }
+        return .object(["invocation_id": .string(invocation.invocationID)])
+    }
+
+    func startedCount() -> Int { started }
+}
+
 private actor PlatformToolHostStub: LocalAgentHostClientServicing {
     enum Mode {
         case idle
         case oneSideEffectingClaim
+        case preflightDeniedClaim
         case onePendingApproval
         case renewingClaim(renewalAccepted: Bool)
         case eventDrivenClaim
+        case terminalEvent(String)
+        case concurrentClaims(Int)
+        case staggeredClaims
+        case delayedClaim(emptyAttempts: Int)
     }
 
     private let mode: Mode
@@ -583,6 +1103,8 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
     private var claimAttempts = 0
     private var eventDelivered = false
     private var eventListRequests = 0
+    private var concurrentClaimCount = 0
+    private var staggeredClaimAvailable = false
 
     init(mode: Mode) {
         self.mode = mode
@@ -610,41 +1132,98 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
             }
             try await Task.sleep(for: .milliseconds(100))
             eventDelivered = true
+            let eventType = if case let .terminalEvent(value) = mode {
+                value
+            } else {
+                "tool_batch_requested"
+            }
             return try json([
                 "type": "events",
                 "events": [[
                     "cursor": 1,
                     "event_id": "event-tool-batch",
                     "run_id": "run-1",
-                    "event_type": "tool_batch_requested",
+                    "event_type": eventType,
                     "created_at_unix_ms": 1,
                 ]],
                 "next_cursor": 1,
             ])
         case "claim_next_tool":
             claimAttempts += 1
+            if case let .concurrentClaims(limit) = mode {
+                guard concurrentClaimCount < limit else {
+                    return try json(["type": "tool_claim", "claim": NSNull()])
+                }
+                concurrentClaimCount += 1
+                return try json([
+                    "type": "tool_claim",
+                    "claim": [
+                        "worker_id": "worker-1",
+                        "claim_token": "claim-token-\(concurrentClaimCount)",
+                        "invocation": invocation(
+                            status: "running",
+                            version: 2,
+                            index: concurrentClaimCount
+                        ),
+                    ],
+                ])
+            }
+            if case .staggeredClaims = mode {
+                let canClaim = concurrentClaimCount == 0
+                    || (concurrentClaimCount == 1 && staggeredClaimAvailable)
+                guard canClaim, concurrentClaimCount < 2 else {
+                    return try json(["type": "tool_claim", "claim": NSNull()])
+                }
+                concurrentClaimCount += 1
+                return try json([
+                    "type": "tool_claim",
+                    "claim": [
+                        "worker_id": "worker-1",
+                        "claim_token": "claim-token-\(concurrentClaimCount)",
+                        "invocation": invocation(
+                            status: "running",
+                            version: 2,
+                            index: concurrentClaimCount
+                        ),
+                    ],
+                ])
+            }
             let hasClaim = switch mode {
-            case .oneSideEffectingClaim, .renewingClaim: true
-            case .idle, .onePendingApproval: false
+            case .oneSideEffectingClaim, .preflightDeniedClaim, .renewingClaim: true
+            case .idle, .onePendingApproval, .terminalEvent: false
             case .eventDrivenClaim: eventDelivered
+            case .concurrentClaims, .staggeredClaims: false
+            case let .delayedClaim(emptyAttempts): claimAttempts > emptyAttempts
             }
             guard hasClaim, !didClaim else {
                 return try json(["type": "tool_claim", "claim": NSNull()])
             }
             didClaim = true
+            var claim: [String: Any] = [
+                "worker_id": "worker-1",
+                "claim_token": "claim-token-1",
+                "invocation": invocation(status: "running", version: 2),
+            ]
+            if case .preflightDeniedClaim = mode {
+                claim["preflight_outcome"] = [
+                    "type": "failed",
+                    "error": "skill_activation_required",
+                    "detail": [
+                        "required_skill_refs": ["product-skill:test"],
+                    ],
+                ]
+            }
             return try json([
                 "type": "tool_claim",
-                "claim": [
-                    "worker_id": "worker-1",
-                    "claim_token": "claim-token-1",
-                    "invocation": invocation(status: "running", version: 2),
-                ],
+                "claim": claim,
             ])
         case "renew_tool_claim":
             renewals += 1
             let accepted = switch mode {
             case let .renewingClaim(renewalAccepted): renewalAccepted
-            case .idle, .oneSideEffectingClaim, .onePendingApproval, .eventDrivenClaim: true
+            case .idle, .oneSideEffectingClaim, .preflightDeniedClaim,
+                 .onePendingApproval, .eventDrivenClaim, .terminalEvent, .concurrentClaims,
+                 .staggeredClaims, .delayedClaim: true
             }
             return try json([
                 "type": "tool_claim_renewed",
@@ -706,20 +1285,27 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
 
     func eventListRequestCount() -> Int { eventListRequests }
 
+    func makeStaggeredClaimAvailable() {
+        staggeredClaimAvailable = true
+    }
+
     private var supportsEventStream: Bool {
         switch mode {
-        case .eventDrivenClaim, .oneSideEffectingClaim: true
-        default: false
+        case .eventDrivenClaim, .terminalEvent,
+             .oneSideEffectingClaim, .preflightDeniedClaim: true
+        case .idle, .onePendingApproval, .renewingClaim, .concurrentClaims,
+             .staggeredClaims, .delayedClaim: false
         }
     }
 
-    private func invocation(status: String, version: Int) -> [String: Any] {
+    private func invocation(status: String, version: Int, index: Int = 1) -> [String: Any] {
         [
-            "invocation_id": "invocation-1",
-            "run_id": "run-1",
-            "batch_id": "batch-1",
-            "call_id": "call-1",
+            "invocation_id": "invocation-\(index)",
+            "run_id": "run-\(index)",
+            "batch_id": "batch-\(index)",
+            "call_id": "call-\(index)",
             "tool_name": "write_local_state",
+            "execution_route": "platform",
             "arguments": [:],
             "side_effecting": true,
             "requires_approval": false,
@@ -742,6 +1328,7 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
             "batch_id": "batch-1",
             "call_id": "call-1",
             "tool_name": "commit_edit_session",
+            "execution_route": "platform",
             "arguments": ["session_id": "session-1"],
             "side_effecting": true,
             "requires_approval": true,

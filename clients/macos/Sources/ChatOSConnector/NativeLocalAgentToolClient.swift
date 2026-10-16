@@ -7,6 +7,7 @@ public struct LocalAgentToolInvocationRecord: Decodable, Sendable, Equatable {
     public let batchID: String
     public let callID: String
     public let toolName: String
+    public let executionRoute: String
     public let arguments: LocalAgentJSONValue
     public let sideEffecting: Bool
     public let requiresApproval: Bool
@@ -29,6 +30,7 @@ public struct LocalAgentToolInvocationRecord: Decodable, Sendable, Equatable {
         case batchID = "batch_id"
         case callID = "call_id"
         case toolName = "tool_name"
+        case executionRoute = "execution_route"
         case arguments
         case sideEffecting = "side_effecting"
         case requiresApproval = "requires_approval"
@@ -48,20 +50,46 @@ public struct LocalAgentToolClaim: Decodable, Sendable, Equatable {
     public let workerID: String
     public let claimToken: String
     public let invocation: LocalAgentToolInvocationRecord
+    public let preflightOutcome: LocalAgentToolOutcome?
 
     private enum CodingKeys: String, CodingKey {
         case workerID = "worker_id"
         case claimToken = "claim_token"
         case invocation
+        case preflightOutcome = "preflight_outcome"
     }
 }
 
-public enum LocalAgentToolOutcome: Encodable, Sendable, Equatable {
+public enum LocalAgentToolOutcome: Codable, Sendable, Equatable {
     case succeeded(LocalAgentJSONValue)
     case failed(error: String, detail: LocalAgentJSONValue)
     case needsReview(reason: String, detail: LocalAgentJSONValue)
 
     private enum CodingKeys: String, CodingKey { case type, output, error, detail, reason }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .type) {
+        case "succeeded":
+            self = .succeeded(try container.decode(LocalAgentJSONValue.self, forKey: .output))
+        case "failed":
+            self = .failed(
+                error: try container.decode(String.self, forKey: .error),
+                detail: try container.decode(LocalAgentJSONValue.self, forKey: .detail)
+            )
+        case "needs_review":
+            self = .needsReview(
+                reason: try container.decode(String.self, forKey: .reason),
+                detail: try container.decode(LocalAgentJSONValue.self, forKey: .detail)
+            )
+        default:
+            throw DecodingError.dataCorruptedError(
+                forKey: .type,
+                in: container,
+                debugDescription: "Unknown local tool outcome type"
+            )
+        }
+    }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -100,6 +128,7 @@ public struct NativeLocalAgentToolClient: Sendable {
         "cancel_task",
         "wait_for_task_completion",
         "get_task_dependency_graph",
+        "resolve_task_followup",
     ]
 
     private let host: any LocalAgentHostClientServicing
@@ -185,6 +214,40 @@ public struct NativeLocalAgentToolClient: Sendable {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return result.invocations
+    }
+
+    public func activatedSkillRefs(
+        ownerUserID: String,
+        runID: String
+    ) async throws -> Set<String> {
+        let result: RunSkillActivationsResult = try await host.request(
+            GetRunSkillActivationsCommand(
+                type: "get_run_skill_activations",
+                ownerUserID: ownerUserID,
+                runID: runID
+            )
+        )
+        guard result.type == "run_skill_activations", result.runID == runID else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return Set(result.skillRefs)
+    }
+
+    public func skillBundle(
+        ownerUserID: String,
+        runID: String
+    ) async throws -> LocalAgentSkillBundleSnapshot? {
+        let result: RunSkillBundleResult = try await host.request(
+            GetRunSkillActivationsCommand(
+                type: "get_run_skill_bundle",
+                ownerUserID: ownerUserID,
+                runID: runID
+            )
+        )
+        guard result.type == "run_skill_bundle", result.runID == runID else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return result.bundle
     }
 
     public func decideApproval(
@@ -274,6 +337,18 @@ private struct ListPendingApprovalsCommand: Encodable, Sendable {
     }
 }
 
+private struct GetRunSkillActivationsCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let runID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case runID = "run_id"
+    }
+}
+
 private struct DecideApprovalCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
@@ -310,6 +385,29 @@ private struct RenewResult: Decodable, Sendable {
 private struct PendingApprovalsResult: Decodable, Sendable {
     let type: String
     let invocations: [LocalAgentToolInvocationRecord]
+}
+
+private struct RunSkillActivationsResult: Decodable, Sendable {
+    let type: String
+    let runID: String
+    let skillRefs: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case runID = "run_id"
+        case skillRefs = "skill_refs"
+    }
+}
+
+private struct RunSkillBundleResult: Decodable, Sendable {
+    let type: String
+    let runID: String
+    let bundle: LocalAgentSkillBundleSnapshot?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, bundle
+        case runID = "run_id"
+    }
 }
 
 private struct ToolApprovalResult: Decodable, Sendable {

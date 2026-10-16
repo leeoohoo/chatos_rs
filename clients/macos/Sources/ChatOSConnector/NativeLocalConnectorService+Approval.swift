@@ -4,6 +4,13 @@ import CryptoKit
 import Foundation
 
 extension NativeLocalConnectorService {
+    enum ApprovalSessionReuse: Sendable, Equatable {
+        /// Reuse only when the presented operation and arguments are identical.
+        case exactRequest
+        /// Reuse the stable scope declared by a host-owned capability boundary.
+        case declaredScope
+    }
+
     func approvalDecision(
         requestID: String,
         command: String,
@@ -12,8 +19,11 @@ extension NativeLocalConnectorService {
         projectRoot: URL,
         source: String,
         risk: NativeApprovalRisk,
+        purpose: String? = nil,
         requestedPermissionsDescription: String? = nil,
         approvalScopeKey: String? = nil,
+        approvalSessionReuse: ApprovalSessionReuse = .exactRequest,
+        evaluationArguments: [String]? = nil,
         workspaceID: String? = nil
     ) async -> NativeApprovalDecision {
         let scopedApprovalKey = approvalScopeKey.map {
@@ -24,7 +34,9 @@ extension NativeLocalConnectorService {
                 cwd: cwd,
                 projectRoot: projectRoot,
                 workspaceID: workspaceID,
-                requestedPermissionsDescription: requestedPermissionsDescription
+                purpose: purpose,
+                requestedPermissionsDescription: requestedPermissionsDescription,
+                reuse: approvalSessionReuse
             )
         }
         if let scopedApprovalKey, sessionApprovalAllowlist.contains(scopedApprovalKey) {
@@ -32,6 +44,7 @@ extension NativeLocalConnectorService {
             publishApprovalEvent(.init(
                 requestID: requestID,
                 command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
                 cwd: cwd.path,
                 source: source,
                 risk: risk.level,
@@ -48,6 +61,7 @@ extension NativeLocalConnectorService {
             publishApprovalEvent(.init(
                 requestID: requestID,
                 command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
                 cwd: cwd.path,
                 source: source,
                 risk: risk.level,
@@ -66,6 +80,7 @@ extension NativeLocalConnectorService {
                 source: source,
                 risk: risk,
                 reason: risk.reason,
+                purpose: purpose,
                 approvalScopeKey: scopedApprovalKey
             )
         case .autoApproval:
@@ -78,6 +93,7 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 尚未配置模型。",
+                    purpose: purpose,
                     approvalScopeKey: scopedApprovalKey
                 )
             }
@@ -109,12 +125,13 @@ extension NativeLocalConnectorService {
                 let decision = await NativeApprovalAgent().evaluate(
                     request: .init(
                         command: command,
-                        arguments: arguments,
+                        arguments: evaluationArguments ?? arguments,
                         cwd: displayPath(cwd, relativeTo: projectRoot),
                         source: source,
                         projectRoot: projectRoot,
                         riskLevel: risk.level,
                         riskReason: risk.reason,
+                        purpose: purpose,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
                     model: resolvedModel,
@@ -133,14 +150,19 @@ extension NativeLocalConnectorService {
                         source: source,
                         risk: risk,
                         reason: reason,
+                        purpose: purpose,
                         approvalScopeKey: scopedApprovalKey
                     )
                 }
                 switch decision {
-                case let .approve(reason, _):
+                case let .approve(reason, rememberAllow):
+                    if rememberAllow, let scopedApprovalKey {
+                        sessionApprovalAllowlist.insert(scopedApprovalKey)
+                    }
                     publishApprovalEvent(.init(
                         requestID: requestID,
                         command: ([command] + arguments).joined(separator: " "),
+                        purpose: purpose,
                         cwd: cwd.path,
                         source: source,
                         risk: risk.level,
@@ -153,6 +175,7 @@ extension NativeLocalConnectorService {
                     publishApprovalEvent(.init(
                         requestID: requestID,
                         command: ([command] + arguments).joined(separator: " "),
+                        purpose: purpose,
                         cwd: cwd.path,
                         source: source,
                         risk: risk.level,
@@ -164,8 +187,8 @@ extension NativeLocalConnectorService {
                 case .askUser:
                     break
                 }
-                if case let .approve(reason, _) = decision {
-                    return .approve(reason: reason, rememberAllow: false)
+                if case let .approve(reason, rememberAllow) = decision {
+                    return .approve(reason: reason, rememberAllow: rememberAllow)
                 }
                 return decision
             } catch {
@@ -177,31 +200,38 @@ extension NativeLocalConnectorService {
                     source: source,
                     risk: risk,
                     reason: "本机审批 Agent 不可用：\(error.localizedDescription)",
+                    purpose: purpose,
                     approvalScopeKey: scopedApprovalKey
                 )
             }
         }
     }
 
-    private func approvalSessionScope(
+    func approvalSessionScope(
         base: String,
         command: String,
         arguments: [String],
         cwd: URL,
         projectRoot: URL,
         workspaceID: String?,
-        requestedPermissionsDescription: String?
+        purpose: String? = nil,
+        requestedPermissionsDescription: String?,
+        reuse: ApprovalSessionReuse
     ) -> String {
-        let values = [
+        var values = [
             state.user?.id ?? "",
             state.deviceID ?? "",
             workspaceID ?? "",
             projectRoot.standardizedFileURL.resolvingSymlinksInPath().path,
             cwd.standardizedFileURL.resolvingSymlinksInPath().path,
             base,
-            command,
+            purpose ?? "",
             requestedPermissionsDescription ?? "",
-        ] + arguments
+        ]
+        if reuse == .exactRequest {
+            values.append(command)
+            values.append(contentsOf: arguments)
+        }
         let canonical = values.map { "\($0.utf8.count):\($0)" }.joined()
         let digest = SHA256.hash(data: Data(canonical.utf8))
             .map { String(format: "%02x", $0) }
@@ -217,6 +247,7 @@ extension NativeLocalConnectorService {
         source: String,
         risk: NativeApprovalRisk,
         reason: String?,
+        purpose: String?,
         approvalScopeKey: String?
     ) async -> NativeApprovalDecision {
         let id = UUID().uuidString
@@ -224,6 +255,7 @@ extension NativeLocalConnectorService {
             id: id,
             requestID: requestID,
             command: ([command] + arguments).joined(separator: " "),
+            purpose: purpose,
             cwd: cwd.path,
             source: source,
             risk: risk.level,

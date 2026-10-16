@@ -3,13 +3,36 @@
 
 use super::*;
 use crate::{
-    IdempotentCommand, LocalAgentRunStore, LocalAgentTaskStore, RunTransition, SqliteClientStorage,
+    IdempotentCommand, LocalAgentRunStore, LocalAgentTaskStore, LocalConversationStore,
+    RunTransition, SqliteClientStorage,
 };
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
-    LocalTaskStatus,
+    CreateConversationCommand, CreateTaskGraphCommand, LocalConversationResourceBinding,
+    LocalConversationResourceKind, LocalTaskDependency, LocalTaskGraphStatus, LocalTaskSpec,
+    LocalTaskStatus, StartConversationTurnCommand,
 };
 use serde_json::json;
+
+#[test]
+fn prerequisite_result_uses_one_hundred_sixty_thousand_character_inline_limit() {
+    let nineteen_thousand = "解".repeat(19_961);
+    assert_eq!(
+        bounded_visible_text(&nineteen_thousand, Some("run-source")).as_deref(),
+        Some(nineteen_thousand.as_str())
+    );
+
+    let oversized = "x".repeat(INLINE_PREREQUISITE_RESULT_MAX_CHARS + 1);
+    let descriptor = bounded_visible_text(&oversized, Some("run-source")).expect("reference");
+    let descriptor: serde_json::Value = serde_json::from_str(&descriptor).expect("descriptor");
+    assert_eq!(descriptor["type"], "task_result_reference");
+    assert_eq!(descriptor["source_run_id"], "run-source");
+    assert_eq!(descriptor["read_tool"], "tool_result_read");
+    assert_eq!(
+        descriptor["total_chars"],
+        INLINE_PREREQUISITE_RESULT_MAX_CHARS + 1
+    );
+    assert_eq!(descriptor["sha256"].as_str().unwrap().len(), 64);
+}
 
 fn command(id: &str) -> IdempotentCommand {
     IdempotentCommand {
@@ -60,6 +83,188 @@ fn graph() -> CreateTaskGraphCommand {
             },
         ],
     }
+}
+
+fn writer_graph(
+    graph_id: &str,
+    source_turn_id: &str,
+    task_id: &str,
+    owned_paths: &[&str],
+) -> CreateTaskGraphCommand {
+    CreateTaskGraphCommand {
+        graph_id: graph_id.to_string(),
+        owner_user_id: "user-1".to_string(),
+        source_entity_type: "conversation_turn".to_string(),
+        source_entity_id: source_turn_id.to_string(),
+        tasks: vec![LocalTaskSpec {
+            task_id: task_id.to_string(),
+            title: task_id.to_string(),
+            profile_key: "task_execution".to_string(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            input: json!({
+                "objective": format!("Complete {task_id}"),
+                "prompt": format!("Task Objective:\nComplete {task_id}"),
+                "owned_paths": owned_paths,
+                "tool_options": {
+                    "enabled_builtin_kinds": ["CodeMaintainerWrite"]
+                }
+            }),
+            max_iterations: 4,
+        }],
+        dependencies: Vec::new(),
+    }
+}
+
+fn builtin_graph(
+    graph_id: &str,
+    source_turn_id: &str,
+    task_id: &str,
+    builtin_kind: &str,
+) -> CreateTaskGraphCommand {
+    CreateTaskGraphCommand {
+        graph_id: graph_id.to_string(),
+        owner_user_id: "user-1".to_string(),
+        source_entity_type: "conversation_turn".to_string(),
+        source_entity_id: source_turn_id.to_string(),
+        tasks: vec![LocalTaskSpec {
+            task_id: task_id.to_string(),
+            title: task_id.to_string(),
+            profile_key: "task_execution".to_string(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            input: json!({
+                "objective": format!("Complete {task_id}"),
+                "prompt": format!("Task Objective:\nComplete {task_id}"),
+                "tool_options": {
+                    "enabled_builtin_kinds": [builtin_kind]
+                }
+            }),
+            max_iterations: 4,
+        }],
+        dependencies: Vec::new(),
+    }
+}
+
+fn dynamic_platform_graph(
+    graph_id: &str,
+    source_turn_id: &str,
+    task_id: &str,
+    plugin_keys: &[&str],
+    external_mcp_ids: &[&str],
+) -> CreateTaskGraphCommand {
+    CreateTaskGraphCommand {
+        graph_id: graph_id.to_string(),
+        owner_user_id: "user-1".to_string(),
+        source_entity_type: "conversation_turn".to_string(),
+        source_entity_id: source_turn_id.to_string(),
+        tasks: vec![LocalTaskSpec {
+            task_id: task_id.to_string(),
+            title: task_id.to_string(),
+            profile_key: "task_execution".to_string(),
+            model_config_ref: "model-1".to_string(),
+            model_config_revision: "revision-1".to_string(),
+            capability_policy_revision: "policy-1".to_string(),
+            input: json!({
+                "objective": format!("Complete {task_id}"),
+                "prompt": format!("Task Objective:\nComplete {task_id}"),
+                "tool_options": {
+                    "enabled_builtin_kinds": [],
+                    "plugin_hints": plugin_keys.iter().map(|key| {
+                        json!({"plugin_key": key, "component_key": format!("{key}-mcp")})
+                    }).collect::<Vec<_>>(),
+                    "external_mcp_config_ids": external_mcp_ids
+                }
+            }),
+            max_iterations: 4,
+        }],
+        dependencies: Vec::new(),
+    }
+}
+
+async fn create_source_turn(
+    storage: &SqliteClientStorage,
+    conversation_id: &str,
+    turn_id: &str,
+    resource: Option<LocalConversationResourceBinding>,
+    now: i64,
+) {
+    storage
+        .create_conversation(
+            &command(&format!("create-{conversation_id}")),
+            &CreateConversationCommand {
+                conversation_id: conversation_id.to_string(),
+                owner_user_id: "user-1".to_string(),
+                title: conversation_id.to_string(),
+                resource,
+            },
+            now,
+        )
+        .await
+        .expect("create source conversation");
+    let run_id = format!("main-run-{turn_id}");
+    let turn = StartConversationTurnCommand {
+        owner_user_id: "user-1".to_string(),
+        conversation_id: conversation_id.to_string(),
+        expected_conversation_version: 1,
+        turn_id: turn_id.to_string(),
+        message_id: format!("message-{turn_id}"),
+        run_id: run_id.clone(),
+        message: "Start work".to_string(),
+        message_metadata: json!({}),
+        attachments: Vec::new(),
+        model_config_ref: "model-1".to_string(),
+        model_config_revision: "revision-1".to_string(),
+        capability_policy_revision: "policy-1".to_string(),
+        max_iterations: 4,
+    };
+    storage
+        .start_conversation_turn(
+            &command(&format!("start-{turn_id}")),
+            &turn,
+            &LocalAgentRunRecord {
+                run_id,
+                owner_user_id: "user-1".to_string(),
+                owner_entity_type: "conversation_turn".to_string(),
+                owner_entity_id: turn_id.to_string(),
+                profile_key: "main_chat".to_string(),
+                model_config_ref: "model-1".to_string(),
+                model_config_revision: "revision-1".to_string(),
+                capability_policy_revision: "policy-1".to_string(),
+                input: json!({"message": "Start work"}),
+                status: LocalAgentRunStatus::Queued,
+                iteration: 0,
+                model_attempt: 1,
+                max_iterations: 4,
+                version: 1,
+                claim_token: None,
+                claim_until_unix_ms: None,
+                next_attempt_at_unix_ms: None,
+                pending_tool_batch: None,
+                checkpoint: Value::Null,
+                continuation_input: None,
+                terminal_outcome: None,
+                created_at_unix_ms: now + 1,
+                updated_at_unix_ms: now + 1,
+            },
+            &format!("event-start-{turn_id}"),
+            now + 1,
+        )
+        .await
+        .expect("create source turn");
+    storage
+        .cancel_run(
+            &command(&format!("cancel-main-{turn_id}")),
+            &format!("main-run-{turn_id}"),
+            Some(1),
+            "fixture only needs the durable conversation Turn mapping",
+            &format!("event-cancel-main-{turn_id}"),
+            now + 2,
+        )
+        .await
+        .expect("finish source turn fixture");
 }
 
 async fn finish_next(
@@ -120,6 +325,632 @@ async fn finish_next_with_outcome(
         )
         .await
         .expect("finish run");
+}
+
+#[tokio::test]
+async fn cross_graph_write_locks_skip_conflicts_and_release_after_cancellation() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(&storage, "conversation-locks", "turn-locks", None, 100).await;
+    storage
+        .create_task_graph(
+            &command("create-writer-a"),
+            &writer_graph(
+                "graph-writer-a",
+                "turn-locks",
+                "writer-a",
+                &["clients/macos"],
+            ),
+            1_000,
+        )
+        .await
+        .expect("create first writer");
+    storage
+        .create_task_graph(
+            &command("create-writer-b"),
+            &writer_graph(
+                "graph-writer-b",
+                "turn-locks",
+                "writer-b",
+                &["clients/macos/Sources"],
+            ),
+            1_100,
+        )
+        .await
+        .expect("create overlapping writer");
+    storage
+        .create_task_graph(
+            &command("create-writer-c"),
+            &writer_graph(
+                "graph-writer-c",
+                "turn-locks",
+                "writer-c",
+                &["clients/windows"],
+            ),
+            1_200,
+        )
+        .await
+        .expect("create disjoint writer");
+
+    let first = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-writer-a",
+            "run-writer-a",
+            "event-writer-a",
+            2_000,
+        )
+        .await
+        .expect("start first writer")
+        .expect("first writer run");
+    assert_eq!(first.owner_entity_id, "writer-a");
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-writer-b",
+            "run-writer-b-blocked",
+            "event-writer-b-blocked",
+            2_100,
+        )
+        .await
+        .expect("check overlapping writer")
+        .is_none());
+
+    let disjoint = storage
+        .start_next_task_run("user-1", "run-writer-c", "event-writer-c", 2_200)
+        .await
+        .expect("start later disjoint writer")
+        .expect("disjoint writer must bypass the blocked queue head");
+    assert_eq!(disjoint.owner_entity_id, "writer-c");
+
+    storage
+        .cancel_run(
+            &command("cancel-writer-a"),
+            &first.run_id,
+            Some(first.version),
+            "release write ownership",
+            "event-cancel-writer-a",
+            2_300,
+        )
+        .await
+        .expect("cancel first writer");
+    let unblocked = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-writer-b",
+            "run-writer-b",
+            "event-writer-b",
+            2_400,
+        )
+        .await
+        .expect("start writer after lock release")
+        .expect("overlapping writer should start after terminal reconciliation");
+    assert_eq!(unblocked.owner_entity_id, "writer-b");
+}
+
+#[tokio::test]
+async fn terminal_runtime_lock_blocks_writers_but_not_readers_and_releases() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(
+        &storage,
+        "conversation-terminal-locks",
+        "turn-terminal-locks",
+        None,
+        100,
+    )
+    .await;
+    storage
+        .create_task_graph(
+            &command("create-terminal"),
+            &builtin_graph(
+                "graph-terminal",
+                "turn-terminal-locks",
+                "terminal",
+                "TerminalController",
+            ),
+            1_000,
+        )
+        .await
+        .expect("create terminal Task");
+    storage
+        .create_task_graph(
+            &command("create-writer-after-terminal"),
+            &writer_graph(
+                "graph-writer-after-terminal",
+                "turn-terminal-locks",
+                "writer-after-terminal",
+                &["clients/windows"],
+            ),
+            1_100,
+        )
+        .await
+        .expect("create writer Task");
+    storage
+        .create_task_graph(
+            &command("create-reader-after-terminal"),
+            &builtin_graph(
+                "graph-reader-after-terminal",
+                "turn-terminal-locks",
+                "reader-after-terminal",
+                "CodeMaintainerRead",
+            ),
+            1_200,
+        )
+        .await
+        .expect("create reader Task");
+
+    let terminal = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-terminal",
+            "run-terminal",
+            "event-terminal",
+            2_000,
+        )
+        .await
+        .expect("start terminal Task")
+        .expect("terminal Run");
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-writer-after-terminal",
+            "run-writer-blocked",
+            "event-writer-blocked",
+            2_100,
+        )
+        .await
+        .expect("check writer while terminal is active")
+        .is_none());
+
+    let reader = storage
+        .start_next_task_run(
+            "user-1",
+            "run-reader-after-terminal",
+            "event-reader-after-terminal",
+            2_200,
+        )
+        .await
+        .expect("start reader behind blocked writer")
+        .expect("reader should bypass blocked writer");
+    assert_eq!(reader.owner_entity_id, "reader-after-terminal");
+
+    storage
+        .cancel_run(
+            &command("cancel-terminal"),
+            &terminal.run_id,
+            Some(terminal.version),
+            "release conservative terminal lock",
+            "event-cancel-terminal",
+            2_300,
+        )
+        .await
+        .expect("cancel terminal Run");
+    let writer = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-writer-after-terminal",
+            "run-writer-after-terminal",
+            "event-writer-after-terminal",
+            2_400,
+        )
+        .await
+        .expect("start writer after terminal lock release")
+        .expect("writer should be unblocked");
+    assert_eq!(writer.owner_entity_id, "writer-after-terminal");
+}
+
+#[tokio::test]
+async fn plugin_and_external_mcp_runtime_locks_serialize_native_writers() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(
+        &storage,
+        "conversation-dynamic-locks",
+        "turn-dynamic-locks",
+        None,
+        100,
+    )
+    .await;
+    storage
+        .create_task_graph(
+            &command("create-plugin"),
+            &dynamic_platform_graph(
+                "graph-plugin",
+                "turn-dynamic-locks",
+                "plugin-task",
+                &["document"],
+                &[],
+            ),
+            1_000,
+        )
+        .await
+        .expect("create Plugin Task");
+    storage
+        .create_task_graph(
+            &command("create-external"),
+            &dynamic_platform_graph(
+                "graph-external",
+                "turn-dynamic-locks",
+                "external-task",
+                &[],
+                &["external-1"],
+            ),
+            1_100,
+        )
+        .await
+        .expect("create External MCP Task");
+    storage
+        .create_task_graph(
+            &command("create-reader-after-plugin"),
+            &builtin_graph(
+                "graph-reader-after-plugin",
+                "turn-dynamic-locks",
+                "reader-after-plugin",
+                "CodeMaintainerRead",
+            ),
+            1_200,
+        )
+        .await
+        .expect("create reader Task");
+
+    let plugin = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-plugin",
+            "run-plugin",
+            "event-plugin",
+            2_000,
+        )
+        .await
+        .expect("start Plugin Task")
+        .expect("Plugin Run");
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-external",
+            "run-external-blocked",
+            "event-external-blocked",
+            2_100,
+        )
+        .await
+        .expect("check External MCP Task while Plugin is active")
+        .is_none());
+
+    let reader = storage
+        .start_next_task_run(
+            "user-1",
+            "run-reader-after-plugin",
+            "event-reader-after-plugin",
+            2_200,
+        )
+        .await
+        .expect("start reader behind blocked native writer")
+        .expect("reader should bypass blocked native writer");
+    assert_eq!(reader.owner_entity_id, "reader-after-plugin");
+
+    storage
+        .cancel_run(
+            &command("cancel-plugin"),
+            &plugin.run_id,
+            Some(plugin.version),
+            "release conservative Plugin lock",
+            "event-cancel-plugin",
+            2_300,
+        )
+        .await
+        .expect("cancel Plugin Run");
+    let external = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-external",
+            "run-external",
+            "event-external",
+            2_400,
+        )
+        .await
+        .expect("start External MCP Task after lock release")
+        .expect("External MCP Task should be unblocked");
+    assert_eq!(external.owner_entity_id, "external-task");
+}
+
+#[tokio::test]
+async fn different_plugin_runtime_locks_run_concurrently_while_same_plugin_waits() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(
+        &storage,
+        "conversation-plugin-concurrency",
+        "turn-plugin-concurrency",
+        None,
+        100,
+    )
+    .await;
+    for (graph_id, task_id, plugin_key, created_at) in [
+        ("graph-document-a", "document-a", "document", 1_000),
+        ("graph-browser", "browser", "browser", 1_100),
+        ("graph-document-b", "document-b", "document", 1_200),
+    ] {
+        storage
+            .create_task_graph(
+                &command(&format!("create-{task_id}")),
+                &dynamic_platform_graph(
+                    graph_id,
+                    "turn-plugin-concurrency",
+                    task_id,
+                    &[plugin_key],
+                    &[],
+                ),
+                created_at,
+            )
+            .await
+            .expect("create Plugin Task");
+    }
+
+    let document = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-document-a",
+            "run-document-a",
+            "event-document-a",
+            2_000,
+        )
+        .await
+        .expect("start first Document Task")
+        .expect("first Document Run");
+    let browser = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-browser",
+            "run-browser",
+            "event-browser",
+            2_100,
+        )
+        .await
+        .expect("start Browser Task")
+        .expect("Browser should not share the Document runtime lock");
+    assert_eq!(browser.owner_entity_id, "browser");
+
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-document-b",
+            "run-document-b-blocked",
+            "event-document-b-blocked",
+            2_200,
+        )
+        .await
+        .expect("check second Document Task")
+        .is_none());
+
+    storage
+        .cancel_run(
+            &command("cancel-document-a"),
+            &document.run_id,
+            Some(document.version),
+            "release Document runtime lock",
+            "event-cancel-document-a",
+            2_300,
+        )
+        .await
+        .expect("cancel first Document Run");
+    let second_document = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-document-b",
+            "run-document-b",
+            "event-document-b",
+            2_400,
+        )
+        .await
+        .expect("start second Document Task")
+        .expect("second Document Task should start after the matching lock is released");
+    assert_eq!(second_document.owner_entity_id, "document-b");
+}
+
+#[tokio::test]
+async fn write_locks_are_isolated_by_conversation_and_use_project_scope_keys() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(&storage, "conversation-a", "turn-a", None, 100).await;
+    create_source_turn(&storage, "conversation-b", "turn-b", None, 200).await;
+    for (graph_id, turn_id, task_id, created_at) in [
+        (
+            "graph-conversation-a",
+            "turn-a",
+            "writer-conversation-a",
+            1_000,
+        ),
+        (
+            "graph-conversation-b",
+            "turn-b",
+            "writer-conversation-b",
+            1_100,
+        ),
+    ] {
+        storage
+            .create_task_graph(
+                &command(&format!("create-{graph_id}")),
+                &writer_graph(graph_id, turn_id, task_id, &["shared/path"]),
+                created_at,
+            )
+            .await
+            .expect("create conversation writer");
+    }
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-conversation-a",
+            "run-conversation-a",
+            "event-conversation-a",
+            2_000,
+        )
+        .await
+        .expect("start first conversation writer")
+        .is_some());
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-conversation-b",
+            "run-conversation-b",
+            "event-conversation-b",
+            2_100,
+        )
+        .await
+        .expect("start second conversation writer")
+        .is_some());
+
+    let project = |resource_id: &str| LocalConversationResourceBinding {
+        kind: LocalConversationResourceKind::Project,
+        resource_id: resource_id.to_string(),
+    };
+    create_source_turn(
+        &storage,
+        "project-conversation-a",
+        "project-turn-a",
+        Some(project("project-1")),
+        300,
+    )
+    .await;
+    let mut project_conversation_graph = writer_graph(
+        "graph-project-a",
+        "project-turn-a",
+        "writer-project-a",
+        &["shared/path"],
+    );
+    project_conversation_graph.source_entity_type = "conversation".to_string();
+    project_conversation_graph.source_entity_id = "project-conversation-a".to_string();
+    storage
+        .create_task_graph(
+            &command("create-project-writer-a"),
+            &project_conversation_graph,
+            1_200,
+        )
+        .await
+        .expect("create first project writer");
+    storage
+        .create_task_graph(
+            &command("create-project-writer-b"),
+            &writer_graph(
+                "graph-project-b",
+                "project-turn-a",
+                "writer-project-b",
+                &["shared/path/child"],
+            ),
+            1_300,
+        )
+        .await
+        .expect("create second project writer");
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-project-a",
+            "run-project-a",
+            "event-project-a",
+            2_200,
+        )
+        .await
+        .expect("start first project writer")
+        .is_some());
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-project-b",
+            "run-project-b-blocked",
+            "event-project-b-blocked",
+            2_300,
+        )
+        .await
+        .expect("check second project writer")
+        .is_none());
+}
+
+#[tokio::test]
+async fn expired_writer_claim_releases_its_cross_graph_lock() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(
+        &storage,
+        "conversation-recovery",
+        "turn-recovery",
+        None,
+        100,
+    )
+    .await;
+    for (graph_id, task_id, created_at) in [
+        ("graph-expiring-writer", "expiring-writer", 1_000),
+        ("graph-waiting-writer", "waiting-writer", 1_100),
+    ] {
+        storage
+            .create_task_graph(
+                &command(&format!("create-{graph_id}")),
+                &writer_graph(graph_id, "turn-recovery", task_id, &["clients/macos"]),
+                created_at,
+            )
+            .await
+            .expect("create recovery writer");
+    }
+    storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-expiring-writer",
+            "run-expiring-writer",
+            "event-expiring-writer",
+            2_000,
+        )
+        .await
+        .expect("start expiring writer")
+        .expect("expiring writer run");
+    let claim = storage
+        .claim_next_run(
+            &command("claim-expiring-writer"),
+            "user-1",
+            "worker-1",
+            "token-expiring-writer",
+            2_001,
+            3_000,
+            "event-claim-expiring-writer",
+        )
+        .await
+        .expect("claim expiring writer")
+        .expect("writer claim");
+    assert_eq!(claim.run.run_id, "run-expiring-writer");
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-waiting-writer",
+            "run-waiting-blocked",
+            "event-waiting-blocked",
+            2_500,
+        )
+        .await
+        .expect("check waiting writer")
+        .is_none());
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 3_001)
+            .await
+            .expect("recover expired writer"),
+        1
+    );
+    assert!(storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-waiting-writer",
+            "run-waiting-writer",
+            "event-waiting-writer",
+            3_100,
+        )
+        .await
+        .expect("start waiting writer after recovery")
+        .is_some());
 }
 
 #[tokio::test]
@@ -203,8 +1034,12 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
+    let mut context_graph = graph();
+    context_graph.tasks[0].input["acceptance_report_version"] = json!(1);
+    context_graph.tasks[0].input["acceptance_criteria"] = json!(["Model defined"]);
+    context_graph.tasks[0].input["final_response_max_chars"] = json!(100);
     storage
-        .create_task_graph(&command("create-context-graph"), &graph(), 1_000)
+        .create_task_graph(&command("create-context-graph"), &context_graph, 1_000)
         .await
         .expect("create graph");
     finish_next_with_outcome(
@@ -214,6 +1049,7 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
         json!({
             "content": "Implemented the data model.",
             "report": {"content": "Tests: 12 passed"},
+            "task_acceptance":{"status":"succeeded","final_response":"Implemented the data model.","final_response_chars":999,"acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Checked result"}]},
             "reasoning": "hidden chain of thought must never be forwarded"
         }),
         2_000,
@@ -226,6 +1062,16 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
         .expect("start dependent")
         .expect("dependent run");
     let prompt = dependent.input["prompt"].as_str().expect("Task prompt");
+    assert!(prompt.contains("Task Acceptance Facts"));
+    assert_eq!(
+        dependent.input["resolved_prerequisites"][0]["acceptance_summary"]["final_response_chars"],
+        27
+    );
+    assert_eq!(
+        dependent.input["resolved_prerequisites"][0]["acceptance_summary"]
+            ["final_response_max_chars"],
+        100
+    );
 
     assert!(prompt.contains("[Prerequisite Task Results]"));
     assert!(prompt.contains("Implemented the data model."));
@@ -342,6 +1188,77 @@ async fn root_task_input_is_not_rewritten_without_prerequisites() {
             "prompt": "Task Objective:\nComplete task-a"
         })
     );
+}
+
+#[tokio::test]
+async fn completed_external_dependencies_are_ready_on_creation_and_old_pending_is_owner_scoped() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    for owner in ["user-1", "user-2"] {
+        let mut source = graph();
+        source.graph_id = format!("source-{owner}");
+        source.owner_user_id = owner.into();
+        source.tasks.truncate(1);
+        source.tasks[0].task_id = format!("source-task-{owner}");
+        source.dependencies.clear();
+        storage
+            .create_task_graph(&command(&format!("create-source-{owner}")), &source, 1000)
+            .await
+            .unwrap();
+        // Isolated fixture terminal state; never used on the real database.
+        sqlx::query("UPDATE local_tasks SET status='succeeded' WHERE task_id=?")
+            .bind(&source.tasks[0].task_id)
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        let mut dependent = source.clone();
+        dependent.graph_id = format!("dependent-{owner}");
+        dependent.tasks[0].task_id = format!("dependent-task-{owner}");
+        dependent.tasks[0].input["prerequisite_task_ids"] = json!([source.tasks[0].task_id]);
+        let created = storage
+            .create_task_graph(
+                &command(&format!("create-dependent-{owner}")),
+                &dependent,
+                2000,
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.tasks[0].status, LocalTaskStatus::Ready);
+        sqlx::query("UPDATE local_tasks SET status='pending' WHERE task_id=?")
+            .bind(&dependent.tasks[0].task_id)
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+    }
+    let started = storage
+        .start_next_task_run("user-1", "recovered-run", "recovered-event", 3000)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(started.owner_entity_id, "dependent-task-user-1");
+    let other = storage
+        .get_task_graph("user-2", "dependent-user-2")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(other.tasks[0].status, LocalTaskStatus::Pending);
+}
+
+#[test]
+fn prerequisite_acceptance_facts_recount_delivery_not_worker_estimates() {
+    let input = json!({"acceptance_report_version":1,"acceptance_criteria":["Review"],"final_response_max_chars":4});
+    let outcome = json!({"content":"中文\n!","task_acceptance":{"status":"succeeded","final_response":"中文\n!","final_response_chars":999,"acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Estimated 999 characters"}]}});
+    let summary = prerequisite_acceptance_summary(&input, &outcome).unwrap();
+    assert_eq!(summary["final_response_chars"], 4);
+    assert_eq!(summary["explicit_length_limit_passed"], true);
+    assert_eq!(summary["result_summary_is_complete_final_response"], true);
+    assert_eq!(
+        summary["content_verification"],
+        "worker_reported_not_independently_certified"
+    );
+    assert!(prerequisite_acceptance_summary(&json!({}), &outcome).is_none());
+    let mut rewritten = outcome.clone();
+    rewritten["content"] = json!("Different text");
+    assert!(prerequisite_acceptance_summary(&input, &rewritten).is_none());
 }
 
 #[tokio::test]
@@ -521,6 +1438,14 @@ async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
         .expect("get run")
         .expect("run");
     assert_eq!(recovered_run.status, LocalAgentRunStatus::NeedsReview);
+    assert_eq!(
+        recovered_run.terminal_outcome.as_ref().unwrap()["reason_code"],
+        "execution_interrupted"
+    );
+    assert!(recovered_run.terminal_outcome.as_ref().unwrap()["error"]
+        .as_str()
+        .unwrap()
+        .contains("before retrying"));
     let recovered_graph = storage
         .get_task_graph("user-1", "graph-lifecycle")
         .await

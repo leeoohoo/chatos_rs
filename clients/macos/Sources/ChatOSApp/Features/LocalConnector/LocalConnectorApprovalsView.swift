@@ -113,9 +113,24 @@ struct LocalConnectorApprovalsView: View {
                     .appFont(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            Text(approval.command)
-                .appFont(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
+            if let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !purpose.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(model.localized("运行目的", english: "Purpose"), systemImage: "target")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(purpose)
+                        .appFont(.callout.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            DisclosureGroup(model.localized("命令详情", english: "Command details")) {
+                Text(approval.command)
+                    .appFont(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.top, 4)
+            }
+            .appFont(.caption)
             Text(approval.cwd)
                 .appFont(.caption.monospaced())
                 .foregroundStyle(.secondary)
@@ -164,8 +179,14 @@ struct LocalConnectorApprovalsView: View {
                                 .foregroundStyle(decisionColor(entry.decision))
                                 .frame(width: 18)
                             VStack(alignment: .leading, spacing: 4) {
+                                if let purpose = entry.purpose?.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   !purpose.isEmpty {
+                                    Text(purpose)
+                                        .appFont(.callout.weight(.semibold))
+                                        .lineLimit(2)
+                                }
                                 Text(entry.command)
-                                    .appFont(.system(.callout, design: .monospaced))
+                                    .appFont(.system(.caption, design: .monospaced))
                                     .lineLimit(2)
                                 Text("\(entry.source) · \(entry.createdAt)")
                                     .appFont(.caption2)

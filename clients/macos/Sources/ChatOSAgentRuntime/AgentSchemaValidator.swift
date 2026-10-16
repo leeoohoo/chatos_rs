@@ -22,6 +22,18 @@ public enum AgentSchemaValidator {
             "minLength", "maxLength", "enum", "description", "default",
         ]
         guard Set(schema.keys).isSubset(of: supported) else { throw ValidationError.invalid("unsupported schema") }
+        if let types = schema["type"] as? [String] {
+            guard types.count == 2, Set(types).count == 2, types.contains("null"),
+                  let concrete = types.first(where: { $0 != "null" }),
+                  ["object", "array", "string", "integer", "number", "boolean"].contains(concrete) else {
+                throw ValidationError.invalid("unsupported nullable type")
+            }
+            if value is NSNull { return }
+            var concreteSchema = schema
+            concreteSchema["type"] = concrete
+            try check(value, schema: concreteSchema, path: path, depth: depth + 1)
+            return
+        }
         switch schema["type"] as? String {
         case "object":
             guard let object = value as? [String: Any] else { throw ValidationError.invalid(path) }

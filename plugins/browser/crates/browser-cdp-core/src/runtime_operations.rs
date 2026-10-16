@@ -573,7 +573,13 @@ impl BrowserRuntime {
         &self,
         browser_session_id: &str,
         reference: &str,
-    ) -> CoreResult<(Arc<dyn BrowserBackend>, BackendSessionId, String)> {
+    ) -> CoreResult<(
+        Arc<dyn BrowserBackend>,
+        BackendSessionId,
+        String,
+        Option<String>,
+        BrowserMode,
+    )> {
         let session = self.session(browser_session_id).await?;
         let session = session.lock().await;
         let element = session.element_refs.get(reference).ok_or_else(|| {
@@ -590,10 +596,18 @@ impl BrowserRuntime {
             .tabs
             .get(&element.tab_id)
             .ok_or_else(|| CoreError::NotFound(format!("tab {}", element.tab_id)))?;
+        let page = read_page_state(session.backend.as_ref(), &tab.backend_session_id).await?;
+        if page.url != element.page_url || page.document_id != element.document_id {
+            return Err(CoreError::InvalidRequest(
+                "element reference belongs to an earlier page; take a new snapshot".into(),
+            ));
+        }
         Ok((
             session.backend.clone(),
             tab.backend_session_id.clone(),
             element.selector.clone(),
+            element.href.clone(),
+            session.mode,
         ))
     }
 

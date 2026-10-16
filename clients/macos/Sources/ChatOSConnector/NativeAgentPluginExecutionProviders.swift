@@ -222,6 +222,9 @@ extension NativeLocalConnectorService {
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativePluginRuntimeError.invalidRequest("终端命令不能为空")
         }
+        guard let purpose = NativeLocalAgentTerminalCommandResolver.purpose(arguments) else {
+            throw NativePluginRuntimeError.invalidRequest("终端命令必须提供 1 至 500 字的运行目的")
+        }
         let cwd = try resolveDirectory(
             arguments["path"]?.jsonString ?? ".",
             relativeTo: projectRoot,
@@ -240,6 +243,8 @@ extension NativeLocalConnectorService {
             projectRoot: projectRoot,
             source: "local-agent-builtin-mcp",
             risk: risk,
+            purpose: purpose,
+            requestedPermissionsDescription: purpose,
             approvalScopeKey: "agent-project-terminal:\(resolvedProject.workspace.id)",
             workspaceID: resolvedProject.workspace.id
         )
@@ -315,10 +320,17 @@ extension NativeLocalConnectorService {
             kind: .progress,
             runID: runContext.runID,
             stage: audit.stage,
-            detail: String(audit.detail.prefix(16_000)),
+            detail: Self.agentBuiltinAuditDetailPreview(audit.detail),
             assetUpdateSuggestions: [],
             nowUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
         )
+    }
+
+    static func agentBuiltinAuditDetailPreview(_ detail: String) -> String {
+        let maximumCharacters = 16_000
+        guard detail.count > maximumCharacters else { return detail }
+        let marker = "\n[…进度详情为预览；完整工具结果请通过对应分页读取工具或交付文件查看。]"
+        return String(detail.prefix(maximumCharacters - marker.count)) + marker
     }
 
     func cancelAgentBuiltinTools(runID: String) async {

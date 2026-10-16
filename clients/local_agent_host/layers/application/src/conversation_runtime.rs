@@ -118,7 +118,9 @@ impl LocalAgentRuntime {
             }
         }
         let now = self.now()?;
-        let input = json!({
+        let explicit_capability_selection =
+            normalized_explicit_capability_selection(&command.message_metadata)?;
+        let mut input = json!({
             "conversation_id": &command.conversation_id,
             "turn_id": &command.turn_id,
             "message_id": &command.message_id,
@@ -131,6 +133,12 @@ impl LocalAgentRuntime {
                 "reasoning_enabled": settings.reasoning_enabled,
             })),
         });
+        if let Some(selection) = explicit_capability_selection {
+            input
+                .as_object_mut()
+                .expect("conversation Run input is an object")
+                .insert("explicit_capability_selection".to_string(), selection);
+        }
         let run = LocalAgentRunRecord {
             run_id: command.run_id.clone(),
             owner_user_id: conversation.conversation.owner_user_id,
@@ -201,6 +209,86 @@ impl LocalAgentRuntime {
     }
 }
 
+fn normalized_explicit_capability_selection(
+    metadata: &serde_json::Value,
+) -> Result<Option<serde_json::Value>, LocalAgentRuntimeError> {
+    let Some(selection) = metadata.get("explicit_capability_selection") else {
+        return Ok(None);
+    };
+    let values = selection.as_object().ok_or_else(|| {
+        LocalAgentRuntimeError::InvalidRequest(
+            "explicit_capability_selection must be an object".to_string(),
+        )
+    })?;
+    let kind = values
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            LocalAgentRuntimeError::InvalidRequest(
+                "explicit_capability_selection.kind is required".to_string(),
+            )
+        })?;
+    let display_name = values
+        .get("display_name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.chars().count() <= 200)
+        .ok_or_else(|| {
+            LocalAgentRuntimeError::InvalidRequest(
+                "explicit_capability_selection.display_name must be 1..=200 characters".to_string(),
+            )
+        })?;
+    match kind {
+        "plugin" => {
+            let plugin_key = values
+                .get("plugin_key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 256)
+                .ok_or_else(|| {
+                    LocalAgentRuntimeError::InvalidRequest(
+                        "plugin selection requires a 1..=256 character plugin_key".to_string(),
+                    )
+                })?;
+            let component_key = values
+                .get("component_key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 256)
+                .ok_or_else(|| {
+                    LocalAgentRuntimeError::InvalidRequest(
+                        "plugin selection requires a 1..=256 character component_key".to_string(),
+                    )
+                })?;
+            Ok(Some(json!({
+                "kind": "plugin",
+                "plugin_key": plugin_key,
+                "component_key": component_key,
+                "display_name": display_name,
+            })))
+        }
+        "requirement_survey" => {
+            if values
+                .get("plugin_key")
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err(LocalAgentRuntimeError::InvalidRequest(
+                    "requirement_survey selection must not contain plugin_key".to_string(),
+                ));
+            }
+            Ok(Some(json!({
+                "kind": "requirement_survey",
+                "display_name": display_name,
+            })))
+        }
+        _ => Err(LocalAgentRuntimeError::InvalidRequest(format!(
+            "unsupported explicit capability selection kind: {kind}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,7 +328,15 @@ mod tests {
             message_id: "message-1".to_string(),
             run_id: "run-1".to_string(),
             message: "hello".to_string(),
-            message_metadata: json!({"source": "composer"}),
+            message_metadata: json!({
+                "source": "composer",
+                "explicit_capability_selection": {
+                    "kind": "plugin",
+                    "plugin_key": "document-plugin",
+                    "component_key": "document-mcp",
+                    "display_name": "Document"
+                }
+            }),
             attachments: vec![LocalConversationAttachmentSpec {
                 attachment_id: "attachment-1".to_string(),
                 display_name: "brief.pdf".to_string(),
@@ -300,6 +396,15 @@ mod tests {
         assert_eq!(result.run.input["conversation_id"], "conversation-1");
         assert_eq!(result.run.input["turn_id"], "turn-1");
         assert_eq!(result.run.input["message_id"], "message-1");
+        assert_eq!(
+            result.run.input["explicit_capability_selection"],
+            json!({
+                "kind": "plugin",
+                "plugin_key": "document-plugin",
+                "component_key": "document-mcp",
+                "display_name": "Document"
+            })
+        );
         assert_eq!(
             result.run.input["attachments"][0]["attachment_id"],
             "attachment-1"

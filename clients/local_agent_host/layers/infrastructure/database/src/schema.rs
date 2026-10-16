@@ -667,3 +667,52 @@ pub(super) const SCHEMA_V29: &[&str] = &[
            AND json_extract(m.metadata_json, '$.terminal_status') = 'failed'
        )"#,
 ];
+
+pub(super) const SCHEMA_V30: &[&str] = &[
+    "CREATE TABLE local_task_followup_reviews (\
+       task_id TEXT PRIMARY KEY NOT NULL REFERENCES local_tasks(task_id) ON DELETE CASCADE,\
+       conversation_id TEXT NOT NULL REFERENCES local_conversations(conversation_id) ON DELETE CASCADE,\
+       main_chat_run_id TEXT NOT NULL REFERENCES local_agent_runs(run_id) ON DELETE CASCADE,\
+       review_message_id TEXT NOT NULL,\
+       state TEXT NOT NULL CHECK(state IN ('pending','held','released','cancelled')),\
+       reason TEXT, updated_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_task_followup_reviews_run_state ON local_task_followup_reviews(main_chat_run_id, state)",
+];
+
+/// Persist which runtime owns each Tool invocation. Existing platform tools remain platform-owned,
+/// while the built-in control-plane tools are backfilled to the shared Rust worker. Unified
+/// `agent_skill_*` calls belong to macOS only for Task Execution Runs.
+pub(super) const SCHEMA_V31: &[&str] = &[
+    "ALTER TABLE local_agent_tool_invocations ADD COLUMN execution_route TEXT NOT NULL \
+       DEFAULT 'platform' CHECK(execution_route IN ('shared','platform'))",
+    "UPDATE local_agent_tool_invocations SET execution_route = 'shared' WHERE \
+       tool_name IN (\
+         'list_tasks','get_task','create_task','create_tasks_with_prerequisites',\
+         'cancel_task','wait_for_task_completion','get_task_dependency_graph',\
+         'resolve_task_followup','ask_user_prompt_key_values','ask_user_prompt_choices',\
+         'ask_user_prompt_mixed_form','notepad_list_folders','notepad_list_notes',\
+         'notepad_read_note','notepad_create_note','notepad_update_note',\
+         'requirement_survey_create','task_run_process_record_process',\
+         'task_run_process_report_outcome'\
+       ) OR (tool_name IN (\
+         'agent_skill_activate','agent_skill_read_resource'\
+       ) AND run_id IN (\
+         SELECT run_id FROM local_agent_runs WHERE profile_key <> 'task_execution'\
+       ))",
+    "CREATE INDEX local_agent_tool_invocations_route_claimable ON \
+       local_agent_tool_invocations(execution_route, status, created_at_unix_ms, invocation_id)",
+];
+
+pub(super) const SCHEMA_V32: &[&str] = &[
+    "CREATE TABLE local_requirement_plans (\
+       owner_user_id TEXT NOT NULL, plan_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision > 0), \
+       project_resource_id TEXT NOT NULL, source_conversation_id TEXT NOT NULL, \
+       source_survey_id TEXT NOT NULL, source_run_id TEXT NOT NULL, title TEXT NOT NULL, \
+       markdown TEXT NOT NULL, created_at_unix_ms INTEGER NOT NULL, confirmed_at_unix_ms INTEGER, \
+       PRIMARY KEY(owner_user_id, plan_id, revision), \
+       FOREIGN KEY(owner_user_id, source_survey_id) REFERENCES local_requirement_surveys(owner_user_id, survey_id) ON DELETE CASCADE, \
+       FOREIGN KEY(source_run_id) REFERENCES local_agent_runs(run_id) ON DELETE CASCADE)",
+    "CREATE INDEX local_requirement_plans_project ON local_requirement_plans(\
+       owner_user_id, project_resource_id, created_at_unix_ms DESC, plan_id, revision DESC)",
+];

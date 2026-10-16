@@ -15,7 +15,8 @@ const progressiveTools = [
   'web_design_capture_page', 'web_design_capture_region',
   'web_design_compare_snapshots', 'web_design_inspect_at_point', 'web_design_query_scene', 'web_design_edit_scene',
   'web_design_prepare_annotation_task', 'web_design_list_documents', 'web_design_create_document',
-  'web_design_get_catalog', 'web_design_search_catalog', 'web_design_get_component_contract', 'web_design_list_requests'
+  'web_design_get_catalog', 'web_design_search_catalog', 'web_design_get_component_contract', 'web_design_list_requests',
+  'web_design_export_handoff'
 ];
 
 const skillForTool = (name) => name === 'web_design_get_active_context' || name === 'web_design_plan_site' || name === 'web_design_plan_page'
@@ -25,6 +26,8 @@ const skillForTool = (name) => name === 'web_design_get_active_context' || name 
     : name === 'web_design_control_plan' || name === 'web_design_capture_page' || name === 'web_design_capture_region'
       || name === 'web_design_compare_snapshots' || name === 'web_design_inspect_at_point' || name === 'web_design_prepare_annotation_task'
       ? 'web-design-candidate-review'
+      : name === 'web_design_export_handoff'
+        ? 'web-design-validation-export'
       : name.includes('catalog') || name.includes('component')
         ? 'web-design-components'
         : 'web-design-documents';
@@ -61,7 +64,7 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
   try {
     await client.connect(transport);
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 18);
+    assert.equal(listed.tools.length, 19);
     for (const name of progressiveTools) {
       const tool = listed.tools.find((candidate) => candidate.name === name);
       assert.ok(tool, `missing ${name}`);
@@ -75,7 +78,7 @@ test('MCP exposes an AI-first single-step generation workflow without a model-su
     assert.equal(JSON.stringify(runTool.inputSchema).includes('visualInputs'), false);
     assert.ok(
       JSON.stringify(listed.tools).length < 20_000,
-      'the lazy capability description must stay below the local model tool-output truncation budget'
+      'the tool catalog must stay below the task model tool-output truncation budget'
     );
     const queryTool = listed.tools.find((candidate) => candidate.name === 'web_design_query_scene');
     assert.equal(JSON.stringify(queryTool.inputSchema).includes('pageIds'), false);

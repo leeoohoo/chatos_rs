@@ -73,6 +73,7 @@ struct ActiveApplicationDTO: Codable, Sendable, Equatable {
     let name: String?
     let bundleIdentifier: String?
     let processIdentifier: Int32?
+    let windowTitle: String?
 }
 
 struct ActionReceiptDTO: Codable, Sendable, Equatable {

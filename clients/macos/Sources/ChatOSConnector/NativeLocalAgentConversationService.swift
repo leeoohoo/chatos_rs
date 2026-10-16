@@ -9,6 +9,9 @@ public actor NativeLocalAgentConversationService:
     private struct Context: Sendable {
         let ownerUserID: String
         let capabilitiesByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
+        let pluginInstallerCapabilitiesByModelConfigRef: [
+            String: LocalAgentCapabilityPolicySnapshot
+        ]
     }
 
     private let client: NativeLocalAgentConversationClient
@@ -41,12 +44,17 @@ public actor NativeLocalAgentConversationService:
               bootstrap.modelSnapshots.allSatisfy({ snapshot in
                   bootstrap.capabilitySnapshot(forModelConfigRef: snapshot.modelConfigRef)?
                       .ownerUserID == ownerUserID
+                      && bootstrap.pluginInstallerCapabilitySnapshot(
+                          forModelConfigRef: snapshot.modelConfigRef
+                      )?.ownerUserID == ownerUserID
               }) else {
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         context = .init(
             ownerUserID: ownerUserID,
-            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef
+            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef,
+            pluginInstallerCapabilitiesByModelConfigRef:
+                bootstrap.pluginInstallerCapabilitySnapshotsByModelConfigRef
         )
         await eventHub.configure(ownerUserID: ownerUserID)
     }
@@ -63,21 +71,46 @@ public actor NativeLocalAgentConversationService:
         let runtimeSelection = try await runtimeSettings.resolveSelection(
             sessionID: command.sessionID
         )
-        guard let capability = context.capabilitiesByModelConfigRef[
-            runtimeSelection.modelSnapshot.modelConfigRef
-        ] else {
-            throw NativeLocalAgentConversationServiceError.notConfigured
-        }
         let conversation = try await ensureConversation(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
         )
+        let isPluginInstallerConversation = Self.usesPluginInstallerCapability(
+            for: conversation.conversation.resource
+        )
+        let capabilityMap = isPluginInstallerConversation
+            ? context.pluginInstallerCapabilitiesByModelConfigRef
+            : context.capabilitiesByModelConfigRef
+        guard let capability = capabilityMap[runtimeSelection.modelSnapshot.modelConfigRef] else {
+            throw NativeLocalAgentConversationServiceError.notConfigured
+        }
         let messageID = "message_\(UUID().uuidString.lowercased())"
         let attachments = try attachmentVault.authorize(
             command.attachments,
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
         )
+        var messageMetadata: [String: LocalAgentJSONValue] = [
+            "source": .string(
+                isPluginInstallerConversation
+                    ? "native_plugin_installer_chat"
+                    : "native_main_chat"
+            ),
+            "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
+        ]
+        if let selection = command.explicitCapabilitySelection {
+            var explicitSelection: [String: LocalAgentJSONValue] = [
+                "kind": .string(selection.kind.rawValue),
+                "display_name": .string(selection.displayName),
+            ]
+            if let pluginKey = selection.pluginKey {
+                explicitSelection["plugin_key"] = .string(pluginKey)
+            }
+            if let componentKey = selection.componentKey {
+                explicitSelection["component_key"] = .string(componentKey)
+            }
+            messageMetadata["explicit_capability_selection"] = .object(explicitSelection)
+        }
         let result = try await client.startTurn(.init(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID,
@@ -86,10 +119,7 @@ public actor NativeLocalAgentConversationService:
             messageID: messageID,
             runID: "run_\(UUID().uuidString.lowercased())",
             message: command.content,
-            messageMetadata: .object([
-                "source": .string("native_main_chat"),
-                "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
-            ]),
+            messageMetadata: .object(messageMetadata),
             attachments: attachments,
             modelConfigRef: runtimeSelection.modelSnapshot.modelConfigRef,
             modelConfigRevision: runtimeSelection.modelSnapshot.modelConfigRevision,
@@ -100,6 +130,15 @@ public actor NativeLocalAgentConversationService:
             accepted: true,
             turnID: result.turn.turnID,
             userMessageID: result.message?.messageID ?? messageID
+        )
+    }
+
+    static func usesPluginInstallerCapability(
+        for resource: LocalAgentConversationResourceBinding?
+    ) -> Bool {
+        resource == .init(
+            kind: .contact,
+            resourceID: WorkspaceSystemContact.pluginInstallerID
         )
     }
 
@@ -258,6 +297,12 @@ public actor NativeLocalAgentConversationService:
                                 conversationID: sessionID,
                                 knownRunIDs: observedRunIDs
                             ) else { continue }
+                            for signal in Self.askUserPromptSignals(
+                                events,
+                                conversationID: sessionID
+                            ) {
+                                continuation.yield(signal)
+                            }
                         }
 
                         let detail = try await client.get(
@@ -359,6 +404,39 @@ public actor NativeLocalAgentConversationService:
         }
     }
 
+    static func askUserPromptSignals(
+        _ events: [LocalAgentEventRecord],
+        conversationID: String
+    ) -> [ConversationRealtimeSignal] {
+        events.compactMap { event in
+            guard event.eventType == "user_input_requested",
+                  case let .object(payload)? = event.payload,
+                  case let .string(eventConversationID)? = payload["conversation_id"],
+                  eventConversationID == conversationID else { return nil }
+            let turnID: String? = if case let .string(value)? = payload["turn_id"] {
+                value
+            } else {
+                nil
+            }
+            return ConversationRealtimeSignal(
+                eventID: event.eventID,
+                eventSequence: event.cursor,
+                sessionID: conversationID,
+                turnID: turnID,
+                kind: .updated,
+                eventName: event.eventType,
+                timestamp: timestamp(unixMilliseconds: event.createdAtUnixMs),
+                askUserPromptUpdate: AskUserPromptRealtimeUpdate(
+                    promptID: "local-ask:\(event.runID)",
+                    sessionID: conversationID,
+                    turnID: turnID,
+                    action: "created",
+                    status: .pending
+                )
+            )
+        }
+    }
+
     private static func timestamp(unixMilliseconds: Int64) -> String {
         ISO8601DateFormatter().string(
             from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000)
@@ -380,7 +458,9 @@ public actor NativeLocalAgentConversationService:
                     conversationID: turn.conversationID
                 )
             }
-            let assistants = messages.filter { $0.role == "assistant" }
+            let assistants = Self.coalescingTaskGraphTerminalMessages(
+                messages.filter { $0.role == "assistant" }
+            )
             let userMessage = mapMessage(
                 user,
                 fallbackID: turn.userMessageID,
@@ -437,12 +517,38 @@ public actor NativeLocalAgentConversationService:
         }
     }
 
+    /// Storage retains every terminal generation for audit and retry history. Main Chat only
+    /// presents the newest generation for each Task Graph so a later cancellation or recovery
+    /// does not repeat the previous terminal summary and its full delivery.
+    static func coalescingTaskGraphTerminalMessages(
+        _ messages: [LocalAgentConversationMessageRecord]
+    ) -> [LocalAgentConversationMessageRecord] {
+        var latestOrdinalByGraphID: [String: UInt64] = [:]
+        for message in messages {
+            guard let graphID = message.taskGraphTerminalGraphID else { continue }
+            latestOrdinalByGraphID[graphID] = max(
+                latestOrdinalByGraphID[graphID] ?? 0,
+                message.ordinal
+            )
+        }
+        return messages.filter { message in
+            guard let graphID = message.taskGraphTerminalGraphID else { return true }
+            return latestOrdinalByGraphID[graphID] == message.ordinal
+        }
+    }
+
     static func orderedConversationReplies(
         _ replies: [ConversationAssistantReply]
     ) -> [ConversationAssistantReply] {
-        let mainChat = replies.filter { $0.taskCallback == nil }
-        let callbacks = replies.filter { $0.taskCallback != nil }
-        return mainChat + callbacks
+        // Keep the handoff acknowledgement first, but preserve durable ordinal
+        // order among progress messages and graph deliveries. Graph delivery IDs
+        // are minted by the Host (task-graph:<graph>:<generation>), not user text.
+        let isAsyncTaskReply: (ConversationAssistantReply) -> Bool = {
+            $0.taskCallback != nil || $0.id.hasPrefix("task-graph:")
+        }
+        let mainChat = replies.filter { !isAsyncTaskReply($0) }
+        let taskReplies = replies.filter(isAsyncTaskReply)
+        return mainChat + taskReplies
     }
 
     private func mapMessage(

@@ -76,6 +76,9 @@ enum LocalAgentTurnProcessMapper {
             .update
         )
         case "conversation_guidance_queued": ("已追加指导", nil, .streaming, .update)
+        case "task_followup_review_started": ("已暂停后续执行，审查追加要求", nil, .queued, .update)
+        case "task_followup_reviewed": ("已处理追加要求", nil, .completed, .update)
+        case "task_followup_review_required": ("追加要求尚未完成审查", nil, .failed, .update)
         case "tool_invocation_approved": ("工具调用已批准", nil, .streaming, .tool)
         case "tool_invocation_rejected": ("工具调用被拒绝", nil, .failed, .tool)
         case "tool_claim_expired_requeued": ("工具执行已重新排队", nil, .queued, .tool)

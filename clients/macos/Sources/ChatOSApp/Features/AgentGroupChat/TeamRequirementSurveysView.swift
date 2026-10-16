@@ -16,7 +16,7 @@ struct RequirementSurveyRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(survey.title).appFont(.headline).lineLimit(1)
                     Spacer(minLength: 8)
-                    Text(survey.status == .open ? "待填写" : "已恢复任务")
+                    Text(survey.status == .open ? "待填写" : "已提交")
                         .appFont(.caption)
                         .foregroundStyle(statusColor)
                         .padding(.horizontal, 8)
@@ -29,9 +29,7 @@ struct RequirementSurveyRow: View {
                 HStack(spacing: 12) {
                     Label("\(survey.questions.count) 个问题", systemImage: "list.number")
                     Label(createdAt, systemImage: "clock")
-                    if survey.sourceTaskID != nil {
-                        Label("Task", systemImage: "checklist")
-                    }
+                    Label(survey.sourceTaskID == nil ? "主聊天" : "本地任务", systemImage: survey.sourceTaskID == nil ? "bubble.left" : "checklist")
                 }
                 .appFont(.caption2)
                 .foregroundStyle(.tertiary)
@@ -63,6 +61,8 @@ struct RequirementSurveyRow: View {
 struct RequirementSurveyDetailView: View {
     let survey: LocalAgentHostRequirementSurvey
     let isSubmitting: Bool
+    let followUpClient: NativeLocalAgentRequirementSurveyClient?
+    let eventHub: NativeLocalAgentEventHub?
     let onBack: () -> Void
     let onSubmit: (
         LocalAgentHostRequirementSurvey,
@@ -74,6 +74,8 @@ struct RequirementSurveyDetailView: View {
     init(
         survey: LocalAgentHostRequirementSurvey,
         isSubmitting: Bool,
+        followUpClient: NativeLocalAgentRequirementSurveyClient? = nil,
+        eventHub: NativeLocalAgentEventHub? = nil,
         onBack: @escaping () -> Void,
         onSubmit: @escaping (
             LocalAgentHostRequirementSurvey,
@@ -82,6 +84,8 @@ struct RequirementSurveyDetailView: View {
     ) {
         self.survey = survey
         self.isSubmitting = isSubmitting
+        self.followUpClient = followUpClient
+        self.eventHub = eventHub
         self.onBack = onBack
         self.onSubmit = onSubmit
         _answers = State(initialValue: survey.answers ?? [:])
@@ -116,7 +120,7 @@ struct RequirementSurveyDetailView: View {
                                 if isSubmitting {
                                     ProgressView().controlSize(.small)
                                 } else {
-                                    Label("提交并恢复任务", systemImage: "play.fill")
+                                    Label("提交并继续", systemImage: "play.fill")
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -125,12 +129,15 @@ struct RequirementSurveyDetailView: View {
                             .disabled(isSubmitting || !canSubmit)
                         }
                     } else {
-                        Label("答案已保存，原 Local Agent Run 已恢复执行。", systemImage: "checkmark.seal.fill")
+                        Label("你的回答已提交。下方可查看方案或后续回复。", systemImage: "checkmark.seal.fill")
                             .appFont(.body.weight(.medium))
                             .foregroundStyle(.green)
                             .padding(14)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        if let followUpClient {
+                            RequirementSurveyFollowUpView(survey: survey, client: followUpClient, eventHub: eventHub)
+                        }
                     }
                 }
                 .padding(.horizontal, 32)
@@ -158,10 +165,10 @@ struct RequirementSurveyDetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack {
-                Label("本地任务需求调研", systemImage: "list.clipboard")
+                Label(survey.sourceTaskID == nil ? "主聊天需求调研" : "本地任务需求调研", systemImage: "list.clipboard")
                     .appFont(.caption.weight(.semibold))
                     .foregroundStyle(AppPalette.ai)
-                Text(survey.status == .open ? "等待你的输入" : "已恢复任务")
+                Text(survey.status == .open ? "等待你的输入" : "已提交")
                     .appFont(.caption.weight(.medium))
                     .foregroundStyle(survey.status == .open ? AppPalette.ai : .green)
             }
@@ -169,15 +176,6 @@ struct RequirementSurveyDetailView: View {
             if let description = survey.description, !description.isEmpty {
                 Text(description).appFont(.body).foregroundStyle(.secondary)
             }
-            HStack(spacing: 12) {
-                Label("Run: \(survey.sourceRunID)", systemImage: "play.circle")
-                if let taskID = survey.sourceTaskID {
-                    Label("Task: \(taskID)", systemImage: "checklist")
-                }
-            }
-            .appFont(.caption2)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
         }
     }
 

@@ -2,6 +2,19 @@ import ChatOSCore
 import XCTest
 
 final class PluginToolSkillSessionTests: XCTestCase {
+    func testProgressiveSkillPagesUseUnifiedOneHundredSixtyThousandCharacterBudget() throws {
+        let text = String(repeating: "界", count: 160_001)
+        let page = try ProgressiveSkillFileLoader.textPage(
+            text,
+            offset: 0,
+            maximumCharacters: .max
+        )
+
+        XCTAssertEqual(page.content.count, 160_000)
+        XCTAssertEqual(page.nextOffset, 160_000)
+        XCTAssertTrue(page.truncated)
+    }
+
     func testSharedPluginSkillGateFixtureMatchesSwiftRuntime() throws {
         var repositoryRoot = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { repositoryRoot.deleteLastPathComponent() }
@@ -67,6 +80,28 @@ final class PluginToolSkillSessionTests: XCTestCase {
             body: "# Demo read\n\nRead narrowly.",
             reference: "read example"
         )
+        let agentMetadata = root.appendingPathComponent(
+            "skills/demo-read/agents",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: agentMetadata,
+            withIntermediateDirectories: true
+        )
+        try Data("interface:\n  display_name: Demo".utf8).write(
+            to: agentMetadata.appendingPathComponent("openai.yaml")
+        )
+        try Data(#"{"internal":true}"#.utf8).write(
+            to: root.appendingPathComponent("skills/demo-read/contract.json")
+        )
+        let scripts = root.appendingPathComponent(
+            "skills/demo-read/scripts",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: scripts, withIntermediateDirectories: true)
+        try Data("internal helper".utf8).write(
+            to: scripts.appendingPathComponent("helper.txt")
+        )
         try writeSkill(
             root: root,
             name: "demo-write",
@@ -95,6 +130,12 @@ final class PluginToolSkillSessionTests: XCTestCase {
         )
 
         let session = PluginToolSkillSession(snapshot: snapshot)
+        let readDocument = try snapshot.document(named: "demo-read")
+        XCTAssertEqual(
+            readDocument.resourcePaths,
+            ["references/example.md"],
+            "Only references/ is model-readable; UI metadata, executable helpers, assets and internal contracts stay package-private"
+        )
         let readArguments = Data(#"{"mode":"read"}"#.utf8)
         let missingBefore = try await session.missingSkills(
             for: gate,

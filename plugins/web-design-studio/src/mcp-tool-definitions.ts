@@ -108,6 +108,21 @@ export const TOOL_DEFINITIONS_BASE = [
     _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
   },
   {
+    name: 'web_design_export_handoff',
+    description: 'Export HTML and PNG downloads after handoff.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        documentId: { type: 'string' },
+        pageId: { type: 'string' },
+        fileBaseName: { type: 'string' }
+      },
+      required: ['documentId', 'pageId'],
+      additionalProperties: false
+    },
+    _meta: { ...policy, 'chatos/toolResultMaxChars': 500_000 }
+  },
+  {
     name: 'web_design_capture_region',
     description: 'Render and return a PNG crop from one page using either a stable Scene nodeId or an explicit page-space rectangle. Grounding coordinates are relative to the returned crop.',
     inputSchema: {

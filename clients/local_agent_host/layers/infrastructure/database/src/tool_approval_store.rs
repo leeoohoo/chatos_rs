@@ -28,7 +28,7 @@ pub(super) async fn list_pending(
     let mut connection = storage.pool.acquire().await.db()?;
     sqlx::query(
         "SELECT i.invocation_id, i.run_id, i.batch_id, i.call_id, i.tool_name, \
-         i.arguments_json, i.side_effecting, i.requires_approval, i.approval_status, \
+         i.execution_route, i.arguments_json, i.side_effecting, i.requires_approval, i.approval_status, \
          i.approval_decided_by, i.approval_reason, i.approval_decided_at_unix_ms, i.status, \
          i.result_json, i.error_text, i.version, i.claim_token, i.claim_until_unix_ms, \
          i.created_at_unix_ms, i.updated_at_unix_ms \

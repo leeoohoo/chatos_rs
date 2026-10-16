@@ -2,6 +2,7 @@
 
 - source: {{source}}
 - cwd: {{cwd}}
+- user_facing_purpose: {{purpose}}
 - operation: {{operation}}
 - requested_permissions: {{requested_permissions}}
 - static_risk_level: {{risk_level}}
@@ -13,3 +14,4 @@
 3. deny 用于明确恶意、越权或与用户目标冲突的操作。
 4. approve 只用于意图清晰、范围受控且与当前项目任务一致的操作。
 5. Browser CDP、Computer Use 和其他 Plugin 操作不是 shell 命令，不要因为项目中找不到同名文件而拒绝或追问。ChatOS 生成的 browser_session_id、tab_id、cdp_session_id 等不透明标识属于正常会话边界，应结合工具名、参数摘要和权限说明判断。
+6. 用户已经主动选择“AI 自动审批”，因此你应当依据这里提供的事实自主批准或拒绝；不要仅为了让用户重复确认已经明确的 Plugin 安装权限、浏览器配对状态、任务能力选择或宿主强制的访问边界而 ask_user。只有仍缺少会实质改变决定的新授权或新选择时才 ask_user。

@@ -2,11 +2,14 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ask_user_model_tools, notepad_model_tools, requirement_survey_model_tools, task_model_tools,
-    task_process_model_tools, task_process_prompt_item, LocalAskUserToolExecutor,
-    LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor, LocalTaskProcessToolExecutor,
-    ASK_USER_TOOL_NAMES, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES,
-    REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES, TASK_PROCESS_TOOL_NAMES,
+    ask_user_model_tools, notepad_model_tools, requirement_survey_model_tools, skill_model_tools,
+    task_model_tools, task_process_model_tools, task_process_prompt_item, tool_result_model_tools,
+    LocalAskUserToolExecutor, LocalNotepadToolExecutor, LocalRequirementSurveyToolExecutor,
+    LocalSkillToolExecutor, LocalTaskProcessToolExecutor, LocalToolResultReader,
+    AGENT_SKILL_APPROVAL_EXEMPT_TOOLS, AGENT_SKILL_READ_ONLY_TOOLS, AGENT_SKILL_TOOL_NAMES,
+    ASK_USER_TOOL_NAMES, NOTEPAD_APPROVAL_EXEMPT_TOOLS, NOTEPAD_READ_ONLY_TOOLS,
+    NOTEPAD_TOOL_NAMES, REQUIREMENT_SURVEY_TOOL_NAMES, TASK_PROCESS_TOOL_NAMES,
+    TOOL_RESULT_READ_ONLY_TOOLS, TOOL_RESULT_TOOL_NAMES,
 };
 use crate::{
     ChatosAiRuntimeStepExecutor, ControlPlaneLocalAiStepPlanner, DurableAiProfile,
@@ -15,6 +18,7 @@ use crate::{
     LocalToolScheduler, NamedReadOnlyTools, MAIN_CHAT_PROFILE_KEY, TASK_APPROVAL_EXEMPT_TOOLS,
     TASK_EXECUTION_PROFILE_KEY, TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES,
 };
+use chatos_local_agent_protocol::LocalAgentToolExecutionRoute;
 use chatos_local_agent_runtime::{LocalAgentProfileRegistry, LocalAgentRuntime};
 use std::sync::Arc;
 
@@ -133,22 +137,14 @@ impl LocalAgentHostAssembly {
     {
         let model_resolver: Arc<dyn LocalModelRuntimeResolver> = Arc::new(model_resolver);
         let capability_resolver: Arc<dyn LocalCapabilityResolver> = Arc::new(capability_resolver);
-        let safety = NamedReadOnlyTools::new(
-            read_only_tools
-                .into_iter()
-                .map(Into::into)
-                .chain(TASK_READ_ONLY_TOOLS.map(str::to_string))
-                .chain(NOTEPAD_READ_ONLY_TOOLS.map(str::to_string)),
-        )
-        .with_approval_exempt(
-            approval_exempt_tools
-                .into_iter()
-                .chain(TASK_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
-                .chain(ASK_USER_TOOL_NAMES.map(str::to_string))
-                .chain(TASK_PROCESS_TOOL_NAMES.map(str::to_string))
-                .chain([REQUIREMENT_SURVEY_CREATE_TOOL.to_string()]),
+        let safety = host_tool_safety(
+            read_only_tools.into_iter().map(Into::into),
+            approval_exempt_tools,
         );
-        let main_tools = task_model_tools();
+        let mut main_tools = task_model_tools();
+        main_tools.extend(skill_model_tools());
+        main_tools.extend(requirement_survey_model_tools());
+        main_tools.extend(tool_result_model_tools());
         let mut main_chat_planner = ControlPlaneLocalAiStepPlanner::main_chat(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
@@ -158,6 +154,7 @@ impl LocalAgentHostAssembly {
         task_tools.extend(ask_user_model_tools());
         task_tools.extend(requirement_survey_model_tools());
         task_tools.extend(task_process_model_tools());
+        task_tools.extend(tool_result_model_tools());
         let mut task_execution_planner = ControlPlaneLocalAiStepPlanner::task_execution(
             Arc::clone(&model_resolver),
             Arc::clone(&capability_resolver),
@@ -167,7 +164,9 @@ impl LocalAgentHostAssembly {
             "ask_user_",
             "notepad_",
             "requirement_survey_",
+            "requirement_plan_",
             "task_run_process_",
+            "tool_result_",
         ])?
         .with_local_prefixed_input_items(vec![task_process_prompt_item()]);
         if let Some(source_id) = memory_source_id {
@@ -204,11 +203,15 @@ impl LocalAgentHostAssembly {
         for tool_name in TASK_TOOL_NAMES {
             tools.register_shared(tool_name, Arc::clone(&task_tools))?;
         }
+        LocalSkillToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
+            .register_into(&mut tools)?;
         LocalNotepadToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
         LocalAskUserToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
         LocalRequirementSurveyToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?
+            .register_into(&mut tools)?;
+        LocalToolResultReader::new(Arc::clone(&runtime), owner_user_id.clone())?
             .register_into(&mut tools)?;
         let task_process_tools: Arc<dyn LocalToolExecutor> = Arc::new(
             LocalTaskProcessToolExecutor::new(Arc::clone(&runtime), owner_user_id.clone())?,
@@ -225,13 +228,17 @@ impl LocalAgentHostAssembly {
         if external_tool_worker {
             let internal_tools = TASK_TOOL_NAMES
                 .into_iter()
+                .chain(AGENT_SKILL_TOOL_NAMES)
                 .chain(ASK_USER_TOOL_NAMES)
                 .chain(NOTEPAD_TOOL_NAMES)
                 .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
                 .chain(TASK_PROCESS_TOOL_NAMES)
+                .chain(TOOL_RESULT_TOOL_NAMES)
                 .map(str::to_string)
                 .collect();
-            tool_scheduler = tool_scheduler.with_tool_filter(Some(internal_tools), Vec::new())?;
+            tool_scheduler = tool_scheduler
+                .with_tool_filter(Some(internal_tools), Vec::new())?
+                .with_execution_route(LocalAgentToolExecutionRoute::Shared);
         }
         let mut coordinator = LocalAgentHostCoordinator::new(
             Arc::clone(&runtime),
@@ -245,7 +252,8 @@ impl LocalAgentHostAssembly {
                 .chain(ASK_USER_TOOL_NAMES)
                 .chain(NOTEPAD_TOOL_NAMES)
                 .chain(REQUIREMENT_SURVEY_TOOL_NAMES)
-                .chain(TASK_PROCESS_TOOL_NAMES),
+                .chain(TASK_PROCESS_TOOL_NAMES)
+                .chain(TOOL_RESULT_TOOL_NAMES),
         )?;
         if let Some(worker) = memory_sync_worker {
             coordinator = coordinator.with_memory_sync_worker(worker)?;
@@ -257,6 +265,20 @@ impl LocalAgentHostAssembly {
         })
     }
 
+    pub fn with_maximum_concurrent_work_items(mut self, maximum: usize) -> Result<Self, String> {
+        let coordinator = match Arc::try_unwrap(self.coordinator) {
+            Ok(coordinator) => coordinator,
+            Err(_) => {
+                return Err(
+                    "Local Agent coordinator concurrency must be configured before sharing"
+                        .to_string(),
+                )
+            }
+        };
+        self.coordinator = Arc::new(coordinator.with_maximum_concurrent_work_items(maximum)?);
+        Ok(self)
+    }
+
     pub fn runtime(&self) -> Arc<LocalAgentRuntime> {
         Arc::clone(&self.runtime)
     }
@@ -266,6 +288,35 @@ impl LocalAgentHostAssembly {
     }
 }
 
+fn host_tool_safety(
+    read_only_tools: impl IntoIterator<Item = String>,
+    approval_exempt_tools: Vec<String>,
+) -> NamedReadOnlyTools {
+    NamedReadOnlyTools::new(
+        read_only_tools
+            .into_iter()
+            .chain(TASK_READ_ONLY_TOOLS.map(str::to_string))
+            .chain(NOTEPAD_READ_ONLY_TOOLS.map(str::to_string))
+            .chain(AGENT_SKILL_READ_ONLY_TOOLS.map(str::to_string))
+            .chain(TOOL_RESULT_READ_ONLY_TOOLS.map(str::to_string)),
+    )
+    .with_approval_exempt(
+        approval_exempt_tools
+            .into_iter()
+            .chain(TASK_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
+            .chain(ASK_USER_TOOL_NAMES.map(str::to_string))
+            .chain(TASK_PROCESS_TOOL_NAMES.map(str::to_string))
+            .chain(AGENT_SKILL_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
+            // The Task's bound Notepad capability already authorizes durable note output.
+            // Keep these writes side-effecting for recovery without routing them through
+            // the command-approval UI.
+            .chain(NOTEPAD_APPROVAL_EXEMPT_TOOLS.map(str::to_string))
+            // Survey/plan writes persist conversational drafts. Human proposal
+            // confirmation and execution authorization remain separate guards.
+            .chain(REQUIREMENT_SURVEY_TOOL_NAMES.map(str::to_string)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +324,28 @@ mod tests {
     use async_trait::async_trait;
     use chatos_client_storage::SqliteClientStorage;
     use chatos_local_agent_protocol::{LocalAgentToolInvocationRecord, LocalAgentToolOutcome};
+
+    #[test]
+    fn host_owned_durable_writes_are_side_effecting_but_do_not_wait_for_execution_approval() {
+        use chatos_agent_profiles::ToolSafetyPolicy;
+        let safety = host_tool_safety(Vec::<String>::new(), Vec::new());
+        for name in REQUIREMENT_SURVEY_TOOL_NAMES
+            .into_iter()
+            .chain(["notepad_create_note", "notepad_update_note"])
+        {
+            assert!(safety.is_side_effecting(name));
+            assert!(
+                !safety.requires_approval(name),
+                "host-owned durable write must not hang behind command approval: {name}"
+            );
+        }
+        for name in ["write_file", "terminal_execute", "requirement_plan_confirm"] {
+            assert!(
+                safety.requires_approval(name),
+                "do not exempt unrelated effects: {name}"
+            );
+        }
+    }
 
     struct ModelResolver;
 

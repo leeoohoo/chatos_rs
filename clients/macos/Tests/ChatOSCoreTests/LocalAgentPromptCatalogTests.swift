@@ -76,6 +76,7 @@ final class LocalAgentPromptCatalogTests: XCTestCase {
                 [
                     "source": "plugin",
                     "cwd": "/project",
+                    "purpose": "验证项目状态",
                     "operation": "tool --flag",
                     "requested_permissions": "read",
                     "risk_level": "low",

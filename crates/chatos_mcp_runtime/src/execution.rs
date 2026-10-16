@@ -393,6 +393,9 @@ pub fn external_tool_result_from_value(
     value: &Value,
     max_chars: Option<usize>,
 ) -> ToolResult {
+    let is_error = ["isError", "is_error"]
+        .iter()
+        .any(|key| value.get(key).and_then(Value::as_bool) == Some(true));
     let (content, structured_result) = max_chars
         .map(|limit| crate::text::to_text_and_structured_result_with_transient_limit(value, limit))
         .unwrap_or_else(|| crate::text::to_text_and_structured_result_with_transient(value));
@@ -403,16 +406,33 @@ pub fn external_tool_result_from_value(
         content,
         structured_result,
     );
-    let is_error = value
-        .get("isError")
-        .or_else(|| value.get("is_error"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     if is_error {
         result.success = false;
         result.is_error = true;
+        result.content = crate::text::external_tool_error_text(Some(value), "", max_chars);
         result.transient_model_input = None;
     }
+    result
+}
+
+/// A durable failure status is authoritative even if the provider payload has no
+/// error flag. Keep both the transport code and the actionable provider diagnosis.
+pub fn external_tool_failure_from_value(
+    tool_call_id: String,
+    name: String,
+    conversation_turn_id: Option<String>,
+    value: Option<&Value>,
+    error: &str,
+    max_chars: Option<usize>,
+) -> ToolResult {
+    let mut result = tool_result_error(
+        tool_call_id,
+        name,
+        conversation_turn_id,
+        crate::text::external_tool_error_text(value, error, max_chars),
+        false,
+    );
+    result.result = value.filter(|value| !value.is_null()).cloned();
     result
 }
 

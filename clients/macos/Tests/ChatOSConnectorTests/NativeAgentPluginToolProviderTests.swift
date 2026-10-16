@@ -5,6 +5,178 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
+    func testTaskBuiltinDiscoveryRestoresFrozenSkillsWithoutBrokerExecution() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("task-builtin-skills-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "alice", username: "alice", displayName: nil, role: "user")
+        state.deviceID = "device-1"
+        try JSONEncoder().encode(state).write(to: stateURL)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "http://127.0.0.1:1")!, stateURL: stateURL
+            ),
+            ticketProvider: AgentPluginTestTicketProvider()
+        )
+        let external = NativeLocalAgentExternalMCPConfig(
+            resourceID: "mcp-1", serverName: "external", url: URL(string: "https://mcp.example.test/rpc")!,
+            headers: [:], tools: [.init(publicName: "external_mcp__external__search", upstreamName: "search",
+                description: "Search", inputSchema: .object(["type": .string("object")]))]
+        )
+        let original = try NativeLocalConnectorService.taskExecutionSkillSnapshot(externalMCPConfigs: [external]).bundle
+        // Simulate a Run created with a different app bundle, including its resource manifest.
+        let frozen = LocalAgentSkillBundleSnapshot(
+            bundleRevision: "frozen-revision",
+            documents: original.documents.map { document in
+                guard document.name == "chatos-project-read" else { return document }
+                return .init(
+                    skillRef: document.skillRef, name: document.name, role: document.role,
+                    description: "Frozen read guidance", instructions: "Frozen instructions for this Run",
+                    instructionsSHA256: String(repeating: "a", count: 64),
+                    resources: [.init(
+                        relativePath: "references/frozen.md", content: "A😀e\u{301}中",
+                        sha256: String(repeating: "b", count: 64)
+                    )]
+                )
+            },
+            toolSkillBindings: original.toolSkillBindings
+        )
+        func provider(
+            capabilities: Set<LocalAgentTodoBuiltinCapability>, refs: Set<String>, externalIDs: Set<String> = []
+        ) async throws -> any AgentToolProvider {
+            try await service.makeTaskExecutionCapabilityToolProvider(
+                ownerUserID: "alice", runID: "frozen-run", conversationID: "contact-1",
+                projectContext: .device, executionRootURL: root,
+                workspaceScopeID: "contact:contact-1", builtinCapabilities: capabilities,
+                pluginSelectionIDs: [], productSkillBundle: frozen,
+                selectedExternalMCPIDs: externalIDs, preactivatedSkillRefs: refs
+            )
+        }
+        let refs: Set<String> = [
+            "product-skill:chatos-project-files", "product-skill:chatos-project-read",
+            "product-skill:chatos-terminal", "product-skill:unknown",
+        ]
+        let broker = try await provider(capabilities: [.projectRead], refs: refs)
+        let activation = try await broker.execute(.init(
+            id: "restored-activation", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-project-read"}"#
+        ))
+        XCTAssertFalse(activation.isError)
+        XCTAssertTrue(activation.content.contains("Frozen instructions for this Run"))
+        XCTAssertTrue(activation.content.contains("references/frozen.md"))
+        let page = try await broker.execute(.init(
+            id: "restored-page", name: "agent_skill_read_resource",
+            arguments: #"{"skill_ref":"product-skill:chatos-project-read","relative_path":"references/frozen.md","offset":1,"max_chars":3}"#
+        ))
+        XCTAssertFalse(page.isError)
+        let pageObject = try JSONDecoder().decode(NativeJSONValue.self, from: Data(page.content.utf8)).jsonObject
+        XCTAssertEqual(pageObject?["content"]?.jsonString, "😀e\u{301}")
+        XCTAssertEqual(pageObject?["next_offset"], .number(4))
+        let unrelated = try await broker.execute(.init(
+            id: "unrelated-restored", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-terminal"}"#
+        ))
+        XCTAssertTrue(unrelated.isError, "Restored refs must not add unselected capability Skills")
+        let unavailable = try await broker.execute(.init(
+            id: "unselected-activation", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-terminal"}"#
+        ))
+        XCTAssertTrue(unavailable.isError)
+
+        let externalOnly = try await provider(capabilities: [], refs: [], externalIDs: ["mcp-1"])
+        let externalActivation = try await externalOnly.execute(.init(
+            id: "activate-external", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-external-mcp"}"#
+        ))
+        XCTAssertFalse(externalActivation.isError)
+        XCTAssertTrue(externalActivation.content.contains("frozen"))
+        let notSelected = try await broker.execute(.init(
+            id: "reject-unselected-external", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-external-mcp"}"#
+        ))
+        XCTAssertTrue(notSelected.isError)
+
+        let allBuiltins = try await provider(
+            capabilities: [.projectRead, .projectWrite, .terminal],
+            refs: Set(frozen.documents.map(\.skillRef))
+        )
+        let description = try await allBuiltins.execute(.init(
+            id: "describe-builtins", name: "capability_describe",
+            arguments: #"{"plugin_option":"builtin_1"}"#
+        ))
+        XCTAssertFalse(description.isError)
+        let descriptor = try JSONDecoder().decode(NativeJSONValue.self, from: Data(description.content.utf8))
+        XCTAssertEqual(descriptor.jsonObject?["binding_schema_version"], .number(1))
+        XCTAssertEqual(descriptor.jsonObject?["provider_id"], .string(ProductToolProviderID.capabilityBroker))
+        let nullableIndex = try await allBuiltins.execute(.init(
+            id: "describe-null-unset", name: "capability_describe",
+            arguments: #"{"plugin_option":"builtin_1","tool_option":null,"query":null,"offset":null,"limit":null,"schema_offset":null}"#
+        ))
+        XCTAssertFalse(nullableIndex.isError)
+        XCTAssertEqual(try JSONDecoder().decode(NativeJSONValue.self, from: Data(nullableIndex.content.utf8))
+            .jsonObject?["view"], .string("catalog"))
+        let tools = try await readCapabilityTestDefinitions(allBuiltins, pluginOption: "builtin_1")
+        for name in ["read_file", "commit_edit_session", "execute_command", "process_write", "process_kill"] {
+            let tool = try XCTUnwrap(tools.first { $0.jsonObject?["name"]?.jsonString == name }?.jsonObject)
+            XCTAssertEqual(tool["invocation_mode"]?.jsonString, "direct_task_tool")
+            let token = try XCTUnwrap(tool["tool_option"]?.jsonString)
+            let outcome = try await allBuiltins.execute(.init(
+                id: "reject-\(name)", name: "capability_invoke",
+                arguments: """
+                {"plugin_option":"builtin_1","tool_option":"\(token)","arguments":{}}
+                """
+            ))
+            XCTAssertTrue(outcome.isError)
+            XCTAssertTrue(outcome.content.contains("原生工具"))
+        }
+        let skillOnly = try await provider(capabilities: [], refs: [])
+        let discovery = try await skillOnly.execute(.init(
+            id: "run-bound-guidance", name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"product-skill:chatos-capability-discovery"}"#
+        ))
+        XCTAssertFalse(discovery.isError)
+        XCTAssertTrue(discovery.content.contains("references/search-activation-and-recovery.md"))
+        let unactivated = try await provider(capabilities: [.projectRead], refs: [])
+        let denied = try await unactivated.execute(.init(
+            id: "not-restored", name: "agent_skill_read_resource",
+            arguments: #"{"skill_ref":"product-skill:chatos-project-read","relative_path":"references/frozen.md"}"#
+        ))
+        XCTAssertTrue(denied.isError)
+        let host = FrozenTaskSkillHostStub(bundle: frozen, refs: refs)
+        let executor = NativeLocalAgentPluginToolExecutor(
+            connector: service, host: host, idleExpiration: .milliseconds(20)
+        )
+        let context = NativeLocalAgentTaskExecutionContext(
+            conversationID: "contact-1", projectID: nil, applicationContext: .device,
+            resolvedPath: nil, executionRootURL: root, workspaceScopeID: "contact:contact-1",
+            toolAuthorization: .init(
+                requiresExecution: false, enabledBuiltinKinds: ["CodeMaintainerRead"],
+                pluginSelectionIDs: []
+            )
+        )
+        for _ in 0..<2 {
+            let result = try await executor.execute(
+                ownerUserID: "alice",
+                invocation: platformInvocation(
+                    runID: "frozen-run", name: "agent_skill_activate",
+                    arguments: .object(["skill_ref": .string("product-skill:chatos-project-read")])
+                ),
+                context: context,
+                arguments: ["skill_ref": .string("product-skill:chatos-project-read")]
+            )
+            XCTAssertEqual(result.jsonObject?["is_error"]?.jsonBool, false)
+            XCTAssertTrue(result.canonicalJSONString.contains("references/frozen.md"))
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        let queries = await host.queryTypes()
+        XCTAssertEqual(queries.filter { $0 == "get_run_skill_bundle" }.count, 2)
+        XCTAssertEqual(queries.filter { $0 == "get_run_skill_activations" }.count, 2)
+        await executor.reset()
+    }
+
     func testTodoAuthorizationCatalogUsesExecutorRuntimeToolDefinitions() {
         let cases: [(LocalAgentTodoBuiltinCapability, [NativeJSONValue])] = [
             (.projectRead, NativeMCPCodeReadTools.toolDefinitions),
@@ -201,7 +373,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
               printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05","capabilities":{},"instructions":"test"}}'
               ;;
             *'"method":"tools/list"'*)
-              printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true},"_meta":{"chatos/skillGate":{"allOf":["test-agent-plugin"]}}}]}}'
+              printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"local_echo","description":"Echo locally","inputSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false},"annotations":{"readOnlyHint":true},"_meta":{"chatos/skillGate":{"allOf":["test-agent-plugin"],"selectByArgument":{"pointer":"/value","map":{"hello":"test-agent-plugin","fail":"test-agent-plugin","hello again":"test-agent-plugin","restored":"test-agent-plugin","task":"test-agent-plugin","slow":"test-agent-plugin"}}}}}]}}'
               ;;
             *'"method":"tools/call"'*)
               request_id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\1/')
@@ -237,6 +409,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         # Test Agent Plugin
 
         Activate this fixed Release Skill before calling `local_echo`.
+
+        Legacy host guidance: call `skill_skill_activate` and pass activation evidence.
 
         Read [references/examples.md](references/examples.md) only when an exact echo example is needed.
         """#
@@ -312,12 +486,23 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             lane: .executor
         )
         let installed = try await service.installedAgentPlugins(ownerUserID: "alice")
-        XCTAssertEqual(installed.map(\.id), ["plugin-1"])
+        XCTAssertEqual(installed.map(\.id), ["plugin-1:test-mcp"])
         XCTAssertEqual(installed.first?.displayName, "test-agent-plugin")
+        let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+            pluginKey: "plugin-1", componentKey: "test-mcp"
+        )
+        let releaseSnapshot = NativeLocalAgentTaskPluginReleaseSnapshot(
+            pluginKey: "plugin-1",
+            componentKey: "test-mcp",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64)
+        )
         let providers = try await service.makeAgentPluginSkillToolProviders(
             ownerUserID: "alice",
             runContext: runContext,
-            pluginIDs: ["plugin-1"],
+            plugins: installed,
             projectContext: .init(
                 projectID: "project-1",
                 projectName: "Test",
@@ -329,6 +514,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertEqual(definitions.map(\.name), ["local_echo"])
         XCTAssertEqual(definitions.first?.effect, .readOnly)
         XCTAssertNotNil(definitions.first?.pluginSkillGate)
+
 
         let blockedDirect = try await providers[0].execute(.init(
             id: "call-1",
@@ -375,15 +561,15 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 builtinCapabilities: [
                     .projectRead, .projectWrite, .terminal,
                 ],
-                plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
+                plugins: [.init(pluginID: "plugin-1", componentKey: "test-mcp", displayName: "test-agent-plugin")]
             )
         )
         let brokerDefinitions = try await broker.definitions()
         XCTAssertEqual(
             Set(brokerDefinitions.map(\.name)),
             [
-                "capability_search", "capability_describe", "capability_skill_activate",
-                "capability_skill_read_resource", "capability_invoke",
+                "capability_search", "capability_describe", "agent_skill_activate",
+                "agent_skill_read_resource", "capability_invoke",
             ]
         )
         let brokerCoverage = ToolSkillCoverageCatalog.product.audit(
@@ -397,6 +583,15 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         )
         XCTAssertEqual(brokerCoverage.coveredTools, 5)
         XCTAssertTrue(brokerCoverage.isComplete)
+        for removedAlias in ["capability_skill_activate", "capability_skill_read_resource"] {
+            let rejected = try await broker.execute(.init(
+                id: "removed-\(removedAlias)",
+                name: removedAlias,
+                arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+            ))
+            XCTAssertTrue(rejected.isError)
+            XCTAssertTrue(rejected.content.contains("能力发现工具不可用"))
+        }
 
         let search = try await broker.execute(.init(
             id: "search-1",
@@ -407,10 +602,20 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertTrue(search.content.contains("test-agent-plugin"))
         XCTAssertFalse(search.content.contains("plugin-1"))
 
+        let guessedSkillActivation = try await broker.execute(.init(
+            id: "activate-undisclosed-plugin-skill",
+            name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
+        ))
+        XCTAssertTrue(
+            guessedSkillActivation.isError,
+            "A Plugin Skill ref must not be activatable until capability_describe disclosed it in this Run"
+        )
+
         let description = try await broker.execute(.init(
             id: "describe-1",
             name: "capability_describe",
-            arguments: #"{"plugin_option":"plugin_1"}"#
+            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1"}"#
         ))
         XCTAssertTrue(description.content.contains("tool_1"))
         XCTAssertTrue(description.content.contains("local_echo"))
@@ -423,10 +628,22 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ).jsonObject
         let pluginTools = try XCTUnwrap(pluginDescription?["tools"]?.jsonArray)
         let echoTool = try XCTUnwrap(pluginTools.first?.jsonObject)
+        XCTAssertEqual(pluginDescription?["provider_id"], .string("plugin:plugin-1:test-mcp"))
+        XCTAssertEqual(pluginDescription?["binding_schema_version"], .number(1))
+        let gate = try XCTUnwrap(echoTool["skill_gate"]?.jsonObject)
+        XCTAssertEqual(gate["all_of"], .array([.string("plugin-skill:plugin_1:test-agent-plugin")]))
+        XCTAssertEqual(gate["select_by_argument"]?.jsonObject?["pointer"], .string("/value"))
+        XCTAssertEqual(gate["select_by_argument"]?.jsonObject?["map"]?.jsonObject?["hello"],
+            .string("plugin-skill:plugin_1:test-agent-plugin"))
         let echoToolOption = try XCTUnwrap(echoTool["tool_option"]?.jsonString)
+        XCTAssertNil(echoTool["required_skills"])
         XCTAssertEqual(
-            echoTool["required_skills"]?.jsonArray?.compactMap(\.jsonString),
-            ["test-agent-plugin"]
+            echoTool["required_skill_refs"]?.jsonArray?.compactMap(\.jsonString),
+            ["plugin-skill:plugin_1:test-agent-plugin"]
+        )
+        XCTAssertEqual(
+            pluginDescription?["skills"]?.jsonArray?.first?.jsonObject?["skill_ref"]?.jsonString,
+            "plugin-skill:plugin_1:test-agent-plugin"
         )
 
         let gatedPlugin = try await broker.execute(.init(
@@ -441,15 +658,16 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let pluginActivation = try await broker.execute(.init(
             id: "activate-plugin-skill",
-            name: "capability_skill_activate",
-            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+            name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
         ))
         XCTAssertFalse(pluginActivation.isError)
         XCTAssertTrue(pluginActivation.content.contains("Test Agent Plugin"))
+        XCTAssertTrue(pluginActivation.content.contains("references/examples.md"))
         let pluginReference = try await broker.execute(.init(
             id: "read-plugin-reference",
-            name: "capability_skill_read_resource",
-            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin","relative_path":"references/examples.md"}"#
+            name: "agent_skill_read_resource",
+            arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin","relative_path":"references/examples.md","max_chars":12000}"#
         ))
         XCTAssertFalse(pluginReference.isError)
         XCTAssertTrue(pluginReference.content.contains("bounded value"))
@@ -487,6 +705,55 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(recoveredInvocation.isError)
         XCTAssertTrue(recoveredInvocation.content.contains("local-plugin-ok"))
 
+        let restoredContext = try LocalAgentChatRunContext(
+            ownerUserID: "alice",
+            projectID: "project-1",
+            roomID: "room-1",
+            agentID: "local-task-execution",
+            deliveryID: "run-restored",
+            triggerMessageID: "run-restored",
+            rootMessageID: "run-restored",
+            runID: "run-restored",
+            hopCount: 0,
+            lane: .executor
+        )
+        let restoredBroker = NativeAgentCapabilityToolProvider(
+            service: service,
+            ownerUserID: "alice",
+            runContext: restoredContext,
+            projectContext: .init(
+                projectID: "project-1",
+                projectName: "Test",
+                projectRoot: project.path
+            ),
+            resolvedProject: try await service.resolveProjectPath(project.path),
+            builtinCapabilities: [],
+            installedPlugins: installed,
+            fallbackToSelectedOptions: true,
+            preactivatedSkillRefs: ["plugin-skill:plugin_1:test-agent-plugin"]
+        )
+        let restoredDescription = try await restoredBroker.execute(.init(
+            id: "describe-restored",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1"}"#
+        ))
+        let restoredDescriptionObject = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(restoredDescription.content.utf8)
+        ).jsonObject
+        let restoredToolOption = try XCTUnwrap(
+            restoredDescriptionObject?["tools"]?.jsonArray?.first?.jsonObject?["tool_option"]?.jsonString
+        )
+        let restoredInvocation = try await restoredBroker.execute(.init(
+            id: "invoke-restored",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(restoredToolOption)","arguments":{"value":"restored"}}
+            """
+        ))
+        XCTAssertFalse(restoredInvocation.isError)
+        XCTAssertTrue(restoredInvocation.content.contains("local-plugin-ok"))
+
         let builtinDescription = try await broker.execute(.init(
             id: "describe-builtin",
             name: "capability_describe",
@@ -496,22 +763,24 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             NativeJSONValue.self,
             from: Data(builtinDescription.content.utf8)
         ).jsonObject
-        let builtinTools = try XCTUnwrap(builtinObject?["tools"]?.jsonArray)
+        XCTAssertEqual(builtinObject?["view"], .string("catalog"))
+        let builtinTools = try await readCapabilityTestDefinitions(broker, pluginOption: "builtin_1")
         let processList = try XCTUnwrap(builtinTools.first {
             $0.jsonObject?["name"]?.jsonString == "process_list"
         }?.jsonObject)
         let processListOption = try XCTUnwrap(processList["tool_option"]?.jsonString)
+        XCTAssertNil(processList["required_skills"])
         XCTAssertEqual(
-            processList["required_skills"]?.jsonArray?.compactMap(\.jsonString),
-            ["chatos-terminal", "chatos-terminal-process-observation"]
+            processList["required_skill_refs"]?.jsonArray?.compactMap(\.jsonString),
+            [
+                "product-skill:chatos-terminal",
+                "product-skill:chatos-terminal-process-observation",
+            ]
         )
         let listDirectory = try XCTUnwrap(builtinTools.first {
             $0.jsonObject?["name"]?.jsonString == "list_dir"
         }?.jsonObject)
-        XCTAssertEqual(
-            listDirectory["required_skills"]?.jsonArray?.compactMap(\.jsonString),
-            ["chatos-project-files", "chatos-project-read"]
-        )
+        XCTAssertNil(listDirectory["required_skills"])
         XCTAssertNil(builtinTools.first {
             $0.jsonObject?["name"]?.jsonString == "skill_activate"
         })
@@ -532,10 +801,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         for skillName in ["chatos-terminal", "chatos-terminal-process-observation"] {
             let activated = try await broker.execute(.init(
                 id: "activate-\(skillName)",
-                name: "capability_skill_activate",
-                arguments: """
-                {"plugin_option":"builtin_1","skill_name":"\(skillName)"}
-                """
+                name: "agent_skill_activate",
+                arguments: #"{"skill_ref":"product-skill:\#(skillName)"}"#
             ))
             XCTAssertFalse(activated.isError)
             XCTAssertTrue(activated.content.contains(skillName))
@@ -543,8 +810,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
 
         let reference = try await broker.execute(.init(
             id: "read-terminal-reference",
-            name: "capability_skill_read_resource",
-            arguments: #"{"plugin_option":"builtin_1","skill_name":"chatos-terminal-process-observation","relative_path":"references/scenarios.md","limit":2000}"#
+            name: "agent_skill_read_resource",
+            arguments: #"{"skill_ref":"product-skill:chatos-terminal-process-observation","relative_path":"references/scenarios.md","max_chars":2000}"#
         ))
         XCTAssertFalse(reference.isError)
         XCTAssertTrue(reference.content.contains("Background build"))
@@ -559,6 +826,37 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(observed.isError)
         XCTAssertTrue(observed.content.contains("process_count"))
 
+        do {
+            _ = try await service.makeTaskExecutionCapabilityToolProvider(
+                ownerUserID: "alice",
+                runID: "task-run-stale-release",
+                conversationID: "conversation-1",
+                projectContext: .init(
+                    projectID: "project-1",
+                    projectName: "Test",
+                    projectRoot: project.path
+                ),
+                executionRootURL: project,
+                workspaceScopeID: "workspace-1",
+                pluginSelectionIDs: [selectionID],
+                pluginReleaseSnapshots: [
+                    selectionID: .init(
+                        pluginKey: "plugin-1",
+                        componentKey: "test-mcp",
+                        pluginID: "plugin-1",
+                        releaseID: "stale-release",
+                        version: "1.0.0",
+                        artifactSHA256: String(repeating: "a", count: 64)
+                    ),
+                ]
+            )
+            XCTFail("stale Plugin Release snapshot must be rejected")
+        } catch let error as NativePluginRuntimeError {
+            guard case .invalidRequest = error else {
+                return XCTFail("unexpected stale Release error: \(error)")
+            }
+        }
+
         let taskBroker = try await service.makeTaskExecutionCapabilityToolProvider(
             ownerUserID: "alice",
             runID: "task-run-1",
@@ -570,7 +868,11 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             ),
             executionRootURL: project,
             workspaceScopeID: "workspace-1",
-            pluginIDs: ["plugin-1"]
+            builtinCapabilities: [.projectRead],
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [
+                selectionID: releaseSnapshot,
+            ]
         )
         let taskSearch = try await taskBroker.execute(.init(
             id: "task-search-1",
@@ -579,6 +881,39 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ))
         XCTAssertTrue(taskSearch.content.contains("plugin_1"))
         XCTAssertFalse(taskSearch.content.contains("builtin_1"))
+        let taskBuiltinSearch = try await taskBroker.execute(.init(
+            id: "task-search-builtin",
+            name: "capability_search",
+            arguments: #"{"query":"文件"}"#
+        ))
+        XCTAssertFalse(taskBuiltinSearch.isError)
+        XCTAssertTrue(taskBuiltinSearch.content.contains("builtin_1"))
+        let taskBuiltinDescription = try await taskBroker.execute(.init(
+            id: "task-describe-builtin",
+            name: "capability_describe",
+            arguments: #"{"plugin_option":"builtin_1"}"#
+        ))
+        let taskBuiltinDescriptionObject = try JSONDecoder().decode(
+            NativeJSONValue.self,
+            from: Data(taskBuiltinDescription.content.utf8)
+        ).jsonObject
+        let taskBuiltinSkillRefs = Set(
+            taskBuiltinDescriptionObject?["tools"]?.jsonArray?.flatMap { tool in
+                tool.jsonObject?["required_skill_refs"]?.jsonArray?.compactMap(\.jsonString) ?? []
+            } ?? []
+        )
+        XCTAssertTrue(taskBuiltinSkillRefs.contains("product-skill:chatos-project-files"))
+        XCTAssertTrue(taskBuiltinSkillRefs.contains("product-skill:chatos-project-read"))
+        for skillRef in taskBuiltinSkillRefs.sorted() {
+            let activation = try await taskBroker.execute(.init(
+                id: "task-activate-\(skillRef)",
+                name: "agent_skill_activate",
+                arguments: """
+                {"skill_ref":"\(skillRef)"}
+                """
+            ))
+            XCTAssertFalse(activation.isError)
+        }
         let translatedTaskSearch = try await taskBroker.execute(.init(
             id: "task-search-translated",
             name: "capability_search",
@@ -591,7 +926,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let taskDescription = try await taskBroker.execute(.init(
             id: "task-describe-1",
             name: "capability_describe",
-            arguments: #"{"plugin_option":"plugin_1"}"#
+            arguments: #"{"plugin_option":"plugin_1","tool_option":"tool_1"}"#
         ))
         let taskDescriptionObject = try JSONDecoder().decode(
             NativeJSONValue.self,
@@ -603,10 +938,15 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let taskToolOption = try XCTUnwrap(taskTool["tool_option"]?.jsonString)
         let taskActivation = try await taskBroker.execute(.init(
             id: "task-activate-1",
-            name: "capability_skill_activate",
-            arguments: #"{"plugin_option":"plugin_1","skill_name":"test-agent-plugin"}"#
+            name: "agent_skill_activate",
+            arguments: #"{"skill_ref":"plugin-skill:plugin_1:test-agent-plugin"}"#
         ))
         XCTAssertFalse(taskActivation.isError)
+        let activationObject = try JSONDecoder().decode(
+            NativeJSONValue.self, from: Data(taskActivation.content.utf8)
+        ).jsonObject
+        XCTAssertEqual(activationObject?["instructions"]?.jsonString, skillMarkdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        XCTAssertNil(activationObject?["host_skill_protocol"])
         let taskInvocation = try await taskBroker.execute(.init(
             id: "task-invoke-1",
             name: "capability_invoke",
@@ -629,7 +969,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             projectContext: .device,
             executionRootURL: contactRoot,
             workspaceScopeID: "contact:contact-conversation-1",
-            pluginIDs: ["plugin-1"]
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [selectionID: releaseSnapshot]
         )
         let contactSearch = try await contactBroker.execute(.init(
             id: "contact-task-search-1",
@@ -658,8 +999,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             toolAuthorization: .init(
                 requiresExecution: true,
                 enabledBuiltinKinds: [],
-                pluginKeys: ["plugin-1"],
-                isLegacyUnrestricted: true
+                pluginSelectionIDs: [selectionID],
+                pluginReleaseSnapshots: [selectionID: releaseSnapshot]
             )
         )
         let platformSearch = try await platformExecutor.execute(
@@ -682,26 +1023,24 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             invocation: platformInvocation(
                 runID: "task-run-2",
                 name: "capability_describe",
-                arguments: .object(["plugin_option": .string("plugin_1")])
+                arguments: .object(["plugin_option": .string("plugin_1"), "tool_option": .string("tool_1")])
             ),
             context: platformContext,
-            arguments: ["plugin_option": .string("plugin_1")]
+            arguments: ["plugin_option": .string("plugin_1"), "tool_option": .string("tool_1")]
         )
         XCTAssertEqual(platformDescribe.jsonObject?["is_error"]?.jsonBool, false)
         let platformActivation = try await platformExecutor.execute(
             ownerUserID: "alice",
             invocation: platformInvocation(
                 runID: "task-run-2",
-                name: "capability_skill_activate",
+                name: "agent_skill_activate",
                 arguments: .object([
-                    "plugin_option": .string("plugin_1"),
-                    "skill_name": .string("test-agent-plugin"),
+                    "skill_ref": .string("plugin-skill:plugin_1:test-agent-plugin"),
                 ])
             ),
             context: platformContext,
             arguments: [
-                "plugin_option": .string("plugin_1"),
-                "skill_name": .string("test-agent-plugin"),
+                "skill_ref": .string("plugin-skill:plugin_1:test-agent-plugin"),
             ]
         )
         XCTAssertEqual(platformActivation.jsonObject?["is_error"]?.jsonBool, false)
@@ -741,8 +1080,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             toolAuthorization: .init(
                 requiresExecution: true,
                 enabledBuiltinKinds: [],
-                pluginKeys: ["plugin-1"],
-                isLegacyUnrestricted: false
+                pluginSelectionIDs: []
             )
         )
         XCTAssertThrowsError(try contactContext.requireProject()) { error in
@@ -764,6 +1102,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             batchID: "batch-1",
             callID: "call-\(name)",
             toolName: name,
+            executionRoute: "platform",
             arguments: arguments,
             sideEffecting: name == "capability_invoke",
             requiresApproval: false,
@@ -781,6 +1120,47 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             updatedAtUnixMs: 1
         )
     }
+}
+
+private actor FrozenTaskSkillHostStub: LocalAgentHostClientServicing {
+    let bundle: LocalAgentSkillBundleSnapshot
+    let refs: Set<String>
+    private var types: [String] = []
+
+    init(bundle: LocalAgentSkillBundleSnapshot, refs: Set<String>) {
+        self.bundle = bundle
+        self.refs = refs
+    }
+
+    func start(ownerUserID: String) async throws {}
+    func stop() async {}
+
+    func request(command: Data) async throws -> Data {
+        let object = try JSONDecoder().decode(NativeJSONValue.self, from: command).jsonObject
+        guard object?["owner_user_id"]?.jsonString == "alice",
+              object?["run_id"]?.jsonString == "frozen-run",
+              let type = object?["type"]?.jsonString else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        types.append(type)
+        let result: NativeJSONValue
+        switch type {
+        case "get_run_skill_bundle":
+            result = .object([
+                "type": .string("run_skill_bundle"), "run_id": .string("frozen-run"),
+                "bundle": try JSONDecoder().decode(NativeJSONValue.self, from: JSONEncoder().encode(bundle)),
+            ])
+        case "get_run_skill_activations":
+            result = .object([
+                "type": .string("run_skill_activations"), "run_id": .string("frozen-run"),
+                "skill_refs": .array(refs.sorted().map(NativeJSONValue.string)),
+            ])
+        default: throw NativeLocalAgentHostError.invalidResponse
+        }
+        return try JSONEncoder().encode(result)
+    }
+
+    func queryTypes() -> [String] { types }
 }
 
 private struct AgentPluginTestTicketProvider: LocalConnectorPairingTicketProviding {

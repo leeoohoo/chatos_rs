@@ -27,14 +27,14 @@ Activate only the leaves needed by the current visible workflow. ChatOS associat
 
 ## Platform Skill protocol
 
-Activate this router with `skill_skill_activate`, then activate the chosen leaf. ChatOS records and validates those activations automatically. Call Visual Computer Use tools with visible-action arguments only; never add user, project, workspace, device, session, activation, or authentication fields. Use `skill_skill_list_resources` and `skill_skill_read_resource` only for references declared by the activated leaf.
+Activate this router and the chosen leaf through the host's advertised Skill tools. Main Chat and Task Execution use `agent_skill_activate` with the exact catalog `skill_ref`; its result already lists declared references, so read only a relevant one with `agent_skill_read_resource`. If that result is unavailable after resume, activate the same exact ref again. Other host surfaces use their advertised tool names and schemas. ChatOS manages activation evidence; never invent it or call an unadvertised alias. Call Visual Computer Use tools with visible-action arguments only; never add user, project, workspace, device, session, activation, or authentication fields.
 
 ## MCP tool directory
 
 - Permissions: `check_permissions` reads current authorization; `request_permissions` opens the bounded native onboarding UI when authorization is missing.
 - Observation and targeting: `observe_screen` captures current visible truth; `move_mouse` moves only the visible AI reticle and returns a verification screenshot.
 - Pointer and keyboard: `click` acts at the verified reticle hotspot; `scroll` scrolls the targeted visible container; `type_text` enters Unicode text; `key_press` sends one key or chord.
-- Application focus: `active_application` reads frontmost public process identity; `activate_application` launches or focuses a known bundle identifier and observes it; `list_shortcuts` reads known shortcuts for the active app.
+- Application focus: `active_application` reads frontmost public process identity and its first visible standard-window title when macOS exposes one; `activate_application` launches or focuses a known bundle identifier and observes it; `list_shortcuts` reads known shortcuts for the active app.
 
 Do not substitute one tool for another: `move_mouse` never clicks, an input event never proves success, and application identity never proves that the intended field or dialog is focused.
 

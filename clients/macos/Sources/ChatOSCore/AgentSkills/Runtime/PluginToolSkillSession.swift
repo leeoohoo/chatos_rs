@@ -255,7 +255,7 @@ public struct PluginSkillSnapshot: Sendable {
         skillName: String,
         relativePath: String,
         offset: Int = 0,
-        maximumCharacters: Int = 12_000
+        maximumCharacters: Int = ProgressiveSkillFileLoader.maximumPageCharacters
     ) throws -> ProgressiveSkillFileLoader.TextPage {
         let document = try document(named: skillName)
         let path = try ProgressiveSkillFileLoader.normalizedRelativePath(relativePath)
@@ -334,16 +334,19 @@ public struct PluginSkillSnapshot: Sendable {
                 enumerator.skipDescendants()
                 continue
             }
-            guard values.isRegularFile == true, url.lastPathComponent != "SKILL.md" else {
+            let path = String(url.standardizedFileURL.path.dropFirst(directory.path.count + 1))
+            let topLevel = path.split(separator: "/").first.map(String.init) ?? ""
+            if values.isDirectory == true {
+                if topLevel != "references" { enumerator.skipDescendants() }
+                continue
+            }
+            guard topLevel == "references", values.isRegularFile == true else {
                 continue
             }
             seenResources += 1
             guard seenResources <= maximumResourcesPerSkill else {
                 throw SnapshotError.invalidCatalog
             }
-            let path = String(url.standardizedFileURL.path.dropFirst(directory.path.count + 1))
-            let topLevel = path.split(separator: "/").first.map(String.init) ?? ""
-            guard topLevel != "assets", topLevel != "scripts" else { continue }
             let data = try ProgressiveSkillFileLoader.readRegularFile(
                 url,
                 beneath: root,
@@ -381,11 +384,15 @@ public actor PluginToolSkillSession {
         return document
     }
 
+    public func isActivated(_ name: String) -> Bool {
+        activatedNames.contains(name)
+    }
+
     public func readResource(
         skillName: String,
         relativePath: String,
         offset: Int = 0,
-        maximumCharacters: Int = 12_000
+        maximumCharacters: Int = ProgressiveSkillFileLoader.maximumPageCharacters
     ) throws -> ProgressiveSkillFileLoader.TextPage {
         guard activatedNames.contains(skillName) else {
             throw SessionError.skillNotActivated(skillName)

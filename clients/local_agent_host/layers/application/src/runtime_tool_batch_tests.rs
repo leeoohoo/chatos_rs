@@ -105,6 +105,7 @@ async fn tool_batch_is_durable_and_resumes_after_all_results() {
                     lease_duration_ms: 10_000,
                     include_tool_names: None,
                     exclude_tool_names: Vec::new(),
+                    execution_route: None,
                 }),
             ))
             .await;

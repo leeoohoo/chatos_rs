@@ -18,6 +18,8 @@ mod notepad_tool_tests;
 mod notepad_tools;
 mod requirement_survey_tools;
 mod scheduler;
+mod skill_tools;
+mod task_followup_tool;
 mod task_model_policy;
 mod task_process_tools;
 mod task_tool_definitions;
@@ -27,6 +29,7 @@ mod task_tool_scope_tests;
 mod task_tool_source_context;
 mod task_tool_support;
 mod task_tools;
+mod tool_result_tools;
 mod tool_scheduler;
 
 pub use ask_user_tools::{
@@ -41,15 +44,19 @@ pub use memory_sync::{
     MemorySyncTick,
 };
 pub use notepad_tools::{
-    notepad_model_tools, LocalNotepadToolExecutor, NOTEPAD_CREATE_NOTE_TOOL,
-    NOTEPAD_LIST_FOLDERS_TOOL, NOTEPAD_LIST_NOTES_TOOL, NOTEPAD_READ_NOTE_TOOL,
-    NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES, NOTEPAD_UPDATE_NOTE_TOOL,
+    notepad_model_tools, LocalNotepadToolExecutor, NOTEPAD_APPROVAL_EXEMPT_TOOLS,
+    NOTEPAD_CREATE_NOTE_TOOL, NOTEPAD_LIST_FOLDERS_TOOL, NOTEPAD_LIST_NOTES_TOOL,
+    NOTEPAD_READ_NOTE_TOOL, NOTEPAD_READ_ONLY_TOOLS, NOTEPAD_TOOL_NAMES, NOTEPAD_UPDATE_NOTE_TOOL,
 };
 pub use requirement_survey_tools::{
     requirement_survey_model_tools, LocalRequirementSurveyToolExecutor,
     REQUIREMENT_SURVEY_CREATE_TOOL, REQUIREMENT_SURVEY_TOOL_NAMES,
 };
 pub use scheduler::{LocalAgentScheduler, LocalAgentSchedulerError, SchedulerTick};
+pub use skill_tools::{
+    skill_model_tools, LocalSkillToolExecutor, AGENT_SKILL_APPROVAL_EXEMPT_TOOLS,
+    AGENT_SKILL_READ_ONLY_TOOLS, AGENT_SKILL_TOOL_NAMES,
+};
 pub use task_process_tools::{
     task_process_model_tools, task_process_prompt_item, LocalTaskProcessToolExecutor,
     TASK_OUTCOME_REPORT_TOOL, TASK_PROCESS_RECORD_TOOL, TASK_PROCESS_TOOL_NAMES,
@@ -60,6 +67,10 @@ pub use task_tool_definitions::{
     TASK_READ_ONLY_TOOLS, TASK_TOOL_NAMES, WAIT_FOR_TASK_COMPLETION_TOOL,
 };
 pub use task_tools::LocalTaskToolExecutor;
+pub use tool_result_tools::{
+    tool_result_model_tools, LocalToolResultReader, TOOL_RESULT_READ_ONLY_TOOLS,
+    TOOL_RESULT_READ_TOOL, TOOL_RESULT_TOOL_NAMES,
+};
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,
     ToolSchedulerTick,

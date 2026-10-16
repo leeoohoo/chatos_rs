@@ -85,9 +85,11 @@ final class PetOverlayStore: ObservableObject {
         case (.user, true): title = "你已允许本机操作"
         case (.user, false): title = "你已拒绝本机操作"
         }
+        let purpose = event.purpose?.trimmingCharacters(in: .whitespacesAndNewlines)
         let command = event.command.trimmingCharacters(in: .whitespacesAndNewlines)
         let reason = event.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let detail = [command.isEmpty ? nil : command, reason?.isEmpty == false ? reason : nil]
+        let primary = purpose?.isEmpty == false ? purpose : (command.isEmpty ? nil : command)
+        let detail = [primary, reason?.isEmpty == false ? reason : nil]
             .compactMap { $0 }
             .joined(separator: "\n")
         apply(.upsert(PetActivity(
@@ -270,8 +272,10 @@ final class PetOverlayStore: ObservableObject {
         case "medium": risk = "中风险"
         default: risk = "低风险"
         }
+        let purpose = approval.purpose?.trimmingCharacters(in: .whitespacesAndNewlines)
         let command = approval.command.trimmingCharacters(in: .whitespacesAndNewlines)
         let metadata = "\(risk) · \(approval.source)"
+        if let purpose, !purpose.isEmpty { return "\(purpose)\n\(metadata)" }
         return command.isEmpty ? metadata : "\(command)\n\(metadata)"
     }
 

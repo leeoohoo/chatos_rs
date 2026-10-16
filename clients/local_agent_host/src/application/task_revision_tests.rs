@@ -4,7 +4,9 @@
 use super::*;
 use crate::application::CREATE_TASKS_TOOL;
 use chatos_local_agent_protocol::{
-    CreateTaskGraphCommand, LocalAgentRunStatus, LocalTaskSpec, LocalTaskStatus, RestartTaskCommand,
+    CancelRunCommand, ClaimNextRunCommand, CommitStepCommand, CreateTaskGraphCommand,
+    HostResult, LocalAgentRunStatus, LocalAgentStepOutcome, LocalTaskSpec, LocalTaskStatus,
+    RestartTaskCommand,
 };
 
 fn corrected_input(task_id: &str) -> Value {
@@ -45,7 +47,8 @@ async fn correction_requires_cancel_and_does_not_reuse_unaffected_active_graph()
     let error = executor
         .execute_tool(&create)
         .await
-        .expect_err("must stop old execution first");
+        .expect("replacement rejection precedes mutation");
+    let error = preparation_error(error);
     assert!(error.contains("must be cancelled before replacement"));
 
     let cancelled = succeeded_output(
@@ -98,6 +101,101 @@ async fn correction_requires_cancel_and_does_not_reuse_unaffected_active_graph()
 }
 
 #[tokio::test]
+async fn failed_task_can_be_superseded_without_impossible_cancellation() {
+    let runtime = runtime_with_project_conversations().await;
+    let executor = LocalTaskToolExecutor::new(Arc::clone(&runtime), "user-1").unwrap();
+    for run_id in ["parent-run", "other-parent-run"] {
+        let run = runtime
+            .get_run_for_host_worker(run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        runtime
+            .try_handle(envelope(
+                &format!("cancel-{run_id}"),
+                HostCommand::CancelRun(CancelRunCommand {
+                    owner_user_id: "user-1".into(),
+                    run_id: run_id.into(),
+                    expected_version: Some(run.version),
+                    reason: "isolate the Task Run under test".into(),
+                }),
+            ))
+            .await
+            .unwrap();
+    }
+    let original = succeeded_output(
+        &executor,
+        invocation(
+            "failed-original",
+            "parent-run",
+            CREATE_TASK_TOOL,
+            json!({"title": "Original", "objective": "Attempt work",
+                "requires_execution": false, "enabled_builtin_kinds": []}),
+        ),
+    )
+    .await;
+    let old_id = original["id"].as_str().unwrap();
+    let old_run_id = runtime
+        .get_task_for_conversation("user-1", "conversation-1", old_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .active_run_id
+        .unwrap();
+
+    let HostResult::Claim { claim: Some(claim) } = runtime
+        .try_handle(envelope(
+            "claim-original-run",
+            HostCommand::ClaimNextRun(ClaimNextRunCommand {
+                owner_user_id: "user-1".into(),
+                worker_id: "local-model-worker".into(),
+                lease_duration_ms: 30_000,
+            }),
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("expected the Task Run")
+    };
+    assert_eq!(claim.run.run_id, old_run_id);
+    runtime
+        .try_handle(envelope(
+            "fail-original-run",
+            HostCommand::CommitStep(CommitStepCommand {
+                owner_user_id: "user-1".into(),
+                run_id: claim.run.run_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.run.version,
+                outcome: LocalAgentStepOutcome::Fail {
+                    error: "provider rejected unsupported reasoning level".into(),
+                    detail: Value::Null,
+                },
+            }),
+        ))
+        .await
+        .unwrap();
+
+    let failed = runtime
+        .get_task_for_conversation("user-1", "conversation-1", old_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, LocalTaskStatus::Failed);
+
+    let replacement = succeeded_output(
+        &executor,
+        invocation(
+            "replace-failed",
+            "parent-run",
+            CREATE_TASK_TOOL,
+            corrected_input(old_id),
+        ),
+    )
+    .await;
+    assert_ne!(replacement["id"], old_id);
+}
+
+#[tokio::test]
 async fn correction_cannot_use_cancelled_task_from_another_conversation() {
     let runtime = runtime_with_project_conversations().await;
     let executor = LocalTaskToolExecutor::new(runtime, "user-1").unwrap();
@@ -131,7 +229,8 @@ async fn correction_cannot_use_cancelled_task_from_another_conversation() {
             corrected_input(other_id),
         ))
         .await
-        .expect_err("cannot supersede another conversation's task");
+        .expect("foreign replacement rejection precedes mutation");
+    let error = preparation_error(error);
     assert!(error.contains("superseded task not found"));
 }
 
@@ -163,8 +262,13 @@ async fn corrected_batch_creates_new_graph_and_reuses_it_on_model_retry() {
     .await;
     let args = json!({
         "supersedes_task_ids": [old_id],
-        "tasks": [{"client_ref": "corrected", "title": "Corrected batch", "objective": "New work",
-                   "requires_execution": false, "enabled_builtin_kinds": []}]
+        "tasks": [
+            {"client_ref": "corrected", "title": "Corrected batch", "objective": "New work",
+             "requires_execution": false, "enabled_builtin_kinds": []},
+            {"client_ref": "verify", "title": "Verify corrected batch", "objective": "Verify new work",
+             "prerequisite_refs": ["corrected"], "requires_execution": false,
+             "enabled_builtin_kinds": []}
+        ]
     });
     let first = succeeded_output(
         &executor,
@@ -269,7 +373,7 @@ async fn replacement_transaction_rejects_old_task_restarted_after_preflight() {
         ))
         .await
         .expect_err("transaction must recheck cancellation state");
-    assert!(result.to_string().contains("no longer cancelled"));
+    assert!(result.to_string().contains("became active again"));
     assert!(runtime
         .task_graph_by_id("user-1", "race-replacement-graph")
         .await

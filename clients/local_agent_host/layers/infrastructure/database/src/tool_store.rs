@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     LocalAgentToolApprovalDecision, LocalAgentToolApprovalResult, LocalAgentToolApprovalStatus,
     LocalAgentToolBatch, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalAgentToolStatus,
+    LocalAgentToolExecutionRoute, LocalAgentToolInvocationRecord, LocalAgentToolOutcome,
+    LocalAgentToolStatus,
 };
 use serde_json::{json, Value};
 use sqlx::{sqlite::SqliteRow, QueryBuilder, Row, Sqlite, SqliteConnection};
@@ -23,19 +24,27 @@ pub(crate) async fn insert_tool_batch(
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     batch.validate().map_err(ClientStorageError::InvalidState)?;
+    let profile_key: String =
+        sqlx::query_scalar("SELECT profile_key FROM local_agent_runs WHERE run_id = ?")
+            .bind(run_id)
+            .fetch_one(&mut *connection)
+            .await
+            .db()?;
     for call in &batch.calls {
+        let execution_route = tool_execution_route(&profile_key, &call.tool_name);
         sqlx::query(
             "INSERT INTO local_agent_tool_invocations(\
-             invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+             invocation_id, run_id, batch_id, call_id, tool_name, execution_route, arguments_json, \
              side_effecting, requires_approval, approval_status, status, result_json, error_text, \
              version, claim_token, claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms) \
-             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, 1, NULL, NULL, ?, ?)",
+             VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, 1, NULL, NULL, ?, ?)",
         )
         .bind(Uuid::new_v4().to_string())
         .bind(run_id)
         .bind(&batch.batch_id)
         .bind(&call.call_id)
         .bind(&call.tool_name)
+        .bind(execution_route.as_str())
         .bind(serde_json::to_string(&call.arguments)?)
         .bind(call.side_effecting)
         .bind(call.requires_approval)
@@ -83,6 +92,33 @@ impl LocalAgentToolStore for SqliteClientStorage {
         fetch_invocation(&mut connection, invocation_id).await
     }
 
+    async fn get_completed_tool_invocation_for_run_call(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        call_id: &str,
+    ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError> {
+        let row = sqlx::query(
+            "SELECT i.invocation_id, i.run_id, i.batch_id, i.call_id, i.tool_name, \
+             i.execution_route, i.arguments_json, i.side_effecting, i.requires_approval, \
+             i.approval_status, i.approval_decided_by, i.approval_reason, \
+             i.approval_decided_at_unix_ms, i.status, i.result_json, i.error_text, \
+             i.version, i.claim_token, i.claim_until_unix_ms, i.created_at_unix_ms, \
+             i.updated_at_unix_ms FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE r.owner_user_id = ? AND i.run_id = ? AND i.call_id = ? \
+               AND i.status IN ('succeeded', 'failed', 'needs_review') \
+               AND i.result_json IS NOT NULL LIMIT 1",
+        )
+        .bind(owner_user_id)
+        .bind(run_id)
+        .bind(call_id)
+        .fetch_optional(&self.pool)
+        .await
+        .db()?;
+        row.map(decode_invocation).transpose()
+    }
+
     async fn successful_tool_invocation_count(
         &self,
         run_id: &str,
@@ -90,7 +126,9 @@ impl LocalAgentToolStore for SqliteClientStorage {
     ) -> Result<u64, ClientStorageError> {
         let count: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM local_agent_tool_invocations \
-             WHERE run_id = ? AND tool_name = ? AND status = 'succeeded'",
+             WHERE run_id = ? AND tool_name = ? AND status = 'succeeded' \
+               AND COALESCE(json_extract(result_json, '$.is_error'), 0) = 0 \
+               AND COALESCE(json_extract(result_json, '$.isError'), 0) = 0",
         )
         .bind(run_id)
         .bind(tool_name)
@@ -102,6 +140,117 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 "successful tool invocation count cannot be negative".to_string(),
             )
         })
+    }
+
+    async fn has_successful_tool_invocation_argument(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> Result<bool, ClientStorageError> {
+        if argument_name.trim().is_empty() || argument_name.len() > 128 {
+            return Err(ClientStorageError::InvalidState(
+                "tool invocation argument name must be 1..=128 bytes".to_string(),
+            ));
+        }
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT arguments_json FROM local_agent_tool_invocations \
+             WHERE run_id = ? AND tool_name = ? AND status = 'succeeded' \
+               AND COALESCE(json_extract(result_json, '$.is_error'), 0) = 0 \
+               AND COALESCE(json_extract(result_json, '$.isError'), 0) = 0",
+        )
+        .bind(run_id)
+        .bind(tool_name)
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        for encoded in rows {
+            let arguments: Value = serde_json::from_str(&encoded)?;
+            if arguments.get(argument_name).and_then(Value::as_str) == Some(argument_value) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn successful_tool_invocation_argument_values(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+    ) -> Result<Vec<String>, ClientStorageError> {
+        if argument_name.trim().is_empty() || argument_name.len() > 128 {
+            return Err(ClientStorageError::InvalidState(
+                "tool invocation argument name must be 1..=128 bytes".to_string(),
+            ));
+        }
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT i.arguments_json FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE i.run_id = ? AND r.owner_user_id = ? AND i.tool_name = ? \
+               AND i.status = 'succeeded' \
+               AND COALESCE(json_extract(i.result_json, '$.is_error'), 0) = 0 \
+               AND COALESCE(json_extract(i.result_json, '$.isError'), 0) = 0 \
+             ORDER BY i.created_at_unix_ms, i.invocation_id",
+        )
+        .bind(run_id)
+        .bind(owner_user_id)
+        .bind(tool_name)
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        let mut values = std::collections::BTreeSet::new();
+        for encoded in rows {
+            let arguments: Value = serde_json::from_str(&encoded)?;
+            if let Some(value) = arguments.get(argument_name).and_then(Value::as_str) {
+                values.insert(value.to_string());
+            }
+        }
+        Ok(values.into_iter().collect())
+    }
+
+    async fn latest_successful_tool_invocation_result(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+        described_tool_option: Option<&str>,
+    ) -> Result<Option<Value>, ClientStorageError> {
+        if argument_name.is_empty()
+            || argument_name.len() > 128
+            || !argument_name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(ClientStorageError::InvalidState(
+                "invalid result lookup argument name".into(),
+            ));
+        }
+        let encoded: Option<String> = sqlx::query_scalar(
+            "SELECT i.result_json FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE i.run_id = ? AND r.owner_user_id = ? AND i.tool_name = ? \
+               AND i.status = 'succeeded' AND i.result_json IS NOT NULL \
+               AND COALESCE(json_extract(i.result_json, '$.is_error'), 0) = 0 \
+               AND COALESCE(json_extract(i.result_json, '$.isError'), 0) = 0 \
+               AND json_extract(i.arguments_json, ?) = ? \
+               AND (? IS NULL OR ( \
+                 COALESCE(json_extract(i.result_json, '$.content.view'), json_extract(i.result_json, '$.view')) = 'tool' \
+                 AND EXISTS (SELECT 1 FROM json_each(COALESCE(json_extract(i.result_json, '$.content.tools'), json_extract(i.result_json, '$.tools'))) t \
+                             WHERE json_extract(t.value, '$.tool_option') = ?) \
+               )) \
+             ORDER BY i.updated_at_unix_ms DESC, i.created_at_unix_ms DESC, i.invocation_id DESC LIMIT 1",
+        ).bind(run_id).bind(owner_user_id).bind(tool_name)
+            .bind(format!("$.{argument_name}")).bind(argument_value)
+            .bind(described_tool_option).bind(described_tool_option)
+            .fetch_optional(&self.pool).await.db()?;
+        encoded
+            .map(|value| serde_json::from_str(&value).map_err(ClientStorageError::from))
+            .transpose()
     }
 
     async fn recover_expired_tool_claims(
@@ -155,6 +304,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
         event_id: &str,
         include_tool_names: Option<&[String]>,
         exclude_tool_names: &[String],
+        execution_route: Option<LocalAgentToolExecutionRoute>,
     ) -> Result<Option<LocalAgentToolClaim>, ClientStorageError> {
         let mut connection = self.pool.acquire().await.db()?;
         Self::begin_immediate(&mut connection).await.db()?;
@@ -173,7 +323,10 @@ impl LocalAgentToolStore for SqliteClientStorage {
                    WHERE owner_user_id = ",
             );
             candidate_query.push_bind(owner_user_id).push(
-                " AND status = 'waiting_tool_result'\
+                " AND status = 'waiting_tool_result' \
+                  AND NOT EXISTS (SELECT 1 FROM local_task_followup_reviews f \
+                    WHERE local_agent_runs.owner_entity_type = 'task' \
+                      AND f.task_id = local_agent_runs.owner_entity_id AND f.state IN ('pending','held'))\
                  )",
             );
             if let Some(tool_names) = include_tool_names {
@@ -191,6 +344,11 @@ impl LocalAgentToolStore for SqliteClientStorage {
                     separated.push_bind(tool_name);
                 }
                 separated.push_unseparated(")");
+            }
+            if let Some(execution_route) = execution_route {
+                candidate_query
+                    .push(" AND execution_route = ")
+                    .push_bind(execution_route.as_str());
             }
             candidate_query.push(" ORDER BY created_at_unix_ms, invocation_id LIMIT 1");
             let candidate = candidate_query
@@ -242,6 +400,7 @@ impl LocalAgentToolStore for SqliteClientStorage {
                 worker_id: worker_id.to_string(),
                 claim_token: claim_token.to_string(),
                 invocation,
+                preflight_outcome: None,
             });
             Self::record_receipt(&mut connection, command, &response, now_unix_ms)
                 .await
@@ -511,6 +670,13 @@ pub(super) async fn advance_run_after_tool(
         let invocation_id: String = prompt_row.try_get("invocation_id").db()?;
         let call_id: String = prompt_row.try_get("call_id").db()?;
         let result_json: String = prompt_row.try_get("result_json").db()?;
+        let input_json: String =
+            sqlx::query_scalar("SELECT input_json FROM local_agent_runs WHERE run_id = ?")
+                .bind(run_id)
+                .fetch_one(&mut *connection)
+                .await
+                .db()?;
+        let run_input: Value = serde_json::from_str(&input_json)?;
         let result: Value = serde_json::from_str(&result_json)?;
         let mut prompt = result
             .get("prompt")
@@ -522,11 +688,30 @@ pub(super) async fn advance_run_after_tool(
                 )
             })?;
         prompt.insert("tool_call_id".to_string(), Value::String(call_id));
-        let payload = json!({
+        let mut payload = json!({
             "prompt": Value::Object(prompt),
             "invocation_id": invocation_id,
             "batch_id": batch_id
         });
+        if let Some(object) = payload.as_object_mut() {
+            if let Some(conversation_id) = run_input
+                .get("conversation_id")
+                .or_else(|| run_input.get("source_conversation_id"))
+                .and_then(Value::as_str)
+            {
+                object.insert(
+                    "conversation_id".to_string(),
+                    Value::String(conversation_id.to_string()),
+                );
+            }
+            if let Some(turn_id) = run_input
+                .get("turn_id")
+                .or_else(|| run_input.get("source_turn_id"))
+                .and_then(Value::as_str)
+            {
+                object.insert("turn_id".to_string(), Value::String(turn_id.to_string()));
+            }
+        }
         let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'waiting_user', version = version + 1, \
              pending_tool_batch_json = NULL, continuation_input_json = NULL, \
@@ -599,11 +784,18 @@ pub(super) async fn advance_run_after_tool(
             )
             .await
             .db()?;
+            super::requirement_survey_store::write_back_main_chat_survey_status(
+                connection,
+                &survey_id,
+                false,
+                now_unix_ms,
+            )
+            .await?;
         }
         return Ok(());
     }
     let rows = sqlx::query(
-        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, execution_route, arguments_json, \
          side_effecting, requires_approval, approval_status, approval_decided_by, \
          approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
          claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
@@ -655,7 +847,7 @@ pub(super) async fn fetch_invocation(
     invocation_id: &str,
 ) -> Result<Option<LocalAgentToolInvocationRecord>, ClientStorageError> {
     sqlx::query(
-        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, execution_route, arguments_json, \
          side_effecting, requires_approval, approval_status, approval_decided_by, \
          approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
          claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
@@ -674,6 +866,7 @@ pub(super) fn decode_invocation(
 ) -> Result<LocalAgentToolInvocationRecord, ClientStorageError> {
     let status: String = row.try_get("status").db()?;
     let approval_status: String = row.try_get("approval_status").db()?;
+    let execution_route: String = row.try_get("execution_route").db()?;
     let arguments: String = row.try_get("arguments_json").db()?;
     let result: Option<String> = row.try_get("result_json").db()?;
     Ok(LocalAgentToolInvocationRecord {
@@ -682,6 +875,8 @@ pub(super) fn decode_invocation(
         batch_id: row.try_get("batch_id").db()?,
         call_id: row.try_get("call_id").db()?,
         tool_name: row.try_get("tool_name").db()?,
+        execution_route: LocalAgentToolExecutionRoute::from_str(&execution_route)
+            .map_err(ClientStorageError::InvalidState)?,
         arguments: serde_json::from_str(&arguments)?,
         side_effecting: row.try_get("side_effecting").db()?,
         requires_approval: row.try_get("requires_approval").db()?,
@@ -704,6 +899,65 @@ pub(super) fn decode_invocation(
         created_at_unix_ms: row.try_get("created_at_unix_ms").db()?,
         updated_at_unix_ms: row.try_get("updated_at_unix_ms").db()?,
     })
+}
+
+fn tool_execution_route(profile_key: &str, tool_name: &str) -> LocalAgentToolExecutionRoute {
+    const SHARED_TOOLS: &[&str] = &[
+        "list_tasks",
+        "get_task",
+        "create_task",
+        "create_tasks_with_prerequisites",
+        "cancel_task",
+        "wait_for_task_completion",
+        "get_task_dependency_graph",
+        "resolve_task_followup",
+        "ask_user_prompt_key_values",
+        "ask_user_prompt_choices",
+        "ask_user_prompt_mixed_form",
+        "notepad_list_folders",
+        "notepad_list_notes",
+        "notepad_read_note",
+        "notepad_create_note",
+        "notepad_update_note",
+        "requirement_survey_create",
+        "requirement_plan_save",
+        "task_run_process_record_process",
+        "task_run_process_report_outcome",
+        "tool_result_read",
+    ];
+    const SKILL_TOOLS: &[&str] = &["agent_skill_activate", "agent_skill_read_resource"];
+    if SHARED_TOOLS.contains(&tool_name)
+        || (profile_key != "task_execution" && SKILL_TOOLS.contains(&tool_name))
+    {
+        LocalAgentToolExecutionRoute::Shared
+    } else {
+        LocalAgentToolExecutionRoute::Platform
+    }
+}
+
+#[cfg(test)]
+mod execution_route_tests {
+    use super::*;
+
+    #[test]
+    fn unified_skill_tools_route_by_run_profile() {
+        assert_eq!(
+            tool_execution_route("main_chat", "agent_skill_activate"),
+            LocalAgentToolExecutionRoute::Shared
+        );
+        assert_eq!(
+            tool_execution_route("task_execution", "agent_skill_activate"),
+            LocalAgentToolExecutionRoute::Platform
+        );
+        assert_eq!(
+            tool_execution_route("task_execution", "agent_skill_read_resource"),
+            LocalAgentToolExecutionRoute::Platform
+        );
+        assert_eq!(
+            tool_execution_route("main_chat", "read_file"),
+            LocalAgentToolExecutionRoute::Platform
+        );
+    }
 }
 
 fn outcome_fields(

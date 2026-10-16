@@ -10,6 +10,7 @@ import SwiftUI
 @MainActor
 final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding {
     @Published var selection: SidebarSelection?
+    @Published var requestedRequirementSurvey: RequirementSurveyNavigationTarget?
     @Published var projectTab: ProjectWorkspaceTab = .messages
     @Published var isNotepadPresented = false
     @Published var navigationSplitVisibility: NavigationSplitViewVisibility = .all
@@ -272,7 +273,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                 projects: localProjectsService,
                 connector: localConnectorService,
                 remoteConnectionProvider: remoteConnectionService,
-                eventHub: eventHub
+                eventHub: eventHub,
+                maximumConcurrentClaims: RuntimeConfiguration
+                    .localAgentMaximumConcurrentWorkItems
             )
             localAgentRuntimeSettingsService = settings
             localAgentEventHub = eventHub
@@ -360,7 +363,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                     ownerUserID: ownerUserID
                 ).map {
                     LocalAgentTodoPluginOption(
-                        pluginID: $0.id,
+                        pluginID: $0.pluginID,
+                        componentKey: $0.componentKey,
                         displayName: $0.displayName,
                         description: $0.description
                     )
@@ -553,11 +557,22 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             )
             await localConnectorService.setAgentGroupChatService(agentGroupChatService)
             await localConnectorService.setAgentGroupChatScheduler(agentGroupChatScheduler)
+            await localConnectorService.setPluginConfigurationChangedHandler { [weak self] in
+                await MainActor.run {
+                    guard let self, let ownerUserID = self.authenticatedUserID else { return }
+                    self.refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+                    self.refreshPluginApplications()
+                }
+            }
             guard let self else { return }
             await localConnectorService.setCompanionRuntime(self)
         }
         localConnectorControl.setServicePreparationTask(connectorServicePreparationTask)
         localConnectorControl.setModelConfigurationChangedHandler { [weak self] in
+            guard let self, let ownerUserID = authenticatedUserID else { return }
+            refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+        }
+        localConnectorControl.setPluginConfigurationChangedHandler { [weak self] in
             guard let self, let ownerUserID = authenticatedUserID else { return }
             refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
         }

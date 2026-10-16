@@ -46,6 +46,8 @@ enum NativePluginArtifactRegistrar {
             try parseCandidate($0, artifactRoot: artifactRoot)
         }
         var authoritative: [NativeJSONValue] = []
+        var deliveryLinks: [String] = []
+        var deliveryDescriptors: [NativeJSONValue] = []
         var createdDirectories: [URL] = []
         do {
             for candidate in candidates {
@@ -71,6 +73,13 @@ enum NativePluginArtifactRegistrar {
                 }
                 let relativePath = [managedDirectory, sessionDirectory, artifactID, candidate.displayName]
                     .joined(separator: "/")
+                let deliveryMarkdown = "[\(markdownLabel(candidate.displayName))](\(markdownTarget(relativePath)))"
+                deliveryLinks.append("- \(deliveryMarkdown)")
+                deliveryDescriptors.append(.object([
+                    "display_name": .string(candidate.displayName),
+                    "workspace_relative_path": .string(relativePath),
+                    "markdown": .string(deliveryMarkdown),
+                ]))
                 let descriptor: NativeJSONValue = .object([
                     "artifact_id": .string(artifactID),
                     "owner": .object([
@@ -107,7 +116,46 @@ enum NativePluginArtifactRegistrar {
         }
         metadata["chatos/artifacts"] = .array(authoritative)
         resultObject["_meta"] = .object(metadata)
+        if !deliveryLinks.isEmpty {
+            var content = resultObject["content"]?.jsonArray ?? []
+            let deliveryText = "ChatOS managed delivery links follow. In the final response, use the exact "
+                + "Markdown target below; do not replace it with the producer relativePath, "
+                + "a basename, an absolute path, or a file:// URL.\n"
+                + deliveryLinks.joined(separator: "\n")
+            // Put delivery evidence first. Tool results can be truncated for model context, and
+            // artifact-producing tools often return a large structured payload before the Host
+            // augments it. Appending the only authoritative link made a successful registration
+            // look absent to the executor even though it was present in the persisted result.
+            content.insert(.object([
+                "type": .string("text"),
+                "text": .string(deliveryText),
+            ]), at: 0)
+            resultObject["content"] = .array(content)
+            if var structured = resultObject["structuredContent"]?.jsonObject {
+                structured["chatos_managed_delivery"] = .object([
+                    "instruction": .string(
+                        "Use one of these exact Markdown values in the final response. "
+                            + "These are Host-registered downloadable project artifacts."
+                    ),
+                    "links": .array(deliveryDescriptors),
+                ])
+                resultObject["structuredContent"] = .object(structured)
+            }
+        }
         return .object(resultObject)
+    }
+
+    private static func markdownLabel(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+    }
+
+    private static func markdownTarget(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~/")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private static func parseCandidate(

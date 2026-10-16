@@ -49,8 +49,8 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
     func testAllChatToolsHaveCentralSkillCoverage() {
         let report = LocalAgentChatToolProvider.skillCoverageReport()
 
-        XCTAssertEqual(report.totalTools, 33)
-        XCTAssertEqual(report.coveredTools, 33)
+        XCTAssertEqual(report.totalTools, 32)
+        XCTAssertEqual(report.coveredTools, 32)
         XCTAssertTrue(report.isComplete)
         XCTAssertTrue(report.issues.isEmpty)
     }
@@ -130,7 +130,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         )
         let definitions = Set(try await provider.definitions().map(\.name))
         XCTAssertTrue(definitions.contains("agent_skill_activate"))
-        XCTAssertTrue(definitions.contains("agent_skill_list_resources"))
+        XCTAssertFalse(definitions.contains("agent_skill_list_resources"))
         XCTAssertTrue(definitions.contains("agent_skill_read_resource"))
         let gatedTodoList = try await provider.execute(.init(
             id: "todo-list-before-product-skill",
@@ -160,14 +160,6 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(coverage.coveredTools, liveDefinitions.count)
 
         let professionRef = snapshot.skills[0].skillRef
-        let listBeforeActivation = try await provider.execute(.init(
-            id: "list-before-activate",
-            name: "agent_skill_list_resources",
-            arguments: try toolArguments(["skill_ref": professionRef])
-        ))
-        XCTAssertTrue(listBeforeActivation.isError)
-        XCTAssertTrue(listBeforeActivation.content.contains("skill_ref_not_activated"))
-
         let activation = try await provider.execute(.init(
             id: "activate",
             name: "agent_skill_activate",
@@ -305,8 +297,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(
             Set(definitions.map(\.name)),
             [
-                "agent_skill_activate", "agent_skill_list_resources",
-                "agent_skill_read_resource",
+                "agent_skill_activate", "agent_skill_read_resource",
                 "agent_workspace_snapshot", "chat_read_attachment", "chat_document_create",
                 "agent_propose_member",
                 "agent_propose_existing_member", "agent_propose_member_removal",
@@ -991,6 +982,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let pluginOptions: [LocalAgentTodoPluginOption] = [
             .init(
                 pluginID: "internal-plugin-secret",
+                componentKey: "test-mcp",
                 displayName: "本地测试插件",
                 description: "只暴露安全目录信息"
             ),
@@ -1647,7 +1639,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         XCTAssertEqual(Set(executorDefinitions.map(\.name)), Set([
             "todo_get_context", "todo_progress_append", "todo_complete", "todo_block",
             "team_asset_list", "team_asset_get",
-            "agent_skill_activate", "agent_skill_list_resources", "agent_skill_read_resource",
+            "agent_skill_activate", "agent_skill_read_resource",
         ]))
         _ = try await store.appendAgentTodoProgress(
             ownerUserID: "alice",

@@ -180,6 +180,24 @@ fn tool_records_omit_binary_payloads_and_duplicate_structured_metadata() {
 }
 
 #[test]
+fn tool_records_preserve_complete_large_text_for_durable_memory() {
+    let content = "方案".repeat(160_001);
+    let input = SaveToolRecordInput {
+        conversation_id: "conversation-1".to_string(),
+        tool_call_id: "call-large".to_string(),
+        tool_name: "solution.read".to_string(),
+        content: content.clone(),
+        success: true,
+        ..SaveToolRecordInput::default()
+    };
+
+    let record: SaveRecordInput = input.into();
+
+    assert_eq!(record.content, content);
+    assert!(!record.content.contains("truncated"));
+}
+
+#[test]
 fn assistant_record_input_preserves_structured_payload_and_tool_calls() {
     let tool_calls = json!([{
         "id": "call_1",

@@ -100,6 +100,145 @@ async fn finish_next_success(storage: &SqliteClientStorage, run_id: &str, now_un
 }
 
 #[tokio::test]
+async fn cancelling_review_task_abandons_workflow_but_preserves_uncertain_run() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    storage
+        .create_task_graph(
+            &command("create-review"),
+            &graph("review-graph", true),
+            1_000,
+        )
+        .await
+        .unwrap();
+    storage
+        .start_next_task_run("user-1", "review-run", "start-review", 2_000)
+        .await
+        .unwrap()
+        .unwrap();
+    storage
+        .claim_next_run(
+            &command("claim-review"),
+            "user-1",
+            "worker",
+            "token",
+            2_001,
+            3_000,
+            "claim-review-event",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    storage
+        .recover_expired_claims("user-1", 3_001)
+        .await
+        .unwrap();
+    let original_run = storage.get_run("review-run").await.unwrap().unwrap();
+    assert_eq!(original_run.status, LocalAgentRunStatus::NeedsReview);
+    let blocked = storage
+        .get_task_graph("user-1", "review-graph")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(blocked
+        .tasks
+        .iter()
+        .all(|t| t.status == LocalTaskStatus::Blocked));
+    let version = blocked
+        .tasks
+        .iter()
+        .find(|t| t.task_id == "task-root")
+        .unwrap()
+        .version;
+    for (owner, expected) in [("other-owner", version), ("user-1", version - 1)] {
+        assert!(storage
+            .cancel_task(
+                &command(&format!("invalid-{owner}")),
+                owner,
+                "task-root",
+                Some(expected),
+                "stop",
+                &[],
+                "invalid-event",
+                4_000
+            )
+            .await
+            .is_err());
+    }
+    let cancelled = storage
+        .cancel_task(
+            &command("cancel-review"),
+            "user-1",
+            "task-root",
+            Some(version),
+            "user abandoned review",
+            &[],
+            "cancel-review-event",
+            4_001,
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled.status, LocalTaskGraphStatus::Cancelled);
+    assert!(cancelled
+        .tasks
+        .iter()
+        .all(|t| t.status == LocalTaskStatus::Cancelled && t.active_run_id.is_none()));
+    assert_eq!(
+        storage.get_run("review-run").await.unwrap().unwrap(),
+        original_run
+    );
+    let active = storage
+        .list_runs(
+            "user-1",
+            chatos_local_agent_protocol::LocalAgentRunListScope::Active,
+            None,
+            None,
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
+    assert!(
+        active.runs.is_empty(),
+        "Cancelled workflow must disappear from active pet activities"
+    );
+    assert!(storage
+        .start_next_task_run("user-1", "must-not-start", "must-not-start-event", 5_000)
+        .await
+        .unwrap()
+        .is_none());
+    let replay = storage
+        .cancel_task(
+            &command("cancel-review"),
+            "user-1",
+            "task-root",
+            Some(version),
+            "user abandoned review",
+            &[],
+            "cancel-review-event",
+            5_001,
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, cancelled);
+    let events = storage
+        .list_events(0, 20, Some("review-run"))
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.event_type == "task_cancelled")
+            .count(),
+        1
+    );
+    assert!(
+        !events.iter().any(|e| e.event_type == "run_cancelled"),
+        "Cannot relabel an unknown historical step result as cancelled"
+    );
+}
+
+#[tokio::test]
 async fn cancel_and_retry_recompute_blocked_descendants() {
     let storage = SqliteClientStorage::connect_memory()
         .await

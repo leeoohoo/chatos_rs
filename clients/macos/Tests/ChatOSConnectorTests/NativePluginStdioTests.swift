@@ -281,14 +281,7 @@ extension NativePluginRuntimeTests {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: runtimeRoot) }
         let launch = try NativePluginManifestLoader.prepare(
-            record: .init(
-                pluginID: "browser-cdp-integration",
-                releaseID: "browser-cdp-integration-release",
-                version: manifest.version,
-                artifactSHA256: String(repeating: "a", count: 64),
-                installationPath: installation.path,
-                installedAt: "2026-08-29T00:00:00Z"
-            ),
+            record: try NativeBrowserPluginUsageFixture.installedRecord(at: installation),
             componentKey: NativeBrowserPluginIdentity.componentKey,
             serverKey: nil,
             adapterSessionID: UUID().uuidString.lowercased(),
@@ -305,22 +298,14 @@ extension NativePluginRuntimeTests {
         do {
             let opened = try await client.callTool(
                 name: "browser_session_open",
-                arguments: .object([
-                    "mode": .string("managed"),
-                    "persistent_profile": .bool(false),
-                    "headless": .bool(true),
-                    "session_name": .string("Swift stdio integration"),
-                ]),
+                arguments: NativeBrowserPluginUsageFixture.openArguments,
                 timeout: .seconds(60)
             )
             #expect(opened.jsonObject?["isError"]?.jsonBool != true)
 
             let navigated = try await client.callTool(
                 name: "browser_navigate",
-                arguments: .object([
-                    "timeout_ms": .number(30_000),
-                    "url": .string("https://github.com/search?q=%22DeepSeek+Harness%22&type=repositories"),
-                ]),
+                arguments: NativeBrowserPluginUsageFixture.navigationArguments,
                 timeout: .seconds(45)
             )
             #expect(navigated.jsonObject?["isError"]?.jsonBool != true)

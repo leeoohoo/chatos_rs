@@ -28,6 +28,7 @@ struct Options {
     read_only_tools: Vec<String>,
     approval_exempt_tools: Vec<String>,
     memory: Option<MemoryOptions>,
+    maximum_concurrent_work_items: usize,
 }
 
 struct MemoryOptions {
@@ -84,7 +85,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Arc::new(ChildEnvironmentModelCredentialResolver),
             ),
     );
-    let assembly = match memory_services {
+    let assembly = (match memory_services {
         Some((source_id, sync_worker)) => {
             LocalAgentHostAssembly::with_external_tool_worker_and_memory(
                 runtime,
@@ -105,7 +106,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             options.read_only_tools,
             options.approval_exempt_tools,
         ),
-    }
+    })
+    .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?
+    .with_maximum_concurrent_work_items(options.maximum_concurrent_work_items)
     .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     let coordinator = assembly.coordinator();
     match options.mode {
@@ -183,6 +186,7 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
     let mut memory_base_url = None;
     let mut memory_source_id = None;
     let mut memory_timeout_ms = 30_000;
+    let mut maximum_concurrent_work_items = default_maximum_concurrent_work_items();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -224,6 +228,16 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
                     return Err("--memory-timeout-ms must be between 1 and 300000".to_string());
                 }
             }
+            "--max-concurrent-work-items" => {
+                index += 1;
+                let value = required_value(&arguments, index, "--max-concurrent-work-items")?;
+                maximum_concurrent_work_items = value
+                    .parse::<usize>()
+                    .map_err(|_| "--max-concurrent-work-items must be an integer".to_string())?;
+                if !(1..=16).contains(&maximum_concurrent_work_items) {
+                    return Err("--max-concurrent-work-items must be between 1 and 16".to_string());
+                }
+            }
             "--disable-workers" => workers_enabled = false,
             "--stdio" => set_mode(&mut mode, IpcMode::Stdio)?,
             #[cfg(unix)]
@@ -263,7 +277,14 @@ fn parse_options(arguments: Vec<String>) -> Result<Options, String> {
         read_only_tools,
         approval_exempt_tools,
         memory,
+        maximum_concurrent_work_items,
     })
+}
+
+fn default_maximum_concurrent_work_items() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| (parallelism.get() / 2).clamp(2, 8))
+        .unwrap_or(2)
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -302,6 +323,7 @@ fn print_help() {
     eprintln!("  --memory-base-url <url>  Enable retained Memory compose and record sync");
     eprintln!("  --memory-source-id <id>  Memory source paired with --memory-base-url");
     eprintln!("  --memory-timeout-ms <ms>  Memory request timeout (default: 30000)");
+    eprintln!("  --max-concurrent-work-items <count>  Shared model/tool concurrency (1..16; adaptive default)");
     eprintln!(
         "  --disable-workers    Serve IPC without claiming model or tool work during bootstrap"
     );
@@ -434,6 +456,8 @@ mod tests {
                 "list_files",
                 "--approval-exempt-tool",
                 "stage_edit_batch",
+                "--max-concurrent-work-items",
+                "7",
                 "--stdio",
             ]
             .into_iter()
@@ -450,6 +474,7 @@ mod tests {
             options.approval_exempt_tools,
             vec!["stage_edit_batch".to_string()]
         );
+        assert_eq!(options.maximum_concurrent_work_items, 7);
         assert!(matches!(options.mode, IpcMode::Stdio));
         assert!(options.memory.is_none());
         assert!(parse_options(vec!["--api-key".to_string(), "secret".to_string()]).is_err());
@@ -463,6 +488,21 @@ mod tests {
                 .into_iter()
                 .map(str::to_string)
                 .collect()
+        )
+        .is_err());
+        assert!(parse_options(
+            [
+                "--database",
+                "/tmp/local-agent.sqlite",
+                "--owner-user-id",
+                "user-1",
+                "--max-concurrent-work-items",
+                "17",
+                "--stdio",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
         )
         .is_err());
     }

@@ -5,6 +5,62 @@ import Testing
 
 struct NativeConnectorStateStoreTests {
     @Test
+    func declaredPluginApprovalScopeIgnoresTaskLabelButExactCommandScopeDoesNot() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-1", username: "owner", displayName: "Owner", role: "user")
+        state.deviceID = "device-1"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let root = directory.appendingPathComponent("project", isDirectory: true)
+        let common = "仅暴露任务新建页和用户主动共享页；browser.chrome.attach"
+
+        let declaredA = await service.approvalSessionScope(
+            base: "agent-plugin:browser-cdp-mcp:browser_session_open:browser.chrome.attach",
+            command: "agent_plugin:browser-cdp-mcp · browser_session_open",
+            arguments: ["任务 A"], cwd: root, projectRoot: root, workspaceID: "workspace-1",
+            requestedPermissionsDescription: common, reuse: .declaredScope
+        )
+        let declaredB = await service.approvalSessionScope(
+            base: "agent-plugin:browser-cdp-mcp:browser_session_open:browser.chrome.attach",
+            command: "agent_plugin:browser-cdp-mcp · browser_session_open",
+            arguments: ["任务 B"], cwd: root, projectRoot: root, workspaceID: "workspace-1",
+            requestedPermissionsDescription: common, reuse: .declaredScope
+        )
+        let exactA = await service.approvalSessionScope(
+            base: "local-agent-terminal:conversation-1", command: "/bin/zsh",
+            arguments: ["-lc", "echo A"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", requestedPermissionsDescription: "项目命令",
+            reuse: .exactRequest
+        )
+        let exactB = await service.approvalSessionScope(
+            base: "local-agent-terminal:conversation-1", command: "/bin/zsh",
+            arguments: ["-lc", "echo B"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", requestedPermissionsDescription: "项目命令",
+            reuse: .exactRequest
+        )
+        let exactDifferentPurpose = await service.approvalSessionScope(
+            base: "local-agent-terminal:conversation-1", command: "/bin/zsh",
+            arguments: ["-lc", "echo A"], cwd: root, projectRoot: root,
+            workspaceID: "workspace-1", purpose: "执行另一项检查",
+            requestedPermissionsDescription: "项目命令", reuse: .exactRequest
+        )
+
+        #expect(declaredA == declaredB)
+        #expect(exactA != exactB)
+        #expect(exactA != exactDifferentPurpose)
+    }
+
+    @Test
     func pluginUpdateStateUsesInstalledReleaseVersionAndArtifact() {
         let installed = NativeInstalledPluginRecord(
             pluginID: "plugin-a",
@@ -120,6 +176,7 @@ struct NativeConnectorStateStoreTests {
             "model-gpt": "managed-prompt-revision-7",
         ]
         state.localAgentPromptBundleVersion = 7
+        state.localAgentTaskSkillChecksum = "sha256:task-skill-7"
         state.workspaces = [
             .init(id: "workspace-1", alias: "Project", absoluteRoot: "/tmp/project", fingerprint: "abc")
         ]
@@ -147,6 +204,7 @@ struct NativeConnectorStateStoreTests {
                 == "managed-prompt-revision-7"
         )
         #expect(restored.localAgentPromptBundleVersion == 7)
+        #expect(restored.localAgentTaskSkillChecksum == "sha256:task-skill-7")
         #expect(restored.workspaces.first?.absoluteRoot == "/tmp/project")
     }
 

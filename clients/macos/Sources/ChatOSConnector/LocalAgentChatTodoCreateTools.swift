@@ -149,7 +149,7 @@ extension LocalAgentChatToolProvider {
         }
         let pluginHints = try Self.optionalObjectArray(arguments, key: "plugin_hints")
         var pluginSelections: [LocalAgentTodoPluginSelection] = []
-        var selectedPluginIDs = Set<String>()
+        var selectedPluginComponents = Set<String>()
         for (index, hint) in pluginHints.enumerated() {
             guard let reference = hint["plugin_ref"] as? String,
                   let option = await references.plugin(reference: reference) else {
@@ -161,7 +161,7 @@ extension LocalAgentChatToolProvider {
                     nextTool: Self.todoExecutionOptionsToolName
                 )
             }
-            guard selectedPluginIDs.insert(option.pluginID).inserted else {
+            guard selectedPluginComponents.insert("\(option.pluginID):\(option.componentKey)").inserted else {
                 return Self.structuredFailure(
                     code: "duplicate_plugin",
                     field: "plugin_hints[\(index)].plugin_ref",
@@ -172,6 +172,7 @@ extension LocalAgentChatToolProvider {
             let reason = (hint["reason"] as? String) ?? ""
             pluginSelections.append(.init(
                 pluginID: option.pluginID,
+                componentKey: option.componentKey,
                 displayName: option.displayName,
                 reason: reason
             ))

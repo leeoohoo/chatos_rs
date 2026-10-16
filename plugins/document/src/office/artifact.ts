@@ -11,8 +11,16 @@ import { translateOperations, type OfficeFormat } from './operations.js';
 
 const EXTENSIONS: Record<OfficeFormat, string> = { docx: '.docx', xlsx: '.xlsx', pptx: '.pptx' };
 
-function validateLocale(locale: unknown): string {
-  if (locale === undefined) return 'en-US';
+function validateLocale(locale: unknown, operations: unknown): string {
+  if (locale === undefined || locale === 'auto') {
+    const content = JSON.stringify(operations ?? []);
+    if (/\p{Script=Hiragana}|\p{Script=Katakana}/u.test(content)) return 'ja';
+    if (/\p{Script=Hangul}/u.test(content)) return 'ko';
+    if (/\p{Script=Han}/u.test(content)) return 'zh-CN';
+    if (/\p{Script=Arabic}/u.test(content)) return 'ar';
+    if (/\p{Script=Hebrew}/u.test(content)) return 'he';
+    return 'en-US';
+  }
   if (typeof locale !== 'string' || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,2}$/.test(locale)) {
     throw new DocumentError('INVALID_ARGUMENT', 'locale must be a short BCP-47 language tag.');
   }
@@ -28,10 +36,22 @@ async function applyBatch(
 ): Promise<void> {
   const commands = translateOperations(format, operations, operationLimit);
   if (commands.length === 0) return;
-  for (let offset = 0; offset < commands.length; offset += 500) {
+  const phases = format === 'docx'
+    ? [
+        commands.filter((command) => command.command === 'set' && command.path === '/'),
+        commands.filter((command) => command.command === 'add' && command.parent === '/styles'),
+        commands.filter((command) => !(
+          (command.command === 'set' && command.path === '/')
+          || (command.command === 'add' && command.parent === '/styles')
+          || (command.command === 'add' && command.parent === '/' && (command.type === 'header' || command.type === 'footer'))
+        )),
+        commands.filter((command) => command.command === 'add' && command.parent === '/' && (command.type === 'header' || command.type === 'footer'))
+      ].filter((phase) => phase.length > 0)
+    : [commands];
+  for (const phase of phases) for (let offset = 0; offset < phase.length; offset += 500) {
     const commandFile = path.join(root, `.document-mcp-commands-${randomUUID()}.json`);
     try {
-      await writeFile(commandFile, JSON.stringify(commands.slice(offset, offset + 500)), { flag: 'wx', mode: 0o600 });
+      await writeFile(commandFile, JSON.stringify(phase.slice(offset, offset + 500)), { flag: 'wx', mode: 0o600 });
       await runOfficeCli(
         ['batch', filePath, '--input', commandFile, '--stop-on-error', '--json'],
         root
@@ -79,7 +99,7 @@ export async function createOfficeArtifact(args: Record<string, unknown>): Promi
   const paths = await resolveArtifactPaths(args.outputName, EXTENSIONS[format]);
   try {
     await runOfficeCli(
-      ['create', paths.temporaryPath, '--type', format, '--locale', validateLocale(args.locale), '--json'],
+      ['create', paths.temporaryPath, '--type', format, '--locale', validateLocale(args.locale, args.operations), '--json'],
       paths.root
     );
     await applyBatch(paths.temporaryPath, format, args.operations ?? [], paths.root);
@@ -95,7 +115,12 @@ export async function createOfficeArtifact(args: Record<string, unknown>): Promi
       format,
       artifact,
       engine: { name: 'OfficeCLI', version: OFFICECLI_VERSION },
-      validation: { status: 'passed', warnings: [] }
+      validation: { status: 'structural_passed', visualReviewStatus: 'required', warnings: [] },
+      requiredNextAction: {
+        tool: 'document_render',
+        inputPath: artifact.relativePath,
+        reason: 'Inspect the returned page images before delivering the document.'
+      }
     };
   } catch (error) {
     await rm(paths.temporaryPath, { force: true });
@@ -133,7 +158,12 @@ export async function editOfficeArtifact(
       source: { relativePath: source.relativePath, size: source.size, sha256: await sha256File(source.absolutePath) },
       artifact,
       engine: { name: 'OfficeCLI', version: OFFICECLI_VERSION },
-      validation: { status: 'passed', warnings: [] }
+      validation: { status: 'structural_passed', visualReviewStatus: 'required', warnings: [] },
+      requiredNextAction: {
+        tool: 'document_render',
+        inputPath: artifact.relativePath,
+        reason: 'Inspect every visually changed page before delivering the document.'
+      }
     };
   } catch (error) {
     await rm(paths.temporaryPath, { force: true });

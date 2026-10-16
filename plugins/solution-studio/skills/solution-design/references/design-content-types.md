@@ -20,6 +20,7 @@ A `DesignSection` is the single decided detailed design for a requirement. Its `
 - Prefer a light neutral canvas, system-font fallbacks, restrained Apple-style color, clear spacing, and legible labels. Use dark text on light surfaces unless the requested design calls for a dark appearance.
 - Escape XML-sensitive text. Keep important labels as SVG `<text>` so the artifact remains inspectable.
 - Make arrow direction and reading order unambiguous. Avoid crossed connectors when a small layout change can remove them.
+- Use a separate SVG element for each independent directed connector. Do not combine several `M` subpaths into one path and expect `marker-end` to put an arrow on every connector; it marks only the end of the combined path. Inspect every intended arrow after rendering.
 - Route every connector from one shape boundary to another. Reserve enough clear space for the full marker plus visible padding; a short segment must not place its arrowhead inside either node.
 - Do not run a connector, arrowhead, or branch label through a node's bounding box. Give incoming, outgoing, and return paths separate ports or lanes when sharing an edge would create overlap.
 - Before persisting, verify that the SVG parses, its content fits inside the `viewBox`, labels are not clipped, and it remains understandable at the plugin preview width.
@@ -50,6 +51,7 @@ Generate a behavioral, business, state, or data flow as SVG code.
 
 - Include a clear start and terminal outcome.
 - Use diamonds only for real decisions and label outgoing branches.
+- Keep distinct outcomes distinct: return-for-revision is not rejection, and approval is not payment. Match the latest saved design's named steps and terminal outcomes; if prose changes the flow, update the corresponding SVG in the same authorized revision rather than leaving a contradictory older preview.
 - Show failure, retry, cancellation, or fallback paths when they matter to the requirement.
 - Keep the primary path visually dominant and place exceptional paths below or to the side.
 - This is a design flow, not the execution-plan DAG. Implementation ordering belongs in `executionPlan.tasks[].dependsOn` and is rendered separately.

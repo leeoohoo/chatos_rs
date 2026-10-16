@@ -67,19 +67,66 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
 struct NativeLocalAgentTaskToolAuthorization: Sendable {
     let requiresExecution: Bool
     let enabledBuiltinKinds: Set<String>
-    let pluginKeys: Set<String>
-    let isLegacyUnrestricted: Bool
+    let pluginSelectionIDs: Set<String>
+    let pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]
+    let ownedPaths: [String]
+    let externalMCPConfigIDs: Set<String>
 
-    var pluginsEnabled: Bool { isLegacyUnrestricted || !pluginKeys.isEmpty }
+    init(
+        requiresExecution: Bool,
+        enabledBuiltinKinds: Set<String>,
+        pluginSelectionIDs: Set<String>,
+        pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot] = [:],
+        ownedPaths: [String] = [],
+        externalMCPConfigIDs: Set<String> = []
+    ) {
+        self.requiresExecution = requiresExecution
+        self.enabledBuiltinKinds = enabledBuiltinKinds
+        self.pluginSelectionIDs = pluginSelectionIDs
+        self.pluginReleaseSnapshots = pluginReleaseSnapshots
+        self.ownedPaths = ownedPaths
+        self.externalMCPConfigIDs = externalMCPConfigIDs
+    }
+
+    var capabilityBrokerEnabled: Bool {
+        !pluginSelectionIDs.isEmpty || !brokerBuiltinCapabilities.isEmpty || !externalMCPConfigIDs.isEmpty
+    }
+
+    var brokerBuiltinCapabilities: Set<LocalAgentTodoBuiltinCapability> {
+        var capabilities: Set<LocalAgentTodoBuiltinCapability> = []
+        if enabledBuiltinKinds.contains("CodeMaintainerRead") {
+            capabilities.insert(.projectRead)
+        }
+        if requiresExecution, enabledBuiltinKinds.contains("CodeMaintainerWrite") {
+            capabilities.insert(.projectWrite)
+        }
+        if requiresExecution, enabledBuiltinKinds.contains("TerminalController") {
+            capabilities.insert(.terminal)
+        }
+        return capabilities
+    }
 
     static func resolve(_ input: [String: LocalAgentJSONValue]) throws -> Self {
+        let ownedPaths: [String]
+        if let raw = input["owned_paths"] {
+            guard case let .array(values) = raw else {
+                throw NativeLocalAgentPlatformToolError.invalidRunContext
+            }
+            let paths = try values.map { value -> String in
+                guard case let .string(path) = value else {
+                    throw NativeLocalAgentPlatformToolError.invalidRunContext
+                }
+                return path
+            }
+            guard let validated = try? NativeMCPCodeWriteOwnership.validate(paths) else {
+                throw NativeLocalAgentPlatformToolError.invalidRunContext
+            }
+            ownedPaths = validated
+        } else {
+            ownedPaths = []
+        }
         guard case let .object(options)? = input["tool_options"] else {
-            return .init(
-                requiresExecution: true,
-                enabledBuiltinKinds: [],
-                pluginKeys: [],
-                isLegacyUnrestricted: true
-            )
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
         }
         guard case let .bool(requiresExecution)? = options["requires_execution"],
               case let .array(rawKinds)? = options["enabled_builtin_kinds"] else {
@@ -91,36 +138,63 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
             }
             return kind
         }
-        let pluginKeys: Set<String>
-        if case let .array(hints)? = options["plugin_hints"] {
-            let keys = try hints.map { hint -> String in
-                guard case let .object(values) = hint,
-                      case let .string(rawKey)? = values["plugin_key"] else {
-                    throw NativeLocalAgentPlatformToolError.invalidRunContext
-                }
-                let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !key.isEmpty else {
-                    throw NativeLocalAgentPlatformToolError.invalidRunContext
-                }
-                return key
-            }
-            pluginKeys = Set(keys)
-            guard pluginKeys.count == keys.count else {
+        guard case let .array(hints)? = options["plugin_hints"] else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let selectionIDs = try hints.map { hint -> String in
+            guard case let .object(values) = hint,
+                  case let .string(rawKey)? = values["plugin_key"],
+                  case let .string(rawComponentKey)? = values["component_key"] else {
                 throw NativeLocalAgentPlatformToolError.invalidRunContext
             }
-        } else {
-            pluginKeys = []
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let componentKey = rawComponentKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !componentKey.isEmpty else {
+                throw NativeLocalAgentPlatformToolError.invalidRunContext
+            }
+            return Self.pluginSelectionID(pluginKey: key, componentKey: componentKey)
         }
+        let pluginSelectionIDs = Set(selectionIDs)
+        guard pluginSelectionIDs.count == selectionIDs.count else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        guard case let .array(rawSnapshots)? = options["plugin_release_snapshots"] else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let snapshots = try rawSnapshots.map(NativeLocalAgentTaskPluginReleaseSnapshot.init(jsonValue:))
+        let snapshotPairs = snapshots.map { Self.pluginSelectionID(pluginKey: $0.pluginKey, componentKey: $0.componentKey) }
+        guard Set(snapshotPairs).count == snapshots.count,
+              Set(snapshotPairs) == pluginSelectionIDs else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let pluginReleaseSnapshots = Dictionary(uniqueKeysWithValues: zip(snapshotPairs, snapshots))
+        let externalIDs: Set<String>
+        if let raw = options["external_mcp_config_ids"] {
+            guard case let .array(values) = raw else { throw NativeLocalAgentPlatformToolError.invalidRunContext }
+            let ids = try values.map { value -> String in
+                guard case let .string(id) = value, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NativeLocalAgentPlatformToolError.invalidRunContext
+                }
+                return id
+            }
+            externalIDs = Set(ids)
+            guard externalIDs.count == ids.count else { throw NativeLocalAgentPlatformToolError.invalidRunContext }
+        } else { externalIDs = [] }
         return .init(
             requiresExecution: requiresExecution,
             enabledBuiltinKinds: Set(kinds),
-            pluginKeys: pluginKeys,
-            isLegacyUnrestricted: false
+            pluginSelectionIDs: pluginSelectionIDs,
+            pluginReleaseSnapshots: pluginReleaseSnapshots,
+            ownedPaths: ownedPaths,
+            externalMCPConfigIDs: externalIDs
         )
     }
 
+    static func pluginSelectionID(pluginKey: String, componentKey: String) -> String {
+        "\(pluginKey)\u{0}\(componentKey)"
+    }
+
     func allows(_ toolName: String) -> Bool {
-        if isLegacyUnrestricted { return true }
         if ["read_file_raw", "read_file_range", "list_dir", "search_text", "read_file", "search_files"]
             .contains(toolName) {
             return enabledBuiltinKinds.contains("CodeMaintainerRead")
@@ -132,12 +206,63 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
             return requiresExecution && enabledBuiltinKinds.contains("TerminalController")
         }
         if NativeAgentCapabilityBrokerToolCatalog.toolNames.contains(toolName) {
-            return pluginsEnabled
+            return capabilityBrokerEnabled
         }
         if NativeLocalAgentPlatformToolCatalog.taskExecutionRemoteToolNames.contains(toolName) {
             return enabledBuiltinKinds.contains("RemoteConnectionController")
         }
         return false
+    }
+}
+
+struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
+    let pluginKey: String
+    let componentKey: String
+    let pluginID: String
+    let releaseID: String
+    let version: String
+    let artifactSHA256: String
+
+    init(
+        pluginKey: String,
+        componentKey: String,
+        pluginID: String,
+        releaseID: String,
+        version: String,
+        artifactSHA256: String
+    ) {
+        self.pluginKey = pluginKey
+        self.componentKey = componentKey
+        self.pluginID = pluginID
+        self.releaseID = releaseID
+        self.version = version
+        self.artifactSHA256 = artifactSHA256
+    }
+
+    init(jsonValue: LocalAgentJSONValue) throws {
+        guard case let .object(values) = jsonValue,
+              case let .string(pluginKey)? = values["plugin_key"],
+              case let .string(componentKey)? = values["component_key"],
+              case let .string(pluginID)? = values["plugin_id"],
+              case let .string(releaseID)? = values["release_id"],
+              case let .string(version)? = values["version"],
+              case let .string(artifactSHA256)? = values["artifact_sha256"],
+              !pluginKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !componentKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !pluginID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !releaseID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !artifactSHA256.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        self.init(
+            pluginKey: pluginKey,
+            componentKey: componentKey,
+            pluginID: pluginID,
+            releaseID: releaseID,
+            version: version,
+            artifactSHA256: artifactSHA256
+        )
     }
 }
 
@@ -252,7 +377,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         contextResolver = .init(host: host, projects: projects, connector: connector)
         self.writeStore = writeStore
         self.terminalStore = terminalStore
-        pluginTools = .init(connector: connector)
+        pluginTools = .init(connector: connector, host: host)
         remoteConnections = remoteConnectionProvider.map {
             NativeMCPRemoteConnectionController(provider: $0)
         }
@@ -314,7 +439,8 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
                         sessionID: context.conversationID,
                         runID: invocation.runID
                     ),
-                    projectRoot: context.executionRootURL
+                    projectRoot: context.executionRootURL,
+                    ownedPaths: context.toolAuthorization.ownedPaths
                 )
             } else if NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
                 invocation.toolName
@@ -354,6 +480,16 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             return .init(native: result)
         } catch let error as NativeLocalAgentPlatformToolError {
             throw error
+        } catch let error as NativeMCPCodeWriteError {
+            // Staging and pre-commit validation failures have no filesystem side effect.
+            // Return the actionable diagnostic to the model so it can re-read and retry
+            // instead of escalating an ordinary patch mismatch to Human review.
+            if case .commitFailed = error {
+                throw NativeLocalAgentPlatformToolError.projectToolFailed
+            }
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                error.errorDescription ?? "The project edit was rejected before commit."
+            )
         } catch {
             // Tool and filesystem errors may contain real local paths or staged content.
             // Collapse them before the result crosses IPC and becomes model-visible.
@@ -396,6 +532,9 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         let command = NativeLocalAgentTerminalCommandResolver.resolve(arguments) ?? ""
         guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw NativeLocalAgentPlatformToolError.invalidField("command")
+        }
+        guard NativeLocalAgentTerminalCommandResolver.purpose(arguments) != nil else {
+            throw NativeLocalAgentPlatformToolError.invalidField("purpose")
         }
         let cwd = try Self.resolveDirectory(
             Self.string(arguments["path"]) ?? ".",

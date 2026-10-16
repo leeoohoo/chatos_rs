@@ -72,8 +72,8 @@ For every AI-generated or structurally rewritten diagram:
 
 1. Call `diagram_list_documents` to avoid accidental duplicates when appropriate.
 2. Choose exactly one diagram kind and one mode for the next document.
-3. Activate the matching dedicated Skill from the platform catalog with `skill_skill_activate`. ChatOS associates it with this router internally.
-4. Read the dedicated Skill's linked examples or contract resource when its instructions require them.
+3. Activate the matching dedicated Skill using its exact platform catalog `skill_ref`. Main Chat and Task Execution use `agent_skill_activate`, whose result already lists declared references; read only a reference needed for the current diagram with `agent_skill_read_resource`. If that activation result is no longer available after resume, activate the same exact ref again. Other host surfaces use their advertised Skill tools and schemas. ChatOS associates the leaf with this router and manages activation evidence internally; never invent evidence or call an unadvertised alias.
+4. Read only the dedicated Skill examples its instructions require. Package-internal contracts and UI metadata are not model references.
 5. Call `diagram_prepare_generation` with a stable `artifactKey` and a bounded plan. Do not pass an operation, document ID, permit, activation field, or host context; the plugin stores the approved plan internally and resolves create versus revise inside the injected scope.
 6. Call `diagram_commit_generation` with the PlantUML source and the same semantic `kind`, `title`, and `artifactKey`.
 7. If the result is not `ready`, revise the plan or split the diagram and prepare it again.
@@ -82,94 +82,6 @@ For every AI-generated or structurally rewritten diagram:
 
 The platform's internal activation graph proves that the correct immutable Skill instructions were loaded in this Runtime Session. The structured plan and final quality validation prove that the instructions were applied. AI-facing tool arguments contain business content only.
 
-## Tool reference
+## Load operational details only when needed
 
-### `diagram_list_documents`
-
-Lists diagrams in the current injected scope. Use it before creation when an equivalent logical deliverable may already exist. It takes no project ID. Match existing work primarily by `artifactKey`, then by title and kind.
-
-### `diagram_list_projects`
-
-Lists Diagram Studio's UI classification projects inside the already injected ChatOS scope. These are folders for organizing diagrams, not ChatOS project selectors. Never use this tool to choose or change the outer ChatOS project.
-
-### `diagram_create_project`
-
-Creates an optional UI classification folder inside the current scope. It is not required before creating a diagram. Generated diagrams are automatically assigned to the stable scope project when no UI classification move is requested.
-
-### `diagram_get_project`, `diagram_update_project`, and `diagram_delete_project`
-
-Read or manage UI classification metadata only. A project ID returned by these tools is internal to Diagram Studio and valid only inside the current injected scope. It must never be treated as or copied into a ChatOS project ID.
-
-### `diagram_move_document`
-
-Moves a document between Diagram Studio UI classifications within the current injected scope. It cannot move content across ChatOS users, projects, workspaces, tenants, or public scope. Do not use it to simulate scope switching.
-
-### `diagram_get_document`
-
-Returns the complete editable document. Call it before revising an existing diagram so node IDs, edge IDs, current revision, user positions, styles, and evidence can be preserved.
-
-### `diagram_prepare_generation`
-
-Submits and internally stores the approved plan for one logical diagram. The plan must state scope, excluded details, estimated size, boundaries or participants, split decisions, and the dedicated Skill checklist acknowledgements. Pass `kind`, optional `mode`, and a stable `artifactKey`. It takes no project ID, operation, document ID, permit, or activation credential.
-
-The plugin resolves the write mode itself: an `artifactKey` not present in the current injected scope prepares a create; an existing `artifactKey` prepares a revision bound to that document. Never invent placeholder document IDs such as `create`, `none`, or `new`.
-
-The internal plan state is bound to the injected runtime session and scope, diagram kind, mode, artifact key, operation, plan, and current guide version. It is never returned to or copied by the AI.
-
-### `diagram_commit_generation`
-
-Creates or upserts one generated diagram from PlantUML using the active internal plan. Use stable ASCII aliases, pass source evidence for code-derived nodes, and use the same `artifactKey` and `idempotencyKey` selected in the plan.
-
-This tool performs parsing, layout, contract checks, quality validation, persistence, and generation-provenance recording. Do not call `diagram_create_document` first.
-
-### `diagram_import_plantuml`
-
-Imports PlantUML through the same generation gates as `diagram_commit_generation`. It resolves the active Skill and generation plan internally, accepts no project ID or credential, and applies the same contract, quality, scope, and provenance checks.
-
-### `diagram_create_document`
-
-Creates an empty canvas only. Use it when the user explicitly wants to draw manually from a blank page. It is not preparation for generated PlantUML and it must not be followed by a second create call for the same deliverable.
-
-### `diagram_apply_patch`
-
-Applies focused changes to an existing document using optimistic revision control. Title, description, position, and viewport-only changes do not require a prepared generation plan. Before adding or removing nodes or semantic edges, prepare a plan for that document's `artifactKey`; the plugin resolves it internally.
-
-Preserve unrelated user edits. On a revision conflict, reread the document and rebase the intended patch.
-
-### `diagram_replace_document`
-
-Replaces the complete structured document and therefore requires an active internally stored generation plan. Prefer a focused patch unless the entire semantic structure truly must change.
-
-### `diagram_auto_layout`
-
-Rearranges the existing graph without changing its semantic elements. Use after substantial structural edits, not after every small style or position adjustment. Do not relayout user-positioned diagrams unless requested or necessary to repair overlaps.
-
-### `diagram_validate`
-
-Checks structural validity and delivery readiness. Completion requires `valid: true` and `ready: true`. Blocking issues must be repaired, simplified, or split. Use the same quality profile selected by the dedicated guide.
-
-### `diagram_export`
-
-Exports the current document as JSON, SVG, or PlantUML. Export does not replace validation and does not create a new logical diagram.
-
-### `diagram_delete_document`
-
-Deletes one document in the current injected scope. Use only when the user explicitly requests deletion. Do not delete a crowded diagram merely because a better replacement was generated.
-
-## Plan requirements
-
-Every generation plan must contain:
-
-- one-sentence `goal`;
-- bounded `scope`;
-- `excludedDetails` with at least one meaningful exclusion;
-- `estimatedPrimaryItemCount` and `estimatedEdgeCount`;
-- `structure`, listing the important boundaries, lanes, deployment groups, or participants;
-- `splitPlan`, even when empty, with a reason for keeping or separating concerns;
-- every checklist ID returned by the dedicated guide.
-
-If the estimated size exceeds the guide contract, split the diagram instead of asking for a larger canvas.
-
-## Evidence and completion
-
-For code-derived diagrams, map PlantUML aliases to concrete source references. Do not place file paths in visible labels. A final response must name the created or updated documents and must not claim success if any required diagram is missing, unvalidated, or `ready: false`.
+Before selecting calls, preparing a plan, revising an existing document, or delivering an export, read [tools, generation plans, and delivery](references/tools-generation-and-delivery.md). Do not load it merely to decide whether Diagram Studio is the right capability.

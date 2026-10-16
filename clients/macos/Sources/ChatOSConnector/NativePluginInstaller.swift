@@ -11,9 +11,9 @@ struct NativePluginInstaller: Sendable {
         let packageFileSHA256: [String: String]
     }
 
-    private let rootURL: URL
-    private let maximumFiles = 20_000
-    private let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
+    let rootURL: URL
+    let maximumFiles = 20_000
+    let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
 
     init(rootURL: URL) {
         self.rootURL = rootURL

@@ -39,6 +39,10 @@ pub(super) fn source_conversation_context(
     }
 }
 
+pub(super) fn source_user_message(parent: &LocalAgentRunRecord) -> Option<String> {
+    input_string(&parent.input, "message")
+}
+
 fn input_string(input: &Value, key: &str) -> Option<String> {
     input
         .get(key)

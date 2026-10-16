@@ -12,7 +12,7 @@ export class RevisionConflictError extends Error {
 }
 
 export function resolveDataDirectory(): string {
-  return path.resolve(process.env.SOLUTION_STUDIO_DATA_DIR ?? process.env.CHATOS_PLUGIN_DATA_DIR ?? path.join(process.cwd(), '.solution-studio-data'));
+  return path.resolve(process.env.CHATOS_PLUGIN_DATA_DIR ?? path.join(process.cwd(), '.solution-studio-data'));
 }
 
 export function dataScopeFingerprint(rootDirectory: string): string {
@@ -20,10 +20,25 @@ export function dataScopeFingerprint(rootDirectory: string): string {
 }
 
 export class SolutionWorkspaceStore {
+  private initialized = false;
   constructor(public readonly rootDirectory = resolveDataDirectory(), public readonly hostProject = projectBindingFromContext()) {}
 
   async initialize(): Promise<void> {
     await fs.mkdir(this.rootDirectory, { recursive: true });
+    if (this.initialized) return;
+    this.initialized = true;
+    const entries = await fs.readdir(this.rootDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.solution.json')) continue;
+      const workspacePath = path.join(this.rootDirectory, entry.name);
+      try {
+        const value: unknown = JSON.parse(await fs.readFile(workspacePath, 'utf8'));
+        assertSolutionWorkspace(value);
+        continue;
+      } catch { /* Invalid JSON is unusable and is removed below. */ }
+      await fs.unlink(workspacePath);
+      process.stderr.write(`Removed incompatible Solution Studio workspace: ${entry.name}\n`);
+    }
   }
 
   async list(): Promise<SolutionWorkspaceSummary[]> {
@@ -32,8 +47,7 @@ export class SolutionWorkspaceStore {
     const workspaces: SolutionWorkspace[] = [];
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith('.solution.json')) continue;
-      try { workspaces.push(await this.read(entry.name.slice(0, -'.solution.json'.length))); }
-      catch { /* A malformed workspace remains visible through its direct read error. */ }
+      workspaces.push(await this.read(entry.name.slice(0, -'.solution.json'.length)));
     }
     return workspaces
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -46,13 +60,6 @@ export class SolutionWorkspaceStore {
     return current ? this.read(current.workspaceId) : undefined;
   }
 
-  async findByArtifactKey(artifactKey: string): Promise<SolutionWorkspace | undefined> {
-    assertIdentifier(artifactKey, 'artifactKey');
-    const summaries = await this.list();
-    const match = summaries.find((item) => item.artifactKey === artifactKey);
-    return match ? this.read(match.workspaceId) : undefined;
-  }
-
   async read(workspaceId: string): Promise<SolutionWorkspace> {
     assertIdentifier(workspaceId, 'workspaceId');
     const value: unknown = JSON.parse(await fs.readFile(this.workspacePath(workspaceId), 'utf8'));
@@ -61,12 +68,11 @@ export class SolutionWorkspaceStore {
     return this.bindToHostProject(value);
   }
 
-  async create(title: string, sourceMode: SourceMode = 'existing-project', artifactKey?: string): Promise<SolutionWorkspace> {
+  async create(title: string, sourceMode: SourceMode = 'existing-project'): Promise<SolutionWorkspace> {
     return this.withLock(async () => {
       const current = await this.getCurrent();
       if (current) return current;
-      const key = artifactKey?.trim();
-      const workspace = createSolutionWorkspace(title, sourceMode, key, this.hostProject);
+      const workspace = createSolutionWorkspace(title, sourceMode, this.hostProject);
       const now = new Date().toISOString();
       workspace.revision = 1;
       workspace.createdAt = now;
@@ -93,11 +99,10 @@ export class SolutionWorkspaceStore {
     });
   }
 
-  async upsert(artifactKey: string, title: string, sourceMode: SourceMode, updater: (workspace: SolutionWorkspace) => SolutionWorkspace): Promise<{ workspace: SolutionWorkspace; created: boolean }> {
-    assertIdentifier(artifactKey, 'artifactKey');
+  async upsert(title: string, sourceMode: SourceMode, updater: (workspace: SolutionWorkspace) => SolutionWorkspace): Promise<{ workspace: SolutionWorkspace; created: boolean }> {
     return this.withLock(async () => {
       const existing = await this.getCurrent();
-      const base = existing ?? createSolutionWorkspace(title, sourceMode, artifactKey, this.hostProject);
+      const base = existing ?? createSolutionWorkspace(title, sourceMode, this.hostProject);
       const next = updater(structuredClone(base));
       next.title = title.trim().slice(0, 240) || base.title;
       next.sourceMode = sourceMode;

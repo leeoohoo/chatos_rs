@@ -54,6 +54,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var companionAskUserService: NativeLocalAgentAskUserPromptService?
     var agentGroupChatService: NativeAgentGroupChatService?
     var agentGroupChatScheduler: LocalAgentGroupChatScheduler?
+    var pluginConfigurationChangedHandler: (@Sendable () async -> Void)?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
     var cachedAccessToken: String?
@@ -166,6 +167,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func setAgentGroupChatScheduler(_ scheduler: LocalAgentGroupChatScheduler) {
         agentGroupChatScheduler = scheduler
+    }
+
+    public func setPluginConfigurationChangedHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) {
+        pluginConfigurationChangedHandler = handler
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {
@@ -443,6 +450,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 .init(
                     id: UUID().uuidString,
                     command: pending.command,
+                    purpose: pending.purpose,
                     cwd: pending.cwd,
                     source: pending.source,
                     mode: state.approvalMode,
@@ -457,6 +465,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,
+                purpose: pending.purpose,
                 cwd: pending.cwd,
                 source: pending.source,
                 risk: pending.risk,

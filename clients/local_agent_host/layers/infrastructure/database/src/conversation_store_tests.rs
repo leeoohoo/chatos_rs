@@ -9,6 +9,11 @@ use chatos_local_agent_protocol::{
 };
 use serde_json::{json, Value};
 
+#[path = "requirement_plan_tests.rs"]
+mod requirement_plan_tests;
+#[path = "task_followup_tests.rs"]
+mod task_followup_tests;
+
 fn idempotency(command_id: &str) -> IdempotentCommand {
     IdempotentCommand {
         command_id: command_id.to_string(),
@@ -571,6 +576,143 @@ async fn history_pages_are_bounded_chronological_and_cursor_stable() {
     assert_eq!(older.messages[0].ordinal, 1);
     assert_eq!(older.next_before_ordinal, None);
     assert!(older.attachments.is_empty());
+}
+
+#[tokio::test]
+async fn history_pages_never_split_a_turn_from_its_user_message() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-complete-turn-history").await;
+
+    let mut first = turn("conversation-complete-turn-history", 1, "first");
+    first.attachments.push(LocalConversationAttachmentSpec {
+        attachment_id: "attachment-complete-turn-first".to_string(),
+        display_name: "original-request.txt".to_string(),
+        media_type: "text/plain".to_string(),
+        byte_size: 16,
+        sha256: "d".repeat(64),
+        authorized_local_ref: "local-attachment:complete-turn-first".to_string(),
+        metadata: json!({}),
+    });
+    let first_started = start(&storage, &first, 10_000)
+        .await
+        .expect("start first Turn");
+    storage
+        .cancel_run(
+            &idempotency("cancel-complete-turn-first"),
+            &first_started.run.run_id,
+            Some(first_started.run.version),
+            "finish fixture",
+            "event-cancel-complete-turn-first",
+            11_000,
+        )
+        .await
+        .expect("cancel first Run");
+
+    let mut connection = storage.pool.acquire().await.expect("connection");
+    for ordinal in 2_i64..=4 {
+        sqlx::query(
+            "INSERT INTO local_conversation_messages(\
+             message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
+             created_at_unix_ms) VALUES(?, ?, ?, ?, 'assistant', ?, '{}', ?)",
+        )
+        .bind(format!("assistant-complete-turn-{ordinal}"))
+        .bind("conversation-complete-turn-history")
+        .bind(&first.turn_id)
+        .bind(ordinal)
+        .bind(serde_json::to_string(&json!({"text": format!("reply {ordinal}")})).unwrap())
+        .bind(11_000 + ordinal)
+        .execute(&mut *connection)
+        .await
+        .expect("insert assistant fixture");
+    }
+    drop(connection);
+
+    let second = turn("conversation-complete-turn-history", 3, "second");
+    let second_started = start(&storage, &second, 12_000)
+        .await
+        .expect("start second Turn");
+    storage
+        .cancel_run(
+            &idempotency("cancel-complete-turn-second"),
+            &second_started.run.run_id,
+            Some(second_started.run.version),
+            "finish fixture",
+            "event-cancel-complete-turn-second",
+            13_000,
+        )
+        .await
+        .expect("cancel second Run");
+    let mut connection = storage.pool.acquire().await.expect("connection");
+    sqlx::query(
+        "INSERT INTO local_conversation_messages(\
+         message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \
+         created_at_unix_ms) VALUES(?, ?, ?, 6, 'assistant', ?, '{}', ?)",
+    )
+    .bind("assistant-complete-turn-second")
+    .bind("conversation-complete-turn-history")
+    .bind(&second.turn_id)
+    .bind(serde_json::to_string(&json!({"text": "second reply"})).unwrap())
+    .bind(13_001_i64)
+    .execute(&mut *connection)
+    .await
+    .expect("insert second assistant fixture");
+    drop(connection);
+
+    let latest = storage
+        .get_conversation_history("user-1", "conversation-complete-turn-history", None, 2)
+        .await
+        .expect("latest page");
+    assert_eq!(
+        latest
+            .messages
+            .iter()
+            .map(|message| message.ordinal)
+            .collect::<Vec<_>>(),
+        vec![5, 6]
+    );
+    assert_eq!(latest.next_before_ordinal, Some(5));
+
+    let older = storage
+        .get_conversation_history(
+            "user-1",
+            "conversation-complete-turn-history",
+            latest.next_before_ordinal,
+            2,
+        )
+        .await
+        .expect("older page");
+    assert_eq!(
+        older
+            .messages
+            .iter()
+            .map(|message| message.ordinal)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3, 4]
+    );
+    assert_eq!(older.next_before_ordinal, None);
+    assert_eq!(older.turns.len(), 1);
+    let returned_turn = &older.turns[0];
+    assert!(older.messages.iter().any(|message| {
+        message.message_id == returned_turn.user_message_id
+            && message.role == LocalConversationMessageRole::User
+    }));
+    assert_eq!(older.attachments.len(), 1);
+    assert_eq!(
+        older.attachments[0].message_id,
+        returned_turn.user_message_id
+    );
+
+    let mut all_message_ids = latest
+        .messages
+        .iter()
+        .chain(older.messages.iter())
+        .map(|message| message.message_id.as_str())
+        .collect::<Vec<_>>();
+    all_message_ids.sort_unstable();
+    all_message_ids.dedup();
+    assert_eq!(all_message_ids.len(), 6);
 }
 
 #[tokio::test]

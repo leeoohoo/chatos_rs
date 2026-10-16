@@ -9,7 +9,7 @@ use chatos_local_agent_ports::{
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
     HostResult, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentStepOutcome,
-    LocalAgentToolBatch,
+    LocalAgentToolBatch, LocalAgentToolOutcome,
 };
 use serde_json::json;
 use std::{
@@ -42,12 +42,14 @@ mod requirement_survey_runtime;
 #[cfg(test)]
 mod requirement_survey_tests;
 mod run_factory;
+mod skill_runtime;
 #[cfg(test)]
 mod task_query_tests;
 mod task_runtime;
 
 pub use profile::{LocalAgentProfile, LocalAgentProfileRegistry};
 use run_factory::create_run_record;
+pub use skill_runtime::LocalToolSkillGateDenial;
 
 #[derive(Debug, Error)]
 pub enum LocalAgentRuntimeError {
@@ -262,6 +264,30 @@ impl LocalAgentRuntime {
                     .ok_or(ClientStorageError::NotFound(command.run_id))?;
                 Ok(HostResult::Run { run })
             }
+            HostCommand::GetRunSkillActivations(command) => {
+                let skill_refs = self
+                    .activated_skill_refs_for_run(&command.owner_user_id, &command.run_id)
+                    .await?;
+                Ok(HostResult::RunSkillActivations {
+                    run_id: command.run_id,
+                    skill_refs,
+                })
+            }
+            HostCommand::GetRunSkillBundle(command) => {
+                // Check account ownership before accessing the internal Run snapshot.
+                self.store
+                    .get_run_for_owner(&command.owner_user_id, &command.run_id)
+                    .await?
+                    .ok_or_else(|| ClientStorageError::NotFound(command.run_id.clone()))?;
+                let bundle = self
+                    .skill_bundle_for_run(&command.run_id)
+                    .await?
+                    .map(|(_, bundle)| bundle);
+                Ok(HostResult::RunSkillBundle {
+                    run_id: command.run_id,
+                    bundle,
+                })
+            }
             HostCommand::ListRuns(command) => {
                 let page = self
                     .store
@@ -324,6 +350,35 @@ impl LocalAgentRuntime {
                             .to_string(),
                     ));
                 }
+                if current.owner_entity_type == "task"
+                    && current.profile_key == "task_execution"
+                    && current
+                        .input
+                        .get("acceptance_report_version")
+                        .and_then(serde_json::Value::as_u64)
+                        == Some(1)
+                {
+                    if let LocalAgentStepOutcome::Succeed { output } = &command.outcome {
+                        let report = chatos_local_agent_protocol::completed_task_acceptance_report(
+                            current.continuation_input.as_ref(),
+                        )
+                        .ok_or_else(|| {
+                            LocalAgentRuntimeError::InvalidRequest(
+                                "Task has no accepted structured outcome report".into(),
+                            )
+                        })?;
+                        chatos_local_agent_protocol::validate_task_acceptance_report(
+                            &current.input,
+                            report,
+                        )
+                        .map_err(LocalAgentRuntimeError::InvalidRequest)?;
+                        if output.get("content") != report.get("final_response") {
+                            return Err(LocalAgentRuntimeError::InvalidRequest(
+                                "Task final response must match its checked outcome report".into(),
+                            ));
+                        }
+                    }
+                }
                 let now = self.now()?;
                 let transition = transition_for_outcome(
                     &current,
@@ -348,7 +403,7 @@ impl LocalAgentRuntime {
                 let claim_until = now.checked_add(lease_duration).ok_or_else(|| {
                     LocalAgentRuntimeError::InvalidRequest("claim lease overflow".to_string())
                 })?;
-                let claim = self
+                let mut claim = self
                     .store
                     .claim_next_tool(
                         &idempotency,
@@ -360,8 +415,30 @@ impl LocalAgentRuntime {
                         &new_event_id(),
                         command.include_tool_names.as_deref(),
                         &command.exclude_tool_names,
+                        command.execution_route,
                     )
                     .await?;
+                if let Some(claim) = claim.as_mut() {
+                    if let Err(denial) = self
+                        .authorize_tool_skill_invocation(
+                            &claim.invocation.run_id,
+                            &claim.invocation.tool_name,
+                            &claim.invocation.arguments,
+                        )
+                        .await?
+                    {
+                        claim.preflight_outcome = Some(LocalAgentToolOutcome::Failed {
+                            error: denial.error,
+                            detail: json!({
+                                "tool_name": denial.tool_name,
+                                "binding_id": denial.binding_id,
+                                "required_skill_refs": denial.required_skill_refs,
+                                "bundle_revision": denial.bundle_revision,
+                                "next_action": denial.next_action,
+                            }),
+                        });
+                    }
+                }
                 Ok(HostResult::ToolClaim { claim })
             }
             HostCommand::RenewToolClaim(command) => {
@@ -515,6 +592,7 @@ impl LocalAgentRuntime {
             | HostCommand::GetMessageTaskGraph(_)
             | HostCommand::GetTaskRuns(_)
             | HostCommand::CancelTask(_)
+            | HostCommand::ResolveTaskFollowup(_)
             | HostCommand::RetryTask(_)
             | HostCommand::RestartTask(_)) => self.handle_task_command(&idempotency, command).await,
             command @ (HostCommand::PutPluginInstallation(_)
@@ -569,7 +647,10 @@ impl LocalAgentRuntime {
             command @ (HostCommand::CreateRequirementSurvey(_)
             | HostCommand::ListRequirementSurveys(_)
             | HostCommand::GetRequirementSurvey(_)
-            | HostCommand::ResolveRequirementSurvey(_)) => {
+            | HostCommand::ResolveRequirementSurvey(_)
+            | HostCommand::GetRequirementPlan(_)
+            | HostCommand::SaveRequirementPlan(_)
+            | HostCommand::ConfirmRequirementPlan(_)) => {
                 self.handle_requirement_survey_command(&idempotency, command)
                     .await
             }

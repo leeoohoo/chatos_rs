@@ -53,14 +53,17 @@ pub(super) async fn cancel_task(
         )));
     }
     validate_replacement_tasks(connection, owner_user_id, task_id, replacement_task_ids).await?;
-    if matches!(status, LocalTaskStatus::Failed | LocalTaskStatus::Blocked) {
+    if status == LocalTaskStatus::Failed {
         return Err(ClientStorageError::Conflict(format!(
             "terminal task cannot be cancelled: {task_id}"
         )));
     }
     if matches!(
         status,
-        LocalTaskStatus::Pending | LocalTaskStatus::Ready | LocalTaskStatus::Running
+        LocalTaskStatus::Pending
+            | LocalTaskStatus::Ready
+            | LocalTaskStatus::Running
+            | LocalTaskStatus::Blocked
     ) {
         cancel_one_task(
             connection,
@@ -128,7 +131,7 @@ async fn cancel_one_task(
     connection: &mut SqliteConnection,
     task_id: &str,
     version: u64,
-    _status: LocalTaskStatus,
+    status: LocalTaskStatus,
     active_run_id: Option<String>,
     reason: &str,
     replacement_task_ids: &[String],
@@ -137,7 +140,20 @@ async fn cancel_one_task(
     run_event_id: &str,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
-    let cancelled_run_id = active_run_id.clone();
+    // Abandoning a blocked Task cancels its workflow, not the historical uncertain
+    // execution result. Keep needs_review and its diagnostic intact for inspection.
+    let cancelled_run_id = if active_run_id.is_none() && status == LocalTaskStatus::Blocked {
+        sqlx::query_scalar(
+            "SELECT run_id FROM local_agent_runs WHERE owner_entity_type = 'task' \
+             AND owner_entity_id = ? ORDER BY created_at_unix_ms DESC, rowid DESC LIMIT 1",
+        )
+        .bind(task_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?
+    } else {
+        active_run_id.clone()
+    };
     if active_run_id.is_some() {
         cancel_active_run(
             connection,
@@ -155,7 +171,7 @@ async fn cancel_one_task(
         "UPDATE local_tasks SET status = 'cancelled', active_run_id = NULL, \
          cancel_reason = ?, replacement_task_ids_json = ?, cancelled_because_task_id = ?, \
          cascade_root_task_id = ?, version = version + 1, updated_at_unix_ms = ? \
-         WHERE task_id = ? AND version = ? AND status IN ('pending','ready','running')",
+         WHERE task_id = ? AND version = ? AND status IN ('pending','ready','running','blocked')",
     )
     .bind(reason)
     .bind(replacement_task_ids_json)
@@ -180,7 +196,11 @@ async fn cancel_one_task(
             connection,
             &format!("{run_event_id}:task-reconciled"),
             &run_id,
-            "task_state_reconciled",
+            if status == LocalTaskStatus::Blocked {
+                "task_cancelled"
+            } else {
+                "task_state_reconciled"
+            },
             &serde_json::json!({"task_id": task_id, "status": "cancelled"}),
             now_unix_ms,
         )
@@ -233,7 +253,10 @@ async fn cascade_cancel_dependents(
                 .map_err(ClientStorageError::InvalidState)?;
             if !matches!(
                 status,
-                LocalTaskStatus::Pending | LocalTaskStatus::Ready | LocalTaskStatus::Running
+                LocalTaskStatus::Pending
+                    | LocalTaskStatus::Ready
+                    | LocalTaskStatus::Running
+                    | LocalTaskStatus::Blocked
             ) {
                 continue;
             }

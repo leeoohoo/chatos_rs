@@ -444,6 +444,7 @@ extension NativeLocalConnectorService {
         }
         let records = state.installedPluginRecords ?? [:]
         let items = records.values
+            .filter { $0.source == nil }
             .sorted { $0.pluginID < $1.pluginID }
             .compactMap { record in
                 try? NativePluginInstallationStatusBuilder.makeItem(

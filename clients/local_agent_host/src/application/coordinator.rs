@@ -9,12 +9,16 @@ use crate::{
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
     validate_identifier, HostCommand, HostError, HostRequestEnvelope, HostResponseEnvelope,
-    HostResult,
+    HostResult, LocalAgentToolExecutionRoute,
 };
 use chatos_local_agent_runtime::{LocalAgentRuntime, LocalAgentRuntimeError};
+use futures::future::join_all;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::sync::{watch, Notify};
+
+const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
+const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
 
 #[derive(Debug, Error)]
 pub enum LocalAgentCoordinatorError {
@@ -40,6 +44,7 @@ pub struct LocalAgentHostCoordinator {
     memory_wakeup: Arc<Notify>,
     activity: watch::Sender<u64>,
     reserved_ipc_tools: Vec<String>,
+    maximum_concurrent_work_items: usize,
 }
 
 impl LocalAgentHostCoordinator {
@@ -76,7 +81,18 @@ impl LocalAgentHostCoordinator {
             memory_wakeup: Arc::new(Notify::new()),
             activity,
             reserved_ipc_tools: Vec::new(),
+            maximum_concurrent_work_items: default_maximum_concurrent_work_items(),
         })
+    }
+
+    pub fn with_maximum_concurrent_work_items(mut self, maximum: usize) -> Result<Self, String> {
+        if !(MIN_CONCURRENT_WORK_ITEMS..=MAX_CONCURRENT_WORK_ITEMS).contains(&maximum) {
+            return Err(format!(
+                "maximum concurrent work items must be between {MIN_CONCURRENT_WORK_ITEMS} and {MAX_CONCURRENT_WORK_ITEMS}"
+            ));
+        }
+        self.maximum_concurrent_work_items = maximum;
+        Ok(self)
     }
 
     pub fn with_memory_sync_worker(
@@ -185,22 +201,31 @@ impl LocalAgentHostCoordinator {
             }
             let mut progressed = false;
             if let Some(scheduler) = self.model_scheduler.as_ref() {
-                let committed = matches!(scheduler.run_once().await?, SchedulerTick::Committed(_));
-                if committed {
-                    self.signal_activity();
+                let results =
+                    join_all((0..self.maximum_concurrent_work_items).map(|_| scheduler.run_once()))
+                        .await;
+                for result in results {
+                    let committed = matches!(result?, SchedulerTick::Committed(_));
+                    if committed {
+                        self.signal_activity();
+                    }
+                    progressed |= committed;
                 }
-                progressed |= committed;
             }
             if *shutdown.borrow() {
                 return Ok(());
             }
             if let Some(scheduler) = self.tool_scheduler.as_ref() {
-                let committed =
-                    matches!(scheduler.run_once().await?, ToolSchedulerTick::Committed(_));
-                if committed {
-                    self.signal_activity();
+                let results =
+                    join_all((0..self.maximum_concurrent_work_items).map(|_| scheduler.run_once()))
+                        .await;
+                for result in results {
+                    let committed = matches!(result?, ToolSchedulerTick::Committed(_));
+                    if committed {
+                        self.signal_activity();
+                    }
+                    progressed |= committed;
                 }
-                progressed |= committed;
             }
             if !progressed {
                 return Ok(());
@@ -327,6 +352,7 @@ impl LocalAgentHostCoordinator {
                 command.exclude_tool_names.push(tool_name.clone());
             }
         }
+        command.execution_route = Some(LocalAgentToolExecutionRoute::Platform);
     }
 
     async fn reject_external_reserved_tool_commit(
@@ -350,18 +376,25 @@ impl LocalAgentHostCoordinator {
             }
         };
         invocation
-            .filter(|invocation| self.reserved_ipc_tools.contains(&invocation.tool_name))
+            .filter(|invocation| invocation.execution_route != LocalAgentToolExecutionRoute::Platform)
             .map(|_| {
                 HostResponseEnvelope::failure(
                     request.command_id.clone(),
                     HostError::new(
                         "reserved_command",
-                        "Host-owned tool results can only be committed by the built-in local worker",
+                        "shared-runtime tool results can only be committed by the built-in local worker",
                         false,
                     ),
                 )
             })
     }
+}
+
+fn default_maximum_concurrent_work_items() -> usize {
+    std::thread::available_parallelism()
+        .map(|parallelism| (parallelism.get() / 2).clamp(2, 8))
+        .unwrap_or(2)
+        .clamp(MIN_CONCURRENT_WORK_ITEMS, MAX_CONCURRENT_WORK_ITEMS)
 }
 
 #[async_trait]
@@ -450,6 +483,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::CancelRun(_)
         | HostCommand::CreateTaskGraph(_)
         | HostCommand::CancelTask(_)
+        | HostCommand::ResolveTaskFollowup(_)
         | HostCommand::RetryTask(_)
         | HostCommand::RestartTask(_)
         | HostCommand::StartConversationTurn(_)
@@ -465,6 +499,8 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::PutCapabilityPolicySnapshot(_)
         | HostCommand::GetCapabilityPolicySnapshot(_)
         | HostCommand::GetLatestCapabilityPolicySnapshot(_)
+        | HostCommand::GetRunSkillActivations(_)
+        | HostCommand::GetRunSkillBundle(_)
         | HostCommand::GetRun(_)
         | HostCommand::ListRuns(_)
         | HostCommand::ClaimNextRun(_)
@@ -511,7 +547,10 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::DeleteArtifact(_)
         | HostCommand::CreateRequirementSurvey(_)
         | HostCommand::ListRequirementSurveys(_)
-        | HostCommand::GetRequirementSurvey(_) => false,
+        | HostCommand::GetRequirementSurvey(_)
+        | HostCommand::GetRequirementPlan(_)
+        | HostCommand::SaveRequirementPlan(_)
+        | HostCommand::ConfirmRequirementPlan(_) => false,
     }
 }
 

@@ -25,7 +25,10 @@ enum VisualComputerUseMCPMain {
                arguments.indices.contains(outputIndex + 1) {
                 let outputURL = URL(fileURLWithPath: arguments[outputIndex + 1])
                 let data = try permissionDiagnosticsData()
-                try data.write(to: outputURL, options: .atomic)
+                // The host grants this exact isolated diagnostics directory. Foundation's
+                // atomic writer may stage a sibling file outside that grant under Seatbelt.
+                // The caller reads the report only after this process exits successfully.
+                try data.write(to: outputURL)
                 return
             }
 

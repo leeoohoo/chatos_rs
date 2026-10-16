@@ -25,8 +25,8 @@ export interface SolutionRepository {
   remove(workspaceId: string): Promise<void>;
 }
 
-const indexKey = 'chatos.solution-studio.index.v1';
-const workspacePrefix = 'chatos.solution-studio.workspace.v1.';
+const indexKey = 'chatos.solution-studio.index.v2';
+const workspacePrefix = 'chatos.solution-studio.workspace.v2.';
 
 function summary(workspace: SolutionWorkspace): SolutionWorkspaceSummary {
   return {
@@ -36,6 +36,7 @@ function summary(workspace: SolutionWorkspace): SolutionWorkspaceSummary {
     title: workspace.title,
     sourceMode: workspace.sourceMode,
     requirementCount: workspace.requirements.items.length,
+    moduleCount: workspace.requirements.modules.length,
     designSectionCount: workspace.design.sections.length,
     taskCount: workspace.executionPlan.tasks.length,
     completedTaskCount: workspace.executionPlan.tasks.filter((task) => task.status === 'done').length,
@@ -114,10 +115,10 @@ class LocalRepository implements SolutionRepository {
     const now = new Date().toISOString();
     const workspaceId = `solution-${crypto.randomUUID().slice(0, 8)}`;
     const workspace: SolutionWorkspace = {
-      schemaVersion: 1, workspaceId, artifactKey: workspaceId, revision: 1, title: title.trim() || '未命名方案', description: '', sourceMode, createdAt: now, updatedAt: now,
-      requirements: { status: 'draft', revision: 0, summary: '', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], items: [], updatedAt: now },
+      schemaVersion: 2, workspaceId, artifactKey: 'project-plan', revision: 1, title: title.trim() || '未命名方案', description: '', projectProfile: { background: '', overview: '', projectType: '', deliveryForm: '', targetPlatforms: [] }, sourceMode, createdAt: now, updatedAt: now,
+      requirements: { status: 'draft', revision: 0, summary: '', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], modules: [{ id: 'MOD-BUSINESS', title: '核心业务', kind: 'business', description: '', order: 0 }], items: [], updatedAt: now },
       design: { status: 'draft', revision: 0, basedOnRequirementsRevision: 0, summary: '', sections: [], decisions: [], risks: [], validationStrategy: [], updatedAt: now },
-      executionPlan: { status: 'draft', revision: 0, basedOnDesignRevision: 0, objective: '', tasks: [], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now }
+      executionPlan: { status: 'draft', revision: 0, basedOnDesignRevision: 0, objective: '', tasks: [], statusEvents: [], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now }
     };
     localStorage.setItem(`${workspacePrefix}${workspaceId}`, JSON.stringify(workspace));
     const ids = JSON.parse(localStorage.getItem(indexKey) ?? '[]') as string[];

@@ -77,6 +77,31 @@ public struct NativeLocalAgentRequirementSurveyClient: Sendable {
         self.host = host
     }
 
+    public var planClient: NativeLocalAgentRequirementPlanClient { .init(host: host) }
+
+    /// A submitted form is not evidence that its follow-up has finished. Read the
+    /// exact source Run, and expose only the final user-facing reply, never traces.
+    public func followUp(
+        ownerUserID: String,
+        survey: LocalAgentHostRequirementSurvey
+    ) async throws -> RequirementSurveyFollowUp {
+        guard survey.ownerUserID == ownerUserID else { throw NativeLocalAgentHostError.invalidResponse }
+        guard survey.status == .resolved else { return .awaitingAnswers }
+        let run = try await NativeLocalAgentRuntimeClient(host: host).run(
+            ownerUserID: ownerUserID, runID: survey.sourceRunID
+        )
+        guard run.ownerUserID == ownerUserID, run.runID == survey.sourceRunID,
+              case let .object(input) = run.input,
+              input[survey.sourceTaskID == nil ? "conversation_id" : "source_conversation_id"]
+                == .string(survey.sourceConversationID),
+              survey.sourceTaskID == nil
+                ? (run.profileKey == "main_chat" && run.ownerEntityType == "conversation_turn")
+                : (run.profileKey == "task_execution" && run.ownerEntityType == "task"
+                    && run.ownerEntityID == survey.sourceTaskID)
+        else { throw NativeLocalAgentHostError.invalidResponse }
+        return RequirementSurveyFollowUp.project(run)
+    }
+
     public func list(
         ownerUserID: String,
         projectResourceID: String? = nil,
@@ -105,7 +130,8 @@ public struct NativeLocalAgentRequirementSurveyClient: Sendable {
             ownerUserID: ownerUserID,
             surveyID: surveyID
         ))
-        guard result.type == "requirement_survey" else {
+        guard result.type == "requirement_survey", result.survey.id == surveyID,
+              result.survey.ownerUserID == ownerUserID else {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return result.survey
@@ -129,6 +155,36 @@ public struct NativeLocalAgentRequirementSurveyClient: Sendable {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return result.resolution
+    }
+}
+
+public enum RequirementSurveyFollowUp: Equatable, Sendable {
+    case awaitingAnswers
+    case processing
+    case completed(String)
+    case completedWithoutReply
+    case waitingForInput
+    case needsReview
+    case failed
+    case cancelled
+
+    static func project(_ run: LocalAgentRunRecord) -> Self {
+        switch run.status {
+        case "succeeded":
+            guard case let .object(outcome)? = run.terminalOutcome else { return .completedWithoutReply }
+            for key in ["content", "answer", "text", "output"] {
+                if case let .string(text)? = outcome[key],
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return .completed(text)
+                }
+            }
+            return .completedWithoutReply
+        case "failed": return .failed
+        case "cancelled": return .cancelled
+        case "waiting_user": return .waitingForInput
+        case "paused", "needs_review": return .needsReview
+        default: return .processing
+        }
     }
 }
 

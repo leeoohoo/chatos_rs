@@ -91,8 +91,18 @@ extension NativeLocalConnectorService {
         } catch NativeConnectorError.notPaired {
             // Switching between local and deployed gateways can leave only the connector token
             // stale. Re-pair it once through the still-valid primary ChatOS session.
-            _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
-            return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
+            do {
+                _ = try await pairWithCurrentChatOSSession(deviceName: Host.current().localizedName)
+                return try await fetchPluginsWithCurrentPairing(forceRefresh: refresh)
+            } catch {
+                let custom = await customInstalledPlugins(forceRefresh: refresh)
+                if !custom.isEmpty { return custom }
+                throw error
+            }
+        } catch {
+            let custom = await customInstalledPlugins(forceRefresh: refresh)
+            if !custom.isEmpty { return custom }
+            throw error
         }
     }
 
@@ -161,9 +171,11 @@ extension NativeLocalConnectorService {
                 enabled: state.pluginPreferences[id] ?? source.preference?.enabled ?? true,
                 hasUI: source.catalog.hasUI ?? installedManifest.map { !$0.ui.isEmpty },
                 permissions: permissions,
-                installationIssue: installationIssue
+                installationIssue: installationIssue,
+                source: .marketplace
             ))
         }
+        plugins.append(contentsOf: await customInstalledPlugins(forceRefresh: forceRefresh))
         return plugins
     }
 
@@ -171,7 +183,7 @@ extension NativeLocalConnectorService {
         sources: [GatewayPluginSourceDTO]? = nil
     ) async {
         guard (state.installedPluginRecords ?? [:]).values.contains(where: {
-            $0.packageFileSHA256?.isEmpty != false
+            $0.source == nil && $0.packageFileSHA256?.isEmpty != false
         }) else { return }
         if let pluginIntegrityRepairTask {
             await pluginIntegrityRepairTask.value
@@ -202,7 +214,7 @@ extension NativeLocalConnectorService {
             )
             let token = try requireAccessToken()
             let candidates = (state.installedPluginRecords ?? [:]).values
-                .filter { $0.packageFileSHA256?.isEmpty != false }
+                .filter { $0.source == nil && $0.packageFileSHA256?.isEmpty != false }
                 .sorted { $0.pluginID < $1.pluginID }
             var changed = false
             for record in candidates {
@@ -481,14 +493,16 @@ extension NativeLocalConnectorService {
     }
 
     public func updatePluginEnabled(id: String, enabled: Bool) async throws {
-        let token = try requireAccessToken()
-        guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
-        try await gateway.updatePluginPreference(
-            token: token,
-            pluginID: id,
-            deviceID: deviceID,
-            enabled: enabled
-        )
+        if state.installedPluginRecords?[id]?.source == nil {
+            let token = try requireAccessToken()
+            guard let deviceID = state.deviceID else { throw NativeConnectorError.notPaired }
+            try await gateway.updatePluginPreference(
+                token: token,
+                pluginID: id,
+                deviceID: deviceID,
+                enabled: enabled
+            )
+        }
         state.pluginPreferences[id] = enabled
         if !enabled {
             await browserExtensionPairingRuntime.stop()
@@ -625,6 +639,7 @@ extension NativeLocalConnectorService {
         var changed = false
 
         for (storedID, record) in records.sorted(by: { $0.key < $1.key }) {
+            guard record.source == nil else { continue }
             if currentIDs.contains(storedID) {
                 guard let source = sources.first(where: { $0.catalog.id == storedID }),
                       record.pluginKey != source.catalog.pluginKey else {

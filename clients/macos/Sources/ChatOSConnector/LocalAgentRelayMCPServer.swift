@@ -6,11 +6,13 @@ import Foundation
 /// mapped from a run-scoped opaque reference before a Todo execution plan is persisted.
 public struct LocalAgentTodoPluginOption: Sendable, Equatable {
     public let pluginID: String
+    public let componentKey: String
     public let displayName: String
     public let description: String
 
-    public init(pluginID: String, displayName: String, description: String) {
+    public init(pluginID: String, componentKey: String, displayName: String, description: String) {
         self.pluginID = pluginID
+        self.componentKey = componentKey
         self.displayName = displayName
         self.description = description
     }
