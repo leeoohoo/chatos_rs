@@ -8,23 +8,27 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelOptions: [ConversationModelOption]
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
     public let capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
+    public let pluginInstallerCapabilitySnapshotsByModelConfigRef: [
+        String: LocalAgentCapabilityPolicySnapshot
+    ]
     public let externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
 
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
         modelOptions: [ConversationModelOption],
         capabilitySnapshot: LocalAgentCapabilityPolicySnapshot,
-        capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot] = [:],
+        capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot],
+        pluginInstallerCapabilitySnapshotsByModelConfigRef: [
+            String: LocalAgentCapabilityPolicySnapshot
+        ],
         externalMCPConfigs: [NativeLocalAgentExternalMCPConfig] = []
     ) {
         self.modelSnapshots = modelSnapshots
         self.modelOptions = modelOptions
         self.capabilitySnapshot = capabilitySnapshot
-        self.capabilitySnapshotsByModelConfigRef = capabilitySnapshotsByModelConfigRef.isEmpty
-            ? Dictionary(uniqueKeysWithValues: modelSnapshots.map {
-                ($0.modelConfigRef, capabilitySnapshot)
-            })
-            : capabilitySnapshotsByModelConfigRef
+        self.capabilitySnapshotsByModelConfigRef = capabilitySnapshotsByModelConfigRef
+        self.pluginInstallerCapabilitySnapshotsByModelConfigRef =
+            pluginInstallerCapabilitySnapshotsByModelConfigRef
         self.externalMCPConfigs = externalMCPConfigs
     }
 
@@ -32,6 +36,12 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
         forModelConfigRef modelConfigRef: String
     ) -> LocalAgentCapabilityPolicySnapshot? {
         capabilitySnapshotsByModelConfigRef[modelConfigRef]
+    }
+
+    public func pluginInstallerCapabilitySnapshot(
+        forModelConfigRef modelConfigRef: String
+    ) -> LocalAgentCapabilityPolicySnapshot? {
+        pluginInstallerCapabilitySnapshotsByModelConfigRef[modelConfigRef]
     }
 }
 
@@ -99,11 +109,17 @@ extension NativeLocalConnectorService {
         guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef],
               capability.ownerUserID == ownerUserID,
               capability.profileKey == "main_chat" else { return nil }
+        let installerCapabilitiesByModel = try await publishPluginInstallerCapabilities(
+            controlPlane: controlPlane,
+            ownerUserID: ownerUserID,
+            mainCapabilitiesByModel: capabilitiesByModel
+        )
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
             capabilitySnapshot: capability,
-            capabilitySnapshotsByModelConfigRef: capabilitiesByModel
+            capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
         )
     }
 
@@ -259,11 +275,17 @@ extension NativeLocalConnectorService {
                   capability.profileKey == "main_chat" else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
+            let installerCapabilitiesByModel = try await publishPluginInstallerCapabilities(
+                controlPlane: controlPlane,
+                ownerUserID: ownerUserID,
+                mainCapabilitiesByModel: capabilitiesByModel
+            )
             return .init(
                 modelSnapshots: snapshots,
                 modelOptions: modelOptions,
                 capabilitySnapshot: capability,
-                capabilitySnapshotsByModelConfigRef: capabilitiesByModel
+                capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
+                pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
             )
         }
         let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
@@ -448,11 +470,17 @@ extension NativeLocalConnectorService {
         state.localAgentPromptBundleVersion = nil
         state.localAgentTaskSkillChecksum = skillBundleChecksum
         try stateStore.save(state)
+        let installerCapabilitiesByModel = try await publishPluginInstallerCapabilities(
+            controlPlane: controlPlane,
+            ownerUserID: ownerUserID,
+            mainCapabilitiesByModel: capabilitiesByModel
+        )
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel,
             externalMCPConfigs: externalMCPConfigs
         )
     }

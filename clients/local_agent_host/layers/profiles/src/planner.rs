@@ -513,6 +513,18 @@ fn merge_local_tools(
 }
 
 fn main_chat_scoped_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
+    let is_plugin_installer_chat = tools.iter().any(|tool| {
+        tool_name(tool).is_some_and(|name| name.starts_with("plugin_installer_"))
+    });
+    if is_plugin_installer_chat {
+        // The dedicated installer contact receives a separate immutable capability snapshot.
+        // Remove Rust-owned Main Chat helpers as well, so task/project/skill tools are absent
+        // from the model request instead of relying on prompt instructions to avoid them.
+        tools.retain(|tool| {
+            tool_name(tool).is_some_and(|name| name.starts_with("plugin_installer_"))
+        });
+        return tools;
+    }
     let explicitly_selected_plugin = input
         .pointer("/explicit_capability_selection/kind")
         .and_then(Value::as_str)

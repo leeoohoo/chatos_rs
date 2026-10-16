@@ -1,5 +1,10 @@
 import Foundation
 
+public enum WorkspaceSystemContact {
+    public static let mainID = "jiguli"
+    public static let pluginInstallerID = "plugin-installer"
+}
+
 public struct WorkspaceProject: Sendable, Equatable, Identifiable {
     public var id: String
     public var name: String

@@ -7,6 +7,28 @@ mod attachment_tests;
 
 struct OwnerCheckingModelResolver;
 
+#[test]
+fn plugin_installer_main_chat_exposes_only_installer_tools() {
+    let tools = vec![
+        json!({"name": "create_task"}),
+        json!({"name": "agent_skill_activate"}),
+        json!({"name": "plugin_installer_search_npm"}),
+        json!({"name": "plugin_installer_install_npm"}),
+    ];
+    let scoped = main_chat_scoped_tools(tools, &json!({"conversation_id": "installer"}));
+    let names = scoped
+        .iter()
+        .filter_map(tool_name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "plugin_installer_search_npm",
+            "plugin_installer_install_npm"
+        ]
+    );
+}
+
 #[async_trait]
 impl LocalModelRuntimeResolver for OwnerCheckingModelResolver {
     async fn resolve_model_runtime(

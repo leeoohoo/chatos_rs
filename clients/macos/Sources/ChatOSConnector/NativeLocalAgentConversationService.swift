@@ -9,6 +9,9 @@ public actor NativeLocalAgentConversationService:
     private struct Context: Sendable {
         let ownerUserID: String
         let capabilitiesByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
+        let pluginInstallerCapabilitiesByModelConfigRef: [
+            String: LocalAgentCapabilityPolicySnapshot
+        ]
     }
 
     private let client: NativeLocalAgentConversationClient
@@ -41,12 +44,17 @@ public actor NativeLocalAgentConversationService:
               bootstrap.modelSnapshots.allSatisfy({ snapshot in
                   bootstrap.capabilitySnapshot(forModelConfigRef: snapshot.modelConfigRef)?
                       .ownerUserID == ownerUserID
+                      && bootstrap.pluginInstallerCapabilitySnapshot(
+                          forModelConfigRef: snapshot.modelConfigRef
+                      )?.ownerUserID == ownerUserID
               }) else {
             throw NativeLocalAgentConversationServiceError.notConfigured
         }
         context = .init(
             ownerUserID: ownerUserID,
-            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef
+            capabilitiesByModelConfigRef: bootstrap.capabilitySnapshotsByModelConfigRef,
+            pluginInstallerCapabilitiesByModelConfigRef:
+                bootstrap.pluginInstallerCapabilitySnapshotsByModelConfigRef
         )
         await eventHub.configure(ownerUserID: ownerUserID)
     }
@@ -63,15 +71,19 @@ public actor NativeLocalAgentConversationService:
         let runtimeSelection = try await runtimeSettings.resolveSelection(
             sessionID: command.sessionID
         )
-        guard let capability = context.capabilitiesByModelConfigRef[
-            runtimeSelection.modelSnapshot.modelConfigRef
-        ] else {
-            throw NativeLocalAgentConversationServiceError.notConfigured
-        }
         let conversation = try await ensureConversation(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
         )
+        let isPluginInstallerConversation = Self.usesPluginInstallerCapability(
+            for: conversation.conversation.resource
+        )
+        let capabilityMap = isPluginInstallerConversation
+            ? context.pluginInstallerCapabilitiesByModelConfigRef
+            : context.capabilitiesByModelConfigRef
+        guard let capability = capabilityMap[runtimeSelection.modelSnapshot.modelConfigRef] else {
+            throw NativeLocalAgentConversationServiceError.notConfigured
+        }
         let messageID = "message_\(UUID().uuidString.lowercased())"
         let attachments = try attachmentVault.authorize(
             command.attachments,
@@ -79,7 +91,11 @@ public actor NativeLocalAgentConversationService:
             conversationID: command.sessionID
         )
         var messageMetadata: [String: LocalAgentJSONValue] = [
-            "source": .string("native_main_chat"),
+            "source": .string(
+                isPluginInstallerConversation
+                    ? "native_plugin_installer_chat"
+                    : "native_main_chat"
+            ),
             "reasoning_enabled": .bool(command.reasoningEnabled ?? false),
         ]
         if let selection = command.explicitCapabilitySelection {
@@ -114,6 +130,15 @@ public actor NativeLocalAgentConversationService:
             accepted: true,
             turnID: result.turn.turnID,
             userMessageID: result.message?.messageID ?? messageID
+        )
+    }
+
+    static func usesPluginInstallerCapability(
+        for resource: LocalAgentConversationResourceBinding?
+    ) -> Bool {
+        resource == .init(
+            kind: .contact,
+            resourceID: WorkspaceSystemContact.pluginInstallerID
         )
     }
 

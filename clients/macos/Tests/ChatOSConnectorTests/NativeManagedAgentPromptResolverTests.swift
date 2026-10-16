@@ -73,6 +73,10 @@ final class NativeManagedAgentPromptResolverTests: XCTestCase {
             capabilitySnapshotsByModelConfigRef: [
                 "model-1": firstCapability,
                 "model-2": secondCapability,
+            ],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: [
+                "model-1": firstCapability,
+                "model-2": secondCapability,
             ]
         )
 

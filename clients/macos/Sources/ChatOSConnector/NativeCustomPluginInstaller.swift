@@ -266,7 +266,7 @@ extension NativePluginInstaller {
         return value
     }
 
-    private static func resolveExecutable(named name: String) throws -> URL {
+    static func resolveExecutable(named name: String) throws -> URL {
         for directory in NativePluginProcessEnvironment.runtimePath().split(separator: ":") {
             let candidate = URL(fileURLWithPath: String(directory), isDirectory: true)
                 .appendingPathComponent(name)
@@ -343,6 +343,84 @@ extension NativePluginInstaller {
             }
         }
         try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+    }
+
+    static func runNPMQuery(arguments: [String]) async throws -> Data {
+        let allowedCommands = Set(["search", "view"])
+        guard let command = arguments.first,
+              allowedCommands.contains(command),
+              arguments.count <= 16,
+              arguments.allSatisfy({ !$0.contains("\0") && $0.count <= 2_048 }) else {
+            throw NativeConnectorError.pluginInstallation("npm 查询参数无效")
+        }
+        let npmURL = try resolveExecutable(named: "npm")
+        let worker = Task.detached(priority: .utility) {
+            let process = Process()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            let stdoutCapture = NativeBoundedProcessOutput(maximumBytes: 2 * 1_024 * 1_024)
+            let stderrCapture = NativeBoundedProcessOutput(maximumBytes: 256 * 1_024)
+            NativeProcessPipeReader.install(
+                on: stdout.fileHandleForReading,
+                onData: stdoutCapture.append
+            )
+            NativeProcessPipeReader.install(
+                on: stderr.fileHandleForReading,
+                onData: stderrCapture.append
+            )
+            process.executableURL = npmURL
+            process.arguments = arguments
+            process.standardOutput = stdout
+            process.standardError = stderr
+            let deadline = Date().addingTimeInterval(60)
+            var timedOut = false
+            do {
+                try process.run()
+                while process.isRunning, !Task.isCancelled, Date() < deadline {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                if process.isRunning {
+                    timedOut = !Task.isCancelled && Date() >= deadline
+                    process.terminate()
+                    let terminationDeadline = Date().addingTimeInterval(2)
+                    while process.isRunning, Date() < terminationDeadline {
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    process.waitUntilExit()
+                }
+            } catch {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
+                throw error
+            }
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+            stdoutCapture.append(stdout.fileHandleForReading.readDataToEndOfFile())
+            stderrCapture.append(stderr.fileHandleForReading.readDataToEndOfFile())
+            let output = stdoutCapture.snapshot
+            let errorOutput = stderrCapture.snapshot
+            guard !output.discarded, !errorOutput.discarded else {
+                throw NativeConnectorError.pluginInstallation("npm 查询输出超过安全限制")
+            }
+            if Task.isCancelled { throw CancellationError() }
+            guard !timedOut else {
+                throw NativeConnectorError.pluginInstallation("npm 查询超过 60 秒，已终止")
+            }
+            guard process.terminationStatus == 0 else {
+                let detail = String(decoding: errorOutput.data.suffix(8 * 1_024), as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw NativeConnectorError.pluginInstallation(
+                    detail.isEmpty ? "npm 查询失败" : "npm 查询失败：\(detail)"
+                )
+            }
+            return output.data
+        }
+        return try await withTaskCancellationHandler {
             try await worker.value
         } onCancel: {
             worker.cancel()

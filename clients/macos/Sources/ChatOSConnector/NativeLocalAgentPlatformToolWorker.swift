@@ -28,12 +28,14 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
   private let attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)?
   private let projectTools: (any NativeLocalAgentProjectToolExecuting)?
   private let externalMCPs: NativeLocalAgentExternalMCPExecutor
+  private let pluginInstallerTools: NativeLocalAgentPluginInstallerToolExecutor?
 
   init(
     host: any LocalAgentHostClientServicing,
     attachmentRootURL: URL,
     projectTools: (any NativeLocalAgentProjectToolExecuting)? = nil,
-    attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil
+    attachmentWorkspaceResolver: (any NativeLocalAgentAttachmentWorkspaceResolving)? = nil,
+    connector: NativeLocalConnectorService? = nil
   ) {
     runtime = .init(host: host)
     conversations = .init(host: host)
@@ -41,12 +43,26 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
     self.projectTools = projectTools
     self.attachmentWorkspaceResolver = attachmentWorkspaceResolver
     externalMCPs = .init(host: host)
+    pluginInstallerTools = connector.map {
+      NativeLocalAgentPluginInstallerToolExecutor(host: host, connector: $0)
+    }
   }
 
   func execute(
     ownerUserID: String,
     invocation: LocalAgentToolInvocationRecord
   ) async throws -> LocalAgentJSONValue {
+    if invocation.toolName.hasPrefix(
+      NativeLocalAgentPlatformToolCatalog.pluginInstallerToolPrefix
+    ) {
+      guard let pluginInstallerTools else {
+        throw NativeLocalAgentPlatformToolError.unsupportedTool
+      }
+      return try await pluginInstallerTools.execute(
+        ownerUserID: ownerUserID,
+        invocation: invocation
+      )
+    }
     if invocation.toolName.hasPrefix("external_mcp__") {
       return try await externalMCPs.execute(
         ownerUserID: ownerUserID,
@@ -284,7 +300,8 @@ public actor NativeLocalAgentPlatformToolWorker {
       ),
       attachmentWorkspaceResolver: NativeLocalAgentProjectContextResolver(
         host: host, projects: projects, connector: connector
-      )
+      ),
+      connector: connector
     )
     approvalHandler = NativeLocalAgentToolApprovalHandler(
       host: host,

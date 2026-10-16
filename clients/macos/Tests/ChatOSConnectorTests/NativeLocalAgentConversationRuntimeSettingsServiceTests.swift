@@ -115,6 +115,11 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
             provider: "openai",
             supportsResponses: true
         )
+        let capability = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "user-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: "policy-1"
+        )
         return .init(
             modelSnapshots: [first, second],
             modelOptions: [
@@ -136,11 +141,15 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
                     thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh"]
                 ),
             ],
-            capabilitySnapshot: .init(
-                ownerUserID: "user-1",
-                profileKey: "main_chat",
-                capabilityPolicyRevision: "policy-1"
-            )
+            capabilitySnapshot: capability,
+            capabilitySnapshotsByModelConfigRef: [
+                "model-1": capability,
+                "model-2": capability,
+            ],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: [
+                "model-1": capability,
+                "model-2": capability,
+            ]
         )
     }
 }

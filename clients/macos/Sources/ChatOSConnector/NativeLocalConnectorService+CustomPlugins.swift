@@ -123,6 +123,7 @@ extension NativeLocalConnectorService {
         state.pluginPreferences[record.pluginID] = true
         try stateStore.save(state)
         await pluginPermissionSnapshots.invalidateAll()
+        await pluginConfigurationChangedHandler?()
     }
 
     func customInstalledPlugins(forceRefresh: Bool) async -> [LocalConnectorPlugin] {

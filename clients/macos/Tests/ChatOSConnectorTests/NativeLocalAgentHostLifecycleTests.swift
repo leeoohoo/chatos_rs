@@ -31,8 +31,11 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             let workspace = NativeLocalAgentWorkspaceService(host: lifecycle)
             await workspace.configure(ownerUserID: "user-1")
             let initialRelations = try await workspace.fetchWorkspaceRelations()
-            XCTAssertEqual(initialRelations.contacts.map(\.id), [NativeLocalAgentWorkspaceService.mainContact.id])
-            XCTAssertEqual(initialRelations.conversations.count, 1)
+            XCTAssertEqual(initialRelations.contacts.map(\.id), [
+                NativeLocalAgentWorkspaceService.mainContact.id,
+                NativeLocalAgentWorkspaceService.pluginInstallerContact.id,
+            ])
+            XCTAssertEqual(initialRelations.conversations.count, 2)
             let credentialStore = NativeLocalAgentModelCredentialStore(rootURL: root.appendingPathComponent("credentials"))
             let modelSnapshots = ["test", "historical"].map { model in
                 LocalAgentModelConfigSnapshot(ownerUserID: "user-1", modelConfigRef: model,
@@ -59,7 +62,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
                 XCTAssertEqual(reusedPID, workerPID)
                 let restoredRelations = try await workspace.fetchWorkspaceRelations()
                 XCTAssertEqual(restoredRelations.contacts, initialRelations.contacts)
-                XCTAssertEqual(restoredRelations.conversations.map(\.id), initialRelations.conversations.map(\.id))
+                XCTAssertEqual(
+                    restoredRelations.conversations.map(\.id).sorted(),
+                    initialRelations.conversations.map(\.id).sorted()
+                )
             }
             var rotatedModel = credentials
             rotatedModel["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "rotated-value"
@@ -239,7 +245,9 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let bootstrap = NativeLocalAgentBootstrapResult(
             modelSnapshots: [model],
             modelOptions: [modelOption],
-            capabilitySnapshot: capabilities
+            capabilitySnapshot: capabilities,
+            capabilitySnapshotsByModelConfigRef: ["model-1": capabilities],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: ["model-1": capabilities]
         )
         try await runtimeSettings.configure(ownerUserID: "user-1", bootstrap: bootstrap)
         try await conversationService.configure(

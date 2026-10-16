@@ -54,6 +54,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var companionAskUserService: NativeLocalAgentAskUserPromptService?
     var agentGroupChatService: NativeAgentGroupChatService?
     var agentGroupChatScheduler: LocalAgentGroupChatScheduler?
+    var pluginConfigurationChangedHandler: (@Sendable () async -> Void)?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
     var cachedAccessToken: String?
@@ -166,6 +167,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
 
     public func setAgentGroupChatScheduler(_ scheduler: LocalAgentGroupChatScheduler) {
         agentGroupChatScheduler = scheduler
+    }
+
+    public func setPluginConfigurationChangedHandler(
+        _ handler: (@Sendable () async -> Void)?
+    ) {
+        pluginConfigurationChangedHandler = handler
     }
 
     public func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus {

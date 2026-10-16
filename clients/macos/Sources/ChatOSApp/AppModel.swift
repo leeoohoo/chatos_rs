@@ -557,6 +557,13 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             )
             await localConnectorService.setAgentGroupChatService(agentGroupChatService)
             await localConnectorService.setAgentGroupChatScheduler(agentGroupChatScheduler)
+            await localConnectorService.setPluginConfigurationChangedHandler { [weak self] in
+                await MainActor.run {
+                    guard let self, let ownerUserID = self.authenticatedUserID else { return }
+                    self.refreshLocalAgentControlPlane(ownerUserID: ownerUserID, force: true)
+                    self.refreshPluginApplications()
+                }
+            }
             guard let self else { return }
             await localConnectorService.setCompanionRuntime(self)
         }

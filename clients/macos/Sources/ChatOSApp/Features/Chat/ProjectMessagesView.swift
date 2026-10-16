@@ -1,3 +1,4 @@
+import ChatOSCore
 import SwiftUI
 
 struct ProjectMessagesView: View {
@@ -87,10 +88,27 @@ struct ContactConversationView: View {
 
         Group {
             if let conversation = model.contactConversation {
-                ConversationTimelineView(
-                    conversation: conversation,
-                    title: contactName
-                )
+                VStack(spacing: 0) {
+                    if contactID == WorkspaceSystemContact.pluginInstallerID {
+                        Label(
+                            model.localized(
+                                "直接告诉我想安装的 MCP、npm 包名或本地 Plugin 文件夹；安装能力只在此对话可用。",
+                                english: "Tell me which MCP, npm package, or local Plugin folder to install. Installation tools are available only in this conversation."
+                            ),
+                            systemImage: "lock.shield.fill"
+                        )
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        Divider()
+                    }
+                    ConversationTimelineView(
+                        conversation: conversation,
+                        title: contactName
+                    )
+                }
             } else {
                 ContentUnavailableView(
                     model.localized("还没有公开会话", english: "No conversation yet"),
