@@ -43,6 +43,21 @@ if [[ -z "$BUILD_DATE" ]]; then
   exit 1
 fi
 
+for RESOURCE_BUNDLE in \
+  ChatOSSwift_ChatOSCore.bundle \
+  ChatOSSwift_ChatOSModelCapabilities.bundle \
+  SwiftTerm_SwiftTerm.bundle
+do
+  if [[ ! -d "$APP_PATH/$RESOURCE_BUNDLE" ]]; then
+    echo "Missing native Swift resource bundle: $APP_PATH/$RESOURCE_BUNDLE" >&2
+    exit 1
+  fi
+  if [[ ! -d "$APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" ]]; then
+    echo "Missing SwiftBuild resource bundle: $APP_PATH/Contents/Resources/$RESOURCE_BUNDLE" >&2
+    exit 1
+  fi
+done
+
 if [[ "$CONFIGURATION" == "release" ]] && strings "$EXECUTABLE" | grep -F '/debug/' >/dev/null; then
   echo "Release ChatOS binary contains a Debug build path" >&2
   exit 1

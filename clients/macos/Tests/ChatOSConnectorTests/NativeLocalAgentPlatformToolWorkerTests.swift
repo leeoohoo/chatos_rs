@@ -468,7 +468,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                 "agent_skill_activate", "agent_skill_read_resource",
                 "capability_describe", "capability_search",
                 "plugin_installer_search_npm", "plugin_installer_resolve_npm",
-                "plugin_installer_inspect_npm", "plugin_installer_inspect_local",
+                "plugin_installer_inspect_npm", "plugin_installer_inspect_source",
             ]
         )
         XCTAssertEqual(
@@ -495,7 +495,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             [
                 "open_edit_session", "stage_edit_batch", "abort_edit_session",
                 "capability_invoke",
-                "plugin_installer_install_npm", "plugin_installer_install_local",
+                "plugin_installer_install_npm", "plugin_installer_install_source",
             ]
         )
     }
