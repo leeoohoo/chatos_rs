@@ -363,7 +363,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
                     ownerUserID: ownerUserID
                 ).map {
                     LocalAgentTodoPluginOption(
-                        pluginID: $0.id,
+                        pluginID: $0.pluginID,
+                        componentKey: $0.componentKey,
                         displayName: $0.displayName,
                         description: $0.description
                     )

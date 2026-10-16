@@ -6,9 +6,7 @@ use std::collections::HashSet;
 
 pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<Value>, String> {
     let Some(options) = input.get("tool_options").and_then(Value::as_object) else {
-        // Runs created before task capability selection was restored keep their
-        // immutable snapshot behavior. Newly created Tasks always persist this object.
-        return Ok(tools);
+        return Err("Task tool_options must be an object".to_string());
     };
     let requires_execution = options
         .get("requires_execution")
@@ -26,10 +24,29 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                 .ok_or_else(|| "Task builtin capability must be a string".to_string())
         })
         .collect::<Result<HashSet<_>, _>>()?;
-    let plugins_enabled = options
+    let plugin_hints = options
         .get("plugin_hints")
         .and_then(Value::as_array)
-        .is_some_and(|hints| !hints.is_empty());
+        .ok_or_else(|| "Task tool_options.plugin_hints must be an array".to_string())?;
+    let mut plugin_components = HashSet::new();
+    for hint in plugin_hints {
+        let plugin_key = hint
+            .get("plugin_key")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Task Plugin hint must contain plugin_key".to_string())?;
+        let component_key = hint
+            .get("component_key")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Task Plugin hint must contain component_key".to_string())?;
+        if !plugin_components.insert((plugin_key.to_string(), component_key.to_string())) {
+            return Err("Task Plugin hints must contain unique plugin components".to_string());
+        }
+    }
+    let plugins_enabled = !plugin_components.is_empty();
     let external_mcps = match options.get("external_mcp_config_ids") {
         None => HashSet::new(),
         Some(value) => value

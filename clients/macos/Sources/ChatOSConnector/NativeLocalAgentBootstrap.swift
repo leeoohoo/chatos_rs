@@ -296,19 +296,32 @@ extension NativeLocalConnectorService {
         let pluginReleaseSnapshots = try installedPlugins.compactMap {
             plugin -> NativeLocalAgentTaskPluginReleaseSnapshot? in
             guard policyPluginKeys.contains(plugin.pluginKey) else { return nil }
-            guard let record = state.installedPluginRecords?[plugin.id],
+            guard let record = state.installedPluginRecords?[plugin.pluginID],
                   (record.pluginKey?.trimmedNonEmpty ?? record.pluginID) == plugin.pluginKey else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
             return .init(
                 pluginKey: plugin.pluginKey,
-                pluginID: record.pluginID,
+                componentKey: plugin.componentKey,
+                pluginID: plugin.pluginID,
                 releaseID: record.releaseID,
                 version: record.version,
                 artifactSHA256: record.artifactSHA256
             )
-        }.sorted { $0.pluginKey < $1.pluginKey }
-        guard Set(pluginReleaseSnapshots.map(\.pluginKey)) == policyPluginKeys else {
+        }.sorted { ($0.pluginKey, $0.componentKey) < ($1.pluginKey, $1.componentKey) }
+        let policyPluginSelectionIDs = Set(installedPlugins.filter {
+            policyPluginKeys.contains($0.pluginKey)
+        }.map {
+            NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+                pluginKey: $0.pluginKey, componentKey: $0.componentKey
+            )
+        })
+        let snapshotSelectionIDs = Set(pluginReleaseSnapshots.map {
+            NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+                pluginKey: $0.pluginKey, componentKey: $0.componentKey
+            )
+        })
+        guard snapshotSelectionIDs == policyPluginSelectionIDs else {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
         let builtinChoices = Self.selectableBuiltinChoices(agentCapability.mcps)
@@ -338,10 +351,19 @@ extension NativeLocalConnectorService {
             ),
             "enabled_builtin_kinds": .array(requiredBuiltinKinds.sorted().map(LocalAgentJSONValue.string)),
             "external_mcp_config_ids": .array(requiredExternalIDs.sorted().map(LocalAgentJSONValue.string)),
-            "plugin_keys": .array(requiredPluginKeys.sorted().map(LocalAgentJSONValue.string)),
+            "plugin_components": .array(installedPlugins.filter {
+                requiredPluginKeys.contains($0.pluginKey)
+            }.map { plugin in
+                .object([
+                    "plugin_key": .string(plugin.pluginKey),
+                    "component_key": .string(plugin.componentKey),
+                    "reason": .string("required by Local Agent capability policy"),
+                ])
+            }),
             "plugin_release_snapshots": .array(pluginReleaseSnapshots.map { snapshot in
                 .object([
                     "plugin_key": .string(snapshot.pluginKey),
+                    "component_key": .string(snapshot.componentKey),
                     "plugin_id": .string(snapshot.pluginID),
                     "release_id": .string(snapshot.releaseID),
                     "version": .string(snapshot.version),

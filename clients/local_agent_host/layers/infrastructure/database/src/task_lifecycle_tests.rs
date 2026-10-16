@@ -173,7 +173,7 @@ fn dynamic_platform_graph(
                 "tool_options": {
                     "enabled_builtin_kinds": [],
                     "plugin_hints": plugin_keys.iter().map(|key| {
-                        json!({"plugin_key": key})
+                        json!({"plugin_key": key, "component_key": format!("{key}-mcp")})
                     }).collect::<Vec<_>>(),
                     "external_mcp_config_ids": external_mcp_ids
                 }

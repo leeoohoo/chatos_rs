@@ -252,9 +252,20 @@ fn normalized_explicit_capability_selection(
                         "plugin selection requires a 1..=256 character plugin_key".to_string(),
                     )
                 })?;
+            let component_key = values
+                .get("component_key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && value.chars().count() <= 256)
+                .ok_or_else(|| {
+                    LocalAgentRuntimeError::InvalidRequest(
+                        "plugin selection requires a 1..=256 character component_key".to_string(),
+                    )
+                })?;
             Ok(Some(json!({
                 "kind": "plugin",
                 "plugin_key": plugin_key,
+                "component_key": component_key,
                 "display_name": display_name,
             })))
         }
@@ -322,6 +333,7 @@ mod tests {
                 "explicit_capability_selection": {
                     "kind": "plugin",
                     "plugin_key": "document-plugin",
+                    "component_key": "document-mcp",
                     "display_name": "Document"
                 }
             }),
@@ -389,6 +401,7 @@ mod tests {
             json!({
                 "kind": "plugin",
                 "plugin_key": "document-plugin",
+                "component_key": "document-mcp",
                 "display_name": "Document"
             })
         );

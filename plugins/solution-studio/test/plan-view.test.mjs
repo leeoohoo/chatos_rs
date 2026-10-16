@@ -17,11 +17,12 @@ test('requirement mainline preserves hidden prerequisites and canonical readines
   assert.deepEqual(plan, original);
 });
 
-test('complete scope includes transitive support and all five prerequisite edges', () => {
+test('complete scope includes transitive support and hides redundant prerequisite edges by default', () => {
   const plan = crossRequirementPlan();
   const view = requirementPlanView(plan, 'R-002', 'complete');
   assert.equal(view.plan.tasks.length, 5);
-  assert.deepEqual(visibleDependencyEdges(view.plan.tasks).map((edge) => edge.id), ['T-001->T-002', 'T-002->T-003', 'T-001->T-004', 'T-003->T-004', 'T-004->T-005']);
+  assert.deepEqual(visibleDependencyEdges(view.plan.tasks).map((edge) => edge.id), ['T-001->T-002', 'T-002->T-003', 'T-003->T-004', 'T-004->T-005']);
+  assert.deepEqual(visibleDependencyEdges(view.plan.tasks, true).map((edge) => edge.id), ['T-001->T-002', 'T-002->T-003', 'T-001->T-004', 'T-003->T-004', 'T-004->T-005']);
   assert.equal(view.readyCount, 1);
   const workspace = createSolutionWorkspace('回归');
   workspace.executionPlan = plan;

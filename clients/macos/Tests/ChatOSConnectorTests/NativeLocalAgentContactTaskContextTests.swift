@@ -92,7 +92,10 @@ final class NativeLocalAgentContactTaskContextTests: XCTestCase {
             ))
             XCTFail("Task executor must pass frozen ownership to the editor")
         } catch let error as NativeLocalAgentPlatformToolError {
-            XCTAssertEqual(error, .projectToolFailed)
+            guard case let .projectToolRejected(message) = error else {
+                return XCTFail("unexpected ownership error: \(error)")
+            }
+            XCTAssertTrue(message.contains("owned_paths"))
         }
         _ = try await executor.execute(ownerUserID: "user-1", invocation: Self.invocation(
             toolName: "stage_edit_batch", arguments: stageArguments("reports/result.txt")
@@ -220,7 +223,8 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                             "enabled_builtin_kinds": [
                                 "CodeMaintainerRead", "CodeMaintainerWrite", "TerminalController",
                             ],
-                            "plugin_hints": [["plugin_key": "browser-plugin"]],
+                            "plugin_hints": [],
+                            "plugin_release_snapshots": [],
                         ],
                     ],
                     "status": "running",

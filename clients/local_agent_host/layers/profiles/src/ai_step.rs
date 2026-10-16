@@ -567,6 +567,7 @@ mod tests {
             "explicit_capability_selection": {
                 "kind": "plugin",
                 "plugin_key": "web-design-plugin",
+                "component_key": "web-design-mcp",
                 "display_name": "Web Design Studio"
             }
         });

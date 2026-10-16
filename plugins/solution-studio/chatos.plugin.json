@@ -1,17 +1,31 @@
 {
   "schemaVersion": 3,
   "name": "chatos-solution-studio",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "Create traceable requirements, solution designs, and dependency-aware execution plans.",
   "author": { "name": "Chatos" },
   "license": "Apache-2.0",
   "keywords": ["requirements", "solution-design", "execution-plan", "dag", "project-planning", "mcp"],
   "mcpServers": {
-    "solution-studio-mcp": {
+    "solution-authoring-mcp": {
       "type": "stdio",
       "bin": "chatos-solution-studio",
-      "args": ["mcp"],
-      "env": {}
+      "args": ["mcp-authoring"],
+      "env": {},
+      "agent": {
+        "displayName": "方案创建器",
+        "description": "创建总体设计、功能模块与依赖清晰的实施计划"
+      }
+    },
+    "solution-executor-mcp": {
+      "type": "stdio",
+      "bin": "chatos-solution-studio",
+      "args": ["mcp-executor"],
+      "env": {},
+      "agent": {
+        "displayName": "任务执行器",
+        "description": "领取可执行任务并回写进行中、阻塞、完成或取消状态"
+      }
     }
   },
   "skills": [
@@ -19,6 +33,7 @@
     "./skills/solution-discovery",
     "./skills/solution-design",
     "./skills/solution-execution-plan",
+    "./skills/solution-task-execution",
     "./skills/solution-validation"
   ],
   "ui": [
@@ -58,14 +73,14 @@
   "dependencies": { "minimumHostVersion": ">=2.2.0", "supportedPlatforms": ["macos", "windows", "linux"] },
   "runtimeContext": {
     "scope": "project",
-    "components": ["solution-studio-mcp", "solution-workbench"],
+    "components": ["solution-authoring-mcp", "solution-executor-mcp", "solution-workbench"],
     "required": [],
     "optional": ["project.id", "workspace.id", "workspace.root"],
     "storageIsolation": "project",
     "missingContext": "device"
   },
   "permissions": [
-    { "permission": "process.spawn", "required": true, "reason": "Launch the installed Solution Studio MCP and local application service.", "components": ["solution-studio-mcp", "solution-workbench"] },
-    { "permission": "artifact.create", "required": true, "reason": "Export requirements, solution designs, execution plans, and graph snapshots.", "components": ["solution-studio-mcp", "solution-workbench"] }
+    { "permission": "process.spawn", "required": true, "reason": "Launch the installed Solution Studio MCP and local application service.", "components": ["solution-authoring-mcp", "solution-executor-mcp", "solution-workbench"] },
+    { "permission": "artifact.create", "required": true, "reason": "Export requirements, solution designs, execution plans, and graph snapshots.", "components": ["solution-authoring-mcp", "solution-workbench"] }
   ]
 }

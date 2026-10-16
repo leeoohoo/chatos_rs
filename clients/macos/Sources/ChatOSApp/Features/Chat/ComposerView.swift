@@ -406,6 +406,7 @@ struct ComposerView: View {
                 ComposerCapabilityCandidate(
                     selection: .plugin(
                         key: plugin.pluginKey,
+                        componentKey: plugin.componentKey,
                         displayName: plugin.displayName
                     ),
                     subtitle: plugin.description

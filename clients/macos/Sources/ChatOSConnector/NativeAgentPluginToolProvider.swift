@@ -402,7 +402,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let pluginProviders = try await service.makeAgentPluginSkillToolProviders(
                 ownerUserID: ownerUserID,
                 runContext: runContext,
-                pluginIDs: [plugin.id],
+                plugins: [plugin],
                 projectContext: projectContext,
                 fallbackWorkspaceID: fallbackWorkspaceID,
                 fallbackWorkspaceRootURL: fallbackWorkspaceRootURL,

@@ -474,7 +474,7 @@ mod tests {
                     "tool_options": {
                         "requires_execution": true,
                         "enabled_builtin_kinds": ["Notepad"],
-                        "plugin_hints": [{"plugin_key":"solution-studio","reason":"planning"}]
+                        "plugin_hints": [{"plugin_key":"solution-studio","component_key":"solution-authoring-mcp","reason":"planning"}]
                     }
                 }),
             )

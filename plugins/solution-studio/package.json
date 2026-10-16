@@ -1,6 +1,6 @@
 {
   "name": "@chatos/solution-studio",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "Apple-inspired workbench for requirements, solution design, and dependency-aware execution planning.",
   "license": "Apache-2.0",
   "type": "module",
@@ -28,9 +28,10 @@
     "build": "vite build && node scripts/build.mjs",
     "studio": "node bin/chatos-solution-studio studio",
     "studio:dev": "npm run build && npm run studio",
-    "mcp": "node dist/mcp-server.mjs mcp",
+    "mcp:authoring": "node bin/chatos-solution-studio mcp-authoring",
+    "mcp:executor": "node bin/chatos-solution-studio mcp-executor",
     "typecheck": "tsc --noEmit",
-    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-solution-studio mcp",
+    "audit:skill-gates": "node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-solution-studio mcp-authoring && node ../../scripts/audit-plugin-skill-gates.mjs --manifest chatos.plugin.json --cwd . -- node bin/chatos-solution-studio mcp-executor",
     "test": "npm run build && node --test test/*.test.mjs",
     "prepack": "node ../../scripts/run-plugin-prepack.mjs build audit:skill-gates",
     "pack:verify": "npm run test && npm pack --dry-run"

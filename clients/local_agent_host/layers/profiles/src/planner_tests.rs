@@ -195,6 +195,7 @@ async fn selected_plugin_is_sent_each_step_as_a_required_delivery_contract() {
                 "enabled_builtin_kinds": ["Notepad"],
                 "plugin_hints": [{
                     "plugin_key": "chatos-solution-studio@chatos-marketplace",
+                    "component_key": "solution-authoring-mcp",
                     "reason": "persist the traceable requirements and execution plan"
                 }]
             }
@@ -313,8 +314,9 @@ fn local_task_tools_keep_request_scoped_plugin_and_external_mcp_choices() {
                 "plugin_hints": {
                     "type": "array",
                     "items": {"type": "object", "properties": {
-                        "plugin_key": {"type": "string", "enum": ["plugin-1"]}
-                    }}
+                        "plugin_key": {"type": "string", "enum": ["plugin-1"]},
+                        "component_key": {"type": "string", "enum": ["plugin-1-mcp"]}
+                    }, "required": ["plugin_key", "component_key"]}
                 },
                 "external_mcp_config_ids": {
                     "type": "array",
@@ -482,7 +484,7 @@ fn plugin_tasks_cannot_use_notepad_as_a_writable_fallback() {
     let input = json!({"tool_options": {
         "requires_execution": true,
         "enabled_builtin_kinds": ["Notepad"],
-        "plugin_hints": [{"plugin_key": "solution-studio"}]
+        "plugin_hints": [{"plugin_key": "solution-studio", "component_key": "solution-authoring-mcp"}]
     }});
 
     let filtered = task_scoped_tools(tools, &input).expect("filter Plugin Task tools");
@@ -542,7 +544,7 @@ fn unified_skill_controls_follow_effective_task_capabilities() {
         (
             false,
             json!([]),
-            json!([{"plugin_key": "plugin-1"}]),
+            json!([{"plugin_key": "plugin-1", "component_key": "plugin-1-mcp"}]),
             json!([]),
             true,
         ),
@@ -670,15 +672,12 @@ fn task_attachment_tool_is_available_only_when_the_source_task_carries_attachmen
 }
 
 #[test]
-fn legacy_task_without_tool_options_keeps_its_immutable_capability_snapshot() {
+fn task_without_tool_options_is_rejected() {
     let tools = vec![
         json!({"name": "read_file"}),
         json!({"name": "execute_command"}),
     ];
-    assert_eq!(
-        task_scoped_tools(tools.clone(), &json!({"prompt": "legacy"})).expect("legacy tools"),
-        tools
-    );
+    assert!(task_scoped_tools(tools, &json!({"prompt": "missing scope"})).is_err());
 }
 
 #[test]
@@ -799,6 +798,7 @@ async fn main_chat_receives_the_program_owned_composer_capability_contract() {
         "explicit_capability_selection": {
             "kind": "plugin",
             "plugin_key": "document-plugin",
+            "component_key": "document-mcp",
             "display_name": "Document"
         }
     });
@@ -850,6 +850,7 @@ async fn composer_selected_plugin_cannot_be_rerouted_into_requirement_survey() {
         "explicit_capability_selection": {
             "kind": "plugin",
             "plugin_key": "web-design-plugin",
+            "component_key": "web-design-mcp",
             "display_name": "Web Design Studio"
         }
     });
@@ -1077,6 +1078,13 @@ async fn runtime_clock_is_present_on_main_and_task_steps() {
         }
         .into();
         run_claim.run.input = json!({"message":"Check publication dates", "prompt":"Check publication dates", "current_date":"1999-01-01"});
+        if is_task {
+            run_claim.run.input["tool_options"] = json!({
+                "requires_execution": false,
+                "enabled_builtin_kinds": [],
+                "plugin_hints": []
+            });
+        }
         let prepared = planner.prepare_ai_step(&run_claim).await.unwrap();
         let clock = prepared
             .request

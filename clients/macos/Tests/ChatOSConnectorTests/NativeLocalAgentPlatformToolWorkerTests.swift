@@ -20,6 +20,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             "tool_options": .object([
                 "requires_execution": .bool(false), "enabled_builtin_kinds": .array([]),
                 "plugin_hints": .array([]), "external_mcp_config_ids": .array([.string("mcp-1")]),
+                "plugin_release_snapshots": .array([]),
             ]),
         ])
         XCTAssertTrue(authorization.allows("agent_skill_activate"))
@@ -486,6 +487,7 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                     .string("TerminalController"),
                 ]),
                 "plugin_hints": .array([]),
+                "plugin_release_snapshots": .array([]),
             ]),
         ])
         XCTAssertTrue(readOnly.allows("read_file"))
@@ -495,6 +497,12 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         XCTAssertEqual(readOnly.brokerBuiltinCapabilities, [.projectRead])
         let scoped = try NativeLocalAgentTaskToolAuthorization.resolve([
             "owned_paths": .array([.string("src"), .string("docs/report.md")]),
+            "tool_options": .object([
+                "requires_execution": .bool(true),
+                "enabled_builtin_kinds": .array([]),
+                "plugin_hints": .array([]),
+                "plugin_release_snapshots": .array([]),
+            ]),
         ])
         XCTAssertEqual(scoped.ownedPaths, ["docs/report.md", "src"])
         for path in ["../outside", "/absolute", "src//file", "src\\file", "C:/repo", "src/./file"] {
@@ -511,9 +519,13 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
                     .string("CodeMaintainerWrite"),
                     .string("TerminalController"),
                 ]),
-                "plugin_hints": .array([.object(["plugin_key": .string("browser")])]),
+                "plugin_hints": .array([.object([
+                    "plugin_key": .string("browser"),
+                    "component_key": .string("browser-cdp-mcp"),
+                ])]),
                 "plugin_release_snapshots": .array([.object([
                     "plugin_key": .string("browser"),
+                    "component_key": .string("browser-cdp-mcp"),
                     "plugin_id": .string("plugin-1"),
                     "release_id": .string("release-1"),
                     "version": .string("1.2.3"),
@@ -528,9 +540,13 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
             execution.brokerBuiltinCapabilities,
             [.projectRead, .projectWrite, .terminal]
         )
-        XCTAssertEqual(execution.pluginKeys, ["browser"])
+        let browserSelection = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+            pluginKey: "browser",
+            componentKey: "browser-cdp-mcp"
+        )
+        XCTAssertEqual(execution.pluginSelectionIDs, [browserSelection])
         XCTAssertEqual(
-            execution.pluginReleaseSnapshots?["browser"]?.releaseID,
+            execution.pluginReleaseSnapshots[browserSelection]?.releaseID,
             "release-1"
         )
 

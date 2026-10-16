@@ -299,25 +299,25 @@ fn normalized_owned_paths(input: &Value, task_id: &str) -> Result<Option<Vec<Str
 ///
 /// `CodeMaintainerWrite` can be constrained by declared `owned_paths`. Terminal and External MCP
 /// execution remain entire-project writers. Plugin execution holds one synthetic lock per selected
-/// Plugin plus any declared paths: Tasks using different Plugins and disjoint files may run in
-/// parallel, while the same Plugin or an explicitly shared file stays serialized.
+/// Plugin component plus any declared paths: Tasks using different components and disjoint files
+/// may run in parallel, while the same component or an explicitly shared file stays serialized.
 pub fn local_task_runtime_write_scope(
     input: &Value,
     task_id: &str,
 ) -> Result<Option<Vec<String>>, String> {
-    let plugin_keys = task_selected_plugin_keys(input, task_id)?;
+    let plugin_components = task_selected_plugin_components(input, task_id)?;
     let external_mcp_selected = task_selects_external_mcp(input, task_id)?;
     let code_write_scope = local_task_write_scope(input, task_id)?;
     if task_enables_terminal(input) || external_mcp_selected {
         return Ok(Some(Vec::new()));
     }
-    if !plugin_keys.is_empty() {
+    if !plugin_components.is_empty() {
         let declared_paths = normalized_owned_paths(input, task_id)?.unwrap_or_default();
         if code_write_scope.as_ref().is_some_and(Vec::is_empty) {
             return Ok(Some(Vec::new()));
         }
         let mut paths = code_write_scope.unwrap_or(declared_paths);
-        paths.extend(plugin_keys.into_iter().map(plugin_runtime_lock_path));
+        paths.extend(plugin_components.into_iter().map(plugin_runtime_lock_path));
         paths.sort();
         paths.dedup();
         return Ok(Some(paths));
@@ -333,7 +333,7 @@ fn task_enables_terminal(input: &Value) -> bool {
     task_enables_builtin_kind(input, "TerminalController")
 }
 
-fn task_selected_plugin_keys(input: &Value, task_id: &str) -> Result<Vec<String>, String> {
+fn task_selected_plugin_components(input: &Value, task_id: &str) -> Result<Vec<String>, String> {
     let Some(value) = input.pointer("/tool_options/plugin_hints") else {
         return Ok(Vec::new());
     };
@@ -343,7 +343,7 @@ fn task_selected_plugin_keys(input: &Value, task_id: &str) -> Result<Vec<String>
     let values = value
         .as_array()
         .ok_or_else(|| format!("plugin_hints must be an array for task: {task_id}"))?;
-    let mut keys = Vec::with_capacity(values.len());
+    let mut components = Vec::with_capacity(values.len());
     let mut unique = HashSet::new();
     for value in values {
         let key = value
@@ -353,12 +353,23 @@ fn task_selected_plugin_keys(input: &Value, task_id: &str) -> Result<Vec<String>
             .ok_or_else(|| {
                 format!("plugin_hints must contain plugin_key strings for task: {task_id}")
             })?;
-        if unique.insert(key) {
-            keys.push(key.to_string());
+        let component_key = value
+            .get("component_key")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && !key.contains('\0'))
+            .ok_or_else(|| {
+                format!("plugin_hints must contain component_key strings for task: {task_id}")
+            })?;
+        let selection_id = format!("{key}\0{component_key}");
+        if !unique.insert(selection_id.clone()) {
+            return Err(format!(
+                "plugin_hints contains a duplicate plugin component for task: {task_id}"
+            ));
         }
+        components.push(selection_id);
     }
-    keys.sort();
-    Ok(keys)
+    components.sort();
+    Ok(components)
 }
 
 fn task_selects_external_mcp(input: &Value, task_id: &str) -> Result<bool, String> {
@@ -374,8 +385,8 @@ fn task_selects_external_mcp(input: &Value, task_id: &str) -> Result<bool, Strin
     Ok(!values.is_empty())
 }
 
-fn plugin_runtime_lock_path(plugin_key: String) -> String {
-    let encoded = plugin_key
+fn plugin_runtime_lock_path(plugin_component: String) -> String {
+    let encoded = plugin_component
         .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1120,7 +1131,7 @@ mod tests {
             "document",
             json!({
                 "enabled_builtin_kinds": [],
-                "plugin_hints": [{"plugin_key": "document"}],
+                "plugin_hints": [{"plugin_key": "document", "component_key": "document-mcp"}],
                 "external_mcp_config_ids": []
             }),
         );
@@ -1128,7 +1139,7 @@ mod tests {
             "browser",
             json!({
                 "enabled_builtin_kinds": [],
-                "plugin_hints": [{"plugin_key": "browser"}],
+                "plugin_hints": [{"plugin_key": "browser", "component_key": "browser-mcp"}],
                 "external_mcp_config_ids": []
             }),
         );
@@ -1146,7 +1157,7 @@ mod tests {
             "document-2",
             json!({
                 "enabled_builtin_kinds": [],
-                "plugin_hints": [{"plugin_key": "document"}],
+                "plugin_hints": [{"plugin_key": "document", "component_key": "document-mcp"}],
                 "external_mcp_config_ids": []
             }),
         );
@@ -1189,7 +1200,8 @@ mod tests {
         let malformed = capability_task("malformed", json!({"plugin_hints": "document"}));
         assert!(local_task_runtime_write_scope(&malformed.input, &malformed.task_id).is_err());
         for options in [
-            json!({"plugin_hints": [{"plugin_key": "document"}], "external_mcp_config_ids": "bad"}),
+            json!({"plugin_hints": [{"plugin_key": "document"}]}),
+            json!({"plugin_hints": [{"plugin_key": "document", "component_key": "document-mcp"}], "external_mcp_config_ids": "bad"}),
             json!({"enabled_builtin_kinds": ["TerminalController"], "plugin_hints": "bad"}),
         ] {
             let malformed = capability_task("malformed-selection", options);

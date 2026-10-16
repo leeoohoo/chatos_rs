@@ -982,6 +982,7 @@ final class LocalAgentChatToolProviderTests: XCTestCase {
         let pluginOptions: [LocalAgentTodoPluginOption] = [
             .init(
                 pluginID: "internal-plugin-secret",
+                componentKey: "test-mcp",
                 displayName: "本地测试插件",
                 description: "只暴露安全目录信息"
             ),

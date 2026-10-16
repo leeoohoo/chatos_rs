@@ -67,38 +67,32 @@ struct NativeLocalAgentTaskExecutionContext: Sendable {
 struct NativeLocalAgentTaskToolAuthorization: Sendable {
     let requiresExecution: Bool
     let enabledBuiltinKinds: Set<String>
-    let pluginKeys: Set<String>
-    let pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]?
-    let isLegacyUnrestricted: Bool
+    let pluginSelectionIDs: Set<String>
+    let pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]
     let ownedPaths: [String]
     let externalMCPConfigIDs: Set<String>
 
     init(
         requiresExecution: Bool,
         enabledBuiltinKinds: Set<String>,
-        pluginKeys: Set<String>,
-        pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]? = nil,
-        isLegacyUnrestricted: Bool,
+        pluginSelectionIDs: Set<String>,
+        pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot] = [:],
         ownedPaths: [String] = [],
         externalMCPConfigIDs: Set<String> = []
     ) {
         self.requiresExecution = requiresExecution
         self.enabledBuiltinKinds = enabledBuiltinKinds
-        self.pluginKeys = pluginKeys
+        self.pluginSelectionIDs = pluginSelectionIDs
         self.pluginReleaseSnapshots = pluginReleaseSnapshots
-        self.isLegacyUnrestricted = isLegacyUnrestricted
         self.ownedPaths = ownedPaths
         self.externalMCPConfigIDs = externalMCPConfigIDs
     }
 
     var capabilityBrokerEnabled: Bool {
-        isLegacyUnrestricted || !pluginKeys.isEmpty || !brokerBuiltinCapabilities.isEmpty || !externalMCPConfigIDs.isEmpty
+        !pluginSelectionIDs.isEmpty || !brokerBuiltinCapabilities.isEmpty || !externalMCPConfigIDs.isEmpty
     }
 
     var brokerBuiltinCapabilities: Set<LocalAgentTodoBuiltinCapability> {
-        if isLegacyUnrestricted {
-            return Set(LocalAgentTodoBuiltinCapability.allCases)
-        }
         var capabilities: Set<LocalAgentTodoBuiltinCapability> = []
         if enabledBuiltinKinds.contains("CodeMaintainerRead") {
             capabilities.insert(.projectRead)
@@ -132,14 +126,7 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
             ownedPaths = []
         }
         guard case let .object(options)? = input["tool_options"] else {
-            return .init(
-                requiresExecution: true,
-                enabledBuiltinKinds: [],
-                pluginKeys: [],
-                pluginReleaseSnapshots: nil,
-                isLegacyUnrestricted: true,
-                ownedPaths: ownedPaths
-            )
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
         }
         guard case let .bool(requiresExecution)? = options["requires_execution"],
               case let .array(rawKinds)? = options["enabled_builtin_kinds"] else {
@@ -151,45 +138,36 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
             }
             return kind
         }
-        let pluginKeys: Set<String>
-        if case let .array(hints)? = options["plugin_hints"] {
-            let keys = try hints.map { hint -> String in
-                guard case let .object(values) = hint,
-                      case let .string(rawKey)? = values["plugin_key"] else {
-                    throw NativeLocalAgentPlatformToolError.invalidRunContext
-                }
-                let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !key.isEmpty else {
-                    throw NativeLocalAgentPlatformToolError.invalidRunContext
-                }
-                return key
-            }
-            pluginKeys = Set(keys)
-            guard pluginKeys.count == keys.count else {
+        guard case let .array(hints)? = options["plugin_hints"] else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let selectionIDs = try hints.map { hint -> String in
+            guard case let .object(values) = hint,
+                  case let .string(rawKey)? = values["plugin_key"],
+                  case let .string(rawComponentKey)? = values["component_key"] else {
                 throw NativeLocalAgentPlatformToolError.invalidRunContext
             }
-        } else {
-            pluginKeys = []
-        }
-        let pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]?
-        if case let .array(rawSnapshots)? = options["plugin_release_snapshots"] {
-            let snapshots = try rawSnapshots.map(
-                NativeLocalAgentTaskPluginReleaseSnapshot.init(jsonValue:)
-            )
-            let byKey = Dictionary(grouping: snapshots, by: \.pluginKey)
-            guard byKey.values.allSatisfy({ $0.count == 1 }),
-                  Set(snapshots.map(\.pluginKey)) == pluginKeys,
-                  Set(snapshots.map(\.pluginID)).count == snapshots.count else {
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let componentKey = rawComponentKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !componentKey.isEmpty else {
                 throw NativeLocalAgentPlatformToolError.invalidRunContext
             }
-            pluginReleaseSnapshots = Dictionary(
-                uniqueKeysWithValues: snapshots.map { ($0.pluginKey, $0) }
-            )
-        } else {
-            // Tasks created before release freezing continue through the legacy installed-plugin
-            // validation path. A JSON null emitted by an older shared Host is treated the same.
-            pluginReleaseSnapshots = nil
+            return Self.pluginSelectionID(pluginKey: key, componentKey: componentKey)
         }
+        let pluginSelectionIDs = Set(selectionIDs)
+        guard pluginSelectionIDs.count == selectionIDs.count else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        guard case let .array(rawSnapshots)? = options["plugin_release_snapshots"] else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let snapshots = try rawSnapshots.map(NativeLocalAgentTaskPluginReleaseSnapshot.init(jsonValue:))
+        let snapshotPairs = snapshots.map { Self.pluginSelectionID(pluginKey: $0.pluginKey, componentKey: $0.componentKey) }
+        guard Set(snapshotPairs).count == snapshots.count,
+              Set(snapshotPairs) == pluginSelectionIDs else {
+            throw NativeLocalAgentPlatformToolError.invalidRunContext
+        }
+        let pluginReleaseSnapshots = Dictionary(uniqueKeysWithValues: zip(snapshotPairs, snapshots))
         let externalIDs: Set<String>
         if let raw = options["external_mcp_config_ids"] {
             guard case let .array(values) = raw else { throw NativeLocalAgentPlatformToolError.invalidRunContext }
@@ -205,16 +183,18 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
         return .init(
             requiresExecution: requiresExecution,
             enabledBuiltinKinds: Set(kinds),
-            pluginKeys: pluginKeys,
+            pluginSelectionIDs: pluginSelectionIDs,
             pluginReleaseSnapshots: pluginReleaseSnapshots,
-            isLegacyUnrestricted: false,
             ownedPaths: ownedPaths,
             externalMCPConfigIDs: externalIDs
         )
     }
 
+    static func pluginSelectionID(pluginKey: String, componentKey: String) -> String {
+        "\(pluginKey)\u{0}\(componentKey)"
+    }
+
     func allows(_ toolName: String) -> Bool {
-        if isLegacyUnrestricted { return true }
         if ["read_file_raw", "read_file_range", "list_dir", "search_text", "read_file", "search_files"]
             .contains(toolName) {
             return enabledBuiltinKinds.contains("CodeMaintainerRead")
@@ -237,6 +217,7 @@ struct NativeLocalAgentTaskToolAuthorization: Sendable {
 
 struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
     let pluginKey: String
+    let componentKey: String
     let pluginID: String
     let releaseID: String
     let version: String
@@ -244,12 +225,14 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
 
     init(
         pluginKey: String,
+        componentKey: String,
         pluginID: String,
         releaseID: String,
         version: String,
         artifactSHA256: String
     ) {
         self.pluginKey = pluginKey
+        self.componentKey = componentKey
         self.pluginID = pluginID
         self.releaseID = releaseID
         self.version = version
@@ -259,11 +242,13 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
     init(jsonValue: LocalAgentJSONValue) throws {
         guard case let .object(values) = jsonValue,
               case let .string(pluginKey)? = values["plugin_key"],
+              case let .string(componentKey)? = values["component_key"],
               case let .string(pluginID)? = values["plugin_id"],
               case let .string(releaseID)? = values["release_id"],
               case let .string(version)? = values["version"],
               case let .string(artifactSHA256)? = values["artifact_sha256"],
               !pluginKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !componentKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !pluginID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !releaseID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -272,6 +257,7 @@ struct NativeLocalAgentTaskPluginReleaseSnapshot: Sendable, Equatable {
         }
         self.init(
             pluginKey: pluginKey,
+            componentKey: componentKey,
             pluginID: pluginID,
             releaseID: releaseID,
             version: version,

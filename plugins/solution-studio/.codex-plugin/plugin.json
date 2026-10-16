@@ -1,6 +1,6 @@
 {
   "name": "solution-studio",
-  "version": "0.1.15",
+  "version": "0.2.0",
   "description": "Turn project context into requirements, solution designs, and dependency-aware execution plans.",
   "author": {
     "name": "Chatos"

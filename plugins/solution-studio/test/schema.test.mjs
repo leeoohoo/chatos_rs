@@ -3,14 +3,15 @@ import test from 'node:test';
 import { createSolutionWorkspace, validateWorkspace, workspaceToMarkdown } from '../dist/schema.mjs';
 
 function completeWorkspace() {
-  const workspace = createSolutionWorkspace('登录改造', 'existing-project', 'login-redesign');
+  const workspace = createSolutionWorkspace('登录改造', 'existing-project');
   const now = new Date().toISOString();
   workspace.revision = 1;
   workspace.projectProfile = { background: '现有登录流程需要提升稳定性。', overview: '改造会话刷新与失败回退。', projectType: '软件开发', deliveryForm: 'Web 应用', targetPlatforms: ['Web'] };
   workspace.requirements = {
     status: 'approved', revision: 1, summary: '改进登录可靠性', goals: ['稳定登录'], users: ['注册用户'], inScope: ['会话刷新'], outOfScope: ['第三方登录'], constraints: [], assumptions: [], openQuestions: [],
     evidence: [{ id: 'E-001', label: '认证入口', source: 'src/auth.ts', confidence: 'verified' }],
-    items: [{ id: 'R-001', title: '刷新会话', description: '用户会话过期前自动刷新。', priority: 'must', acceptanceCriteria: ['有效会话不中断'], evidenceIds: ['E-001'], selectedDesignSectionId: 'D-001' }], updatedAt: now
+    modules: [{ id: 'MOD-AUTH', title: '身份认证', kind: 'business', description: '登录和会话能力。', order: 0 }],
+    items: [{ id: 'R-001', moduleId: 'MOD-AUTH', kind: 'capability', title: '刷新会话', description: '用户会话过期前自动刷新。', priority: 'must', acceptanceCriteria: ['有效会话不中断'], evidenceIds: ['E-001'], selectedDesignSectionId: 'D-001' }], updatedAt: now
   };
   workspace.design = {
     status: 'approved', revision: 1, basedOnRequirementsRevision: 1, summary: '集中刷新流程',
@@ -18,15 +19,15 @@ function completeWorkspace() {
       { id: 'D-000-B-001', type: 'text', title: '技术基线', content: 'TypeScript 与 Web 运行时。' },
       { id: 'D-000-B-002', type: 'architecture', title: '总体架构', content: '<svg viewBox="0 0 400 200"><text x="20" y="30">Overall</text></svg>' }
     ],
-    sections: [{ id: 'D-001', title: '刷新协调器', body: '统一刷新并合并并发请求。', requirementIds: ['R-001'], evidenceIds: ['E-001'], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '协调器接口与失败处理。' }, { id: 'D-001-B-002', type: 'flowchart', title: '刷新流程', content: '<svg viewBox="0 0 400 200"><text x="20" y="30">Refresh flow</text></svg>' }] }],
+    sections: [{ id: 'D-001', moduleId: 'MOD-AUTH', title: '刷新协调器', body: '统一刷新并合并并发请求。', requirementIds: ['R-001'], evidenceIds: ['E-001'], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '协调器接口与失败处理。' }, { id: 'D-001-B-002', type: 'flowchart', title: '刷新流程', content: '<svg viewBox="0 0 400 200"><text x="20" y="30">Refresh flow</text></svg>' }] }],
     decisions: [], risks: ['刷新失败需要退出'], validationStrategy: ['并发刷新测试'], updatedAt: now
   };
   workspace.executionPlan = {
     status: 'approved', revision: 1, basedOnDesignRevision: 1, objective: '交付可验证的刷新流程',
     tasks: [
-      { id: 'T-001', title: '实现协调器', description: '实现并发合并。', type: 'task', phase: '实现', dependsOn: [], status: 'done', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: ['刷新协调器'], acceptanceCriteria: ['并发请求只刷新一次'], sourceReferences: ['src/auth.ts'] },
-      { id: 'T-002', title: '补充集成测试', description: '覆盖成功和失败路径。', type: 'task', phase: '验证', dependsOn: ['T-001'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: ['集成测试'], acceptanceCriteria: ['成功和失败用例通过'], sourceReferences: [] }
-    ], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now
+      { id: 'T-001', moduleId: 'MOD-AUTH', title: '实现协调器', description: '实现并发合并。', type: 'task', phase: '实现', dependsOn: [], status: 'done', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: ['刷新协调器'], acceptanceCriteria: ['并发请求只刷新一次'], sourceReferences: ['src/auth.ts'] },
+      { id: 'T-002', moduleId: 'MOD-AUTH', title: '补充集成测试', description: '覆盖成功和失败路径。', type: 'task', phase: '验证', dependsOn: ['T-001'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: ['集成测试'], acceptanceCriteria: ['成功和失败用例通过'], sourceReferences: [] }
+    ], statusEvents: [], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now
   };
   return workspace;
 }

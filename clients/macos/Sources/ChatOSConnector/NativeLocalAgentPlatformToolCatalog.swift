@@ -579,41 +579,31 @@ public enum NativeLocalAgentPlatformToolCatalog {
   private static func pluginHints(
     _ choices: [NativeInstalledAgentPlugin]
   ) -> LocalAgentJSONValue {
-    let choices = Dictionary(uniqueKeysWithValues: choices.map { ($0.pluginKey, $0) })
-      .values.sorted { $0.pluginKey < $1.pluginKey }
-    var pluginKey: [String: LocalAgentJSONValue] = [
-      "type": .string("string"), "minLength": .number(1),
-    ]
-    if !choices.isEmpty {
-      pluginKey["enum"] = .array(choices.map { .string($0.pluginKey) })
-      pluginKey["oneOf"] = .array(choices.map {
-        .object([
-          "const": .string($0.pluginKey),
-          "title": .string(pluginChoiceTitle($0)),
-        ])
-      })
-      pluginKey["x-enum-labels"] = .array(choices.map {
-        .string(pluginChoiceTitle($0))
-      })
-    }
+    let choices = choices.sorted { $0.id < $1.id }
     var schema: [String: LocalAgentJSONValue] = [
       "type": .string("array"),
       "maxItems": .number(16),
       "uniqueItems": .bool(true),
       "description": .string(
-        "Suggest only the minimum installed Plugins required by this specific Task. Use only plugin_key values from this request-scoped catalog. Route by the actual interaction surface: use Computer Use for native desktop applications and operating-system UI; use Browser CDP only for websites in managed Chromium or an explicitly connected Chrome session. Do not select both merely as a fallback. The client freezes and validates the selected Plugin keys before execution."
+        "Suggest only the minimum installed Plugin components required by this specific Task. Use only exact plugin_key/component_key pairs from this request-scoped catalog. The client freezes and validates the selected component before execution."
       ),
       "items": .object([
-        "type": .string("object"),
-        "properties": .object([
-          "plugin_key": .object(pluginKey),
-          "reason": .object([
-            "type": .string("string"), "maxLength": .number(1_000),
-            "description": .string("Why this specific Task requires the Plugin."),
-          ]),
-        ]),
-        "required": .array([.string("plugin_key")]),
-        "additionalProperties": .bool(false),
+        "oneOf": .array(choices.map { choice in
+          .object([
+            "title": .string(pluginChoiceTitle(choice)),
+            "type": .string("object"),
+            "properties": .object([
+              "plugin_key": .object(["const": .string(choice.pluginKey)]),
+              "component_key": .object(["const": .string(choice.componentKey)]),
+              "reason": .object([
+                "type": .string("string"), "maxLength": .number(1_000),
+                "description": .string("Why this specific Task requires the Plugin component."),
+              ]),
+            ]),
+            "required": .array([.string("plugin_key"), .string("component_key")]),
+            "additionalProperties": .bool(false),
+          ])
+        }),
       ]),
     ]
     if choices.isEmpty {

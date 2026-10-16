@@ -56,6 +56,13 @@ actor LocalAgentRunReferenceVault {
         let value: String
     }
 
+    private struct PluginAuthority: Codable, Sendable {
+        let pluginID: String
+        let componentKey: String
+
+        var key: String { "\(pluginID):\(componentKey)" }
+    }
+
     private struct SealedReference<Value: Codable & Sendable>: Codable, Sendable {
         let version: Int
         let kind: String
@@ -104,7 +111,7 @@ actor LocalAgentRunReferenceVault {
         self.documentDraftDirectoryURL = documentDraftDirectoryURL
         self.communicationPolicy = communicationPolicy
         self.pluginOptionsByID = pluginOptions.reduce(into: [:]) { result, option in
-            result[option.pluginID] = option
+            result["\(option.pluginID):\(option.componentKey)"] = option
         }
         var keyMaterial = Data("chatos-local-agent-run-reference-v1".utf8)
         for value in [
@@ -278,13 +285,15 @@ actor LocalAgentRunReferenceVault {
     }
 
     func pluginReference(option: LocalAgentTodoPluginOption) -> String {
-        if let existing = plugins.first(where: { $0.value.pluginID == option.pluginID })?.key {
+        if let existing = plugins.first(where: {
+            $0.value.pluginID == option.pluginID && $0.value.componentKey == option.componentKey
+        })?.key {
             return existing
         }
         let reference = sealedReference(
             prefix: "plugin_",
             kind: "plugin",
-            authority: StringAuthority(value: option.pluginID)
+            authority: PluginAuthority(pluginID: option.pluginID, componentKey: option.componentKey)
         )
         plugins[reference] = option
         return reference
@@ -292,13 +301,13 @@ actor LocalAgentRunReferenceVault {
 
     func plugin(reference: String) -> LocalAgentTodoPluginOption? {
         if let option = plugins[reference] { return option }
-        guard let pluginID = openedReference(
+        guard let authority = openedReference(
             reference,
             prefix: "plugin_",
             kind: "plugin",
-            as: StringAuthority.self
-        )?.value else { return nil }
-        return pluginOptionsByID[pluginID]
+            as: PluginAuthority.self
+        ) else { return nil }
+        return pluginOptionsByID[authority.key]
     }
 
     func attachmentReference(roomID: String, messageID: String, attachmentID: String) -> String {

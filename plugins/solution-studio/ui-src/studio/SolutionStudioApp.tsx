@@ -1,19 +1,20 @@
 import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
+import type { DesignContentBlock, DesignContentType, DesignSection, ExecutionTask, PlanNodePosition, RequirementItem, RequirementModuleKind, RequirementPriority, SolutionWorkspace, SolutionWorkspaceSummary, TaskStatus, WorkspaceValidation } from '../../src/schema';
 import { createRepository, type RuntimeContext, type SolutionRepository } from './repository';
 import { PlanGraph } from './PlanGraph';
 import { readyTaskIds, requirementPlanView } from '../../src/plan-view';
 
-type Area = 'overview' | 'requirements';
+type Area = 'overview' | 'requirements' | 'plan';
 type DirtyPart = 'requirements' | 'design' | 'plan' | 'workspace';
 type RequirementPanelTab = 'detail' | 'design' | 'plan';
 type UiScale = 'compact' | 'comfortable' | 'large';
-type CreateModalState = { kind: 'requirement' } | { kind: 'design'; requirementId: string } | { kind: 'designBlock'; requirementId: string; designId: string } | { kind: 'task'; requirementId: string };
+type CreateModalState = { kind: 'module'; moduleId?: string } | { kind: 'requirement'; moduleId?: string } | { kind: 'design'; requirementId: string } | { kind: 'designBlock'; requirementId: string; designId: string } | { kind: 'task'; requirementId: string };
 
 const navigation: Array<{ id: Area; icon: string; label: string; caption: string }> = [
   { id: 'overview', icon: '⌂', label: '项目概览', caption: '状态与追踪' },
-  { id: 'requirements', icon: '◎', label: '需求', caption: '方案与执行入口' }
+  { id: 'requirements', icon: '◎', label: '功能模块', caption: '需求与设计' },
+  { id: 'plan', icon: '⌘', label: '任务图', caption: '模块执行顺序' }
 ];
 
 const taskStatusLabels: Record<TaskStatus, string> = { planned: '未开始', in_progress: '进行中', blocked: '阻塞', done: '完成', cancelled: '取消' };
@@ -162,12 +163,46 @@ export function SolutionStudioApp() {
   const doneCount = workspace.executionPlan.tasks.filter((task) => task.status === 'done').length;
   const readyCount = readyTaskIds(workspace.executionPlan.tasks).length;
 
-  function addRequirement(input: { title: string; description: string; priority: 'must' | 'should' | 'could'; parentRequirementId?: string; acceptanceCriteria: string[] }) {
+  function saveModule(input: { moduleId?: string; title: string; description: string; kind: RequirementModuleKind }) {
+    let id = input.moduleId ?? '';
+    updateWorkspace('requirements', (draft) => {
+      if (input.moduleId) {
+        const module = draft.requirements.modules.find((candidate) => candidate.id === input.moduleId);
+        if (!module) throw new Error('模块不存在。');
+        module.title = input.title;
+        module.description = input.description;
+        module.kind = input.kind;
+        return;
+      }
+      const number = Math.max(0, ...draft.requirements.modules.map((item) => Number.parseInt(item.id.replace(/\D/g, ''), 10) || 0)) + 1;
+      id = `MOD-${String(number).padStart(3, '0')}`;
+      draft.requirements.modules.push({ id, title: input.title, description: input.description, kind: input.kind, order: draft.requirements.modules.length });
+    });
+    setCreateModal(undefined);
+    notify(input.moduleId ? `已更新 ${id}` : `已创建 ${id}`);
+  }
+
+  function deleteModule(moduleId: string) {
+    const used = currentWorkspace.requirements.items.some((item) => item.moduleId === moduleId)
+      || currentWorkspace.design.sections.some((section) => section.moduleId === moduleId)
+      || currentWorkspace.executionPlan.tasks.some((task) => task.moduleId === moduleId);
+    if (used) { notify('请先删除或移动该模块下的需求、设计和任务。'); return; }
+    updateWorkspace('requirements', (draft) => {
+      draft.requirements.modules = draft.requirements.modules.filter((module) => module.id !== moduleId).map((module, order) => ({ ...module, order }));
+    });
+    notify(`已删除 ${moduleId}`);
+  }
+
+  function addRequirement(input: { moduleId: string; title: string; description: string; priority: 'must' | 'should' | 'could'; parentRequirementId?: string; acceptanceCriteria: string[] }) {
     let id = '';
     updateWorkspace('requirements', (draft) => {
       const number = Math.max(0, ...draft.requirements.items.map((item) => Number.parseInt(item.id.replace(/\D/g, ''), 10) || 0)) + 1;
       id = `R-${String(number).padStart(3, '0')}`;
-      draft.requirements.items.push({ id, ...(input.parentRequirementId ? { parentRequirementId: input.parentRequirementId } : {}), title: input.title, description: input.description, priority: input.priority, acceptanceCriteria: input.acceptanceCriteria, evidenceIds: [] });
+      const module = draft.requirements.modules.find((candidate) => candidate.id === input.moduleId);
+      if (!module) throw new Error('请先选择有效功能模块。');
+      const parent = input.parentRequirementId ? draft.requirements.items.find((item) => item.id === input.parentRequirementId) : undefined;
+      if (parent && parent.moduleId !== module.id) throw new Error('父需求必须与子需求位于同一模块。');
+      draft.requirements.items.push({ id, moduleId: module.id, kind: 'capability', ...(input.parentRequirementId ? { parentRequirementId: input.parentRequirementId } : {}), title: input.title, description: input.description, priority: input.priority, acceptanceCriteria: input.acceptanceCriteria, evidenceIds: [] });
     });
     setCreateModal(undefined);
     notify(`已创建 ${id}`);
@@ -181,7 +216,9 @@ export function SolutionStudioApp() {
     const number = Math.max(0, ...currentWorkspace.design.sections.map((item) => Number.parseInt(item.id.replace(/\D/g, ''), 10) || 0)) + 1;
     const id = `D-${String(number).padStart(3, '0')}`;
     updateWorkspace('design', (draft) => {
-      draft.design.sections.push({ id, title: input.title, body: input.body, requirementIds: [requirementId], evidenceIds: [], blocks: [{ id: `${id}-B-001`, type: 'text', title: '方案说明', content: input.body }] });
+      const moduleId = draft.requirements.items.find((item) => item.id === requirementId)?.moduleId;
+      if (!moduleId) throw new Error('需求没有所属模块。');
+      draft.design.sections.push({ id, moduleId, title: input.title, body: input.body, requirementIds: [requirementId], evidenceIds: [], blocks: [{ id: `${id}-B-001`, type: 'text', title: '方案说明', content: input.body }] });
       draft.design.basedOnRequirementsRevision = draft.requirements.revision;
     });
     updateWorkspace('requirements', (draft) => {
@@ -206,11 +243,13 @@ export function SolutionStudioApp() {
   }
 
   function addTask(requirementId: string, input: { title: string; description: string; phase: string; acceptanceCriteria: string[]; dependsOn: string[] }) {
-    const selectedDesignSectionId = currentWorkspace.requirements.items.find((item) => item.id === requirementId)?.selectedDesignSectionId;
+    const requirement = currentWorkspace.requirements.items.find((item) => item.id === requirementId);
+    const selectedDesignSectionId = requirement?.selectedDesignSectionId;
+    if (!requirement) return;
     updateWorkspace('plan', (draft) => {
       const number = Math.max(0, ...draft.executionPlan.tasks.map((item) => Number.parseInt(item.id.replace(/\D/g, ''), 10) || 0)) + 1;
       const id = `T-${String(number).padStart(3, '0')}`;
-      draft.executionPlan.tasks.push({ id, title: input.title, description: input.description, type: 'task', phase: input.phase, dependsOn: input.dependsOn, status: 'planned', requirementIds: [requirementId], designSectionIds: selectedDesignSectionId ? [selectedDesignSectionId] : [], deliverables: [], acceptanceCriteria: input.acceptanceCriteria, sourceReferences: [] });
+      draft.executionPlan.tasks.push({ id, moduleId: requirement.moduleId, title: input.title, description: input.description, type: 'task', phase: input.phase, dependsOn: input.dependsOn, status: 'planned', requirementIds: [requirementId], designSectionIds: selectedDesignSectionId ? [selectedDesignSectionId] : [], deliverables: [], acceptanceCriteria: input.acceptanceCriteria, sourceReferences: [] });
       draft.executionPlan.basedOnDesignRevision = draft.design.revision;
       setSelectedTaskId(id);
     });
@@ -229,6 +268,18 @@ export function SolutionStudioApp() {
       const task = draft.executionPlan.tasks.find((candidate) => candidate.id === taskId);
       if (task) updater(task);
     });
+  }
+
+  function deleteTask(taskId: string) {
+    const task = currentWorkspace.executionPlan.tasks.find((candidate) => candidate.id === taskId);
+    if (!task || task.status !== 'planned') { notify('只能删除尚未领取的任务。'); return; }
+    if (currentWorkspace.executionPlan.tasks.some((candidate) => candidate.dependsOn.includes(taskId))) { notify('请先移除其他任务对它的依赖。'); return; }
+    updateWorkspace('plan', (draft) => {
+      draft.executionPlan.tasks = draft.executionPlan.tasks.filter((candidate) => candidate.id !== taskId);
+      delete draft.executionPlan.positions[taskId];
+    });
+    setSelectedTaskId(undefined);
+    notify(`已删除 ${taskId}`);
   }
 
   return <div className={`solution-shell ui-scale-${uiScale} ${activeRequirement ? 'with-requirement-sheet' : ''}`}>
@@ -251,11 +302,41 @@ export function SolutionStudioApp() {
 
     <main className={`content area-${area}`}>
       {area === 'overview' && <Overview workspace={workspace} validation={validation} requirementTrace={requirementsWithDesign} taskTrace={requirementsWithTasks} doneCount={doneCount} readyCount={readyCount} onNavigate={setArea}/>}
-      {area === 'requirements' && <RequirementsView workspace={workspace} onAdd={() => setCreateModal({ kind: 'requirement' })} onOpen={openRequirement}/>}
+      {area === 'requirements' && <RequirementsView workspace={workspace} onAddModule={() => setCreateModal({ kind: 'module' })} onEditModule={(moduleId) => setCreateModal({ kind: 'module', moduleId })} onDeleteModule={deleteModule} onAdd={(moduleId) => setCreateModal({ kind: 'requirement', moduleId })} onOpen={openRequirement}/>}
+      {area === 'plan' && <ModulePlanView workspace={workspace} selectedTaskId={selectedTaskId} onSelectTask={setSelectedTaskId} onOpenRequirement={(id, taskId) => { openRequirement(id, 'plan'); setSelectedTaskId(taskId); }} onPositionsChange={(positions) => updateWorkspace('workspace', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}/>}
     </main>
 
-    {activeRequirement && <RequirementSheet workspace={workspace} requirement={activeRequirement} tab={requirementPanelTab} selectedTaskId={selectedTaskId} onTab={setRequirementPanelTab} onSelectTask={setSelectedTaskId} onOpenRequirement={(id, taskId) => { openRequirement(id, 'plan'); setSelectedTaskId(taskId); }} onClose={() => { setActiveRequirementId(undefined); setSelectedTaskId(undefined); }} onAddDesign={() => setCreateModal({ kind: 'design', requirementId: activeRequirement.id })} onAddDesignBlock={(designId) => setCreateModal({ kind: 'designBlock', requirementId: activeRequirement.id, designId })} onAddTask={() => setCreateModal({ kind: 'task', requirementId: activeRequirement.id })} onUpdateDesign={(designId, updater) => updateWorkspace('design', (draft) => { const target = draft.design.sections.find((item) => item.id === designId); if (target) updater(target); })} onUpdateTask={updateTask} onPositionsChange={(positions) => updateWorkspace('workspace', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}/>}
-    {createModal && <CreateModal state={createModal} workspace={workspace} onClose={() => setCreateModal(undefined)} onCreateRequirement={addRequirement} onCreateDesign={addDesignSection} onCreateDesignBlock={addDesignBlock} onCreateTask={addTask}/>}
+    {activeRequirement && (
+      <RequirementSheet
+        workspace={workspace}
+        requirement={activeRequirement}
+        tab={requirementPanelTab}
+        selectedTaskId={selectedTaskId}
+        onTab={setRequirementPanelTab}
+        onSelectTask={setSelectedTaskId}
+        onOpenRequirement={(id, taskId) => { openRequirement(id, 'plan'); setSelectedTaskId(taskId); }}
+        onClose={() => { setActiveRequirementId(undefined); setSelectedTaskId(undefined); }}
+        onAddDesign={() => setCreateModal({ kind: 'design', requirementId: activeRequirement.id })}
+        onAddDesignBlock={(designId) => setCreateModal({ kind: 'designBlock', requirementId: activeRequirement.id, designId })}
+        onAddTask={() => setCreateModal({ kind: 'task', requirementId: activeRequirement.id })}
+        onUpdateDesign={(designId, updater) => updateWorkspace('design', (draft) => { const target = draft.design.sections.find((item) => item.id === designId); if (target) updater(target); })}
+        onUpdateTask={updateTask}
+        onDeleteTask={deleteTask}
+        onPositionsChange={(positions) => updateWorkspace('workspace', (draft) => { draft.executionPlan.positions = { ...draft.executionPlan.positions, ...positions }; })}
+      />
+    )}
+    {createModal && (
+      <CreateModal
+        state={createModal}
+        workspace={workspace}
+        onClose={() => setCreateModal(undefined)}
+        onSaveModule={saveModule}
+        onCreateRequirement={addRequirement}
+        onCreateDesign={addDesignSection}
+        onCreateDesignBlock={addDesignBlock}
+        onCreateTask={addTask}
+      />
+    )}
     {markdownPreview && <MarkdownPreview title={markdownPreview.title} content={markdownPreview.content} onClose={() => setMarkdownPreview(undefined)} onNotify={notify} onCopyFile={async () => {
       const result = await repository.copyMarkdownFile(workspace.workspaceId);
       notify(`已复制文件 ${result.fileName}`);
@@ -328,7 +409,14 @@ function LineEditor({ label, value, placeholder, onChange }: { label: string; va
   return <label className="line-editor"><span>{label}</span><textarea rows={Math.max(3, Math.min(7, value.length + 1))} value={value.join('\n')} onChange={(event) => onChange(lines(event.target.value))} placeholder={placeholder}/></label>;
 }
 
-function RequirementsView({ workspace, onAdd, onOpen }: { workspace: SolutionWorkspace; onAdd: () => void; onOpen: (requirementId: string, tab: RequirementPanelTab) => void }) {
+function RequirementsView({ workspace, onAddModule, onEditModule, onDeleteModule, onAdd, onOpen }: {
+  workspace: SolutionWorkspace;
+  onAddModule: () => void;
+  onEditModule: (moduleId: string) => void;
+  onDeleteModule: (moduleId: string) => void;
+  onAdd: (moduleId?: string) => void;
+  onOpen: (requirementId: string, tab: RequirementPanelTab) => void;
+}) {
   const document = workspace.requirements;
   const children = new Map<string | undefined, RequirementItem[]>();
   for (const item of document.items) children.set(item.parentRequirementId, [...(children.get(item.parentRequirementId) ?? []), item]);
@@ -374,19 +462,76 @@ function RequirementsView({ workspace, onAdd, onOpen }: { workspace: SolutionWor
       {hasChildren && !collapsed && <div className="requirement-children" id={`requirement-children-${item.id}`} role="group">{childItems.map((child) => renderNode(child, depth + 1))}</div>}
     </div>;
   }
-  const tree = renderRoots.map((item) => renderNode(item, 0));
+  const moduleKindLabels = { foundation: '平台基础', business: '业务功能', delivery: '交付保障' } as const;
+  const moduleTrees = [...document.modules].sort((left, right) => left.order - right.order).map((module) => ({
+    module,
+    nodes: renderRoots.filter((item) => item.moduleId === module.id).map((item) => renderNode(item, 0)),
+    requirementCount: document.items.filter((item) => item.moduleId === module.id).length,
+    taskCount: workspace.executionPlan.tasks.filter((task) => task.moduleId === module.id).length
+  }));
   return <div className="document-page requirements-index">
     <div className="requirements-heading">
-      <div><span className="eyebrow">REQUIREMENTS</span><h1>需求</h1><p>每条需求都有自己的设计方案和执行计划。先选中一条需求，再继续往下做。</p></div>
-      <button className="button primary" onClick={onAdd}>＋ 新增需求</button>
+      <div><span className="eyebrow">MODULES & REQUIREMENTS</span><h1>功能模块</h1><p>先按业务能力组织模块，再在模块内维护需求、设计和执行任务。</p></div>
+      <div className="requirements-heading-actions"><button className="button secondary" onClick={onAddModule}>＋ 新增模块</button><button className="button primary" disabled={document.modules.length === 0} onClick={() => onAdd()}>＋ 新增需求</button></div>
     </div>
     <div className="relationship-guide" aria-label="使用方式"><span><b>1</b> 创建需求</span><i>›</i><span><b>2</b> 完成设计方案</span><i>›</i><span><b>3</b> 拆解执行任务</span></div>
     <section className="requirements-list">
-      <header><strong>全部需求</strong><div className="requirements-list-tools"><span>{document.items.length} 项</span>{parentIds.length > 0 && <><button type="button" onClick={() => setCollapsedIds(new Set())}>全部展开</button><button type="button" onClick={() => setCollapsedIds(new Set(parentIds))}>全部收起</button></>}</div></header>
-      {document.items.length > 0 && <div className="requirement-tree" role="tree" aria-label="需求层级">{tree}</div>}
-      {document.items.length === 0 && <div className="requirements-empty"><span>◎</span><strong>还没有需求</strong><p>先创建一条清晰的需求。每条需求对应一个确定的设计方案和一份执行计划。</p><button className="button primary" onClick={onAdd}>新增第一条需求</button></div>}
+      <header><strong>全部模块</strong><div className="requirements-list-tools"><span>{document.modules.length} 个模块 · {document.items.length} 项需求</span>{parentIds.length > 0 && <><button type="button" onClick={() => setCollapsedIds(new Set())}>全部展开</button><button type="button" onClick={() => setCollapsedIds(new Set(parentIds))}>全部收起</button></>}</div></header>
+      {document.modules.length > 0 && <div className="module-lanes">{moduleTrees.map(({ module, nodes, requirementCount, taskCount }) => <section className={`module-lane module-${module.kind}`} key={module.id}><header><div><span>{module.id} · {moduleKindLabels[module.kind]}</span><strong>{module.title}</strong><p>{module.description || '尚未补充模块说明'}</p></div><div className="module-lane-actions"><small>{requirementCount} 项需求 · {taskCount} 个任务</small><button onClick={() => onAdd(module.id)}>新增需求</button><button onClick={() => onEditModule(module.id)}>编辑</button><button className="danger" disabled={requirementCount > 0 || taskCount > 0} onClick={() => onDeleteModule(module.id)}>删除</button></div></header>{requirementCount > 0 ? <div className="requirement-tree" role="tree" aria-label={`${module.title}需求层级`}>{nodes}</div> : <div className="requirements-empty compact"><strong>该模块还没有需求</strong><button className="button secondary" onClick={() => onAdd(module.id)}>添加需求</button></div>}</section>)}</div>}
+      {document.modules.length === 0 && <div className="requirements-empty"><span>▦</span><strong>先建立功能模块</strong><p>模块是总体设计、需求和任务的稳定边界。创建业务功能模块后，再在模块内拆分需求。</p><button className="button primary" onClick={onAddModule}>新增第一个模块</button></div>}
+      {document.modules.length > 0 && document.items.length === 0 && <div className="requirements-empty"><span>◎</span><strong>还没有需求</strong><p>先创建一条清晰的需求。每条需求对应一个确定的设计方案和一份执行计划。</p><button className="button primary" onClick={() => onAdd()}>新增第一条需求</button></div>}
     </section>
   </div>;
+}
+
+function ModulePlanView({ workspace, selectedTaskId, onSelectTask, onOpenRequirement, onPositionsChange }: {
+  workspace: SolutionWorkspace;
+  selectedTaskId?: string;
+  onSelectTask: (taskId?: string) => void;
+  onOpenRequirement: (requirementId: string, taskId: string) => void;
+  onPositionsChange: (positions: Record<string, PlanNodePosition>) => void;
+}) {
+  const orderedModules = [...workspace.requirements.modules].sort((left, right) => left.order - right.order);
+  const [moduleId, setModuleId] = useState(orderedModules[0]?.id ?? '');
+  const moduleSignature = orderedModules.map((module) => module.id).join('|');
+  useEffect(() => setModuleId((current) => orderedModules.some((module) => module.id === current) ? current : orderedModules[0]?.id ?? ''), [workspace.workspaceId, moduleSignature]);
+  const module = orderedModules.find((candidate) => candidate.id === moduleId);
+  const primaryTasks = workspace.executionPlan.tasks.filter((task) => task.moduleId === moduleId);
+  const primaryTaskIds = new Set(primaryTasks.map((task) => task.id));
+  const taskById = new Map(workspace.executionPlan.tasks.map((task) => [task.id, task]));
+  const visibleTaskIds = new Set(primaryTaskIds);
+  const visitPrerequisites = (task: ExecutionTask) => {
+    for (const dependencyId of task.dependsOn) {
+      if (visibleTaskIds.has(dependencyId)) continue;
+      const dependency = taskById.get(dependencyId);
+      if (!dependency) continue;
+      visibleTaskIds.add(dependencyId);
+      visitPrerequisites(dependency);
+    }
+  };
+  for (const task of primaryTasks) visitPrerequisites(task);
+  const plan = { ...workspace.executionPlan, tasks: workspace.executionPlan.tasks.filter((task) => visibleTaskIds.has(task.id)) };
+  const selectedTask = workspace.executionPlan.tasks.find((task) => task.id === selectedTaskId && visibleTaskIds.has(task.id));
+  const ready = new Set(readyTaskIds(workspace.executionPlan.tasks));
+  const readyCount = primaryTasks.filter((task) => ready.has(task.id)).length;
+  const doneCount = primaryTasks.filter((task) => task.status === 'done').length;
+  return <div className="document-page module-plan-page">
+    <div className="page-heading"><span className="eyebrow">MODULE EXECUTION DAG</span><h1>模块任务图</h1><p>按功能模块审查任务主线；跨模块前置会自动带入，但仍保留原模块归属。</p></div>
+    {orderedModules.length === 0 ? <div className="requirements-empty"><span>▦</span><strong>还没有功能模块</strong><p>请先在“功能模块”中建立模块和需求。</p></div> : <>
+      <nav className="module-plan-tabs" aria-label="选择功能模块">{orderedModules.map((candidate) => {
+        const count = workspace.executionPlan.tasks.filter((task) => task.moduleId === candidate.id).length;
+        return <button key={candidate.id} className={candidate.id === moduleId ? 'active' : ''} onClick={() => { setModuleId(candidate.id); onSelectTask(undefined); }}><span>{candidate.id}</span><strong>{candidate.title}</strong><small>{count} 个任务</small></button>;
+      })}</nav>
+      <section className="module-plan-summary"><div><span>当前模块</span><strong>{module?.title}</strong><small>{module?.description || '尚未补充模块说明'}</small></div><div><span>模块任务</span><strong>{primaryTasks.length}</strong><small>{doneCount} 已完成 · {readyCount} 可领取</small></div><div><span>跨模块前置</span><strong>{plan.tasks.length - primaryTasks.length}</strong><small>只读展示完整依赖链</small></div></section>
+      <div className="module-plan-workspace"><PlanGraph plan={plan} sourcePlan={workspace.executionPlan} primaryTaskIds={primaryTaskIds} selectedTaskId={selectedTaskId} onSelect={onSelectTask} onPositionsChange={onPositionsChange}/>{selectedTask && <ModuleTaskDetails task={selectedTask} workspace={workspace} primary={primaryTaskIds.has(selectedTask.id)} onClose={() => onSelectTask(undefined)} onOpenRequirement={onOpenRequirement}/>}</div>
+    </>}
+  </div>;
+}
+
+function ModuleTaskDetails({ task, workspace, primary, onClose, onOpenRequirement }: { task: ExecutionTask; workspace: SolutionWorkspace; primary: boolean; onClose: () => void; onOpenRequirement: (requirementId: string, taskId: string) => void }) {
+  const owners = workspace.requirements.items.filter((item) => task.requirementIds.includes(item.id));
+  const module = workspace.requirements.modules.find((item) => item.id === task.moduleId);
+  return <aside className="inspector module-task-inspector"><header><div><span>{task.id}</span><strong>{primary ? '模块任务' : '跨模块前置'}</strong></div><button aria-label="关闭任务详情" onClick={onClose}>×</button></header><div className="inspector-scroll"><h3>{task.title}</h3><p>{task.description || '尚未补充任务说明'}</p><section className="readonly-facts"><p><b>模块</b>{module?.title ?? task.moduleId}</p><p><b>状态</b>{taskStatusLabels[task.status]}</p><p><b>阶段</b>{task.phase || '未分阶段'}</p></section>{task.blockedReason && <section><strong>阻塞原因</strong><p>{task.blockedReason}</p></section>}<section><strong>关联需求</strong>{owners.map((owner) => <button key={owner.id} onClick={() => onOpenRequirement(owner.id, task.id)}>{owner.id} · {owner.title} ›</button>)}{owners.length === 0 && <p>尚未关联需求</p>}</section><section><strong>前置任务</strong>{task.dependsOn.map((id) => { const dependency = workspace.executionPlan.tasks.find((candidate) => candidate.id === id); return <p key={id}>{id} · {dependency?.title ?? '前置不存在'}{dependency ? ` · ${taskStatusLabels[dependency.status]}` : ''}</p>; })}{task.dependsOn.length === 0 && <p>无</p>}</section><section><strong>验收标准</strong>{task.acceptanceCriteria.map((item, index) => <p key={index}>{item}</p>)}</section></div><footer><span>任务状态由“任务执行器”回写</span></footer></aside>;
 }
 
 function svgPreviewUrl(svg: string) {
@@ -400,11 +545,11 @@ function DesignBlockPreview({ block }: { block: DesignContentBlock }) {
   </section>;
 }
 
-export function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, onSelectTask, onOpenRequirement, onClose, onAddDesign, onAddDesignBlock, onAddTask, onUpdateDesign, onUpdateTask, onPositionsChange }: {
+export function RequirementSheet({ workspace, requirement, tab, selectedTaskId, onTab, onSelectTask, onOpenRequirement, onClose, onAddDesign, onAddDesignBlock, onAddTask, onUpdateDesign, onUpdateTask, onDeleteTask, onPositionsChange }: {
   workspace: SolutionWorkspace; requirement: RequirementItem; tab: RequirementPanelTab; selectedTaskId?: string;
   onTab: (tab: RequirementPanelTab) => void; onSelectTask: (id?: string) => void; onClose: () => void; onAddDesign: () => void; onAddDesignBlock: (designId: string) => void; onAddTask: () => void;
   onOpenRequirement: (requirementId: string, taskId: string) => void;
-  onUpdateDesign: (id: string, updater: (section: DesignSection) => void) => void; onUpdateTask: (id: string, updater: (task: ExecutionTask) => void) => void; onPositionsChange: (positions: Record<string, PlanNodePosition>) => void;
+  onUpdateDesign: (id: string, updater: (section: DesignSection) => void) => void; onUpdateTask: (id: string, updater: (task: ExecutionTask) => void) => void; onDeleteTask: (id: string) => void; onPositionsChange: (positions: Record<string, PlanNodePosition>) => void;
 }) {
   const designs = workspace.design.sections.filter((section) => section.requirementIds.includes(requirement.id));
   const design = designs.find((section) => section.id === requirement.selectedDesignSectionId) ?? designs[0];
@@ -451,7 +596,7 @@ export function RequirementSheet({ workspace, requirement, tab, selectedTaskId, 
             {missingDependencyIds.length > 0 && <p className="plan-dependency-warning" role="alert">前置任务不存在：{missingDependencyIds.join('、')}。请修复计划引用；这些任务不会被视为已完成。</p>}
             <div className="sheet-graph"><PlanGraph plan={scopedPlan} sourcePlan={workspace.executionPlan} primaryTaskIds={primaryTaskIds} selectedTaskId={selectedTaskId} onSelect={onSelectTask} onPositionsChange={onPositionsChange}/></div>
             <TaskList tasks={tasks} readyCount={readyCount} onSelect={onSelectTask}/>
-            {selectedTask && <div className="sheet-task-editor">{primaryTaskIds.has(selectedTask.id) ? <TaskInspector task={selectedTask} tasks={workspace.executionPlan.tasks} requirements={workspace.requirements.items} sections={workspace.design.sections} onClose={() => onSelectTask(undefined)} onUpdate={(updater) => onUpdateTask(selectedTask.id, updater)} onDelete={() => {}}/> : <SupportingTaskDetails task={selectedTask} workspace={workspace} onClose={() => onSelectTask(undefined)} onSelectTask={onSelectTask} onOpenRequirement={onOpenRequirement}/>}</div>}
+            {selectedTask && <div className="sheet-task-editor">{primaryTaskIds.has(selectedTask.id) ? <TaskInspector task={selectedTask} tasks={workspace.executionPlan.tasks} requirements={workspace.requirements.items} sections={workspace.design.sections} onClose={() => onSelectTask(undefined)} onUpdate={(updater) => onUpdateTask(selectedTask.id, updater)} onDelete={() => onDeleteTask(selectedTask.id)}/> : <SupportingTaskDetails task={selectedTask} workspace={workspace} onClose={() => onSelectTask(undefined)} onSelectTask={onSelectTask} onOpenRequirement={onOpenRequirement}/>}</div>}
           </>}
         </section>}
       </div>
@@ -473,43 +618,49 @@ function SupportingTaskDetails({ task, workspace, onClose, onSelectTask, onOpenR
   </div><footer><span>只读查看；进入所属需求后可编辑</span></footer></aside>;
 }
 
-function CreateModal({ state, workspace, onClose, onCreateRequirement, onCreateDesign, onCreateDesignBlock, onCreateTask }: {
+function CreateModal({ state, workspace, onClose, onSaveModule, onCreateRequirement, onCreateDesign, onCreateDesignBlock, onCreateTask }: {
   state: CreateModalState; workspace: SolutionWorkspace; onClose: () => void;
-  onCreateRequirement: (input: { title: string; description: string; priority: 'must' | 'should' | 'could'; parentRequirementId?: string; acceptanceCriteria: string[] }) => void;
+  onSaveModule: (input: { moduleId?: string; title: string; description: string; kind: RequirementModuleKind }) => void;
+  onCreateRequirement: (input: { moduleId: string; title: string; description: string; priority: 'must' | 'should' | 'could'; parentRequirementId?: string; acceptanceCriteria: string[] }) => void;
   onCreateDesign: (requirementId: string, input: { title: string; body: string }) => void;
   onCreateDesignBlock: (designId: string, input: { type: DesignContentType; title: string; content: string }) => void;
   onCreateTask: (requirementId: string, input: { title: string; description: string; phase: string; acceptanceCriteria: string[]; dependsOn: string[] }) => void;
 }) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const editedModule = state.kind === 'module' && state.moduleId ? workspace.requirements.modules.find((module) => module.id === state.moduleId) : undefined;
+  const [title, setTitle] = useState(editedModule?.title ?? '');
+  const [description, setDescription] = useState(editedModule?.description ?? '');
+  const [moduleKind, setModuleKind] = useState<RequirementModuleKind>(editedModule?.kind ?? 'business');
+  const [moduleId, setModuleId] = useState(state.kind === 'requirement' ? state.moduleId ?? workspace.requirements.modules.find((module) => module.kind === 'business')?.id ?? workspace.requirements.modules[0]?.id ?? '' : '');
   const [priority, setPriority] = useState<'must' | 'should' | 'could'>('must');
   const [parentRequirementId, setParentRequirementId] = useState('');
   const [criteria, setCriteria] = useState('');
   const [phase, setPhase] = useState('实现');
   const [dependsOn, setDependsOn] = useState<string[]>([]);
   const [contentType, setContentType] = useState<DesignContentType>('text');
-  const requirement = state.kind === 'requirement' ? undefined : workspace.requirements.items.find((item) => item.id === state.requirementId);
-  const availableTasks = requirement ? workspace.executionPlan.tasks.filter((task) => task.requirementIds.includes(requirement.id)) : [];
-  const kindLabel = state.kind === 'requirement' ? '需求' : state.kind === 'design' ? '设计方案' : state.kind === 'designBlock' ? '方案内容' : '执行任务';
+  const requirement = state.kind === 'design' || state.kind === 'designBlock' || state.kind === 'task' ? workspace.requirements.items.find((item) => item.id === state.requirementId) : undefined;
+  const availableTasks = requirement ? workspace.executionPlan.tasks : [];
+  const kindLabel = state.kind === 'module' ? '功能模块' : state.kind === 'requirement' ? '需求' : state.kind === 'design' ? '设计方案' : state.kind === 'designBlock' ? '方案内容' : '执行任务';
   const validSvg = state.kind !== 'designBlock' || contentType === 'text' || /<svg[\s>]/i.test(description);
-  const valid = Boolean(title.trim() && description.trim() && validSvg && (state.kind !== 'requirement' || lines(criteria).length > 0));
+  const valid = Boolean(title.trim() && (state.kind === 'module' || description.trim()) && validSvg && (state.kind !== 'requirement' || (moduleId && lines(criteria).length > 0)));
   function submit() {
     if (!valid) return;
-    if (state.kind === 'requirement') onCreateRequirement({ title: title.trim(), description: description.trim(), priority, ...(parentRequirementId ? { parentRequirementId } : {}), acceptanceCriteria: lines(criteria) });
+    if (state.kind === 'module') onSaveModule({ ...(state.moduleId ? { moduleId: state.moduleId } : {}), title: title.trim(), description: description.trim(), kind: moduleKind });
+    else if (state.kind === 'requirement') onCreateRequirement({ moduleId, title: title.trim(), description: description.trim(), priority, ...(parentRequirementId ? { parentRequirementId } : {}), acceptanceCriteria: lines(criteria) });
     else if (state.kind === 'design') onCreateDesign(state.requirementId, { title: title.trim(), body: description.trim() });
     else if (state.kind === 'designBlock') onCreateDesignBlock(state.designId, { type: contentType, title: title.trim(), content: description.trim() });
     else onCreateTask(state.requirementId, { title: title.trim(), description: description.trim(), phase: phase.trim(), acceptanceCriteria: lines(criteria), dependsOn });
   }
   return <div className="create-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-    <section className="create-modal" role="dialog" aria-modal="true"><header><div><span>{state.kind === 'requirement' ? 'NEW REQUIREMENT' : requirement?.id}</span><h2>新增{kindLabel}</h2><p>{state.kind === 'requirement' ? '写清用户需要的结果，后续方案和计划都会归在这条需求下。' : `归属于：${requirement?.title ?? ''}`}</p></div><button aria-label="关闭" onClick={onClose}>×</button></header>
+    <section className="create-modal" role="dialog" aria-modal="true"><header><div><span>{state.kind === 'module' ? state.moduleId ?? 'NEW MODULE' : state.kind === 'requirement' ? 'NEW REQUIREMENT' : requirement?.id}</span><h2>{state.kind === 'module' && state.moduleId ? '编辑' : '新增'}{kindLabel}</h2><p>{state.kind === 'module' ? '模块定义稳定的业务或技术边界，需求、设计和任务都归属于模块。' : state.kind === 'requirement' ? '写清用户需要的结果，后续方案和计划都会归在这条需求下。' : `归属于：${requirement?.title ?? ''}`}</p></div><button aria-label="关闭" onClick={onClose}>×</button></header>
       <div className="modal-fields">
+        {state.kind === 'module' && <label><span>模块类型</span><select value={moduleKind} onChange={(event) => setModuleKind(event.target.value as RequirementModuleKind)}><option value="business">业务功能</option><option value="foundation">平台基础</option><option value="delivery">交付保障</option></select></label>}
         {state.kind === 'designBlock' && <label><span>内容类型</span><select value={contentType} onChange={(event) => setContentType(event.target.value as DesignContentType)}><option value="text">文本</option><option value="architecture">架构图 · SVG</option><option value="flowchart">流程图 · SVG</option><option value="ui-svg">页面设计图 · SVG</option></select></label>}
         <label><span>{kindLabel}名称</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`输入${kindLabel}名称`}/></label>
-        <label><span>{state.kind === 'design' ? '方案摘要' : state.kind === 'designBlock' ? contentType === 'text' ? '文本内容' : 'SVG 代码' : '详细说明'}</span><textarea className={state.kind === 'designBlock' && contentType !== 'text' ? 'code-input' : ''} rows={state.kind === 'designBlock' ? 10 : 5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={state.kind === 'design' ? '说明实现方式、关键取舍和边界' : state.kind === 'designBlock' ? contentType === 'text' ? '输入方案正文' : '<svg viewBox="0 0 1200 800" …>…</svg>' : '说明目标、边界和预期结果'}/>{state.kind === 'designBlock' && contentType !== 'text' && !validSvg && description.trim() && <small className="field-error">请输入完整的 SVG 代码。</small>}</label>
-        {state.kind === 'requirement' && <><label><span>父需求 · 可选</span><select value={parentRequirementId} onChange={(event) => setParentRequirementId(event.target.value)}><option value="">顶层需求</option>{workspace.requirements.items.map((item) => <option key={item.id} value={item.id}>{item.id} · {item.title}</option>)}</select></label><label><span>优先级</span><select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="must">高</option><option value="should">中</option><option value="could">低</option></select></label><label><span>验收条件 · 每行一条</span><textarea rows={4} value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="用户可以完成…&#10;系统能够正确…"/></label></>}
+        <label><span>{state.kind === 'module' ? '模块说明' : state.kind === 'design' ? '方案摘要' : state.kind === 'designBlock' ? contentType === 'text' ? '文本内容' : 'SVG 代码' : '详细说明'}</span><textarea className={state.kind === 'designBlock' && contentType !== 'text' ? 'code-input' : ''} rows={state.kind === 'designBlock' ? 10 : 5} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={state.kind === 'module' ? '说明模块职责、边界和不负责的内容' : state.kind === 'design' ? '说明实现方式、关键取舍和边界' : state.kind === 'designBlock' ? contentType === 'text' ? '输入方案正文' : '<svg viewBox="0 0 1200 800" …>…</svg>' : '说明目标、边界和预期结果'}/>{state.kind === 'designBlock' && contentType !== 'text' && !validSvg && description.trim() && <small className="field-error">请输入完整的 SVG 代码。</small>}</label>
+        {state.kind === 'requirement' && <><label><span>所属模块</span><select value={moduleId} onChange={(event) => { setModuleId(event.target.value); setParentRequirementId(''); }}><option value="">请选择模块</option>{[...workspace.requirements.modules].sort((left, right) => left.order - right.order).map((module) => <option key={module.id} value={module.id}>{module.id} · {module.title}</option>)}</select></label><label><span>父需求 · 可选</span><select value={parentRequirementId} onChange={(event) => setParentRequirementId(event.target.value)}><option value="">顶层需求</option>{workspace.requirements.items.filter((item) => item.moduleId === moduleId).map((item) => <option key={item.id} value={item.id}>{item.id} · {item.title}</option>)}</select></label><label><span>优先级</span><select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}><option value="must">高</option><option value="should">中</option><option value="could">低</option></select></label><label><span>验收条件 · 每行一条</span><textarea rows={4} value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="用户可以完成…&#10;系统能够正确…"/></label></>}
         {state.kind === 'task' && <><label><span>阶段</span><input value={phase} onChange={(event) => setPhase(event.target.value)} placeholder="例如：准备、实现、验证"/></label><label><span>验收条件 · 每行一条</span><textarea rows={3} value={criteria} onChange={(event) => setCriteria(event.target.value)} placeholder="任务完成的可验证标准"/></label><fieldset><legend>前置任务</legend>{availableTasks.length ? availableTasks.map((task) => <label className="modal-check" key={task.id}><input type="checkbox" checked={dependsOn.includes(task.id)} onChange={(event) => setDependsOn((current) => event.target.checked ? [...current, task.id] : current.filter((id) => id !== task.id))}/><span><b>{task.id} · {task.title}</b><small>完成后当前任务才能开始</small></span></label>) : <p>这是第一个任务，不需要前置任务。</p>}</fieldset></>}
       </div>
-      <footer className="modal-actions"><button onClick={onClose}>取消</button><button className="button primary" disabled={!valid} onClick={submit}>创建{kindLabel}</button></footer>
+      <footer className="modal-actions"><button onClick={onClose}>取消</button><button className="button primary" disabled={!valid} onClick={submit}>{state.kind === 'module' && state.moduleId ? '保存模块' : `创建${kindLabel}`}</button></footer>
     </section>
   </div>;
 }
@@ -519,7 +670,8 @@ function TaskList({ tasks, readyCount, onSelect }: { tasks: ExecutionTask[]; rea
 }
 
 function TaskInspector({ task, tasks, requirements, sections, onClose, onUpdate, onDelete }: { task: ExecutionTask; tasks: ExecutionTask[]; requirements: Array<{ id: string; title: string }>; sections: Array<{ id: string; title: string }>; onClose: () => void; onUpdate: (updater: (task: ExecutionTask) => void) => void; onDelete: () => void }) {
-  return <aside className="inspector"><header><div><span>{task.id}</span><strong>任务详情</strong></div><button onClick={onClose}>×</button></header><div className="inspector-scroll"><label><span>任务名称</span><input value={task.title} onChange={(event) => onUpdate((draft) => { draft.title = event.target.value; })}/></label><label><span>说明</span><textarea rows={4} value={task.description} onChange={(event) => onUpdate((draft) => { draft.description = event.target.value; })}/></label><div className="two-fields"><label><span>状态</span><select value={task.status} onChange={(event) => onUpdate((draft) => { draft.status = event.target.value as TaskStatus; })}>{Object.entries(taskStatusLabels).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label><span>阶段</span><input value={task.phase} onChange={(event) => onUpdate((draft) => { draft.phase = event.target.value; })}/></label></div>{task.status === 'blocked' && <label><span>阻塞原因</span><textarea rows={3} value={task.blockedReason ?? ''} onChange={(event) => onUpdate((draft) => { draft.blockedReason = event.target.value; })}/></label>}<section className="inspector-section"><strong>前置任务</strong><p>只有全部前置任务完成后，当前任务才会进入“可以开始”。</p>{tasks.filter((candidate) => candidate.id !== task.id).map((candidate) => <label className="check-row" key={candidate.id}><input type="checkbox" checked={task.dependsOn.includes(candidate.id)} onChange={(event) => onUpdate((draft) => { draft.dependsOn = event.target.checked ? [...draft.dependsOn, candidate.id] : draft.dependsOn.filter((id) => id !== candidate.id); })}/><span><b>{candidate.id}</b>{candidate.title}</span></label>)}</section><section className="inspector-section"><strong>关联需求</strong>{requirements.map((item) => <label className="check-row" key={item.id}><input type="checkbox" checked={task.requirementIds.includes(item.id)} onChange={(event) => onUpdate((draft) => { draft.requirementIds = event.target.checked ? [...draft.requirementIds, item.id] : draft.requirementIds.filter((id) => id !== item.id); })}/><span><b>{item.id}</b>{item.title}</span></label>)}</section><section className="inspector-section"><strong>关联设计</strong>{sections.map((item) => <label className="check-row" key={item.id}><input type="checkbox" checked={task.designSectionIds.includes(item.id)} onChange={(event) => onUpdate((draft) => { draft.designSectionIds = event.target.checked ? [...draft.designSectionIds, item.id] : draft.designSectionIds.filter((id) => id !== item.id); })}/><span><b>{item.id}</b>{item.title}</span></label>)}</section><LineEditor label="验收条件" value={task.acceptanceCriteria} placeholder="每行一个可验证结果" onChange={(value) => onUpdate((draft) => { draft.acceptanceCriteria = value; })}/></div><footer><button className="danger-button" onClick={onDelete}>删除任务</button></footer></aside>;
+  const editable = task.status === 'planned';
+  return <aside className="inspector"><header><div><span>{task.id}</span><strong>{editable ? '任务详情' : '任务详情 · 执行后只读'}</strong></div><button onClick={onClose}>×</button></header><div className="inspector-scroll"><label><span>任务名称</span><input value={task.title} readOnly={!editable} onChange={(event) => onUpdate((draft) => { draft.title = event.target.value; })}/></label><label><span>说明</span><textarea rows={4} value={task.description} readOnly={!editable} onChange={(event) => onUpdate((draft) => { draft.description = event.target.value; })}/></label><div className="two-fields"><label><span>执行状态 · 由任务执行器回写</span><input value={taskStatusLabels[task.status]} readOnly/></label><label><span>阶段</span><input value={task.phase} readOnly={!editable} onChange={(event) => onUpdate((draft) => { draft.phase = event.target.value; })}/></label></div>{task.status === 'blocked' && <label><span>阻塞原因 · 只读</span><textarea rows={3} value={task.blockedReason ?? ''} readOnly/></label>}<section className="inspector-section"><strong>前置任务</strong><p>只有全部前置任务完成后，当前任务才会进入“可以开始”。</p>{tasks.filter((candidate) => candidate.id !== task.id).map((candidate) => <label className="check-row" key={candidate.id}><input type="checkbox" disabled={!editable} checked={task.dependsOn.includes(candidate.id)} onChange={(event) => onUpdate((draft) => { draft.dependsOn = event.target.checked ? [...draft.dependsOn, candidate.id] : draft.dependsOn.filter((id) => id !== candidate.id); })}/><span><b>{candidate.id}</b>{candidate.title}</span></label>)}</section><section className="inspector-section"><strong>关联需求</strong>{requirements.map((item) => <label className="check-row" key={item.id}><input type="checkbox" disabled={!editable} checked={task.requirementIds.includes(item.id)} onChange={(event) => onUpdate((draft) => { draft.requirementIds = event.target.checked ? [...draft.requirementIds, item.id] : draft.requirementIds.filter((id) => id !== item.id); })}/><span><b>{item.id}</b>{item.title}</span></label>)}</section><section className="inspector-section"><strong>关联设计</strong>{sections.map((item) => <label className="check-row" key={item.id}><input type="checkbox" disabled={!editable} checked={task.designSectionIds.includes(item.id)} onChange={(event) => onUpdate((draft) => { draft.designSectionIds = event.target.checked ? [...draft.designSectionIds, item.id] : draft.designSectionIds.filter((id) => id !== item.id); })}/><span><b>{item.id}</b>{item.title}</span></label>)}</section>{editable ? <LineEditor label="验收条件" value={task.acceptanceCriteria} placeholder="每行一个可验证结果" onChange={(value) => onUpdate((draft) => { draft.acceptanceCriteria = value; })}/> : <section className="inspector-section"><strong>验收条件</strong>{task.acceptanceCriteria.map((item, index) => <p key={index}>{item}</p>)}</section>}</div><footer>{editable ? <button className="danger-button" onClick={onDelete}>删除任务</button> : <span className="readonly-note">状态和定义已冻结，由任务执行器继续处理</span>}</footer></aside>;
 }
 
 function LogoMark() {

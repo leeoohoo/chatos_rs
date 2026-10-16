@@ -13,16 +13,16 @@ final class NativeTaskOrchestrationEvalExportTests: XCTestCase {
             return XCTFail("export requires a new absolute output path")
         }
         let plugins: [NativeInstalledAgentPlugin] = [
-            .init(id: "eval-browser", pluginKey: NativeBrowserPluginIdentity.marketplaceKey,
-                  displayName: "Browser CDP", description: "Inspect public websites and verify browser UI.", componentCount: 1),
-            .init(id: "eval-computer", pluginKey: "open-computer-use@chatos-marketplace",
-                  displayName: "Computer Use", description: "Inspect and control native desktop apps.", componentCount: 1),
-            .init(id: "eval-document", pluginKey: NativeDocumentPluginIdentity.marketplaceKey,
-                  displayName: "Documents", description: "Create, edit, render and verify Word, PDF, spreadsheets and presentations.", componentCount: 1),
-            .init(id: "eval-design", pluginKey: "design@eval",
-                  displayName: "Design", description: "Create editable design assets and export visual previews.", componentCount: 1),
-            .init(id: "eval-media", pluginKey: "media@eval",
-                  displayName: "Media", description: "Edit video and audio, generate subtitles and export verified media.", componentCount: 1),
+            .init(pluginID: "eval-browser", pluginKey: NativeBrowserPluginIdentity.marketplaceKey,
+                  componentKey: NativeBrowserPluginIdentity.componentKey, displayName: "Browser CDP", description: "Inspect public websites and verify browser UI."),
+            .init(pluginID: "eval-computer", pluginKey: "open-computer-use@chatos-marketplace",
+                  componentKey: "computer-use-mcp", displayName: "Computer Use", description: "Inspect and control native desktop apps."),
+            .init(pluginID: "eval-document", pluginKey: NativeDocumentPluginIdentity.marketplaceKey,
+                  componentKey: NativeDocumentPluginIdentity.componentKey, displayName: "Documents", description: "Create, edit, render and verify Word, PDF, spreadsheets and presentations."),
+            .init(pluginID: "eval-design", pluginKey: "design@eval",
+                  componentKey: "design-mcp", displayName: "Design", description: "Create editable design assets and export visual previews."),
+            .init(pluginID: "eval-media", pluginKey: "media@eval",
+                  componentKey: "media-mcp", displayName: "Media", description: "Edit video and audio, generate subtitles and export verified media."),
         ]
         let external = NativeLocalAgentExternalMCPConfig(
             resourceID: "eval-research", serverName: "Research",

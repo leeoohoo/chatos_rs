@@ -225,7 +225,9 @@ enum NativePluginManifestLoader {
             installationURL: installationURL,
             visualSessionURL: visualSessionURL,
             artifactURL: artifactURL,
-            displayName: manifest.interface?.displayName?.nonEmptyTrimmed ?? manifest.name,
+            displayName: server.agent?.displayName.nonEmptyTrimmed
+                ?? manifest.interface?.displayName?.nonEmptyTrimmed
+                ?? manifest.name,
             permissionSnapshot: permissionSnapshot,
             workspaceRoot: workspaceRoot
         )

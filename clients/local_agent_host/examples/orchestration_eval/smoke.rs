@@ -36,7 +36,10 @@ fn task(title: &str, objective: &str, output: &str, allowed: &Capabilities) -> V
         "acceptance_criteria": [format!("{output}以实际项目证据核验，保留请求的范围与原始资料")],
         "requires_execution": allowed.builtins.iter().any(|s| s == "CodeMaintainerWrite"),
         "enabled_builtin_kinds": allowed.builtins,
-        "plugin_hints": allowed.plugins.iter().map(|key| json!({"plugin_key": key})).collect::<Vec<_>>()})
+        "plugin_hints": allowed.plugins.iter().map(|key| json!({
+            "plugin_key": key,
+            "component_key": format!("{key}-mcp")
+        })).collect::<Vec<_>>()})
 }
 
 fn steps(case: &Scenario, allowed: &Capabilities, seed_id: Option<&str>) -> Vec<ReplayStep> {

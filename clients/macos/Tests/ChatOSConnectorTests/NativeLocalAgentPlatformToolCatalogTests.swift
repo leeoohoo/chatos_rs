@@ -51,18 +51,18 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
     func testMainChatTaskSchemaFreezesInstalledPluginChoicesWithRoutingDescriptions() throws {
         let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools(pluginChoices: [
             .init(
-                id: "plugin-2",
+                pluginID: "plugin-2",
                 pluginKey: NativeBrowserPluginIdentity.marketplaceKey,
+                componentKey: NativeBrowserPluginIdentity.componentKey,
                 displayName: "Browser CDP",
-                description: "Browser pages.",
-                componentCount: 1
+                description: "Browser pages."
             ),
             .init(
-                id: "plugin-1",
+                pluginID: "plugin-1",
                 pluginKey: "open-computer-use@chatos-marketplace",
+                componentKey: "computer-use-mcp",
                 displayName: "Computer Use",
-                description: "Desktop control.",
-                componentCount: 1
+                description: "Desktop control."
             ),
         ])
         let create = try XCTUnwrap(tools.first { value in
@@ -76,15 +76,21 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
               case .array(let thinkingLevels)? = thinkingLevel["enum"],
               case .object(let hints)? = properties["plugin_hints"],
               case .object(let items)? = hints["items"],
-              case .object(let hintProperties)? = items["properties"],
-              case .object(let pluginKey)? = hintProperties["plugin_key"],
-              case .array(let values)? = pluginKey["enum"],
-              case .array(let choices)? = pluginKey["oneOf"] else {
+              case .array(let choices)? = items["oneOf"] else {
             return XCTFail("missing installed Plugin choice schema")
         }
-        XCTAssertEqual(values, [
-            .string(NativeBrowserPluginIdentity.marketplaceKey),
-            .string("open-computer-use@chatos-marketplace"),
+        let identities = choices.compactMap { choice -> String? in
+            guard case .object(let object) = choice,
+                  case .object(let choiceProperties)? = object["properties"],
+                  case .object(let pluginKey)? = choiceProperties["plugin_key"],
+                  case .string(let key)? = pluginKey["const"],
+                  case .object(let componentKey)? = choiceProperties["component_key"],
+                  case .string(let component)? = componentKey["const"] else { return nil }
+            return "\(key):\(component)"
+        }
+        XCTAssertEqual(identities, [
+            "open-computer-use@chatos-marketplace:computer-use-mcp",
+            "\(NativeBrowserPluginIdentity.marketplaceKey):\(NativeBrowserPluginIdentity.componentKey)",
         ])
         XCTAssertEqual(thinkingLevels, [
             .string("none"), .string("auto"), .string("minimal"), .string("low"),

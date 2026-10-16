@@ -17,11 +17,17 @@ struct NativePluginManifest: Decodable, Sendable {
     }
 
     struct MCPServer: Decodable, Sendable {
+        struct AgentPresentation: Decodable, Sendable {
+            var displayName: String
+            var description: String
+        }
+
         var type: String
         var bin: String
         var args: [String]
         var env: [String: String]
         var requiresExclusiveExecution: Bool
+        var agent: AgentPresentation?
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -33,10 +39,11 @@ struct NativePluginManifest: Decodable, Sendable {
                 Bool.self,
                 forKey: .requiresExclusiveExecution
             ) ?? false
+            agent = try container.decodeIfPresent(AgentPresentation.self, forKey: .agent)
         }
 
         private enum CodingKeys: String, CodingKey {
-            case type, bin, args, env, requiresExclusiveExecution
+            case type, bin, args, env, requiresExclusiveExecution, agent
         }
     }
 

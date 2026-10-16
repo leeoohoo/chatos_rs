@@ -329,7 +329,13 @@ private actor ExternalMCPHostStub: LocalAgentHostClientServicing {
                 "owner_entity_id": "task-1",
                 "profile_key": "task_execution",
                 "input": [
-                    "tool_options": ["external_mcp_config_ids": selectedIDs],
+                    "tool_options": [
+                        "requires_execution": false,
+                        "enabled_builtin_kinds": [],
+                        "plugin_hints": [],
+                        "plugin_release_snapshots": [],
+                        "external_mcp_config_ids": selectedIDs,
+                    ],
                 ],
                 "status": "model_running",
                 "version": 2,

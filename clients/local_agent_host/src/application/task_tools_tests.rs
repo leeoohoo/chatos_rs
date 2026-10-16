@@ -522,9 +522,14 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
                             "max_iterations": 600,
                             "enabled_builtin_kinds": ["Notepad"],
                             "external_mcp_config_ids": ["required-mcp"],
-                            "plugin_keys": ["required-plugin"],
+                            "plugin_components": [{
+                                "plugin_key": "required-plugin",
+                                "component_key": "required-component",
+                                "reason": "required by Local Agent capability policy"
+                            }],
                             "plugin_release_snapshots": [{
                                 "plugin_key": "required-plugin",
+                                "component_key": "required-component",
                                 "plugin_id": "plugin-id-1",
                                 "release_id": "release-1",
                                 "version": "1.2.3",
@@ -569,6 +574,7 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
         options["plugin_hints"],
         json!([{
             "plugin_key": "required-plugin",
+            "component_key": "required-component",
             "reason": "required by Local Agent capability policy"
         }])
     );
@@ -576,6 +582,7 @@ async fn task_creation_automatically_freezes_required_policy_capabilities() {
         options["plugin_release_snapshots"],
         json!([{
             "plugin_key": "required-plugin",
+            "component_key": "required-component",
             "plugin_id": "plugin-id-1",
             "release_id": "release-1",
             "version": "1.2.3",
@@ -612,6 +619,7 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
                     "explicit_capability_selection": {
                         "kind": "plugin",
                         "plugin_key": "document-plugin",
+                        "component_key": "document-mcp",
                         "display_name": "Document"
                     }
                 }),
@@ -633,6 +641,7 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
                             "plugin_release_snapshots": [
                                 {
                                     "plugin_key": "document-plugin",
+                                    "component_key": "document-mcp",
                                     "plugin_id": "document-id",
                                     "release_id": "document-release",
                                     "version": "1.0.0",
@@ -640,6 +649,7 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
                                 },
                                 {
                                     "plugin_key": "other-plugin",
+                                    "component_key": "other-mcp",
                                     "plugin_id": "other-id",
                                     "release_id": "other-release",
                                     "version": "1.0.0",
@@ -668,6 +678,7 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
     let mut unexpected = base.clone();
     unexpected["plugin_hints"] = json!([{
         "plugin_key": "other-plugin",
+        "component_key": "other-mcp",
         "reason": "model chose another optional Plugin"
     }]);
     let mut call = invocation(unexpected);
@@ -691,7 +702,8 @@ async fn composer_selected_plugin_is_mandatory_and_excludes_unselected_optional_
         graph.tasks[0].input["tool_options"]["plugin_hints"],
         json!([{
             "plugin_key": "document-plugin",
-            "reason": "required by Local Agent capability policy"
+            "component_key": "document-mcp",
+            "reason": "selected explicitly in Main Chat"
         }])
     );
     assert_eq!(
@@ -715,6 +727,7 @@ async fn task_creation_rejects_plugin_outside_the_frozen_release_catalog() {
                         json!({
                             "plugin_release_snapshots": [{
                                 "plugin_key": "allowed-plugin",
+                                "component_key": "allowed-mcp",
                                 "plugin_id": "plugin-id-1",
                                 "release_id": "release-1",
                                 "version": "1.0.0",
@@ -738,7 +751,7 @@ async fn task_creation_rejects_plugin_outside_the_frozen_release_catalog() {
         "acceptance_criteria": ["The result exists"],
         "requires_execution": true,
         "enabled_builtin_kinds": [],
-        "plugin_hints": [{"plugin_key": "other-plugin", "reason": "needed"}]
+        "plugin_hints": [{"plugin_key": "other-plugin", "component_key": "other-mcp", "reason": "needed"}]
     }));
     invocation.tool_name = CREATE_TASK_TOOL.to_string();
 

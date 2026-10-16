@@ -22,17 +22,20 @@ public enum LocalAgentTodoBuiltinCapability: String, Codable, Sendable, CaseIter
 /// into model-facing Todo responses; the model selects a run-scoped opaque reference instead.
 public struct LocalAgentTodoPluginSelection: Codable, Sendable, Equatable {
     public let pluginID: String
+    public let componentKey: String
     public let displayName: String
     public let reason: String
 
-    public init(pluginID: String, displayName: String, reason: String = "") {
+    public init(pluginID: String, componentKey: String, displayName: String, reason: String = "") {
         self.pluginID = pluginID
+        self.componentKey = componentKey
         self.displayName = displayName
         self.reason = reason
     }
 
     public func validate() throws {
         try AgentGroupChatValidation.identifier(pluginID, field: "todoPluginID")
+        try AgentGroupChatValidation.identifier(componentKey, field: "todoPluginComponentKey")
         try AgentGroupChatValidation.text(
             displayName,
             field: "todoPluginDisplayName",
@@ -71,7 +74,7 @@ public struct LocalAgentTodoExecutionPlan: Codable, Sendable, Equatable {
 
     public func validate() throws {
         guard Set(builtinCapabilities).count == builtinCapabilities.count,
-              Set(plugins.map(\.pluginID)).count == plugins.count,
+              Set(plugins.map { "\($0.pluginID):\($0.componentKey)" }).count == plugins.count,
               builtinCapabilities.count <= LocalAgentTodoBuiltinCapability.allCases.count,
               plugins.count <= 32,
               selectedAtUnixMs >= 0 else {

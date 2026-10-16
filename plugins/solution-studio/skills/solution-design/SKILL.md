@@ -9,7 +9,7 @@ metadata:
 
 # Solution Design
 
-Design against a concrete requirements revision. Read the current workspace first and set `basedOnRequirementsRevision` to the revision actually used. Produce one decided solution for the project, not a menu of implementation paths.
+Design against a concrete requirements revision. Read the current workspace first and set `basedOnRequirementsRevision` to the revision actually used. Produce one decided solution for the project, not a menu of implementation paths. Start with the project-wide technical baseline and architecture, then design one functional module at a time. Every section must carry the `moduleId` of its requirement.
 
 ## Reliable authoring sequence
 
@@ -22,7 +22,7 @@ Design against a concrete requirements revision. Read the current workspace firs
 
 Use `design.blocks` for the project-level solution. For a development project it must contain a technical-baseline text block and an overall architecture SVG. The technical baseline must explicitly choose the language and runtime, application or game framework, UI/rendering technology, state and rules architecture, data storage or database, testing toolchain, build system, and deployment shape. State when a server database is intentionally not needed. The overall architecture must show the major runtime boundaries and data flow.
 
-Create exactly one `DesignSection` for each requirement and set that requirement's `selectedDesignSectionId` to it. A section is the requirement's detailed design inside the fixed project architecture, not a candidate. Record rejected or considered alternatives only in `decisions[].alternatives`; never create a second design section to represent another route.
+Create exactly one `DesignSection` for each requirement and set that requirement's `selectedDesignSectionId` to it. A section is the requirement's detailed design inside its module and the fixed project architecture, not a candidate. Record rejected or considered alternatives only in `decisions[].alternatives`; never create a second design section to represent another route.
 
 For a development project, every section needs a substantive text block. A one-sentence `body` is only the summary and never counts as the design document. Cover the relevant module responsibilities, interfaces or data model, state and key flow, error and fallback behavior, compatibility or rollout constraints, observability, and verification. Omit only headings that genuinely do not apply, not the document itself.
 

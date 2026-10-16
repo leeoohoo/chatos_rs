@@ -13,17 +13,22 @@ extension NativeLocalConnectorService {
             throw NativePluginRuntimeError.invalidRequest("本机 Plugin 不属于当前账户")
         }
         await repairLegacyPluginIntegrityRecordsIfNeeded()
-        return (state.installedPluginRecords ?? [:]).values.compactMap { record in
+        return (state.installedPluginRecords ?? [:]).values.flatMap { record -> [NativeInstalledAgentPlugin] in
             guard state.pluginPreferences[record.pluginID] ?? true,
                   NativePluginInstallationIntegrity.status(record: record) == .verified,
-                  let manifest = try? Self.agentPluginManifest(record: record) else { return nil }
-            return .init(
-                id: record.pluginID,
-                pluginKey: record.pluginKey,
-                displayName: manifest.interface?.displayName ?? manifest.name,
-                description: manifest.description,
-                componentCount: manifest.mcpServers.count
-            )
+                  let manifest = try? Self.agentPluginManifest(record: record) else { return [] }
+            return manifest.mcpServers.keys.sorted().compactMap { componentKey in
+                guard let server = manifest.mcpServers[componentKey] else { return nil }
+                return .init(
+                    pluginID: record.pluginID,
+                    pluginKey: record.pluginKey,
+                    componentKey: componentKey,
+                    displayName: server.agent?.displayName
+                        ?? manifest.interface?.displayName
+                        ?? manifest.name,
+                    description: server.agent?.description ?? manifest.description
+                )
+            }
         }.sorted {
             if $0.displayName != $1.displayName {
                 return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
@@ -35,13 +40,13 @@ extension NativeLocalConnectorService {
     public func makeAgentPluginToolProviders(
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
-        pluginIDs: [String],
+        plugins: [NativeInstalledAgentPlugin],
         projectContext: LocalConnectorPluginApplicationContext
     ) async throws -> [any AgentToolProvider] {
         try await makeAgentPluginSkillToolProviders(
             ownerUserID: ownerUserID,
             runContext: runContext,
-            pluginIDs: pluginIDs,
+            plugins: plugins,
             projectContext: projectContext
         ).map { $0 as any AgentToolProvider }
     }
@@ -49,7 +54,7 @@ extension NativeLocalConnectorService {
     func makeAgentPluginSkillToolProviders(
         ownerUserID: String,
         runContext: LocalAgentChatRunContext,
-        pluginIDs: [String],
+        plugins: [NativeInstalledAgentPlugin],
         projectContext: LocalConnectorPluginApplicationContext,
         fallbackWorkspaceID: String? = nil,
         fallbackWorkspaceRootURL: URL? = nil,
@@ -77,17 +82,22 @@ extension NativeLocalConnectorService {
               let workspaceID = resolvedProject?.workspace.id ?? fallbackWorkspaceID else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent Plugin 缺少工作目录")
         }
-        let selectedPluginIDs = Array(Set(pluginIDs)).sorted()
-        guard selectedPluginIDs.count <= 100 else {
+        let selectedPlugins = plugins.sorted { $0.id < $1.id }
+        guard Set(selectedPlugins.map(\.id)).count == selectedPlugins.count,
+              selectedPlugins.count <= 100 else {
             throw NativePluginRuntimeError.invalidRequest("本地 Agent 选择的 Plugin 数量无效")
         }
         var providers: [NativeAgentPluginToolProvider] = []
-        for pluginID in selectedPluginIDs {
+        for plugin in selectedPlugins {
+            let pluginID = plugin.pluginID
             guard state.pluginPreferences[pluginID] ?? true,
                   let record = state.installedPluginRecords?[pluginID] else {
                 throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin 未安装或已停用：\(pluginID)")
             }
             let manifest = try Self.agentPluginManifest(record: record)
+            guard manifest.mcpServers[plugin.componentKey] != nil else {
+                throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin component 不存在：\(plugin.componentKey)")
+            }
             let installationURL = URL(
                 fileURLWithPath: record.installationPath,
                 isDirectory: true
@@ -98,7 +108,7 @@ extension NativeLocalConnectorService {
             )
             let skillSession = PluginToolSkillSession(snapshot: skillSnapshot)
             let permissionSnapshot = Set(manifest.permissions.map(\.permission))
-            for componentKey in manifest.mcpServers.keys.sorted() {
+            let componentKey = plugin.componentKey
                 let adapterSessionID = "agent-" + UUID().uuidString.lowercased()
                 if componentKey == NativeBrowserPluginIdentity.componentKey {
                     await browserExtensionPairingRuntime.stop()
@@ -182,7 +192,6 @@ extension NativeLocalConnectorService {
                     try? FileManager.default.removeItem(at: launch.visualSessionURL)
                     throw error
                 }
-            }
         }
         return providers
     }
@@ -208,9 +217,9 @@ extension NativeLocalConnectorService {
         let installed = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let installedByID = Dictionary(uniqueKeysWithValues: installed.map { ($0.id, $0) })
         let selectedPlugins = try executionPlan.plugins.map { selection in
-            guard let plugin = installedByID[selection.pluginID] else {
+            guard let plugin = installedByID["\(selection.pluginID):\(selection.componentKey)"] else {
                 throw NativePluginRuntimeError.invalidRequest(
-                    "Todo 所需 Plugin「\(selection.displayName)」已经卸载或停用，请由通讯线程调整任务计划。"
+                    "Todo 所需 Plugin component「\(selection.displayName)」已经卸载或停用，请由通讯线程调整任务计划。"
                 )
             }
             return plugin

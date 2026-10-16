@@ -155,6 +155,7 @@ struct AttachmentDispatchFixture {
                     (mainChat ? "conversation_id" : "source_conversation_id"): "conversation-1",
                     "tool_options": [
                         "requires_execution": false, "enabled_builtin_kinds": [], "plugin_hints": [],
+                        "plugin_release_snapshots": [],
                     ],
                 ],
             ],

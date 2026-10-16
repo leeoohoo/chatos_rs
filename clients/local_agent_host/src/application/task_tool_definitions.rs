@@ -260,9 +260,10 @@ fn plugin_hints_schema() -> Value {
             "type": "object",
             "properties": {
                 "plugin_key": {"type": "string", "minLength": 1},
+                "component_key": {"type": "string", "minLength": 1},
                 "reason": {"type": "string", "maxLength": 1000}
             },
-            "required": ["plugin_key"],
+            "required": ["plugin_key", "component_key"],
             "additionalProperties": false
         }
     })

@@ -30,7 +30,7 @@ function TaskNode({ data, selected }: NodeProps) {
 
 const nodeTypes = { taskNode: TaskNode };
 
-async function automaticPositions(plan: ExecutionPlan): Promise<Record<string, PlanNodePosition>> {
+async function automaticPositions(plan: ExecutionPlan, includeRedundant: boolean): Promise<Record<string, PlanNodePosition>> {
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: {
@@ -45,7 +45,7 @@ async function automaticPositions(plan: ExecutionPlan): Promise<Record<string, P
       'elk.layered.nodePlacement.favorStraightEdges': 'true'
     },
     children: plan.tasks.map((task) => ({ id: task.id, width: NODE_WIDTH, height: NODE_HEIGHT })),
-    edges: visibleDependencyEdges(plan.tasks).map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }))
+    edges: visibleDependencyEdges(plan.tasks, includeRedundant).map((edge) => ({ id: edge.id, sources: [edge.source], targets: [edge.target] }))
   });
   return Object.fromEntries((graph.children ?? []).map((node) => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
 }
@@ -76,6 +76,7 @@ export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, on
   const [layouting, setLayouting] = useState(false);
   const [transientPositions, setTransientPositions] = useState<Record<string, PlanNodePosition>>({});
   const [expanded, setExpanded] = useState(false);
+  const [showAllEdges, setShowAllEdges] = useState(false);
   const { fitView } = useReactFlow();
   const ready = useMemo(() => new Set(readyTaskIds(sourcePlan.tasks)), [sourcePlan]);
   const readyCount = [...primaryTaskIds].filter((id) => ready.has(id)).length;
@@ -105,7 +106,7 @@ export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, on
   useEffect(() => {
     if ((!missingPositions && !overlappingPositions) || plan.tasks.length === 0 || layouting) return;
     setLayouting(true);
-    void automaticPositions(plan).then((positions) => {
+    void automaticPositions(plan, showAllEdges).then((positions) => {
       showAutomaticPositions(positions);
       if (overlappingPositions) onPositionsChange(positions);
     }).finally(() => setLayouting(false));
@@ -118,7 +119,7 @@ export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, on
     selected: task.id === selectedTaskId,
     data: { task, ready: ready.has(task.id), supporting: !primaryTaskIds.has(task.id), hiddenDependencies: task.dependsOn.filter((id) => !visibleIds.has(id)) }
   }));
-  const edges = visibleDependencyEdges(plan.tasks).map((edge) => ({
+  const edges = visibleDependencyEdges(plan.tasks, showAllEdges).map((edge) => ({
     ...edge,
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed, width: 17, height: 17 },
@@ -129,7 +130,7 @@ export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, on
     if (layouting || plan.tasks.length === 0) return;
     setLayouting(true);
     try {
-      const positions = await automaticPositions(plan);
+      const positions = await automaticPositions(plan, showAllEdges);
       showAutomaticPositions(positions);
       onPositionsChange(positions);
     }
@@ -139,7 +140,7 @@ export function PlanGraph({ plan, sourcePlan, primaryTaskIds, selectedTaskId, on
   const graph = <section className={`plan-graph-shell ${expanded ? 'is-expanded' : ''}`}>
     <div className="plan-graph-toolbar">
       <div><strong>依赖关系图</strong><span>本需求 {readyCount} 个任务具备开始条件</span></div>
-      <div className="plan-graph-actions"><button onClick={() => void relayout()} disabled={layouting}>{layouting ? '正在整理…' : '自动整理'}</button><button onClick={() => setExpanded((value) => !value)}>{expanded ? '退出全屏' : '全屏'}</button></div>
+      <div className="plan-graph-actions"><button onClick={() => setShowAllEdges((value) => !value)}>{showAllEdges ? '隐藏冗余边' : '显示全部显式边'}</button><button onClick={() => void relayout()} disabled={layouting}>{layouting ? '正在整理…' : '自动整理'}</button><button onClick={() => setExpanded((value) => !value)}>{expanded ? '退出全屏' : '全屏'}</button></div>
     </div>
     <div className="plan-graph-canvas">
       {plan.tasks.length === 0 ? <div className="empty-canvas"><span>⌘</span><strong>还没有执行任务</strong><p>添加任务后，前置关系会自动渲染成可浏览的流程图。</p></div> : <ReactFlow

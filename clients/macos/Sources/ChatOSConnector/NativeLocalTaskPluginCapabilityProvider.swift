@@ -32,8 +32,8 @@ extension NativeLocalConnectorService {
         executionRootURL: URL,
         workspaceScopeID: String,
         builtinCapabilities: Set<LocalAgentTodoBuiltinCapability> = [],
-        pluginIDs: [String]?,
-        pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot]? = nil,
+        pluginSelectionIDs: [String],
+        pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot] = [:],
         productSkillBundle: LocalAgentSkillBundleSnapshot? = nil,
         selectedExternalMCPIDs: Set<String> = [],
         preactivatedSkillRefs: Set<String> = []
@@ -70,41 +70,39 @@ extension NativeLocalConnectorService {
         )
         let installedPlugins = try await installedAgentPlugins(ownerUserID: ownerUserID)
         let selectedPlugins: [NativeInstalledAgentPlugin]
-        if let pluginIDs {
-            let installedByKey = Dictionary(
-                uniqueKeysWithValues: installedPlugins.map { ($0.pluginKey, $0) }
+        let installedByKey = Dictionary(
+            uniqueKeysWithValues: installedPlugins.map {
+                (NativeLocalAgentTaskToolAuthorization.pluginSelectionID(pluginKey: $0.pluginKey, componentKey: $0.componentKey), $0)
+            }
+        )
+        selectedPlugins = try Array(Set(pluginSelectionIDs)).sorted().map { selectionID in
+            guard let plugin = installedByKey[selectionID] else {
+                throw NativePluginRuntimeError.invalidRequest(
+                    "本地任务选择的 Plugin component 未安装或已停用"
+                )
+            }
+            return plugin
+        }
+        guard Set(pluginReleaseSnapshots.keys) == Set(pluginSelectionIDs) else {
+            throw NativePluginRuntimeError.invalidRequest(
+                "本地任务 Plugin Release 快照与授权范围不一致"
             )
-            selectedPlugins = try Array(Set(pluginIDs)).sorted().map { pluginKey in
-                guard let plugin = installedByKey[pluginKey] else {
+        }
+        for plugin in selectedPlugins {
+            let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(pluginKey: plugin.pluginKey, componentKey: plugin.componentKey)
+            guard let expected = pluginReleaseSnapshots[selectionID],
+                      expected.pluginID == plugin.pluginID,
+                      expected.componentKey == plugin.componentKey,
+                      let record = state.installedPluginRecords?[plugin.pluginID],
+                      record.releaseID == expected.releaseID,
+                      record.version == expected.version,
+                      record.artifactSHA256 == expected.artifactSHA256,
+                      (record.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .nilIfEmpty ?? record.pluginID) == expected.pluginKey else {
                     throw NativePluginRuntimeError.invalidRequest(
-                        "本地任务选择的 Plugin 未安装或已停用：\(pluginKey)"
+                        "本地任务固定的 Plugin Release 已变更，请重新创建任务"
                     )
-                }
-                return plugin
             }
-            if let pluginReleaseSnapshots {
-                guard Set(pluginReleaseSnapshots.keys) == Set(pluginIDs) else {
-                    throw NativePluginRuntimeError.invalidRequest(
-                        "本地任务 Plugin Release 快照与授权范围不一致"
-                    )
-                }
-                for plugin in selectedPlugins {
-                    guard let expected = pluginReleaseSnapshots[plugin.pluginKey],
-                          expected.pluginID == plugin.id,
-                          let record = state.installedPluginRecords?[plugin.id],
-                          record.releaseID == expected.releaseID,
-                          record.version == expected.version,
-                          record.artifactSHA256 == expected.artifactSHA256,
-                          (record.pluginKey?.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .nilIfEmpty ?? record.pluginID) == expected.pluginKey else {
-                        throw NativePluginRuntimeError.invalidRequest(
-                            "本地任务固定的 Plugin Release 已变更，请重新创建任务"
-                        )
-                    }
-                }
-            }
-        } else {
-            selectedPlugins = installedPlugins
         }
         return NativeAgentCapabilityToolProvider(
             service: self,

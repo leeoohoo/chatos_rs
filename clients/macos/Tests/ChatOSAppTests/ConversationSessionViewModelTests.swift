@@ -155,6 +155,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
         viewModel.draft = "帮我整理成一份正式文档"
         viewModel.selectedCapability = .plugin(
             key: "document-plugin",
+            componentKey: "document-mcp",
             displayName: "Document"
         )
 
@@ -167,7 +168,7 @@ final class ConversationSessionViewModelTests: XCTestCase {
         let command = try XCTUnwrap(commands.first)
         XCTAssertEqual(
             command.explicitCapabilitySelection,
-            .plugin(key: "document-plugin", displayName: "Document")
+            .plugin(key: "document-plugin", componentKey: "document-mcp", displayName: "Document")
         )
         XCTAssertNil(viewModel.selectedCapability)
     }

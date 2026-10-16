@@ -24,6 +24,11 @@ fn image_claim(task: bool) -> LocalAgentRunClaim {
     );
     if task {
         current.run.profile_key = TASK_EXECUTION_PROFILE_KEY.into();
+        current.run.input["tool_options"] = json!({
+            "requires_execution": false,
+            "enabled_builtin_kinds": [],
+            "plugin_hints": []
+        });
     }
     current
 }

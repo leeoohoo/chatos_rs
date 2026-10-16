@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { SolutionWorkspaceStore } from '../dist/store.mjs';
 
 const now = () => new Date().toISOString();
 const packageRoot = process.env.CHATOS_PLUGIN_TEST_PACKAGE_ROOT || path.resolve(import.meta.dirname, '..');
@@ -16,8 +17,8 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
   const client = new Client({ name: 'solution-studio-test', version: '1.0.0' });
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp'],
-    env: { ...process.env, SOLUTION_STUDIO_DATA_DIR: path.join(root, 'data'), CHATOS_PLUGIN_ARTIFACT_DIR: path.join(root, 'exports'), CHATOS_CONTEXT_SCOPE: 'project', CHATOS_CONTEXT_SCOPE_ID: 'scope-mcp-123', CHATOS_PROJECT_ID: 'project-mcp-123', CHATOS_PROJECT_NAME: '示例项目', CHATOS_WORKSPACE_ID: 'workspace-mcp-456', CHATOS_WORKSPACE: projectRoot }
+    args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp-authoring'],
+    env: { ...process.env, CHATOS_PLUGIN_DATA_DIR: path.join(root, 'data'), CHATOS_PLUGIN_ARTIFACT_DIR: path.join(root, 'exports'), CHATOS_CONTEXT_SCOPE: 'project', CHATOS_CONTEXT_SCOPE_ID: 'scope-mcp-123', CHATOS_PROJECT_ID: 'project-mcp-123', CHATOS_PROJECT_NAME: '示例项目', CHATOS_WORKSPACE_ID: 'workspace-mcp-456', CHATOS_WORKSPACE: projectRoot }
   });
   try {
     await client.connect(transport);
@@ -38,7 +39,7 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
       title: 'MCP 方案',
       description: '验证 Solution Studio 完整交付链路。',
       projectProfile: { background: '现有项目需要可追踪规划。', overview: '输出需求、设计与执行计划。', projectType: '软件开发', deliveryForm: 'Web 应用', targetPlatforms: ['Web'] },
-      requirements: { status: 'approved', revision: 0, summary: '需求', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], items: ['R-001', 'R-002'].map(id => ({ id, title: `能力 ${id}`, description: '提供能力。', priority: 'must', acceptanceCriteria: ['可以验证'], evidenceIds: [], selectedDesignSectionId: 'D-001' })), updatedAt: now() }
+      requirements: { status: 'approved', revision: 0, summary: '需求', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], modules: [{ id: 'MOD-CORE', title: '核心业务', kind: 'business', description: '核心能力', order: 0 }], items: ['R-001', 'R-002'].map(id => ({ id, moduleId: 'MOD-CORE', kind: 'capability', title: `能力 ${id}`, description: '提供能力。', priority: 'must', acceptanceCriteria: ['可以验证'], evidenceIds: [], selectedDesignSectionId: 'D-001' })), updatedAt: now() }
     });
     assert.equal(requirementResult.workspace.hostProjectId, 'project-mcp-123');
     assert.equal(requirementResult.validation.valid, false);
@@ -48,17 +49,17 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.deepEqual(requirementResult.continuation.suggestedActions.map(action => action.tool),
       ['solution_upsert_design', 'solution_upsert_execution_plan', 'solution_finalize']);
     await call(client, 'solution_upsert_design', {
-      artifactKey: 'ignored-parallel-plan', title: 'MCP 方案', sourceMode: 'existing-project',
-      design: { status: 'approved', revision: 0, basedOnRequirementsRevision: 1, summary: '方案', blocks: [{ id: 'D-000-B-001', type: 'text', title: '技术基线', content: 'TypeScript' }, { id: 'D-000-B-002', type: 'architecture', title: '总体架构', content: '<svg viewBox="0 0 100 100"><text x="5" y="10">Architecture</text></svg>' }], sections: [{ id: 'D-001', title: '核心设计', body: '设计内容', requirementIds: ['R-001', 'R-002'], evidenceIds: [], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '模块与接口。' }, { id: 'D-001-B-002', type: 'flowchart', title: '核心流程', content: '<svg viewBox="0 0 100 100"><text x="5" y="10">Flow</text></svg>' }] }], decisions: [], risks: [], validationStrategy: [], updatedAt: now() }
+      title: 'MCP 方案', sourceMode: 'existing-project',
+      design: { status: 'approved', revision: 0, basedOnRequirementsRevision: 1, summary: '方案', blocks: [{ id: 'D-000-B-001', type: 'text', title: '技术基线', content: 'TypeScript' }, { id: 'D-000-B-002', type: 'architecture', title: '总体架构', content: '<svg viewBox="0 0 100 100"><text x="5" y="10">Architecture</text></svg>' }], sections: [{ id: 'D-001', moduleId: 'MOD-CORE', title: '核心设计', body: '设计内容', requirementIds: ['R-001', 'R-002'], evidenceIds: [], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: '模块与接口。' }, { id: 'D-001-B-002', type: 'flowchart', title: '核心流程', content: '<svg viewBox="0 0 100 100"><text x="5" y="10">Flow</text></svg>' }] }], decisions: [], risks: [], validationStrategy: [], updatedAt: now() }
     });
     const afterDesign = await call(client, 'solution_get_active_context', {});
     assert.equal(afterDesign.workspace.workspaceId, requirementResult.workspace.workspaceId);
 
     const invalidPlan = {
-      status: 'approved', revision: 0, basedOnDesignRevision: 1, objective: '执行', positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now(),
+      status: 'approved', revision: 0, basedOnDesignRevision: 1, objective: '执行', statusEvents: [], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: now(),
       tasks: [
-        { id: 'T-001', title: 'A', description: '', type: 'task', phase: '实现', dependsOn: ['T-002'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [], acceptanceCriteria: ['A 完成'], sourceReferences: [] },
-        { id: 'T-002', title: 'B', description: '', type: 'task', phase: '实现', dependsOn: ['T-001'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [], acceptanceCriteria: ['B 完成'], sourceReferences: [] }
+        { id: 'T-001', moduleId: 'MOD-CORE', title: 'A', description: '', type: 'task', phase: '实现', dependsOn: ['T-002'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [], acceptanceCriteria: ['A 完成'], sourceReferences: [] },
+        { id: 'T-002', moduleId: 'MOD-CORE', title: 'B', description: '', type: 'task', phase: '实现', dependsOn: ['T-001'], status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [], acceptanceCriteria: ['B 完成'], sourceReferences: [] }
       ]
     };
     const rejected = await client.callTool({ name: 'solution_upsert_execution_plan', arguments: { title: 'MCP 方案', executionPlan: invalidPlan } });
@@ -67,7 +68,7 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     const afterReject = await call(client, 'solution_get_workspace', {});
     assert.equal(afterReject.workspace.executionPlan.tasks.length, 0);
 
-    const task = (id, requirementId, dependsOn) => ({ id, title: `任务 ${id}`, description: '仅用于隔离验收。', type: 'task', phase: '实现', dependsOn, status: 'planned', requirementIds: [requirementId], designSectionIds: ['D-001'], deliverables: [`${id} 交付物`], acceptanceCriteria: [`${id} 可验证`], sourceReferences: [] });
+    const task = (id, requirementId, dependsOn) => ({ id, moduleId: 'MOD-CORE', title: `任务 ${id}`, description: '仅用于隔离验收。', type: 'task', phase: '实现', dependsOn, status: 'planned', requirementIds: [requirementId], designSectionIds: ['D-001'], deliverables: [`${id} 交付物`], acceptanceCriteria: [`${id} 可验证`], sourceReferences: [] });
     const validPlan = { ...invalidPlan, tasks: [
       task('T-001', 'R-001', []),
       task('T-002', 'R-001', ['T-001']),
@@ -118,7 +119,8 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
       projectProfile: { background: '现有项目需要可追踪规划。', overview: '本轮仅修订需求与执行计划。', projectType: '软件开发', deliveryForm: 'Web 应用', targetPlatforms: ['Web'] },
       requirements: {
         status: 'draft', revision: 0, summary: '修订后需求', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [],
-        items: ['R-001', 'R-002'].map(id => ({ id, title: `能力 ${id}`, description: '修订后需求。', priority: 'must', acceptanceCriteria: ['可以验证'], evidenceIds: [] })),
+        modules: [{ id: 'MOD-CORE', title: '核心业务', kind: 'business', description: '核心能力', order: 0 }],
+        items: ['R-001', 'R-002'].map(id => ({ id, moduleId: 'MOD-CORE', kind: 'capability', title: `能力 ${id}`, description: '修订后需求。', priority: 'must', acceptanceCriteria: ['可以验证'], evidenceIds: [] })),
         updatedAt: now()
       }
     });
@@ -140,6 +142,53 @@ test('MCP exposes gated planning tools and rejects an invalid dependency graph b
     assert.equal(planOnlyFinalized.structuredContent.scope, 'plan');
     assert.equal(planOnlyFinalized.structuredContent.completionProof.revision, revisedPlan.workspace.revision);
     assert.deepEqual(await readdir(projectRoot), []);
+  } finally {
+    await client.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('executor exposes only task execution tools and enforces prerequisites and transitions', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'solution-studio-executor-'));
+  const dataRoot = path.join(root, 'data');
+  const store = new SolutionWorkspaceStore(dataRoot);
+  const nowValue = now();
+  const created = await store.create('执行器方案', 'existing-project');
+  const workspace = structuredClone(created);
+  workspace.projectProfile = { background: '验证执行状态。', overview: '两项有依赖的任务。', projectType: '运营流程', deliveryForm: '执行清单', targetPlatforms: ['本地'] };
+  workspace.requirements = { status: 'approved', revision: 1, summary: '执行两项任务', goals: [], users: [], inScope: [], outOfScope: [], constraints: [], assumptions: [], openQuestions: [], evidence: [], modules: [{ id: 'MOD-OPS', title: '执行模块', kind: 'business', description: '', order: 0 }], items: [{ id: 'R-001', moduleId: 'MOD-OPS', kind: 'capability', title: '顺序执行', description: '按依赖完成。', priority: 'must', acceptanceCriteria: ['两项任务完成'], evidenceIds: [], selectedDesignSectionId: 'D-001' }], updatedAt: nowValue };
+  workspace.design = { status: 'approved', revision: 1, basedOnRequirementsRevision: 1, summary: '顺序执行设计', blocks: [{ id: 'D-000-B-001', type: 'text', title: '总体设计', content: '按任务前置执行。' }], sections: [{ id: 'D-001', moduleId: 'MOD-OPS', title: '执行顺序', body: '先一后二。', requirementIds: ['R-001'], evidenceIds: [], blocks: [{ id: 'D-001-B-001', type: 'text', title: '详细设计', content: 'T-002 依赖 T-001。' }] }], decisions: [], risks: [], validationStrategy: [], updatedAt: nowValue };
+  const task = (id, dependsOn) => ({ id, moduleId: 'MOD-OPS', title: id, description: '执行任务', type: 'task', phase: '执行', dependsOn, status: 'planned', requirementIds: ['R-001'], designSectionIds: ['D-001'], deliverables: [id], acceptanceCriteria: [`${id} 完成`], sourceReferences: [] });
+  workspace.executionPlan = { status: 'approved', revision: 1, basedOnDesignRevision: 1, objective: '顺序完成', tasks: [task('T-001', []), task('T-002', ['T-001'])], statusEvents: [], positions: {}, viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: nowValue };
+  const saved = await store.replace(workspace, created.revision);
+
+  const client = new Client({ name: 'solution-executor-test', version: '1.0.0' });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(packageRoot, 'bin/chatos-solution-studio'), 'mcp-executor'],
+    env: { ...process.env, CHATOS_PLUGIN_DATA_DIR: dataRoot, CHATOS_PLUGIN_RUNTIME_SESSION_ID: 'executor-session-1' }
+  });
+  try {
+    await client.connect(transport);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    assert.ok(names.includes('solution_claim_task'));
+    assert.ok(names.includes('solution_complete_task'));
+    assert.equal(names.some((name) => name.includes('upsert') || name === 'solution_finalize' || name === 'solution_export'), false);
+
+    const blockedClaim = await client.callTool({ name: 'solution_claim_task', arguments: { workspaceId: saved.workspaceId, taskId: 'T-002', expectedRevision: saved.revision } });
+    assert.equal(blockedClaim.isError, true);
+    assert.match(blockedClaim.structuredContent.error, /前置任务尚未全部完成/);
+
+    const claimed = await call(client, 'solution_claim_task', { workspaceId: saved.workspaceId, taskId: 'T-001', expectedRevision: saved.revision });
+    assert.equal(claimed.task.status, 'in_progress');
+    const completed = await call(client, 'solution_complete_task', { workspaceId: saved.workspaceId, taskId: 'T-001', expectedRevision: claimed.workspace.revision, summary: '验收通过', evidence: ['test:T-001'] });
+    assert.equal(completed.task.status, 'done');
+    assert.deepEqual(completed.readyTaskIds, ['T-002']);
+    const second = await call(client, 'solution_claim_task', { workspaceId: saved.workspaceId, taskId: 'T-002', expectedRevision: completed.workspace.revision });
+    assert.equal(second.task.status, 'in_progress');
+    const persisted = await store.read(saved.workspaceId);
+    assert.equal(persisted.executionPlan.statusEvents.length, 3);
+    assert.equal(persisted.executionPlan.statusEvents[0].runtimeSessionId, 'executor-session-1');
   } finally {
     await client.close();
     await rm(root, { recursive: true, force: true });

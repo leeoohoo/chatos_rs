@@ -252,6 +252,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             content: "hello locally",
             explicitCapabilitySelection: .plugin(
                 key: "document-plugin",
+                componentKey: "document-mcp",
                 displayName: "Document"
             )
         ))

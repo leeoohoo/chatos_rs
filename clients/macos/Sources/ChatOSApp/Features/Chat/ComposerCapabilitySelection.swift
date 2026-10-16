@@ -8,7 +8,7 @@ struct ComposerCapabilityCandidate: Identifiable, Equatable {
     var id: String {
         switch selection.kind {
         case .plugin:
-            "plugin:\(selection.pluginKey ?? "")"
+            ["plugin", selection.pluginKey ?? "", selection.componentKey ?? ""].joined(separator: ":")
         case .requirementSurvey:
             "requirement_survey"
         }

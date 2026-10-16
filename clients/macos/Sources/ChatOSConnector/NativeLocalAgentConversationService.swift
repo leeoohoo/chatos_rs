@@ -90,6 +90,9 @@ public actor NativeLocalAgentConversationService:
             if let pluginKey = selection.pluginKey {
                 explicitSelection["plugin_key"] = .string(pluginKey)
             }
+            if let componentKey = selection.componentKey {
+                explicitSelection["component_key"] = .string(componentKey)
+            }
             messageMetadata["explicit_capability_selection"] = .object(explicitSelection)
         }
         let result = try await client.startTurn(.init(

@@ -51,7 +51,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 ownerUserID: "alice", runID: "frozen-run", conversationID: "contact-1",
                 projectContext: .device, executionRootURL: root,
                 workspaceScopeID: "contact:contact-1", builtinCapabilities: capabilities,
-                pluginIDs: [], productSkillBundle: frozen, selectedExternalMCPIDs: externalIDs, preactivatedSkillRefs: refs
+                pluginSelectionIDs: [], productSkillBundle: frozen,
+                selectedExternalMCPIDs: externalIDs, preactivatedSkillRefs: refs
             )
         }
         let refs: Set<String> = [
@@ -153,7 +154,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             resolvedPath: nil, executionRootURL: root, workspaceScopeID: "contact:contact-1",
             toolAuthorization: .init(
                 requiresExecution: false, enabledBuiltinKinds: ["CodeMaintainerRead"],
-                pluginKeys: [], isLegacyUnrestricted: false
+                pluginSelectionIDs: []
             )
         )
         for _ in 0..<2 {
@@ -485,12 +486,23 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             lane: .executor
         )
         let installed = try await service.installedAgentPlugins(ownerUserID: "alice")
-        XCTAssertEqual(installed.map(\.id), ["plugin-1"])
+        XCTAssertEqual(installed.map(\.id), ["plugin-1:test-mcp"])
         XCTAssertEqual(installed.first?.displayName, "test-agent-plugin")
+        let selectionID = NativeLocalAgentTaskToolAuthorization.pluginSelectionID(
+            pluginKey: "plugin-1", componentKey: "test-mcp"
+        )
+        let releaseSnapshot = NativeLocalAgentTaskPluginReleaseSnapshot(
+            pluginKey: "plugin-1",
+            componentKey: "test-mcp",
+            pluginID: "plugin-1",
+            releaseID: "release-1",
+            version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64)
+        )
         let providers = try await service.makeAgentPluginSkillToolProviders(
             ownerUserID: "alice",
             runContext: runContext,
-            pluginIDs: ["plugin-1"],
+            plugins: installed,
             projectContext: .init(
                 projectID: "project-1",
                 projectName: "Test",
@@ -549,7 +561,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 builtinCapabilities: [
                     .projectRead, .projectWrite, .terminal,
                 ],
-                plugins: [.init(pluginID: "plugin-1", displayName: "test-agent-plugin")]
+                plugins: [.init(pluginID: "plugin-1", componentKey: "test-mcp", displayName: "test-agent-plugin")]
             )
         )
         let brokerDefinitions = try await broker.definitions()
@@ -616,7 +628,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         ).jsonObject
         let pluginTools = try XCTUnwrap(pluginDescription?["tools"]?.jsonArray)
         let echoTool = try XCTUnwrap(pluginTools.first?.jsonObject)
-        XCTAssertEqual(pluginDescription?["provider_id"], .string("plugin:plugin-1"))
+        XCTAssertEqual(pluginDescription?["provider_id"], .string("plugin:plugin-1:test-mcp"))
         XCTAssertEqual(pluginDescription?["binding_schema_version"], .number(1))
         let gate = try XCTUnwrap(echoTool["skill_gate"]?.jsonObject)
         XCTAssertEqual(gate["all_of"], .array([.string("plugin-skill:plugin_1:test-agent-plugin")]))
@@ -826,10 +838,11 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
                 ),
                 executionRootURL: project,
                 workspaceScopeID: "workspace-1",
-                pluginIDs: ["plugin-1"],
+                pluginSelectionIDs: [selectionID],
                 pluginReleaseSnapshots: [
-                    "plugin-1": .init(
+                    selectionID: .init(
                         pluginKey: "plugin-1",
+                        componentKey: "test-mcp",
                         pluginID: "plugin-1",
                         releaseID: "stale-release",
                         version: "1.0.0",
@@ -856,15 +869,9 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             executionRootURL: project,
             workspaceScopeID: "workspace-1",
             builtinCapabilities: [.projectRead],
-            pluginIDs: ["plugin-1"],
+            pluginSelectionIDs: [selectionID],
             pluginReleaseSnapshots: [
-                "plugin-1": .init(
-                    pluginKey: "plugin-1",
-                    pluginID: "plugin-1",
-                    releaseID: "release-1",
-                    version: "1.0.0",
-                    artifactSHA256: String(repeating: "a", count: 64)
-                ),
+                selectionID: releaseSnapshot,
             ]
         )
         let taskSearch = try await taskBroker.execute(.init(
@@ -962,7 +969,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             projectContext: .device,
             executionRootURL: contactRoot,
             workspaceScopeID: "contact:contact-conversation-1",
-            pluginIDs: ["plugin-1"]
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [selectionID: releaseSnapshot]
         )
         let contactSearch = try await contactBroker.execute(.init(
             id: "contact-task-search-1",
@@ -991,8 +999,8 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             toolAuthorization: .init(
                 requiresExecution: true,
                 enabledBuiltinKinds: [],
-                pluginKeys: ["plugin-1"],
-                isLegacyUnrestricted: true
+                pluginSelectionIDs: [selectionID],
+                pluginReleaseSnapshots: [selectionID: releaseSnapshot]
             )
         )
         let platformSearch = try await platformExecutor.execute(
@@ -1072,8 +1080,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
             toolAuthorization: .init(
                 requiresExecution: true,
                 enabledBuiltinKinds: [],
-                pluginKeys: ["plugin-1"],
-                isLegacyUnrestricted: false
+                pluginSelectionIDs: []
             )
         )
         XCTAssertThrowsError(try contactContext.requireProject()) { error in

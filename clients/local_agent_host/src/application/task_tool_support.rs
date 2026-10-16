@@ -628,8 +628,9 @@ pub(super) fn validate_plugin_hints(hints: &[TaskPluginHint]) -> Result<(), Stri
     let mut seen = HashSet::new();
     for hint in hints {
         let key = hint.plugin_key.trim();
-        if key.is_empty() || !seen.insert(key) {
-            return Err("plugin_hints must contain unique non-empty plugin_key values".to_string());
+        let component = hint.component_key.trim();
+        if key.is_empty() || component.is_empty() || !seen.insert((key, component)) {
+            return Err("plugin_hints must contain unique non-empty plugin_key/component_key pairs".to_string());
         }
         if hint.reason.chars().count() > 1_000 {
             return Err("plugin hint reason cannot exceed 1000 characters".to_string());

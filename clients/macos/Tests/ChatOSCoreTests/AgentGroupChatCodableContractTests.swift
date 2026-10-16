@@ -204,7 +204,7 @@ final class AgentGroupChatCodableContractTests: XCTestCase {
             executionPlan: .init(
                 requiresExecution: true,
                 builtinCapabilities: [.projectRead, .projectWrite],
-                plugins: [.init(pluginID: "plugin-1", displayName: "Plugin", reason: "Verify")],
+                plugins: [.init(pluginID: "plugin-1", componentKey: "main-mcp", displayName: "Plugin", reason: "Verify")],
                 selectionRevision: "revision-1",
                 selectedAtUnixMs: 90
             ),

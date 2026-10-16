@@ -102,9 +102,7 @@ actor NativeLocalAgentPluginToolExecutor {
             executionRootURL: context.executionRootURL,
             workspaceScopeID: context.workspaceScopeID,
             builtinCapabilities: context.toolAuthorization.brokerBuiltinCapabilities,
-            pluginIDs: context.toolAuthorization.isLegacyUnrestricted
-                ? nil
-                : context.toolAuthorization.pluginKeys.sorted(),
+            pluginSelectionIDs: context.toolAuthorization.pluginSelectionIDs.sorted(),
             pluginReleaseSnapshots: context.toolAuthorization.pluginReleaseSnapshots,
             productSkillBundle: try await skillActivationClient?.skillBundle(
                 ownerUserID: ownerUserID,

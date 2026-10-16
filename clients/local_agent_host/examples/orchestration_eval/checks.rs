@@ -194,6 +194,9 @@ pub fn capabilities_valid(tasks: &[LocalTaskRecord], allowed: &Capabilities) -> 
                 hint["plugin_key"]
                     .as_str()
                     .is_some_and(|s| allowed.plugins.iter().any(|v| v == s))
+                    && hint["component_key"]
+                        .as_str()
+                        .is_some_and(|s| !s.trim().is_empty())
             })
         })
     })

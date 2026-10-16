@@ -28,6 +28,6 @@ Express ordering through `dependsOn`, not numbering, phases, layout coordinates,
 
 ## Planning versus execution
 
-`solution_update_task` records planning status; it neither starts a local Task nor proves implementation. Do not mark a task done because its plan was written or a model response ended. When implementation is separately authorized, hand off the exact saved workspace revision, task ID, requirement/design references, expected outputs, acceptance criteria, prerequisite results, and write boundaries to the existing Task orchestration capability. Discover and activate that capability using the current Host's provided catalog and Skill protocol; do not invent tool names, IDs, or dispatch parameters.
+The authoring component cannot update task status. Do not mark a task done because its plan was written or a model response ended. When implementation is separately authorized, select the “任务执行器” component and hand off the exact saved workspace revision, task ID, requirement/design references, expected outputs, acceptance criteria, prerequisite results, and write boundaries. Claim the task there before making implementation changes.
 
 Do not dispatch dependent work before prerequisite evidence is available. If a local execution mapping is not supported, say that execution status is not linked, rather than presenting planned statuses as live runner events. Preserve unrelated planning content and existing task IDs when revising the handoff.
