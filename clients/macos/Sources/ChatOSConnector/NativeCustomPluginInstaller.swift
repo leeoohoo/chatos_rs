@@ -126,29 +126,146 @@ extension NativePluginInstaller {
         var isDirectory: ObjCBool = false
         guard sourceURL.path.hasPrefix("/"),
               FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
+              isDirectory.boolValue,
+              !rootURL.standardizedFileURL.path.hasPrefix(sourceURL.path + "/") else {
             throw NativeConnectorError.pluginInstallation("请选择一个存在的 Plugin 文件夹")
         }
         let stagingRoot = try makeCustomStagingRoot()
         do {
             let packageRoot = stagingRoot.appendingPathComponent("package", isDirectory: true)
             try FileManager.default.copyItem(at: sourceURL, to: packageRoot)
-            let manifest = try NativePluginManifestLoader.loadManifest(
-                from: packageRoot.appendingPathComponent("chatos.plugin.json")
+            let imported = try NativeAgentPluginCompatibilityImporter.normalizePackage(
+                at: packageRoot
             )
+            let manifest = imported.manifest
             guard manifest.schemaVersion == 3,
                   !manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !manifest.version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !manifest.mcpServers.isEmpty,
+                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty,
                   manifest.mcpServers.values.allSatisfy({ $0.type == "stdio" }) else {
-                throw NativeConnectorError.pluginInstallation("本地 Plugin manifest 必须是 schema v3，并至少声明一个 stdio MCP")
+                throw NativeConnectorError.pluginInstallation(
+                    "导入目录必须至少包含一个有效 Skill 或 stdio MCP"
+                )
             }
             return try preparedCustomPlugin(
                 packageRoot: packageRoot,
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "folder:\(sourceURL.path):\(manifest.name)",
                 source: .localPlugin,
-                sourceSummary: sourceURL.path
+                sourceSummary: "\(imported.formatName) · \(sourceURL.path)"
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: stagingRoot)
+            throw error
+        }
+    }
+
+    func preparePluginSource(
+        _ draft: LocalConnectorPluginSourceDraft
+    ) async throws -> NativePreparedCustomPlugin {
+        let input = try NativePluginSourceInput(draft: draft)
+        if input.kind == .localFolder, input.subdirectory == nil {
+            return try prepareLocalPlugin(atPath: input.location)
+        }
+        let stagingRoot = try makeCustomStagingRoot()
+        do {
+            let acquiredRoot = stagingRoot.appendingPathComponent("acquired", isDirectory: true)
+            let source: LocalConnectorPluginSource
+            let summary: String
+            let identity: String
+            switch input.kind {
+            case .localFolder:
+                let local = URL(fileURLWithPath: input.location, isDirectory: true)
+                    .standardizedFileURL.resolvingSymlinksInPath()
+                try Self.requireDirectory(local, message: "请选择一个存在的 Plugin 文件夹")
+                guard !rootURL.standardizedFileURL.path.hasPrefix(local.path + "/") else {
+                    throw NativeConnectorError.pluginInstallation(
+                        "Plugin 来源目录不能包含 ChatOS 的插件安装目录"
+                    )
+                }
+                try FileManager.default.copyItem(at: local, to: acquiredRoot)
+                source = .localPlugin
+                summary = "Local folder · \(input.location)"
+                identity = "folder:\(local.path)"
+            case .gitRepository:
+                try FileManager.default.createDirectory(at: acquiredRoot, withIntermediateDirectories: true)
+                let reference = input.gitReference ?? "HEAD"
+                try await Self.cloneGitRepository(
+                    url: input.location,
+                    reference: reference,
+                    into: acquiredRoot
+                )
+                try? FileManager.default.removeItem(
+                    at: acquiredRoot.appendingPathComponent(".git", isDirectory: true)
+                )
+                source = .gitPlugin
+                summary = "Git · \(input.location) · \(reference)"
+                identity = "git:\(input.location):\(reference)"
+            case .npmPackage:
+                let version = input.exactVersion!
+                let installRoot = stagingRoot.appendingPathComponent("npm", isDirectory: true)
+                try FileManager.default.createDirectory(at: installRoot, withIntermediateDirectories: true)
+                let wrapper: [String: Any] = [
+                    "name": "chatos-agent-plugin-source",
+                    "private": true,
+                    "version": "1.0.0",
+                    "dependencies": [input.location: version],
+                ]
+                try JSONSerialization.data(withJSONObject: wrapper, options: [.prettyPrinted, .sortedKeys])
+                    .write(to: installRoot.appendingPathComponent("package.json"), options: .atomic)
+                try await Self.runInstallerProcess(
+                    executableURL: try Self.resolveExecutable(named: "npm"),
+                    arguments: [
+                        "install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund",
+                        "--save-exact", "--package-lock=true",
+                    ],
+                    currentDirectoryURL: installRoot
+                )
+                let dependencyRoot = installRoot
+                    .appendingPathComponent("node_modules", isDirectory: true)
+                    .appendingPathComponent(input.location, isDirectory: true)
+                    .standardizedFileURL
+                let metadata = try Self.readJSONObject(
+                    dependencyRoot.appendingPathComponent("package.json")
+                )
+                guard metadata["name"] as? String == input.location,
+                      metadata["version"] as? String == version else {
+                    throw NativeConnectorError.pluginInstallation("npm Plugin 安装结果与固定版本不一致")
+                }
+                try FileManager.default.copyItem(at: dependencyRoot, to: acquiredRoot)
+                let dependencies = installRoot.appendingPathComponent("node_modules", isDirectory: true)
+                try FileManager.default.copyItem(
+                    at: dependencies,
+                    to: acquiredRoot.appendingPathComponent("node_modules", isDirectory: true)
+                )
+                source = .npmPlugin
+                summary = "npm Agent Plugin · \(input.location)@\(version)"
+                identity = "npm-plugin:\(input.location):\(version)"
+            }
+
+            try removeSymbolicLinks(in: acquiredRoot)
+            let selectedRoot = try Self.selectedPluginRoot(
+                acquiredRoot: acquiredRoot,
+                subdirectory: input.subdirectory
+            )
+            let packageRoot = stagingRoot.appendingPathComponent("package", isDirectory: true)
+            try FileManager.default.copyItem(at: selectedRoot, to: packageRoot)
+            let imported = try NativeAgentPluginCompatibilityImporter.normalizePackage(at: packageRoot)
+            let manifest = imported.manifest
+            guard manifest.schemaVersion == 3,
+                  !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty,
+                  manifest.mcpServers.values.allSatisfy({ $0.type == "stdio" }) else {
+                throw NativeConnectorError.pluginInstallation(
+                    "该来源没有可安装的 Skill 或 stdio MCP"
+                )
+            }
+            let suffix = input.subdirectory.map { " · \($0)" } ?? ""
+            return try preparedCustomPlugin(
+                packageRoot: packageRoot,
+                temporaryRootURL: stagingRoot,
+                pluginIDSeed: "\(identity):\(input.subdirectory ?? ""):\(manifest.name)",
+                source: source,
+                sourceSummary: "\(imported.formatName) · \(summary)\(suffix)"
             )
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
@@ -246,6 +363,60 @@ extension NativePluginInstaller {
             }
         }
         for link in links { try FileManager.default.removeItem(at: link) }
+    }
+
+    private static func requireDirectory(_ url: URL, message: String) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw NativeConnectorError.pluginInstallation(message)
+        }
+    }
+
+    private static func selectedPluginRoot(
+        acquiredRoot: URL,
+        subdirectory: String?
+    ) throws -> URL {
+        guard let subdirectory else { return acquiredRoot }
+        let selected = acquiredRoot.appendingPathComponent(subdirectory, isDirectory: true)
+            .standardizedFileURL
+        guard selected.path.hasPrefix(acquiredRoot.standardizedFileURL.path + "/") else {
+            throw NativeConnectorError.pluginInstallation("Plugin 子目录超出来源根目录")
+        }
+        try requireDirectory(selected, message: "Plugin 子目录不存在：\(subdirectory)")
+        let values = try selected.resourceValues(forKeys: [.isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else {
+            throw NativeConnectorError.pluginInstallation("Plugin 子目录不能是符号链接")
+        }
+        return selected
+    }
+
+    private static func cloneGitRepository(
+        url: String,
+        reference: String,
+        into destination: URL
+    ) async throws {
+        try await Task.detached(priority: .utility) {
+            _ = try NativeGitProcess.run(arguments: ["init", "--quiet"], directory: destination)
+            _ = try NativeGitProcess.run(
+                arguments: ["remote", "add", "origin", url],
+                directory: destination
+            )
+            _ = try NativeGitProcess.run(
+                arguments: [
+                    "-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never",
+                    "fetch", "--quiet", "--depth", "1", "--no-tags", "origin", reference,
+                ],
+                directory: destination,
+                timeout: 5 * 60
+            )
+            _ = try NativeGitProcess.run(
+                arguments: [
+                    "-c", "core.hooksPath=/dev/null", "checkout", "--quiet", "--detach", "FETCH_HEAD",
+                ],
+                directory: destination
+            )
+        }.value
     }
 
     private static func binaryPath(
@@ -471,6 +642,81 @@ private struct NativeCustomPluginInput {
             throw NativeConnectorError.pluginInstallation(
                 "自定义 MCP 参数无效；npm 必须使用精确版本，命令参数必须分项填写，当前版本不接受明文环境变量"
             )
+        }
+    }
+}
+
+private struct NativePluginSourceInput {
+    var kind: LocalConnectorPluginSourceDraft.Kind
+    var location: String
+    var exactVersion: String?
+    var gitReference: String?
+    var subdirectory: String?
+
+    init(draft: LocalConnectorPluginSourceDraft) throws {
+        kind = draft.kind
+        location = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
+        exactVersion = draft.exactVersion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        gitReference = draft.gitReference?.trimmingCharacters(in: .whitespacesAndNewlines)
+        subdirectory = draft.subdirectory?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if exactVersion?.isEmpty == true { exactVersion = nil }
+        if gitReference?.isEmpty == true { gitReference = nil }
+        if subdirectory?.isEmpty == true { subdirectory = nil }
+
+        guard !location.isEmpty, location.count <= 4_096, !location.contains("\0") else {
+            throw NativeConnectorError.pluginInstallation("Plugin 来源无效")
+        }
+        if let subdirectory {
+            let parts = subdirectory.split(separator: "/", omittingEmptySubsequences: false)
+            guard !subdirectory.hasPrefix("/"), subdirectory.count <= 1_024,
+                  parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+                throw NativeConnectorError.pluginInstallation("Plugin 子目录必须是安全的相对路径")
+            }
+        }
+
+        switch kind {
+        case .localFolder:
+            guard location.hasPrefix("/"), exactVersion == nil, gitReference == nil else {
+                throw NativeConnectorError.pluginInstallation("本地 Plugin 来源必须是绝对目录")
+            }
+        case .gitRepository:
+            guard exactVersion == nil,
+                  let url = URL(string: location),
+                  url.scheme?.lowercased() == "https",
+                  url.host != nil,
+                  url.user == nil,
+                  url.password == nil,
+                  url.query == nil,
+                  url.fragment == nil,
+                  !location.contains("\r"), !location.contains("\n") else {
+                throw NativeConnectorError.pluginInstallation(
+                    "Git Plugin 目前只接受不含凭据的 HTTPS 仓库 URL"
+                )
+            }
+            if let gitReference {
+                guard gitReference.count <= 256,
+                      !gitReference.hasPrefix("-"),
+                      !gitReference.contains(".."),
+                      !gitReference.contains("@{"),
+                      gitReference.range(of: "^[A-Za-z0-9][A-Za-z0-9._/-]*$", options: .regularExpression) != nil else {
+                    throw NativeConnectorError.pluginInstallation("Git ref 无效")
+                }
+            }
+        case .npmPackage:
+            guard gitReference == nil,
+                  let exactVersion,
+                  location.range(
+                    of: "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$",
+                    options: .regularExpression
+                  ) != nil,
+                  exactVersion.range(
+                    of: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+                    options: .regularExpression
+                  ) != nil else {
+                throw NativeConnectorError.pluginInstallation(
+                    "npm Agent Plugin 必须使用合法包名和精确版本"
+                )
+            }
         }
     }
 }

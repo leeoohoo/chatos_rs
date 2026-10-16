@@ -73,6 +73,36 @@ public enum LocalConnectorPluginSource: String, Codable, Sendable, Equatable {
     case marketplace
     case customMCP = "custom_mcp"
     case localPlugin = "local_plugin"
+    case gitPlugin = "git_plugin"
+    case npmPlugin = "npm_plugin"
+}
+
+public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable, Equatable {
+        case localFolder = "local_folder"
+        case gitRepository = "git_repository"
+        case npmPackage = "npm_package"
+    }
+
+    public var kind: Kind
+    public var location: String
+    public var exactVersion: String?
+    public var gitReference: String?
+    public var subdirectory: String?
+
+    public init(
+        kind: Kind,
+        location: String,
+        exactVersion: String? = nil,
+        gitReference: String? = nil,
+        subdirectory: String? = nil
+    ) {
+        self.kind = kind
+        self.location = location
+        self.exactVersion = exactVersion
+        self.gitReference = gitReference
+        self.subdirectory = subdirectory
+    }
 }
 
 public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
@@ -107,15 +137,27 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
 }
 
 public struct LocalConnectorPluginInspectionComponent: Codable, Identifiable, Sendable, Equatable {
+    public enum Kind: String, Codable, Sendable, Equatable {
+        case mcp
+        case skill
+    }
+
     public var componentKey: String
     public var displayName: String
+    public var kind: Kind
     public var toolNames: [String]
 
     public var id: String { componentKey }
 
-    public init(componentKey: String, displayName: String, toolNames: [String]) {
+    public init(
+        componentKey: String,
+        displayName: String,
+        kind: Kind,
+        toolNames: [String]
+    ) {
         self.componentKey = componentKey
         self.displayName = displayName
+        self.kind = kind
         self.toolNames = toolNames
     }
 }

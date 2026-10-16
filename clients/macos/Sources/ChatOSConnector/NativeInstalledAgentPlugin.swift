@@ -1,6 +1,8 @@
 import Foundation
 
 public struct NativeInstalledAgentPlugin: Sendable, Equatable, Identifiable {
+    public static let skillsOnlyComponentKey = "plugin-skills"
+
     public let pluginID: String
     public let pluginKey: String
     public let componentKey: String

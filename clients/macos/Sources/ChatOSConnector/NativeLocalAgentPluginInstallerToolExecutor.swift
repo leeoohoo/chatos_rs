@@ -53,16 +53,23 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 "package_name": .string(draft.packageName),
                 "package_version": .string(draft.packageVersion),
             ])
-        case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectLocalToolName:
-            let path = try Self.string(arguments, "path")
-            return Self.inspectionResult(try await connector.inspectLocalPlugin(atPath: path))
-        case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallLocalToolName:
-            let path = try Self.string(arguments, "path")
-            try await connector.installLocalPlugin(
-                atPath: path,
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectSourceToolName:
+            let source = try Self.pluginSource(arguments)
+            return Self.inspectionResult(
+                try await connector.inspectPluginSource(source),
+                source: source
+            )
+        case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName:
+            let source = try Self.pluginSource(arguments)
+            try await connector.installPluginSource(
+                source,
                 expectedFingerprint: Self.string(arguments, "expected_fingerprint")
             )
-            return .object(["status": .string("installed"), "path": .string(path)])
+            return .object([
+                "status": .string("installed"),
+                "source_kind": .string(source.kind.rawValue),
+                "location": .string(source.location),
+            ])
         default:
             throw NativeLocalAgentPluginInstallerToolError.unsupportedTool
         }
@@ -195,9 +202,27 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         )
     }
 
+    private static func pluginSource(
+        _ arguments: [String: LocalAgentJSONValue]
+    ) throws -> LocalConnectorPluginSourceDraft {
+        guard let kind = LocalConnectorPluginSourceDraft.Kind(
+            rawValue: try string(arguments, "source_kind")
+        ) else {
+            throw NativeLocalAgentPluginInstallerToolError.invalidField("source_kind")
+        }
+        return .init(
+            kind: kind,
+            location: try string(arguments, "location"),
+            exactVersion: optionalString(arguments, "exact_version"),
+            gitReference: optionalString(arguments, "git_reference"),
+            subdirectory: optionalString(arguments, "subdirectory")
+        )
+    }
+
     private static func inspectionResult(
         _ inspection: LocalConnectorPluginInspection,
-        draft: LocalConnectorCustomMCPDraft? = nil
+        draft: LocalConnectorCustomMCPDraft? = nil,
+        source: LocalConnectorPluginSourceDraft? = nil
     ) -> LocalAgentJSONValue {
         var value: [String: LocalAgentJSONValue] = [
             "status": .string("inspection_passed"),
@@ -209,6 +234,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 .object([
                     "component_key": .string(component.componentKey),
                     "display_name": .string(component.displayName),
+                    "kind": .string(component.kind.rawValue),
                     "tool_names": .array(component.toolNames.map(LocalAgentJSONValue.string)),
                 ])
             }),
@@ -223,6 +249,16 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 "binary_name": .string(draft.binaryName),
                 "arguments": .array(draft.arguments.map(LocalAgentJSONValue.string)),
             ])
+        }
+        if let source {
+            var resolved: [String: LocalAgentJSONValue] = [
+                "source_kind": .string(source.kind.rawValue),
+                "location": .string(source.location),
+            ]
+            if let value = source.exactVersion { resolved["exact_version"] = .string(value) }
+            if let value = source.gitReference { resolved["git_reference"] = .string(value) }
+            if let value = source.subdirectory { resolved["subdirectory"] = .string(value) }
+            value["resolved_source"] = .object(resolved)
         }
         return .object(value)
     }

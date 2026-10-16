@@ -56,6 +56,34 @@ extension NativeLocalConnectorService {
         try await persistCustomPlugin(record)
     }
 
+    public func inspectPluginSource(
+        _ source: LocalConnectorPluginSourceDraft
+    ) async throws -> LocalConnectorPluginInspection {
+        let prepared = try await pluginInstaller.preparePluginSource(source)
+        defer { pluginInstaller.discardCustomPlugin(prepared) }
+        return try await inspectPreparedCustomPlugin(prepared)
+    }
+
+    public func installPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        expectedFingerprint: String
+    ) async throws {
+        let prepared = try await pluginInstaller.preparePluginSource(source)
+        var shouldDiscard = true
+        defer {
+            if shouldDiscard { pluginInstaller.discardCustomPlugin(prepared) }
+        }
+        let inspection = try await inspectPreparedCustomPlugin(prepared)
+        guard inspection.fingerprint == expectedFingerprint else {
+            throw NativeConnectorError.pluginInstallation(
+                "Plugin 来源或组件清单在确认后发生变化，请重新预检并确认"
+            )
+        }
+        let record = try pluginInstaller.commitCustomPlugin(prepared)
+        shouldDiscard = false
+        try await persistCustomPlugin(record)
+    }
+
     private func inspectPreparedCustomPlugin(
         _ prepared: NativePreparedCustomPlugin
     ) async throws -> LocalConnectorPluginInspection {
@@ -91,6 +119,7 @@ extension NativeLocalConnectorService {
                 components.append(.init(
                     componentKey: componentKey,
                     displayName: launch.displayName,
+                    kind: .mcp,
                     toolNames: toolNames
                 ))
                 fingerprintParts.append(componentKey)
@@ -100,8 +129,24 @@ extension NativeLocalConnectorService {
                 throw error
             }
         }
+        let skillSnapshot = try PluginSkillSnapshot.load(
+            installationRoot: URL(
+                fileURLWithPath: record.installationPath,
+                isDirectory: true
+            ),
+            relativeSkillDirectories: manifest.skills.map(\.path)
+        )
+        for skillName in skillSnapshot.skillNames.sorted() {
+            components.append(.init(
+                componentKey: skillName,
+                displayName: skillName,
+                kind: .skill,
+                toolNames: []
+            ))
+            fingerprintParts.append("skill:\(skillName)")
+        }
         guard !components.isEmpty else {
-            throw NativeConnectorError.pluginInstallation("Plugin 没有可安装的 MCP 组件")
+            throw NativeConnectorError.pluginInstallation("Plugin 没有可安装的 Skill 或 MCP 组件")
         }
         let fingerprint = NativePluginInstaller.sha256Hex(
             fingerprintParts.joined(separator: "\n")
@@ -128,7 +173,10 @@ extension NativeLocalConnectorService {
 
     func customInstalledPlugins(forceRefresh: Bool) async -> [LocalConnectorPlugin] {
         let records = (state.installedPluginRecords ?? [:]).values
-            .filter { $0.source == .customMCP || $0.source == .localPlugin }
+            .filter {
+                $0.source == .customMCP || $0.source == .localPlugin
+                    || $0.source == .gitPlugin || $0.source == .npmPlugin
+            }
             .sorted { $0.pluginID < $1.pluginID }
         var result: [LocalConnectorPlugin] = []
         for record in records {
@@ -144,13 +192,20 @@ extension NativeLocalConnectorService {
             } else {
                 permissions = []
             }
+            let category: String
+            switch record.source {
+            case .some(.customMCP): category = "Custom MCP"
+            case .some(.gitPlugin): category = "Git Plugin"
+            case .some(.npmPlugin): category = "npm Plugin"
+            default: category = "Local Plugin"
+            }
             result.append(.init(
                 pluginID: record.pluginID,
                 packageName: manifest?.name,
                 pluginKey: record.pluginKey,
                 displayName: manifest?.interface?.displayName ?? manifest?.name ?? record.pluginID,
                 description: manifest?.description ?? record.sourceSummary ?? "",
-                category: record.source == .customMCP ? "Custom MCP" : "Local Plugin",
+                category: category,
                 publisher: "Local",
                 latestVersion: record.version,
                 installedVersion: record.version,

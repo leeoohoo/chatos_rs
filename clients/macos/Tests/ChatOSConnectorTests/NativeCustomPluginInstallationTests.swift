@@ -122,6 +122,232 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.isEmpty)
     }
 
+    @Test("portable Agent Plugin skill-only packages import and become selectable")
+    func portableSkillOnlyPluginImports() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PortableAgentPlugin-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let skill = source.appendingPathComponent("skills/hello", isDirectory: true)
+        try FileManager.default.createDirectory(at: skill, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("""
+        {
+          "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+          "name": "portable-hello",
+          "version": "1.2.3",
+          "description": "Portable skill fixture",
+          "extensions": {"com.openai": {"interface": {"displayName": "Portable Hello"}}}
+        }
+        """.utf8).write(to: source.appendingPathComponent("plugin.json"))
+        try Data("""
+        ---
+        name: hello
+        description: Greet the user using the portable plugin workflow.
+        ---
+        Greet the user warmly.
+        """.utf8).write(to: skill.appendingPathComponent("SKILL.md"))
+
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-portable", username: "portable", displayName: "Portable", role: "user")
+        state.deviceID = "device-portable"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        let inspection = try await service.inspectLocalPlugin(atPath: source.path)
+        #expect(inspection.displayName == "Portable Hello")
+        #expect(inspection.version == "1.2.3")
+        #expect(inspection.sourceSummary.contains("Agent Plugin"))
+        #expect(inspection.components == [.init(
+            componentKey: "hello",
+            displayName: "hello",
+            kind: .skill,
+            toolNames: []
+        )])
+        try await service.installLocalPlugin(
+            atPath: source.path,
+            expectedFingerprint: inspection.fingerprint
+        )
+        let installed = try await service.installedAgentPlugins(ownerUserID: "owner-portable")
+        #expect(installed.count == 1)
+        #expect(installed.first?.componentKey == NativeInstalledAgentPlugin.skillsOnlyComponentKey)
+        #expect(installed.first?.displayName == "Portable Hello")
+    }
+
+    @Test("Codex compatibility plugins import their .mcp.json stdio servers")
+    func codexPluginMCPImports() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CodexPluginImport-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let manifestFolder = source.appendingPathComponent(".codex-plugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: manifestFolder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("""
+        {"name":"codex-fixture","version":"2.0.0","description":"Codex fixture","displayName":"Codex Fixture"}
+        """.utf8).write(to: manifestFolder.appendingPathComponent("plugin.json"))
+        try Data("""
+        {"mcpServers":{"fixture":{"command":"node","args":["${PLUGIN_ROOT}/server.js"]}}}
+        """.utf8).write(to: source.appendingPathComponent(".mcp.json"))
+        try Data("""
+        const readline = require("node:readline");
+        const lines = readline.createInterface({ input: process.stdin });
+        lines.on("line", (line) => {
+          const request = JSON.parse(line);
+          if (request.id === undefined) return;
+          let result = {};
+          if (request.method === "initialize") {
+            result = { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "codex-fixture", version: "2" } };
+          } else if (request.method === "tools/list") {
+            result = { tools: [{ name: "ping", description: "Ping", inputSchema: { type: "object", properties: {} } }] };
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+        });
+        """.utf8).write(to: source.appendingPathComponent("server.js"))
+
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-codex", username: "codex", displayName: "Codex", role: "user")
+        state.deviceID = "device-codex"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        let inspection = try await service.inspectLocalPlugin(atPath: source.path)
+        #expect(inspection.sourceSummary.contains("Codex Plugin"))
+        #expect(inspection.components.first?.kind == .mcp)
+        #expect(inspection.components.first?.toolNames == ["ping"])
+    }
+
+    @Test("a standalone root Skill inside a monorepo subdirectory imports through the unified source flow")
+    func standaloneSkillSubdirectoryImports() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StandaloneSkillSource-\(UUID().uuidString)", isDirectory: true)
+        let plugin = root.appendingPathComponent("repository/packages/reviewer", isDirectory: true)
+        try FileManager.default.createDirectory(at: plugin, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("""
+        ---
+        name: reviewer
+        description: Review a change carefully.
+        ---
+        Review the requested change and report concrete findings.
+        """.utf8).write(to: plugin.appendingPathComponent("SKILL.md"))
+
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-skill", username: "skill", displayName: "Skill", role: "user")
+        state.deviceID = "device-skill"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        let source = LocalConnectorPluginSourceDraft(
+            kind: .localFolder,
+            location: root.appendingPathComponent("repository").path,
+            subdirectory: "packages/reviewer"
+        )
+
+        let inspection = try await service.inspectPluginSource(source)
+        #expect(inspection.components == [.init(
+            componentKey: "reviewer",
+            displayName: "reviewer",
+            kind: .skill,
+            toolNames: []
+        )])
+        try await service.installPluginSource(
+            source,
+            expectedFingerprint: inspection.fingerprint
+        )
+        let installed = try await service.installedAgentPlugins(ownerUserID: "owner-skill")
+        #expect(installed.first?.componentKey == NativeInstalledAgentPlugin.skillsOnlyComponentKey)
+    }
+
+    @Test("VS Code style servers accept a structured command array")
+    func vscodeMCPConfigurationImports() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VSCodeMCPImport-\(UUID().uuidString)", isDirectory: true)
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let config = source.appendingPathComponent(".vscode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("""
+        {"servers":{"fixture":{"type":"stdio","command":["node","${PLUGIN_ROOT}/server.js"]}}}
+        """.utf8).write(to: config.appendingPathComponent("mcp.json"))
+        try Data("""
+        const readline = require("node:readline");
+        const lines = readline.createInterface({ input: process.stdin });
+        lines.on("line", (line) => {
+          const request = JSON.parse(line);
+          if (request.id === undefined) return;
+          let result = {};
+          if (request.method === "initialize") {
+            result = { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "fixture", version: "1" } };
+          } else if (request.method === "tools/list") {
+            result = { tools: [{ name: "ping", inputSchema: { type: "object" } }] };
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+        });
+        """.utf8).write(to: source.appendingPathComponent("server.js"))
+
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(id: "owner-vscode", username: "vscode", displayName: "VS Code", role: "user")
+        state.deviceID = "device-vscode"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+
+        let inspection = try await service.inspectLocalPlugin(atPath: source.path)
+        #expect(inspection.sourceSummary.contains("Standalone MCP"))
+        #expect(inspection.components.first?.toolNames == ["ping"])
+    }
+
+    @Test("Git plugin sources reject insecure or credential-bearing URLs before acquisition")
+    func gitPluginSourceValidation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GitPluginValidation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: root.appendingPathComponent("state.json")
+            ),
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        await #expect(throws: NativeConnectorError.self) {
+            _ = try await service.inspectPluginSource(.init(
+                kind: .gitRepository,
+                location: "http://example.test/plugin.git"
+            ))
+        }
+        await #expect(throws: NativeConnectorError.self) {
+            _ = try await service.inspectPluginSource(.init(
+                kind: .gitRepository,
+                location: "https://token@example.test/plugin.git"
+            ))
+        }
+    }
+
     @Test(
         "REA 6.5.0 completes inspect, fingerprinted install, persistence and Main Chat component discovery",
         .enabled(if: ProcessInfo.processInfo.environment["CHATOS_REA_INTEGRATION"] == "1")

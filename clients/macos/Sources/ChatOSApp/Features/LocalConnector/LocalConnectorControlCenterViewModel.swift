@@ -600,6 +600,15 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
+    func inspectPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        completion: @escaping @MainActor (Result<LocalConnectorPluginInspection, Error>) -> Void
+    ) {
+        runCustomPluginInspection(completion: completion) {
+            try await self.service.inspectPluginSource(source)
+        }
+    }
+
     func installCustomMCP(
         _ draft: LocalConnectorCustomMCPDraft,
         expectedFingerprint: String,
@@ -621,6 +630,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         runCustomPluginInstall(completion: completion) {
             try await self.service.installLocalPlugin(
                 atPath: path,
+                expectedFingerprint: expectedFingerprint
+            )
+        }
+    }
+
+    func installPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        expectedFingerprint: String,
+        completion: @escaping @MainActor (Result<Void, Error>) -> Void
+    ) {
+        runCustomPluginInstall(completion: completion) {
+            try await self.service.installPluginSource(
+                source,
                 expectedFingerprint: expectedFingerprint
             )
         }

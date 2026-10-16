@@ -18,15 +18,15 @@ public enum NativeLocalAgentPlatformToolCatalog {
   public static let pluginInstallerResolveNPMToolName = "plugin_installer_resolve_npm"
   public static let pluginInstallerInspectNPMToolName = "plugin_installer_inspect_npm"
   public static let pluginInstallerInstallNPMToolName = "plugin_installer_install_npm"
-  public static let pluginInstallerInspectLocalToolName = "plugin_installer_inspect_local"
-  public static let pluginInstallerInstallLocalToolName = "plugin_installer_install_local"
+  public static let pluginInstallerInspectSourceToolName = "plugin_installer_inspect_source"
+  public static let pluginInstallerInstallSourceToolName = "plugin_installer_install_source"
   public static let pluginInstallerToolNames: Set<String> = [
     pluginInstallerSearchNPMToolName,
     pluginInstallerResolveNPMToolName,
     pluginInstallerInspectNPMToolName,
     pluginInstallerInstallNPMToolName,
-    pluginInstallerInspectLocalToolName,
-    pluginInstallerInstallLocalToolName,
+    pluginInstallerInspectSourceToolName,
+    pluginInstallerInstallSourceToolName,
   ]
   public static let pluginInstallerTools: [LocalAgentJSONValue] = [
     taskTool(
@@ -73,28 +73,44 @@ public enum NativeLocalAgentPlatformToolCatalog {
       ]
     ),
     taskTool(
-      name: pluginInstallerInspectLocalToolName,
-      description: "Inspect a local ChatOS Plugin folder containing a schema-v3 chatos.plugin.json. The folder is copied to isolated staging and its MCP tools are started for preflight; nothing is installed yet.",
-      properties: [
-        "path": .object([
-          "type": .string("string"), "minLength": .number(1), "maxLength": .number(4096),
-        ]),
-      ],
-      required: ["path"]
+      name: pluginInstallerInspectSourceToolName,
+      description: "Acquire and inspect a complete Agent Plugin or Skill from a local folder, HTTPS Git repository, or pinned npm package. Supports portable Agent Plugin, Codex, Claude, standalone Skill, and common MCP JSON layouts. Git/npm content is untrusted and install scripts are never run. This does not persist the plugin.",
+      properties: pluginSourceProperties,
+      required: ["source_kind", "location"]
     ),
     taskTool(
-      name: pluginInstallerInstallLocalToolName,
-      description: "Re-inspect and install a local ChatOS Plugin folder only when its fingerprint still matches the preceding preflight. Call only after an explicit install request in this dedicated installer conversation.",
-      properties: [
-        "path": .object([
-          "type": .string("string"), "minLength": .number(1), "maxLength": .number(4096),
-        ]),
+      name: pluginInstallerInstallSourceToolName,
+      description: "Re-acquire and install an Agent Plugin or Skill source only when its fingerprint still matches the preceding preflight. Use the identical resolved_source returned by inspection and only after an explicit install request.",
+      properties: pluginSourceProperties.merging([
         "expected_fingerprint": .object([
           "type": .string("string"), "pattern": .string("^[a-f0-9]{64}$"),
         ]),
-      ],
-      required: ["path", "expected_fingerprint"]
+      ]) { _, new in new },
+      required: ["source_kind", "location", "expected_fingerprint"]
     ),
+  ]
+
+  private static let pluginSourceProperties: [String: LocalAgentJSONValue] = [
+    "source_kind": .object([
+      "type": .string("string"),
+      "enum": .array(["local_folder", "git_repository", "npm_package"].map(LocalAgentJSONValue.string)),
+    ]),
+    "location": .object([
+      "type": .string("string"), "minLength": .number(1), "maxLength": .number(4096),
+      "description": .string("Absolute folder path, credential-free HTTPS Git URL, or exact npm package name according to source_kind."),
+    ]),
+    "exact_version": .object([
+      "type": .string("string"), "maxLength": .number(128),
+      "description": .string("Required exact semantic version for npm_package; forbidden otherwise."),
+    ]),
+    "git_reference": .object([
+      "type": .string("string"), "maxLength": .number(256),
+      "description": .string("Optional branch, tag, or commit for git_repository. Omit to fetch remote HEAD."),
+    ]),
+    "subdirectory": .object([
+      "type": .string("string"), "maxLength": .number(1024),
+      "description": .string("Optional safe relative path when the plugin lives inside a monorepo."),
+    ]),
   ]
   public static let requirementSurveyCreateToolName = "requirement_survey_create"
   public static let requirementPlanSaveToolName = "requirement_plan_save"
@@ -179,12 +195,12 @@ public enum NativeLocalAgentPlatformToolCatalog {
     + pluginReadOnlyToolNames
     + [
       pluginInstallerSearchNPMToolName, pluginInstallerResolveNPMToolName,
-      pluginInstallerInspectNPMToolName, pluginInstallerInspectLocalToolName,
+      pluginInstallerInspectNPMToolName, pluginInstallerInspectSourceToolName,
     ]
   public static let approvalExemptToolNames = [
     "open_edit_session", "stage_edit_batch", "abort_edit_session",
     NativeAgentCapabilityBrokerToolCatalog.invokeToolName,
-    pluginInstallerInstallNPMToolName, pluginInstallerInstallLocalToolName,
+    pluginInstallerInstallNPMToolName, pluginInstallerInstallSourceToolName,
   ]
 
   private static let npmInstallerDraftProperties: [String: LocalAgentJSONValue] = [

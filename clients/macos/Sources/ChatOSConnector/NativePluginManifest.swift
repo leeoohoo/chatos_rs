@@ -192,7 +192,13 @@ enum NativePluginManifestLoader {
             options: .atomic
         )
 
-        var environment = server.env
+        var environment = server.env.mapValues {
+            Self.expandingCompatibilityVariables(
+                $0,
+                installationPath: installationURL.path,
+                dataPath: dataURL.path
+            )
+        }
         environment.merge([
             "CHATOS_PLUGIN_ROOT": installationURL.path,
             "CHATOS_PLUGIN_DATA_DIR": dataURL.path,
@@ -203,6 +209,10 @@ enum NativePluginManifestLoader {
             "CHATOS_PLUGIN_ID": record.pluginID,
             "CHATOS_PLUGIN_COMPONENT_KEY": componentKey,
             "CHATOS_PLUGIN_RUNTIME_SESSION_ID": adapterSessionID,
+            "PLUGIN_ROOT": installationURL.path,
+            "PLUGIN_DATA": dataURL.path,
+            "CLAUDE_PLUGIN_ROOT": installationURL.path,
+            "CLAUDE_PLUGIN_DATA": dataURL.path,
         ], uniquingKeysWith: { _, runtime in runtime })
         environment.merge(runtimeContext.environment, uniquingKeysWith: { _, runtime in runtime })
 #if os(macOS)
@@ -220,7 +230,13 @@ enum NativePluginManifestLoader {
             componentKey: componentKey,
             server: server,
             executableURL: executableURL,
-            arguments: server.args,
+            arguments: server.args.map {
+                Self.expandingCompatibilityVariables(
+                    $0,
+                    installationPath: installationURL.path,
+                    dataPath: dataURL.path
+                )
+            },
             environment: environment,
             installationURL: installationURL,
             visualSessionURL: visualSessionURL,
@@ -235,6 +251,21 @@ enum NativePluginManifestLoader {
 
     private static func safeExecutableName(_ value: String) -> Bool {
         !value.isEmpty && value.count <= 128 && !value.contains("/") && value != "." && value != ".."
+    }
+
+    private static func expandingCompatibilityVariables(
+        _ value: String,
+        installationPath: String,
+        dataPath: String
+    ) -> String {
+        var result = value
+        for token in ["${PLUGIN_ROOT}", "$PLUGIN_ROOT", "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PLUGIN_ROOT"] {
+            result = result.replacingOccurrences(of: token, with: installationPath)
+        }
+        for token in ["${PLUGIN_DATA}", "$PLUGIN_DATA", "${CLAUDE_PLUGIN_DATA}", "$CLAUDE_PLUGIN_DATA"] {
+            result = result.replacingOccurrences(of: token, with: dataPath)
+        }
+        return result
     }
 
     static func sha256(_ value: String) -> String {

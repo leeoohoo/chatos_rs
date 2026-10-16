@@ -17,7 +17,7 @@ extension NativeLocalConnectorService {
             guard state.pluginPreferences[record.pluginID] ?? true,
                   NativePluginInstallationIntegrity.status(record: record) == .verified,
                   let manifest = try? Self.agentPluginManifest(record: record) else { return [] }
-            return manifest.mcpServers.keys.sorted().compactMap { componentKey in
+            let mcpComponents: [NativeInstalledAgentPlugin] = manifest.mcpServers.keys.sorted().compactMap { componentKey in
                 guard let server = manifest.mcpServers[componentKey] else { return nil }
                 return .init(
                     pluginID: record.pluginID,
@@ -29,6 +29,17 @@ extension NativeLocalConnectorService {
                     description: server.agent?.description ?? manifest.description
                 )
             }
+            if !mcpComponents.isEmpty { return mcpComponents }
+            guard !manifest.skills.isEmpty else { return [] }
+            return [.init(
+                pluginID: record.pluginID,
+                pluginKey: record.pluginKey,
+                componentKey: NativeInstalledAgentPlugin.skillsOnlyComponentKey,
+                displayName: manifest.interface?.displayName ?? manifest.name,
+                description: manifest.description.isEmpty
+                    ? "Installed Plugin Skills"
+                    : manifest.description
+            )]
         }.sorted {
             if $0.displayName != $1.displayName {
                 return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
@@ -95,7 +106,11 @@ extension NativeLocalConnectorService {
                 throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin 未安装或已停用：\(pluginID)")
             }
             let manifest = try Self.agentPluginManifest(record: record)
-            guard manifest.mcpServers[plugin.componentKey] != nil else {
+            let isSkillsOnly = plugin.componentKey
+                == NativeInstalledAgentPlugin.skillsOnlyComponentKey
+                && manifest.mcpServers.isEmpty
+                && !manifest.skills.isEmpty
+            guard manifest.mcpServers[plugin.componentKey] != nil || isSkillsOnly else {
                 throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin component 不存在：\(plugin.componentKey)")
             }
             let installationURL = URL(
@@ -109,6 +124,35 @@ extension NativeLocalConnectorService {
             let skillSession = PluginToolSkillSession(snapshot: skillSnapshot)
             let permissionSnapshot = Set(manifest.permissions.map(\.permission))
             let componentKey = plugin.componentKey
+            if isSkillsOnly {
+                let adapterSessionID = "agent-skills-" + UUID().uuidString.lowercased()
+                let identity = NativePluginRuntimeStore.Identity(
+                    runID: runContext.runID,
+                    pluginID: pluginID,
+                    releaseID: record.releaseID,
+                    version: record.version,
+                    artifactSHA256: record.artifactSHA256,
+                    componentKey: componentKey,
+                    adapterSessionID: adapterSessionID,
+                    projectID: projectContext.projectID,
+                    requiresExclusiveExecution: false
+                )
+                providers.append(try NativeAgentPluginToolProvider(
+                    service: self,
+                    runtimeStore: pluginRuntimeStore,
+                    identity: identity,
+                    tools: [],
+                    displayName: plugin.displayName,
+                    ownerUserID: ownerUserID,
+                    projectRootURL: workspaceRootURL,
+                    workspaceID: workspaceID,
+                    permissionSnapshot: permissionSnapshot,
+                    executionPresentation: executionPresentation,
+                    pluginSkillSnapshot: skillSnapshot,
+                    pluginSkillSession: skillSession
+                ))
+                continue
+            }
                 let adapterSessionID = "agent-" + UUID().uuidString.lowercased()
                 if componentKey == NativeBrowserPluginIdentity.componentKey {
                     await browserExtensionPairingRuntime.stop()
@@ -303,8 +347,8 @@ extension NativeLocalConnectorService {
         let manifest = try NativePluginManifestLoader.loadManifest(from: url)
         guard manifest.schemaVersion == 3,
               manifest.version == record.version,
-              !manifest.mcpServers.isEmpty else {
-            throw NativePluginRuntimeError.invalidManifest("Plugin 没有可用于 Agent 的 MCP 组件")
+              !manifest.mcpServers.isEmpty || !manifest.skills.isEmpty else {
+            throw NativePluginRuntimeError.invalidManifest("Plugin 没有可用于 Agent 的 Skill 或 MCP 组件")
         }
         return manifest
     }

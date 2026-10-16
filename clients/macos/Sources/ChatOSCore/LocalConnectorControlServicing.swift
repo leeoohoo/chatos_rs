@@ -60,6 +60,13 @@ public protocol LocalConnectorControlServicing: Sendable {
     ) async throws
     func inspectLocalPlugin(atPath path: String) async throws -> LocalConnectorPluginInspection
     func installLocalPlugin(atPath path: String, expectedFingerprint: String) async throws
+    func inspectPluginSource(
+        _ source: LocalConnectorPluginSourceDraft
+    ) async throws -> LocalConnectorPluginInspection
+    func installPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        expectedFingerprint: String
+    ) async throws
     func uninstallPlugin(id: String) async throws
     func updatePluginEnabled(id: String, enabled: Bool) async throws
     func requestPluginPermission(pluginID: String, permissionID: String) async throws
@@ -92,6 +99,19 @@ public extension LocalConnectorControlServicing {
     }
 
     func installLocalPlugin(atPath path: String, expectedFingerprint: String) async throws {
+        throw URLError(.unsupportedURL)
+    }
+
+    func inspectPluginSource(
+        _ source: LocalConnectorPluginSourceDraft
+    ) async throws -> LocalConnectorPluginInspection {
+        throw URLError(.unsupportedURL)
+    }
+
+    func installPluginSource(
+        _ source: LocalConnectorPluginSourceDraft,
+        expectedFingerprint: String
+    ) async throws {
         throw URLError(.unsupportedURL)
     }
 
