@@ -192,6 +192,13 @@ struct LocalAgentConversationReplyProjection: Sendable, Equatable {
 }
 
 extension LocalAgentConversationMessageRecord {
+    var taskGraphTerminalGraphID: String? {
+        guard let contentObject = content.objectValue,
+              contentObject["type"]?.stringValue == "task_graph_terminal" else { return nil }
+        return metadata.objectValue?["graph_id"]?.trimmedString
+            ?? contentObject["graph_id"]?.trimmedString
+    }
+
     func replyProjections(sourceUserMessageID: String) -> [LocalAgentConversationReplyProjection] {
         if let callback = taskCallbackReference(sourceUserMessageID: sourceUserMessageID) {
             return [LocalAgentConversationReplyProjection(

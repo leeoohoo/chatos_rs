@@ -421,6 +421,54 @@ final class NativeLocalAgentConversationCommandTests: XCTestCase {
         XCTAssertEqual(replies[0].messageID, message.messageID)
     }
 
+    func testConversationKeepsOnlyLatestTerminalGenerationForEachTaskGraph() {
+        func message(
+            id: String,
+            ordinal: UInt64,
+            graphID: String? = nil,
+            summary: String
+        ) -> LocalAgentConversationMessageRecord {
+            let content: LocalAgentJSONValue
+            let metadata: LocalAgentJSONValue
+            if let graphID {
+                content = .object([
+                    "type": .string("task_graph_terminal"),
+                    "graph_id": .string(graphID),
+                    "summary": .string(summary),
+                ])
+                metadata = .object([
+                    "kind": .string("task_graph_terminal"),
+                    "graph_id": .string(graphID),
+                ])
+            } else {
+                content = .string(summary)
+                metadata = .object([:])
+            }
+            return LocalAgentConversationMessageRecord(
+                messageID: id,
+                conversationID: "conversation-1",
+                turnID: "turn-1",
+                ordinal: ordinal,
+                role: "assistant",
+                content: content,
+                metadata: metadata,
+                createdAtUnixMs: Int64(ordinal) * 1_000
+            )
+        }
+
+        let visible = NativeLocalAgentConversationService.coalescingTaskGraphTerminalMessages([
+            message(id: "graph-a-1", ordinal: 2, graphID: "graph-a", summary: "旧阻塞总结"),
+            message(id: "handoff", ordinal: 3, summary: "正在继续处理"),
+            message(id: "graph-b-1", ordinal: 4, graphID: "graph-b", summary: "另一任务总结"),
+            message(id: "graph-a-2", ordinal: 5, graphID: "graph-a", summary: "最新取消总结"),
+        ])
+
+        XCTAssertEqual(visible.map(\.messageID), ["handoff", "graph-b-1", "graph-a-2"])
+        XCTAssertEqual(visible.map(\.content.conversationDisplayText), [
+            "正在继续处理", "另一任务总结", "最新取消总结",
+        ])
+    }
+
     func testEmptyDeliveryFallsBackToLegacySummary() {
         let value = LocalAgentJSONValue.object([
             "type": .string("task_graph_terminal"), "delivery_text": .string(" \n "),

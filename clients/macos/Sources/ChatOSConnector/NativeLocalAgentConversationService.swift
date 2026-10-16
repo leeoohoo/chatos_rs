@@ -430,7 +430,9 @@ public actor NativeLocalAgentConversationService:
                     conversationID: turn.conversationID
                 )
             }
-            let assistants = messages.filter { $0.role == "assistant" }
+            let assistants = Self.coalescingTaskGraphTerminalMessages(
+                messages.filter { $0.role == "assistant" }
+            )
             let userMessage = mapMessage(
                 user,
                 fallbackID: turn.userMessageID,
@@ -484,6 +486,26 @@ public actor NativeLocalAgentConversationService:
                 completedAt: status == .streaming ? nil
                     : Date(timeIntervalSince1970: Double(turn.updatedAtUnixMs) / 1_000)
             )
+        }
+    }
+
+    /// Storage retains every terminal generation for audit and retry history. Main Chat only
+    /// presents the newest generation for each Task Graph so a later cancellation or recovery
+    /// does not repeat the previous terminal summary and its full delivery.
+    static func coalescingTaskGraphTerminalMessages(
+        _ messages: [LocalAgentConversationMessageRecord]
+    ) -> [LocalAgentConversationMessageRecord] {
+        var latestOrdinalByGraphID: [String: UInt64] = [:]
+        for message in messages {
+            guard let graphID = message.taskGraphTerminalGraphID else { continue }
+            latestOrdinalByGraphID[graphID] = max(
+                latestOrdinalByGraphID[graphID] ?? 0,
+                message.ordinal
+            )
+        }
+        return messages.filter { message in
+            guard let graphID = message.taskGraphTerminalGraphID else { return true }
+            return latestOrdinalByGraphID[graphID] == message.ordinal
         }
     }
 
