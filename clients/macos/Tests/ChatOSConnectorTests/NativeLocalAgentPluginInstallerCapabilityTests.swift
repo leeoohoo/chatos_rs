@@ -13,6 +13,9 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertEqual(toolNames(capability.tools),
                        NativeLocalAgentPlatformToolCatalog.pluginInstallerToolNames)
         XCTAssertTrue(capability.instructions?.contains("项目聊天和其他联系人没有这些安装工具") == true)
+        XCTAssertTrue(capability.instructions?.contains("不得再问“安装还是只查看”") == true)
+        XCTAssertTrue(capability.instructions?.contains("REA 或 reverse-engineer-anything 明确对应 npm 包 rea-agents") == true)
+        XCTAssertTrue(capability.instructions?.contains("不得再让用户在 rea-agents 与面向其他宿主的 REA 适配包之间选择") == true)
     }
 
     func testOrdinaryMainChatCatalogNeverPublishesInstallerTools() {
