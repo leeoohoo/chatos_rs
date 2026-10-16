@@ -476,7 +476,7 @@ function result(value: Record<string, unknown>, isError = false) {
   return response;
 }
 
-const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.0' }, { capabilities: { tools: {} } });
+const server = new Server({ name: `chatos-solution-studio-${role}`, version: '0.2.1' }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOL_DEFINITIONS }));
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try { return result(await callTool(request.params.name, request.params.arguments)); }

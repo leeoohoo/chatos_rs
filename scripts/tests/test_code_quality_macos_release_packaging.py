@@ -34,6 +34,7 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
 
     def test_generic_packager_embeds_and_verifies_build_identity(self) -> None:
         package = self.read(MACOS_SCRIPTS / "package-app.sh")
+        release = self.read(MACOS_SCRIPTS / "package-release-app.sh")
         verify = self.read(MACOS_SCRIPTS / "verify-app-build.sh")
 
         self.assertIn('BUILD_CONFIGURATION=${CHATOS_BUILD_CONFIGURATION:-}', package)
@@ -42,6 +43,10 @@ class MacOSReleasePackagingPolicyTests(unittest.TestCase):
         self.assertIn('ChatOSBuildGitCommit', package)
         self.assertIn('ChatOSBuildDateUTC', package)
         self.assertIn('verify-app-build.sh', package)
+        self.assertIn('CHATOS_VERIFY_LAUNCH_SMOKE=1', release)
+        self.assertIn('CHATOS_BUILD_SMOKE_TEST=1', verify)
+        self.assertIn('CFFIXED_USER_HOME=', verify)
+        self.assertIn('"$LOCAL_AGENT_HOST" --help', verify)
         self.assertIn("Release ChatOS binary contains a Debug build path", verify)
         self.assertIn("codesign --verify --deep --strict", verify)
 

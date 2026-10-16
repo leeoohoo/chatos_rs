@@ -6,6 +6,7 @@ import Foundation
 public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
     public let modelOptions: [ConversationModelOption]
+    public let defaultConversationModelConfigRef: String
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
     public let capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
     public let pluginInstallerCapabilitySnapshotsByModelConfigRef: [
@@ -16,6 +17,7 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
         modelOptions: [ConversationModelOption],
+        defaultConversationModelConfigRef: String,
         capabilitySnapshot: LocalAgentCapabilityPolicySnapshot,
         capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot],
         pluginInstallerCapabilitySnapshotsByModelConfigRef: [
@@ -25,6 +27,7 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     ) {
         self.modelSnapshots = modelSnapshots
         self.modelOptions = modelOptions
+        self.defaultConversationModelConfigRef = defaultConversationModelConfigRef
         self.capabilitySnapshot = capabilitySnapshot
         self.capabilitySnapshotsByModelConfigRef = capabilitySnapshotsByModelConfigRef
         self.pluginInstallerCapabilitySnapshotsByModelConfigRef =
@@ -93,6 +96,9 @@ extension NativeLocalConnectorService {
             ))
         }
         guard !snapshots.isEmpty else { return nil }
+        let defaultConversationModelConfigRef = Self.defaultConversationModelConfigRef(
+            in: snapshots
+        )
         if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
             environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
         }
@@ -106,7 +112,7 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             modelSnapshots: snapshots
         )
-        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef],
+        guard let capability = capabilitiesByModel[defaultConversationModelConfigRef],
               capability.ownerUserID == ownerUserID,
               capability.profileKey == "main_chat" else { return nil }
         let installerCapabilitiesByModel = try await publishPluginInstallerCapabilities(
@@ -117,6 +123,7 @@ extension NativeLocalConnectorService {
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
+            defaultConversationModelConfigRef: defaultConversationModelConfigRef,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
             pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
@@ -250,6 +257,9 @@ extension NativeLocalConnectorService {
             ))
         }
         guard !snapshots.isEmpty else { throw NativeLocalAgentBootstrapError.noEnabledModel }
+        let defaultConversationModelConfigRef = snapshots.first(where: {
+            taskEnabledModelConfigIDs.contains($0.modelConfigRef)
+        })?.modelConfigRef ?? snapshots[0].modelConfigRef
         if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
             environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
         }
@@ -268,7 +278,7 @@ extension NativeLocalConnectorService {
                 ownerUserID: ownerUserID,
                 modelSnapshots: snapshots
             )
-            guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+            guard let capability = capabilitiesByModel[defaultConversationModelConfigRef] else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
             guard capability.ownerUserID == ownerUserID,
@@ -283,6 +293,7 @@ extension NativeLocalConnectorService {
             return .init(
                 modelSnapshots: snapshots,
                 modelOptions: modelOptions,
+                defaultConversationModelConfigRef: defaultConversationModelConfigRef,
                 capabilitySnapshot: capability,
                 capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
                 pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
@@ -460,7 +471,7 @@ extension NativeLocalConnectorService {
             ))
             try await controlPlane.publishCapabilities(mainCapability)
         }
-        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+        guard let capability = capabilitiesByModel[defaultConversationModelConfigRef] else {
             throw NativeLocalAgentBootstrapError.skillConfigurationUnavailable
         }
         state.localAgentCapabilityRevisionsByModelConfigID = capabilitiesByModel.mapValues(
@@ -478,11 +489,28 @@ extension NativeLocalConnectorService {
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
+            defaultConversationModelConfigRef: defaultConversationModelConfigRef,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
             pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel,
             externalMCPConfigs: externalMCPConfigs
         )
+    }
+
+    private static func defaultConversationModelConfigRef(
+        in snapshots: [LocalAgentModelConfigSnapshot]
+    ) -> String {
+        snapshots.first(where: { !isLikelyGenerationOnlyModel($0.model) })?.modelConfigRef
+            ?? snapshots[0].modelConfigRef
+    }
+
+    private static func isLikelyGenerationOnlyModel(_ model: String) -> Bool {
+        let value = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return [
+            "gpt-image", "dall-e", "imagen", "imagegen", "image-generation",
+            "sora", "veo", "kling", "seedance", "hailuo", "runway", "luma",
+            "pixverse", "vidu", "cogvideo", "hunyuan-video",
+        ].contains(where: value.contains)
     }
 
     private static func externalMCPConfigs(

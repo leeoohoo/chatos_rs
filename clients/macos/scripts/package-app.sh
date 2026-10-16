@@ -156,6 +156,7 @@ fi
 "$SCRIPT_DIR/verify-app-build.sh" \
   "$APP_DIR" \
   "$BUILD_CONFIGURATION" \
-  "$BUILD_GIT_COMMIT"
+  "$BUILD_GIT_COMMIT" \
+  "${CHATOS_VERIFY_LAUNCH_SMOKE:-0}"
 
 echo "$APP_DIR"

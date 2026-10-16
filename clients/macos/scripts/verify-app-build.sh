@@ -4,6 +4,7 @@ set -euo pipefail
 APP_PATH=${1:-}
 EXPECTED_CONFIGURATION=${2:-}
 EXPECTED_GIT_COMMIT=${3:-}
+RUN_LAUNCH_SMOKE=${4:-0}
 
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "Usage: verify-app-build.sh APP_PATH [debug|release] [GIT_COMMIT]" >&2
@@ -65,4 +66,47 @@ fi
 
 codesign --verify --strict "$LOCAL_AGENT_HOST"
 codesign --verify --deep --strict "$APP_PATH"
+
+if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
+  SMOKE_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/chatos-app-smoke.XXXXXXXX")
+  SMOKE_LOG="$SMOKE_ROOT/ChatOSSwift.log"
+  SMOKE_PID=""
+  cleanup_smoke() {
+    if [[ -n "$SMOKE_PID" ]] && kill -0 "$SMOKE_PID" 2>/dev/null; then
+      kill -TERM "$SMOKE_PID" 2>/dev/null || true
+      wait "$SMOKE_PID" 2>/dev/null || true
+    fi
+    rm -rf -- "$SMOKE_ROOT"
+  }
+  trap cleanup_smoke EXIT INT TERM
+
+  "$LOCAL_AGENT_HOST" --help >"$SMOKE_ROOT/local-agent-host.log" 2>&1
+  env \
+    CFFIXED_USER_HOME="$SMOKE_ROOT" \
+    CHATOS_BUILD_SMOKE_TEST=1 \
+    "$EXECUTABLE" >"$SMOKE_LOG" 2>&1 &
+  SMOKE_PID=$!
+
+  for _ in {1..50}; do
+    if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+      wait "$SMOKE_PID" 2>/dev/null || true
+      echo "Packaged ChatOS exited during launch smoke test" >&2
+      sed -n '1,200p' "$SMOKE_LOG" >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+
+  if find "$SMOKE_ROOT/Library/Logs/DiagnosticReports" -maxdepth 1 \
+      -type f -name 'ChatOSSwift*' -print -quit 2>/dev/null | grep -q .; then
+    echo "Packaged ChatOS produced a crash report during launch smoke test" >&2
+    exit 1
+  fi
+  kill -TERM "$SMOKE_PID" 2>/dev/null || true
+  wait "$SMOKE_PID" 2>/dev/null || true
+  SMOKE_PID=""
+  trap - EXIT INT TERM
+  rm -rf -- "$SMOKE_ROOT"
+fi
+
 echo "Verified ChatOS $CONFIGURATION build $GIT_COMMIT ($BUILD_DATE)"

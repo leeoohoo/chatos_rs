@@ -245,6 +245,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let bootstrap = NativeLocalAgentBootstrapResult(
             modelSnapshots: [model],
             modelOptions: [modelOption],
+            defaultConversationModelConfigRef: "model-1",
             capabilitySnapshot: capabilities,
             capabilitySnapshotsByModelConfigRef: ["model-1": capabilities],
             pluginInstallerCapabilitySnapshotsByModelConfigRef: ["model-1": capabilities]

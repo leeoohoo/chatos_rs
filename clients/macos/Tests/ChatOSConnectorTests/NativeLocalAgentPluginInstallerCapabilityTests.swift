@@ -78,6 +78,35 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertNotEqual(first.capabilityPolicyRevision, second.capabilityPolicyRevision)
     }
 
+    func testInstallIntentRequiresAnExplicitNonNegatedRequest() {
+        for message in [
+            "帮我安装一下 REA",
+            "直接添加这个 MCP",
+            "请配置并使用这个插件",
+            "Please install rea-agents for me.",
+            "Set up this MCP plugin.",
+        ] {
+            XCTAssertTrue(
+                NativeLocalAgentPluginInstallerToolExecutor.hasExplicitInstallIntent(message),
+                message
+            )
+        }
+
+        for message in [
+            "比较一下 REA 和另一个插件",
+            "怎么安装 REA？",
+            "是否支持安装 Codex 插件？",
+            "先不要安装，只查看工具列表",
+            "How do I install this MCP?",
+            "Do not install this package.",
+        ] {
+            XCTAssertFalse(
+                NativeLocalAgentPluginInstallerToolExecutor.hasExplicitInstallIntent(message),
+                message
+            )
+        }
+    }
+
     private func toolNames(_ tools: [LocalAgentJSONValue]) -> Set<String> {
         Set(tools.compactMap(Self.toolName))
     }

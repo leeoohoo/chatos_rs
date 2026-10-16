@@ -24,10 +24,16 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         ) else {
             throw NativeLocalAgentPluginInstallerToolError.unsupportedTool
         }
-        try await authorizeInstallerConversation(
+        let authorizedUserMessage = try await authorizeInstallerConversation(
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
+        if invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
+            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName {
+            guard Self.hasExplicitInstallIntent(authorizedUserMessage) else {
+                throw NativeLocalAgentPluginInstallerToolError.explicitInstallIntentRequired
+            }
+        }
         let arguments = try Self.object(invocation.arguments)
         switch invocation.toolName {
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerSearchNPMToolName:
@@ -78,7 +84,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     private func authorizeInstallerConversation(
         ownerUserID: String,
         runID: String
-    ) async throws {
+    ) async throws -> String {
         let run = try await runtime.run(ownerUserID: ownerUserID, runID: runID)
         guard run.ownerUserID == ownerUserID,
               run.profileKey == "main_chat",
@@ -98,6 +104,61 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
               ) else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
+        let latestUserMessage = detail.messages
+            .filter { $0.turnID == run.ownerEntityID && $0.role == "user" }
+            .max(by: { $0.ordinal < $1.ordinal })
+            .flatMap { message -> String? in
+                guard case let .string(value) = message.content else { return nil }
+                return value
+            }
+        let originalMessage: String? = if case let .object(input) = run.input,
+                                          case let .string(value)? = input["message"] {
+            value
+        } else {
+            nil
+        }
+        guard let userMessage = latestUserMessage ?? originalMessage else {
+            throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
+        }
+        return userMessage
+    }
+
+    static func hasExplicitInstallIntent(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        let deniedPatterns = [
+            #"(?:不要|不用|无需|别|暂不|先不|不想|不需要).{0,8}(?:安装|装上|添加|接入|配置|启用)"#,
+            #"\b(?:do\s+not|don't|dont|without)\s+(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        if deniedPatterns.contains(where: { matches($0, in: normalized) }) {
+            return false
+        }
+
+        let informationalPatterns = [
+            #"(?:怎么|如何|哪里).{0,12}(?:安装|添加|接入|配置|启用)"#,
+            #"(?:是否支持|能否支持).{0,8}(?:安装|添加|接入|配置|启用)"#,
+            #"\b(?:how|where)\s+(?:do\s+i\s+|to\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        if informationalPatterns.contains(where: { matches($0, in: normalized) }) {
+            return false
+        }
+
+        let affirmativePatterns = [
+            #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能)?\s*(?:安装|装上|添加|接入|配置(?:并)?使用|启用)(?:一下|上)?"#,
+            #"\b(?:please\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        return affirmativePatterns.contains(where: { matches($0, in: normalized) })
+    }
+
+    private static func matches(_ pattern: String, in value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+        return expression.firstMatch(
+            in: value,
+            range: NSRange(value.startIndex..., in: value)
+        ) != nil
     }
 
     private func searchNPM(query: String) async throws -> LocalAgentJSONValue {
@@ -335,6 +396,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
 enum NativeLocalAgentPluginInstallerToolError: LocalizedError {
     case unsupportedTool
     case unauthorizedConversation
+    case explicitInstallIntentRequired
     case invalidArguments
     case invalidField(String)
     case invalidNPMResponse
@@ -345,6 +407,8 @@ enum NativeLocalAgentPluginInstallerToolError: LocalizedError {
             "不支持的插件安装工具"
         case .unauthorizedConversation:
             "插件安装工具只允许在“插件安装助手”系统联系人中使用"
+        case .explicitInstallIntentRequired:
+            "当前用户消息没有明确授权安装；可以继续检查或比较，但不能安装"
         case .invalidArguments:
             "插件安装工具参数无效"
         case let .invalidField(field):

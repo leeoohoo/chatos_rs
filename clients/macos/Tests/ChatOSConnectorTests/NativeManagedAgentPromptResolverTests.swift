@@ -69,6 +69,7 @@ final class NativeManagedAgentPromptResolverTests: XCTestCase {
         let result = NativeLocalAgentBootstrapResult(
             modelSnapshots: [first, second],
             modelOptions: [],
+            defaultConversationModelConfigRef: "model-1",
             capabilitySnapshot: firstCapability,
             capabilitySnapshotsByModelConfigRef: [
                 "model-1": firstCapability,

@@ -24,7 +24,8 @@ actor KeychainCredentialStore: CredentialStoring {
     func loadAccessToken() async throws -> String? {
         if hasLoadedAccessToken { return cachedAccessToken }
 
-        if !FileManager.default.fileExists(atPath: credentialURL.path),
+        if ProcessInfo.processInfo.environment["CHATOS_BUILD_SMOKE_TEST"] != "1",
+           !FileManager.default.fileExists(atPath: credentialURL.path),
            let legacy = loadLegacyKeychainWithoutUI() {
             try persist(legacy)
         }
