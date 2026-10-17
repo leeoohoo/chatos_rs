@@ -216,6 +216,11 @@ enum NativePluginSandboxProfile {
             "(allow file-read-metadata)",
             "(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/opt/homebrew\") (subpath \"/usr/local\") (subpath \"/Library/Apple\") \(literal(launch.installationURL.path)))",
         ]
+        if launch.permissionSnapshot.contains("process.spawn") {
+            // PTY-backed process tools (including REA process capture) need the
+            // Seatbelt pseudo-terminal operation in addition to process-fork.
+            rules.append("(allow pseudo-tty)")
+        }
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
         }

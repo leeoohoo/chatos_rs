@@ -398,6 +398,7 @@ extension NativePluginRuntimeTests {
         let permittedProfile = try #require(
             NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
         )
+        #expect(permittedProfile.contains("(allow pseudo-tty)"))
         #expect(permittedProfile.contains("(allow network-outbound)"))
         #expect(permittedProfile.contains("/Applications/Xcode.app"))
         #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
@@ -445,12 +446,29 @@ extension NativePluginRuntimeTests {
         let restrictedProfile = try #require(
             NativePluginSandboxProfile.arguments(for: restricted).dropFirst().first
         )
+        #expect(restrictedProfile.contains("(allow pseudo-tty)"))
         #expect(!restrictedProfile.contains("(allow network-outbound)"))
         #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
         #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
         #expect(!restrictedProfile.contains("/Library/Preferences/com.apple.dt.Xcode.plist"))
         #expect(!restrictedProfile.contains(canonicalModuleCache))
         #expect(!restrictedProfile.contains("xcrun_db-"))
+
+        let withoutSpawn = NativePluginProcessLaunch(
+            record: record,
+            executableURL: executable,
+            arguments: [],
+            environment: [:],
+            installationURL: installation,
+            writableDirectories: [],
+            workspaceRoot: nil,
+            permissionSnapshot: [],
+            networkAccess: .disabled
+        )
+        let withoutSpawnProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: withoutSpawn).dropFirst().first
+        )
+        #expect(!withoutSpawnProfile.contains("(allow pseudo-tty)"))
     }
 
     @Test("Web Design receives isolated temporary storage and managed browser access")
