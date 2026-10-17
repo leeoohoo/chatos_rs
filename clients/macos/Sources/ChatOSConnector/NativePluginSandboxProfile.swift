@@ -297,6 +297,10 @@ enum NativePluginSandboxProfile {
             )
             let escapedTemporaryRoot = Self.regexLiteral(temporaryRoot)
             rules.append("(allow file-read* file-write* (regex #\"^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$\"))")
+            // xcodebuild checks the machine-wide license record before xcrun can
+            // compile REA's process ownership helper. Without this narrow read,
+            // xcodebuild reports exit 69 as if the license had not been accepted.
+            rules.append("(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))")
         }
         // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")

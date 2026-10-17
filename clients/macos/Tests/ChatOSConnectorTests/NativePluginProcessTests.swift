@@ -409,6 +409,9 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains(
             "^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$"
         ))
+        #expect(permittedProfile.contains(
+            "(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))"
+        ))
         #expect(!permittedProfile.contains("(subpath \"\(temporaryRoot)\")"))
 
         let restricted = NativePluginProcessLaunch(
@@ -428,6 +431,7 @@ extension NativePluginRuntimeTests {
         #expect(!restrictedProfile.contains("(allow network-outbound)"))
         #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
         #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
+        #expect(!restrictedProfile.contains("/Library/Preferences/com.apple.dt.Xcode.plist"))
         #expect(!restrictedProfile.contains("xcrun_db-"))
     }
 
