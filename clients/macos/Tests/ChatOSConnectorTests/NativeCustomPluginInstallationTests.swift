@@ -4,6 +4,27 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeCustomPluginInstallationTests {
+    @Test("custom MCP access profiles grant only their declared permission sets")
+    func accessProfilePermissionsAreExplicit() {
+        let restricted = NativeCustomMCPAccessPolicy.permissions(for: .restricted).map(\.id)
+        let network = NativeCustomMCPAccessPolicy.permissions(for: .networkClient).map(\.id)
+        let developer = NativeCustomMCPAccessPolicy.permissions(for: .developerAnalysis).map(\.id)
+
+        #expect(restricted == ["process.spawn"])
+        #expect(network == ["process.spawn", "network.client"])
+        #expect(Set(developer) == Set([
+            "process.spawn",
+            "network.client",
+            "system.developer-tools.read",
+            "browser.managed.launch",
+            "artifact.create",
+            "workspace.read",
+        ]))
+        #expect(!restricted.contains("network.client"))
+        #expect(!restricted.contains("system.developer-tools.read"))
+        #expect(!restricted.contains("browser.managed.launch"))
+    }
+
     @Test("custom npm MCP requires an exact package version before invoking npm")
     func exactVersionIsRequired() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -16,7 +37,8 @@ struct NativeCustomPluginInstallationTests {
             packageName: "rea-agents",
             packageVersion: "latest",
             binaryName: "rea",
-            arguments: ["mcp"]
+            arguments: ["mcp"],
+            accessProfile: .restricted
         )
         await #expect(throws: NativeConnectorError.self) {
             _ = try await installer.prepareCustomMCP(draft)
@@ -375,7 +397,8 @@ struct NativeCustomPluginInstallationTests {
             packageName: "rea-agents",
             packageVersion: "6.5.0",
             binaryName: "rea",
-            arguments: ["mcp"]
+            arguments: ["mcp"],
+            accessProfile: .developerAnalysis
         )
 
         let inspection = try await service.inspectCustomMCP(draft)

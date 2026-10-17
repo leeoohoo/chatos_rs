@@ -627,6 +627,8 @@ struct LocalConnectorPluginsView: View {
         case "workspace.read": "Read Project Files"
         case "workspace.write": "Write Project Files"
         case "artifact.create": "Create Deliverables"
+        case "network.client": "Access Network"
+        case "system.developer-tools.read": "Read Developer Tools"
         case "browser.managed.launch": "Launch Managed Browser"
         case "browser.page.read": "Read Web Pages"
         case "browser.page.control": "Control Web Pages"
@@ -649,6 +651,8 @@ struct LocalConnectorPluginsView: View {
         case "workspace.read": "Read project files bound to the current task."
         case "workspace.write": "Modify project files within the current task's authorization scope."
         case "artifact.create": "Create files in ChatOS-managed deliverable folders."
+        case "network.client": "Connect to external network services."
+        case "system.developer-tools.read": "Read and invoke tools from Xcode or Command Line Tools."
         case "browser.managed.launch": "Launch browser sessions isolated and managed by ChatOS."
         case "browser.page.read": "Read page content and structure in the managed browser."
         case "browser.page.control": "Navigate, click, type, and scroll in the managed browser."
@@ -753,6 +757,19 @@ struct LocalConnectorPluginsView: View {
     }
 }
 
+enum LocalConnectorCustomMCPExamples {
+    static let rea = LocalConnectorCustomMCPDraft(
+        displayName: "Reverse Engineer Anything",
+        description: "Reverse engineering tools exposed through REA MCP.",
+        componentKey: "reverse-engineer-anything",
+        packageName: "rea-agents",
+        packageVersion: "6.5.0",
+        binaryName: "rea",
+        arguments: ["mcp"],
+        accessProfile: .developerAnalysis
+    )
+}
+
 private struct CustomPluginInstallerSheet: View {
     private enum InstallKind: String, CaseIterable, Identifiable {
         case npmMCP
@@ -773,6 +790,7 @@ private struct CustomPluginInstallerSheet: View {
     @State private var packageVersion = ""
     @State private var binaryName = ""
     @State private var argumentsText = ""
+    @State private var accessProfile: LocalConnectorCustomMCPDraft.AccessProfile = .restricted
     @State private var folderPath = ""
     @State private var gitReference = ""
     @State private var subdirectory = ""
@@ -877,13 +895,15 @@ private struct CustomPluginInstallerSheet: View {
                     .font(.headline)
                 Spacer()
                 Button(model.localized("填入 REA 示例", english: "Use REA Example")) {
-                    displayName = "Reverse Engineer Anything"
-                    description = "Reverse engineering tools exposed through REA MCP."
-                    componentKey = "reverse-engineer-anything"
-                    packageName = "rea-agents"
-                    packageVersion = "6.5.0"
-                    binaryName = "rea"
-                    argumentsText = "mcp"
+                    let example = LocalConnectorCustomMCPExamples.rea
+                    displayName = example.displayName
+                    description = example.description
+                    componentKey = example.componentKey
+                    packageName = example.packageName
+                    packageVersion = example.packageVersion
+                    binaryName = example.binaryName
+                    argumentsText = example.arguments.joined(separator: "\n")
+                    accessProfile = example.accessProfile
                 }
             }
             HStack {
@@ -896,6 +916,22 @@ private struct CustomPluginInstallerSheet: View {
                 field(model.localized("Bin 名称", english: "Bin Name"), text: $binaryName)
             }
             field(model.localized("说明", english: "Description"), text: $description)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(model.localized("访问级别", english: "Access Profile"))
+                    .font(.caption.weight(.medium))
+                Picker("", selection: $accessProfile) {
+                    Text(model.localized("受限（仅本地）", english: "Restricted (Local Only)"))
+                        .tag(LocalConnectorCustomMCPDraft.AccessProfile.restricted)
+                    Text(model.localized("网络客户端", english: "Network Client"))
+                        .tag(LocalConnectorCustomMCPDraft.AccessProfile.networkClient)
+                    Text(model.localized("开发与逆向分析", english: "Developer Analysis"))
+                        .tag(LocalConnectorCustomMCPDraft.AccessProfile.developerAnalysis)
+                }
+                .pickerStyle(.segmented)
+                Text(accessProfileDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading, spacing: 5) {
                 Text(model.localized("参数（每行一个，不经过 shell）", english: "Arguments (one per line, no shell parsing)"))
                     .font(.caption.weight(.medium))
@@ -1074,13 +1110,35 @@ private struct CustomPluginInstallerSheet: View {
             packageVersion: packageVersion,
             binaryName: binaryName,
             arguments: argumentsText.split(whereSeparator: \.isNewline).map(String.init),
-            environment: [:]
+            environment: [:],
+            accessProfile: accessProfile
         )
     }
 
     private var inputSignature: String {
         [kind.rawValue, displayName, description, componentKey, packageName, packageVersion,
-         binaryName, argumentsText, folderPath, gitReference, subdirectory].joined(separator: "\u{0}")
+         binaryName, argumentsText, accessProfile.rawValue, folderPath, gitReference,
+         subdirectory].joined(separator: "\u{0}")
+    }
+
+    private var accessProfileDescription: String {
+        switch accessProfile {
+        case .restricted:
+            model.localized(
+                "只启动 MCP，不开放外网、开发工具、浏览器或项目文件。",
+                english: "Starts the MCP without network, developer-tool, browser, or project access."
+            )
+        case .networkClient:
+            model.localized(
+                "允许 MCP 连接外部 API；仍不能读取项目或启动浏览器。",
+                english: "Allows outbound API access, but not project reads or browser launches."
+            )
+        case .developerAnalysis:
+            model.localized(
+                "用于开发与逆向工具：可读项目、调用开发工具、启动受管浏览器并保存证据。",
+                english: "For development and reverse engineering: project reads, developer tools, managed browser launches, and evidence artifacts."
+            )
+        }
     }
 
     private var sourceDraft: LocalConnectorPluginSourceDraft {

@@ -329,6 +329,98 @@ extension NativePluginRuntimeTests {
         #expect(!deniedProfile.contains("com[.]apple[.]pasteboard"))
     }
 
+    @Test("developer analysis sandbox access requires explicit manifest permissions")
+    func developerAnalysisSandboxIsPermissionGated() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let executable = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("analysis-mcp")
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion":3,
+              "name":"analysis-mcp",
+              "version":"1.0.0",
+              "mcpServers":{"analysis":{"type":"stdio","bin":"analysis-mcp"}},
+              "permissions":[
+                {"permission":"process.spawn","required":true},
+                {"permission":"network.client","required":true},
+                {"permission":"system.developer-tools.read","required":true},
+                {"permission":"browser.managed.launch","required":true}
+              ]
+            }
+            """.utf8)
+        )
+        let record = try nativePluginTestRecord(
+            installationURL: installation,
+            pluginID: "developer-analysis-plugin",
+            version: "1.0.0"
+        )
+        let permissions: Set<String> = [
+            "process.spawn",
+            "network.client",
+            "system.developer-tools.read",
+            "browser.managed.launch",
+        ]
+        let prepared = try NativePluginManifestLoader.prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: "analysis",
+            serverKey: nil,
+            adapterSessionID: "analysis-session",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: permissions,
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+        let permitted = NativePluginProcessLaunch(stdio: prepared)
+        #expect(permitted.networkAccess == .loopbackServer)
+        let installedBrowserPaths = [
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Microsoft Edge.app",
+        ].filter(FileManager.default.fileExists(atPath:))
+        #expect(Set(permitted.executableDirectories.map(\.path)).isSuperset(of: installedBrowserPaths))
+        let permittedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
+        )
+        #expect(permittedProfile.contains("(allow network-outbound)"))
+        #expect(permittedProfile.contains("/Applications/Xcode.app"))
+        #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
+
+        let restricted = NativePluginProcessLaunch(
+            record: record,
+            executableURL: executable,
+            arguments: [],
+            environment: [:],
+            installationURL: installation,
+            writableDirectories: [],
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn"],
+            networkAccess: .disabled
+        )
+        let restrictedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: restricted).dropFirst().first
+        )
+        #expect(!restrictedProfile.contains("(allow network-outbound)"))
+        #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
+        #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
+    }
+
     @Test("Web Design receives isolated temporary storage and managed browser access")
     func webDesignPluginLaunchSupportsVisualVerification() throws {
         let root = FileManager.default.temporaryDirectory

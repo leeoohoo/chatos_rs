@@ -81,8 +81,13 @@ struct NativePluginProcessLaunch: Sendable {
             == NativeDocumentPluginIdentity.marketplaceKey
             && launch.manifest.name == NativeDocumentPluginIdentity.packageName
             && launch.componentKey == NativeDocumentPluginIdentity.componentKey
-        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
-        let requiresLoopbackServer = isBrowserPlugin || isWebDesignPlugin
+        let hasManagedBrowserPermission = launch.permissionSnapshot.contains(
+            "browser.managed.launch"
+        )
+        let requiresManagedBrowser = hasManagedBrowserPermission
+            || isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
+        let requiresLoopbackServer = hasManagedBrowserPermission
+            || isBrowserPlugin || isWebDesignPlugin
         let browserHome = isBrowserPlugin
             && launch.permissionSnapshot.contains("browser.chrome.attach")
             ? FileManager.default.homeDirectoryForCurrentUser
@@ -273,7 +278,19 @@ enum NativePluginSandboxProfile {
             rules.append("(allow network-inbound (local ip \"localhost:*\"))")
             rules.append("(allow network-outbound (remote ip \"localhost:*\"))")
         }
-        // All non-loopback sockets remain denied. Domain access requires a host-controlled proxy.
+        if launch.permissionSnapshot.contains("network.client") {
+            rules.append("(allow network-outbound)")
+        }
+        if launch.permissionSnapshot.contains("system.developer-tools.read") {
+            for directory in [
+                "/Applications/Xcode.app",
+                "/Library/Developer/CommandLineTools",
+            ] {
+                rules.append("(allow file-read* \(literal(directory)))")
+                rules.append("(allow process-exec \(literal(directory)))")
+            }
+        }
+        // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")
     }
 

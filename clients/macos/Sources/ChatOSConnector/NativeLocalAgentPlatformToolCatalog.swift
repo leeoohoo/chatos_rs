@@ -57,7 +57,9 @@ public enum NativeLocalAgentPlatformToolCatalog {
       name: pluginInstallerInspectNPMToolName,
       description: "Download a pinned npm package without install scripts, build an isolated local MCP wrapper, start it in inspection mode and return its exact tool list and fingerprint. This does not persist the plugin. Use exact metadata returned by plugin_installer_resolve_npm.",
       properties: npmInstallerDraftProperties,
-      required: ["package_name", "package_version", "binary_name", "arguments"]
+      required: [
+        "package_name", "package_version", "binary_name", "arguments", "access_profile",
+      ]
     ),
     taskTool(
       name: pluginInstallerInstallNPMToolName,
@@ -69,7 +71,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       ]) { _, new in new },
       required: [
         "package_name", "package_version", "binary_name", "arguments",
-        "expected_fingerprint",
+        "access_profile", "expected_fingerprint",
       ]
     ),
     taskTool(
@@ -229,6 +231,13 @@ public enum NativeLocalAgentPlatformToolCatalog {
       "type": .string("array"), "maxItems": .number(64),
       "items": .object(["type": .string("string"), "maxLength": .number(2048)]),
       "description": .string("Structured executable arguments, never a shell command. Use [] when the bin starts MCP directly."),
+    ]),
+    "access_profile": .object([
+      "type": .string("string"),
+      "enum": .array(
+        ["restricted", "network_client", "developer_analysis"].map(LocalAgentJSONValue.string)
+      ),
+      "description": .string("Required capability boundary. Use restricted for local-only MCPs, network_client for outbound APIs, and developer_analysis only for tools that must inspect a workspace, use local developer tools, launch a managed browser, and create evidence artifacts."),
     ]),
   ]
 

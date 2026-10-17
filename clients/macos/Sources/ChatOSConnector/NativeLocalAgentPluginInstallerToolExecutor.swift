@@ -58,6 +58,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 "display_name": .string(draft.displayName),
                 "package_name": .string(draft.packageName),
                 "package_version": .string(draft.packageVersion),
+                "access_profile": .string(draft.accessProfile.rawValue),
             ])
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectSourceToolName:
             let source = try Self.pluginSource(arguments)
@@ -251,6 +252,11 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         let packageVersion = try string(arguments, "package_version")
         let binaryName = try string(arguments, "binary_name")
         let launchArguments = try stringArray(arguments, "arguments")
+        guard let accessProfile = LocalConnectorCustomMCPDraft.AccessProfile(
+            rawValue: try string(arguments, "access_profile")
+        ) else {
+            throw NativeLocalAgentPluginInstallerToolError.invalidField("access_profile")
+        }
         return .init(
             displayName: optionalString(arguments, "display_name") ?? packageName,
             description: optionalString(arguments, "description") ?? "",
@@ -259,7 +265,8 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             packageVersion: packageVersion,
             binaryName: binaryName,
             arguments: launchArguments,
-            environment: [:]
+            environment: [:],
+            accessProfile: accessProfile
         )
     }
 
@@ -309,6 +316,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 "package_version": .string(draft.packageVersion),
                 "binary_name": .string(draft.binaryName),
                 "arguments": .array(draft.arguments.map(LocalAgentJSONValue.string)),
+                "access_profile": .string(draft.accessProfile.rawValue),
             ])
         }
         if let source {

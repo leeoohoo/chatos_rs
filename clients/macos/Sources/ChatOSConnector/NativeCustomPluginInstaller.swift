@@ -10,6 +10,40 @@ struct NativePreparedCustomPlugin: Sendable {
     var sourceSummary: String
 }
 
+enum NativeCustomMCPAccessPolicy {
+    struct Permission: Sendable, Equatable {
+        var id: String
+        var reason: String
+    }
+
+    static func permissions(
+        for profile: LocalConnectorCustomMCPDraft.AccessProfile
+    ) -> [Permission] {
+        let process = Permission(
+            id: "process.spawn",
+            reason: "启动用户确认安装的本地 MCP Server"
+        )
+        switch profile {
+        case .restricted:
+            return [process]
+        case .networkClient:
+            return [
+                process,
+                .init(id: "network.client", reason: "允许 MCP 发起出站网络请求"),
+            ]
+        case .developerAnalysis:
+            return [
+                process,
+                .init(id: "network.client", reason: "允许分析工具发起出站网络请求"),
+                .init(id: "system.developer-tools.read", reason: "读取并调用本机开发工具链"),
+                .init(id: "browser.managed.launch", reason: "启动隔离的本机浏览器进行动态分析"),
+                .init(id: "artifact.create", reason: "在 ChatOS 管理目录中保存分析证据"),
+                .init(id: "workspace.read", reason: "读取当前任务绑定的项目文件"),
+            ]
+        }
+    }
+}
+
 extension NativePluginInstaller {
     func prepareCustomMCP(
         _ draft: LocalConnectorCustomMCPDraft
@@ -98,12 +132,16 @@ extension NativePluginInstaller {
                         ],
                     ],
                 ],
-                "permissions": [[
-                    "permission": "process.spawn",
-                    "required": true,
-                    "reason": "启动用户确认安装的本地 MCP Server",
-                    "components": [input.componentKey],
-                ]],
+                "permissions": NativeCustomMCPAccessPolicy.permissions(
+                    for: input.accessProfile
+                ).map { permission in
+                    [
+                        "permission": permission.id,
+                        "required": true,
+                        "reason": permission.reason,
+                        "components": [input.componentKey],
+                    ] as [String: Any]
+                },
             ]
             try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
                 .write(to: packageRoot.appendingPathComponent("chatos.plugin.json"), options: .atomic)
@@ -112,7 +150,7 @@ extension NativePluginInstaller {
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "npm:\(input.packageName):\(input.componentKey)",
                 source: .customMCP,
-                sourceSummary: "npm \(input.packageName)@\(input.packageVersion) · \(input.binaryName) \(input.arguments.joined(separator: " "))"
+                sourceSummary: "npm \(input.packageName)@\(input.packageVersion) · \(input.binaryName) \(input.arguments.joined(separator: " ")) · \(input.accessProfile.rawValue)"
             )
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
@@ -617,6 +655,7 @@ private struct NativeCustomPluginInput {
     var binaryName: String
     var arguments: [String]
     var environment: [String: String]
+    var accessProfile: LocalConnectorCustomMCPDraft.AccessProfile
 
     init(draft: LocalConnectorCustomMCPDraft) throws {
         displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -627,6 +666,7 @@ private struct NativeCustomPluginInput {
         binaryName = draft.binaryName.trimmingCharacters(in: .whitespacesAndNewlines)
         arguments = draft.arguments
         environment = draft.environment
+        accessProfile = draft.accessProfile
         let safeID = try NSRegularExpression(pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
         let safePackage = try NSRegularExpression(pattern: "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")
         let exactVersion = try NSRegularExpression(pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$")

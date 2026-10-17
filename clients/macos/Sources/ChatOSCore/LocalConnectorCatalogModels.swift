@@ -106,6 +106,12 @@ public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
 }
 
 public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
+    public enum AccessProfile: String, Codable, Sendable, Equatable, CaseIterable {
+        case restricted
+        case networkClient = "network_client"
+        case developerAnalysis = "developer_analysis"
+    }
+
     public var displayName: String
     public var description: String
     public var componentKey: String
@@ -114,6 +120,7 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
     public var binaryName: String
     public var arguments: [String]
     public var environment: [String: String]
+    public var accessProfile: AccessProfile
 
     public init(
         displayName: String,
@@ -123,7 +130,8 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
         packageVersion: String,
         binaryName: String,
         arguments: [String] = [],
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        accessProfile: AccessProfile
     ) {
         self.displayName = displayName
         self.description = description
@@ -133,6 +141,7 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
         self.binaryName = binaryName
         self.arguments = arguments
         self.environment = environment
+        self.accessProfile = accessProfile
     }
 }
 

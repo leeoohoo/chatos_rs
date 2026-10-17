@@ -4,6 +4,33 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
+    func testNPMInstallerRequiresTheSameAccessProfileForInspectAndInstall() throws {
+        for name in [
+            NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectNPMToolName,
+            NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName,
+        ] {
+            let tool = try XCTUnwrap(
+                NativeLocalAgentPlatformToolCatalog.pluginInstallerTools.first { value in
+                    guard case let .object(object) = value else { return false }
+                    return object["name"] == .string(name)
+                }
+            )
+            guard case let .object(definition) = tool,
+                  case let .object(parameters)? = definition["parameters"],
+                  case let .object(properties)? = parameters["properties"],
+                  case let .object(profile)? = properties["access_profile"],
+                  case let .array(required)? = parameters["required"] else {
+                return XCTFail("missing access profile schema for \(name)")
+            }
+            XCTAssertEqual(profile["enum"], .array([
+                .string("restricted"),
+                .string("network_client"),
+                .string("developer_analysis"),
+            ]))
+            XCTAssertTrue(required.contains(.string("access_profile")))
+        }
+    }
+
     func testMainChatCanReadImagesWithoutAddingATaskBusinessTool() throws {
         let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools
         let tool = try XCTUnwrap(tools.first { value in
