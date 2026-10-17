@@ -383,6 +383,7 @@ struct NativeCustomPluginInstallationTests {
         #expect(inspection.version == "6.5.0")
         #expect(component.componentKey == "reverse-engineer-anything")
         #expect(component.toolNames.count >= 200)
+        #expect(component.toolNames.count <= NativeLocalConnectorService.maximumAgentPluginToolCount)
         #expect(component.toolNames.contains("binary_session"))
 
         try await service.installCustomMCP(

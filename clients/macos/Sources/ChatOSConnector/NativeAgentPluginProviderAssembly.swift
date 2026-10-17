@@ -6,6 +6,8 @@ import Foundation
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
 extension NativeLocalConnectorService {
+    static let maximumAgentPluginToolCount = 512
+
     public func installedAgentPlugins(
         ownerUserID: String
     ) async throws -> [NativeInstalledAgentPlugin] {
@@ -353,10 +355,10 @@ extension NativeLocalConnectorService {
         return manifest
     }
 
-    private static func validatedAgentPluginTools(
+    static func validatedAgentPluginTools(
         _ tools: [NativeJSONValue]
     ) throws -> [NativeJSONValue] {
-        guard (1...200).contains(tools.count) else {
+        guard (1...maximumAgentPluginToolCount).contains(tools.count) else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 工具数量无效")
         }
         var names = Set<String>()

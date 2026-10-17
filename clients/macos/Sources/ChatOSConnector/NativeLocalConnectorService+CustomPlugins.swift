@@ -110,7 +110,7 @@ extension NativeLocalConnectorService {
                 try await client.start()
                 let initialized = try await client.initialize()
                 await client.terminate()
-                let tools = initialized.tools
+                let tools = try Self.validatedAgentPluginTools(initialized.tools)
                 let toolNames = tools.compactMap { $0.jsonObject?["name"]?.jsonString }.sorted()
                 guard toolNames.count == tools.count,
                       Set(toolNames).count == toolNames.count else {

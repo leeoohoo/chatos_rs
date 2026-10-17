@@ -5,6 +5,34 @@ import Foundation
 import XCTest
 
 final class NativeAgentPluginToolProviderTests: XCTestCase {
+    func testProgressivePluginCatalogAcceptsREAToolCountWithinBound() throws {
+        let tools: [NativeJSONValue] = (1...207).map { index in
+            .object([
+                "name": .string("rea_tool_\(index)"),
+                "description": .string("REA tool \(index)"),
+                "inputSchema": .object(["type": .string("object")]),
+            ])
+        }
+
+        let validated = try NativeLocalConnectorService.validatedAgentPluginTools(tools)
+
+        XCTAssertEqual(validated.count, 207)
+        XCTAssertEqual(NativeLocalConnectorService.maximumAgentPluginToolCount, 512)
+    }
+
+    func testProgressivePluginCatalogStillRejectsUnboundedToolInventory() {
+        let tools: [NativeJSONValue] = (1...513).map { index in
+            .object([
+                "name": .string("tool_\(index)"),
+                "inputSchema": .object(["type": .string("object")]),
+            ])
+        }
+
+        XCTAssertThrowsError(
+            try NativeLocalConnectorService.validatedAgentPluginTools(tools)
+        )
+    }
+
     func testTaskBuiltinDiscoveryRestoresFrozenSkillsWithoutBrokerExecution() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("task-builtin-skills-\(UUID().uuidString)", isDirectory: true)
