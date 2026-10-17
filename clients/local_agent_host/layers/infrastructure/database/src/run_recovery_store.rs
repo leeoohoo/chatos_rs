@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    task_conversation_writeback, task_lifecycle, ClientStorageError, SqliteClientStorage,
-    SqliteResultExt,
+    conversation_lifecycle, task_conversation_writeback, task_lifecycle, ClientStorageError,
+    SqliteClientStorage, SqliteResultExt,
 };
 use sqlx::{Row, SqliteConnection};
 
@@ -67,6 +67,8 @@ pub(super) async fn recover_expired_claims(
             .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
         task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
         task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+            .await?;
+        conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms)
             .await?;
     }
 
@@ -146,5 +148,29 @@ pub(super) async fn recover_expired_claims(
             .await?;
         }
     }
-    Ok((rows.len() + stranded_task_runs.len() + missing_reasons.len()) as u64)
+    // Repair databases where a previous Host already marked a Main Chat Run as
+    // needs_review but left the visible Turn running forever. Run this after historical
+    // diagnostic backfill so the assistant failure message never loses its reason.
+    let stranded_conversation_runs: Vec<String> = sqlx::query_scalar(
+        "SELECT run.run_id FROM local_agent_runs run \
+         JOIN local_conversation_turns turn ON turn.run_id = run.run_id \
+         WHERE run.owner_user_id = ? AND run.owner_entity_type = 'conversation_turn' \
+         AND run.status = 'needs_review' AND turn.status = 'running' \
+         ORDER BY run.run_id",
+    )
+    .bind(owner_user_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for run_id in &stranded_conversation_runs {
+        let run = SqliteClientStorage::fetch_run_on(connection, run_id)
+            .await?
+            .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+        conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms)
+            .await?;
+    }
+    Ok((rows.len()
+        + stranded_task_runs.len()
+        + stranded_conversation_runs.len()
+        + missing_reasons.len()) as u64)
 }

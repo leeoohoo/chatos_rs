@@ -11,7 +11,9 @@ pub(super) async fn reconcile_conversation_after_run(
     run: &LocalAgentRunRecord,
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
-    if run.owner_entity_type != "conversation_turn" || !run.status.is_terminal() {
+    if run.owner_entity_type != "conversation_turn"
+        || (!run.status.is_terminal() && run.status != LocalAgentRunStatus::NeedsReview)
+    {
         return Ok(());
     }
     let row = sqlx::query(
@@ -28,6 +30,10 @@ pub(super) async fn reconcile_conversation_after_run(
         LocalAgentRunStatus::Succeeded => "succeeded",
         LocalAgentRunStatus::Failed => "failed",
         LocalAgentRunStatus::Cancelled => "cancelled",
+        // A lost Host claim cannot be replayed safely. Close the visible Turn as failed so
+        // Main Chat becomes writable again while preserving the Run's more precise
+        // needs_review state and diagnostic payload.
+        LocalAgentRunStatus::NeedsReview => "failed",
         _ => return Ok(()),
     };
     let updated = sqlx::query(
@@ -48,16 +54,25 @@ pub(super) async fn reconcile_conversation_after_run(
     }
     if matches!(
         run.status,
-        LocalAgentRunStatus::Succeeded | LocalAgentRunStatus::Failed
+        LocalAgentRunStatus::Succeeded
+            | LocalAgentRunStatus::Failed
+            | LocalAgentRunStatus::NeedsReview
     ) {
         let ordinal = next_message_ordinal(connection, &conversation_id).await?;
-        let content = run.terminal_outcome.clone().unwrap_or_else(|| {
-            if run.status == LocalAgentRunStatus::Failed {
-                json!({"error": "Local model execution failed before producing a response."})
-            } else {
-                serde_json::Value::Null
-            }
-        });
+        let content = run
+            .terminal_outcome
+            .clone()
+            .unwrap_or_else(|| match run.status {
+                LocalAgentRunStatus::Failed => {
+                    json!({"error": "Local model execution failed before producing a response."})
+                }
+                LocalAgentRunStatus::NeedsReview => json!({
+                    "status": "needs_review",
+                    "reason_code": "execution_interrupted",
+                    "error": "Execution stopped before the current step result could be confirmed."
+                }),
+                _ => serde_json::Value::Null,
+            });
         sqlx::query(
             "INSERT INTO local_conversation_messages(\
              message_id, conversation_id, turn_id, ordinal, role, content_json, metadata_json, \

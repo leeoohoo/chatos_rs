@@ -2,8 +2,8 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    ClientStorageError, IdempotentCommand, LocalAgentToolStore, SqliteClientStorage,
-    SqliteResultExt,
+    conversation_lifecycle, task_conversation_writeback, task_lifecycle, ClientStorageError,
+    IdempotentCommand, LocalAgentToolStore, SqliteClientStorage, SqliteResultExt,
 };
 use async_trait::async_trait;
 use chatos_local_agent_protocol::{
@@ -592,17 +592,27 @@ async fn recover_expired_on(
         .db()?;
         let event_type = if side_effecting {
             let continuation = tool_batch_continuation(connection, &run_id, &batch_id).await?;
-            sqlx::query(
+            let outcome = json!({
+                "status": "needs_review",
+                "reason_code": "tool_execution_interrupted",
+                "error": "A side-effecting tool stopped before its result could be confirmed. Review the execution record before retrying."
+            });
+            let updated = sqlx::query(
                 "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
-                 continuation_input_json = ?, updated_at_unix_ms = ? \
+                 continuation_input_json = ?, terminal_outcome_json = COALESCE(terminal_outcome_json, ?), \
+                 updated_at_unix_ms = ? \
                  WHERE run_id = ? AND status = 'waiting_tool_result'",
             )
             .bind(serde_json::to_string(&continuation)?)
+            .bind(serde_json::to_string(&outcome)?)
             .bind(now_unix_ms)
             .bind(&run_id)
             .execute(&mut *connection)
             .await
             .db()?;
+            if updated.rows_affected() == 1 {
+                reconcile_needs_review_run(connection, &run_id, now_unix_ms).await?;
+            }
             "tool_claim_expired_needs_review"
         } else {
             "tool_claim_expired_requeued"
@@ -626,6 +636,20 @@ async fn recover_expired_on(
     Ok(rows.len() as u64)
 }
 
+async fn reconcile_needs_review_run(
+    connection: &mut SqliteConnection,
+    run_id: &str,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let run = SqliteClientStorage::fetch_run_on(connection, run_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+    task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
+    task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
+        .await?;
+    conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms).await
+}
+
 pub(super) async fn advance_run_after_tool(
     connection: &mut SqliteConnection,
     run_id: &str,
@@ -636,17 +660,27 @@ pub(super) async fn advance_run_after_tool(
 ) -> Result<(), ClientStorageError> {
     if completed_status == LocalAgentToolStatus::NeedsReview {
         let continuation = tool_batch_continuation(connection, run_id, batch_id).await?;
-        sqlx::query(
+        let outcome = json!({
+            "status": "needs_review",
+            "reason_code": "tool_result_requires_review",
+            "error": "A tool result could not be confirmed safely. Review the execution record before retrying."
+        });
+        let updated = sqlx::query(
             "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
-             continuation_input_json = ?, updated_at_unix_ms = ? \
+             continuation_input_json = ?, terminal_outcome_json = COALESCE(terminal_outcome_json, ?), \
+             updated_at_unix_ms = ? \
              WHERE run_id = ? AND status = 'waiting_tool_result'",
         )
         .bind(serde_json::to_string(&continuation)?)
+        .bind(serde_json::to_string(&outcome)?)
         .bind(now_unix_ms)
         .bind(run_id)
         .execute(&mut *connection)
         .await
         .db()?;
+        if updated.rows_affected() == 1 {
+            reconcile_needs_review_run(connection, run_id, now_unix_ms).await?;
+        }
         return Ok(());
     }
     let remaining: i64 = sqlx::query_scalar(
