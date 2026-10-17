@@ -77,6 +77,13 @@ public enum LocalConnectorPluginSource: String, Codable, Sendable, Equatable {
     case npmPlugin = "npm_plugin"
 }
 
+public enum LocalConnectorPluginRuntimeStatus: String, Codable, Sendable, Equatable {
+    case notChecked = "not_checked"
+    case ready
+    case unavailable
+    case disabled
+}
+
 public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, Equatable {
         case localFolder = "local_folder"
@@ -211,7 +218,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var permissions: [LocalConnectorPluginPermission]
     public var installationIssue: LocalConnectorPluginInstallationIssue?
     public var source: LocalConnectorPluginSource
-    public var runtimeStatus: String?
+    public var runtimeStatus: LocalConnectorPluginRuntimeStatus?
     public var runtimeToolCount: Int?
     public var runtimeLastCheckedAt: Date?
     public var runtimeError: String?
@@ -237,7 +244,7 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         permissions: [LocalConnectorPluginPermission] = [],
         installationIssue: LocalConnectorPluginInstallationIssue? = nil,
         source: LocalConnectorPluginSource = .marketplace,
-        runtimeStatus: String? = nil,
+        runtimeStatus: LocalConnectorPluginRuntimeStatus? = nil,
         runtimeToolCount: Int? = nil,
         runtimeLastCheckedAt: Date? = nil,
         runtimeError: String? = nil

@@ -2,7 +2,7 @@ import ChatOSCore
 import Foundation
 
 struct NativeCustomPluginRuntimeHealth: Sendable, Equatable {
-    var status: String
+    var status: LocalConnectorPluginRuntimeStatus
     var toolCount: Int?
     var checkedAt: Date
     var error: String?
@@ -204,7 +204,7 @@ extension NativeLocalConnectorService {
                 customPluginRuntimeHealth.removeValue(forKey: record.pluginID)
             } else if !enabled {
                 customPluginRuntimeHealth[record.pluginID] = .init(
-                    status: "disabled", toolCount: nil, checkedAt: Date(), error: nil
+                    status: .disabled, toolCount: nil, checkedAt: Date(), error: nil
                 )
             } else if forceRefresh {
                 do {
@@ -213,14 +213,14 @@ extension NativeLocalConnectorService {
                         sourceSummary: record.sourceSummary ?? "installed custom plugin"
                     )
                     customPluginRuntimeHealth[record.pluginID] = .init(
-                        status: "ready",
+                        status: .ready,
                         toolCount: inspection.components.reduce(0) { $0 + $1.toolNames.count },
                         checkedAt: Date(),
                         error: nil
                     )
                 } catch {
                     customPluginRuntimeHealth[record.pluginID] = .init(
-                        status: "unavailable", toolCount: nil, checkedAt: Date(),
+                        status: .unavailable, toolCount: nil, checkedAt: Date(),
                         error: error.localizedDescription
                     )
                 }
@@ -261,7 +261,7 @@ extension NativeLocalConnectorService {
                 permissions: permissions,
                 installationIssue: issue,
                 source: record.source ?? .localPlugin,
-                runtimeStatus: hasMCP ? (runtimeHealth?.status ?? "not_checked") : nil,
+                runtimeStatus: hasMCP ? (runtimeHealth?.status ?? .notChecked) : nil,
                 runtimeToolCount: runtimeHealth?.toolCount,
                 runtimeLastCheckedAt: runtimeHealth?.checkedAt,
                 runtimeError: runtimeHealth?.error

@@ -135,7 +135,7 @@ struct NativeCustomPluginInstallationTests {
 
         let catalog = try await service.fetchPlugins(refresh: true)
         let visible = try #require(catalog.first(where: { $0.displayName == "Local Fixture" }))
-        #expect(visible.runtimeStatus == "ready")
+        #expect(visible.runtimeStatus == .ready)
         #expect(visible.runtimeToolCount == 1)
         #expect(visible.runtimeLastCheckedAt != nil)
         #expect(visible.runtimeError == nil)
@@ -449,7 +449,7 @@ struct NativeCustomPluginInstallationTests {
         let catalog = try await service.fetchPlugins(refresh: true)
         let installedPluginID = try recordPluginID(in: stateURL)
         let visibleREA = try #require(catalog.first(where: { $0.pluginID == installedPluginID }))
-        #expect(visibleREA.runtimeStatus == "ready")
+        #expect(visibleREA.runtimeStatus == .ready)
         #expect((visibleREA.runtimeToolCount ?? 0) >= 200)
         #expect(visibleREA.runtimeLastCheckedAt != nil)
         #expect(visibleREA.runtimeError == nil)
