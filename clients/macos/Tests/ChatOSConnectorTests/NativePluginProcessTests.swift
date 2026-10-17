@@ -412,6 +412,19 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains(
             "(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))"
         ))
+        let cacheLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+        guard cacheLength > 0 else {
+            Issue.record("DARWIN_USER_CACHE_DIR is unavailable")
+            return
+        }
+        var cacheBuffer = [CChar](repeating: 0, count: cacheLength)
+        #expect(confstr(_CS_DARWIN_USER_CACHE_DIR, &cacheBuffer, cacheLength) > 0)
+        let moduleCache = URL(fileURLWithPath: String(cString: cacheBuffer), isDirectory: true)
+            .appendingPathComponent("clang", isDirectory: true)
+            .appendingPathComponent("ModuleCache", isDirectory: true)
+            .path
+        let canonicalModuleCache = NativePluginSandboxProfile.canonicalPath(moduleCache)
+        #expect(permittedProfile.contains("(subpath \"\(canonicalModuleCache)\")"))
         #expect(!permittedProfile.contains("(subpath \"\(temporaryRoot)\")"))
 
         let restricted = NativePluginProcessLaunch(
@@ -432,6 +445,7 @@ extension NativePluginRuntimeTests {
         #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
         #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
         #expect(!restrictedProfile.contains("/Library/Preferences/com.apple.dt.Xcode.plist"))
+        #expect(!restrictedProfile.contains(canonicalModuleCache))
         #expect(!restrictedProfile.contains("xcrun_db-"))
     }
 

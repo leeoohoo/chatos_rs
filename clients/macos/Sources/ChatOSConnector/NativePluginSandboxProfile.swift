@@ -301,6 +301,16 @@ enum NativePluginSandboxProfile {
             // compile REA's process ownership helper. Without this narrow read,
             // xcodebuild reports exit 69 as if the license had not been accepted.
             rules.append("(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))")
+            // Swift writes imported SDK modules below the Darwin per-user cache
+            // while compiling REA's ownership helper. Scope the exception to the
+            // compiler's ModuleCache instead of exposing the full cache root.
+            if let cacheRoot = Self.darwinUserCacheDirectory() {
+                let moduleCache = URL(fileURLWithPath: cacheRoot, isDirectory: true)
+                    .appendingPathComponent("clang", isDirectory: true)
+                    .appendingPathComponent("ModuleCache", isDirectory: true)
+                    .path
+                rules.append("(allow file-read* file-write* \(literal(moduleCache)))")
+            }
         }
         // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")
@@ -326,6 +336,16 @@ enum NativePluginSandboxProfile {
             missingComponents.append(candidate.lastPathComponent)
             candidate = parent
         }
+    }
+
+    private static func darwinUserCacheDirectory() -> String? {
+        let requiredLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+        guard requiredLength > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: requiredLength)
+        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buffer, requiredLength) > 0 else {
+            return nil
+        }
+        return String(cString: buffer)
     }
 
     private static func literal(_ path: String) -> String {
