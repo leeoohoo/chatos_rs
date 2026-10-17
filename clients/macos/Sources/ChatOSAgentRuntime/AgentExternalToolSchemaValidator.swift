@@ -25,7 +25,7 @@ public enum AgentExternalToolSchemaValidator {
             "$schema", "$id", "$comment", "$defs", "definitions", "$ref", "title", "description",
             "default", "examples", "deprecated", "readOnly", "writeOnly", "format",
             "x-enum-labels", "x-chatos-external-mcp-id",
-            "type", "properties", "required", "additionalProperties", "minProperties", "maxProperties",
+            "type", "properties", "propertyNames", "required", "additionalProperties", "minProperties", "maxProperties",
             "items", "prefixItems", "minItems", "maxItems", "uniqueItems", "minimum", "maximum",
             "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern",
             "enum", "const", "anyOf", "oneOf", "allOf", "not", "if", "then", "else",
@@ -77,6 +77,9 @@ public enum AgentExternalToolSchemaValidator {
             }
             let properties = spec["properties"] as? [String: Any] ?? [:]
             for key in object.keys.sorted() {
+                if let propertyNameSchema = spec["propertyNames"] {
+                    try check(key, schema: propertyNameSchema, root: root, path: path + "." + key, depth: depth + 1)
+                }
                 if let schema = properties[key] {
                     try check(object[key]!, schema: schema, root: root, path: path + "." + key, depth: depth + 1)
                 } else if let schema = spec["additionalProperties"] {

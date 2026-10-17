@@ -41,6 +41,17 @@ final class AgentExternalToolSchemaValidatorTests: XCTestCase {
         XCTAssertThrowsError(try validate("[1,1]", #"{"type":"array","uniqueItems":true}"#))
     }
 
+    func testPropertyNamesValidatesDynamicMCPArgumentKeys() throws {
+        let schema = #"{"type":"object","propertyNames":{"type":"string","pattern":"^[A-Z_][A-Z0-9_]*$"},"additionalProperties":{"type":"string"}}"#
+
+        XCTAssertNoThrow(try validate(#"{"REA_MODE":"browser","TIMEOUT":"30"}"#, schema))
+        XCTAssertThrowsError(try validate(#"{"invalid-key":"browser"}"#, schema)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("$.invalid-key"), error.localizedDescription)
+        }
+        XCTAssertThrowsError(try validate(#"{"ANY":"value"}"#, #"{"type":"object","propertyNames":false}"#))
+        XCTAssertNoThrow(try validate("{}", #"{"type":"object","propertyNames":false}"#))
+    }
+
     func testUnsupportedSchemaAndRemoteReferencesNeverPassSilently() throws {
         for schema in [#"{"$ref":"https://example.test/schema"}"#, #"{"unknownAssertion":true}"#,
             ##"{"$ref":"#"}"##, ##"{"$ref":"#/$defs/missing"}"##] {
