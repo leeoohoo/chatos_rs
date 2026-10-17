@@ -399,6 +399,9 @@ extension NativePluginRuntimeTests {
             NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
         )
         #expect(permittedProfile.contains("(allow pseudo-tty)"))
+        #expect(permittedProfile.contains("(allow process-info-pidinfo (target self))"))
+        #expect(permittedProfile.contains("(literal \"/dev/ptmx\")"))
+        #expect(permittedProfile.contains("^/dev/ttys[0-9a-f]+$"))
         #expect(permittedProfile.contains("(allow network-outbound)"))
         #expect(permittedProfile.contains("/Applications/Xcode.app"))
         #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
@@ -452,6 +455,9 @@ extension NativePluginRuntimeTests {
             NativePluginSandboxProfile.arguments(for: restricted).dropFirst().first
         )
         #expect(restrictedProfile.contains("(allow pseudo-tty)"))
+        #expect(restrictedProfile.contains("(allow process-info-pidinfo (target self))"))
+        #expect(restrictedProfile.contains("(literal \"/dev/ptmx\")"))
+        #expect(restrictedProfile.contains("^/dev/ttys[0-9a-f]+$"))
         #expect(!restrictedProfile.contains("(allow network-outbound)"))
         #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
         #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
@@ -476,6 +482,9 @@ extension NativePluginRuntimeTests {
             NativePluginSandboxProfile.arguments(for: withoutSpawn).dropFirst().first
         )
         #expect(!withoutSpawnProfile.contains("(allow pseudo-tty)"))
+        #expect(!withoutSpawnProfile.contains("process-info-pidinfo"))
+        #expect(!withoutSpawnProfile.contains("/dev/ptmx"))
+        #expect(!withoutSpawnProfile.contains("/dev/ttys"))
     }
 
     @Test("Web Design receives isolated temporary storage and managed browser access")

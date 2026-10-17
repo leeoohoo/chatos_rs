@@ -224,9 +224,12 @@ enum NativePluginSandboxProfile {
             "(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/opt/homebrew\") (subpath \"/usr/local\") (subpath \"/Library/Apple\") \(literal(launch.installationURL.path)))",
         ]
         if launch.permissionSnapshot.contains("process.spawn") {
-            // PTY-backed process tools (including REA process capture) need the
-            // Seatbelt pseudo-terminal operation in addition to process-fork.
+            // PTY-backed process tools (including REA process capture) open the
+            // multiplexor, configure its dynamically allocated slave, and query
+            // their own PID while posix_spawn prepares the helper process.
             rules.append("(allow pseudo-tty)")
+            rules.append("(allow process-info-pidinfo (target self))")
+            rules.append("(allow file-read* file-write* file-ioctl (literal \"/dev/ptmx\") (regex #\"^/dev/ttys[0-9a-f]+$\"))")
         }
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
