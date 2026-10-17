@@ -419,7 +419,11 @@ extension NativePluginRuntimeTests {
         }
         var cacheBuffer = [CChar](repeating: 0, count: cacheLength)
         #expect(confstr(_CS_DARWIN_USER_CACHE_DIR, &cacheBuffer, cacheLength) > 0)
-        let moduleCache = URL(fileURLWithPath: String(cString: cacheBuffer), isDirectory: true)
+        let cachePath = String(
+            decoding: cacheBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )
+        let moduleCache = URL(fileURLWithPath: cachePath, isDirectory: true)
             .appendingPathComponent("clang", isDirectory: true)
             .appendingPathComponent("ModuleCache", isDirectory: true)
             .path
