@@ -399,12 +399,16 @@ extension NativePluginRuntimeTests {
             NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
         )
         #expect(permittedProfile.contains("(allow pseudo-tty)"))
-        #expect(permittedProfile.contains("(allow process-info-pidinfo (target self))"))
+        #expect(permittedProfile.contains("(allow process-info-listpids)"))
+        #expect(permittedProfile.contains("(allow process-info-pidinfo (target same-sandbox))"))
         #expect(permittedProfile.contains("(literal \"/dev/ptmx\")"))
         #expect(permittedProfile.contains("^/dev/ttys[0-9a-f]+$"))
         #expect(permittedProfile.contains("(allow network-outbound)"))
         #expect(permittedProfile.contains("/Applications/Xcode.app"))
         #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
+        let preparedCache = try #require(prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+        let canonicalPreparedCache = NativePluginSandboxProfile.canonicalPath(preparedCache)
+        #expect(permittedProfile.contains("(allow process-exec (subpath \"\(canonicalPreparedCache)\"))"))
         let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
             FileManager.default.temporaryDirectory.path
         )
@@ -455,7 +459,8 @@ extension NativePluginRuntimeTests {
             NativePluginSandboxProfile.arguments(for: restricted).dropFirst().first
         )
         #expect(restrictedProfile.contains("(allow pseudo-tty)"))
-        #expect(restrictedProfile.contains("(allow process-info-pidinfo (target self))"))
+        #expect(restrictedProfile.contains("(allow process-info-listpids)"))
+        #expect(restrictedProfile.contains("(allow process-info-pidinfo (target same-sandbox))"))
         #expect(restrictedProfile.contains("(literal \"/dev/ptmx\")"))
         #expect(restrictedProfile.contains("^/dev/ttys[0-9a-f]+$"))
         #expect(!restrictedProfile.contains("(allow network-outbound)"))
@@ -483,6 +488,7 @@ extension NativePluginRuntimeTests {
         )
         #expect(!withoutSpawnProfile.contains("(allow pseudo-tty)"))
         #expect(!withoutSpawnProfile.contains("process-info-pidinfo"))
+        #expect(!withoutSpawnProfile.contains("process-info-listpids"))
         #expect(!withoutSpawnProfile.contains("/dev/ptmx"))
         #expect(!withoutSpawnProfile.contains("/dev/ttys"))
     }

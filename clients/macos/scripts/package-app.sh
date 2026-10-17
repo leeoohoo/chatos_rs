@@ -61,14 +61,24 @@ swiftpm build \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
   --product ChatOSSwift
+swiftpm build \
+  --build-system "$SWIFT_BUILD_SYSTEM" \
+  --scratch-path "$SWIFT_SCRATCH_PATH" \
+  --configuration "$BUILD_CONFIGURATION" \
+  --product chatos_plugin_ps
 BIN_DIR=$(swiftpm build \
   --build-system "$SWIFT_BUILD_SYSTEM" \
   --scratch-path "$SWIFT_SCRATCH_PATH" \
   --configuration "$BUILD_CONFIGURATION" \
   --show-bin-path)
 EXECUTABLE="$BIN_DIR/ChatOSSwift"
+PLUGIN_PROCESS_LIST="$BIN_DIR/chatos_plugin_ps"
 if [[ ! -x "$EXECUTABLE" ]]; then
   echo "ChatOSSwift executable not found at $EXECUTABLE" >&2
+  exit 1
+fi
+if [[ ! -x "$PLUGIN_PROCESS_LIST" ]]; then
+  echo "Plugin process-list helper not found at $PLUGIN_PROCESS_LIST" >&2
   exit 1
 fi
 
@@ -126,6 +136,7 @@ set_plist_string "ChatOSBuildConfiguration" "$BUILD_CONFIGURATION"
 set_plist_string "ChatOSBuildGitCommit" "$BUILD_GIT_COMMIT"
 set_plist_string "ChatOSBuildDateUTC" "$BUILD_DATE_UTC"
 cp "$PROJECT_DIR/Support/Tools/darwin-arm64/rg" "$TOOLS_DIR/rg"
+cp "$PLUGIN_PROCESS_LIST" "$TOOLS_DIR/ps"
 cp "$PROJECT_DIR/Support/ThirdParty/ripgrep/LICENSE-MIT" "$RIPGREP_NOTICE_DIR/LICENSE-MIT"
 cp "$PROJECT_DIR/Support/ThirdParty/ripgrep/UNLICENSE" "$RIPGREP_NOTICE_DIR/UNLICENSE"
 cp "$PROJECT_DIR/Support/ThirdParty/SwiftTerm/LICENSE" "$SWIFTTERM_NOTICE_DIR/LICENSE"
@@ -134,10 +145,12 @@ cp "$PROJECT_DIR/Support/Pets/fengtuan/spritesheet.webp" "$PET_DIR/spritesheet.w
 cp "$PROJECT_DIR/Support/Localization/en.lproj/Localizable.strings" "$EN_LOCALIZATION_DIR/Localizable.strings"
 cp "$PROJECT_DIR/Support/Localization/zh-Hans.lproj/Localizable.strings" "$ZH_HANS_LOCALIZATION_DIR/Localizable.strings"
 chmod 755 "$TOOLS_DIR/rg"
+chmod 755 "$TOOLS_DIR/ps"
 chmod 755 "$MACOS_DIR/chatos_local_agent_host"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/rg"
+  codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$TOOLS_DIR/ps"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$MACOS_DIR/chatos_local_agent_host"
   codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none "$APP_DIR"
 else
@@ -145,6 +158,7 @@ else
   # ad-hoc signature falls back to its changing cdhash and makes Keychain treat
   # every build as a different application.
   codesign --force --sign - "$TOOLS_DIR/rg"
+  codesign --force --sign - "$TOOLS_DIR/ps"
   codesign --force --sign - "$MACOS_DIR/chatos_local_agent_host"
   codesign \
     --force \

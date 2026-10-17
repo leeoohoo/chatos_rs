@@ -13,6 +13,7 @@ let package = Package(
         .library(name: "ChatOSAPI", targets: ["ChatOSAPI"]),
         .library(name: "ChatOSConnector", targets: ["ChatOSConnector"]),
         .executable(name: "ChatOSSwift", targets: ["ChatOSApp"]),
+        .executable(name: "chatos_plugin_ps", targets: ["ChatOSPluginProcessList"]),
     ],
     dependencies: [
         .package(
@@ -86,6 +87,7 @@ let package = Package(
                 .linkedLibrary("sqlite3"),
             ]
         ),
+        .executableTarget(name: "ChatOSPluginProcessList"),
         .testTarget(
             name: "ChatOSAgentRuntimeTests",
             dependencies: ["ChatOSAgentRuntime"]

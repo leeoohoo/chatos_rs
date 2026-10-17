@@ -100,6 +100,10 @@ struct NativePluginProcessLaunch: Sendable {
         if requiresManagedBrowser {
             executableDirectories.append(contentsOf: Self.installedBrowserApplications())
         }
+        if launch.permissionSnapshot.contains("system.developer-tools.read"),
+           let cachePath = launch.environment["CHATOS_PLUGIN_CACHE_DIR"] {
+            executableDirectories.append(URL(fileURLWithPath: cachePath, isDirectory: true))
+        }
         self.init(
             record: launch.record,
             executableURL: launch.executableURL,
@@ -187,6 +191,13 @@ enum NativePluginProcessLauncher {
             // compiler rely on the existing outer boundary instead.
             environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"] = "-disable-sandbox"
         }
+        if launch.permissionSnapshot.contains("process.spawn"),
+           let processList = NativePluginProcessEnvironment.bundledProcessListExecutable() {
+            environment["PATH"] = [
+                processList.deletingLastPathComponent().path,
+                environment["PATH"],
+            ].compactMap { $0 }.joined(separator: ":")
+        }
         environment["CHATOS_PLUGIN_SANDBOX"] = "macos-seatbelt"
         return .init(
             executableURL: sandboxExecutable,
@@ -228,8 +239,13 @@ enum NativePluginSandboxProfile {
             // multiplexor, configure its dynamically allocated slave, and query
             // their own PID while posix_spawn prepares the helper process.
             rules.append("(allow pseudo-tty)")
-            rules.append("(allow process-info-pidinfo (target self))")
+            rules.append("(allow process-info-listpids)")
+            rules.append("(allow process-info-pidinfo (target same-sandbox))")
             rules.append("(allow file-read* file-write* file-ioctl (literal \"/dev/ptmx\") (regex #\"^/dev/ttys[0-9a-f]+$\"))")
+            if let processList = NativePluginProcessEnvironment.bundledProcessListExecutable() {
+                rules.append("(allow file-read* \(literal(processList.path)))")
+                rules.append("(allow process-exec \(literal(processList.path)))")
+            }
         }
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")

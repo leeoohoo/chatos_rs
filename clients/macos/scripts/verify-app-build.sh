@@ -14,7 +14,8 @@ fi
 INFO_PLIST="$APP_PATH/Contents/Info.plist"
 EXECUTABLE="$APP_PATH/Contents/MacOS/ChatOSSwift"
 LOCAL_AGENT_HOST="$APP_PATH/Contents/MacOS/chatos_local_agent_host"
-if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" ]]; then
+PLUGIN_PROCESS_LIST="$APP_PATH/Contents/Resources/Tools/darwin-arm64/ps"
+if [[ ! -f "$INFO_PLIST" || ! -x "$EXECUTABLE" || ! -x "$LOCAL_AGENT_HOST" || ! -x "$PLUGIN_PROCESS_LIST" ]]; then
   echo "Invalid ChatOS app bundle: $APP_PATH" >&2
   exit 1
 fi
@@ -65,6 +66,7 @@ if [[ "$CONFIGURATION" == "release" ]] && strings "$LOCAL_AGENT_HOST" | grep -F 
 fi
 
 codesign --verify --strict "$LOCAL_AGENT_HOST"
+codesign --verify --strict "$PLUGIN_PROCESS_LIST"
 codesign --verify --deep --strict "$APP_PATH"
 
 if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
