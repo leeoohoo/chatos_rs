@@ -390,10 +390,26 @@ struct NativeCustomPluginInstallationTests {
             ),
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
+        let restrictedDraft = LocalConnectorCustomMCPDraft(
+            displayName: "REA",
+            description: "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+            componentKey: "rea",
+            packageName: "rea-agents",
+            packageVersion: "6.5.0",
+            binaryName: "rea",
+            arguments: ["mcp"],
+            accessProfile: .restricted
+        )
+        let restrictedInspection = try await service.inspectCustomMCP(restrictedDraft)
+        try await service.installCustomMCP(
+            restrictedDraft,
+            expectedFingerprint: restrictedInspection.fingerprint
+        )
+
         let draft = LocalConnectorCustomMCPDraft(
-            displayName: "Reverse Engineer Anything",
-            description: "Pinned REA integration fixture",
-            componentKey: "reverse-engineer-anything",
+            displayName: "REA",
+            description: "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+            componentKey: "rea",
             packageName: "rea-agents",
             packageVersion: "6.5.0",
             binaryName: "rea",
@@ -404,7 +420,7 @@ struct NativeCustomPluginInstallationTests {
         let inspection = try await service.inspectCustomMCP(draft)
         let component = try #require(inspection.components.first)
         #expect(inspection.version == "6.5.0")
-        #expect(component.componentKey == "reverse-engineer-anything")
+        #expect(component.componentKey == "rea")
         #expect(component.toolNames.count >= 200)
         #expect(component.toolNames.count <= NativeLocalConnectorService.maximumAgentPluginToolCount)
         #expect(component.toolNames.contains("binary_session"))
@@ -415,14 +431,21 @@ struct NativeCustomPluginInstallationTests {
         )
         let installed = try await service.installedAgentPlugins(ownerUserID: "owner-rea")
         #expect(installed.count == 1)
-        #expect(installed.first?.componentKey == "reverse-engineer-anything")
-        #expect(installed.first?.displayName == "Reverse Engineer Anything")
+        #expect(installed.first?.componentKey == "rea")
+        #expect(installed.first?.displayName == "REA")
 
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         let record = try #require(restored.installedPluginRecords?.values.first)
         #expect(record.source == .customMCP)
         #expect(record.version == "6.5.0")
         #expect(NativePluginInstallationIntegrity.status(record: record) == .verified)
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: URL(fileURLWithPath: record.installationPath, isDirectory: true)
+                .appendingPathComponent("chatos.plugin.json")
+        )
+        #expect(Set(manifest.permissions.map(\.permission)).contains(
+            "system.developer-tools.read"
+        ))
     }
 }
 

@@ -45,14 +45,18 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectNPMToolName:
             let draft = try Self.npmDraft(arguments)
-            let inspection = try await connector.inspectCustomMCP(draft)
+            let inspection = try await Self.withSafeInstallerErrors {
+                try await connector.inspectCustomMCP(draft)
+            }
             return Self.inspectionResult(inspection, draft: draft)
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName:
             let draft = try Self.npmDraft(arguments)
-            try await connector.installCustomMCP(
-                draft,
-                expectedFingerprint: Self.string(arguments, "expected_fingerprint")
-            )
+            try await Self.withSafeInstallerErrors {
+                try await connector.installCustomMCP(
+                    draft,
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                )
+            }
             return .object([
                 "status": .string("installed"),
                 "display_name": .string(draft.displayName),
@@ -63,15 +67,19 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectSourceToolName:
             let source = try Self.pluginSource(arguments)
             return Self.inspectionResult(
-                try await connector.inspectPluginSource(source),
+                try await Self.withSafeInstallerErrors {
+                    try await connector.inspectPluginSource(source)
+                },
                 source: source
             )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName:
             let source = try Self.pluginSource(arguments)
-            try await connector.installPluginSource(
-                source,
-                expectedFingerprint: Self.string(arguments, "expected_fingerprint")
-            )
+            try await Self.withSafeInstallerErrors {
+                try await connector.installPluginSource(
+                    source,
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                )
+            }
             return .object([
                 "status": .string("installed"),
                 "source_kind": .string(source.kind.rawValue),
@@ -339,6 +347,23 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             throw NativeLocalAgentPluginInstallerToolError.invalidArguments
         }
         return result
+    }
+
+    private static func withSafeInstallerErrors<Value: Sendable>(
+        _ operation: () async throws -> Value
+    ) async throws -> Value {
+        do {
+            return try await operation()
+        } catch let error as NativeConnectorError {
+            if case let .pluginInstallation(message) = error {
+                throw NativeLocalAgentPlatformToolError.pluginInstallerRejected(message)
+            }
+            throw error
+        } catch let error as CocoaError {
+            throw NativeLocalAgentPlatformToolError.pluginInstallerFileOperationFailed(
+                error.code.rawValue
+            )
+        }
     }
 
     private static func string(
