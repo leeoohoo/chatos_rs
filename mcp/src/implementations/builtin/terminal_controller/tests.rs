@@ -17,6 +17,7 @@ impl TerminalControllerStore for NoopTerminalStore {
         &self,
         context: TerminalControllerContext,
         _path: String,
+        _purpose: String,
         command: String,
         _background: bool,
         permissions: TerminalCommandPermissions,
@@ -184,6 +185,12 @@ fn terminal_controller_registers_process_tools() {
             .all(|value| value.as_str() != Some("path")),
         "execute_command should not require path"
     );
+    assert!(
+        execute_required
+            .iter()
+            .any(|value| value.as_str() == Some("purpose")),
+        "execute_command should require a user-facing purpose"
+    );
     let has_background = execute_schema
         .get("properties")
         .and_then(Value::as_object)
@@ -260,7 +267,7 @@ fn managed_output_limit_overrides_the_host_default_for_one_call() {
     let result = service
         .call_tool_with_max_output_chars(
             "execute_command",
-            json!({"common": "pwd"}),
+            json!({"purpose": "Confirm the current workspace directory", "common": "pwd"}),
             None,
             Some(40_000),
         )
@@ -313,6 +320,7 @@ fn execute_command_treats_null_permission_overlays_as_absent() {
     let result = service.call_tool(
         "execute_command",
         json!({
+            "purpose": "Confirm the current workspace directory",
             "command": "pwd",
             "additionalPermissions": null,
             "_grantedPermissions": null

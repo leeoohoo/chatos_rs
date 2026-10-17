@@ -249,6 +249,15 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                     kind: edge.kind
                 )
             },
+            goal: graph.nodes.lazy.compactMap {
+                Self.string("graph_goal", in: $0.task.input)
+            }.first,
+            decompositionRationale: graph.nodes.lazy.compactMap {
+                Self.string("decomposition_rationale", in: $0.task.input)
+            }.first,
+            finalDeliveryTaskID: graph.nodes.first(where: {
+                Self.bool("final_delivery", in: $0.task.input) == true
+            })?.task.taskID,
             sourceSessionID: graph.sourceConversationID,
             sourceTurnID: graph.sourceTurnID,
             sourceUserMessageID: graph.sourceUserMessageID
@@ -344,6 +353,15 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             rootTaskIDs: roots,
             nodes: nodes,
             edges: edges,
+            goal: tasks.lazy.compactMap {
+                Self.string("graph_goal", in: $0.input)
+            }.first,
+            decompositionRationale: tasks.lazy.compactMap {
+                Self.string("decomposition_rationale", in: $0.input)
+            }.first,
+            finalDeliveryTaskID: tasks.first(where: {
+                Self.bool("final_delivery", in: $0.input) == true
+            })?.taskID,
             sourceSessionID: lookup?.sessionID,
             sourceTurnID: lookup?.turnID,
             sourceUserMessageID: lookup?.sourceUserMessageID ?? messageID

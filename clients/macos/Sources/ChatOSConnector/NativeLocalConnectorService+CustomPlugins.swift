@@ -1,6 +1,13 @@
 import ChatOSCore
 import Foundation
 
+struct NativeCustomPluginRuntimeHealth: Sendable, Equatable {
+    var status: String
+    var toolCount: Int?
+    var checkedAt: Date
+    var error: String?
+}
+
 extension NativeLocalConnectorService {
     public func inspectCustomMCP(
         _ draft: LocalConnectorCustomMCPDraft
@@ -87,11 +94,20 @@ extension NativeLocalConnectorService {
     private func inspectPreparedCustomPlugin(
         _ prepared: NativePreparedCustomPlugin
     ) async throws -> LocalConnectorPluginInspection {
-        let record = prepared.record
+        try await inspectCustomPlugin(
+            record: prepared.record,
+            sourceSummary: prepared.sourceSummary
+        )
+    }
+
+    private func inspectCustomPlugin(
+        record: NativeInstalledPluginRecord,
+        sourceSummary: String
+    ) async throws -> LocalConnectorPluginInspection {
         let manifest = try Self.loadCustomPluginManifest(record: record)
         let permissionSnapshot = Set(manifest.permissions.map(\.permission)).union(["process.spawn"])
         var components: [LocalConnectorPluginInspectionComponent] = []
-        var fingerprintParts = [record.artifactSHA256, prepared.sourceSummary]
+        var fingerprintParts = [record.artifactSHA256, sourceSummary]
         for componentKey in manifest.mcpServers.keys.sorted() {
             let launch = try NativePluginManifestLoader.prepare(
                 record: record,
@@ -155,7 +171,7 @@ extension NativeLocalConnectorService {
             fingerprint: fingerprint,
             displayName: manifest.interface?.displayName ?? manifest.name,
             version: manifest.version,
-            sourceSummary: prepared.sourceSummary,
+            sourceSummary: sourceSummary,
             components: components
         )
     }
@@ -182,6 +198,34 @@ extension NativeLocalConnectorService {
         for record in records {
             let issue = Self.customPluginInstallationIssue(record)
             let manifest = issue == nil ? try? Self.loadCustomPluginManifest(record: record) : nil
+            let enabled = state.pluginPreferences[record.pluginID] ?? true
+            let hasMCP = manifest?.mcpServers.isEmpty == false
+            if issue != nil || !hasMCP {
+                customPluginRuntimeHealth.removeValue(forKey: record.pluginID)
+            } else if !enabled {
+                customPluginRuntimeHealth[record.pluginID] = .init(
+                    status: "disabled", toolCount: nil, checkedAt: Date(), error: nil
+                )
+            } else if forceRefresh {
+                do {
+                    let inspection = try await inspectCustomPlugin(
+                        record: record,
+                        sourceSummary: record.sourceSummary ?? "installed custom plugin"
+                    )
+                    customPluginRuntimeHealth[record.pluginID] = .init(
+                        status: "ready",
+                        toolCount: inspection.components.reduce(0) { $0 + $1.toolNames.count },
+                        checkedAt: Date(),
+                        error: nil
+                    )
+                } catch {
+                    customPluginRuntimeHealth[record.pluginID] = .init(
+                        status: "unavailable", toolCount: nil, checkedAt: Date(),
+                        error: error.localizedDescription
+                    )
+                }
+            }
+            let runtimeHealth = customPluginRuntimeHealth[record.pluginID]
             let permissions: [LocalConnectorPluginPermission]
             if let manifest {
                 permissions = (try? await pluginPermissionSnapshots.permissions(
@@ -212,11 +256,15 @@ extension NativeLocalConnectorService {
                 installed: true,
                 updateAvailable: false,
                 installAvailable: false,
-                enabled: state.pluginPreferences[record.pluginID] ?? true,
+                enabled: enabled,
                 hasUI: manifest.map { !$0.ui.isEmpty },
                 permissions: permissions,
                 installationIssue: issue,
-                source: record.source ?? .localPlugin
+                source: record.source ?? .localPlugin,
+                runtimeStatus: hasMCP ? (runtimeHealth?.status ?? "not_checked") : nil,
+                runtimeToolCount: runtimeHealth?.toolCount,
+                runtimeLastCheckedAt: runtimeHealth?.checkedAt,
+                runtimeError: runtimeHealth?.error
             ))
         }
         return result

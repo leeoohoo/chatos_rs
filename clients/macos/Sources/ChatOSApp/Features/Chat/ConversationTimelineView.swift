@@ -276,7 +276,11 @@ private struct ConversationTimelineContentView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
+                if reply.id.hasPrefix("task-graph:") {
+                    TaskGraphDeliveryReplyView(reply: reply)
+                } else {
+                    AssistantReplyView(reply: reply, projectRootPath: projectRootPath)
+                }
             }
 
         case let .prompt(prompt):

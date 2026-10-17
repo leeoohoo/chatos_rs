@@ -334,11 +334,12 @@ public enum NativeLocalAgentPlatformToolCatalog {
           "notification_policy": .object([
             "type": .string("string"),
             "enum": .array([
-              .string("all_tasks"), .string("milestones"), .string("graph_summary"),
+              .string("progress_summary"), .string("all_tasks"),
+              .string("milestones"), .string("graph_summary"),
             ]),
-            "default": .string("graph_summary"),
+            "default": .string("progress_summary"),
             "description": .string(
-              "How Task progress is written back to Main Chat. graph_summary is the quiet default; milestones emits explicitly marked milestones plus blockers and a final summary; all_tasks emits every Task lifecycle update."
+              "How Task progress is written back to Main Chat. progress_summary is the default and updates one short message per actual Run before delivering the final result; graph_summary is opt-in quiet mode; milestones emits explicitly marked milestones plus blockers and a final summary; all_tasks emits every Task lifecycle update."
             ),
           ]),
           "tasks": .object([

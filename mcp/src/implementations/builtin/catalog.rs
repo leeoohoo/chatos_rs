@@ -151,6 +151,7 @@ impl TerminalControllerStore for SchemaOnlyStore {
         &self,
         _context: TerminalControllerContext,
         _path: String,
+        _purpose: String,
         _command: String,
         _background: bool,
         _permissions: crate::TerminalCommandPermissions,

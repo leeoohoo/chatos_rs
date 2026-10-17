@@ -22,6 +22,9 @@ public enum MessageTaskGraphNormalizer {
             rootTaskIDs: graph.rootTaskIDs,
             nodes: validNodes,
             edges: mode == .reduced ? MessageTaskGraphAlgorithms.transitiveReduction(edges) : edges,
+            goal: graph.goal,
+            decompositionRationale: graph.decompositionRationale,
+            finalDeliveryTaskID: graph.finalDeliveryTaskID,
             sourceSessionID: graph.sourceSessionID,
             sourceTurnID: graph.sourceTurnID,
             sourceUserMessageID: graph.sourceUserMessageID
@@ -139,6 +142,11 @@ public enum MessageTaskGraphNormalizer {
             rootTaskIDs: graph.rootTaskIDs.compactMap { representativeByTaskID[$0] },
             nodes: nodes,
             edges: edges,
+            goal: graph.goal,
+            decompositionRationale: graph.decompositionRationale,
+            finalDeliveryTaskID: graph.finalDeliveryTaskID.flatMap {
+                representativeByTaskID[$0] ?? $0
+            },
             sourceSessionID: graph.sourceSessionID,
             sourceTurnID: graph.sourceTurnID,
             sourceUserMessageID: graph.sourceUserMessageID

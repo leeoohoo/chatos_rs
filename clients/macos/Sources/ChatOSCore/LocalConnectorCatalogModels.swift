@@ -211,6 +211,10 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var permissions: [LocalConnectorPluginPermission]
     public var installationIssue: LocalConnectorPluginInstallationIssue?
     public var source: LocalConnectorPluginSource
+    public var runtimeStatus: String?
+    public var runtimeToolCount: Int?
+    public var runtimeLastCheckedAt: Date?
+    public var runtimeError: String?
 
     public var id: String { pluginID }
     public var requiresReinstall: Bool { installationIssue != nil }
@@ -232,7 +236,11 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         hasUI: Bool? = nil,
         permissions: [LocalConnectorPluginPermission] = [],
         installationIssue: LocalConnectorPluginInstallationIssue? = nil,
-        source: LocalConnectorPluginSource = .marketplace
+        source: LocalConnectorPluginSource = .marketplace,
+        runtimeStatus: String? = nil,
+        runtimeToolCount: Int? = nil,
+        runtimeLastCheckedAt: Date? = nil,
+        runtimeError: String? = nil
     ) {
         self.pluginID = pluginID
         self.packageName = packageName
@@ -251,6 +259,10 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.permissions = permissions
         self.installationIssue = installationIssue
         self.source = source
+        self.runtimeStatus = runtimeStatus
+        self.runtimeToolCount = runtimeToolCount
+        self.runtimeLastCheckedAt = runtimeLastCheckedAt
+        self.runtimeError = runtimeError
     }
 }
 

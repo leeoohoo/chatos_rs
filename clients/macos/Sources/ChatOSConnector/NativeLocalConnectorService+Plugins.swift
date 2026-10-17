@@ -488,6 +488,7 @@ extension NativeLocalConnectorService {
         await pluginPermissionSnapshots.invalidateAll()
         state.installedPluginIDs.remove(id)
         state.installedPluginRecords?[id] = nil
+        customPluginRuntimeHealth[id] = nil
         try stateStore.save(state)
         try? await publishPluginInstallationStatus()
     }

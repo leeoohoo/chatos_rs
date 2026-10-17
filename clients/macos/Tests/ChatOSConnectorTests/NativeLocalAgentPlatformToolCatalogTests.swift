@@ -292,9 +292,10 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
               case .array(let notificationValues)? = notificationPolicy["enum"] else {
             return XCTFail("missing graph notification policy")
         }
-        XCTAssertEqual(notificationPolicy["default"], .string("graph_summary"))
+        XCTAssertEqual(notificationPolicy["default"], .string("progress_summary"))
         XCTAssertEqual(notificationValues, [
-            .string("all_tasks"), .string("milestones"), .string("graph_summary"),
+            .string("progress_summary"), .string("all_tasks"),
+            .string("milestones"), .string("graph_summary"),
         ])
         guard case .object(let taskItems)? = tasks["items"],
               case .object(let taskProperties)? = taskItems["properties"],

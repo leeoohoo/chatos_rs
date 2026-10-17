@@ -68,6 +68,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var pluginSourceRefresh: NativePluginSourceRefresh?
     var pluginSourceGeneration = 0
     var pluginIntegrityRepairTask: Task<Void, Never>?
+    var customPluginRuntimeHealth: [String: NativeCustomPluginRuntimeHealth] = [:]
     var modelCatalogCache: NativeModelCatalogCache?
     var modelCatalogRefresh: NativeModelCatalogRefresh?
     var modelCatalogGeneration = 0

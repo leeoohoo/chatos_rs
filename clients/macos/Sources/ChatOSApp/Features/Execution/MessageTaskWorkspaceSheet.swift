@@ -7,6 +7,7 @@ struct MessageTaskWorkspaceSheet: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: MessageTaskWorkspaceViewModel
     @State private var isFullscreen = false
+    @State private var showsGraphOverview = true
     @Environment(\.dismiss) private var dismiss
 
     init(
@@ -31,6 +32,10 @@ struct MessageTaskWorkspaceSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
+            if let graph = viewModel.displayGraph, graph.hasOverview {
+                graphOverview(graph)
+                Divider()
+            }
             content
                 .workspaceFill()
         }
@@ -43,6 +48,61 @@ struct MessageTaskWorkspaceSheet: View {
             viewModel.stopPolling()
             viewModel.stopRealtime()
         }
+    }
+
+    private func graphOverview(_ graph: MessageTaskGraphSnapshot) -> some View {
+        DisclosureGroup(isExpanded: $showsGraphOverview) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let goal = graph.goal {
+                    overviewField(
+                        model.localized("总体目标", english: "Overall Goal"),
+                        value: goal
+                    )
+                }
+                if let rationale = graph.decompositionRationale {
+                    overviewField(
+                        model.localized("模块拆分依据", english: "Decomposition Rationale"),
+                        value: rationale
+                    )
+                }
+                if let finalTaskID = graph.finalDeliveryTaskID,
+                   let finalTask = graph.nodes.first(where: { $0.id == finalTaskID })?.task {
+                    HStack(spacing: 8) {
+                        Label(
+                            model.localized("最终交付", english: "Final Delivery"),
+                            systemImage: "flag.checkered"
+                        )
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        Text(finalTask.title)
+                            .appFont(.caption.weight(.medium))
+                    }
+                }
+            }
+            .padding(.top, 10)
+        } label: {
+            Label(
+                model.localized("总体方案", english: "Overall Plan"),
+                systemImage: "map.fill"
+            )
+            .appFont(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(AppPalette.ai.opacity(0.045))
+    }
+
+    private func overviewField(_ label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .appFont(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .appFont(.callout)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var header: some View {
@@ -157,6 +217,14 @@ struct MessageTaskWorkspaceSheet: View {
             }
         }
         .workspaceFill()
+    }
+}
+
+private extension MessageTaskGraphSnapshot {
+    var hasOverview: Bool {
+        goal?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || decompositionRationale?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || finalDeliveryTaskID != nil
     }
 }
 

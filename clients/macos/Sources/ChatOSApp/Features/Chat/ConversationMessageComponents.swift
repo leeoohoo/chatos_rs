@@ -93,6 +93,86 @@ struct AssistantReplyView: View {
     }
 }
 
+struct TaskGraphDeliveryReplyView: View {
+    @EnvironmentObject private var model: AppModel
+    let reply: ConversationAssistantReply
+    @State private var isExpanded = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "shippingbox.fill")
+                .foregroundStyle(AppPalette.ai)
+                .appFont(.title3)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(model.localized("任务组最终交付", english: "Task Group Delivery"))
+                        .appFont(.caption.weight(.semibold))
+                    Text(reply.message.createdAt, style: .time)
+                        .appFont(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                    StatusCapsule(
+                        title: model.localized("已汇总", english: "Delivered"),
+                        color: AppPalette.ai
+                    )
+                }
+
+                if isExpanded || !TaskGraphDeliveryPresentation.shouldCollapse(reply.message.text) {
+                    MarkdownDocumentView(
+                        markdown: reply.message.text,
+                        allowsTextSelection: true
+                    )
+                } else {
+                    Text(TaskGraphDeliveryPresentation.preview(reply.message.text))
+                        .appFont(.callout)
+                        .foregroundStyle(.primary)
+                        .lineLimit(8)
+                        .textSelection(.enabled)
+                }
+
+                if TaskGraphDeliveryPresentation.shouldCollapse(reply.message.text) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            isExpanded.toggle()
+                        }
+                    } label: {
+                        Label(
+                            isExpanded
+                                ? model.localized("收起完整交付", english: "Collapse Full Delivery")
+                                : model.localized("展开完整交付", english: "Show Full Delivery"),
+                            systemImage: isExpanded ? "chevron.up" : "chevron.down"
+                        )
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(13)
+            .background(AppPalette.ai.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(AppPalette.ai.opacity(0.18), lineWidth: 1)
+            }
+        }
+    }
+}
+
+enum TaskGraphDeliveryPresentation {
+    static let collapsedCharacterLimit = 1_200
+    static let previewCharacterLimit = 800
+
+    static func shouldCollapse(_ text: String) -> Bool {
+        text.count > collapsedCharacterLimit || text.split(separator: "\n").count > 14
+    }
+
+    static func preview(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > previewCharacterLimit else { return trimmed }
+        return String(trimmed.prefix(previewCharacterLimit))
+            .trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+}
+
 struct TaskAgentReplyView: View {
     @EnvironmentObject private var model: AppModel
     let reply: ConversationAssistantReply
@@ -169,6 +249,7 @@ struct TaskAgentReplyView: View {
         case "evidence_incomplete": "部分完成，待核验"
         case "failed": "失败"
         case "blocked": "阻塞"
+        case "cancelled", "canceled", "stopped": "已取消"
         case "running", "processing", "in_progress": "执行中"
         default: status ?? "任务"
         }
@@ -181,6 +262,7 @@ struct TaskAgentReplyView: View {
         case "evidence_incomplete": .orange
         case "failed": .red
         case "blocked": .orange
+        case "cancelled", "canceled", "stopped": .secondary
         case "running", "processing", "in_progress": AppPalette.ai
         default: .secondary
         }

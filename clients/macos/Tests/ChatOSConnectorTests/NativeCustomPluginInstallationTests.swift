@@ -133,6 +133,13 @@ struct NativeCustomPluginInstallationTests {
         var installed = try await service.installedAgentPlugins(ownerUserID: "owner-local")
         #expect(installed.map(\.componentKey) == ["local-fixture"])
 
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let visible = try #require(catalog.first(where: { $0.displayName == "Local Fixture" }))
+        #expect(visible.runtimeStatus == "ready")
+        #expect(visible.runtimeToolCount == 1)
+        #expect(visible.runtimeLastCheckedAt != nil)
+        #expect(visible.runtimeError == nil)
+
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         let record = try #require(restored.installedPluginRecords?.values.first)
         try Data("tampered".utf8).write(
@@ -200,6 +207,11 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.count == 1)
         #expect(installed.first?.componentKey == NativeInstalledAgentPlugin.skillsOnlyComponentKey)
         #expect(installed.first?.displayName == "Portable Hello")
+
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let visible = try #require(catalog.first(where: { $0.displayName == "Portable Hello" }))
+        #expect(visible.runtimeStatus == nil)
+        #expect(visible.runtimeToolCount == nil)
     }
 
     @Test("Codex compatibility plugins import their .mcp.json stdio servers")
@@ -434,6 +446,14 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.first?.componentKey == "rea")
         #expect(installed.first?.displayName == "REA")
 
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let installedPluginID = try recordPluginID(in: stateURL)
+        let visibleREA = try #require(catalog.first(where: { $0.pluginID == installedPluginID }))
+        #expect(visibleREA.runtimeStatus == "ready")
+        #expect((visibleREA.runtimeToolCount ?? 0) >= 200)
+        #expect(visibleREA.runtimeLastCheckedAt != nil)
+        #expect(visibleREA.runtimeError == nil)
+
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         let record = try #require(restored.installedPluginRecords?.values.first)
         #expect(record.source == .customMCP)
@@ -446,6 +466,11 @@ struct NativeCustomPluginInstallationTests {
         #expect(Set(manifest.permissions.map(\.permission)).contains(
             "system.developer-tools.read"
         ))
+    }
+
+    private func recordPluginID(in stateURL: URL) throws -> String {
+        let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
+        return try #require(restored.installedPluginRecords?.values.first?.pluginID)
     }
 }
 

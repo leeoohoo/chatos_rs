@@ -682,7 +682,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
                 guard let self else { return }
                 self.isInstallingCustomPlugin = false
                 self.notice = "自定义 Plugin 已完成复检并安装到本机。"
-                self.loadPlugins(forceRefresh: false)
+                self.loadPlugins(forceRefresh: true)
                 self.pluginConfigurationChanged?()
                 completion(.success(()))
             } catch is CancellationError {
