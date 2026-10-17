@@ -180,6 +180,13 @@ enum NativePluginProcessLauncher {
             overrides: launch.environment,
             homeDirectory: launch.homeDirectory?.path
         )
+        if launch.permissionSnapshot.contains("system.developer-tools.read") {
+            // swift-driver normally launches compiler jobs through another
+            // sandbox-exec process. Seatbelt rejects nested initialization when
+            // the Plugin already runs inside ChatOS's sandbox, so make the
+            // compiler rely on the existing outer boundary instead.
+            environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"] = "-disable-sandbox"
+        }
         environment["CHATOS_PLUGIN_SANDBOX"] = "macos-seatbelt"
         return .init(
             executableURL: sandboxExecutable,

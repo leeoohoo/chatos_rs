@@ -413,6 +413,11 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains(
             "(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))"
         ))
+        let permittedProcess = try NativePluginProcessLauncher.prepare(permitted)
+        #expect(
+            permittedProcess.environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"]
+                == "-disable-sandbox"
+        )
         let cacheLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
         guard cacheLength > 0 else {
             Issue.record("DARWIN_USER_CACHE_DIR is unavailable")
@@ -453,6 +458,8 @@ extension NativePluginRuntimeTests {
         #expect(!restrictedProfile.contains("/Library/Preferences/com.apple.dt.Xcode.plist"))
         #expect(!restrictedProfile.contains(canonicalModuleCache))
         #expect(!restrictedProfile.contains("xcrun_db-"))
+        let restrictedProcess = try NativePluginProcessLauncher.prepare(restricted)
+        #expect(restrictedProcess.environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"] == nil)
 
         let withoutSpawn = NativePluginProcessLaunch(
             record: record,
