@@ -718,7 +718,7 @@ public enum NativeLocalAgentPlatformToolCatalog {
       "maxItems": .number(16),
       "uniqueItems": .bool(true),
       "description": .string(
-        "Suggest only the minimum installed Plugin components required by this specific Task. Use only exact plugin_key/component_key pairs from this request-scoped catalog. The client freezes and validates the selected component before execution."
+        "Select the minimum installed Plugin components required by this specific Task. When the user explicitly names an installed Plugin or MCP and asks that it perform an operation, its matching component is required on every Task that performs that operation. Supporting components are additive and must never replace the named component. Use only exact plugin_key/component_key pairs from this request-scoped catalog. The client freezes and validates every selected component before execution."
       ),
       "items": .object([
         "oneOf": .array(choices.map { choice in

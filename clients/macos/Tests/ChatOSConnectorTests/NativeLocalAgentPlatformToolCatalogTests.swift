@@ -64,6 +64,13 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
                 displayName: "Computer Use",
                 description: "Desktop control."
             ),
+            .init(
+                pluginID: "plugin-3",
+                pluginKey: "rea@local",
+                componentKey: "rea",
+                displayName: "REA",
+                description: "Reverse engineering."
+            ),
         ])
         let create = try XCTUnwrap(tools.first { value in
             guard case .object(let tool) = value else { return false }
@@ -91,6 +98,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertEqual(identities, [
             "open-computer-use@chatos-marketplace:computer-use-mcp",
             "\(NativeBrowserPluginIdentity.marketplaceKey):\(NativeBrowserPluginIdentity.componentKey)",
+            "rea@local:rea",
         ])
         XCTAssertEqual(thinkingLevels, [
             .string("none"), .string("auto"), .string("minimal"), .string("low"),
@@ -107,6 +115,12 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(titles.contains(where: {
             $0.contains("Desktop control.") && $0.contains("native desktop applications")
         }))
+        guard case .string(let hintDescription)? = hints["description"] else {
+            return XCTFail("missing plugin preservation guidance")
+        }
+        XCTAssertTrue(hintDescription.contains("explicitly names an installed Plugin or MCP"))
+        XCTAssertTrue(hintDescription.contains("additive"))
+        XCTAssertTrue(hintDescription.contains("must never replace"))
     }
 
     func testTaskModelSchemaOnlyPublishesTaskEnabledChoices() throws {

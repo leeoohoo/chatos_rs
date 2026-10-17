@@ -337,6 +337,9 @@ mod tests {
         assert!(content.contains("结构化需求"));
         assert!(content.contains("匹配的规划 Plugin"));
         assert!(content.contains("擅自改成通过 `CodeMaintainerWrite` 写项目 Markdown"));
+        assert!(content.contains("自然语言请求里明确点名"));
+        assert!(content.contains("补充并列选择"));
+        assert!(content.contains("不能替换或省略用户点名的能力"));
         assert!(content.contains("`task_followup_review`"));
         assert!(content.contains("`resolve_task_followup`"));
         assert!(content.contains("`supersedes_task_ids`"));

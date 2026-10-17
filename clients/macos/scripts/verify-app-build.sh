@@ -84,6 +84,7 @@ if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
   env \
     CFFIXED_USER_HOME="$SMOKE_ROOT" \
     CHATOS_BUILD_SMOKE_TEST=1 \
+    CHATOS_BUILD_SMOKE_TEST_EXIT_AFTER_SECONDS=6 \
     "$EXECUTABLE" >"$SMOKE_LOG" 2>&1 &
   SMOKE_PID=$!
 
@@ -102,8 +103,22 @@ if [[ "$RUN_LAUNCH_SMOKE" == "1" ]]; then
     echo "Packaged ChatOS produced a crash report during launch smoke test" >&2
     exit 1
   fi
-  kill -TERM "$SMOKE_PID" 2>/dev/null || true
-  wait "$SMOKE_PID" 2>/dev/null || true
+
+  for _ in {1..30}; do
+    if ! kill -0 "$SMOKE_PID" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if kill -0 "$SMOKE_PID" 2>/dev/null; then
+    echo "Packaged ChatOS did not terminate cleanly after launch smoke test" >&2
+    exit 1
+  fi
+  if ! wait "$SMOKE_PID"; then
+    echo "Packaged ChatOS returned a failure status after launch smoke test" >&2
+    sed -n '1,200p' "$SMOKE_LOG" >&2
+    exit 1
+  fi
   SMOKE_PID=""
   trap - EXIT INT TERM
   rm -rf -- "$SMOKE_ROOT"

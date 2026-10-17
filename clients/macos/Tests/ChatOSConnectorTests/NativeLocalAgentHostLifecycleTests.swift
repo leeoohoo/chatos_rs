@@ -285,6 +285,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             .object([
                 "kind": .string("plugin"),
                 "plugin_key": .string("document-plugin"),
+                "component_key": .string("document-mcp"),
                 "display_name": .string("Document"),
             ])
         )

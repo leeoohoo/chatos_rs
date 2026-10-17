@@ -113,6 +113,7 @@
 "当前消息" = "Current Message";
 "当前消息没有任务图" = "No Task Graph for This Message";
 "当前目录没有子文件夹" = "No Subfolders in This Folder";
+"当前目录本身会成为项目根目录；“创建项目”不会自动新建同名文件夹。需要独立目录时，请先点击上方“新建文件夹”并进入该文件夹。" = "The current folder itself becomes the project root. Create Project does not automatically make a folder with the same name. For a separate project folder, use New Folder above and open it first.";
 "当前通知缺少直接重试所需的运行信息，请打开任务详情处理。" = "This notification lacks the run information required for a direct retry. Open task details to continue.";
 "待你处理" = "Needs Your Attention";
 "忽略" = "Dismiss";
@@ -359,6 +360,7 @@
 "选择 JSON 清单…" = "Choose JSON List…";
 "重命名本地项目" = "Rename Local Project";
 "项目保存在本机。Git 由本机管理，聊天可在创建后单独准备。" = "Projects are stored locally. Git is managed on this device, and chat can be set up separately after creation.";
+"项目根目录：%@" = "Project root: %@";
 "Agent 只会直接启动这里明确选择、且已在本机安装并启用的 Plugin。" = "Agents will only launch plugins explicitly selected here that are installed and enabled on this Mac.";
 "Builder 只能读取当前项目、群成员、可用模型和本机 Plugin 清单；它只能提交草案，不能直接创建成员。" = "The Builder can only read the current project, group members, available models, and local plugin list. It can submit drafts but cannot create members directly.";
 "Builder 模型" = "Builder Model";
