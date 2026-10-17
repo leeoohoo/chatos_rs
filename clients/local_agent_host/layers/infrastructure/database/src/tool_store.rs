@@ -550,7 +550,7 @@ async fn recover_expired_on(
     now_unix_ms: i64,
 ) -> Result<u64, ClientStorageError> {
     let rows = sqlx::query(
-        "SELECT invocation_id, run_id, call_id, side_effecting, version \
+        "SELECT invocation_id, run_id, batch_id, call_id, side_effecting, version \
          FROM local_agent_tool_invocations WHERE status = 'running' \
          AND claim_until_unix_ms IS NOT NULL AND claim_until_unix_ms <= ? \
          AND run_id IN (SELECT run_id FROM local_agent_runs WHERE owner_user_id = ?) \
@@ -564,6 +564,7 @@ async fn recover_expired_on(
     for row in &rows {
         let invocation_id: String = row.try_get("invocation_id").db()?;
         let run_id: String = row.try_get("run_id").db()?;
+        let batch_id: String = row.try_get("batch_id").db()?;
         let call_id: String = row.try_get("call_id").db()?;
         let side_effecting: bool = row.try_get("side_effecting").db()?;
         let version: i64 = row.try_get("version").db()?;
@@ -590,10 +591,13 @@ async fn recover_expired_on(
         .await
         .db()?;
         let event_type = if side_effecting {
+            let continuation = tool_batch_continuation(connection, &run_id, &batch_id).await?;
             sqlx::query(
                 "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
-                 updated_at_unix_ms = ? WHERE run_id = ? AND status = 'waiting_tool_result'",
+                 continuation_input_json = ?, updated_at_unix_ms = ? \
+                 WHERE run_id = ? AND status = 'waiting_tool_result'",
             )
+            .bind(serde_json::to_string(&continuation)?)
             .bind(now_unix_ms)
             .bind(&run_id)
             .execute(&mut *connection)
@@ -631,10 +635,13 @@ pub(super) async fn advance_run_after_tool(
     now_unix_ms: i64,
 ) -> Result<(), ClientStorageError> {
     if completed_status == LocalAgentToolStatus::NeedsReview {
+        let continuation = tool_batch_continuation(connection, run_id, batch_id).await?;
         sqlx::query(
             "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
-             updated_at_unix_ms = ? WHERE run_id = ? AND status = 'waiting_tool_result'",
+             continuation_input_json = ?, updated_at_unix_ms = ? \
+             WHERE run_id = ? AND status = 'waiting_tool_result'",
         )
+        .bind(serde_json::to_string(&continuation)?)
         .bind(now_unix_ms)
         .bind(run_id)
         .execute(&mut *connection)
@@ -794,28 +801,7 @@ pub(super) async fn advance_run_after_tool(
         }
         return Ok(());
     }
-    let rows = sqlx::query(
-        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, execution_route, arguments_json, \
-         side_effecting, requires_approval, approval_status, approval_decided_by, \
-         approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
-         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
-         FROM local_agent_tool_invocations WHERE run_id = ? AND batch_id = ? \
-         ORDER BY invocation_id",
-    )
-    .bind(run_id)
-    .bind(batch_id)
-    .fetch_all(&mut *connection)
-    .await
-    .db()?;
-    let invocations = rows
-        .into_iter()
-        .map(decode_invocation)
-        .collect::<Result<Vec<_>, _>>()?;
-    let continuation = json!({
-        "type": "tool_results",
-        "batch_id": batch_id,
-        "invocations": invocations
-    });
+    let continuation = tool_batch_continuation(connection, run_id, batch_id).await?;
     let updated = sqlx::query(
         "UPDATE local_agent_runs SET status = 'continuation_ready', version = version + 1, \
          pending_tool_batch_json = NULL, continuation_input_json = ?, updated_at_unix_ms = ? \
@@ -840,6 +826,36 @@ pub(super) async fn advance_run_after_tool(
         .db()?;
     }
     Ok(())
+}
+
+async fn tool_batch_continuation(
+    connection: &mut SqliteConnection,
+    run_id: &str,
+    batch_id: &str,
+) -> Result<Value, ClientStorageError> {
+    let rows = sqlx::query(
+        "SELECT invocation_id, run_id, batch_id, call_id, tool_name, execution_route, arguments_json, \
+         side_effecting, requires_approval, approval_status, approval_decided_by, \
+         approval_reason, approval_decided_at_unix_ms, status, result_json, error_text, version, claim_token, \
+         claim_until_unix_ms, created_at_unix_ms, updated_at_unix_ms \
+         FROM local_agent_tool_invocations WHERE run_id = ? AND batch_id = ? \
+         ORDER BY invocation_id",
+    )
+    .bind(run_id)
+    .bind(batch_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    let invocations = rows
+        .into_iter()
+        .map(decode_invocation)
+        .collect::<Result<Vec<_>, _>>()?;
+    let continuation = json!({
+        "type": "tool_results",
+        "batch_id": batch_id,
+        "invocations": invocations
+    });
+    Ok(continuation)
 }
 
 pub(super) async fn fetch_invocation(
