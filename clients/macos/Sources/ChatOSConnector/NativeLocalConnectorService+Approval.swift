@@ -97,31 +97,31 @@ extension NativeLocalConnectorService {
                     approvalScopeKey: scopedApprovalKey
                 )
             }
-            do {
-                let token = try requireAccessToken()
-                async let model = gateway.modelConfig(token: token, id: modelID, includeSecret: true)
-                async let promptBundle = gateway.agentPromptBundle(token: token)
-                async let capability = gateway.agentCapability(
-                    token: token,
-                    agentKey: NativeApprovalAgent.agentKey
+            guard let runtime = localApprovalAgentRuntime,
+                  runtime.model.configID == modelID else {
+                return await requestUserApproval(
+                    requestID: requestID,
+                    command: command,
+                    arguments: arguments,
+                    cwd: cwd,
+                    source: source,
+                    risk: risk,
+                    reason: localApprovalAgentUnavailableReason,
+                    purpose: purpose,
+                    approvalScopeKey: scopedApprovalKey
                 )
-                guard let tenantID = state.user?.id,
-                      let workspaceID,
-                      let approvalMemoryProviderFactory else {
-                    throw AgentContextError.unavailable
-                }
+            }
+            do {
                 let runID = UUID()
                 let runtimeScope = "approval:\(runID.uuidString)"
-                async let contextProvider = approvalMemoryProviderFactory(
-                    tenantID, workspaceID, runID, runtimeScope
-                )
-                let resolvedModel = try await model
-                let systemPrompt = try NativeApprovalAgent.resolveManagedSystemPrompt(
-                    model: resolvedModel,
-                    bundle: try await promptBundle,
-                    capability: try await capability,
-                    ownerUserID: tenantID
-                )
+                let contextProvider: AgentMemoryContextProvider?
+                if let workspaceID, let approvalMemoryProviderFactory {
+                    contextProvider = try await approvalMemoryProviderFactory(
+                        runtime.ownerUserID, workspaceID, runID, runtimeScope
+                    )
+                } else {
+                    contextProvider = nil
+                }
                 let decision = await NativeApprovalAgent().evaluate(
                     request: .init(
                         command: command,
@@ -134,63 +134,24 @@ extension NativeLocalConnectorService {
                         purpose: purpose,
                         requestedPermissionsDescription: requestedPermissionsDescription
                     ),
-                    model: resolvedModel,
-                    systemPrompt: systemPrompt,
-                    thinkingLevel: state.commandApprovalThinkingLevel,
+                    model: runtime.model,
+                    systemPrompt: runtime.systemPrompt,
+                    thinkingLevel: runtime.thinkingLevel,
                     runID: runID,
                     runtimeScope: runtimeScope,
-                    contextProvider: try await contextProvider
+                    contextProvider: contextProvider
                 )
-                if case let .askUser(reason) = decision {
-                    return await requestUserApproval(
-                        requestID: requestID,
-                        command: command,
-                        arguments: arguments,
-                        cwd: cwd,
-                        source: source,
-                        risk: risk,
-                        reason: reason,
-                        purpose: purpose,
-                        approvalScopeKey: scopedApprovalKey
-                    )
-                }
-                switch decision {
-                case let .approve(reason, rememberAllow):
-                    if rememberAllow, let scopedApprovalKey {
-                        sessionApprovalAllowlist.insert(scopedApprovalKey)
-                    }
-                    publishApprovalEvent(.init(
-                        requestID: requestID,
-                        command: ([command] + arguments).joined(separator: " "),
-                        purpose: purpose,
-                        cwd: cwd.path,
-                        source: source,
-                        risk: risk.level,
-                        decision: "approved",
-                        reason: reason,
-                        mode: .autoApproval,
-                        reviewer: .ai
-                    ))
-                case let .deny(reason):
-                    publishApprovalEvent(.init(
-                        requestID: requestID,
-                        command: ([command] + arguments).joined(separator: " "),
-                        purpose: purpose,
-                        cwd: cwd.path,
-                        source: source,
-                        risk: risk.level,
-                        decision: "denied",
-                        reason: reason,
-                        mode: .autoApproval,
-                        reviewer: .ai
-                    ))
-                case .askUser:
-                    break
-                }
-                if case let .approve(reason, rememberAllow) = decision {
-                    return .approve(reason: reason, rememberAllow: rememberAllow)
-                }
-                return decision
+                return await finalizeAutomaticApproval(
+                    decision,
+                    requestID: requestID,
+                    command: command,
+                    arguments: arguments,
+                    cwd: cwd,
+                    source: source,
+                    risk: risk,
+                    purpose: purpose,
+                    approvalScopeKey: scopedApprovalKey
+                )
             } catch {
                 return await requestUserApproval(
                     requestID: requestID,
@@ -205,6 +166,66 @@ extension NativeLocalConnectorService {
                 )
             }
         }
+    }
+
+    private func finalizeAutomaticApproval(
+        _ decision: NativeApprovalDecision,
+        requestID: String,
+        command: String,
+        arguments: [String],
+        cwd: URL,
+        source: String,
+        risk: NativeApprovalRisk,
+        purpose: String?,
+        approvalScopeKey: String?
+    ) async -> NativeApprovalDecision {
+        if case let .askUser(reason) = decision {
+            return await requestUserApproval(
+                requestID: requestID,
+                command: command,
+                arguments: arguments,
+                cwd: cwd,
+                source: source,
+                risk: risk,
+                reason: reason,
+                purpose: purpose,
+                approvalScopeKey: approvalScopeKey
+            )
+        }
+        switch decision {
+        case let .approve(reason, rememberAllow):
+            if rememberAllow, let approvalScopeKey {
+                sessionApprovalAllowlist.insert(approvalScopeKey)
+            }
+            publishApprovalEvent(.init(
+                requestID: requestID,
+                command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
+                cwd: cwd.path,
+                source: source,
+                risk: risk.level,
+                decision: "approved",
+                reason: reason,
+                mode: .autoApproval,
+                reviewer: .ai
+            ))
+        case let .deny(reason):
+            publishApprovalEvent(.init(
+                requestID: requestID,
+                command: ([command] + arguments).joined(separator: " "),
+                purpose: purpose,
+                cwd: cwd.path,
+                source: source,
+                risk: risk.level,
+                decision: "denied",
+                reason: reason,
+                mode: .autoApproval,
+                reviewer: .ai
+            ))
+        case .askUser:
+            break
+        }
+        return decision
     }
 
     func approvalSessionScope(

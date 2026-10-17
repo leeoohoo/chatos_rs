@@ -66,7 +66,7 @@ extension NativeLocalConnectorService {
     ) async throws -> NativeLocalAgentBootstrapResult? {
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
-        let credentialStore = NativeLocalAgentModelCredentialStore()
+        let credentialStore = localAgentModelCredentialStore
         var environment = try NativeLocalAgentCredentialEnvironment.restoredModels(
             persisted, ownerUserID: ownerUserID, store: credentialStore
         )
@@ -176,7 +176,7 @@ extension NativeLocalConnectorService {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
         }
-        let credentialStore = NativeLocalAgentModelCredentialStore()
+        let credentialStore = localAgentModelCredentialStore
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
         var environment = try NativeLocalAgentCredentialEnvironment.restoredModels(

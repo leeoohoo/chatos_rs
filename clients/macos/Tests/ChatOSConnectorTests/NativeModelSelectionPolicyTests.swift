@@ -10,17 +10,25 @@ struct NativeModelSelectionPolicyTests {
         let model = try JSONDecoder().decode(GatewayModelConfigDTO.self, from: Data(#"{"id":"general","name":"General","provider":"gpt","model":"test-model","enabled":true,"task_enabled":false,"has_api_key":true,"api_key":"test-key","base_url":"https://model-selection.invalid/v1"}"#.utf8))
         #expect(model.isSelectable(for: .general))
         #expect(!model.isSelectable(for: .taskCreation))
+        let snapshot = approvalSnapshot(baseURL: model.baseURL ?? "")
+        let configuration = try NativeApprovalAgentModelConfiguration(
+            snapshot: snapshot,
+            apiKey: model.apiKey ?? ""
+        )
         // Construct the actual approval client without making any network request.
-        _ = try NativeApprovalAgent.makeModelClient(model: model, policy: .init(), thinkingLevel: "low")
-        var disabled = model
-        disabled.enabled = false
+        _ = try NativeApprovalAgent.makeModelClient(
+            model: configuration,
+            policy: .init(),
+            thinkingLevel: "low"
+        )
         #expect(throws: (any Error).self) {
-            try NativeApprovalAgent.makeModelClient(model: disabled, policy: .init(), thinkingLevel: nil)
+            try NativeApprovalAgentModelConfiguration(
+                snapshot: approvalSnapshot(baseURL: "file:///tmp/model"),
+                apiKey: "test-key"
+            )
         }
-        var noKey = model
-        noKey.apiKey = nil
         #expect(throws: (any Error).self) {
-            try NativeApprovalAgent.makeModelClient(model: noKey, policy: .init(), thinkingLevel: nil)
+            try NativeApprovalAgentModelConfiguration(snapshot: snapshot, apiKey: "")
         }
     }
 
@@ -47,5 +55,18 @@ struct NativeModelSelectionPolicyTests {
         .init(id: id, name: id, provider: "gpt", modelName: id,
               enabled: enabled, taskEnabled: taskEnabled, hasAPIKey: hasAPIKey,
               supportsImages: false, supportsReasoning: true)
+    }
+
+    private func approvalSnapshot(baseURL: String) -> LocalAgentModelConfigSnapshot {
+        .init(
+            ownerUserID: "owner-1",
+            modelConfigRef: "general",
+            modelConfigRevision: "revision-1",
+            credentialRef: "env:GENERAL",
+            baseURL: baseURL,
+            model: "test-model",
+            provider: "gpt",
+            supportsResponses: true
+        )
     }
 }

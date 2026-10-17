@@ -43,6 +43,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
     let pluginApplicationRuntime: NativePluginApplicationRuntime
+    let localAgentModelCredentialStore: NativeLocalAgentModelCredentialStore
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let companionAgentDrainCoordinator = CompanionAgentDrainCoordinator()
     let pluginRuntimeRootURL: URL
@@ -95,6 +96,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         UUID: AsyncStream<LocalConnectorApprovalEvent>.Continuation
     ] = [:]
     var sessionApprovalAllowlist: Set<String> = []
+    var localApprovalAgentRuntime: NativeApprovalAgentRuntimeConfiguration?
+    var localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
     var seenRelayNonces: [String: Int64] = [:]
 
     public init(
@@ -117,6 +120,11 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             .appendingPathComponent("PluginRuntime", isDirectory: true)
         self.pluginInstaller = NativePluginInstaller(rootURL: pluginInstallationRootURL)
         self.pluginRuntimeRootURL = pluginRuntimeRootURL
+        self.localAgentModelCredentialStore = NativeLocalAgentModelCredentialStore(
+            rootURL: connectorRootURL
+                .appendingPathComponent("Secrets", isDirectory: true)
+                .appendingPathComponent("LocalAgentModels", isDirectory: true)
+        )
         self.pluginApplicationRuntime = NativePluginApplicationRuntime(
             processStateURL: pluginRuntimeRootURL
                 .appendingPathComponent("application-processes.json"),
@@ -159,6 +167,53 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         companionConversationService = conversation
         companionMessageTaskService = messageTasks
         companionAskUserService = askUser
+    }
+
+    public func configureLocalApprovalAgent(
+        ownerUserID: String,
+        bootstrap: NativeLocalAgentBootstrapResult
+    ) {
+        localApprovalAgentRuntime = nil
+        guard let modelConfigID = state.commandApprovalModelConfigID?.trimmedNonEmpty else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 尚未配置模型。"
+            return
+        }
+        guard let snapshot = bootstrap.modelSnapshots.first(where: {
+            $0.ownerUserID == ownerUserID && $0.modelConfigRef == modelConfigID
+        }) else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 所选模型未载入本地任务运行时。"
+            return
+        }
+        let credentialVariable = localAgentModelCredentialStore.environmentVariable(
+            modelConfigRef: modelConfigID
+        )
+        guard snapshot.credentialRef == "env:\(credentialVariable)" else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据引用无效。"
+            return
+        }
+        do {
+            guard let credential = try localAgentModelCredentialStore.loadWithoutUserInteraction(
+                ownerUserID: ownerUserID,
+                modelConfigRef: modelConfigID
+            )?.trimmedNonEmpty else {
+                localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据不可用。"
+                return
+            }
+            localApprovalAgentRuntime = try .init(
+                ownerUserID: ownerUserID,
+                model: .init(snapshot: snapshot, apiKey: credential),
+                systemPrompt: LocalAgentPromptCatalog.render(.approvalSystem),
+                thinkingLevel: state.commandApprovalThinkingLevel?.trimmedNonEmpty
+            )
+            localApprovalAgentUnavailableReason = ""
+        } catch {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 配置无效：\(error.localizedDescription)"
+        }
+    }
+
+    public func resetLocalApprovalAgent() {
+        localApprovalAgentRuntime = nil
+        localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
     }
 
     public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {
@@ -257,6 +312,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func suspendForSignedOut() async {
+        resetLocalApprovalAgent()
         await stopServerAccess()
         await pluginApplicationRuntime.stopAll()
         await browserExtensionPairingRuntime.stop()

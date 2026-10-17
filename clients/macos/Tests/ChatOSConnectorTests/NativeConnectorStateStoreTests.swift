@@ -5,6 +5,122 @@ import Testing
 
 struct NativeConnectorStateStoreTests {
     @Test
+    func localApprovalRuntimeLoadsWithoutGatewayPairing() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.approvalMode = .autoApproval
+        state.commandApprovalModelConfigID = "approval-model"
+        state.commandApprovalThinkingLevel = "medium"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let credentialStore = NativeLocalAgentModelCredentialStore(
+            rootURL: directory
+                .appendingPathComponent("Secrets", isDirectory: true)
+                .appendingPathComponent("LocalAgentModels", isDirectory: true)
+        )
+        try credentialStore.saveWithoutUserInteraction(
+            "local-api-key",
+            ownerUserID: "owner-1",
+            modelConfigRef: "approval-model"
+        )
+        let snapshot = LocalAgentModelConfigSnapshot(
+            ownerUserID: "owner-1",
+            modelConfigRef: "approval-model",
+            modelConfigRevision: "revision-1",
+            credentialRef: "env:CHATOS_LOCAL_AGENT_MODEL_APPROVAL_MODEL",
+            baseURL: "https://models.example.test/v1",
+            model: "approval-model-name",
+            provider: "openai",
+            supportsResponses: true,
+            temperature: 0,
+            maxOutputTokens: 1_200
+        )
+        let capability = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "owner-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: "policy-1"
+        )
+        let bootstrap = NativeLocalAgentBootstrapResult(
+            modelSnapshots: [snapshot],
+            modelOptions: [],
+            defaultConversationModelConfigRef: snapshot.modelConfigRef,
+            capabilitySnapshot: capability,
+            capabilitySnapshotsByModelConfigRef: [snapshot.modelConfigRef: capability],
+            pluginInstallerCapabilitySnapshotsByModelConfigRef: [:]
+        )
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+
+        await service.configureLocalApprovalAgent(
+            ownerUserID: "owner-1",
+            bootstrap: bootstrap
+        )
+
+        let runtime = await service.localApprovalAgentRuntime
+        #expect(runtime?.ownerUserID == "owner-1")
+        #expect(runtime?.model.configID == "approval-model")
+        #expect(runtime?.model.apiKey == "local-api-key")
+        #expect(runtime?.systemPrompt == LocalAgentPromptCatalog.render(.approvalSystem))
+        #expect(runtime?.thinkingLevel == "medium")
+        let status = try await service.fetchStatus()
+        #expect(!status.configured)
+    }
+
+    @Test
+    func unavailableLocalApprovalRuntimeNeverReportsGatewayPairingAsTheCause() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stateURL = directory.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.approvalMode = .autoApproval
+        state.commandApprovalModelConfigID = "approval-model"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let service = NativeLocalConnectorService(
+            configuration: .init(
+                gatewayBaseURL: URL(string: "https://connector.example.test")!,
+                stateURL: stateURL
+            ),
+            ticketProvider: RejectingTicketProvider()
+        )
+        let root = directory.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let decisionTask = Task {
+            await service.approvalDecision(
+                requestID: "request-1",
+                command: "/bin/zsh",
+                arguments: ["-lc", "pwd"],
+                cwd: root,
+                projectRoot: root,
+                source: "Local Agent Task",
+                risk: .init(level: "low", reason: nil),
+                purpose: "确认工作目录",
+                workspaceID: "workspace-1"
+            )
+        }
+        var pending: [LocalConnectorPendingApproval] = []
+        for _ in 0..<100 {
+            pending = try await service.fetchPendingApprovals()
+            if !pending.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let approval = try #require(pending.first)
+        #expect(approval.reason == "本机审批 Agent 尚未从本地任务运行时载入。")
+        #expect(approval.reason?.contains("网关配对") == false)
+
+        try await service.resolveApproval(id: approval.id, decision: "decline")
+        let decision = await decisionTask.value
+        #expect(decision == .deny(reason: "用户已在本机拒绝。"))
+    }
+
+    @Test
     func declaredPluginApprovalScopeIgnoresTaskLabelButExactCommandScopeDoesNot() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

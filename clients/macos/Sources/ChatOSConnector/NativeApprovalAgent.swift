@@ -20,6 +20,37 @@ struct NativeApprovalAgentRequest: Sendable {
     var requestedPermissionsDescription: String?
 }
 
+struct NativeApprovalAgentModelConfiguration: Sendable, Equatable {
+    let configID: String
+    let baseURL: URL
+    let model: String
+    let apiKey: String
+    let temperature: Double?
+    let maxOutputTokens: Int?
+
+    init(snapshot: LocalAgentModelConfigSnapshot, apiKey: String) throws {
+        guard let baseURL = URL(string: snapshot.baseURL),
+              baseURL.scheme == "https" || baseURL.scheme == "http",
+              snapshot.model.trimmedNonEmpty != nil,
+              apiKey.trimmedNonEmpty != nil else {
+            throw NativeApprovalAgentError.invalidModelConfiguration
+        }
+        configID = snapshot.modelConfigRef
+        self.baseURL = baseURL
+        model = snapshot.model
+        self.apiKey = apiKey
+        temperature = snapshot.temperature
+        maxOutputTokens = snapshot.maxOutputTokens.flatMap(Int.init(exactly:))
+    }
+}
+
+struct NativeApprovalAgentRuntimeConfiguration: Sendable, Equatable {
+    let ownerUserID: String
+    let model: NativeApprovalAgentModelConfiguration
+    let systemPrompt: String
+    let thinkingLevel: String?
+}
+
 struct NativeApprovalAgent: Sendable {
     static let agentKey = "local_connector_command_approval_agent"
     private let tools = NativeApprovalAgentTools()
@@ -29,7 +60,7 @@ struct NativeApprovalAgent: Sendable {
 
     func evaluate(
         request: NativeApprovalAgentRequest,
-        model: GatewayModelConfigDTO,
+        model: NativeApprovalAgentModelConfiguration,
         systemPrompt: String,
         thinkingLevel: String?,
         runID: UUID = UUID(),
@@ -49,20 +80,17 @@ struct NativeApprovalAgent: Sendable {
     }
 
     static func makeModelClient(
-        model: GatewayModelConfigDTO, policy: AgentRunPolicy, thinkingLevel: String?
+        model: NativeApprovalAgentModelConfiguration,
+        policy: AgentRunPolicy,
+        thinkingLevel: String?
     ) throws -> any AgentModelClient {
-        guard model.isSelectable(for: .general),
-              let apiKey = model.apiKey?.trimmedNonEmpty,
-              let baseURLText = model.baseURL?.trimmedNonEmpty,
-              let baseURL = URL(string: baseURLText), !model.model.isEmpty else {
-            throw NativeApprovalAgentError.invalidModelConfiguration
-        }
         let reserve = (policy.context ?? .init()).outputReserveTokens
         let maximumOutputTokens = min(max(1, model.maxOutputTokens ?? 1_200), reserve)
         return try AgentResponsesModelClient(
-            baseURL: baseURL, model: model.model, apiKey: apiKey,
+            baseURL: model.baseURL, model: model.model, apiKey: model.apiKey,
             thinking: thinkingLevel, maximumOutputTokens: maximumOutputTokens,
-            temperature: model.temperature ?? 0, promptCacheKey: "approval-agent:\(model.id)"
+            temperature: model.temperature ?? 0,
+            promptCacheKey: "approval-agent:\(model.configID)"
         )
     }
 
@@ -75,7 +103,7 @@ struct NativeApprovalAgent: Sendable {
                   contextProvider: AgentMemoryContextProvider? = nil) async -> NativeApprovalDecision {
         do {
             guard systemPrompt.trimmedNonEmpty != nil else {
-                throw NativeApprovalAgentError.invalidManagedPrompt
+                throw NativeApprovalAgentError.invalidSystemPrompt
             }
             let definitions = try Self.toolDefinitions()
             let operationSkill = try BundledAgentSkillLoader.load(
@@ -110,25 +138,6 @@ struct NativeApprovalAgent: Sendable {
         } catch {
             return .askUser(reason: "本机审批 Agent 不可用：\(error.localizedDescription)")
         }
-    }
-
-    static func resolveManagedSystemPrompt(
-        model: GatewayModelConfigDTO,
-        bundle: GatewayAgentPromptBundleDTO,
-        capability: GatewayAgentCapabilityDTO,
-        ownerUserID: String
-    ) throws -> String {
-        guard capability.agentEnabled,
-              capability.agentKey == agentKey,
-              capability.ownerUserID == ownerUserID,
-              capability.policyRevision.trimmedNonEmpty != nil else {
-            throw NativeApprovalAgentError.invalidManagedCapability
-        }
-        return try NativeManagedAgentPromptResolver.resolve(
-            agentKey: agentKey,
-            model: model,
-            bundle: bundle
-        ).content
     }
 
     private func decodeArguments(_ text: String) throws -> [String: Any] {
@@ -253,24 +262,16 @@ struct NativeApprovalAgent: Sendable {
 
 private enum NativeApprovalAgentError: LocalizedError {
     case invalidModelConfiguration
-    case invalidManagedCapability
-    case invalidManagedPrompt
-    case unsupportedPromptVendor
-    case invalidResponse
+    case invalidSystemPrompt
     case invalidToolArguments
     case invalidDecision
-    case upstream(Int, String)
 
     var errorDescription: String? {
         switch self {
         case .invalidModelConfiguration: "审批模型配置缺少 Base URL、模型名或 API Key"
-        case .invalidManagedCapability: "审批 Agent 的能力策略缺失或校验失败"
-        case .invalidManagedPrompt: "审批 Agent 的托管 Prompt 缺失或校验失败"
-        case .unsupportedPromptVendor: "审批模型不支持对应的托管 Prompt 类型"
-        case .invalidResponse: "审批模型返回格式无效"
+        case .invalidSystemPrompt: "审批 Agent 的系统提示词缺失"
         case .invalidToolArguments: "审批模型返回了无效工具参数"
         case .invalidDecision: "审批模型没有返回有效审批结论"
-        case let .upstream(status, detail): "审批模型请求失败（HTTP \(status)）：\(detail.prefix(400))"
         }
     }
 }
