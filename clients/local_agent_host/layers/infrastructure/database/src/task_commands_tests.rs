@@ -128,6 +128,22 @@ async fn cancelling_review_task_abandons_workflow_but_preserves_uncertain_run() 
         .await
         .unwrap()
         .unwrap();
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+         claim_token = NULL, claim_until_unix_ms = NULL, terminal_outcome_json = ?, \
+         updated_at_unix_ms = 3_001 WHERE run_id = 'review-run'",
+    )
+    .bind(
+        json!({
+            "status": "needs_review",
+            "reason_code": "tool_result_unknown",
+            "error": "A side-effecting tool result could not be confirmed."
+        })
+        .to_string(),
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
     storage
         .recover_expired_claims("user-1", 3_001)
         .await

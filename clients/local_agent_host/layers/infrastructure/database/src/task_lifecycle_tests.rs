@@ -917,7 +917,7 @@ async fn write_locks_are_isolated_by_conversation_and_use_project_scope_keys() {
 }
 
 #[tokio::test]
-async fn expired_writer_claim_releases_its_cross_graph_lock() {
+async fn expired_writer_model_claim_requeues_and_keeps_its_cross_graph_lock() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -995,8 +995,14 @@ async fn expired_writer_claim_releases_its_cross_graph_lock() {
             3_100,
         )
         .await
-        .expect("start waiting writer after recovery")
-        .is_some());
+        .expect("check waiting writer after recovery")
+        .is_none());
+    let recovered = storage
+        .get_run("run-expiring-writer")
+        .await
+        .expect("get recovered writer")
+        .expect("recovered writer");
+    assert_eq!(recovered.status, LocalAgentRunStatus::ModelReady);
 }
 
 #[tokio::test]
@@ -1443,7 +1449,7 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
 }
 
 #[tokio::test]
-async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
+async fn expired_model_claim_requeues_without_blocking_its_task() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -1488,25 +1494,22 @@ async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
         .await
         .expect("get run")
         .expect("run");
-    assert_eq!(recovered_run.status, LocalAgentRunStatus::NeedsReview);
-    assert_eq!(
-        recovered_run.terminal_outcome.as_ref().unwrap()["reason_code"],
-        "execution_interrupted"
-    );
-    assert!(recovered_run.terminal_outcome.as_ref().unwrap()["error"]
-        .as_str()
-        .unwrap()
-        .contains("before retrying"));
+    assert_eq!(recovered_run.status, LocalAgentRunStatus::ModelReady);
+    assert_eq!(recovered_run.iteration, 0);
+    assert!(recovered_run.terminal_outcome.is_none());
     let recovered_graph = storage
         .get_task_graph("user-1", "graph-lifecycle")
         .await
         .expect("get graph")
         .expect("graph");
-    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Blocked);
-    assert!(recovered_graph.tasks[0].active_run_id.is_none());
+    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Running);
+    assert_eq!(
+        recovered_graph.tasks[0].active_run_id.as_deref(),
+        Some(run.run_id.as_str())
+    );
     assert!(recovered_graph.tasks[1..]
         .iter()
-        .all(|task| task.status == LocalTaskStatus::Blocked));
+        .all(|task| task.status == LocalTaskStatus::Pending));
 }
 
 #[tokio::test]

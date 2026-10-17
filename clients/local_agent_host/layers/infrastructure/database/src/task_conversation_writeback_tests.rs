@@ -1019,6 +1019,34 @@ async fn expired_claim_reason_is_visible_and_legacy_backfill_is_owner_scoped_and
             .await
             .unwrap()
             .unwrap();
+        sqlx::query(
+            "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+             claim_token = NULL, claim_until_unix_ms = NULL, terminal_outcome_json = ?, \
+             updated_at_unix_ms = 6_001 WHERE run_id = 'interrupted-run'",
+        )
+        .bind(
+            json!({
+                "status": "needs_review",
+                "reason_code": "execution_interrupted",
+                "error": "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation."
+            })
+            .to_string(),
+        )
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+        let mut connection = storage.pool.acquire().await.unwrap();
+        SqliteClientStorage::insert_event(
+            &mut connection,
+            "legacy-expired-interrupted-run",
+            "interrupted-run",
+            "claim_expired_needs_review",
+            &json!({"reason": "legacy model claim recovery"}),
+            6_001,
+        )
+        .await
+        .unwrap();
+        drop(connection);
         assert_eq!(
             storage
                 .recover_expired_claims("user-1", 6_001)
@@ -1207,6 +1235,34 @@ async fn historical_diagnostic_repair_preserves_successful_retry_and_existing_ca
         .await
         .unwrap()
         .unwrap();
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+         claim_token = NULL, claim_until_unix_ms = NULL, terminal_outcome_json = ?, \
+         updated_at_unix_ms = 6_001 WHERE run_id = 'legacy-interrupted'",
+    )
+    .bind(
+        json!({
+            "status": "needs_review",
+            "reason_code": "execution_interrupted",
+            "error": "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation."
+        })
+        .to_string(),
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    let mut connection = storage.pool.acquire().await.unwrap();
+    SqliteClientStorage::insert_event(
+        &mut connection,
+        "legacy-expired-callback-run",
+        "legacy-interrupted",
+        "claim_expired_needs_review",
+        &json!({"reason": "legacy model claim recovery"}),
+        6_001,
+    )
+    .await
+    .unwrap();
+    drop(connection);
     storage
         .recover_expired_claims("user-1", 6_001)
         .await

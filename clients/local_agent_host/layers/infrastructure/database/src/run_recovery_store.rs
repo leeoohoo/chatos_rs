@@ -20,6 +20,62 @@ pub(super) async fn recover_expired_claims(
     owner_user_id: &str,
     now_unix_ms: i64,
 ) -> Result<u64, ClientStorageError> {
+    // A model claim is only a lease around response generation. Model output cannot
+    // execute tools until commit_step has durably persisted the calls, so losing this
+    // lease is safe to replay and should not require user review after an app restart.
+    //
+    // An inconsistent historical row with an open tool invocation is deliberately left
+    // for the conservative needs_review path below. Tool recovery separately handles
+    // the important case where a side-effecting invocation has an unknown result.
+    let replayable_rows = sqlx::query(
+        "SELECT run_id, version FROM local_agent_runs run \
+         WHERE owner_user_id = ? AND status = 'model_running' \
+         AND claim_until_unix_ms IS NOT NULL \
+         AND claim_until_unix_ms <= ? \
+         AND NOT EXISTS (SELECT 1 FROM local_agent_tool_invocations invocation \
+           WHERE invocation.run_id = run.run_id \
+           AND invocation.status IN ('pending','running','needs_review')) \
+         ORDER BY run_id",
+    )
+    .bind(owner_user_id)
+    .bind(now_unix_ms)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    for row in &replayable_rows {
+        let run_id: String = row.try_get("run_id").db()?;
+        let version: i64 = row.try_get("version").db()?;
+        sqlx::query(
+            "UPDATE local_agent_runs SET \
+             status = CASE WHEN continuation_input_json IS NULL \
+               THEN 'model_ready' ELSE 'continuation_ready' END, \
+             iteration = MAX(iteration - 1, 0), version = version + 1, \
+             claim_token = NULL, claim_until_unix_ms = NULL, updated_at_unix_ms = ? \
+             WHERE run_id = ? AND owner_user_id = ? AND version = ? \
+             AND status = 'model_running'",
+        )
+        .bind(now_unix_ms)
+        .bind(&run_id)
+        .bind(owner_user_id)
+        .bind(version)
+        .execute(&mut *connection)
+        .await
+        .db()?;
+        let event_id = format!("recovery-requeued:{run_id}:{}", version + 1);
+        SqliteClientStorage::insert_event(
+            connection,
+            &event_id,
+            &run_id,
+            "claim_expired_requeued",
+            &serde_json::json!({
+                "reason": "the host stopped during model response generation"
+            }),
+            now_unix_ms,
+        )
+        .await
+        .db()?;
+    }
+
     let rows = sqlx::query(
         "SELECT run_id, version FROM local_agent_runs \
          WHERE owner_user_id = ? AND status = 'model_running' \
@@ -169,7 +225,8 @@ pub(super) async fn recover_expired_claims(
         conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms)
             .await?;
     }
-    Ok((rows.len()
+    Ok((replayable_rows.len()
+        + rows.len()
         + stranded_task_runs.len()
         + stranded_conversation_runs.len()
         + missing_reasons.len()) as u64)
