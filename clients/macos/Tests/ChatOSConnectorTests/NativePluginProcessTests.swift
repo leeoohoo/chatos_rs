@@ -401,6 +401,15 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains("(allow network-outbound)"))
         #expect(permittedProfile.contains("/Applications/Xcode.app"))
         #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
+        let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
+            FileManager.default.temporaryDirectory.path
+        )
+        let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        #expect(permittedProfile.contains(
+            "^\(escapedTemporaryRoot)/xcrun_db-[^/]+$"
+        ))
+        #expect(!permittedProfile.contains("(subpath \"\(temporaryRoot)\")"))
 
         let restricted = NativePluginProcessLaunch(
             record: record,
@@ -419,6 +428,7 @@ extension NativePluginRuntimeTests {
         #expect(!restrictedProfile.contains("(allow network-outbound)"))
         #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
         #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
+        #expect(!restrictedProfile.contains("xcrun_db-"))
     }
 
     @Test("Web Design receives isolated temporary storage and managed browser access")

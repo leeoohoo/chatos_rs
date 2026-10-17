@@ -289,6 +289,14 @@ enum NativePluginSandboxProfile {
                 rules.append("(allow file-read* \(literal(directory)))")
                 rules.append("(allow process-exec \(literal(directory)))")
             }
+            // xcrun uses DARWIN_USER_TEMP_DIR for a short-lived SDK lookup cache even
+            // when the child process has an isolated TMPDIR. Keep this exception to
+            // xcrun's randomized cache files instead of exposing the user's temp tree.
+            let temporaryRoot = Self.canonicalPath(
+                FileManager.default.temporaryDirectory.path
+            )
+            let escapedTemporaryRoot = Self.regexLiteral(temporaryRoot)
+            rules.append("(allow file-read* file-write* (regex #\"^\(escapedTemporaryRoot)/xcrun_db-[^/]+$\"))")
         }
         // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")
