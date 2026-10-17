@@ -265,11 +265,8 @@ async fn task_input_with_prerequisites(
     .fetch_all(&mut *connection)
     .await
     .db()?;
-    if rows.is_empty() {
-        return Ok(input_json.to_string());
-    }
     let mut input: Value = serde_json::from_str(input_json)?;
-    let object = input.as_object_mut().ok_or_else(|| {
+    let object = input.as_object().ok_or_else(|| {
         ClientStorageError::InvalidState("Task input must be a JSON object".to_string())
     })?;
     let current_prompt = object
@@ -279,6 +276,8 @@ async fn task_input_with_prerequisites(
         .trim()
         .to_string();
     let english = !contains_cjk(&current_prompt);
+    let write_boundary = task_write_boundary(object, english);
+    let has_prerequisites = !rows.is_empty();
     let mut contexts = Vec::with_capacity(rows.len());
     let mut text = if english {
         "[Prerequisite Task Results]\nPath reliability rule: prose summaries may contain inaccurate paths. Confirm every prerequisite file path through directory listing or search before reading it.".to_string()
@@ -373,16 +372,51 @@ async fn task_input_with_prerequisites(
     } else {
         "[当前任务]"
     };
-    object.insert(
-        "prompt".to_string(),
-        Value::String(if current_prompt.is_empty() {
+    let mut prompt = if has_prerequisites {
+        if current_prompt.is_empty() {
             text
         } else {
             format!("{text}\n\n{current_heading}\n\n{current_prompt}")
-        }),
-    );
-    object.insert("resolved_prerequisites".to_string(), Value::Array(contexts));
+        }
+    } else {
+        current_prompt
+    };
+    if let Some(boundary) = write_boundary {
+        if !prompt.is_empty() {
+            prompt.push_str("\n\n");
+        }
+        prompt.push_str(&boundary);
+    }
+    let object = input.as_object_mut().ok_or_else(|| {
+        ClientStorageError::InvalidState("Task input must be a JSON object".to_string())
+    })?;
+    object.insert("prompt".to_string(), Value::String(prompt));
+    if has_prerequisites {
+        object.insert("resolved_prerequisites".to_string(), Value::Array(contexts));
+    }
     serde_json::to_string(&input).map_err(Into::into)
+}
+
+fn task_write_boundary(object: &serde_json::Map<String, Value>, english: bool) -> Option<String> {
+    let paths = object.get("owned_paths")?.as_array()?;
+    if paths.is_empty() {
+        return None;
+    }
+    let paths = paths
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    let mut text = if english {
+        "[Task Write Boundary]\nWrite only the following project-relative paths or their descendants. Create new files inside these paths; do not guess sibling directories or attempt shared wiring outside this scope:".to_string()
+    } else {
+        "[任务写入边界]\n只允许写入以下项目相对路径或其后代。新文件必须创建在这些路径内；不要猜测同级目录，也不要修改范围外的共享接线文件：".to_string()
+    };
+    for path in paths {
+        text.push_str("\n- `");
+        text.push_str(path);
+        text.push('`');
+    }
+    Some(text)
 }
 
 fn prerequisite_acceptance_summary(input: &Value, outcome: &Value) -> Option<Value> {
