@@ -317,11 +317,16 @@ extension NativeLocalConnectorService {
         guard requiredPluginKeys.allSatisfy(installedPluginKeys.contains) else {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
-        let selectablePluginKeys = Set<String>(agentCapability.plugins.compactMap { plugin in
+        let managedSelectablePluginKeys = Set<String>(agentCapability.plugins.compactMap { plugin in
             guard !plugin.binding.required,
                   plugin.available || plugin.status == "partially_available" else { return nil }
             return plugin.catalog.pluginKey
         })
+        let selectablePluginKeys = Self.selectablePluginKeys(
+            managedKeys: managedSelectablePluginKeys,
+            installedPlugins: installedPlugins,
+            records: state.installedPluginRecords ?? [:]
+        )
         let pluginChoices = installedPlugins.filter {
             selectablePluginKeys.contains($0.pluginKey)
         }
@@ -502,6 +507,21 @@ extension NativeLocalConnectorService {
     ) -> String {
         snapshots.first(where: { !isLikelyGenerationOnlyModel($0.model) })?.modelConfigRef
             ?? snapshots[0].modelConfigRef
+    }
+
+    static func selectablePluginKeys(
+        managedKeys: Set<String>,
+        installedPlugins: [NativeInstalledAgentPlugin],
+        records: [String: NativeInstalledPluginRecord]
+    ) -> Set<String> {
+        let installedPluginIDs = Set(installedPlugins.map(\.pluginID))
+        let localKeys = records.values.compactMap { record -> String? in
+            guard installedPluginIDs.contains(record.pluginID),
+                  record.source != nil,
+                  record.source != .marketplace else { return nil }
+            return record.pluginKey?.trimmedNonEmpty
+        }
+        return managedKeys.union(localKeys)
     }
 
     private static func isLikelyGenerationOnlyModel(_ model: String) -> Bool {

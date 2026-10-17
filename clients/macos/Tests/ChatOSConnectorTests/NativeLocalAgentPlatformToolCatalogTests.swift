@@ -123,6 +123,49 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(hintDescription.contains("must never replace"))
     }
 
+    func testCustomInstalledPluginRemainsSelectableAlongsideManagedPlugins() {
+        let managed = NativeInstalledAgentPlugin(
+            pluginID: "browser-id",
+            pluginKey: "browser@marketplace",
+            componentKey: "browser-mcp",
+            displayName: "Browser",
+            description: "Browser automation"
+        )
+        let local = NativeInstalledAgentPlugin(
+            pluginID: "rea-id",
+            pluginKey: "rea@local",
+            componentKey: "rea",
+            displayName: "REA",
+            description: "Reverse engineering"
+        )
+        let keys = NativeLocalConnectorService.selectablePluginKeys(
+            managedKeys: [managed.pluginKey],
+            installedPlugins: [managed, local],
+            records: [
+                managed.pluginID: .init(
+                    pluginID: managed.pluginID, releaseID: "browser-release", version: "1.0.0",
+                    artifactSHA256: String(repeating: "a", count: 64), installationPath: "/browser",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: managed.pluginKey,
+                    source: .marketplace
+                ),
+                local.pluginID: .init(
+                    pluginID: local.pluginID, releaseID: "rea-release", version: "6.5.0",
+                    artifactSHA256: String(repeating: "b", count: 64), installationPath: "/rea",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: local.pluginKey,
+                    source: .npmPlugin
+                ),
+                "not-installed": .init(
+                    pluginID: "not-installed", releaseID: "unused", version: "1.0.0",
+                    artifactSHA256: String(repeating: "c", count: 64), installationPath: "/unused",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: "unused@local",
+                    source: .localPlugin
+                ),
+            ]
+        )
+
+        XCTAssertEqual(keys, ["browser@marketplace", "rea@local"])
+    }
+
     func testTaskModelSchemaOnlyPublishesTaskEnabledChoices() throws {
         let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools(
             pluginChoices: [],
