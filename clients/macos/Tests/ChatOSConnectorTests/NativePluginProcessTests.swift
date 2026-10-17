@@ -407,7 +407,7 @@ extension NativePluginRuntimeTests {
         let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
             .replacingOccurrences(of: "\"", with: "\\\"")
         #expect(permittedProfile.contains(
-            "^\(escapedTemporaryRoot)/xcrun_db-[^/]+$"
+            "^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$"
         ))
         #expect(!permittedProfile.contains("(subpath \"\(temporaryRoot)\")"))
 

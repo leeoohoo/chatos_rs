@@ -296,7 +296,7 @@ enum NativePluginSandboxProfile {
                 FileManager.default.temporaryDirectory.path
             )
             let escapedTemporaryRoot = Self.regexLiteral(temporaryRoot)
-            rules.append("(allow file-read* file-write* (regex #\"^\(escapedTemporaryRoot)/xcrun_db-[^/]+$\"))")
+            rules.append("(allow file-read* file-write* (regex #\"^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$\"))")
         }
         // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")
