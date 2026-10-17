@@ -475,6 +475,34 @@ struct NativePluginRuntimeTests {
     }
 
     @Test
+    func rawCDPMouseMoveApprovalSummaryStatesThatItCannotClick() {
+        let arguments = NativeJSONValue.object([
+            "method": .string("Input.dispatchMouseEvent"),
+            "target": .string("page"),
+            "params": .object([
+                "type": .string("mouseMoved"),
+                "x": .number(99.5),
+                "y": .number(76),
+            ]),
+        ])
+
+        let displaySummary = NativeLocalConnectorService.safeArgumentSummary(
+            toolName: "browser_cdp_send",
+            arguments: arguments
+        )
+        let evaluationSummary = NativeLocalConnectorService.safeApprovalEvaluationSummary(
+            toolName: "browser_cdp_send",
+            arguments: arguments
+        )
+
+        for summary in [displaySummary, evaluationSummary] {
+            #expect(summary.contains("仅将鼠标移动"))
+            #expect(summary.contains("（99.5, 76）"))
+            #expect(summary.contains("不会按下、释放或点击"))
+        }
+    }
+
+    @Test
     func rawCDPApprovalEvaluationSummaryKeepsCompleteSafeExpression() {
         let expression = "JSON.stringify({session:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='会话管理').length,ticket:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='应用票据管理').length,role:[...document.querySelectorAll('*')].filter(e=>e.textContent.trim()==='角色').length})"
         let displaySummary = NativeLocalConnectorService.safeArgumentSummary(

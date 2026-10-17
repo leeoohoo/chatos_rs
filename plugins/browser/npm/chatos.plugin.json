@@ -106,6 +106,12 @@
       "components": ["browser-cdp-mcp"]
     },
     {
+      "permission": "artifact.create",
+      "required": true,
+      "reason": "Register screenshots, HAR captures and collected downloads as ChatOS-managed project artifacts.",
+      "components": ["browser-cdp-mcp"]
+    },
+    {
       "permission": "browser.cdp.raw",
       "required": false,
       "reason": "Execute explicitly approved raw Chrome DevTools Protocol commands.",

@@ -28,9 +28,11 @@ extension NativeLocalConnectorService {
             let target = object["target"]?.jsonString ?? "page"
             let parameterKeys = object["params"]?.jsonObject?.keys.sorted().joined(separator: ", ")
                 ?? "无"
-            let expression = object["params"]?.jsonObject?["expression"]?.jsonString
+            let params = object["params"]?.jsonObject ?? [:]
+            let expression = params["expression"]?.jsonString
             let expressionSummary = safeCDPExpressionSummary(expression)
-            return "向当前隔离浏览器发送 CDP 方法 \(method)，目标 \(target)，参数字段：\(parameterKeys)\(expressionSummary.map { "；表达式：\($0)" } ?? "")。"
+            let mouseSummary = safeCDPMouseEventSummary(method: method, params: params)
+            return "向当前隔离浏览器发送 CDP 方法 \(method)，目标 \(target)，参数字段：\(parameterKeys)\(expressionSummary.map { "；表达式：\($0)" } ?? "")\(mouseSummary ?? "")。"
         }
         let keys = arguments.jsonObject?.keys.sorted().joined(separator: ", ") ?? "参数"
         let digest = (try? NativePluginHash.canonicalSHA256(arguments).prefix(12)) ?? "unknown"
@@ -49,9 +51,11 @@ extension NativeLocalConnectorService {
         let target = object["target"]?.jsonString ?? "page"
         let parameterKeys = object["params"]?.jsonObject?.keys.sorted().joined(separator: ", ")
             ?? "无"
-        let expression = object["params"]?.jsonObject?["expression"]?.jsonString
+        let params = object["params"]?.jsonObject ?? [:]
+        let expression = params["expression"]?.jsonString
         let expressionSummary = safeCDPExpressionEvaluationSummary(expression)
-        return "向当前隔离浏览器发送 CDP 方法 \(method)，目标 \(target)，参数字段：\(parameterKeys)\(expressionSummary.map { "；完整表达式：\($0)" } ?? "")。"
+        let mouseSummary = safeCDPMouseEventSummary(method: method, params: params)
+        return "向当前隔离浏览器发送 CDP 方法 \(method)，目标 \(target)，参数字段：\(parameterKeys)\(expressionSummary.map { "；完整表达式：\($0)" } ?? "")\(mouseSummary ?? "")。"
     }
 
     static func browserSessionArguments(
@@ -201,6 +205,40 @@ extension NativeLocalConnectorService {
         guard flattened.count > approvalEvaluationMaximumCharacters else { return flattened }
         return String(flattened.prefix(approvalEvaluationMaximumCharacters))
             + "…（仅审批评估摘要超过 160,000 字符，已安全截断）"
+    }
+
+    private static func safeCDPMouseEventSummary(
+        method: String,
+        params: [String: NativeJSONValue]
+    ) -> String? {
+        guard method == "Input.dispatchMouseEvent",
+              let eventType = params["type"]?.jsonString else { return nil }
+        let coordinates: String = {
+            guard let x = params["x"]?.jsonNumber,
+                  let y = params["y"]?.jsonNumber else { return "未提供坐标" }
+            return "页面坐标（\(compactNumber(x)), \(compactNumber(y))）"
+        }()
+        switch eventType {
+        case "mouseMoved":
+            return "；实际动作：仅将鼠标移动到\(coordinates)，不会按下、释放或点击"
+        case "mousePressed":
+            let button = params["button"]?.jsonString ?? "未指定按键"
+            let clickCount = params["clickCount"]?.jsonNumber.map(compactNumber) ?? "未指定"
+            return "；实际动作：在\(coordinates)按下鼠标（\(button)，点击计数 \(clickCount)），尚未释放"
+        case "mouseReleased":
+            let button = params["button"]?.jsonString ?? "未指定按键"
+            return "；实际动作：在\(coordinates)释放鼠标（\(button)），可能完成一次点击"
+        case "mouseWheel":
+            let deltaX = params["deltaX"]?.jsonNumber.map(compactNumber) ?? "0"
+            let deltaY = params["deltaY"]?.jsonNumber.map(compactNumber) ?? "0"
+            return "；实际动作：在\(coordinates)滚动页面（横向 \(deltaX)，纵向 \(deltaY)），不会点击"
+        default:
+            return "；实际动作：鼠标事件 \(eventType)，位置为\(coordinates)"
+        }
+    }
+
+    private static func compactNumber(_ value: Double) -> String {
+        value.rounded() == value ? String(Int64(value)) : String(value)
     }
 }
 
