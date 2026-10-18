@@ -79,6 +79,50 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertNotEqual(first.capabilityPolicyRevision, second.capabilityPolicyRevision)
     }
 
+    func testOnlyExactInstallerCapabilityIsAuthorizedAtExecutionTime() throws {
+        let capability = try NativeLocalConnectorService.pluginInstallerCapability(
+            ownerUserID: "user-1",
+            baseRevision: "base-1"
+        )
+        XCTAssertTrue(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                capability,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: capability.capabilityPolicyRevision
+            )
+        )
+
+        let ordinaryMainChat = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "user-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: capability.capabilityPolicyRevision,
+            instructions: capability.instructions,
+            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
+        )
+        XCTAssertFalse(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                ordinaryMainChat,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: capability.capabilityPolicyRevision
+            )
+        )
+
+        let forgedRevision = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: capability.ownerUserID,
+            profileKey: capability.profileKey,
+            capabilityPolicyRevision: "ordinary-main-chat",
+            instructions: capability.instructions,
+            tools: capability.tools
+        )
+        XCTAssertFalse(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                forgedRevision,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: forgedRevision.capabilityPolicyRevision
+            )
+        )
+    }
+
     func testInstallIntentRequiresAnExplicitNonNegatedRequest() {
         for message in [
             "帮我安装一下 REA",

@@ -76,6 +76,7 @@ pub struct LocalAgentRunSummary {
     pub owner_entity_type: String,
     pub owner_entity_id: String,
     pub profile_key: String,
+    pub capability_policy_revision: String,
     pub input: Value,
     pub status: LocalAgentRunStatus,
     pub version: u64,

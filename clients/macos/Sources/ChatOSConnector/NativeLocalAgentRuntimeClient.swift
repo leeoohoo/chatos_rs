@@ -7,6 +7,7 @@ public struct LocalAgentRunRecord: Decodable, Sendable, Equatable {
     public let ownerEntityType: String
     public let ownerEntityID: String
     public let profileKey: String
+    public let capabilityPolicyRevision: String
     public let input: LocalAgentJSONValue
     public let status: String
     public let version: UInt64
@@ -20,6 +21,7 @@ public struct LocalAgentRunRecord: Decodable, Sendable, Equatable {
         case ownerEntityType = "owner_entity_type"
         case ownerEntityID = "owner_entity_id"
         case profileKey = "profile_key"
+        case capabilityPolicyRevision = "capability_policy_revision"
         case input, status, version
         case terminalOutcome = "terminal_outcome"
         case createdAtUnixMs = "created_at_unix_ms"

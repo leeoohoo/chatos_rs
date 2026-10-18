@@ -51,7 +51,8 @@ pub(super) async fn list_runs(
     };
     let sql = format!(
         "SELECT run.run_id, run.owner_user_id, run.owner_entity_type, run.owner_entity_id, \
-         run.profile_key, run.input_json, run.status, run.version, run.terminal_outcome_json, \
+         run.profile_key, run.capability_policy_revision, run.input_json, run.status, \
+         run.version, run.terminal_outcome_json, \
          run.created_at_unix_ms, run.updated_at_unix_ms FROM local_agent_runs run \
          WHERE run.owner_user_id = ?{scope_filter}{status_filter}{updated_after_filter}{cursor_filter} \
          ORDER BY run.updated_at_unix_ms DESC, run.run_id DESC LIMIT ?"

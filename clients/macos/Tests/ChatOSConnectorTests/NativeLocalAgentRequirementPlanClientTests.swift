@@ -93,7 +93,8 @@ private actor RequirementPlanHostStub: LocalAgentHostClientServicing {
         if type == "get_run" {
             return try JSONSerialization.data(withJSONObject: ["type": "run", "run": [
                 "run_id": "run-1", "owner_user_id": "user-1", "owner_entity_type": "conversation_turn",
-                "owner_entity_id": "turn-1", "profile_key": "main_chat", "input": ["conversation_id": "chat-1"],
+                "owner_entity_id": "turn-1", "profile_key": "main_chat",
+                "capability_policy_revision": "policy-1", "input": ["conversation_id": "chat-1"],
                 "status": runStatus, "version": 4, "terminal_outcome": ["content": "Fictional proposal"],
                 "created_at_unix_ms": 1, "updated_at_unix_ms": 4,
             ]])

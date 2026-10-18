@@ -122,6 +122,7 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
                 "owner_entity_type": main ? "conversation_turn" : "task",
                 "owner_entity_id": main ? "turn-1" : "task-1",
                 "profile_key": main ? "main_chat" : "task_execution",
+                "capability_policy_revision": "policy-1",
                 "input": [main ? "conversation_id" : "source_conversation_id": mismatchedConversation ? "other-conversation" : "conversation-1"],
                 "status": runStatus, "version": 4,
                 "terminal_outcome": [
@@ -146,6 +147,7 @@ private actor RequirementSurveyHostStub: LocalAgentHostClientServicing {
                         "owner_entity_type": "task",
                         "owner_entity_id": "task-1",
                         "profile_key": "task_execution",
+                        "capability_policy_revision": "policy-1",
                         "input": ["continuation": "survey-1"],
                         "status": "continuation_ready",
                         "version": 3,

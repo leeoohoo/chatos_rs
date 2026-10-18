@@ -462,6 +462,7 @@ private actor LocalTaskHostStub: LocalAgentHostClientServicing {
             "owner_entity_type": "task",
             "owner_entity_id": "task-2",
             "profile_key": "task_execution",
+            "capability_policy_revision": "policy-1",
             "input": [:],
             "status": "succeeded",
             "version": 3,

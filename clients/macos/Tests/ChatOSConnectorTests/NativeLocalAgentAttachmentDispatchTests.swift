@@ -149,7 +149,8 @@ struct AttachmentDispatchFixture {
             "run": [
                 "run_id": "run-1", "owner_user_id": runOwner,
                 "owner_entity_type": mainChat ? "conversation" : "task", "owner_entity_id": mainChat ? "conversation-1" : "task-1",
-                "profile_key": mainChat ? "main_chat" : "task_execution", "status": "running", "version": 1,
+                "profile_key": mainChat ? "main_chat" : "task_execution",
+                "capability_policy_revision": "policy-1", "status": "running", "version": 1,
                 "created_at_unix_ms": 1, "updated_at_unix_ms": 1,
                 "input": [
                     (mainChat ? "conversation_id" : "source_conversation_id"): "conversation-1",

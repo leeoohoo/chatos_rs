@@ -4,6 +4,7 @@ import Foundation
 struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     private let runtime: NativeLocalAgentRuntimeClient
     private let conversations: NativeLocalAgentConversationClient
+    private let controlPlane: NativeLocalAgentControlPlaneClient
     private let connector: NativeLocalConnectorService
 
     init(
@@ -12,6 +13,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     ) {
         runtime = .init(host: host)
         conversations = .init(host: host)
+        controlPlane = .init(host: host)
         self.connector = connector
     }
 
@@ -102,6 +104,18 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
               case let .string(conversationID)? = input["conversation_id"] else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
+        let capability = try await controlPlane.capabilities(
+            ownerUserID: ownerUserID,
+            profileKey: run.profileKey,
+            capabilityPolicyRevision: run.capabilityPolicyRevision
+        )
+        guard Self.isAuthorizedInstallerCapability(
+            capability,
+            ownerUserID: ownerUserID,
+            capabilityPolicyRevision: run.capabilityPolicyRevision
+        ) else {
+            throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
+        }
         let detail = try await conversations.get(
             ownerUserID: ownerUserID,
             conversationID: conversationID
@@ -130,6 +144,20 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
         return userMessage
+    }
+
+    static func isAuthorizedInstallerCapability(
+        _ capability: LocalAgentCapabilityPolicySnapshot,
+        ownerUserID: String,
+        capabilityPolicyRevision: String
+    ) -> Bool {
+        capability.ownerUserID == ownerUserID
+            && capability.profileKey == "main_chat"
+            && capability.capabilityPolicyRevision == capabilityPolicyRevision
+            && capabilityPolicyRevision.hasPrefix("plugin-installer-")
+            && capability.instructions == NativeLocalConnectorService.pluginInstallerInstructions
+            && capability.prefixedInputItems.isEmpty
+            && capability.tools == NativeLocalAgentPlatformToolCatalog.pluginInstallerTools
     }
 
     static func hasExplicitInstallIntent(_ message: String) -> Bool {
