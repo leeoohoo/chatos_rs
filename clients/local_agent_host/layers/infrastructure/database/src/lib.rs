@@ -59,8 +59,12 @@ mod task_restart_descendant_tests;
 mod task_result;
 mod task_retry_input;
 mod task_store;
+mod task_writeback_source;
+mod task_writeback_summary;
 mod tool_approval_store;
 mod tool_store;
+mod tool_store_execution;
+mod tool_store_record;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
