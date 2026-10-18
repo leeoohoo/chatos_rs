@@ -20,6 +20,8 @@ use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
+#[path = "runtime_cdp.rs"]
+mod cdp;
 #[path = "runtime_operations.rs"]
 mod operations;
 #[path = "runtime_scripts.rs"]
