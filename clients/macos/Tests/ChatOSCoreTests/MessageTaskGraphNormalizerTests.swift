@@ -49,6 +49,26 @@ final class MessageTaskGraphNormalizerTests: XCTestCase {
         XCTAssertEqual(full.edges[0].targetID, "target")
     }
 
+    func testNormalizationPreservesOverallPlanAndFinalDelivery() {
+        let graph = MessageTaskGraphSnapshot(
+            rootTaskIDs: ["delivery"],
+            nodes: [
+                node("research", title: "调研", prerequisites: []),
+                node("delivery", title: "最终交付", prerequisites: ["research"]),
+            ],
+            edges: [],
+            goal: "完成前后端功能",
+            decompositionRationale: "先调研接口，再统一交付。",
+            finalDeliveryTaskID: "delivery"
+        )
+
+        let reduced = MessageTaskGraphNormalizer.normalize(graph, mode: .reduced)
+
+        XCTAssertEqual(reduced.goal, "完成前后端功能")
+        XCTAssertEqual(reduced.decompositionRationale, "先调研接口，再统一交付。")
+        XCTAssertEqual(reduced.finalDeliveryTaskID, "delivery")
+    }
+
     private func node(
         _ id: String,
         title: String,

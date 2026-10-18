@@ -81,8 +81,13 @@ struct NativePluginProcessLaunch: Sendable {
             == NativeDocumentPluginIdentity.marketplaceKey
             && launch.manifest.name == NativeDocumentPluginIdentity.packageName
             && launch.componentKey == NativeDocumentPluginIdentity.componentKey
-        let requiresManagedBrowser = isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
-        let requiresLoopbackServer = isBrowserPlugin || isWebDesignPlugin
+        let hasManagedBrowserPermission = launch.permissionSnapshot.contains(
+            "browser.managed.launch"
+        )
+        let requiresManagedBrowser = hasManagedBrowserPermission
+            || isBrowserPlugin || isWebDesignPlugin || isDocumentPlugin
+        let requiresLoopbackServer = hasManagedBrowserPermission
+            || isBrowserPlugin || isWebDesignPlugin
         let browserHome = isBrowserPlugin
             && launch.permissionSnapshot.contains("browser.chrome.attach")
             ? FileManager.default.homeDirectoryForCurrentUser
@@ -94,6 +99,10 @@ struct NativePluginProcessLaunch: Sendable {
         }
         if requiresManagedBrowser {
             executableDirectories.append(contentsOf: Self.installedBrowserApplications())
+        }
+        if launch.permissionSnapshot.contains("system.developer-tools.read"),
+           let cachePath = launch.environment["CHATOS_PLUGIN_CACHE_DIR"] {
+            executableDirectories.append(URL(fileURLWithPath: cachePath, isDirectory: true))
         }
         self.init(
             record: launch.record,
@@ -175,6 +184,20 @@ enum NativePluginProcessLauncher {
             overrides: launch.environment,
             homeDirectory: launch.homeDirectory?.path
         )
+        if launch.permissionSnapshot.contains("system.developer-tools.read") {
+            // swift-driver normally launches compiler jobs through another
+            // sandbox-exec process. Seatbelt rejects nested initialization when
+            // the Plugin already runs inside ChatOS's sandbox, so make the
+            // compiler rely on the existing outer boundary instead.
+            environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"] = "-disable-sandbox"
+        }
+        if launch.permissionSnapshot.contains("process.spawn"),
+           let processList = NativePluginProcessEnvironment.bundledProcessListExecutable() {
+            environment["PATH"] = [
+                processList.deletingLastPathComponent().path,
+                environment["PATH"],
+            ].compactMap { $0 }.joined(separator: ":")
+        }
         environment["CHATOS_PLUGIN_SANDBOX"] = "macos-seatbelt"
         return .init(
             executableURL: sandboxExecutable,
@@ -211,6 +234,19 @@ enum NativePluginSandboxProfile {
             "(allow file-read-metadata)",
             "(allow file-read* (subpath \"/System\") (subpath \"/usr\") (subpath \"/bin\") (subpath \"/opt/homebrew\") (subpath \"/usr/local\") (subpath \"/Library/Apple\") \(literal(launch.installationURL.path)))",
         ]
+        if launch.permissionSnapshot.contains("process.spawn") {
+            // PTY-backed process tools (including REA process capture) open the
+            // multiplexor, configure its dynamically allocated slave, and query
+            // their own PID while posix_spawn prepares the helper process.
+            rules.append("(allow pseudo-tty)")
+            rules.append("(allow process-info-listpids)")
+            rules.append("(allow process-info-pidinfo (target same-sandbox))")
+            rules.append("(allow file-read* file-write* file-ioctl (literal \"/dev/ptmx\") (regex #\"^/dev/ttys[0-9a-f]+$\"))")
+            if let processList = NativePluginProcessEnvironment.bundledProcessListExecutable() {
+                rules.append("(allow file-read* \(literal(processList.path)))")
+                rules.append("(allow process-exec \(literal(processList.path)))")
+            }
+        }
         for directory in launch.writableDirectories {
             rules.append("(allow file-read* file-write* \(literal(directory.path)))")
         }
@@ -273,7 +309,41 @@ enum NativePluginSandboxProfile {
             rules.append("(allow network-inbound (local ip \"localhost:*\"))")
             rules.append("(allow network-outbound (remote ip \"localhost:*\"))")
         }
-        // All non-loopback sockets remain denied. Domain access requires a host-controlled proxy.
+        if launch.permissionSnapshot.contains("network.client") {
+            rules.append("(allow network-outbound)")
+        }
+        if launch.permissionSnapshot.contains("system.developer-tools.read") {
+            for directory in [
+                "/Applications/Xcode.app",
+                "/Library/Developer/CommandLineTools",
+            ] {
+                rules.append("(allow file-read* \(literal(directory)))")
+                rules.append("(allow process-exec \(literal(directory)))")
+            }
+            // xcrun uses DARWIN_USER_TEMP_DIR for a short-lived SDK lookup cache even
+            // when the child process has an isolated TMPDIR. Keep this exception to
+            // xcrun's randomized cache files instead of exposing the user's temp tree.
+            let temporaryRoot = Self.canonicalPath(
+                FileManager.default.temporaryDirectory.path
+            )
+            let escapedTemporaryRoot = Self.regexLiteral(temporaryRoot)
+            rules.append("(allow file-read* file-write* (regex #\"^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$\"))")
+            // xcodebuild checks the machine-wide license record before xcrun can
+            // compile REA's process ownership helper. Without this narrow read,
+            // xcodebuild reports exit 69 as if the license had not been accepted.
+            rules.append("(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))")
+            // Swift writes imported SDK modules below the Darwin per-user cache
+            // while compiling REA's ownership helper. Scope the exception to the
+            // compiler's ModuleCache instead of exposing the full cache root.
+            if let cacheRoot = Self.darwinUserCacheDirectory() {
+                let moduleCache = URL(fileURLWithPath: cacheRoot, isDirectory: true)
+                    .appendingPathComponent("clang", isDirectory: true)
+                    .appendingPathComponent("ModuleCache", isDirectory: true)
+                    .path
+                rules.append("(allow file-read* file-write* \(literal(moduleCache)))")
+            }
+        }
+        // All sockets beyond explicitly declared loopback or outbound access remain denied.
         return rules.joined(separator: "\n")
     }
 
@@ -297,6 +367,19 @@ enum NativePluginSandboxProfile {
             missingComponents.append(candidate.lastPathComponent)
             candidate = parent
         }
+    }
+
+    private static func darwinUserCacheDirectory() -> String? {
+        let requiredLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+        guard requiredLength > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: requiredLength)
+        guard confstr(_CS_DARWIN_USER_CACHE_DIR, &buffer, requiredLength) > 0 else {
+            return nil
+        }
+        return String(
+            decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )
     }
 
     private static func literal(_ path: String) -> String {

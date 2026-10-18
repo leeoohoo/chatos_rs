@@ -178,7 +178,7 @@ struct MessageTaskDetailSections: View {
     private var basicInformation: some View {
         VStack(alignment: .leading, spacing: 8) {
             LabeledContent("任务 ID", value: task.id)
-            LabeledContent("状态", value: task.status ?? "未知")
+            LabeledContent("状态", value: taskStatusTitle(task.status))
             LabeledContent("创建人", value: creatorDisplayName)
             LabeledContent("模型", value: modelDisplayName)
             LabeledContent("思考等级", value: thinkingLevelDisplayName)
@@ -215,7 +215,7 @@ struct MessageTaskDetailSections: View {
                                 .appFont(.callout.weight(.medium))
                             Spacer(minLength: 8)
                             if let status = item.status {
-                                Text(status)
+                                Text(taskStatusTitle(status))
                                     .appFont(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }
@@ -303,6 +303,23 @@ struct MessageTaskDetailSections: View {
 
     private var lastRunDisplayName: String {
         runDisplay(task.lastRun, fallbackID: task.lastRunID)
+    }
+
+    private func taskStatusTitle(_ status: String?) -> String {
+        switch status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pending", "ready", "queued": model.localized("等待执行", english: "Waiting")
+        case "running", "processing", "in_progress", "doing": model.localized("执行中", english: "Running")
+        case "completed", "succeeded", "success", "done": model.localized("已完成", english: "Completed")
+        case "blocked": model.localized("被阻塞", english: "Blocked")
+        case "failed", "error", "execution_failed": model.localized("失败", english: "Failed")
+        case "acceptance_failed": model.localized("未通过验收", english: "Acceptance Not Met")
+        case "evidence_incomplete": model.localized("部分完成，待核验", english: "Partially Complete")
+        case "cancelled", "canceled", "stopped": model.localized("已取消", english: "Cancelled")
+        case "reviewing_followup": model.localized("审查追加要求", english: "Reviewing Follow-up")
+        case "waiting_confirmation": model.localized("等待确认", english: "Awaiting Confirmation")
+        case .none, "": model.localized("未知", english: "Unknown")
+        default: status ?? model.localized("未知", english: "Unknown")
+        }
     }
 
     private var prerequisiteItems: [MessageTaskReference] {

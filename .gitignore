@@ -72,3 +72,4 @@ clients/wechat-miniprogram/project.private.config.json
 /secrets/
 /.chatos-ci-images
 /.tmp-relay-export/
+/clients/macos/.install-backups/

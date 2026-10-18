@@ -35,4 +35,16 @@ enum NativePluginProcessEnvironment {
     static func runtimePath() -> String {
         "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     }
+
+    static func bundledProcessListExecutable(
+        resourceURL: URL? = Bundle.main.resourceURL
+    ) -> URL? {
+        guard let candidate = resourceURL?
+            .appendingPathComponent("Tools/darwin-arm64", isDirectory: true)
+            .appendingPathComponent("ps", isDirectory: false),
+              FileManager.default.isExecutableFile(atPath: candidate.path) else {
+            return nil
+        }
+        return candidate
+    }
 }

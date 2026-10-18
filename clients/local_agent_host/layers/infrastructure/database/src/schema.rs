@@ -716,3 +716,42 @@ pub(super) const SCHEMA_V32: &[&str] = &[
     "CREATE INDEX local_requirement_plans_project ON local_requirement_plans(\
        owner_user_id, project_resource_id, created_at_unix_ms DESC, plan_id, revision DESC)",
 ];
+
+/// Bounds transient replay and delivery bookkeeping. Command receipts only protect short-lived
+/// IPC retries; retaining complete Run responses indefinitely duplicated most of the database.
+/// Synced Memory rows are likewise delivery receipts, not the authoritative Memory store.
+pub(super) const SCHEMA_V33: &[&str] = &[
+    "DROP TABLE local_agent_command_receipts",
+    "CREATE TABLE local_agent_command_receipts (\
+       command_id TEXT PRIMARY KEY NOT NULL,\
+       request_fingerprint TEXT NOT NULL,\
+       response_json TEXT NOT NULL,\
+       created_at_unix_ms INTEGER NOT NULL\
+     )",
+    "CREATE INDEX local_agent_command_receipts_retention ON \
+       local_agent_command_receipts(created_at_unix_ms DESC, command_id DESC)",
+    "CREATE TRIGGER local_agent_command_receipts_prune AFTER INSERT ON \
+       local_agent_command_receipts BEGIN \
+         DELETE FROM local_agent_command_receipts \
+           WHERE created_at_unix_ms < (\
+             SELECT MAX(created_at_unix_ms) - 86400000 \
+             FROM local_agent_command_receipts\
+           ); \
+         DELETE FROM local_agent_command_receipts WHERE command_id IN (\
+           SELECT command_id FROM local_agent_command_receipts \
+             ORDER BY created_at_unix_ms DESC, command_id DESC LIMIT -1 OFFSET 5000\
+         ); \
+       END",
+    "DELETE FROM local_memory_outbox WHERE status = 'synced'",
+    "CREATE INDEX local_memory_outbox_synced_retention ON local_memory_outbox(\
+       status, updated_at_unix_ms DESC, source_id, record_id\
+     )",
+    "CREATE TRIGGER local_memory_outbox_prune AFTER UPDATE OF status ON local_memory_outbox \
+       WHEN NEW.status = 'synced' BEGIN \
+         DELETE FROM local_memory_outbox WHERE status = 'synced' \
+           AND (source_id, record_id) IN (\
+             SELECT source_id, record_id FROM local_memory_outbox WHERE status = 'synced' \
+               ORDER BY updated_at_unix_ms DESC, source_id, record_id LIMIT -1 OFFSET 1000\
+           ); \
+       END",
+];

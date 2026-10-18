@@ -53,6 +53,25 @@ mod tests {
     }
 
     #[test]
+    fn artifact_producing_tools_require_host_artifact_registration_permission() {
+        let catalog = tool_catalog();
+        for name in ["browser_screenshot", "browser_downloads", "browser_har_stop"] {
+            let tool = catalog
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("missing tool {name}"));
+            let permissions = tool
+                .pointer("/_meta/chatos~1requiredPermissions")
+                .and_then(Value::as_array)
+                .unwrap();
+            assert!(
+                permissions.contains(&json!("artifact.create")),
+                "{name} must require artifact.create before returning a managed artifact"
+            );
+        }
+    }
+
+    #[test]
     fn browser_session_id_is_not_exposed_in_tool_schemas() {
         for tool in tool_catalog() {
             assert!(

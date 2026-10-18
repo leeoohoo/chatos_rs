@@ -368,6 +368,138 @@ async fn terminal_runs_reconcile_turns_and_assistant_messages() {
 }
 
 #[tokio::test]
+async fn expired_main_chat_model_claim_keeps_turn_running_and_requeues() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-interrupted").await;
+    let interrupted_turn = turn("conversation-interrupted", 1, "interrupted");
+    start(&storage, &interrupted_turn, 2_000)
+        .await
+        .expect("start interrupted Turn");
+    storage
+        .claim_next_run(
+            &idempotency("claim-interrupted"),
+            "user-1",
+            "worker-1",
+            "token-interrupted",
+            3_000,
+            4_000,
+            "event-claim-interrupted",
+        )
+        .await
+        .expect("claim")
+        .expect("claimed Run");
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 4_001)
+            .await
+            .expect("recover interrupted claim"),
+        1
+    );
+    let recovered_run = storage
+        .get_run(&interrupted_turn.run_id)
+        .await
+        .expect("get recovered Run")
+        .expect("recovered Run");
+    assert_eq!(recovered_run.status, LocalAgentRunStatus::ModelReady);
+    assert_eq!(recovered_run.iteration, 0);
+
+    let recovered = storage
+        .get_conversation("user-1", "conversation-interrupted")
+        .await
+        .expect("get recovered conversation")
+        .expect("recovered conversation");
+    assert_eq!(
+        recovered.turns[0].status,
+        LocalConversationTurnStatus::Running
+    );
+    assert_eq!(recovered.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn startup_recovery_repairs_stranded_main_chat_turn() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-stranded").await;
+    let stranded_turn = turn("conversation-stranded", 1, "stranded");
+    start(&storage, &stranded_turn, 2_000)
+        .await
+        .expect("start stranded Turn");
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'needs_review', terminal_outcome_json = ?, \
+         version = version + 1, updated_at_unix_ms = ? WHERE run_id = ?",
+    )
+    .bind(
+        json!({
+            "status": "needs_review",
+            "reason_code": "execution_interrupted",
+            "error": "result unknown"
+        })
+        .to_string(),
+    )
+    .bind(3_000_i64)
+    .bind(&stranded_turn.run_id)
+    .execute(&storage.pool)
+    .await
+    .expect("strand Run");
+
+    assert_eq!(
+        storage
+            .recover_expired_claims("user-1", 4_000)
+            .await
+            .expect("repair stranded Turn"),
+        1
+    );
+    let repaired = storage
+        .get_conversation("user-1", "conversation-stranded")
+        .await
+        .expect("get repaired conversation")
+        .expect("repaired conversation");
+    assert_eq!(
+        repaired.turns[0].status,
+        LocalConversationTurnStatus::Failed
+    );
+    assert_eq!(repaired.messages.len(), 2);
+    assert_eq!(repaired.messages[1].content["error"], "result unknown");
+
+    let reviewed_run = storage
+        .get_run(&stranded_turn.run_id)
+        .await
+        .expect("get reviewed Run")
+        .expect("reviewed Run");
+    let cancelled = storage
+        .cancel_conversation_turn(
+            &idempotency("cancel-reviewed-turn"),
+            &CancelConversationTurnCommand {
+                owner_user_id: "user-1".to_string(),
+                conversation_id: "conversation-stranded".to_string(),
+                expected_conversation_version: repaired.conversation.version,
+                turn_id: stranded_turn.turn_id.clone(),
+                expected_run_version: Some(reviewed_run.version),
+                reason: "discard stale interrupted response".to_string(),
+            },
+            "event-cancel-reviewed-turn",
+            5_000,
+        )
+        .await
+        .expect("cancel reviewed Turn");
+    assert_eq!(cancelled.run.status, LocalAgentRunStatus::Cancelled);
+    let after_cancel = storage
+        .get_conversation("user-1", "conversation-stranded")
+        .await
+        .expect("get cancelled conversation")
+        .expect("cancelled conversation");
+    assert_eq!(
+        after_cancel.turns[0].status,
+        LocalConversationTurnStatus::Failed
+    );
+    assert_eq!(after_cancel.messages.len(), 2);
+}
+
+#[tokio::test]
 async fn resume_turn_is_atomic_idempotent_and_rejects_stale_versions() {
     let storage = SqliteClientStorage::connect_memory()
         .await

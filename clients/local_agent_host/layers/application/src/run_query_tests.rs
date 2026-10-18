@@ -80,6 +80,10 @@ async fn lists_only_owner_runs_with_a_stable_composite_cursor() {
     );
     assert_eq!(first.next_before_updated_at_unix_ms, Some(10_000));
     assert_eq!(first.next_before_run_id.as_deref(), Some("run-b"));
+    assert!(first
+        .runs
+        .iter()
+        .all(|run| run.capability_policy_revision == "policy-1"));
 
     let second = runtime
         .try_handle(request(

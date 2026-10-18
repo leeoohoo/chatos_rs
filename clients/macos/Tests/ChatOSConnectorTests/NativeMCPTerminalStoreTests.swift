@@ -302,6 +302,35 @@ struct NativeMCPTerminalStoreTests {
         )
         #expect(try listed.number("process_count") == 2)
     }
+
+    @Test
+    func exitedProcessHistoryIsGloballyByteBounded() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let store = NativeMCPTerminalStore(
+            maximumRetainedExitedProcesses: 10,
+            maximumRetainedExitedLogBytes: 300
+        )
+
+        for _ in 0..<2 {
+            _ = try await store.execute(
+                command: "printf '%0200d' 0",
+                cwd: fixture.root,
+                projectRoot: fixture.root,
+                background: false
+            )
+        }
+
+        let listed = try await store.call(
+            name: "process_list",
+            arguments: [
+                "include_exited": .bool(true),
+                "limit": .number(100),
+            ],
+            projectRoot: fixture.root
+        )
+        #expect(try listed.number("process_count") == 1)
+    }
 }
 
 private struct TerminalFixture {

@@ -183,7 +183,8 @@ struct PerformancePolicyTests {
             hasCommunicationTask: false,
             hasExecutorRecoveryTask: true
         ))
-        #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(30))
+        #expect(AgentRuntimePollingPolicy.communicationRecoveryInterval == .seconds(300))
+        #expect(AgentRuntimePollingPolicy.executorRecoveryInterval == .seconds(300))
         #expect(AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .roomUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .runUpdated))
         #expect(!AgentRuntimePollingPolicy.shouldWakeCommunicationRecovery(for: .deliveryClaimed))

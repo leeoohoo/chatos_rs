@@ -77,8 +77,10 @@ pub fn text_value_or_json(value: &Value, keys: &[&str]) -> Option<String> {
             }
         }
         Value::Object(map) => {
+            let mut recognized_text_field = false;
             for key in keys {
                 if let Some(child) = map.get(*key) {
+                    recognized_text_field = true;
                     if let Some(text) = text_value_or_json(child, keys) {
                         if !text.is_empty() {
                             return Some(text);
@@ -86,7 +88,11 @@ pub fn text_value_or_json(value: &Value, keys: &[&str]) -> Option<String> {
                     }
                 }
             }
-            Some(value.to_string())
+            if recognized_text_field {
+                None
+            } else {
+                Some(value.to_string())
+            }
         }
     }
 }
@@ -103,15 +109,21 @@ pub fn join_text_lines_or_json(value: &Value, keys: &[&str]) -> String {
             .collect::<Vec<_>>()
             .join(""),
         Value::Object(map) => {
+            let mut recognized_text_field = false;
             for key in keys {
                 if let Some(child) = map.get(*key) {
+                    recognized_text_field = true;
                     let text = join_text_lines_or_json(child, keys);
                     if !text.is_empty() {
                         return text;
                     }
                 }
             }
-            value.to_string()
+            if recognized_text_field {
+                String::new()
+            } else {
+                value.to_string()
+            }
         }
     }
 }
@@ -214,6 +226,35 @@ mod tests {
         });
 
         assert_eq!(extract_output_text(&response), "Hello world");
+    }
+
+    #[test]
+    fn extract_output_text_ignores_empty_structured_text_parts() {
+        let response = json!({
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "",
+                            "annotations": [],
+                            "logprobs": []
+                        }
+                    ]
+                }
+            ]
+        });
+
+        assert_eq!(extract_output_text(&response), "");
+    }
+
+    #[test]
+    fn content_text_parser_preserves_unknown_json_fallback() {
+        assert_eq!(
+            super::chat_message_content_to_text(&json!({"other": 1})),
+            r#"{"other":1}"#
+        );
     }
 
     #[test]

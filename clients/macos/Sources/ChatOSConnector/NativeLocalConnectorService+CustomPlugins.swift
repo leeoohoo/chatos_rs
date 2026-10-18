@@ -1,6 +1,13 @@
 import ChatOSCore
 import Foundation
 
+struct NativeCustomPluginRuntimeHealth: Sendable, Equatable {
+    var status: LocalConnectorPluginRuntimeStatus
+    var toolCount: Int?
+    var checkedAt: Date
+    var error: String?
+}
+
 extension NativeLocalConnectorService {
     public func inspectCustomMCP(
         _ draft: LocalConnectorCustomMCPDraft
@@ -87,11 +94,20 @@ extension NativeLocalConnectorService {
     private func inspectPreparedCustomPlugin(
         _ prepared: NativePreparedCustomPlugin
     ) async throws -> LocalConnectorPluginInspection {
-        let record = prepared.record
+        try await inspectCustomPlugin(
+            record: prepared.record,
+            sourceSummary: prepared.sourceSummary
+        )
+    }
+
+    private func inspectCustomPlugin(
+        record: NativeInstalledPluginRecord,
+        sourceSummary: String
+    ) async throws -> LocalConnectorPluginInspection {
         let manifest = try Self.loadCustomPluginManifest(record: record)
         let permissionSnapshot = Set(manifest.permissions.map(\.permission)).union(["process.spawn"])
         var components: [LocalConnectorPluginInspectionComponent] = []
-        var fingerprintParts = [record.artifactSHA256, prepared.sourceSummary]
+        var fingerprintParts = [record.artifactSHA256, sourceSummary]
         for componentKey in manifest.mcpServers.keys.sorted() {
             let launch = try NativePluginManifestLoader.prepare(
                 record: record,
@@ -110,7 +126,7 @@ extension NativeLocalConnectorService {
                 try await client.start()
                 let initialized = try await client.initialize()
                 await client.terminate()
-                let tools = initialized.tools
+                let tools = try Self.validatedAgentPluginTools(initialized.tools)
                 let toolNames = tools.compactMap { $0.jsonObject?["name"]?.jsonString }.sorted()
                 guard toolNames.count == tools.count,
                       Set(toolNames).count == toolNames.count else {
@@ -155,7 +171,7 @@ extension NativeLocalConnectorService {
             fingerprint: fingerprint,
             displayName: manifest.interface?.displayName ?? manifest.name,
             version: manifest.version,
-            sourceSummary: prepared.sourceSummary,
+            sourceSummary: sourceSummary,
             components: components
         )
     }
@@ -168,6 +184,7 @@ extension NativeLocalConnectorService {
         state.pluginPreferences[record.pluginID] = true
         try stateStore.save(state)
         await pluginPermissionSnapshots.invalidateAll()
+        await pluginIntegritySnapshots.invalidateAll()
         await pluginConfigurationChangedHandler?()
     }
 
@@ -180,8 +197,36 @@ extension NativeLocalConnectorService {
             .sorted { $0.pluginID < $1.pluginID }
         var result: [LocalConnectorPlugin] = []
         for record in records {
-            let issue = Self.customPluginInstallationIssue(record)
-            let manifest = issue == nil ? try? Self.loadCustomPluginManifest(record: record) : nil
+            let issue = await customPluginInstallationIssue(record, forceRefresh: forceRefresh)
+            let manifest = issue == nil ? try? Self.loadCustomPluginManifestUnchecked(record: record) : nil
+            let enabled = state.pluginPreferences[record.pluginID] ?? true
+            let hasMCP = manifest?.mcpServers.isEmpty == false
+            if issue != nil || !hasMCP {
+                customPluginRuntimeHealth.removeValue(forKey: record.pluginID)
+            } else if !enabled {
+                customPluginRuntimeHealth[record.pluginID] = .init(
+                    status: .disabled, toolCount: nil, checkedAt: Date(), error: nil
+                )
+            } else if forceRefresh {
+                do {
+                    let inspection = try await inspectCustomPlugin(
+                        record: record,
+                        sourceSummary: record.sourceSummary ?? "installed custom plugin"
+                    )
+                    customPluginRuntimeHealth[record.pluginID] = .init(
+                        status: .ready,
+                        toolCount: inspection.components.reduce(0) { $0 + $1.toolNames.count },
+                        checkedAt: Date(),
+                        error: nil
+                    )
+                } catch {
+                    customPluginRuntimeHealth[record.pluginID] = .init(
+                        status: .unavailable, toolCount: nil, checkedAt: Date(),
+                        error: error.localizedDescription
+                    )
+                }
+            }
+            let runtimeHealth = customPluginRuntimeHealth[record.pluginID]
             let permissions: [LocalConnectorPluginPermission]
             if let manifest {
                 permissions = (try? await pluginPermissionSnapshots.permissions(
@@ -212,20 +257,25 @@ extension NativeLocalConnectorService {
                 installed: true,
                 updateAvailable: false,
                 installAvailable: false,
-                enabled: state.pluginPreferences[record.pluginID] ?? true,
+                enabled: enabled,
                 hasUI: manifest.map { !$0.ui.isEmpty },
                 permissions: permissions,
                 installationIssue: issue,
-                source: record.source ?? .localPlugin
+                source: record.source ?? .localPlugin,
+                runtimeStatus: hasMCP ? (runtimeHealth?.status ?? .notChecked) : nil,
+                runtimeToolCount: runtimeHealth?.toolCount,
+                runtimeLastCheckedAt: runtimeHealth?.checkedAt,
+                runtimeError: runtimeHealth?.error
             ))
         }
         return result
     }
 
-    private static func customPluginInstallationIssue(
-        _ record: NativeInstalledPluginRecord
-    ) -> LocalConnectorPluginInstallationIssue? {
-        switch NativePluginInstallationIntegrity.status(record: record) {
+    private func customPluginInstallationIssue(
+        _ record: NativeInstalledPluginRecord,
+        forceRefresh: Bool
+    ) async -> LocalConnectorPluginInstallationIssue? {
+        switch await pluginIntegritySnapshots.status(record: record, forceRefresh: forceRefresh) {
         case .verified: nil
         case .missingRecord: .missingIntegrityRecord
         case .failed: .integrityCheckFailed
@@ -240,5 +290,18 @@ extension NativeLocalConnectorService {
         return try NativePluginManifestLoader.loadManifest(
             from: installationURL.appendingPathComponent("chatos.plugin.json")
         )
+    }
+
+    private static func loadCustomPluginManifestUnchecked(
+        record: NativeInstalledPluginRecord
+    ) throws -> NativePluginManifest {
+        let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: installationURL.appendingPathComponent("chatos.plugin.json")
+        )
+        guard manifest.name.isEmpty == false, manifest.version == record.version else {
+            throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
+        }
+        return manifest
     }
 }

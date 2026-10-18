@@ -3,8 +3,8 @@
 
 use super::{
     task_conversation_writeback::write_back_graph,
+    task_graph_store::fetch_graph,
     task_lifecycle::{propagate_blocked, reconcile_task_after_run, unlock_satisfied},
-    task_store::fetch_graph,
     ClientStorageError, IdempotentCommand, SqliteClientStorage, SqliteResultExt,
 };
 use chatos_local_agent_protocol::{LocalTaskGraph, LocalTaskStatus};

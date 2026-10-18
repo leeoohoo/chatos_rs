@@ -1,5 +1,4 @@
 import ChatOSAgentRuntime
-import CryptoKit
 import Foundation
 import XCTest
 @testable import ChatOSConnector
@@ -120,89 +119,31 @@ final class NativeApprovalAgentTests: XCTestCase {
         XCTAssertTrue(result.contains("目录内容已截断"))
     }
 
-    func testManagedPromptSelectsModelVendorAndValidatesChecksum() throws {
-        let content = "managed approval prompt"
-        let bundle = promptBundle(content: content, vendor: "gpt")
-        let resolved = try NativeApprovalAgent.resolveManagedSystemPrompt(
-            model: model(provider: "openai", promptVendor: nil),
-            bundle: bundle,
-            capability: capability(),
-            ownerUserID: "owner-1"
-        )
-        XCTAssertEqual(resolved, content)
-    }
-
-    func testManagedPromptRejectsInvalidChecksumAndUnsupportedVendor() throws {
-        var invalid = promptBundle(content: "managed approval prompt", vendor: "gpt")
-        invalid.prompts[0].checksum = "sha256:\(String(repeating: "0", count: 64))"
-        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
-            model: model(provider: "gpt", promptVendor: nil),
-            bundle: invalid,
-            capability: capability(),
-            ownerUserID: "owner-1"
-        ))
-        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
-            model: model(provider: "minimax", promptVendor: nil),
-            bundle: promptBundle(content: "managed approval prompt", vendor: "gpt"),
-            capability: capability(),
-            ownerUserID: "owner-1"
-        ))
-    }
-
-    func testManagedPromptRejectsInvalidCapabilityPolicy() throws {
-        let bundle = promptBundle(content: "managed approval prompt", vendor: "gpt")
-        var invalid = capability()
-        invalid.agentEnabled = false
-        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
-            model: model(provider: "gpt", promptVendor: nil),
-            bundle: bundle,
-            capability: invalid,
-            ownerUserID: "owner-1"
-        ))
-        XCTAssertThrowsError(try NativeApprovalAgent.resolveManagedSystemPrompt(
-            model: model(provider: "gpt", promptVendor: nil),
-            bundle: bundle,
-            capability: capability(),
-            ownerUserID: "another-owner"
-        ))
-    }
-
-    private func model(provider: String, promptVendor: String?) -> GatewayModelConfigDTO {
-        .init(
-            id: "model-1", sourceProviderID: nil, name: "Approval", provider: provider,
-            promptVendor: promptVendor, model: "model", apiKey: "key",
-            baseURL: "https://example.com/v1", taskUsageScenario: nil,
-            taskThinkingLevel: nil, temperature: 0, maxOutputTokens: 1_200,
-            enabled: true, taskEnabled: true, hasAPIKey: true, supportsImages: false,
-            supportsReasoning: true, supportsResponses: true
-        )
-    }
-
-    private func promptBundle(content: String, vendor: String) -> GatewayAgentPromptBundleDTO {
-        let checksum = SHA256.hash(data: Data(content.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return .init(
-            bundleVersion: 1,
-            updatedAt: "2026-09-21T00:00:00Z",
-            prompts: [.init(
-                agentKey: NativeApprovalAgent.agentKey,
-                vendor: vendor,
-                content: content,
-                revision: 1,
-                checksum: "sha256:\(checksum)",
-                publishedAt: "2026-09-21T00:00:00Z"
-            )]
-        )
-    }
-
-    private func capability() -> GatewayAgentCapabilityDTO {
-        .init(
-            agentKey: NativeApprovalAgent.agentKey,
+    func testLocalModelConfigurationValidatesPersistedSnapshot() throws {
+        let snapshot = LocalAgentModelConfigSnapshot(
             ownerUserID: "owner-1",
-            policyRevision: "policy-1",
-            agentEnabled: true
+            modelConfigRef: "model-1",
+            modelConfigRevision: "revision-1",
+            credentialRef: "env:MODEL_1",
+            baseURL: "https://example.com/v1",
+            model: "approval-model",
+            provider: "openai",
+            supportsResponses: true,
+            temperature: 0.2,
+            maxOutputTokens: 1_500
         )
+
+        let configuration = try NativeApprovalAgentModelConfiguration(
+            snapshot: snapshot,
+            apiKey: "local-secret"
+        )
+
+        XCTAssertEqual(configuration.configID, "model-1")
+        XCTAssertEqual(configuration.baseURL.absoluteString, "https://example.com/v1")
+        XCTAssertEqual(configuration.model, "approval-model")
+        XCTAssertEqual(configuration.apiKey, "local-secret")
+        XCTAssertEqual(configuration.temperature, 0.2)
+        XCTAssertEqual(configuration.maxOutputTokens, 1_500)
     }
 
     private func request(_ root: URL) -> NativeApprovalAgentRequest {

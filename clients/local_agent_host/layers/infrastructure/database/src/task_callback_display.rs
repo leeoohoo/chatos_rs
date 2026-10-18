@@ -82,14 +82,7 @@ pub(super) fn user_visible_callback_detail(
         return terminal_outcome
             .and_then(visible_detail_with_source)
             .and_then(|(source, detail)| {
-                // A succeeded Task may legitimately report that a timeout or another
-                // failure did not occur. Preserve that result instead of reclassifying
-                // keyword mentions as a transient runtime failure.
-                let detail = sanitize_visible_detail_with_runtime_mapping(
-                    &detail,
-                    english,
-                    false,
-                )?;
+                let detail = sanitize_visible_detail(&detail, english)?;
                 summarize_completion_detail(&detail, english).map(|summary| (source, summary))
             })
             .or_else(|| {
@@ -104,7 +97,12 @@ pub(super) fn user_visible_callback_detail(
     terminal_outcome
         .and_then(visible_detail_with_source)
         .and_then(|(source, detail)| {
-            sanitize_visible_detail(&detail, english).map(|detail| (source, detail))
+            let detail = if matches!(event, "task.failed" | "task.blocked") {
+                sanitize_failure_detail(&detail, english)
+            } else {
+                sanitize_visible_detail(&detail, english)
+            };
+            detail.map(|detail| (source, detail))
         })
 }
 
@@ -237,14 +235,16 @@ pub(super) fn progress_callback_content_with_status(
 }
 
 pub(super) fn sanitize_visible_detail(value: &str, english: bool) -> Option<String> {
-    sanitize_visible_detail_with_runtime_mapping(value, english, true)
+    sanitize_visible_text(value, english)
 }
 
-fn sanitize_visible_detail_with_runtime_mapping(
-    value: &str,
-    english: bool,
-    map_runtime_failures: bool,
-) -> Option<String> {
+// Error classification is intentionally separate from ordinary result sanitization.
+// Successful reports routinely discuss HTTP 5xx responses, timeouts, unavailable
+// dependencies, or platform failures that were diagnosed and fixed. Treating those
+// words as the Run's own failure discards the completed report and replaces it with a
+// misleading retry message. The authoritative Task event decides whether this
+// classifier may run; the report text itself never changes a successful event.
+fn sanitize_failure_detail(value: &str, english: bool) -> Option<String> {
     if value == "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation." {
         return Some(if english {
             value.to_string()
@@ -253,7 +253,7 @@ fn sanitize_visible_detail_with_runtime_mapping(
         });
     }
     let lower = value.to_ascii_lowercase();
-    if map_runtime_failures && upstream_connection_interrupted(&lower) {
+    if upstream_connection_interrupted(&lower) {
         let retry_count = callback_retry_count(value);
         return Some(match (english, retry_count) {
             (true, Some(count)) => format!(
@@ -264,20 +264,24 @@ fn sanitize_visible_detail_with_runtime_mapping(
             (false, None) => "模型连接在开始处理前中断，自动重试后仍未恢复。".to_string(),
         });
     }
-    if map_runtime_failures && transient_service_error(&lower) {
+    if transient_service_error(&lower) {
         return Some(if english {
             "The service is temporarily unavailable. Please try again later.".to_string()
         } else {
             "服务暂时不可用，请稍后重试。".to_string()
         });
     }
-    if map_runtime_failures && internal_platform_error(&lower) {
+    if internal_platform_error(&lower) {
         return Some(if english {
             "The task could not start. Please try again later.".to_string()
         } else {
             "任务暂时无法启动，请稍后重试。".to_string()
         });
     }
+    sanitize_visible_text(value, english)
+}
+
+fn sanitize_visible_text(value: &str, english: bool) -> Option<String> {
     let mut in_code_fence = false;
     let mut lines = Vec::new();
     for raw_line in value.lines() {

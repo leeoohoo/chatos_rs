@@ -4,6 +4,37 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativePluginInstallerTests {
+    @Test
+    func removesOnlyUnreferencedTopLevelInstallationDirectories() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let referenced = root
+            .appendingPathComponent("referenced", isDirectory: true)
+            .appendingPathComponent("1.0.0", isDirectory: true)
+        let orphan = root.appendingPathComponent("orphan", isDirectory: true)
+        let staging = root.appendingPathComponent(".staging", isDirectory: true)
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        for directory in [referenced, orphan, staging, outside] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let installer = NativePluginInstaller(rootURL: root)
+
+        let removed = try installer.removeUnreferencedInstallations(
+            referencedInstallationPaths: [referenced.path, outside.path]
+        )
+
+        #expect(removed.map(\.lastPathComponent) == ["orphan"])
+        #expect(FileManager.default.fileExists(atPath: referenced.path))
+        #expect(!FileManager.default.fileExists(atPath: orphan.path))
+        #expect(FileManager.default.fileExists(atPath: staging.path))
+        #expect(FileManager.default.fileExists(atPath: outside.path))
+    }
+
     @Test("legacy installation is attested only against a trusted package snapshot")
     func legacyInstallationAttestationUsesTrustedSnapshot() throws {
         let root = FileManager.default.temporaryDirectory
@@ -74,6 +105,32 @@ struct NativePluginInstallerTests {
         #expect(throws: NativePluginRuntimeError.self) {
             try NativePluginInstallationIntegrity.verify(record: record, installationURL: root)
         }
+    }
+
+    @Test
+    func integritySnapshotCacheAvoidsRescansButSupportsForcedRefresh() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NativePluginIntegrityCache-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("plugin.js")
+        try Data("original".utf8).write(to: executable)
+        let checksums = try NativePluginInstallationIntegrity.snapshot(
+            installationURL: root,
+            maximumFiles: 10,
+            maximumBytes: 1_024
+        )
+        let record = NativeInstalledPluginRecord(
+            pluginID: "plugin-1", releaseID: "release-1", version: "1.0.0",
+            artifactSHA256: String(repeating: "a", count: 64), installationPath: root.path,
+            installedAt: "2026-10-19T00:00:00Z", packageFileSHA256: checksums
+        )
+        let cache = NativePluginIntegritySnapshotCache()
+
+        #expect(await cache.status(record: record) == .verified)
+        try Data("tampered".utf8).write(to: executable, options: .atomic)
+        #expect(await cache.status(record: record) == .verified)
+        #expect(await cache.status(record: record, forceRefresh: true) == .failed)
     }
 
     @Test("tar output larger than a pipe buffer does not deadlock plugin validation")

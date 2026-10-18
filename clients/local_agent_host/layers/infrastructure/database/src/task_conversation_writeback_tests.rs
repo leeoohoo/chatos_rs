@@ -691,7 +691,37 @@ fn callback_detail_hides_runtime_secrets_ids_and_transient_errors() {
     );
     assert_eq!(
         super::sanitize_visible_detail("upstream returned status 503", true),
-        Some("The service is temporarily unavailable. Please try again later.".to_string())
+        Some("upstream returned status 503".to_string())
+    );
+    assert_eq!(
+        super::callback_content(
+            "Inspect project",
+            "Inspect the project",
+            "task.failed",
+            Some(&json!({"error": "upstream returned status 503"})),
+            true,
+        ),
+        "I couldn't complete this.\n\nThe service is temporarily unavailable. Please try again later."
+    );
+    assert_eq!(
+        super::callback_content(
+            "Inspect project",
+            "Inspect the project",
+            "task.failed",
+            Some(&json!({"error": "upstream connect error after 3 retries"})),
+            true,
+        ),
+        "I couldn't complete this.\n\nThe model connection ended before processing started and did not recover after automatic retries."
+    );
+    assert_eq!(
+        super::callback_content(
+            "Inspect project",
+            "Inspect the project",
+            "task.blocked",
+            Some(&json!({"error": "task_runner_run_phase failed"})),
+            true,
+        ),
+        "I can't continue yet.\n\nThe task could not start. Please try again later."
     );
 }
 
@@ -741,6 +771,97 @@ fn completed_callback_keeps_documented_authentication_placeholders() {
     assert!(content.contains("扫码报工当前流程"));
     assert!(content.contains("确认结论：扫码入口按二维码类型分流。"));
     assert_ne!(content, "请求失败，请稍后重试。");
+}
+
+#[test]
+fn completed_callback_keeps_success_report_that_discusses_runtime_errors() {
+    let outcome = json!({
+        "content": "已跑通 IAM 本地全链路，所有验收项通过。\n\n- 修复：未知路由由错误的 500 改为 RFC 9457 404。\n- 验证：timeout、service unavailable、connection refused、upstream connect error 与 task_runner_run_phase failed 场景均有覆盖。"
+    });
+
+    let content = super::callback_content(
+        "跑通 IAM 本地全链路（不提交）",
+        "验证 IAM 本地全链路",
+        "task.completed",
+        Some(&outcome),
+        false,
+    );
+
+    assert!(content.contains("已跑通 IAM 本地全链路"));
+    assert!(content.contains("错误的 500 改为 RFC 9457 404"));
+    assert!(content.contains("upstream connect error"));
+    assert!(content.contains("task_runner_run_phase failed"));
+    assert_ne!(content, "服务暂时不可用，请稍后重试。");
+    assert_ne!(content, "任务暂时无法启动，请稍后重试。");
+}
+
+#[tokio::test]
+async fn succeeded_writeback_preserves_report_that_mentions_5xx_and_timeouts() {
+    let storage = SqliteClientStorage::connect_memory().await.unwrap();
+    let turn = create_callback_conversation(
+        &storage,
+        "successful-error-discussion",
+        "跑通 IAM 本地全链路（不提交）",
+    )
+    .await;
+    storage
+        .create_task_graph(
+            &command("create-successful-error-discussion-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "successful-error-discussion-graph".to_string(),
+                owner_user_id: "user-1".to_string(),
+                source_entity_type: "conversation_turn".to_string(),
+                source_entity_id: turn.turn_id.clone(),
+                tasks: vec![summary_task(
+                    "successful-error-discussion-task",
+                    "跑通 IAM 本地全链路（不提交）",
+                )],
+                dependencies: Vec::new(),
+            },
+            4_000,
+        )
+        .await
+        .unwrap();
+    finish_task_run_with_outcome(
+        &storage,
+        "successful-error-discussion-run",
+        LocalAgentRunStatus::Succeeded,
+        5_000,
+        json!({
+            "content": "已跑通 IAM 本地全链路，所有验收项通过。\n\n- 修复：未知路由由错误的 500 改为 RFC 9457 404。\n- 验证：timeout、service unavailable 与 connection refused 场景均有覆盖。"
+        }),
+    )
+    .await;
+
+    let conversation = storage
+        .get_conversation("user-1", &turn.conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let callback = conversation
+        .messages
+        .iter()
+        .find(|message| {
+            message.metadata["task_runner_async"]["task_id"] == "successful-error-discussion-task"
+        })
+        .expect("completed Task callback");
+    let content = callback.content.as_str().expect("callback text");
+    let result_summary = callback.metadata["task_runner_async"]["result_summary"]
+        .as_str()
+        .expect("result summary");
+
+    assert_eq!(
+        callback.metadata["task_runner_async"]["event"],
+        "task.completed"
+    );
+    assert_eq!(
+        callback.metadata["task_runner_async"]["status"],
+        "succeeded"
+    );
+    assert!(content.contains("已跑通 IAM 本地全链路"));
+    assert!(content.contains("错误的 500 改为 RFC 9457 404"));
+    assert_eq!(content, result_summary);
+    assert_ne!(content, "服务暂时不可用，请稍后重试。");
 }
 
 async fn finish_task_run(
@@ -927,6 +1048,34 @@ async fn expired_claim_reason_is_visible_and_legacy_backfill_is_owner_scoped_and
             .await
             .unwrap()
             .unwrap();
+        sqlx::query(
+            "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+             claim_token = NULL, claim_until_unix_ms = NULL, terminal_outcome_json = ?, \
+             updated_at_unix_ms = 6_001 WHERE run_id = 'interrupted-run'",
+        )
+        .bind(
+            json!({
+                "status": "needs_review",
+                "reason_code": "execution_interrupted",
+                "error": "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation."
+            })
+            .to_string(),
+        )
+        .execute(&storage.pool)
+        .await
+        .unwrap();
+        let mut connection = storage.pool.acquire().await.unwrap();
+        SqliteClientStorage::insert_event(
+            &mut connection,
+            "legacy-expired-interrupted-run",
+            "interrupted-run",
+            "claim_expired_needs_review",
+            &json!({"reason": "legacy model claim recovery"}),
+            6_001,
+        )
+        .await
+        .unwrap();
+        drop(connection);
         assert_eq!(
             storage
                 .recover_expired_claims("user-1", 6_001)
@@ -1115,6 +1264,34 @@ async fn historical_diagnostic_repair_preserves_successful_retry_and_existing_ca
         .await
         .unwrap()
         .unwrap();
+    sqlx::query(
+        "UPDATE local_agent_runs SET status = 'needs_review', version = version + 1, \
+         claim_token = NULL, claim_until_unix_ms = NULL, terminal_outcome_json = ?, \
+         updated_at_unix_ms = 6_001 WHERE run_id = 'legacy-interrupted'",
+    )
+    .bind(
+        json!({
+            "status": "needs_review",
+            "reason_code": "execution_interrupted",
+            "error": "Execution was interrupted and the result of the current step could not be confirmed. Review the execution record before retrying to avoid repeating an operation."
+        })
+        .to_string(),
+    )
+    .execute(&storage.pool)
+    .await
+    .unwrap();
+    let mut connection = storage.pool.acquire().await.unwrap();
+    SqliteClientStorage::insert_event(
+        &mut connection,
+        "legacy-expired-callback-run",
+        "legacy-interrupted",
+        "claim_expired_needs_review",
+        &json!({"reason": "legacy model claim recovery"}),
+        6_001,
+    )
+    .await
+    .unwrap();
+    drop(connection);
     storage
         .recover_expired_claims("user-1", 6_001)
         .await

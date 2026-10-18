@@ -456,3 +456,10 @@ W308-01 的陈旧 revision 恢复子链路已补齐并真机通过：macOS/Windo
 - Evidence: `.local/parity/2026-10-18-project-chat-real/46-project-chat-timeout-retry-real.md`.
 - This does not advance to P1. Before P0 completion, restore/verify the macOS Main Chat/Product Skill/`skill_bundle_internal`/`task_skill_bundle_internal`/Task-invariant chain, close the remaining Host-not-ready/loading/permission/reparse cases, rerun affected regressions and complete final residue cleanup.
 
+## 2026-10-19 01:02 upstream 3.0.8 merge checkpoint
+
+- Merged `origin/3.0.8` at `a0d026bfb` into `3.0.8.1` while preserving the accumulated Windows work. Host conflict resolution keeps upstream review-action semantics and graph-store refactoring together with the P0 child-Task cancellation cascade, late-Task-after-Stop rejection and successful-callback classification fix.
+- macOS mapping was rechecked: `NativeLocalAgentBootstrap.swift` publishes Main Chat and Task Execution Product Skill bundles under one revision. Windows now embeds the canonical macOS Main Chat catalog and publishes `skill_bundle_internal`; its Product Skill/Control Plane regression is 24/24. Windows still lacks the canonical Task Execution bundle because `task_skill_bundle_internal` is currently used only for the optional external-MCP bundle.
+- Shared Host storage 116/116 and profiles 54/54 passed. A Windows failed-migration cleanup defect introduced by the upstream schema/backup work was fixed by closing the SQLite pool before returning initialization errors; the recovery backup remains preserved. Final x64 Debug passed with 0 warnings/errors.
+- Evidence: `.local/parity/2026-10-18-project-chat-real/47-upstream-3.0.8-merge.md`. P0 remains real-acceptance-in-progress, not passed; next work stays on Task Execution bundle parity and Host-not-ready/loading/permission/reparse closure. P1/P2/W308 remain frozen.
+

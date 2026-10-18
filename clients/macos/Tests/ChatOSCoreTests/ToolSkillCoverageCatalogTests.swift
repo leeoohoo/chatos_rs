@@ -86,6 +86,12 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(taskOrchestration.instructions.contains("Do not select `Notepad` merely because"))
         XCTAssertTrue(taskOrchestration.instructions.contains("separate downstream Notepad Task"))
         XCTAssertTrue(taskOrchestration.instructions.contains(
+            "explicitly names an installed Plugin or MCP"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "Complementary capabilities are additive"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
             "Never call `cancel_task` for a `failed`, `succeeded`, or `cancelled` Task"
         ))
         let capabilities = try BundledAgentSkillLoader.readResource(
@@ -96,6 +102,9 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(capabilities.content.contains("explicitly asked for that file form"))
         XCTAssertTrue(capabilities.content.contains("Never select it for scratch work"))
         XCTAssertTrue(capabilities.content.contains("Do not give writable Notepad to the Plugin Task"))
+        XCTAssertTrue(capabilities.content.contains(
+            "supporting capabilities as additive, never as substitutes"
+        ))
         let recovery = try BundledAgentSkillLoader.readResource(
             skillName: taskOrchestration.descriptor.name,
             relativePath: "references/followups-cancellation-and-recovery.md"

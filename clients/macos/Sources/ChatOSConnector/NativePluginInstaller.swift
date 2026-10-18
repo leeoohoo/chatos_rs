@@ -4,6 +4,8 @@ import Darwin
 import Foundation
 
 struct NativePluginInstaller: Sendable {
+    typealias NPMInstallOperation = @Sendable (URL) async throws -> Void
+
     private struct VerifiedPackage {
         let version: String
         let artifactSHA256: String
@@ -12,11 +14,20 @@ struct NativePluginInstaller: Sendable {
     }
 
     let rootURL: URL
+    let npmInstall: NPMInstallOperation
     let maximumFiles = 20_000
     let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
 
     init(rootURL: URL) {
+        self.init(rootURL: rootURL, npmInstall: Self.installNPMDependencies)
+    }
+
+    init(
+        rootURL: URL,
+        npmInstall: @escaping NPMInstallOperation
+    ) {
         self.rootURL = rootURL
+        self.npmInstall = npmInstall
     }
 
     func install(
@@ -119,6 +130,40 @@ struct NativePluginInstaller: Sendable {
         if FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.removeItem(at: directory)
         }
+    }
+
+    @discardableResult
+    func removeUnreferencedInstallations(
+        referencedInstallationPaths: [String]
+    ) throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { return [] }
+        let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        let referencedTopLevelNames = Set(referencedInstallationPaths.compactMap { path -> String? in
+            let installation = URL(fileURLWithPath: path, isDirectory: true)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard installation.path.hasPrefix(rootPrefix) else { return nil }
+            let relative = String(installation.path.dropFirst(rootPrefix.count))
+            return relative.split(separator: "/").first.map(String.init)
+        })
+        let children = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsSubdirectoryDescendants]
+        )
+        var removed: [URL] = []
+        for child in children {
+            let name = child.lastPathComponent
+            guard !name.hasPrefix("."), !referencedTopLevelNames.contains(name) else { continue }
+            let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let standardized = child.standardizedFileURL
+            guard standardized.deletingLastPathComponent() == root else { continue }
+            try FileManager.default.removeItem(at: standardized)
+            removed.append(standardized)
+        }
+        return removed
     }
 
     private func withVerifiedPackage<T>(

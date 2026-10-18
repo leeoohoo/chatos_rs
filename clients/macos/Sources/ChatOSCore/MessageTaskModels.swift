@@ -172,6 +172,9 @@ public struct MessageTaskGraphSnapshot: Sendable, Equatable {
     public var rootTaskIDs: [String]
     public var nodes: [MessageTaskGraphNode]
     public var edges: [MessageTaskGraphEdge]
+    public var goal: String?
+    public var decompositionRationale: String?
+    public var finalDeliveryTaskID: String?
     public var sourceSessionID: String?
     public var sourceTurnID: String?
     public var sourceUserMessageID: String?
@@ -180,6 +183,9 @@ public struct MessageTaskGraphSnapshot: Sendable, Equatable {
         rootTaskIDs: [String],
         nodes: [MessageTaskGraphNode],
         edges: [MessageTaskGraphEdge],
+        goal: String? = nil,
+        decompositionRationale: String? = nil,
+        finalDeliveryTaskID: String? = nil,
         sourceSessionID: String? = nil,
         sourceTurnID: String? = nil,
         sourceUserMessageID: String? = nil
@@ -187,6 +193,9 @@ public struct MessageTaskGraphSnapshot: Sendable, Equatable {
         self.rootTaskIDs = rootTaskIDs
         self.nodes = nodes
         self.edges = edges
+        self.goal = goal
+        self.decompositionRationale = decompositionRationale
+        self.finalDeliveryTaskID = finalDeliveryTaskID
         self.sourceSessionID = sourceSessionID
         self.sourceTurnID = sourceTurnID
         self.sourceUserMessageID = sourceUserMessageID

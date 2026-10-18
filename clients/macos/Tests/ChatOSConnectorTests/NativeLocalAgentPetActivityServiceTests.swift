@@ -160,6 +160,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
                 "owner_entity_type": taskSurvey ? "task" : "conversation_turn",
                 "owner_entity_id": taskSurvey ? "task-survey" : "turn-1",
                 "profile_key": taskSurvey ? "task_execution" : "main_chat",
+                "capability_policy_revision": "policy-1",
                 "input": [
                     taskSurvey ? "source_conversation_id" : "conversation_id": "conversation-1",
                     taskSurvey ? "source_turn_id" : "turn_id": "turn-1",
@@ -175,6 +176,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
                 "owner_entity_type": "task",
                 "owner_entity_id": "task-1",
                 "profile_key": "task_execution",
+                "capability_policy_revision": "policy-1",
                 "input": [:],
                 "status": interruptedTask ? "needs_review" : "failed",
                 "version": 4,

@@ -71,6 +71,7 @@ pub trait TerminalControllerStore: Send + Sync {
         &self,
         context: TerminalControllerContext,
         path: String,
+        purpose: String,
         command: String,
         background: bool,
         permissions: TerminalCommandPermissions,
@@ -255,7 +256,7 @@ impl TerminalControllerService {
     ) {
         self.register_tool(
             "execute_command",
-            "Run a shell command in the current project workspace with path switching. Use `path` as a project-root-relative directory; omit it to run at the project root. Change project file content with the dedicated file modification tools, not Python/Node scripts, shell redirection, tee, in-place editors, or patch utilities. Node.js test, build, lint, and package-exec commands require an installed dependency state and may not mask failures with `|| true`; install dependencies first when the structured preflight result requires it. Use background=true for long-running commands and track them with process_poll/process_wait.",
+            "Run a shell command in the current project workspace with path switching. `purpose` is required and must briefly explain the command's user-visible goal without repeating the command. Use `path` as a project-root-relative directory; omit it to run at the project root. Change project file content with the dedicated file modification tools, not Python/Node scripts, shell redirection, tee, in-place editors, or patch utilities. Node.js test, build, lint, and package-exec commands require an installed dependency state and may not mask failures with `|| true`; install dependencies first when the structured preflight result requires it. Use background=true for long-running commands and track them with process_poll/process_wait.",
             execute_command_schema(),
             async_text_tool_handler(move |args| {
                 let path = args
@@ -265,6 +266,7 @@ impl TerminalControllerService {
                     .filter(|value| !value.is_empty())
                     .unwrap_or(".")
                     .to_string();
+                let purpose = required_trimmed_string(&args, "purpose")?;
                 let command = args
                     .get("common")
                     .and_then(Value::as_str)
@@ -310,7 +312,7 @@ impl TerminalControllerService {
                         command.as_str(),
                     )?;
                     store
-                        .execute_command(ctx, path, command, background, permissions)
+                        .execute_command(ctx, path, purpose, command, background, permissions)
                         .await
                 })
             }),

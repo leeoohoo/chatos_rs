@@ -328,6 +328,7 @@ private actor ExternalMCPHostStub: LocalAgentHostClientServicing {
                 "owner_entity_type": "task",
                 "owner_entity_id": "task-1",
                 "profile_key": "task_execution",
+                "capability_policy_revision": "policy-1",
                 "input": [
                     "tool_options": [
                         "requires_execution": false,

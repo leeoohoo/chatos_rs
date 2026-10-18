@@ -2719,3 +2719,10 @@ git diff --check -- clients/windows
 - Evidence: `.local/parity/2026-10-18-project-chat-real/46-project-chat-timeout-retry-real.md` plus `46a`-`46d` artifacts.
 - Strict status remains **P0 real acceptance in progress, not passed**. macOS Main Chat/Product Skill/internal-bundle/Task-invariant parity, Host-not-ready/loading/permission/reparse closure, affected regressions and final cleanup remain open. P1/P2/W308 remain frozen.
 
+## 2026-10-19 01:02：合并最新 3.0.8 并保持 P0 语义
+
+- `origin/3.0.8` 已更新到 `a0d026bfb` 并合入 `3.0.8.1`。冲突按共享 Host/macOS 基线消解：采用上游 review action 与 `task_graph_store` 拆分，同时保留项目聊天 Stop→子 Task/Run 原子取消、Stop 后迟到建 Task 拒绝、成功回调不因 timeout/failure 字样误报失败。
+- macOS `NativeLocalAgentBootstrap.swift` 的完整发布序列再次核对。Windows Main Chat 已直接嵌入 canonical macOS Product Skill catalog 并发布 `skill_bundle_internal`，Product Skill/Control Plane 24/24；但 `task_skill_bundle_internal` 仍只承载可选 external-MCP bundle，canonical Task Execution bundle 仍是 P0 缺口。
+- Host storage 116/116、profiles 54/54、最终 x64 Debug 0 警告/错误。并修复失败迁移返回前未显式关闭 SQLite pool 的 Windows 文件占用问题，恢复备份语义不变。证据 `.local/parity/2026-10-18-project-chat-real/47-upstream-3.0.8-merge.md`。
+- P0 仍未通过；下一项继续 Task Execution bundle 对齐及 Host 未就绪/加载/无权限/reparse 真实矩阵，P1/P2/W308 继续冻结。
+

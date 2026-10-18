@@ -13,6 +13,12 @@ pub(super) fn execute_command_schema() -> Value {
                 "type": "string",
                 "description": "Directory path inside the current project workspace. Defaults to the workspace root when omitted."
             },
+            "purpose": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+                "description": "Short user-facing explanation of why this command is needed and what result it should produce. Do not copy the shell command."
+            },
             "common": {
                 "type": "string",
                 "description": "Shell command to run in the current project workspace."
@@ -27,6 +33,11 @@ pub(super) fn execute_command_schema() -> Value {
                 "description": "When true, return immediately and use process_poll/process_wait to track progress."
             }
         },
+        "required": ["purpose"],
+        "anyOf": [
+            {"required": ["common"]},
+            {"required": ["command"]}
+        ],
         "additionalProperties": false
     })
 }

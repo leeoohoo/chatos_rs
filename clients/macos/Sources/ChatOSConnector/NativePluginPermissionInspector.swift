@@ -320,6 +320,10 @@ enum NativePluginPermissionInspector {
             ("写入项目文件", "在当前任务授权范围内修改项目文件。", nil)
         case "artifact.create":
             ("创建交付文件", "在 ChatOS 管理的产物目录中创建文件。", nil)
+        case "network.client":
+            ("访问网络", "允许插件主动连接外部网络服务。", nil)
+        case "system.developer-tools.read":
+            ("读取开发工具", "读取并调用 Xcode 或 Command Line Tools 中的开发工具。", nil)
         case "browser.managed.launch":
             ("启动托管浏览器", "启动由 ChatOS 隔离管理的浏览器会话。", nil)
         case "browser.page.read":

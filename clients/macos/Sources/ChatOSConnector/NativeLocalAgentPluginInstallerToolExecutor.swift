@@ -4,6 +4,7 @@ import Foundation
 struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     private let runtime: NativeLocalAgentRuntimeClient
     private let conversations: NativeLocalAgentConversationClient
+    private let controlPlane: NativeLocalAgentControlPlaneClient
     private let connector: NativeLocalConnectorService
 
     init(
@@ -12,6 +13,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     ) {
         runtime = .init(host: host)
         conversations = .init(host: host)
+        controlPlane = .init(host: host)
         self.connector = connector
     }
 
@@ -24,10 +26,16 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         ) else {
             throw NativeLocalAgentPluginInstallerToolError.unsupportedTool
         }
-        try await authorizeInstallerConversation(
+        let authorizedUserMessage = try await authorizeInstallerConversation(
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
+        if invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName
+            || invocation.toolName == NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName {
+            guard Self.hasExplicitInstallIntent(authorizedUserMessage) else {
+                throw NativeLocalAgentPluginInstallerToolError.explicitInstallIntentRequired
+            }
+        }
         let arguments = try Self.object(invocation.arguments)
         switch invocation.toolName {
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerSearchNPMToolName:
@@ -39,32 +47,41 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectNPMToolName:
             let draft = try Self.npmDraft(arguments)
-            let inspection = try await connector.inspectCustomMCP(draft)
+            let inspection = try await Self.withSafeInstallerErrors {
+                try await connector.inspectCustomMCP(draft)
+            }
             return Self.inspectionResult(inspection, draft: draft)
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName:
             let draft = try Self.npmDraft(arguments)
-            try await connector.installCustomMCP(
-                draft,
-                expectedFingerprint: Self.string(arguments, "expected_fingerprint")
-            )
+            try await Self.withSafeInstallerErrors {
+                try await connector.installCustomMCP(
+                    draft,
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                )
+            }
             return .object([
                 "status": .string("installed"),
                 "display_name": .string(draft.displayName),
                 "package_name": .string(draft.packageName),
                 "package_version": .string(draft.packageVersion),
+                "access_profile": .string(draft.accessProfile.rawValue),
             ])
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectSourceToolName:
             let source = try Self.pluginSource(arguments)
             return Self.inspectionResult(
-                try await connector.inspectPluginSource(source),
+                try await Self.withSafeInstallerErrors {
+                    try await connector.inspectPluginSource(source)
+                },
                 source: source
             )
         case NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallSourceToolName:
             let source = try Self.pluginSource(arguments)
-            try await connector.installPluginSource(
-                source,
-                expectedFingerprint: Self.string(arguments, "expected_fingerprint")
-            )
+            try await Self.withSafeInstallerErrors {
+                try await connector.installPluginSource(
+                    source,
+                    expectedFingerprint: Self.string(arguments, "expected_fingerprint")
+                )
+            }
             return .object([
                 "status": .string("installed"),
                 "source_kind": .string(source.kind.rawValue),
@@ -78,13 +95,25 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
     private func authorizeInstallerConversation(
         ownerUserID: String,
         runID: String
-    ) async throws {
+    ) async throws -> String {
         let run = try await runtime.run(ownerUserID: ownerUserID, runID: runID)
         guard run.ownerUserID == ownerUserID,
               run.profileKey == "main_chat",
               run.ownerEntityType == "conversation_turn",
               case let .object(input) = run.input,
               case let .string(conversationID)? = input["conversation_id"] else {
+            throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
+        }
+        let capability = try await controlPlane.capabilities(
+            ownerUserID: ownerUserID,
+            profileKey: run.profileKey,
+            capabilityPolicyRevision: run.capabilityPolicyRevision
+        )
+        guard Self.isAuthorizedInstallerCapability(
+            capability,
+            ownerUserID: ownerUserID,
+            capabilityPolicyRevision: run.capabilityPolicyRevision
+        ) else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
         let detail = try await conversations.get(
@@ -98,6 +127,75 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
               ) else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
+        let latestUserMessage = detail.messages
+            .filter { $0.turnID == run.ownerEntityID && $0.role == "user" }
+            .max(by: { $0.ordinal < $1.ordinal })
+            .flatMap { message -> String? in
+                guard case let .string(value) = message.content else { return nil }
+                return value
+            }
+        let originalMessage: String? = if case let .object(input) = run.input,
+                                          case let .string(value)? = input["message"] {
+            value
+        } else {
+            nil
+        }
+        guard let userMessage = latestUserMessage ?? originalMessage else {
+            throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
+        }
+        return userMessage
+    }
+
+    static func isAuthorizedInstallerCapability(
+        _ capability: LocalAgentCapabilityPolicySnapshot,
+        ownerUserID: String,
+        capabilityPolicyRevision: String
+    ) -> Bool {
+        capability.ownerUserID == ownerUserID
+            && capability.profileKey == "main_chat"
+            && capability.capabilityPolicyRevision == capabilityPolicyRevision
+            && capabilityPolicyRevision.hasPrefix("plugin-installer-")
+            && capability.instructions == NativeLocalConnectorService.pluginInstallerInstructions
+            && capability.prefixedInputItems.isEmpty
+            && capability.tools == NativeLocalAgentPlatformToolCatalog.pluginInstallerTools
+    }
+
+    static func hasExplicitInstallIntent(_ message: String) -> Bool {
+        let normalized = message
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        let deniedPatterns = [
+            #"(?:不要|不用|无需|别|暂不|先不|不想|不需要).{0,8}(?:安装|装上|添加|接入|配置|启用)"#,
+            #"\b(?:do\s+not|don't|dont|without)\s+(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        if deniedPatterns.contains(where: { matches($0, in: normalized) }) {
+            return false
+        }
+
+        let informationalPatterns = [
+            #"(?:怎么|如何|哪里).{0,12}(?:安装|添加|接入|配置|启用)"#,
+            #"(?:是否支持|能否支持).{0,8}(?:安装|添加|接入|配置|启用)"#,
+            #"\b(?:how|where)\s+(?:do\s+i\s+|to\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        if informationalPatterns.contains(where: { matches($0, in: normalized) }) {
+            return false
+        }
+
+        let affirmativePatterns = [
+            #"(?:请|麻烦|帮我|给我|我要|我想|现在|直接|可以|可否|能不能)?\s*(?:安装|装上|添加|接入|配置(?:并)?使用|启用)(?:一下|上)?"#,
+            #"\b(?:please\s+)?(?:install|add|set\s*up|configure|enable)\b"#,
+        ]
+        return affirmativePatterns.contains(where: { matches($0, in: normalized) })
+    }
+
+    private static func matches(_ pattern: String, in value: String) -> Bool {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return false }
+        return expression.firstMatch(
+            in: value,
+            range: NSRange(value.startIndex..., in: value)
+        ) != nil
     }
 
     private func searchNPM(query: String) async throws -> LocalAgentJSONValue {
@@ -190,6 +288,11 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         let packageVersion = try string(arguments, "package_version")
         let binaryName = try string(arguments, "binary_name")
         let launchArguments = try stringArray(arguments, "arguments")
+        guard let accessProfile = LocalConnectorCustomMCPDraft.AccessProfile(
+            rawValue: try string(arguments, "access_profile")
+        ) else {
+            throw NativeLocalAgentPluginInstallerToolError.invalidField("access_profile")
+        }
         return .init(
             displayName: optionalString(arguments, "display_name") ?? packageName,
             description: optionalString(arguments, "description") ?? "",
@@ -198,7 +301,8 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             packageVersion: packageVersion,
             binaryName: binaryName,
             arguments: launchArguments,
-            environment: [:]
+            environment: [:],
+            accessProfile: accessProfile
         )
     }
 
@@ -248,6 +352,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
                 "package_version": .string(draft.packageVersion),
                 "binary_name": .string(draft.binaryName),
                 "arguments": .array(draft.arguments.map(LocalAgentJSONValue.string)),
+                "access_profile": .string(draft.accessProfile.rawValue),
             ])
         }
         if let source {
@@ -270,6 +375,23 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
             throw NativeLocalAgentPluginInstallerToolError.invalidArguments
         }
         return result
+    }
+
+    private static func withSafeInstallerErrors<Value: Sendable>(
+        _ operation: () async throws -> Value
+    ) async throws -> Value {
+        do {
+            return try await operation()
+        } catch let error as NativeConnectorError {
+            if case let .pluginInstallation(message) = error {
+                throw NativeLocalAgentPlatformToolError.pluginInstallerRejected(message)
+            }
+            throw error
+        } catch let error as CocoaError {
+            throw NativeLocalAgentPlatformToolError.pluginInstallerFileOperationFailed(
+                error.code.rawValue
+            )
+        }
     }
 
     private static func string(
@@ -335,6 +457,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
 enum NativeLocalAgentPluginInstallerToolError: LocalizedError {
     case unsupportedTool
     case unauthorizedConversation
+    case explicitInstallIntentRequired
     case invalidArguments
     case invalidField(String)
     case invalidNPMResponse
@@ -345,6 +468,8 @@ enum NativeLocalAgentPluginInstallerToolError: LocalizedError {
             "不支持的插件安装工具"
         case .unauthorizedConversation:
             "插件安装工具只允许在“插件安装助手”系统联系人中使用"
+        case .explicitInstallIntentRequired:
+            "当前用户消息没有明确授权安装；可以继续检查或比较，但不能安装"
         case .invalidArguments:
             "插件安装工具参数无效"
         case let .invalidField(field):

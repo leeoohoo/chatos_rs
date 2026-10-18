@@ -1,13 +1,45 @@
 import ChatOSCore
-import ChatOSProcessRuntime
 import CryptoKit
-import Darwin
 import Foundation
 
 struct NativePreparedCustomPlugin: Sendable {
     var record: NativeInstalledPluginRecord
     var temporaryRootURL: URL
     var sourceSummary: String
+}
+
+enum NativeCustomMCPAccessPolicy {
+    struct Permission: Sendable, Equatable {
+        var id: String
+        var reason: String
+    }
+
+    static func permissions(
+        for profile: LocalConnectorCustomMCPDraft.AccessProfile
+    ) -> [Permission] {
+        let process = Permission(
+            id: "process.spawn",
+            reason: "启动用户确认安装的本地 MCP Server"
+        )
+        switch profile {
+        case .restricted:
+            return [process]
+        case .networkClient:
+            return [
+                process,
+                .init(id: "network.client", reason: "允许 MCP 发起出站网络请求"),
+            ]
+        case .developerAnalysis:
+            return [
+                process,
+                .init(id: "network.client", reason: "允许分析工具发起出站网络请求"),
+                .init(id: "system.developer-tools.read", reason: "读取并调用本机开发工具链"),
+                .init(id: "browser.managed.launch", reason: "启动隔离的本机浏览器进行动态分析"),
+                .init(id: "artifact.create", reason: "在 ChatOS 管理目录中保存分析证据"),
+                .init(id: "workspace.read", reason: "读取当前任务绑定的项目文件"),
+            ]
+        }
+    }
 }
 
 extension NativePluginInstaller {
@@ -28,15 +60,7 @@ extension NativePluginInstaller {
             try JSONSerialization.data(withJSONObject: packageJSON, options: [.prettyPrinted, .sortedKeys])
                 .write(to: packageRoot.appendingPathComponent("package.json"), options: .atomic)
 
-            let npmURL = try Self.resolveExecutable(named: "npm")
-            try await Self.runInstallerProcess(
-                executableURL: npmURL,
-                arguments: [
-                    "install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund",
-                    "--save-exact", "--package-lock=true",
-                ],
-                currentDirectoryURL: packageRoot
-            )
+            try await npmInstall(packageRoot)
             try removeSymbolicLinks(in: packageRoot)
 
             let dependencyRoot = packageRoot
@@ -98,12 +122,16 @@ extension NativePluginInstaller {
                         ],
                     ],
                 ],
-                "permissions": [[
-                    "permission": "process.spawn",
-                    "required": true,
-                    "reason": "启动用户确认安装的本地 MCP Server",
-                    "components": [input.componentKey],
-                ]],
+                "permissions": NativeCustomMCPAccessPolicy.permissions(
+                    for: input.accessProfile
+                ).map { permission in
+                    [
+                        "permission": permission.id,
+                        "required": true,
+                        "reason": permission.reason,
+                        "components": [input.componentKey],
+                    ] as [String: Any]
+                },
             ]
             try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
                 .write(to: packageRoot.appendingPathComponent("chatos.plugin.json"), options: .atomic)
@@ -112,7 +140,7 @@ extension NativePluginInstaller {
                 temporaryRootURL: stagingRoot,
                 pluginIDSeed: "npm:\(input.packageName):\(input.componentKey)",
                 source: .customMCP,
-                sourceSummary: "npm \(input.packageName)@\(input.packageVersion) · \(input.binaryName) \(input.arguments.joined(separator: " "))"
+                sourceSummary: "npm \(input.packageName)@\(input.packageVersion) · \(input.binaryName) \(input.arguments.joined(separator: " ")) · \(input.accessProfile.rawValue)"
             )
         } catch {
             try? FileManager.default.removeItem(at: stagingRoot)
@@ -446,158 +474,6 @@ extension NativePluginInstaller {
         throw NativeConnectorError.pluginInstallation("没有找到 \(name)，请先安装 Node.js/npm")
     }
 
-    private static func runInstallerProcess(
-        executableURL: URL,
-        arguments: [String],
-        currentDirectoryURL: URL
-    ) async throws {
-        let worker = Task.detached(priority: .utility) {
-            let process = Process()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            let stdoutCapture = NativeBoundedProcessOutput(maximumBytes: 2 * 1_024 * 1_024)
-            let stderrCapture = NativeBoundedProcessOutput(maximumBytes: 2 * 1_024 * 1_024)
-            NativeProcessPipeReader.install(
-                on: stdout.fileHandleForReading,
-                onData: stdoutCapture.append
-            )
-            NativeProcessPipeReader.install(
-                on: stderr.fileHandleForReading,
-                onData: stderrCapture.append
-            )
-            process.executableURL = executableURL
-            process.arguments = arguments
-            process.currentDirectoryURL = currentDirectoryURL
-            process.standardOutput = stdout
-            process.standardError = stderr
-            let deadline = Date().addingTimeInterval(5 * 60)
-            var timedOut = false
-            do {
-                try process.run()
-                while process.isRunning, !Task.isCancelled, Date() < deadline {
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-                if process.isRunning {
-                    timedOut = !Task.isCancelled && Date() >= deadline
-                    process.terminate()
-                    let terminationDeadline = Date().addingTimeInterval(2)
-                    while process.isRunning, Date() < terminationDeadline {
-                        try? await Task.sleep(for: .milliseconds(50))
-                    }
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    process.waitUntilExit()
-                }
-            } catch {
-                stdout.fileHandleForReading.readabilityHandler = nil
-                stderr.fileHandleForReading.readabilityHandler = nil
-                throw error
-            }
-            stdout.fileHandleForReading.readabilityHandler = nil
-            stderr.fileHandleForReading.readabilityHandler = nil
-            stdoutCapture.append(stdout.fileHandleForReading.readDataToEndOfFile())
-            stderrCapture.append(stderr.fileHandleForReading.readDataToEndOfFile())
-            let output = stdoutCapture.snapshot
-            let errorOutput = stderrCapture.snapshot
-            guard !output.discarded, !errorOutput.discarded else {
-                throw NativeConnectorError.pluginInstallation("npm 输出超过安全限制")
-            }
-            if Task.isCancelled { throw CancellationError() }
-            guard !timedOut else {
-                throw NativeConnectorError.pluginInstallation("npm 安装超过 5 分钟，已终止")
-            }
-            guard process.terminationStatus == 0 else {
-                let detail = String(decoding: errorOutput.data.suffix(8 * 1_024), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw NativeConnectorError.pluginInstallation(
-                    detail.isEmpty ? "npm 安装失败" : "npm 安装失败：\(detail)"
-                )
-            }
-        }
-        try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
-    }
-
-    static func runNPMQuery(arguments: [String]) async throws -> Data {
-        let allowedCommands = Set(["search", "view"])
-        guard let command = arguments.first,
-              allowedCommands.contains(command),
-              arguments.count <= 16,
-              arguments.allSatisfy({ !$0.contains("\0") && $0.count <= 2_048 }) else {
-            throw NativeConnectorError.pluginInstallation("npm 查询参数无效")
-        }
-        let npmURL = try resolveExecutable(named: "npm")
-        let worker = Task.detached(priority: .utility) {
-            let process = Process()
-            let stdout = Pipe()
-            let stderr = Pipe()
-            let stdoutCapture = NativeBoundedProcessOutput(maximumBytes: 2 * 1_024 * 1_024)
-            let stderrCapture = NativeBoundedProcessOutput(maximumBytes: 256 * 1_024)
-            NativeProcessPipeReader.install(
-                on: stdout.fileHandleForReading,
-                onData: stdoutCapture.append
-            )
-            NativeProcessPipeReader.install(
-                on: stderr.fileHandleForReading,
-                onData: stderrCapture.append
-            )
-            process.executableURL = npmURL
-            process.arguments = arguments
-            process.standardOutput = stdout
-            process.standardError = stderr
-            let deadline = Date().addingTimeInterval(60)
-            var timedOut = false
-            do {
-                try process.run()
-                while process.isRunning, !Task.isCancelled, Date() < deadline {
-                    try? await Task.sleep(for: .milliseconds(50))
-                }
-                if process.isRunning {
-                    timedOut = !Task.isCancelled && Date() >= deadline
-                    process.terminate()
-                    let terminationDeadline = Date().addingTimeInterval(2)
-                    while process.isRunning, Date() < terminationDeadline {
-                        try? await Task.sleep(for: .milliseconds(50))
-                    }
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    process.waitUntilExit()
-                }
-            } catch {
-                stdout.fileHandleForReading.readabilityHandler = nil
-                stderr.fileHandleForReading.readabilityHandler = nil
-                throw error
-            }
-            stdout.fileHandleForReading.readabilityHandler = nil
-            stderr.fileHandleForReading.readabilityHandler = nil
-            stdoutCapture.append(stdout.fileHandleForReading.readDataToEndOfFile())
-            stderrCapture.append(stderr.fileHandleForReading.readDataToEndOfFile())
-            let output = stdoutCapture.snapshot
-            let errorOutput = stderrCapture.snapshot
-            guard !output.discarded, !errorOutput.discarded else {
-                throw NativeConnectorError.pluginInstallation("npm 查询输出超过安全限制")
-            }
-            if Task.isCancelled { throw CancellationError() }
-            guard !timedOut else {
-                throw NativeConnectorError.pluginInstallation("npm 查询超过 60 秒，已终止")
-            }
-            guard process.terminationStatus == 0 else {
-                let detail = String(decoding: errorOutput.data.suffix(8 * 1_024), as: UTF8.self)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw NativeConnectorError.pluginInstallation(
-                    detail.isEmpty ? "npm 查询失败" : "npm 查询失败：\(detail)"
-                )
-            }
-            return output.data
-        }
-        return try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
-    }
-
     static func snapshotFingerprint(_ snapshot: [String: String]) -> String {
         let canonical = snapshot.keys.sorted().map { "\($0)\u{0}\(snapshot[$0]!)" }.joined(separator: "\n")
         return sha256Hex(canonical)
@@ -617,6 +493,7 @@ private struct NativeCustomPluginInput {
     var binaryName: String
     var arguments: [String]
     var environment: [String: String]
+    var accessProfile: LocalConnectorCustomMCPDraft.AccessProfile
 
     init(draft: LocalConnectorCustomMCPDraft) throws {
         displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -627,6 +504,7 @@ private struct NativeCustomPluginInput {
         binaryName = draft.binaryName.trimmingCharacters(in: .whitespacesAndNewlines)
         arguments = draft.arguments
         environment = draft.environment
+        accessProfile = draft.accessProfile
         let safeID = try NSRegularExpression(pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
         let safePackage = try NSRegularExpression(pattern: "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$")
         let exactVersion = try NSRegularExpression(pattern: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$")

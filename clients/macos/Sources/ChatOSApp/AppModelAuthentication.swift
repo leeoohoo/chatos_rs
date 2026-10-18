@@ -441,6 +441,10 @@ extension AppModel {
         ownerUserID: String,
         bootstrap: NativeLocalAgentBootstrapResult
     ) async throws {
+        await localConnectorService.configureLocalApprovalAgent(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
         try await runtimeSettingsService?.configure(
             ownerUserID: ownerUserID,
             bootstrap: bootstrap

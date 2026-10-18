@@ -463,3 +463,10 @@
 - **Evidence:** `.local/parity/2026-10-18-project-chat-real/46-project-chat-timeout-retry-real.md` and `46a`-`46d`.
 - **Overall:** P0 is still not passed. Remaining principal work includes macOS Main Chat/Product Skill/internal-bundle/Task-invariant parity, remaining Host-not-ready/loading/permission/reparse cases, affected regressions and final full-matrix cleanup. P1/P2/W308 stay frozen.
 
+## 2026-10-19 01:02 current P0 merge status
+
+- Latest `origin/3.0.8` (`a0d026bfb`) is integrated into `3.0.8.1`; the resolved shared Host keeps review-action support, the upstream graph-store split, conversation Stop child-cancellation, late-Task rejection and event-authoritative callback failure classification.
+- Main Chat Product Skill is now sourced from the exact macOS bundled Skill documents and its Windows Product Skill/Control Plane tests pass 24/24. Strict remaining parity gap: Windows does not yet publish the canonical Task Execution Product Skill bundle to `task_skill_bundle_internal` as macOS does.
+- Storage 116/116, profiles 54/54 and final x64 Debug 0 warnings/errors passed. Failed migration now closes its SQLite pool before returning on Windows while preserving its recovery backup.
+- P0 remains **real acceptance in progress, not passed**. Next focus is the Task Execution bundle plus Host-not-ready/loading/permission/reparse real cases; P1/P2/W308 remain frozen. Evidence: `.local/parity/2026-10-18-project-chat-real/47-upstream-3.0.8-merge.md`.
+

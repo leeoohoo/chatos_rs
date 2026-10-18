@@ -77,6 +77,13 @@ public enum LocalConnectorPluginSource: String, Codable, Sendable, Equatable {
     case npmPlugin = "npm_plugin"
 }
 
+public enum LocalConnectorPluginRuntimeStatus: String, Codable, Sendable, Equatable {
+    case notChecked = "not_checked"
+    case ready
+    case unavailable
+    case disabled
+}
+
 public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
     public enum Kind: String, Codable, Sendable, Equatable {
         case localFolder = "local_folder"
@@ -106,6 +113,12 @@ public struct LocalConnectorPluginSourceDraft: Codable, Sendable, Equatable {
 }
 
 public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
+    public enum AccessProfile: String, Codable, Sendable, Equatable, CaseIterable {
+        case restricted
+        case networkClient = "network_client"
+        case developerAnalysis = "developer_analysis"
+    }
+
     public var displayName: String
     public var description: String
     public var componentKey: String
@@ -114,6 +127,7 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
     public var binaryName: String
     public var arguments: [String]
     public var environment: [String: String]
+    public var accessProfile: AccessProfile
 
     public init(
         displayName: String,
@@ -123,7 +137,8 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
         packageVersion: String,
         binaryName: String,
         arguments: [String] = [],
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        accessProfile: AccessProfile
     ) {
         self.displayName = displayName
         self.description = description
@@ -133,6 +148,7 @@ public struct LocalConnectorCustomMCPDraft: Codable, Sendable, Equatable {
         self.binaryName = binaryName
         self.arguments = arguments
         self.environment = environment
+        self.accessProfile = accessProfile
     }
 }
 
@@ -202,6 +218,10 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
     public var permissions: [LocalConnectorPluginPermission]
     public var installationIssue: LocalConnectorPluginInstallationIssue?
     public var source: LocalConnectorPluginSource
+    public var runtimeStatus: LocalConnectorPluginRuntimeStatus?
+    public var runtimeToolCount: Int?
+    public var runtimeLastCheckedAt: Date?
+    public var runtimeError: String?
 
     public var id: String { pluginID }
     public var requiresReinstall: Bool { installationIssue != nil }
@@ -223,7 +243,11 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         hasUI: Bool? = nil,
         permissions: [LocalConnectorPluginPermission] = [],
         installationIssue: LocalConnectorPluginInstallationIssue? = nil,
-        source: LocalConnectorPluginSource = .marketplace
+        source: LocalConnectorPluginSource = .marketplace,
+        runtimeStatus: LocalConnectorPluginRuntimeStatus? = nil,
+        runtimeToolCount: Int? = nil,
+        runtimeLastCheckedAt: Date? = nil,
+        runtimeError: String? = nil
     ) {
         self.pluginID = pluginID
         self.packageName = packageName
@@ -242,6 +266,10 @@ public struct LocalConnectorPlugin: Codable, Identifiable, Sendable, Equatable {
         self.permissions = permissions
         self.installationIssue = installationIssue
         self.source = source
+        self.runtimeStatus = runtimeStatus
+        self.runtimeToolCount = runtimeToolCount
+        self.runtimeLastCheckedAt = runtimeLastCheckedAt
+        self.runtimeError = runtimeError
     }
 }
 

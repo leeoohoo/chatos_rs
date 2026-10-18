@@ -19,6 +19,7 @@ use tokio::sync::{watch, Notify};
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
+const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Error)]
 pub enum LocalAgentCoordinatorError {
@@ -236,13 +237,13 @@ impl LocalAgentHostCoordinator {
     async fn next_run_retry_delay(&self) -> Result<Duration, LocalAgentCoordinatorError> {
         let next_retry_at = self.runtime.next_retry_at(&self.owner_user_id).await?;
         let Some(next_retry_at) = next_retry_at else {
-            return Ok(Duration::from_secs(30));
+            return Ok(IDLE_RECOVERY_INTERVAL);
         };
         let now = system_now_unix_ms()?;
         Ok(Duration::from_millis(
             u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
         )
-        .min(Duration::from_secs(30)))
+        .min(IDLE_RECOVERY_INTERVAL))
     }
 
     async fn run_memory_until_shutdown(
@@ -290,9 +291,9 @@ impl LocalAgentHostCoordinator {
                     Duration::from_millis(
                         u64::try_from(next_retry_at.saturating_sub(now).max(0)).unwrap_or(0),
                     )
-                    .min(Duration::from_secs(30))
+                    .min(IDLE_RECOVERY_INTERVAL)
                 }
-                Ok(None) => Duration::from_secs(30),
+                Ok(None) => IDLE_RECOVERY_INTERVAL,
                 Err(_) => Duration::from_secs(1),
             };
             tokio::select! {

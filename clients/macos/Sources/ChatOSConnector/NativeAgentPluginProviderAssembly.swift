@@ -6,6 +6,8 @@ import Foundation
 /// It deliberately bypasses relay request signing because there is no remote caller: account,
 /// project, Agent and plugin selection have already been fixed by local application state.
 extension NativeLocalConnectorService {
+    static let maximumAgentPluginToolCount = 512
+
     public func installedAgentPlugins(
         ownerUserID: String
     ) async throws -> [NativeInstalledAgentPlugin] {
@@ -13,10 +15,11 @@ extension NativeLocalConnectorService {
             throw NativePluginRuntimeError.invalidRequest("本机 Plugin 不属于当前账户")
         }
         await repairLegacyPluginIntegrityRecordsIfNeeded()
-        return (state.installedPluginRecords ?? [:]).values.flatMap { record -> [NativeInstalledAgentPlugin] in
+        var plugins: [NativeInstalledAgentPlugin] = []
+        for record in (state.installedPluginRecords ?? [:]).values {
             guard state.pluginPreferences[record.pluginID] ?? true,
-                  NativePluginInstallationIntegrity.status(record: record) == .verified,
-                  let manifest = try? Self.agentPluginManifest(record: record) else { return [] }
+                  await pluginIntegritySnapshots.status(record: record) == .verified,
+                  let manifest = try? Self.agentPluginManifest(record: record) else { continue }
             let mcpComponents: [NativeInstalledAgentPlugin] = manifest.mcpServers.keys.sorted().compactMap { componentKey in
                 guard let server = manifest.mcpServers[componentKey] else { return nil }
                 return .init(
@@ -29,9 +32,12 @@ extension NativeLocalConnectorService {
                     description: server.agent?.description ?? manifest.description
                 )
             }
-            if !mcpComponents.isEmpty { return mcpComponents }
-            guard !manifest.skills.isEmpty else { return [] }
-            return [.init(
+            if !mcpComponents.isEmpty {
+                plugins.append(contentsOf: mcpComponents)
+                continue
+            }
+            guard !manifest.skills.isEmpty else { continue }
+            plugins.append(.init(
                 pluginID: record.pluginID,
                 pluginKey: record.pluginKey,
                 componentKey: NativeInstalledAgentPlugin.skillsOnlyComponentKey,
@@ -39,8 +45,9 @@ extension NativeLocalConnectorService {
                 description: manifest.description.isEmpty
                     ? "Installed Plugin Skills"
                     : manifest.description
-            )]
-        }.sorted {
+            ))
+        }
+        return plugins.sorted {
             if $0.displayName != $1.displayName {
                 return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
             }
@@ -105,6 +112,7 @@ extension NativeLocalConnectorService {
                   let record = state.installedPluginRecords?[pluginID] else {
                 throw NativePluginRuntimeError.invalidRequest("Agent 配置的 Plugin 未安装或已停用：\(pluginID)")
             }
+            try Self.verifyTrustedPluginInstallation(record)
             let manifest = try Self.agentPluginManifest(record: record)
             let isSkillsOnly = plugin.componentKey
                 == NativeInstalledAgentPlugin.skillsOnlyComponentKey
@@ -353,10 +361,10 @@ extension NativeLocalConnectorService {
         return manifest
     }
 
-    private static func validatedAgentPluginTools(
+    static func validatedAgentPluginTools(
         _ tools: [NativeJSONValue]
     ) throws -> [NativeJSONValue] {
-        guard (1...200).contains(tools.count) else {
+        guard (1...maximumAgentPluginToolCount).contains(tools.count) else {
             throw NativePluginRuntimeError.invalidMCPResponse("Plugin MCP 工具数量无效")
         }
         var names = Set<String>()

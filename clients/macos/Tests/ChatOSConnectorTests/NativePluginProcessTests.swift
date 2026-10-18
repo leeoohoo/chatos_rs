@@ -329,6 +329,170 @@ extension NativePluginRuntimeTests {
         #expect(!deniedProfile.contains("com[.]apple[.]pasteboard"))
     }
 
+    @Test("developer analysis sandbox access requires explicit manifest permissions")
+    func developerAnalysisSandboxIsPermissionGated() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let installation = root.appendingPathComponent("plugin", isDirectory: true)
+        let executable = installation
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("analysis-mcp")
+        try FileManager.default.createDirectory(
+            at: executable.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: executable.path
+        )
+        let manifest = try JSONDecoder().decode(
+            NativePluginManifest.self,
+            from: Data("""
+            {
+              "schemaVersion":3,
+              "name":"analysis-mcp",
+              "version":"1.0.0",
+              "mcpServers":{"analysis":{"type":"stdio","bin":"analysis-mcp"}},
+              "permissions":[
+                {"permission":"process.spawn","required":true},
+                {"permission":"network.client","required":true},
+                {"permission":"system.developer-tools.read","required":true},
+                {"permission":"browser.managed.launch","required":true}
+              ]
+            }
+            """.utf8)
+        )
+        let record = try nativePluginTestRecord(
+            installationURL: installation,
+            pluginID: "developer-analysis-plugin",
+            version: "1.0.0"
+        )
+        let permissions: Set<String> = [
+            "process.spawn",
+            "network.client",
+            "system.developer-tools.read",
+            "browser.managed.launch",
+        ]
+        let prepared = try NativePluginManifestLoader.prepare(
+            record: record,
+            manifest: manifest,
+            componentKey: "analysis",
+            serverKey: nil,
+            adapterSessionID: "analysis-session",
+            ownerUserID: "user-1",
+            deviceID: "device-1",
+            workspaceRoot: nil,
+            permissionSnapshot: permissions,
+            runtimeRootURL: root.appendingPathComponent("runtime", isDirectory: true)
+        )
+        let permitted = NativePluginProcessLaunch(stdio: prepared)
+        #expect(permitted.networkAccess == .loopbackServer)
+        let installedBrowserPaths = [
+            "/Applications/Google Chrome.app",
+            "/Applications/Chromium.app",
+            "/Applications/Microsoft Edge.app",
+        ].filter(FileManager.default.fileExists(atPath:))
+        #expect(Set(permitted.executableDirectories.map(\.path)).isSuperset(of: installedBrowserPaths))
+        let permittedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: permitted).dropFirst().first
+        )
+        #expect(permittedProfile.contains("(allow pseudo-tty)"))
+        #expect(permittedProfile.contains("(allow process-info-listpids)"))
+        #expect(permittedProfile.contains("(allow process-info-pidinfo (target same-sandbox))"))
+        #expect(permittedProfile.contains("(literal \"/dev/ptmx\")"))
+        #expect(permittedProfile.contains("^/dev/ttys[0-9a-f]+$"))
+        #expect(permittedProfile.contains("(allow network-outbound)"))
+        #expect(permittedProfile.contains("/Applications/Xcode.app"))
+        #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
+        let preparedCache = try #require(prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
+        let canonicalPreparedCache = NativePluginSandboxProfile.canonicalPath(preparedCache)
+        #expect(permittedProfile.contains("(allow process-exec (subpath \"\(canonicalPreparedCache)\"))"))
+        let temporaryRoot = NativePluginSandboxProfile.canonicalPath(
+            FileManager.default.temporaryDirectory.path
+        )
+        let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        #expect(permittedProfile.contains(
+            "^\(escapedTemporaryRoot)/xcrun_db(-[^/]+)?$"
+        ))
+        #expect(permittedProfile.contains(
+            "(allow file-read-data (literal \"/Library/Preferences/com.apple.dt.Xcode.plist\"))"
+        ))
+        let permittedProcess = try NativePluginProcessLauncher.prepare(permitted)
+        #expect(
+            permittedProcess.environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"]
+                == "-disable-sandbox"
+        )
+        let cacheLength = confstr(_CS_DARWIN_USER_CACHE_DIR, nil, 0)
+        guard cacheLength > 0 else {
+            Issue.record("DARWIN_USER_CACHE_DIR is unavailable")
+            return
+        }
+        var cacheBuffer = [CChar](repeating: 0, count: cacheLength)
+        #expect(confstr(_CS_DARWIN_USER_CACHE_DIR, &cacheBuffer, cacheLength) > 0)
+        let cachePath = String(
+            decoding: cacheBuffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        )
+        let moduleCache = URL(fileURLWithPath: cachePath, isDirectory: true)
+            .appendingPathComponent("clang", isDirectory: true)
+            .appendingPathComponent("ModuleCache", isDirectory: true)
+            .path
+        let canonicalModuleCache = NativePluginSandboxProfile.canonicalPath(moduleCache)
+        #expect(permittedProfile.contains("(subpath \"\(canonicalModuleCache)\")"))
+        #expect(!permittedProfile.contains("(subpath \"\(temporaryRoot)\")"))
+
+        let restricted = NativePluginProcessLaunch(
+            record: record,
+            executableURL: executable,
+            arguments: [],
+            environment: [:],
+            installationURL: installation,
+            writableDirectories: [],
+            workspaceRoot: nil,
+            permissionSnapshot: ["process.spawn"],
+            networkAccess: .disabled
+        )
+        let restrictedProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: restricted).dropFirst().first
+        )
+        #expect(restrictedProfile.contains("(allow pseudo-tty)"))
+        #expect(restrictedProfile.contains("(allow process-info-listpids)"))
+        #expect(restrictedProfile.contains("(allow process-info-pidinfo (target same-sandbox))"))
+        #expect(restrictedProfile.contains("(literal \"/dev/ptmx\")"))
+        #expect(restrictedProfile.contains("^/dev/ttys[0-9a-f]+$"))
+        #expect(!restrictedProfile.contains("(allow network-outbound)"))
+        #expect(!restrictedProfile.contains("/Applications/Xcode.app"))
+        #expect(!restrictedProfile.contains("/Library/Developer/CommandLineTools"))
+        #expect(!restrictedProfile.contains("/Library/Preferences/com.apple.dt.Xcode.plist"))
+        #expect(!restrictedProfile.contains(canonicalModuleCache))
+        #expect(!restrictedProfile.contains("xcrun_db-"))
+        let restrictedProcess = try NativePluginProcessLauncher.prepare(restricted)
+        #expect(restrictedProcess.environment["ADDITIONAL_SWIFT_DRIVER_FLAGS"] == nil)
+
+        let withoutSpawn = NativePluginProcessLaunch(
+            record: record,
+            executableURL: executable,
+            arguments: [],
+            environment: [:],
+            installationURL: installation,
+            writableDirectories: [],
+            workspaceRoot: nil,
+            permissionSnapshot: [],
+            networkAccess: .disabled
+        )
+        let withoutSpawnProfile = try #require(
+            NativePluginSandboxProfile.arguments(for: withoutSpawn).dropFirst().first
+        )
+        #expect(!withoutSpawnProfile.contains("(allow pseudo-tty)"))
+        #expect(!withoutSpawnProfile.contains("process-info-pidinfo"))
+        #expect(!withoutSpawnProfile.contains("process-info-listpids"))
+        #expect(!withoutSpawnProfile.contains("/dev/ptmx"))
+        #expect(!withoutSpawnProfile.contains("/dev/ttys"))
+    }
+
     @Test("Web Design receives isolated temporary storage and managed browser access")
     func webDesignPluginLaunchSupportsVisualVerification() throws {
         let root = FileManager.default.temporaryDirectory

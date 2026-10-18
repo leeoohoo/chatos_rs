@@ -312,3 +312,15 @@ macOS 后续 Bug 修复、功能更新和协议变化先进入 `10-macos-change-
 | Complete P0 project-chat baseline | In progress, not passed | macOS Main Chat/Product Skill/internal bundles/Task invariants, remaining Host-not-ready/loading/permission/reparse coverage, affected regressions and final cleanup remain open. |
 
 Evidence: `.local/parity/2026-10-18-project-chat-real/46-project-chat-timeout-retry-real.md`.
+
+## 2026-10-19 01:02 P0 upstream/Product Skill matrix update
+
+| Capability | Windows status | Evidence / remaining gap |
+|---|---|---|
+| Latest macOS/shared Host baseline | Integrated + automation passed | `origin/3.0.8` `a0d026bfb` merged; storage 116/116, profiles 54/54, final Debug 0 warnings/errors. |
+| Main Chat Product Skill catalog and `skill_bundle_internal` | Implemented + automation passed | Exact macOS bundled Skill resources are embedded; Product Skill/Control Plane 24/24. |
+| Task Execution Product Skill and `task_skill_bundle_internal` | Gap / P0 open | macOS publishes `taskExecutionSkillSnapshot`; Windows currently publishes this internal profile only for optional external MCP and must be corrected before trace-equivalent acceptance. |
+| Failed migration recovery on Windows | Implemented + automation passed | Recovery backup is preserved and the SQLite pool closes before the initialization error returns; storage regression passes. |
+| Complete P0 project-chat baseline | In progress, not passed | Task Execution bundle, Host-not-ready/loading/permission/reparse, affected regressions and final residue cleanup remain open. |
+
+Evidence: `.local/parity/2026-10-18-project-chat-real/47-upstream-3.0.8-merge.md`.

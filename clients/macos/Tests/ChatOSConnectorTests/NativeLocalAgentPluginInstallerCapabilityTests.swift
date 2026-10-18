@@ -16,6 +16,7 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
         XCTAssertTrue(capability.instructions?.contains("不得再问“安装还是只查看”") == true)
         XCTAssertTrue(capability.instructions?.contains("REA 或 reverse-engineer-anything 明确对应 npm 包 rea-agents") == true)
         XCTAssertTrue(capability.instructions?.contains("不得再让用户在 rea-agents 与面向其他宿主的 REA 适配包之间选择") == true)
+        XCTAssertTrue(capability.instructions?.contains("参数 [\"mcp\"] 和 developer_analysis") == true)
     }
 
     func testOrdinaryMainChatCatalogNeverPublishesInstallerTools() {
@@ -76,6 +77,79 @@ final class NativeLocalAgentPluginInstallerCapabilityTests: XCTestCase {
             baseRevision: "base-2"
         )
         XCTAssertNotEqual(first.capabilityPolicyRevision, second.capabilityPolicyRevision)
+    }
+
+    func testOnlyExactInstallerCapabilityIsAuthorizedAtExecutionTime() throws {
+        let capability = try NativeLocalConnectorService.pluginInstallerCapability(
+            ownerUserID: "user-1",
+            baseRevision: "base-1"
+        )
+        XCTAssertTrue(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                capability,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: capability.capabilityPolicyRevision
+            )
+        )
+
+        let ordinaryMainChat = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: "user-1",
+            profileKey: "main_chat",
+            capabilityPolicyRevision: capability.capabilityPolicyRevision,
+            instructions: capability.instructions,
+            tools: NativeLocalAgentPlatformToolCatalog.capabilityTools
+        )
+        XCTAssertFalse(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                ordinaryMainChat,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: capability.capabilityPolicyRevision
+            )
+        )
+
+        let forgedRevision = LocalAgentCapabilityPolicySnapshot(
+            ownerUserID: capability.ownerUserID,
+            profileKey: capability.profileKey,
+            capabilityPolicyRevision: "ordinary-main-chat",
+            instructions: capability.instructions,
+            tools: capability.tools
+        )
+        XCTAssertFalse(
+            NativeLocalAgentPluginInstallerToolExecutor.isAuthorizedInstallerCapability(
+                forgedRevision,
+                ownerUserID: "user-1",
+                capabilityPolicyRevision: forgedRevision.capabilityPolicyRevision
+            )
+        )
+    }
+
+    func testInstallIntentRequiresAnExplicitNonNegatedRequest() {
+        for message in [
+            "帮我安装一下 REA",
+            "直接添加这个 MCP",
+            "请配置并使用这个插件",
+            "Please install rea-agents for me.",
+            "Set up this MCP plugin.",
+        ] {
+            XCTAssertTrue(
+                NativeLocalAgentPluginInstallerToolExecutor.hasExplicitInstallIntent(message),
+                message
+            )
+        }
+
+        for message in [
+            "比较一下 REA 和另一个插件",
+            "怎么安装 REA？",
+            "是否支持安装 Codex 插件？",
+            "先不要安装，只查看工具列表",
+            "How do I install this MCP?",
+            "Do not install this package.",
+        ] {
+            XCTAssertFalse(
+                NativeLocalAgentPluginInstallerToolExecutor.hasExplicitInstallIntent(message),
+                message
+            )
+        }
     }
 
     private func toolNames(_ tools: [LocalAgentJSONValue]) -> Set<String> {

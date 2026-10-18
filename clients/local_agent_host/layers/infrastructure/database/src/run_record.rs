@@ -60,6 +60,7 @@ pub(super) fn decode_run_summary(
         owner_entity_type: row.try_get("owner_entity_type").db()?,
         owner_entity_id: row.try_get("owner_entity_id").db()?,
         profile_key: row.try_get("profile_key").db()?,
+        capability_policy_revision: row.try_get("capability_policy_revision").db()?,
         input: serde_json::from_str(&input)?,
         status: LocalAgentRunStatus::from_str(&status).map_err(ClientStorageError::InvalidState)?,
         version: integer_to_u64(row.try_get("version").db()?, "version")?,

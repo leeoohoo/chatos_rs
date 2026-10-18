@@ -218,6 +218,7 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                     "owner_entity_type": "task",
                     "owner_entity_id": "task-1",
                     "profile_key": "task_execution",
+                    "capability_policy_revision": "policy-1",
                     "input": [
                         "source_conversation_id": "conversation-1",
                         "owned_paths": ["reports"],

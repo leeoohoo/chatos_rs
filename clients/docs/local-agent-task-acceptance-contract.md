@@ -55,7 +55,7 @@ macOS启动先用IPC-only进程加载持久状态，再恢复带凭据的worker�
 
 恢复与联网刷新必须使用一致的模型凭据装配规则：先加载同owner持久模型的有效本地凭据，再以当前目录的权威凭据覆盖匹配key。历史模型不在当前可选目录中不等于密钥发生变化；保留其环境变量供冻结Run使用，不将其重新加入联网刷新后的可选模型或扩充能力权限。缺失、空白凭据和不匹配的credentialRef不加载，规范化变量名碰撞拒绝。真正新增模型key、密钥轮换或memory token变更/缺失仍暂缓；不是凭据热更新。Windows应对齐此规则，避免每次启动后因历史目录过滤反复提示重开。
 
-shared Host将过期模型claim转为 `needs_review`，Task调和为blocked，不自动重跑。运行记录保存 `terminal_outcome.reason_code=execution_interrupted` 及保守的用户说明：执行中断、当前步骤结果无法确认、检查执行记录后决定是否重试，避免重复操作。不能因租约到期就断言“没有任何副作用”或“必然是前置问题”。回调与任务详情应显示该原因，中英本地化不暴露Host、claim token或内部trace。
+shared Host将过期模型claim恢复为 `model_ready` 或 `continuation_ready` 并自动续跑，同时归还本次未提交step占用的iteration。模型输出只有在 `commit_step` 持久化后才会创建工具调用，因此单纯重放模型生成不会重复外部副作用。只有副作用工具租约过期、执行结果确实未知时才进入 `needs_review`，运行记录保存保守诊断并要求用户检查，绝不自动重放。
 
 历史 `needs_review` 且terminal outcome为空的Run，仅在同owner下存在 `claim_expired_needs_review` 事件时补齐上述诊断。保留原中断时间、Task状态和任务版本，不生成新Run；已有诊断不覆盖，其他原因的needs_review不改写。旧状态消息可原地补齐说明，不重复创建开始通知。
 

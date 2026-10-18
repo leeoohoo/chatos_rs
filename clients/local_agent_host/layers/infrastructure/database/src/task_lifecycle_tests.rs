@@ -148,6 +148,52 @@ fn builtin_graph(
     }
 }
 
+#[tokio::test]
+async fn task_run_prompt_discloses_frozen_owned_paths_before_any_write() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create_source_turn(
+        &storage,
+        "conversation-write-boundary",
+        "turn-write-boundary",
+        None,
+        100,
+    )
+    .await;
+    storage
+        .create_task_graph(
+            &command("create-write-boundary"),
+            &writer_graph(
+                "graph-write-boundary",
+                "turn-write-boundary",
+                "writer",
+                &["apps/web/src/features/identity", "apps/web/tests/identity"],
+            ),
+            1_000,
+        )
+        .await
+        .expect("create writer");
+
+    let run = storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-write-boundary",
+            "run-write-boundary",
+            "event-write-boundary",
+            2_000,
+        )
+        .await
+        .expect("start writer")
+        .expect("writer run");
+    let prompt = run.input["prompt"].as_str().expect("Task prompt");
+
+    assert!(prompt.contains("[Task Write Boundary]"));
+    assert!(prompt.contains("`apps/web/src/features/identity`"));
+    assert!(prompt.contains("`apps/web/tests/identity`"));
+    assert!(prompt.contains("do not guess sibling directories"));
+}
+
 fn dynamic_platform_graph(
     graph_id: &str,
     source_turn_id: &str,
@@ -871,7 +917,7 @@ async fn write_locks_are_isolated_by_conversation_and_use_project_scope_keys() {
 }
 
 #[tokio::test]
-async fn expired_writer_claim_releases_its_cross_graph_lock() {
+async fn expired_writer_model_claim_requeues_and_keeps_its_cross_graph_lock() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -949,8 +995,14 @@ async fn expired_writer_claim_releases_its_cross_graph_lock() {
             3_100,
         )
         .await
-        .expect("start waiting writer after recovery")
-        .is_some());
+        .expect("check waiting writer after recovery")
+        .is_none());
+    let recovered = storage
+        .get_run("run-expiring-writer")
+        .await
+        .expect("get recovered writer")
+        .expect("recovered writer");
+    assert_eq!(recovered.status, LocalAgentRunStatus::ModelReady);
 }
 
 #[tokio::test]
@@ -1038,6 +1090,8 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
     context_graph.tasks[0].input["acceptance_report_version"] = json!(1);
     context_graph.tasks[0].input["acceptance_criteria"] = json!(["Model defined"]);
     context_graph.tasks[0].input["final_response_max_chars"] = json!(100);
+    context_graph.tasks[1].input["owned_paths"] =
+        json!(["apps/web/src/features/identity", "apps/web/tests/identity"]);
     storage
         .create_task_graph(&command("create-context-graph"), &context_graph, 1_000)
         .await
@@ -1077,6 +1131,9 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
     assert!(prompt.contains("Implemented the data model."));
     assert!(prompt.contains("Tests: 12 passed"));
     assert!(prompt.contains("[Current Task]"));
+    assert!(prompt.contains("[Task Write Boundary]"));
+    assert!(prompt.contains("`apps/web/src/features/identity`"));
+    assert!(prompt.contains("`apps/web/tests/identity`"));
     assert!(!prompt.contains("hidden chain of thought"));
     assert_eq!(
         dependent.input["resolved_prerequisites"][0]["run_id"],
@@ -1392,7 +1449,7 @@ async fn ai_reported_blocked_outcome_overrides_a_successful_model_run() {
 }
 
 #[tokio::test]
-async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
+async fn expired_model_claim_requeues_without_blocking_its_task() {
     let storage = SqliteClientStorage::connect_memory()
         .await
         .expect("storage");
@@ -1437,25 +1494,22 @@ async fn expired_model_claim_blocks_its_task_instead_of_leaving_it_running() {
         .await
         .expect("get run")
         .expect("run");
-    assert_eq!(recovered_run.status, LocalAgentRunStatus::NeedsReview);
-    assert_eq!(
-        recovered_run.terminal_outcome.as_ref().unwrap()["reason_code"],
-        "execution_interrupted"
-    );
-    assert!(recovered_run.terminal_outcome.as_ref().unwrap()["error"]
-        .as_str()
-        .unwrap()
-        .contains("before retrying"));
+    assert_eq!(recovered_run.status, LocalAgentRunStatus::ModelReady);
+    assert_eq!(recovered_run.iteration, 0);
+    assert!(recovered_run.terminal_outcome.is_none());
     let recovered_graph = storage
         .get_task_graph("user-1", "graph-lifecycle")
         .await
         .expect("get graph")
         .expect("graph");
-    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Blocked);
-    assert!(recovered_graph.tasks[0].active_run_id.is_none());
+    assert_eq!(recovered_graph.tasks[0].status, LocalTaskStatus::Running);
+    assert_eq!(
+        recovered_graph.tasks[0].active_run_id.as_deref(),
+        Some(run.run_id.as_str())
+    );
     assert!(recovered_graph.tasks[1..]
         .iter()
-        .all(|task| task.status == LocalTaskStatus::Blocked));
+        .all(|task| task.status == LocalTaskStatus::Pending));
 }
 
 #[tokio::test]

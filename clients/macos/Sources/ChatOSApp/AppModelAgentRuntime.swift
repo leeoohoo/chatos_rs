@@ -314,8 +314,8 @@ enum AgentRuntimePollingPolicy {
     static let minimumHeartbeatDelayMilliseconds: Int64 = 1_000
     static let maximumHeartbeatDelayMilliseconds: Int64 = 300_000
     static let idleHeartbeatDelayMilliseconds: Int64 = 1_800_000
-    static let communicationRecoveryInterval: Duration = .seconds(30)
-    static let executorRecoveryInterval: Duration = .seconds(30)
+    static let communicationRecoveryInterval: Duration = .seconds(300)
+    static let executorRecoveryInterval: Duration = .seconds(300)
     static let minimumArtifactStorageDelayMilliseconds: Int64 = 1_000
     static let maximumArtifactStorageDelayMilliseconds: Int64 = 300_000
     static let idleArtifactStorageDelayMilliseconds: Int64 = 1_800_000

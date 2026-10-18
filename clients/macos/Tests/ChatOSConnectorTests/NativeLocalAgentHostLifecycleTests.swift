@@ -245,6 +245,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let bootstrap = NativeLocalAgentBootstrapResult(
             modelSnapshots: [model],
             modelOptions: [modelOption],
+            defaultConversationModelConfigRef: "model-1",
             capabilitySnapshot: capabilities,
             capabilitySnapshotsByModelConfigRef: ["model-1": capabilities],
             pluginInstallerCapabilitySnapshotsByModelConfigRef: ["model-1": capabilities]
@@ -284,6 +285,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             .object([
                 "kind": .string("plugin"),
                 "plugin_key": .string("document-plugin"),
+                "component_key": .string("document-mcp"),
                 "display_name": .string("Document"),
             ])
         )

@@ -422,3 +422,10 @@ P0 完成前暂停 Plugin、Skill、MCP、安装器、Solution Studio、REA、Me
 - [x] Normal close/restart restored project `9547b0a2-2d67-42ae-bf61-5874847d8cc6`, conversation `conversation_9dcf8dc35a7644d8a8c7391a78c6a326` and the same successful callback. Evidence: `.local/parity/2026-10-18-project-chat-real/46-project-chat-timeout-retry-real.md`.
 - [ ] P0 is not complete: macOS Main Chat/Product Skill/internal-bundle/Task-invariant parity, remaining Host-not-ready/loading/permission/reparse cases, affected regressions and final full-matrix cleanup remain open. P1/P2/W308 stay frozen.
 
+### 2026-10-19 01:02 latest 3.0.8 merge and Product Skill audit
+
+- [x] Fetched and integrated `origin/3.0.8` at `a0d026bfb` into `3.0.8.1` without discarding local work; all merge conflicts are resolved.
+- [x] Preserved P0 Host semantics across the upstream refactor: failed-Turn review actions, child Task/Run cancellation on Stop, rejection of late Task creation after Stop, and success-result text that mentions runtime failures.
+- [x] Main Chat uses the canonical macOS Product Skill resources and publishes `skill_bundle_internal`; Windows Product Skill/Control Plane 24/24, Host storage 116/116, profiles 54/54 and final x64 Debug 0 warnings/errors passed.
+- [ ] Canonical Task Execution Product Skill parity remains open: Windows `task_skill_bundle_internal` still represents only optional external MCP rather than macOS `taskExecutionSkillSnapshot`. P0 stays in progress; Host-not-ready/loading/permission/reparse and final cleanup also remain open. Evidence: `.local/parity/2026-10-18-project-chat-real/47-upstream-3.0.8-merge.md`.
+

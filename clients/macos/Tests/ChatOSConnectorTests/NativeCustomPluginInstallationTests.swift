@@ -4,6 +4,27 @@ import Testing
 @testable import ChatOSConnector
 
 struct NativeCustomPluginInstallationTests {
+    @Test("custom MCP access profiles grant only their declared permission sets")
+    func accessProfilePermissionsAreExplicit() {
+        let restricted = NativeCustomMCPAccessPolicy.permissions(for: .restricted).map(\.id)
+        let network = NativeCustomMCPAccessPolicy.permissions(for: .networkClient).map(\.id)
+        let developer = NativeCustomMCPAccessPolicy.permissions(for: .developerAnalysis).map(\.id)
+
+        #expect(restricted == ["process.spawn"])
+        #expect(network == ["process.spawn", "network.client"])
+        #expect(Set(developer) == Set([
+            "process.spawn",
+            "network.client",
+            "system.developer-tools.read",
+            "browser.managed.launch",
+            "artifact.create",
+            "workspace.read",
+        ]))
+        #expect(!restricted.contains("network.client"))
+        #expect(!restricted.contains("system.developer-tools.read"))
+        #expect(!restricted.contains("browser.managed.launch"))
+    }
+
     @Test("custom npm MCP requires an exact package version before invoking npm")
     func exactVersionIsRequired() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -16,12 +37,103 @@ struct NativeCustomPluginInstallationTests {
             packageName: "rea-agents",
             packageVersion: "latest",
             binaryName: "rea",
-            arguments: ["mcp"]
+            arguments: ["mcp"],
+            accessProfile: .restricted
         )
         await #expect(throws: NativeConnectorError.self) {
             _ = try await installer.prepareCustomMCP(draft)
         }
         #expect(!FileManager.default.fileExists(atPath: root.path))
+    }
+
+    @Test("offline REA fixture completes npm preflight, install, persistence and Main Chat discovery")
+    func offlineREAInstallation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OfflineREAInstallation-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stateURL = root.appendingPathComponent("state.json")
+        var state = NativeConnectorPersistentState.empty
+        state.user = .init(
+            id: "owner-offline-rea",
+            username: "offline-rea",
+            displayName: "Offline REA",
+            role: "user"
+        )
+        state.deviceID = "device-offline-rea"
+        try NativeConnectorStateStore(stateURL: stateURL).save(state)
+        let configuration = NativeConnectorConfiguration(
+            gatewayBaseURL: URL(string: "https://connector.example.test")!,
+            stateURL: stateURL
+        )
+        let service = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider(),
+            pluginInstallerFactory: { installationRoot in
+                NativePluginInstaller(
+                    rootURL: installationRoot,
+                    npmInstall: Self.installOfflineREAFixture(in:)
+                )
+            }
+        )
+        let draft = LocalConnectorCustomMCPDraft(
+            displayName: "REA",
+            description: "Deterministic reverse-engineering fixture.",
+            componentKey: "rea",
+            packageName: "rea-agents",
+            packageVersion: "6.5.0",
+            binaryName: "rea",
+            arguments: ["mcp"],
+            accessProfile: .developerAnalysis
+        )
+
+        let inspection = try await service.inspectCustomMCP(draft)
+        #expect(inspection.version == "6.5.0")
+        #expect(inspection.components == [.init(
+            componentKey: "rea",
+            displayName: "REA",
+            kind: .mcp,
+            toolNames: ["binary_session", "runtime_snapshot", "web_session"]
+        )])
+        try await service.installCustomMCP(
+            draft,
+            expectedFingerprint: inspection.fingerprint
+        )
+
+        let restoredService = NativeLocalConnectorService(
+            configuration: configuration,
+            ticketProvider: CustomPluginRejectingTicketProvider()
+        )
+        let mainChatComponents = try await restoredService.installedAgentPlugins(
+            ownerUserID: "owner-offline-rea"
+        )
+        #expect(mainChatComponents.count == 1)
+        #expect(mainChatComponents.first?.componentKey == "rea")
+        #expect(mainChatComponents.first?.displayName == "REA")
+
+        let catalog = try await restoredService.fetchPlugins(refresh: true)
+        let installedPluginID = try recordPluginID(in: stateURL)
+        let visibleREA = try #require(catalog.first(where: { $0.pluginID == installedPluginID }))
+        #expect(visibleREA.runtimeStatus == .ready)
+        #expect(visibleREA.runtimeToolCount == 3)
+        #expect(visibleREA.runtimeError == nil)
+
+        let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
+        let record = try #require(restored.installedPluginRecords?[installedPluginID])
+        #expect(record.source == .customMCP)
+        #expect(record.version == "6.5.0")
+        #expect(NativePluginInstallationIntegrity.status(record: record) == .verified)
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: URL(fileURLWithPath: record.installationPath, isDirectory: true)
+                .appendingPathComponent("chatos.plugin.json")
+        )
+        #expect(Set(manifest.permissions.map(\.permission)).isSuperset(of: [
+            "process.spawn",
+            "network.client",
+            "system.developer-tools.read",
+            "browser.managed.launch",
+            "artifact.create",
+            "workspace.read",
+        ]))
     }
 
     @Test("local Plugin import rejects symbolic links")
@@ -111,6 +223,13 @@ struct NativeCustomPluginInstallationTests {
         var installed = try await service.installedAgentPlugins(ownerUserID: "owner-local")
         #expect(installed.map(\.componentKey) == ["local-fixture"])
 
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let visible = try #require(catalog.first(where: { $0.displayName == "Local Fixture" }))
+        #expect(visible.runtimeStatus == .ready)
+        #expect(visible.runtimeToolCount == 1)
+        #expect(visible.runtimeLastCheckedAt != nil)
+        #expect(visible.runtimeError == nil)
+
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         let record = try #require(restored.installedPluginRecords?.values.first)
         try Data("tampered".utf8).write(
@@ -178,6 +297,11 @@ struct NativeCustomPluginInstallationTests {
         #expect(installed.count == 1)
         #expect(installed.first?.componentKey == NativeInstalledAgentPlugin.skillsOnlyComponentKey)
         #expect(installed.first?.displayName == "Portable Hello")
+
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let visible = try #require(catalog.first(where: { $0.displayName == "Portable Hello" }))
+        #expect(visible.runtimeStatus == nil)
+        #expect(visible.runtimeToolCount == nil)
     }
 
     @Test("Codex compatibility plugins import their .mcp.json stdio servers")
@@ -368,21 +492,39 @@ struct NativeCustomPluginInstallationTests {
             ),
             ticketProvider: CustomPluginRejectingTicketProvider()
         )
-        let draft = LocalConnectorCustomMCPDraft(
-            displayName: "Reverse Engineer Anything",
-            description: "Pinned REA integration fixture",
-            componentKey: "reverse-engineer-anything",
+        let restrictedDraft = LocalConnectorCustomMCPDraft(
+            displayName: "REA",
+            description: "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+            componentKey: "rea",
             packageName: "rea-agents",
             packageVersion: "6.5.0",
             binaryName: "rea",
-            arguments: ["mcp"]
+            arguments: ["mcp"],
+            accessProfile: .restricted
+        )
+        let restrictedInspection = try await service.inspectCustomMCP(restrictedDraft)
+        try await service.installCustomMCP(
+            restrictedDraft,
+            expectedFingerprint: restrictedInspection.fingerprint
+        )
+
+        let draft = LocalConnectorCustomMCPDraft(
+            displayName: "REA",
+            description: "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+            componentKey: "rea",
+            packageName: "rea-agents",
+            packageVersion: "6.5.0",
+            binaryName: "rea",
+            arguments: ["mcp"],
+            accessProfile: .developerAnalysis
         )
 
         let inspection = try await service.inspectCustomMCP(draft)
         let component = try #require(inspection.components.first)
         #expect(inspection.version == "6.5.0")
-        #expect(component.componentKey == "reverse-engineer-anything")
+        #expect(component.componentKey == "rea")
         #expect(component.toolNames.count >= 200)
+        #expect(component.toolNames.count <= NativeLocalConnectorService.maximumAgentPluginToolCount)
         #expect(component.toolNames.contains("binary_session"))
 
         try await service.installCustomMCP(
@@ -391,14 +533,90 @@ struct NativeCustomPluginInstallationTests {
         )
         let installed = try await service.installedAgentPlugins(ownerUserID: "owner-rea")
         #expect(installed.count == 1)
-        #expect(installed.first?.componentKey == "reverse-engineer-anything")
-        #expect(installed.first?.displayName == "Reverse Engineer Anything")
+        #expect(installed.first?.componentKey == "rea")
+        #expect(installed.first?.displayName == "REA")
+
+        let catalog = try await service.fetchPlugins(refresh: true)
+        let installedPluginID = try recordPluginID(in: stateURL)
+        let visibleREA = try #require(catalog.first(where: { $0.pluginID == installedPluginID }))
+        #expect(visibleREA.runtimeStatus == .ready)
+        #expect((visibleREA.runtimeToolCount ?? 0) >= 200)
+        #expect(visibleREA.runtimeLastCheckedAt != nil)
+        #expect(visibleREA.runtimeError == nil)
 
         let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
         let record = try #require(restored.installedPluginRecords?.values.first)
         #expect(record.source == .customMCP)
         #expect(record.version == "6.5.0")
         #expect(NativePluginInstallationIntegrity.status(record: record) == .verified)
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: URL(fileURLWithPath: record.installationPath, isDirectory: true)
+                .appendingPathComponent("chatos.plugin.json")
+        )
+        #expect(Set(manifest.permissions.map(\.permission)).contains(
+            "system.developer-tools.read"
+        ))
+    }
+
+    private static func installOfflineREAFixture(in packageRoot: URL) async throws {
+        let request = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: packageRoot.appendingPathComponent("package.json"))
+        ) as? [String: Any]
+        let dependencies = request?["dependencies"] as? [String: String]
+        guard dependencies == ["rea-agents": "6.5.0"] else {
+            throw NativeConnectorError.pluginInstallation(
+                "离线 npm fixture 收到了非固定版本的安装请求"
+            )
+        }
+        let dependencyRoot = packageRoot
+            .appendingPathComponent("node_modules/rea-agents", isDirectory: true)
+        let executableRoot = dependencyRoot.appendingPathComponent("dist", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: executableRoot,
+            withIntermediateDirectories: true
+        )
+        try Data("""
+        {
+          "name": "rea-agents",
+          "version": "6.5.0",
+          "description": "Offline REA integration fixture",
+          "bin": {"rea": "dist/rea.js"}
+        }
+        """.utf8).write(
+            to: dependencyRoot.appendingPathComponent("package.json"),
+            options: .atomic
+        )
+        try Data("""
+        const readline = require("node:readline");
+        const lines = readline.createInterface({ input: process.stdin });
+        lines.on("line", (line) => {
+          const request = JSON.parse(line);
+          if (request.id === undefined) return;
+          let result = {};
+          if (request.method === "initialize") {
+            result = {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "rea", version: "6.5.0" }
+            };
+          } else if (request.method === "tools/list") {
+            result = { tools: [
+              { name: "binary_session", description: "Inspect a binary", inputSchema: { type: "object", properties: {} } },
+              { name: "runtime_snapshot", description: "Inspect a runtime", inputSchema: { type: "object", properties: {} } },
+              { name: "web_session", description: "Inspect a browser session", inputSchema: { type: "object", properties: {} } }
+            ] };
+          }
+          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+        });
+        """.utf8).write(
+            to: executableRoot.appendingPathComponent("rea.js"),
+            options: .atomic
+        )
+    }
+
+    private func recordPluginID(in stateURL: URL) throws -> String {
+        let restored = try NativeConnectorStateStore(stateURL: stateURL).load()
+        return try #require(restored.installedPluginRecords?.values.first?.pluginID)
     }
 }
 

@@ -132,6 +132,50 @@ async fn expired_side_effecting_tool_requires_review() {
         result => panic!("unexpected result: {result:?}"),
     };
     assert_eq!(run.status, LocalAgentRunStatus::NeedsReview);
+    assert_eq!(
+        run.continuation_input
+            .as_ref()
+            .and_then(|value| value.get("type"))
+            .and_then(|value| value.as_str()),
+        Some("tool_results")
+    );
+    assert_eq!(
+        run.continuation_input.as_ref().expect("continuation")["invocations"][0]["status"],
+        "needs_review"
+    );
+}
+
+#[tokio::test]
+async fn tool_needing_review_retains_a_model_continuation_result() {
+    let (runtime, _, claim) = prepare_claimed_tool(true).await;
+    let response = runtime
+        .handle(envelope(
+            "commit-tool-needs-review",
+            HostCommand::CommitTool(CommitToolCommand {
+                owner_user_id: "user-1".to_string(),
+                invocation_id: claim.invocation.invocation_id,
+                claim_token: claim.claim_token,
+                expected_version: claim.invocation.version,
+                outcome: LocalAgentToolOutcome::NeedsReview {
+                    reason: "execution result is uncertain".to_string(),
+                    detail: json!({"phase": "native_platform_execution"}),
+                },
+            }),
+        ))
+        .await;
+    let result = match response.result.expect("tool commit") {
+        HostResult::ToolCommit { result } => result,
+        result => panic!("unexpected result: {result:?}"),
+    };
+    assert_eq!(result.run.status, LocalAgentRunStatus::NeedsReview);
+    let continuation = result.run.continuation_input.expect("tool result continuation");
+    assert_eq!(continuation["type"], "tool_results");
+    assert_eq!(continuation["invocations"][0]["call_id"], "call-1");
+    assert_eq!(continuation["invocations"][0]["status"], "needs_review");
+    assert_eq!(
+        continuation["invocations"][0]["error"],
+        "execution result is uncertain"
+    );
 }
 
 #[tokio::test]

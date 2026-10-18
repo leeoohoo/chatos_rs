@@ -37,12 +37,15 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let ticketProvider: any LocalConnectorPairingTicketProviding
     let gateway: NativeConnectorGateway
     let stateStore: NativeConnectorStateStore
+    let activityHistoryStore: NativeConnectorActivityHistoryStore
     let pluginInstaller: NativePluginInstaller
+    let pluginIntegritySnapshots = NativePluginIntegritySnapshotCache()
     let pluginPermissionSnapshots = NativePluginPermissionSnapshotCache()
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
     let pluginRuntimeStore = NativePluginRuntimeStore()
     let pluginApplicationRuntime: NativePluginApplicationRuntime
+    let localAgentModelCredentialStore: NativeLocalAgentModelCredentialStore
     let browserExtensionPairingRuntime = NativeBrowserExtensionPairingRuntime()
     let companionAgentDrainCoordinator = CompanionAgentDrainCoordinator()
     let pluginRuntimeRootURL: URL
@@ -57,6 +60,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var pluginConfigurationChangedHandler: (@Sendable () async -> Void)?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
+    var activityHistory: NativeConnectorActivityHistory
     var cachedAccessToken: String?
     var hasLoadedAccessToken = false
     var cachedDeviceIdentity: NativeConnectorDeviceIdentity?
@@ -67,6 +71,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var pluginSourceRefresh: NativePluginSourceRefresh?
     var pluginSourceGeneration = 0
     var pluginIntegrityRepairTask: Task<Void, Never>?
+    var customPluginRuntimeHealth: [String: NativeCustomPluginRuntimeHealth] = [:]
     var modelCatalogCache: NativeModelCatalogCache?
     var modelCatalogRefresh: NativeModelCatalogRefresh?
     var modelCatalogGeneration = 0
@@ -95,6 +100,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         UUID: AsyncStream<LocalConnectorApprovalEvent>.Continuation
     ] = [:]
     var sessionApprovalAllowlist: Set<String> = []
+    var localApprovalAgentRuntime: NativeApprovalAgentRuntimeConfiguration?
+    var localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
     var seenRelayNonces: [String: Int64] = [:]
 
     public init(
@@ -102,10 +109,28 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         ticketProvider: any LocalConnectorPairingTicketProviding,
         approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil
     ) {
+        self.init(
+            configuration: configuration,
+            ticketProvider: ticketProvider,
+            approvalMemoryProviderFactory: approvalMemoryProviderFactory,
+            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) }
+        )
+    }
+
+    init(
+        configuration: NativeConnectorConfiguration,
+        ticketProvider: any LocalConnectorPairingTicketProviding,
+        approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil,
+        pluginInstallerFactory: @Sendable (URL) -> NativePluginInstaller
+    ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
+        self.activityHistoryStore = NativeConnectorActivityHistoryStore(
+            historyURL: configuration.stateURL.deletingLastPathComponent()
+                .appendingPathComponent("activity-history.json")
+        )
         self.secretStore = NativeConnectorSecretStore(
             rootURL: configuration.stateURL.deletingLastPathComponent()
                 .appendingPathComponent("Secrets", isDirectory: true)
@@ -115,8 +140,13 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             .appendingPathComponent("Plugins", isDirectory: true)
         let pluginRuntimeRootURL = connectorRootURL
             .appendingPathComponent("PluginRuntime", isDirectory: true)
-        self.pluginInstaller = NativePluginInstaller(rootURL: pluginInstallationRootURL)
+        self.pluginInstaller = pluginInstallerFactory(pluginInstallationRootURL)
         self.pluginRuntimeRootURL = pluginRuntimeRootURL
+        self.localAgentModelCredentialStore = NativeLocalAgentModelCredentialStore(
+            rootURL: connectorRootURL
+                .appendingPathComponent("Secrets", isDirectory: true)
+                .appendingPathComponent("LocalAgentModels", isDirectory: true)
+        )
         self.pluginApplicationRuntime = NativePluginApplicationRuntime(
             processStateURL: pluginRuntimeRootURL
                 .appendingPathComponent("application-processes.json"),
@@ -124,6 +154,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
+        self.activityHistory = (try? activityHistoryStore.load()) ?? .empty
+        _ = try? self.pluginInstaller.removeUnreferencedInstallations(
+            referencedInstallationPaths: (self.state.installedPluginRecords ?? [:]).values.map {
+                $0.installationPath
+            }
+        )
     }
 
     /// NSApplication's termination callback is synchronous. Keep this entry
@@ -159,6 +195,53 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         companionConversationService = conversation
         companionMessageTaskService = messageTasks
         companionAskUserService = askUser
+    }
+
+    public func configureLocalApprovalAgent(
+        ownerUserID: String,
+        bootstrap: NativeLocalAgentBootstrapResult
+    ) {
+        localApprovalAgentRuntime = nil
+        guard let modelConfigID = state.commandApprovalModelConfigID?.trimmedNonEmpty else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 尚未配置模型。"
+            return
+        }
+        guard let snapshot = bootstrap.modelSnapshots.first(where: {
+            $0.ownerUserID == ownerUserID && $0.modelConfigRef == modelConfigID
+        }) else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 所选模型未载入本地任务运行时。"
+            return
+        }
+        let credentialVariable = localAgentModelCredentialStore.environmentVariable(
+            modelConfigRef: modelConfigID
+        )
+        guard snapshot.credentialRef == "env:\(credentialVariable)" else {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据引用无效。"
+            return
+        }
+        do {
+            guard let credential = try localAgentModelCredentialStore.loadWithoutUserInteraction(
+                ownerUserID: ownerUserID,
+                modelConfigRef: modelConfigID
+            )?.trimmedNonEmpty else {
+                localApprovalAgentUnavailableReason = "本机审批 Agent 的本地模型凭据不可用。"
+                return
+            }
+            localApprovalAgentRuntime = try .init(
+                ownerUserID: ownerUserID,
+                model: .init(snapshot: snapshot, apiKey: credential),
+                systemPrompt: LocalAgentPromptCatalog.render(.approvalSystem),
+                thinkingLevel: state.commandApprovalThinkingLevel?.trimmedNonEmpty
+            )
+            localApprovalAgentUnavailableReason = ""
+        } catch {
+            localApprovalAgentUnavailableReason = "本机审批 Agent 配置无效：\(error.localizedDescription)"
+        }
+    }
+
+    public func resetLocalApprovalAgent() {
+        localApprovalAgentRuntime = nil
+        localApprovalAgentUnavailableReason = "本机审批 Agent 尚未从本地任务运行时载入。"
     }
 
     public func setAgentGroupChatService(_ service: NativeAgentGroupChatService) {
@@ -257,6 +340,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     }
 
     public func suspendForSignedOut() async {
+        resetLocalApprovalAgent()
         await stopServerAccess()
         await pluginApplicationRuntime.stopAll()
         await browserExtensionPairingRuntime.stop()
@@ -358,7 +442,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             workspace: workspace
         )
         let now = ISO8601DateFormatter().string(from: Date())
-        state.commandHistory.insert(
+        activityHistory.commands.insert(
             .init(
                 id: UUID().uuidString,
                 source: "native-terminal",
@@ -374,22 +458,22 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             ),
             at: 0
         )
-        state.commandHistory = Array(state.commandHistory.prefix(1_000))
-        try stateStore.save(state)
+        activityHistory.commands = Array(activityHistory.commands.prefix(1_000))
+        try activityHistoryStore.save(activityHistory)
         return result
     }
 
     public func fetchCommandHistory(limit: Int) async throws -> [LocalConnectorCommandHistoryEntry] {
-        Array(state.commandHistory.prefix(max(1, min(limit, 200))))
+        Array(activityHistory.commands.prefix(max(1, min(limit, 200))))
     }
 
     public func clearCommandHistory() async throws {
-        state.commandHistory = []
-        try stateStore.save(state)
+        activityHistory.commands = []
+        try activityHistoryStore.save(activityHistory)
     }
 
     public func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
-        .init(defaultMode: state.approvalMode, history: state.approvalHistory)
+        .init(defaultMode: state.approvalMode, history: activityHistory.approvals)
     }
 
     public func updateDefaultApprovalMode(
@@ -411,7 +495,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         }
         state.approvalMode = mode
         try stateStore.save(state)
-        return .init(defaultMode: mode, history: state.approvalHistory)
+        return .init(defaultMode: mode, history: activityHistory.approvals)
     }
 
     public func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval] {
@@ -446,7 +530,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         let continuation = pendingApprovalContinuations.removeValue(forKey: id)
         let approvalScopeKey = pendingApprovalScopeKeys.removeValue(forKey: id)
         if let pending {
-            state.approvalHistory.insert(
+            activityHistory.approvals.insert(
                 .init(
                     id: UUID().uuidString,
                     command: pending.command,
@@ -461,7 +545,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 ),
                 at: 0
             )
-            try stateStore.save(state)
+            activityHistory.approvals = Array(activityHistory.approvals.prefix(1_000))
+            try activityHistoryStore.save(activityHistory)
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,

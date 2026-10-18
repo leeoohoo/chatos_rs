@@ -105,6 +105,19 @@ struct CreateProjectSheet: View {
             )
             .frame(maxWidth: .infinity, minHeight: 250)
 
+            VStack(alignment: .leading, spacing: 5) {
+                Label("项目根目录：\(viewModel.displayedLocation)", systemImage: "folder.fill")
+                    .appFont(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text("当前目录本身会成为项目根目录；“创建项目”不会自动新建同名文件夹。需要独立目录时，请先点击上方“新建文件夹”并进入该文件夹。")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
             VStack(alignment: .leading, spacing: 7) {
                 Text("项目名称")
                     .appFont(.caption.weight(.semibold))

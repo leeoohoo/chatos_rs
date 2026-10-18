@@ -87,6 +87,31 @@ extension AppModel {
         contacts = resources.contacts
         projects = resources.projects
         reconcileSelection()
+        attachSelectedConversationIfNeeded()
+    }
+
+    private func attachSelectedConversationIfNeeded() {
+        // A valid selection does not emit a new Combine value. Attach a conversation that only
+        // became available in the authoritative snapshot, without reactivating an unchanged
+        // session during both phases of every workspace refresh.
+        switch selection {
+        case let .project(id):
+            let conversationID = projects.first(where: { $0.id == id })?.conversationID
+            if projectConversation?.sessionID != conversationID {
+                activateConversation(for: selection)
+            } else if conversationID == nil {
+                prepareProjectConversationIfNeeded(projectID: id)
+            }
+        case let .contact(id):
+            let conversationID = contacts.first(where: { $0.id == id })?.conversationID
+            if contactConversation?.sessionID != conversationID {
+                activateConversation(for: selection)
+            }
+        default:
+            if projectConversation != nil || contactConversation != nil {
+                activateConversation(for: selection)
+            }
+        }
     }
 
     var localProjectCreator: AccountLocalProjectCreator? {

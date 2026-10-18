@@ -37,8 +37,12 @@ pub(super) async fn resume_conversation_turn(
             turn.expected_conversation_version,
         )
         .await?;
-        let current =
-            fetch_owned_turn_run(&mut connection, &turn.conversation_id, &turn.turn_id).await?;
+        let current = fetch_owned_turn_run_for_review_action(
+            &mut connection,
+            &turn.conversation_id,
+            &turn.turn_id,
+        )
+        .await?;
         if current.version != turn.expected_run_version
             || current.status != turn.expected_run_status
         {
@@ -143,8 +147,12 @@ pub(super) async fn cancel_conversation_turn(
             turn.expected_conversation_version,
         )
         .await?;
-        let current =
-            fetch_owned_turn_run(&mut connection, &turn.conversation_id, &turn.turn_id).await?;
+        let current = fetch_owned_turn_run_for_review_action(
+            &mut connection,
+            &turn.conversation_id,
+            &turn.turn_id,
+        )
+        .await?;
         super::task_commands::cancel_tasks_for_conversation_turn(
             &mut connection,
             &turn.owner_user_id,
@@ -407,6 +415,41 @@ pub(super) async fn fetch_owned_turn_run(
     let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+    if run.owner_entity_type != "conversation_turn" || run.owner_entity_id != turn_id {
+        return Err(ClientStorageError::InvalidState(format!(
+            "Run ownership does not match conversation Turn: {turn_id}"
+        )));
+    }
+    Ok(run)
+}
+
+async fn fetch_owned_turn_run_for_review_action(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+    turn_id: &str,
+) -> Result<LocalAgentRunRecord, ClientStorageError> {
+    let row = sqlx::query(
+        "SELECT run_id, status FROM local_conversation_turns \
+         WHERE turn_id = ? AND conversation_id = ?",
+    )
+    .bind(turn_id)
+    .bind(conversation_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .ok_or_else(|| ClientStorageError::NotFound(turn_id.to_string()))?;
+    let run_id: String = row.try_get("run_id").db()?;
+    let turn_status: String = row.try_get("status").db()?;
+    let run = SqliteClientStorage::fetch_run_on(connection, &run_id)
+        .await?
+        .ok_or_else(|| ClientStorageError::NotFound(run_id.clone()))?;
+    let can_act_on_reviewed_turn = turn_status == "failed"
+        && run.status == chatos_local_agent_protocol::LocalAgentRunStatus::NeedsReview;
+    if turn_status != "running" && !can_act_on_reviewed_turn {
+        return Err(ClientStorageError::Conflict(format!(
+            "conversation Turn is already terminal: {turn_id}"
+        )));
+    }
     if run.owner_entity_type != "conversation_turn" || run.owner_entity_id != turn_id {
         return Err(ClientStorageError::InvalidState(format!(
             "Run ownership does not match conversation Turn: {turn_id}"

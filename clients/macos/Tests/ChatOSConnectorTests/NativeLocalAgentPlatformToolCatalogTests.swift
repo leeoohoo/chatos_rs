@@ -4,6 +4,33 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
+    func testNPMInstallerRequiresTheSameAccessProfileForInspectAndInstall() throws {
+        for name in [
+            NativeLocalAgentPlatformToolCatalog.pluginInstallerInspectNPMToolName,
+            NativeLocalAgentPlatformToolCatalog.pluginInstallerInstallNPMToolName,
+        ] {
+            let tool = try XCTUnwrap(
+                NativeLocalAgentPlatformToolCatalog.pluginInstallerTools.first { value in
+                    guard case let .object(object) = value else { return false }
+                    return object["name"] == .string(name)
+                }
+            )
+            guard case let .object(definition) = tool,
+                  case let .object(parameters)? = definition["parameters"],
+                  case let .object(properties)? = parameters["properties"],
+                  case let .object(profile)? = properties["access_profile"],
+                  case let .array(required)? = parameters["required"] else {
+                return XCTFail("missing access profile schema for \(name)")
+            }
+            XCTAssertEqual(profile["enum"], .array([
+                .string("restricted"),
+                .string("network_client"),
+                .string("developer_analysis"),
+            ]))
+            XCTAssertTrue(required.contains(.string("access_profile")))
+        }
+    }
+
     func testMainChatCanReadImagesWithoutAddingATaskBusinessTool() throws {
         let tools = NativeLocalAgentPlatformToolCatalog.capabilityTools
         let tool = try XCTUnwrap(tools.first { value in
@@ -64,6 +91,13 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
                 displayName: "Computer Use",
                 description: "Desktop control."
             ),
+            .init(
+                pluginID: "plugin-3",
+                pluginKey: "rea@local",
+                componentKey: "rea",
+                displayName: "REA",
+                description: "Reverse engineering."
+            ),
         ])
         let create = try XCTUnwrap(tools.first { value in
             guard case .object(let tool) = value else { return false }
@@ -91,6 +125,7 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertEqual(identities, [
             "open-computer-use@chatos-marketplace:computer-use-mcp",
             "\(NativeBrowserPluginIdentity.marketplaceKey):\(NativeBrowserPluginIdentity.componentKey)",
+            "rea@local:rea",
         ])
         XCTAssertEqual(thinkingLevels, [
             .string("none"), .string("auto"), .string("minimal"), .string("low"),
@@ -107,6 +142,55 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
         XCTAssertTrue(titles.contains(where: {
             $0.contains("Desktop control.") && $0.contains("native desktop applications")
         }))
+        guard case .string(let hintDescription)? = hints["description"] else {
+            return XCTFail("missing plugin preservation guidance")
+        }
+        XCTAssertTrue(hintDescription.contains("explicitly names an installed Plugin or MCP"))
+        XCTAssertTrue(hintDescription.contains("additive"))
+        XCTAssertTrue(hintDescription.contains("must never replace"))
+    }
+
+    func testCustomInstalledPluginRemainsSelectableAlongsideManagedPlugins() {
+        let managed = NativeInstalledAgentPlugin(
+            pluginID: "browser-id",
+            pluginKey: "browser@marketplace",
+            componentKey: "browser-mcp",
+            displayName: "Browser",
+            description: "Browser automation"
+        )
+        let local = NativeInstalledAgentPlugin(
+            pluginID: "rea-id",
+            pluginKey: "rea@local",
+            componentKey: "rea",
+            displayName: "REA",
+            description: "Reverse engineering"
+        )
+        let keys = NativeLocalConnectorService.selectablePluginKeys(
+            managedKeys: [managed.pluginKey],
+            installedPlugins: [managed, local],
+            records: [
+                managed.pluginID: .init(
+                    pluginID: managed.pluginID, releaseID: "browser-release", version: "1.0.0",
+                    artifactSHA256: String(repeating: "a", count: 64), installationPath: "/browser",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: managed.pluginKey,
+                    source: .marketplace
+                ),
+                local.pluginID: .init(
+                    pluginID: local.pluginID, releaseID: "rea-release", version: "6.5.0",
+                    artifactSHA256: String(repeating: "b", count: 64), installationPath: "/rea",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: local.pluginKey,
+                    source: .npmPlugin
+                ),
+                "not-installed": .init(
+                    pluginID: "not-installed", releaseID: "unused", version: "1.0.0",
+                    artifactSHA256: String(repeating: "c", count: 64), installationPath: "/unused",
+                    installedAt: "2026-10-17T00:00:00Z", pluginKey: "unused@local",
+                    source: .localPlugin
+                ),
+            ]
+        )
+
+        XCTAssertEqual(keys, ["browser@marketplace", "rea@local"])
     }
 
     func testTaskModelSchemaOnlyPublishesTaskEnabledChoices() throws {
@@ -208,9 +292,10 @@ final class NativeLocalAgentPlatformToolCatalogTests: XCTestCase {
               case .array(let notificationValues)? = notificationPolicy["enum"] else {
             return XCTFail("missing graph notification policy")
         }
-        XCTAssertEqual(notificationPolicy["default"], .string("graph_summary"))
+        XCTAssertEqual(notificationPolicy["default"], .string("progress_summary"))
         XCTAssertEqual(notificationValues, [
-            .string("all_tasks"), .string("milestones"), .string("graph_summary"),
+            .string("progress_summary"), .string("all_tasks"),
+            .string("milestones"), .string("graph_summary"),
         ])
         guard case .object(let taskItems)? = tasks["items"],
               case .object(let taskProperties)? = taskItems["properties"],

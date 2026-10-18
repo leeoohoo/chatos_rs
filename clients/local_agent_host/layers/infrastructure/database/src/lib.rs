@@ -51,6 +51,7 @@ mod task_commands;
 mod task_conversation_writeback;
 mod task_followup_gate;
 mod task_followup_resolution;
+mod task_graph_store;
 mod task_lifecycle;
 mod task_query_store;
 mod task_replacement_validation;
@@ -59,8 +60,12 @@ mod task_restart_descendant_tests;
 mod task_result;
 mod task_retry_input;
 mod task_store;
+mod task_writeback_source;
+mod task_writeback_summary;
 mod tool_approval_store;
 mod tool_store;
+mod tool_store_execution;
+mod tool_store_record;
 
 pub use chatos_local_agent_ports::{
     ClientStorageError, IdempotentCommand, LocalAgentArtifactStore, LocalAgentArtifactWrite,
@@ -167,32 +172,52 @@ impl SqliteClientStorage {
             artifact_root,
             _temporary_root: temporary_root,
         };
-        if let Some((path, _)) = file_context {
-            maintenance::restrict_file_permissions(path)?;
-        }
-        maintenance::verify_integrity(&storage.pool).await?;
-        let version = storage.current_schema_version().await?;
-        if version > migration::SCHEMA_VERSION {
-            return Err(ClientStorageError::InvalidState(format!(
-                "database schema version {version} is newer than supported {}",
-                migration::SCHEMA_VERSION
-            )));
-        }
-        let requires_migration = version < migration::SCHEMA_VERSION;
-        if requires_migration {
-            if let Some((path, true)) = file_context {
-                maintenance::create_migration_backup(
-                    &storage.pool,
-                    path,
-                    version,
-                    migration::SCHEMA_VERSION,
-                )
-                .await?;
+        let initialization = async {
+            if let Some((path, _)) = file_context {
+                maintenance::restrict_file_permissions(path)?;
             }
-        }
-        storage.migrate().await.db()?;
-        if requires_migration {
             maintenance::verify_integrity(&storage.pool).await?;
+            let version = storage.current_schema_version().await?;
+            if version > migration::SCHEMA_VERSION {
+                return Err(ClientStorageError::InvalidState(format!(
+                    "database schema version {version} is newer than supported {}",
+                    migration::SCHEMA_VERSION
+                )));
+            }
+            let requires_migration = version < migration::SCHEMA_VERSION;
+            let should_compact = migration::requires_compaction(version)
+                && file_context.is_some_and(|(_, existed)| existed);
+            if requires_migration {
+                if let Some((path, true)) = file_context {
+                    maintenance::remove_migration_backups(path)?;
+                    maintenance::create_migration_backup(
+                        &storage.pool,
+                        path,
+                        version,
+                        migration::SCHEMA_VERSION,
+                    )
+                    .await?;
+                }
+            }
+            storage.migrate().await.db()?;
+            if requires_migration {
+                maintenance::verify_integrity(&storage.pool).await?;
+                if should_compact {
+                    maintenance::compact_database(&storage.pool).await?;
+                    maintenance::verify_integrity(&storage.pool).await?;
+                }
+                if let Some((path, _)) = file_context {
+                    maintenance::remove_migration_backups(path)?;
+                }
+            } else if let Some((path, _)) = file_context {
+                maintenance::remove_migration_backups(path)?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = initialization {
+            storage.pool.close().await;
+            return Err(error);
         }
         Ok(storage)
     }

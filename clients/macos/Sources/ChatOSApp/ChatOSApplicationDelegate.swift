@@ -29,6 +29,12 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
         model.startPetOverlayIfNeeded()
         model.startGlobalUtilitiesIfNeeded()
 
+        if let smokeExitDelay = Self.buildSmokeTestExitDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + smokeExitDelay) {
+                NSApp.terminate(nil)
+            }
+        }
+
         // A document-open Apple event may arrive before didFinishLaunching.
         // In that launch path, never schedule creation of the main window.
         if !didReceiveFileOpenRequest {
@@ -38,6 +44,15 @@ final class ChatOSApplicationDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         model.prepareForApplicationTermination()
+    }
+
+    private static var buildSmokeTestExitDelay: TimeInterval? {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CHATOS_BUILD_SMOKE_TEST"] == "1",
+              let rawValue = environment["CHATOS_BUILD_SMOKE_TEST_EXIT_AFTER_SECONDS"],
+              let delay = TimeInterval(rawValue),
+              delay > 0 else { return nil }
+        return delay
     }
 
     func application(_ sender: NSApplication, openFiles filenames: [String]) {

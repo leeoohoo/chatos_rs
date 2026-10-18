@@ -5,7 +5,7 @@ use super::{
     conversation_lifecycle, task_conversation_writeback, task_lifecycle, tool_store,
     ClientStorageError, SqliteClientStorage, SqliteResultExt,
 };
-use chatos_local_agent_protocol::LocalAgentRunRecord;
+use chatos_local_agent_protocol::{LocalAgentRunRecord, LocalAgentRunStatus};
 use sqlx::SqliteConnection;
 
 #[allow(clippy::too_many_arguments)]
@@ -20,6 +20,8 @@ pub(crate) async fn cancel_run_on(
     let current = SqliteClientStorage::fetch_run_on(connection, run_id)
         .await?
         .ok_or_else(|| ClientStorageError::NotFound(run_id.to_string()))?;
+    let already_reconciled_review_conversation = current.status == LocalAgentRunStatus::NeedsReview
+        && current.owner_entity_type == "conversation_turn";
     if current.status.is_terminal() {
         return Err(ClientStorageError::Conflict(format!(
             "terminal run cannot be cancelled: {run_id}"
@@ -69,6 +71,9 @@ pub(crate) async fn cancel_run_on(
     task_lifecycle::reconcile_task_after_run(connection, &run, now_unix_ms).await?;
     task_conversation_writeback::write_back_terminal_task_run(connection, &run, now_unix_ms)
         .await?;
-    conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms).await?;
+    if !already_reconciled_review_conversation {
+        conversation_lifecycle::reconcile_conversation_after_run(connection, &run, now_unix_ms)
+            .await?;
+    }
     Ok(run)
 }

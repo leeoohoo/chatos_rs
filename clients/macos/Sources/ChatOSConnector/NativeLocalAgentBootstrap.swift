@@ -1,4 +1,3 @@
-import CryptoKit
 import ChatOSCore
 import ChatOSModelCapabilities
 import Foundation
@@ -6,6 +5,7 @@ import Foundation
 public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public let modelSnapshots: [LocalAgentModelConfigSnapshot]
     public let modelOptions: [ConversationModelOption]
+    public let defaultConversationModelConfigRef: String
     public let capabilitySnapshot: LocalAgentCapabilityPolicySnapshot
     public let capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot]
     public let pluginInstallerCapabilitySnapshotsByModelConfigRef: [
@@ -16,6 +16,7 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     public init(
         modelSnapshots: [LocalAgentModelConfigSnapshot],
         modelOptions: [ConversationModelOption],
+        defaultConversationModelConfigRef: String,
         capabilitySnapshot: LocalAgentCapabilityPolicySnapshot,
         capabilitySnapshotsByModelConfigRef: [String: LocalAgentCapabilityPolicySnapshot],
         pluginInstallerCapabilitySnapshotsByModelConfigRef: [
@@ -25,6 +26,7 @@ public struct NativeLocalAgentBootstrapResult: Sendable, Equatable {
     ) {
         self.modelSnapshots = modelSnapshots
         self.modelOptions = modelOptions
+        self.defaultConversationModelConfigRef = defaultConversationModelConfigRef
         self.capabilitySnapshot = capabilitySnapshot
         self.capabilitySnapshotsByModelConfigRef = capabilitySnapshotsByModelConfigRef
         self.pluginInstallerCapabilitySnapshotsByModelConfigRef =
@@ -63,7 +65,7 @@ extension NativeLocalConnectorService {
     ) async throws -> NativeLocalAgentBootstrapResult? {
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
-        let credentialStore = NativeLocalAgentModelCredentialStore()
+        let credentialStore = localAgentModelCredentialStore
         var environment = try NativeLocalAgentCredentialEnvironment.restoredModels(
             persisted, ownerUserID: ownerUserID, store: credentialStore
         )
@@ -93,6 +95,9 @@ extension NativeLocalConnectorService {
             ))
         }
         guard !snapshots.isEmpty else { return nil }
+        let defaultConversationModelConfigRef = Self.defaultConversationModelConfigRef(
+            in: snapshots
+        )
         if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
             environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
         }
@@ -106,7 +111,7 @@ extension NativeLocalConnectorService {
             ownerUserID: ownerUserID,
             modelSnapshots: snapshots
         )
-        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef],
+        guard let capability = capabilitiesByModel[defaultConversationModelConfigRef],
               capability.ownerUserID == ownerUserID,
               capability.profileKey == "main_chat" else { return nil }
         let installerCapabilitiesByModel = try await publishPluginInstallerCapabilities(
@@ -117,6 +122,7 @@ extension NativeLocalConnectorService {
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
+            defaultConversationModelConfigRef: defaultConversationModelConfigRef,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
             pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
@@ -169,7 +175,7 @@ extension NativeLocalConnectorService {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
         }
-        let credentialStore = NativeLocalAgentModelCredentialStore()
+        let credentialStore = localAgentModelCredentialStore
         let controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         let persisted = try await controlPlane.latestModels(ownerUserID: ownerUserID)
         var environment = try NativeLocalAgentCredentialEnvironment.restoredModels(
@@ -250,6 +256,9 @@ extension NativeLocalConnectorService {
             ))
         }
         guard !snapshots.isEmpty else { throw NativeLocalAgentBootstrapError.noEnabledModel }
+        let defaultConversationModelConfigRef = snapshots.first(where: {
+            taskEnabledModelConfigIDs.contains($0.modelConfigRef)
+        })?.modelConfigRef ?? snapshots[0].modelConfigRef
         if let memoryAccessToken = memoryAccessToken?.trimmedNonEmpty {
             environment["CHATOS_MEMORY_ACCESS_TOKEN"] = memoryAccessToken
         }
@@ -268,7 +277,7 @@ extension NativeLocalConnectorService {
                 ownerUserID: ownerUserID,
                 modelSnapshots: snapshots
             )
-            guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+            guard let capability = capabilitiesByModel[defaultConversationModelConfigRef] else {
                 throw NativeLocalAgentBootstrapError.executionAgentUnavailable
             }
             guard capability.ownerUserID == ownerUserID,
@@ -283,6 +292,7 @@ extension NativeLocalConnectorService {
             return .init(
                 modelSnapshots: snapshots,
                 modelOptions: modelOptions,
+                defaultConversationModelConfigRef: defaultConversationModelConfigRef,
                 capabilitySnapshot: capability,
                 capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
                 pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel
@@ -306,11 +316,16 @@ extension NativeLocalConnectorService {
         guard requiredPluginKeys.allSatisfy(installedPluginKeys.contains) else {
             throw NativeLocalAgentBootstrapError.executionAgentUnavailable
         }
-        let selectablePluginKeys = Set<String>(agentCapability.plugins.compactMap { plugin in
+        let managedSelectablePluginKeys = Set<String>(agentCapability.plugins.compactMap { plugin in
             guard !plugin.binding.required,
                   plugin.available || plugin.status == "partially_available" else { return nil }
             return plugin.catalog.pluginKey
         })
+        let selectablePluginKeys = Self.selectablePluginKeys(
+            managedKeys: managedSelectablePluginKeys,
+            installedPlugins: installedPlugins,
+            records: state.installedPluginRecords ?? [:]
+        )
         let pluginChoices = installedPlugins.filter {
             selectablePluginKeys.contains($0.pluginKey)
         }
@@ -460,7 +475,7 @@ extension NativeLocalConnectorService {
             ))
             try await controlPlane.publishCapabilities(mainCapability)
         }
-        guard let capability = capabilitiesByModel[snapshots[0].modelConfigRef] else {
+        guard let capability = capabilitiesByModel[defaultConversationModelConfigRef] else {
             throw NativeLocalAgentBootstrapError.skillConfigurationUnavailable
         }
         state.localAgentCapabilityRevisionsByModelConfigID = capabilitiesByModel.mapValues(
@@ -478,6 +493,7 @@ extension NativeLocalConnectorService {
         return .init(
             modelSnapshots: snapshots,
             modelOptions: modelOptions,
+            defaultConversationModelConfigRef: defaultConversationModelConfigRef,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: capabilitiesByModel,
             pluginInstallerCapabilitySnapshotsByModelConfigRef: installerCapabilitiesByModel,
@@ -485,206 +501,6 @@ extension NativeLocalConnectorService {
         )
     }
 
-    private static func externalMCPConfigs(
-        _ mcps: [GatewayResolvedMCPDTO],
-        selectedIDs: Set<String>
-    ) -> [NativeLocalAgentExternalMCPConfig] {
-        var usedToolNames = Set<String>()
-        return mcps.sorted { $0.resource.id < $1.resource.id }.compactMap { item in
-            guard selectedIDs.contains(item.resource.id),
-                  let rawURL = item.resource.runtime.url?.trimmedNonEmpty,
-                  let url = URL(string: rawURL) else { return nil }
-            let serverName = item.resource.runtime.serverName?.trimmedNonEmpty
-                ?? item.resource.name.trimmedNonEmpty
-                ?? item.resource.id
-            let tools = item.toolSnapshot.compactMap { raw -> NativeLocalAgentExternalMCPTool? in
-                guard case .object(let object) = raw,
-                      case .string(let upstreamName)? = object["name"],
-                      let upstreamName = upstreamName.trimmedNonEmpty else { return nil }
-                let description: String
-                if case .string(let value)? = object["description"] { description = value }
-                else { description = "" }
-                let schema = object["inputSchema"] ?? object["input_schema"]
-                    ?? .object(["type": .string("object")])
-                return .init(
-                    publicName: NativeLocalAgentExternalMCPNaming.disambiguatedToolName(
-                        server: serverName,
-                        tool: upstreamName,
-                        resourceID: item.resource.id,
-                        used: &usedToolNames
-                    ),
-                    upstreamName: upstreamName,
-                    description: description,
-                    inputSchema: schema,
-                    remoteSkillGate: {
-                        guard case let .object(metadata)? = object["_meta"] else { return nil }
-                        return metadata["chatos/skillGate"]
-                    }()
-                )
-            }
-            return .init(
-                resourceID: item.resource.id,
-                serverName: serverName,
-                url: url,
-                headers: item.resource.runtime.headers,
-                tools: tools
-            )
-        }
-    }
-
-    private static func selectableBuiltinChoices(
-        _ mcps: [GatewayResolvedMCPDTO]
-    ) -> [NativeLocalAgentMCPChoice] {
-        let candidates = mcps.filter {
-            !$0.binding.required && $0.binding.enabled && $0.resource.enabled
-              && $0.resource.runtime.resolvedBuiltinKind != nil
-        }
-        let available = Set(candidates.compactMap { $0.resource.runtime.resolvedBuiltinKind })
-        return candidates.compactMap { item in
-            guard let kind = item.resource.runtime.resolvedBuiltinKind else { return nil }
-            if kind == "CodeMaintainerWrite", !available.contains("CodeMaintainerRead") {
-                return nil
-            }
-            return .init(value: kind, title: Self.mcpChoiceTitle(item, value: kind))
-        }
-    }
-
-    private static func selectableExternalChoices(
-        _ mcps: [GatewayResolvedMCPDTO]
-    ) -> [NativeLocalAgentMCPChoice] {
-        mcps.compactMap { item in
-            guard !item.binding.required,
-                  item.binding.enabled,
-                  item.resource.enabled,
-                  item.resource.runtime.resolvedBuiltinKind == nil,
-                  item.resource.runtime.isExternalHTTP else { return nil }
-            return .init(
-                value: item.resource.id,
-                title: Self.mcpChoiceTitle(item, value: item.resource.id)
-            )
-        }
-    }
-
-    private static func mcpChoiceTitle(
-        _ item: GatewayResolvedMCPDTO,
-        value: String
-    ) -> String {
-        let display = item.resource.displayName.trimmedNonEmpty
-            ?? item.resource.name.trimmedNonEmpty
-            ?? value
-        var title = display == value ? value : "\(display) (\(value))"
-        if let description = item.resource.description?.trimmedNonEmpty {
-            title += " - \(description)"
-        }
-        let names = item.toolSnapshot.compactMap { tool -> String? in
-            guard case .object(let object) = tool,
-                  case .string(let name)? = object["name"] else { return nil }
-            return name.trimmedNonEmpty
-        }.prefix(12)
-        if !names.isEmpty { title += " [tools: \(names.joined(separator: ", "))]" }
-        return title
-    }
-
-
-    static func shouldUsePersistedCapability(after error: Error) -> Bool {
-        guard let connectorError = error as? NativeConnectorError,
-              case let .server(status, _) = connectorError else { return false }
-        return status == 404
-    }
-
-
-    func restoredMainChatCapabilities(
-        controlPlane: NativeLocalAgentControlPlaneClient,
-        ownerUserID: String,
-        modelSnapshots: [LocalAgentModelConfigSnapshot]
-    ) async throws -> [String: LocalAgentCapabilityPolicySnapshot] {
-        var result: [String: LocalAgentCapabilityPolicySnapshot] = [:]
-        var validatedRevisions = Set<String>()
-        for snapshot in modelSnapshots {
-            guard let revision = state.localAgentCapabilityRevisionsByModelConfigID?[
-                snapshot.modelConfigRef
-            ]?.trimmedNonEmpty else { continue }
-            do {
-                let main = try await controlPlane.capabilities(
-                    ownerUserID: ownerUserID,
-                    profileKey: "main_chat",
-                    capabilityPolicyRevision: revision
-                )
-                if !validatedRevisions.contains(revision) {
-                    _ = try await controlPlane.capabilities(
-                        ownerUserID: ownerUserID,
-                        profileKey: "task_execution",
-                        capabilityPolicyRevision: revision
-                    )
-                    validatedRevisions.insert(revision)
-                }
-                guard main.ownerUserID == ownerUserID,
-                      main.profileKey == "main_chat",
-                      main.capabilityPolicyRevision == revision else { continue }
-                result[snapshot.modelConfigRef] = main
-            } catch {
-                continue
-            }
-        }
-        if result.count < modelSnapshots.count {
-            let latest = try await controlPlane.latestCapabilities(
-                ownerUserID: ownerUserID,
-                profileKey: "main_chat"
-            )
-            _ = try await controlPlane.capabilities(
-                ownerUserID: ownerUserID,
-                profileKey: "task_execution",
-                capabilityPolicyRevision: latest.capabilityPolicyRevision
-            )
-            for snapshot in modelSnapshots where result[snapshot.modelConfigRef] == nil {
-                result[snapshot.modelConfigRef] = latest
-            }
-        }
-        guard result.count == modelSnapshots.count else {
-            throw NativeLocalAgentBootstrapError.executionAgentUnavailable
-        }
-        return result
-    }
-
-    private func modelRevision(_ model: GatewayModelConfigDTO) -> String {
-        let fields = [
-            model.id,
-            model.provider,
-            model.model,
-            model.baseURL ?? "",
-            model.taskThinkingLevel ?? "",
-            model.temperature.map { String($0) } ?? "",
-            model.maxOutputTokens.map { String($0) } ?? "",
-            String(model.supportsImages ?? false),
-            String(model.supportsResponses ?? false),
-        ].joined(separator: "\u{0}")
-        let digest = SHA256.hash(data: Data(fields.utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        return "sha256-\(digest)"
-    }
-
-    private static func modelThinkingLevel(_ level: String?, model: String) -> String? {
-        if let capability = ModelReasoningCapabilities.forModel(model) {
-            return capability.normalized(level) ?? capability.defaultLevel
-        }
-        return level?.trimmedNonEmpty
-    }
-
-    static func thinkingLevels(provider: String, model: String) -> [String] {
-        if let capability = ModelReasoningCapabilities.forModel(model) { return capability.levels }
-        return switch provider.trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased().replacingOccurrences(of: "-", with: "_") {
-        case "gpt", "openai":
-            ["none", "minimal", "low", "medium", "high", "xhigh"]
-        case "deepseek":
-            ["none", "low", "medium", "high", "max"]
-        case "kimi", "kimik2", "moonshot":
-            ["none", "auto", "low", "medium", "high", "xhigh"]
-        default:
-            ["none", "low", "medium", "high", "xhigh"]
-        }
-    }
 }
 
 public enum NativeLocalAgentBootstrapError: LocalizedError {

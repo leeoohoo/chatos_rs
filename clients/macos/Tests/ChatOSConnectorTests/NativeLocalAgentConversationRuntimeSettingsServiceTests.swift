@@ -59,6 +59,19 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
         XCTAssertEqual(putCount, 1)
     }
 
+    func testUsesConfiguredTextDefaultInsteadOfFirstCatalogEntry() async throws {
+        let host = RuntimeSettingsHostStub()
+        let service = NativeLocalAgentConversationRuntimeSettingsService(host: host)
+        let bootstrap = bootstrapResult(
+            firstModel: "gpt-image-1.5",
+            defaultModelConfigRef: "model-2"
+        )
+        try await service.configure(ownerUserID: "user-1", bootstrap: bootstrap)
+
+        let settings = try await service.fetchSettings(sessionID: "plugin-installer-conversation")
+        XCTAssertEqual(settings.selectedModelID, "model-2")
+    }
+
     func testRepairsPersistedUnsupportedLevelsWithoutLosingRemoteBinding() async throws {
         for (selected, enabled, expected) in [("none", false, "low"), ("minimal", true, "low"), ("max", true, "max")] {
             let host = RuntimeSettingsHostStub()
@@ -93,7 +106,10 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
                        options[0].thinkingLevels)
     }
 
-    private func bootstrapResult(firstModel: String = "first") -> NativeLocalAgentBootstrapResult {
+    private func bootstrapResult(
+        firstModel: String = "first",
+        defaultModelConfigRef: String = "model-1"
+    ) -> NativeLocalAgentBootstrapResult {
         let first = LocalAgentModelConfigSnapshot(
             ownerUserID: "user-1",
             modelConfigRef: "model-1",
@@ -141,6 +157,7 @@ final class NativeLocalAgentConversationRuntimeSettingsServiceTests: XCTestCase 
                     thinkingLevels: ["none", "minimal", "low", "medium", "high", "xhigh"]
                 ),
             ],
+            defaultConversationModelConfigRef: defaultModelConfigRef,
             capabilitySnapshot: capability,
             capabilitySnapshotsByModelConfigRef: [
                 "model-1": capability,

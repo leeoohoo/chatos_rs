@@ -89,7 +89,7 @@ async fn create_and_claim_are_atomic_and_idempotent() {
 }
 
 #[tokio::test]
-async fn expired_unknown_step_requires_review_instead_of_replay() {
+async fn expired_model_step_is_requeued_without_user_review() {
     let database_path = std::env::temp_dir().join(format!(
         "chatos-local-agent-storage-{}.sqlite",
         Uuid::new_v4()
@@ -127,7 +127,8 @@ async fn expired_unknown_step_requires_review_instead_of_replay() {
         1
     );
     let recovered = storage.get_run("run-1").await.expect("get").expect("run");
-    assert_eq!(recovered.status, LocalAgentRunStatus::NeedsReview);
+    assert_eq!(recovered.status, LocalAgentRunStatus::ModelReady);
+    assert_eq!(recovered.iteration, 0);
     assert!(recovered.claim_token.is_none());
     storage.pool.close().await;
     drop(storage);
@@ -200,7 +201,7 @@ async fn recovery_claiming_and_retry_deadlines_are_owner_scoped() {
             .expect("get user-1")
             .expect("user-1 run")
             .status,
-        LocalAgentRunStatus::NeedsReview
+        LocalAgentRunStatus::ModelReady
     );
     assert_eq!(
         storage

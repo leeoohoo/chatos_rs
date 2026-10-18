@@ -14,6 +14,7 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
         let ownerUserID: String
         let modelSnapshots: [LocalAgentModelConfigSnapshot]
         let modelOptions: [ConversationModelOption]
+        let defaultConversationModelConfigRef: String
     }
 
     private let client: NativeLocalAgentConversationRuntimeSettingsClient
@@ -29,6 +30,9 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
     ) throws {
         guard !bootstrap.modelSnapshots.isEmpty,
               bootstrap.modelOptions.count == bootstrap.modelSnapshots.count,
+              bootstrap.modelSnapshots.contains(where: {
+                  $0.modelConfigRef == bootstrap.defaultConversationModelConfigRef
+              }),
               bootstrap.modelSnapshots.allSatisfy({ $0.ownerUserID == ownerUserID }),
               bootstrap.modelOptions.allSatisfy({ option in
                   bootstrap.modelSnapshots.contains(where: { $0.modelConfigRef == option.id })
@@ -38,7 +42,8 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
         context = .init(
             ownerUserID: ownerUserID,
             modelSnapshots: bootstrap.modelSnapshots,
-            modelOptions: bootstrap.modelOptions
+            modelOptions: bootstrap.modelOptions,
+            defaultConversationModelConfigRef: bootstrap.defaultConversationModelConfigRef
         )
     }
 
@@ -153,7 +158,9 @@ public actor NativeLocalAgentConversationRuntimeSettingsService:
                 throw error
             }
         }
-        guard let snapshot = context.modelSnapshots.first else {
+        guard let snapshot = context.modelSnapshots.first(where: {
+            $0.modelConfigRef == context.defaultConversationModelConfigRef
+        }) else {
             throw NativeLocalAgentConversationRuntimeSettingsError.notConfigured
         }
         let level = defaultLevel(for: snapshot)
