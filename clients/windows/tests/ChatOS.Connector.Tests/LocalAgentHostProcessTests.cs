@@ -42,11 +42,45 @@ public sealed class LocalAgentHostProcessTests
         AssertReadOnly(arguments, "remote_connection_controller_download_file");
         AssertReadOnly(arguments, "capability_search");
         AssertReadOnly(arguments, "capability_describe");
-        AssertReadOnly(arguments, "capability_skill_activate");
-        AssertReadOnly(arguments, "capability_skill_read_resource");
+        AssertReadOnly(arguments, "agent_skill_activate");
+        AssertReadOnly(arguments, "agent_skill_read_resource");
+        AssertReadOnly(
+            arguments,
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInspectNpmToolName);
+        AssertReadOnly(
+            arguments,
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInspectSourceToolName);
         AssertApprovalExempt(arguments, "capability_invoke");
+        AssertApprovalExempt(
+            arguments,
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInstallSourceToolName);
+        AssertApprovalExempt(
+            arguments,
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInstallNpmToolName);
         Assert.DoesNotContain("project_write", arguments);
+        Assert.DoesNotContain("project_copy", arguments);
+        Assert.DoesNotContain("project_move", arguments);
         Assert.DoesNotContain("terminal_exec", arguments);
+    }
+
+    [Fact]
+    public void BootstrapHostDisablesDurableWorkers()
+    {
+        var options = new LocalAgentHostOptions(
+            @"C:\ChatOS\chatos_local_agent_host.exe",
+            @"C:\ChatOS\local-agent.sqlite3",
+            TimeSpan.FromSeconds(10),
+            new Uri("https://gateway.example/api/memory"),
+            "chatos",
+            TimeSpan.FromSeconds(30));
+
+        var bootstrap = LocalAgentHostProcessLauncher.CreateStartInfo(
+            options, "user-1", new Dictionary<string, string>(), workersEnabled: false);
+        var worker = LocalAgentHostProcessLauncher.CreateStartInfo(
+            options, "user-1", new Dictionary<string, string>(), workersEnabled: true);
+
+        Assert.Contains("--disable-workers", bootstrap.ArgumentList);
+        Assert.DoesNotContain("--disable-workers", worker.ArgumentList);
     }
 
     private static void AssertReadOnly(IReadOnlyList<string> arguments, string toolName)

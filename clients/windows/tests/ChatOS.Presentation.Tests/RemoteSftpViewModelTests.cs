@@ -66,6 +66,22 @@ public sealed class RemoteSftpViewModelTests
         Assert.True(service.LastOverwrite);
     }
 
+    [Fact]
+    public async Task SearchFiltersHiddenEntriesAndCanRevealThem()
+    {
+        var service = new SftpDouble { IncludeHidden = true };
+        var viewModel = new RemoteSftpViewModel(service, new ImmediateUiDispatcher());
+
+        await viewModel.OpenAsync(Connection());
+        Assert.DoesNotContain(viewModel.VisibleEntries, entry => entry.Name == ".env");
+
+        viewModel.ShowsHiddenFiles = true;
+        viewModel.SearchText = "env";
+
+        Assert.Single(viewModel.VisibleEntries);
+        Assert.Equal(".env", viewModel.VisibleEntries[0].Name);
+    }
+
     private static RemoteConnection Connection() => new(
         "remote-1", "Server", "server.example", 22, "deploy", RemoteAuthenticationType.Password,
         true, false, false, "/srv/app", RemoteHostKeyPolicy.Strict, "device-1", "workspace-1",
@@ -80,12 +96,16 @@ public sealed class RemoteSftpViewModelTests
         public string? LastCode { get; private set; }
         public string? LastUploadedPath { get; private set; }
         public bool LastOverwrite { get; private set; }
+        public bool IncludeHidden { get; set; }
 
         public Task<IReadOnlyList<RemoteFileEntry>> ListAsync(string connectionId, string path, string? verificationCode = null, CancellationToken cancellationToken = default)
         {
             LastListedPath = path; LastCode = verificationCode;
             if (RequireVerification) throw new RemoteVerificationRequiredException("OTP:");
-            return Task.FromResult<IReadOnlyList<RemoteFileEntry>>([Directory, File]);
+            IReadOnlyList<RemoteFileEntry> values = IncludeHidden
+                ? [Directory, File, new RemoteFileEntry(".env", "/srv/app/.env", false, false, 4, DateTimeOffset.UtcNow)]
+                : [Directory, File];
+            return Task.FromResult(values);
         }
         public Task<string> ReadTextAsync(string connectionId, string path, string? verificationCode = null, CancellationToken cancellationToken = default) => Task.FromResult("preview");
         public Task DownloadAsync(string connectionId, string remotePath, Stream destination, string? verificationCode = null, CancellationToken cancellationToken = default) => Task.CompletedTask;

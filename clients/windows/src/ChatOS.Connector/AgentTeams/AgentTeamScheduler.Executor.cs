@@ -40,7 +40,8 @@ internal sealed partial class AgentTeamScheduler
         IReadOnlyList<AgentTodoProgress> todoProgress,
         string? pluginInstructions,
         AgentRunReferenceVault references,
-        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments)
+        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments,
+        LocalProjectTypeDefinition? projectType)
     {
         var selectedAssets = SelectAssetSnapshots(assetSnapshots);
         var system = $"""
@@ -49,6 +50,7 @@ internal sealed partial class AgentTeamScheduler
             职业：{profile.Draft.ProfessionKey}
             团队角色：{member.Draft.Role}
             职责：{member.Draft.Responsibility}
+            {ProjectTypeGuidance(projectType)}
 
             {profile.Draft.RolePrompt}
 

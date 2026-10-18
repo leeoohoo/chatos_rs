@@ -75,7 +75,7 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
 
     public Task<IReadOnlyList<AgentRoom>> ListRoomsAsync(
         string ownerUserId,
-        string projectId,
+        string? projectId,
         CancellationToken cancellationToken = default) =>
         _store.ListRoomsAsync(ownerUserId, projectId, includeArchived: false, cancellationToken);
 
@@ -92,6 +92,14 @@ internal sealed class AgentTeamCoordinator : IAgentTeamService
         {
             throw new AgentTeamException(AgentTeamError.NotFound,
                 "The local project is unavailable for an Agent team.");
+        }
+
+        var existingRooms = await _store.ListRoomsAsync(
+            ownerUserId, projectId, includeArchived: false, cancellationToken).ConfigureAwait(false);
+        if (existingRooms.Any(value => value.Kind is AgentConversationKind.ProjectTeam))
+        {
+            throw new AgentTeamException(AgentTeamError.Conflict,
+                "This project already has an active Agent team.");
         }
 
         var room = await _store.CreateRoomAsync(ownerUserId, projectId, draft,

@@ -58,7 +58,15 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
 
     public bool HasRemotes => Remotes.Count > 0;
 
-    public bool CanCommit => HasStagedChanges && CommitMessage.Trim().Length > 0 && !IsMutating;
+    public bool CanOperate => IsRepository && !IsLoading && !IsMutating;
+
+    public bool CanInitializeRepository =>
+        !IsRepository && !IsLoading && !IsMutating && !string.IsNullOrWhiteSpace(ProjectRoot);
+
+    public bool CanCommit => HasStagedChanges &&
+        CommitMessage.Trim().Length > 0 &&
+        !IsLoading &&
+        !IsMutating;
 
     public bool CanCancel => IsLoading || IsMutating;
 
@@ -90,6 +98,7 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
     }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanInitializeRepository))]
     private string? _projectRoot;
 
     [ObservableProperty]
@@ -100,14 +109,21 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCancel))]
+    [NotifyPropertyChangedFor(nameof(CanOperate))]
+    [NotifyPropertyChangedFor(nameof(CanInitializeRepository))]
+    [NotifyPropertyChangedFor(nameof(CanCommit))]
     private bool _isLoading;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanCommit))]
     [NotifyPropertyChangedFor(nameof(CanCancel))]
+    [NotifyPropertyChangedFor(nameof(CanOperate))]
+    [NotifyPropertyChangedFor(nameof(CanInitializeRepository))]
     private bool _isMutating;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanOperate))]
+    [NotifyPropertyChangedFor(nameof(CanInitializeRepository))]
     private bool _isRepository;
 
     [ObservableProperty]
@@ -215,6 +231,13 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void CloseDiff()
+    {
+        SelectedChange = null;
+        SelectedDiff = null;
+    }
+
+    [RelayCommand]
     private Task StageChangeAsync(ProjectGitChange? change) => change is null
         ? Task.CompletedTask
         : MutateAsync(
@@ -236,6 +259,11 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
             .Select(static change => change.Path)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        if (paths.Length == 0)
+        {
+            return Task.CompletedTask;
+        }
+
         return MutateAsync(
             L("全部工作区修改已暂存。", "All working-tree changes were staged."),
             (root, token) => _service.StageAsync(root, paths, token));
@@ -249,6 +277,11 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
             .Select(static change => change.Path)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+        if (paths.Length == 0)
+        {
+            return Task.CompletedTask;
+        }
+
         return MutateAsync(
             L("全部暂存修改已移回工作区。", "All staged changes were moved back to the working tree."),
             (root, token) => _service.UnstageAsync(root, paths, token));
@@ -466,8 +499,35 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
         }
         catch (Exception exception)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message, sessionToken)
-                .ConfigureAwait(false);
+            ProjectGitSnapshot? recoverySnapshot = null;
+            try
+            {
+                // Git mutations such as merge and branch switching can fail after changing the
+                // index or worktree. Match macOS by refreshing the authoritative snapshot so a
+                // conflict is visible immediately instead of leaving the clean pre-operation UI.
+                recoverySnapshot = await _service.SnapshotAsync(root, token).ConfigureAwait(false);
+            }
+            catch (Exception recoveryException) when (
+                recoveryException is not OperationCanceledException || !token.IsCancellationRequested)
+            {
+                // Preserve the original mutation failure. The explicit Refresh action remains
+                // available when the best-effort recovery snapshot also fails.
+            }
+
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (generation != _generation)
+                {
+                    return;
+                }
+
+                if (recoverySnapshot is not null)
+                {
+                    ApplySnapshot(recoverySnapshot);
+                }
+
+                ErrorMessage = exception.Message;
+            }, sessionToken).ConfigureAwait(false);
         }
         finally
         {
@@ -515,11 +575,10 @@ public sealed partial class ProjectGitViewModel : ObservableObject, IDisposable
         if (SelectedChange is not null)
         {
             SelectedChange = Changes.FirstOrDefault(change => change.Path == SelectedChange.Path);
-            if (SelectedChange is null)
-            {
-                SelectedDiff = null;
-            }
         }
+        // Snapshot-producing operations can change the index/worktree side of a path. A diff
+        // loaded before stage, unstage, branch switch, pull or merge is no longer authoritative.
+        SelectedDiff = null;
     }
 
     private void Reset(WorkspaceProject? project)

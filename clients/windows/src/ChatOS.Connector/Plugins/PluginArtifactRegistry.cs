@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -99,6 +100,8 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
         PluginRuntimeIdentity identity,
         string ownerUserId,
         string deviceId,
+        string? workspaceRoot,
+        IReadOnlySet<string> permissionSnapshot,
         string artifactDirectory,
         string toolName,
         JsonElement result,
@@ -110,6 +113,18 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
             !meta.TryGetProperty("chatos/artifacts", out var candidatesValue))
         {
             return result;
+        }
+
+        if (!permissionSnapshot.Contains("artifact.create"))
+        {
+            throw new PluginRuntimeException(
+                "Plugin is not allowed to register local artifacts.");
+        }
+        if (string.IsNullOrWhiteSpace(identity.WorkspaceId) ||
+            string.IsNullOrWhiteSpace(workspaceRoot))
+        {
+            throw new PluginRuntimeException(
+                "Plugin project artifacts require a project workspace.");
         }
 
         if (candidatesValue.ValueKind != JsonValueKind.Array)
@@ -129,7 +144,9 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
         }
 
         var root = ResolveArtifactRoot(artifactDirectory);
-        var prepared = new List<(string ProducerId, RegisteredArtifact Artifact)>(candidates.Length);
+        var projectRoot = ResolveProjectRoot(workspaceRoot);
+        var preparedCandidates = new List<(string ProducerId, McpArtifactCandidate Candidate,
+            string SourcePath, long Size, string Sha256)>(candidates.Length);
         var producerIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var value in candidates)
         {
@@ -137,10 +154,9 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
             McpArtifactCandidate candidate;
             try
             {
-                candidate = value.Deserialize<McpArtifactCandidate>(JsonOptions)
-                    ?? throw new JsonException("Artifact candidate is empty.");
+                candidate = ParseCandidate(value);
             }
-            catch (JsonException exception)
+            catch (Exception exception) when (exception is JsonException or InvalidOperationException)
             {
                 throw new PluginRuntimeException("Plugin MCP Artifact candidate is invalid.", exception);
             }
@@ -153,8 +169,9 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
 
             var path = ResolveArtifactCandidate(root, candidate.RelativePath);
             var (size, hash) = await HashAsync(path, cancellationToken).ConfigureAwait(false);
-            if (size != candidate.SizeBytes ||
-                !string.Equals(hash, candidate.Sha256, StringComparison.Ordinal))
+            if (candidate.SizeBytes is { } declaredSize && size != declaredSize ||
+                candidate.Sha256 is { } declaredHash &&
+                !string.Equals(hash, declaredHash, StringComparison.Ordinal))
             {
                 throw new PluginRuntimeException(
                     "Plugin MCP Artifact size or SHA-256 does not match its candidate descriptor.");
@@ -166,29 +183,58 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
                     "Plugin MCP Artifact MIME type does not match its file extension.");
             }
 
-            var artifactId = $"pa_{Guid.NewGuid():N}";
-            var descriptor = new PluginArtifactDescriptor(
-                artifactId,
-                new PluginArtifactOwner(
-                    ownerUserId,
-                    identity.RunId,
-                    deviceId,
-                    identity.WorkspaceId ?? string.Empty,
-                    identity.PluginId,
-                    identity.ReleaseId,
-                    identity.ArtifactSha256,
-                    identity.ComponentKey,
-                    identity.AdapterSessionId),
-                $"chatos-plugin-artifacts/{identity.AdapterSessionId}/{artifactId}/{candidate.DisplayName}",
-                candidate.DisplayName,
-                candidate.MediaType,
-                size,
-                hash,
-                DateTimeOffset.UtcNow,
-                toolName,
-                Downloadable: true,
-                Mutable: false);
-            prepared.Add((candidate.ProducerArtifactId, new RegisteredArtifact(descriptor, path)));
+            preparedCandidates.Add((candidate.ProducerArtifactId, candidate, path, size, hash));
+        }
+
+        var prepared = new List<(string ProducerId, RegisteredArtifact Artifact)>(candidates.Length);
+        var createdDirectories = new List<string>();
+        try
+        {
+            foreach (var value in preparedCandidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var artifactId = $"pa_{Guid.NewGuid():N}";
+                var relativePath = string.Join('/', "chatos-plugin-artifacts",
+                    SafePathComponent(identity.AdapterSessionId), artifactId,
+                    value.Candidate.DisplayName);
+                var parent = CreateManagedDirectory(projectRoot,
+                    ["chatos-plugin-artifacts", SafePathComponent(identity.AdapterSessionId), artifactId]);
+                createdDirectories.Add(parent);
+                var destination = Path.Combine(parent, value.Candidate.DisplayName);
+                await CopyAndValidateAsync(
+                    value.SourcePath, destination, value.Size, value.Sha256, cancellationToken)
+                    .ConfigureAwait(false);
+                var descriptor = new PluginArtifactDescriptor(
+                    artifactId,
+                    new PluginArtifactOwner(
+                        ownerUserId,
+                        identity.RunId,
+                        deviceId,
+                        identity.WorkspaceId,
+                        identity.PluginId,
+                        identity.ReleaseId,
+                        identity.ArtifactSha256,
+                        identity.ComponentKey,
+                        identity.AdapterSessionId),
+                    relativePath,
+                    value.Candidate.DisplayName,
+                    value.Candidate.MediaType,
+                    value.Size,
+                    value.Sha256,
+                    DateTimeOffset.UtcNow,
+                    toolName,
+                    Downloadable: true,
+                    Mutable: false);
+                prepared.Add((value.ProducerId, new RegisteredArtifact(descriptor, destination)));
+            }
+        }
+        catch
+        {
+            foreach (var directory in createdDirectories.AsEnumerable().Reverse())
+            {
+                TryDeleteDirectory(directory);
+            }
+            throw;
         }
 
         foreach (var value in prepared)
@@ -207,6 +253,35 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
                 producer_artifact_id = value.ProducerId,
                 artifact = value.Artifact.Descriptor,
             }, JsonOptions)).ToArray());
+        if (prepared.Count != 0)
+        {
+            var deliveries = prepared.Select(value => new
+            {
+                display_name = value.Artifact.Descriptor.DisplayName,
+                workspace_relative_path = value.Artifact.Descriptor.WorkspaceRelativePath,
+                markdown = MarkdownLink(value.Artifact.Descriptor),
+            }).ToArray();
+            var deliveryText = "ChatOS managed delivery links follow. In the final response, use the exact " +
+                "Markdown target below; do not replace it with the producer relativePath, a basename, " +
+                "an absolute path, or a file:// URL.\n" +
+                string.Join('\n', deliveries.Select(value => $"- {value.markdown}"));
+            var content = rootNode["content"] as JsonArray ?? [];
+            content.Insert(0, JsonSerializer.SerializeToNode(new
+            {
+                type = "text",
+                text = deliveryText,
+            }, JsonOptions));
+            rootNode["content"] = content;
+            if (rootNode["structuredContent"] is JsonObject structured)
+            {
+                structured["chatos_managed_delivery"] = JsonSerializer.SerializeToNode(new
+                {
+                    instruction = "Use one of these exact Markdown values in the final response. " +
+                        "These are Host-registered downloadable project artifacts.",
+                    links = deliveries,
+                }, JsonOptions);
+            }
+        }
         return JsonSerializer.SerializeToElement(rootNode, JsonOptions);
     }
 
@@ -219,6 +294,107 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
         }
 
         return Path.TrimEndingDirectorySeparator(root);
+    }
+
+    private static string ResolveProjectRoot(string path)
+    {
+        var root = Path.GetFullPath(path);
+        if (!Directory.Exists(root) || IsReparsePoint(root))
+        {
+            throw new PluginRuntimeException("Plugin project workspace is unavailable or unsafe.");
+        }
+
+        return Path.TrimEndingDirectorySeparator(root);
+    }
+
+    private static string CreateManagedDirectory(string root, IReadOnlyList<string> components)
+    {
+        var cursor = root;
+        foreach (var component in components)
+        {
+            cursor = Path.Combine(cursor, component);
+            if (File.Exists(cursor) || Directory.Exists(cursor))
+            {
+                if (!Directory.Exists(cursor) || IsReparsePoint(cursor))
+                {
+                    throw new PluginRuntimeException(
+                        "Plugin artifact project directory is unsafe.");
+                }
+            }
+            else
+            {
+                Directory.CreateDirectory(cursor);
+            }
+        }
+
+        return cursor;
+    }
+
+    private static async Task CopyAndValidateAsync(
+        string source,
+        string destination,
+        long expectedSize,
+        string expectedSha256,
+        CancellationToken cancellationToken)
+    {
+        await using var input = new FileStream(
+            source,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using (var output = new FileStream(
+            destination,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.SequentialScan))
+        {
+            await input.CopyToAsync(output, 64 * 1024, cancellationToken).ConfigureAwait(false);
+            await output.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var (size, sha256) = await HashAsync(destination, cancellationToken).ConfigureAwait(false);
+        if (size != expectedSize || !string.Equals(sha256, expectedSha256, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin artifact changed while being persisted.");
+        }
+    }
+
+    private static string SafePathComponent(string value)
+    {
+        var result = new string(value.Where(character =>
+            char.IsAsciiLetterOrDigit(character) || character is '-' or '_').ToArray());
+        return result.Length != 0
+            ? result
+            : throw new PluginRuntimeException("Plugin artifact session identity is invalid.");
+    }
+
+    private static string MarkdownLink(PluginArtifactDescriptor descriptor) =>
+        $"[{MarkdownLabel(descriptor.DisplayName)}]({MarkdownTarget(descriptor.WorkspaceRelativePath)})";
+
+    private static string MarkdownLabel(string value) => value
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("[", "\\[", StringComparison.Ordinal)
+        .Replace("]", "\\]", StringComparison.Ordinal);
+
+    private static string MarkdownTarget(string value) => string.Join('/',
+        value.Split('/').Select(Uri.EscapeDataString));
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 
     private static string ResolveArtifactCandidate(string root, string relativePath)
@@ -325,19 +501,73 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
     private static void ValidateCandidate(McpArtifactCandidate candidate)
     {
         if (candidate.ProducerArtifactId.Trim() != candidate.ProducerArtifactId ||
-            candidate.ProducerArtifactId.Length is < 1 or > 256 ||
+            Encoding.UTF8.GetByteCount(candidate.ProducerArtifactId) is < 1 or > 256 ||
+            candidate.ProducerArtifactId.Any(char.IsControl) ||
             candidate.DisplayName.Trim() != candidate.DisplayName ||
-            candidate.DisplayName.Length is < 1 or > 512 ||
+            Encoding.UTF8.GetByteCount(candidate.DisplayName) is < 1 or > 512 ||
             candidate.DisplayName.IndexOfAny(['/', '\\']) >= 0 ||
+            candidate.DisplayName.Any(char.IsControl) ||
             candidate.MediaType.Trim() != candidate.MediaType ||
-            candidate.MediaType.Length is < 1 or > 256 ||
+            Encoding.UTF8.GetByteCount(candidate.MediaType) is < 1 or > 256 ||
+            candidate.MediaType.Any(char.IsControl) ||
             candidate.SizeBytes is < 0 or > MaximumArtifactBytes ||
-            candidate.Sha256.Length != 64 ||
-            candidate.Sha256.Any(value => !(char.IsAsciiDigit(value) || value is >= 'a' and <= 'f')))
+            candidate.Sha256 is { } sha256 &&
+            (sha256.Length != 64 ||
+             sha256.Any(value => !(char.IsAsciiDigit(value) || value is >= 'a' and <= 'f'))))
         {
             throw new PluginRuntimeException("Plugin MCP Artifact candidate identity is invalid.");
         }
     }
+
+    private static McpArtifactCandidate ParseCandidate(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("Artifact candidate is not an object.");
+        }
+
+        var keys = value.EnumerateObject().Select(property => property.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        var baseKeys = new HashSet<string>(
+            ["producer_artifact_id", "relative_path", "display_name", "media_type"],
+            StringComparer.Ordinal);
+        var legacyBaseKeys = new HashSet<string>(
+            ["producer_artifact_id", "relative_path", "display_name", "mime_type"],
+            StringComparer.Ordinal);
+        var integrityKeys = new HashSet<string>(["size_bytes", "sha256"], StringComparer.Ordinal);
+        if (!keys.SetEquals(baseKeys) && !keys.SetEquals(legacyBaseKeys) &&
+            !keys.SetEquals(baseKeys.Concat(integrityKeys)) &&
+            !keys.SetEquals(legacyBaseKeys.Concat(integrityKeys)))
+        {
+            throw new JsonException("Artifact candidate fields are invalid.");
+        }
+
+        var mediaProperty = keys.Contains("media_type") ? "media_type" : "mime_type";
+        var producerArtifactId = RequiredJsonString(value, "producer_artifact_id");
+        var relativePath = RequiredJsonString(value, "relative_path");
+        var displayName = RequiredJsonString(value, "display_name");
+        var mediaType = RequiredJsonString(value, mediaProperty);
+        long? sizeBytes = null;
+        string? sha256 = null;
+        if (keys.Contains("size_bytes"))
+        {
+            if (!value.GetProperty("size_bytes").TryGetInt64(out var declaredSize))
+            {
+                throw new JsonException("Artifact size is invalid.");
+            }
+            sizeBytes = declaredSize;
+            sha256 = RequiredJsonString(value, "sha256");
+        }
+
+        return new McpArtifactCandidate(
+            producerArtifactId, relativePath, displayName, mediaType, sizeBytes, sha256);
+    }
+
+    private static string RequiredJsonString(JsonElement value, string property) =>
+        value.GetProperty(property).ValueKind == JsonValueKind.String
+            ? value.GetProperty(property).GetString()
+                ?? throw new JsonException($"Artifact {property} is empty.")
+            : throw new JsonException($"Artifact {property} is not a string.");
 
     private static IReadOnlyList<string> MediaTypesForPath(string path) =>
         Path.GetExtension(path).ToLowerInvariant() switch
@@ -396,19 +626,11 @@ internal sealed class PluginArtifactRegistry : IPluginArtifactService
 
     private sealed record RegisteredArtifact(PluginArtifactDescriptor Descriptor, string AbsolutePath);
 
-    private sealed record McpArtifactCandidate
-    {
-        [JsonPropertyName("producer_artifact_id")]
-        public required string ProducerArtifactId { get; init; }
-        [JsonPropertyName("relative_path")]
-        public required string RelativePath { get; init; }
-        [JsonPropertyName("display_name")]
-        public required string DisplayName { get; init; }
-        [JsonPropertyName("media_type")]
-        public required string MediaType { get; init; }
-        [JsonPropertyName("size_bytes")]
-        public required long SizeBytes { get; init; }
-        [JsonPropertyName("sha256")]
-        public required string Sha256 { get; init; }
-    }
+    private sealed record McpArtifactCandidate(
+        string ProducerArtifactId,
+        string RelativePath,
+        string DisplayName,
+        string MediaType,
+        long? SizeBytes,
+        string? Sha256);
 }

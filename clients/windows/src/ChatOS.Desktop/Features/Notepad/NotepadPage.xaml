@@ -6,90 +6,216 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:core="using:ChatOS.Core.Domain"
     mc:Ignorable="d">
-    <Grid Background="{StaticResource ChatOSContentBackgroundBrush}">
+    <Grid
+        x:Name="NotepadRoot"
+        AutomationProperties.AutomationId="ChatOS.Notepad.Root"
+        AutomationProperties.Name="{x:Bind Localization.Notepad, Mode=OneWay}"
+        Background="Transparent">
         <Grid.RowDefinitions>
             <RowDefinition Height="54" />
             <RowDefinition Height="1" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <Grid Padding="14,0" ColumnSpacing="8">
+
+        <Grid Padding="18,0" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="280" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Button Click="OnCloseClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.CloseNotepad, Mode=OneWay}"><FontIcon Glyph="&#xE72B;" /></Button>
-            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Text="{x:Bind Localization.Notepad, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-            <TextBox Grid.Column="3" VerticalAlignment="Center" PlaceholderText="{x:Bind Localization.SearchNotes, Mode=OneWay}" Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="OnSearchKeyDown" />
-            <Button Grid.Column="4" Command="{x:Bind ViewModel.SearchCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.Search, Mode=OneWay}"><FontIcon Glyph="&#xE721;" /></Button>
-            <ProgressRing Grid.Column="5" Width="18" Height="18" IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}" />
+            <FontIcon Glyph="&#xE70B;" FontSize="15" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+            <TextBlock Grid.Column="1" Margin="7,0,0,0" VerticalAlignment="Center" Text="{x:Bind Localization.Notepad, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+            <ProgressRing Grid.Column="2" Width="18" Height="18" Margin="0,0,4,0" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+            <Button
+                Grid.Column="3"
+                AutomationProperties.AutomationId="ChatOS.Notepad.Refresh"
+                AutomationProperties.Name="{x:Bind Localization.Refresh, Mode=OneWay}"
+                Command="{x:Bind ViewModel.RefreshCommand}"
+                Style="{StaticResource ChatOSSecondaryButtonStyle}">
+                <StackPanel Orientation="Horizontal" Spacing="5"><FontIcon Glyph="&#xE72C;" FontSize="12" /><TextBlock Text="{x:Bind Localization.Refresh, Mode=OneWay}" /></StackPanel>
+            </Button>
+            <Button
+                Grid.Column="4"
+                AutomationProperties.AutomationId="ChatOS.Notepad.Close"
+                AutomationProperties.Name="{x:Bind Localization.CloseNotepad, Mode=OneWay}"
+                Click="OnCloseClick"
+                IsEnabled="{x:Bind ViewModel.CanClose, Mode=OneWay}"
+                Content="{x:Bind Localization.Close, Mode=OneWay}"
+                Style="{StaticResource ChatOSSecondaryButtonStyle}" />
         </Grid>
+
         <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
-        <Grid Grid.Row="2">
+
+        <ScrollViewer
+            Grid.Row="2"
+            AutomationProperties.AutomationId="ChatOS.Notepad.WorkspaceScroll"
+            HorizontalScrollBarVisibility="Auto"
+            HorizontalScrollMode="Enabled"
+            VerticalScrollBarVisibility="Disabled"
+            VerticalScrollMode="Disabled"
+            HorizontalContentAlignment="Stretch"
+            VerticalContentAlignment="Stretch">
+        <Grid MinWidth="1120">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="290" />
+                <ColumnDefinition Width="340" MinWidth="280" MaxWidth="420" />
                 <ColumnDefinition Width="1" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" MinWidth="720" />
             </Grid.ColumnDefinitions>
-            <Grid Background="{StaticResource ChatOSSidebarBackgroundBrush}">
+
+            <Grid Grid.Column="0" Background="{StaticResource ChatOSContentBackgroundBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="180" />
-                    <RowDefinition Height="1" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="1" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <Grid Padding="10,8" ColumnSpacing="4">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="{x:Bind Localization.AllNotes, Mode=OneWay}" Click="OnRootFolderClick" />
-                    <Button Grid.Column="1" Click="OnCreateFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.NewFolder, Mode=OneWay}"><FontIcon Glyph="&#xE8B7;" FontSize="12" /></Button>
+
+                <Grid Margin="10,10,10,6" ColumnSpacing="4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox
+                        AutomationProperties.AutomationId="ChatOS.Notepad.Search"
+                        IsEnabled="{x:Bind ViewModel.CanSearch, Mode=OneWay}"
+                        AutomationProperties.Name="{x:Bind Localization.SearchNotes, Mode=OneWay}"
+                        PlaceholderText="{x:Bind Localization.SearchNotes, Mode=OneWay}"
+                        Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        KeyDown="OnSearchKeyDown" />
+                    <Button Grid.Column="1" AutomationProperties.Name="{x:Bind Localization.Search, Mode=OneWay}" Command="{x:Bind ViewModel.SearchCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.Search, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE721;" FontSize="13" />
+                    </Button>
                 </Grid>
-                <ListView Grid.Row="1" ItemsSource="{x:Bind ViewModel.Folders}" IsItemClickEnabled="True" ItemClick="OnFolderClick" SelectionMode="None" Padding="8,0">
-                    <ListView.ItemTemplate><DataTemplate x:DataType="core:NotepadFolderItem">
-                        <Grid Padding="4" ColumnSpacing="4">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="22" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <FontIcon Glyph="&#xE8B7;" FontSize="12" />
-                            <StackPanel Grid.Column="1"><TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="{x:Bind Path}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                            <Button Grid.Column="2" Click="OnRenameFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}"><FontIcon Glyph="&#xE70F;" FontSize="11" /></Button>
-                            <Button Grid.Column="3" Click="OnDeleteFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}"><FontIcon Glyph="&#xE74D;" FontSize="11" Foreground="{StaticResource ChatOSFailureBrush}" /></Button>
-                        </Grid>
-                    </DataTemplate></ListView.ItemTemplate>
-                </ListView>
+
+                <Grid Grid.Row="1" Padding="14,4,14,8" ColumnSpacing="5">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.CurrentFolderLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal">
+                        <TextBlock Text="/" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock Text="{x:Bind ViewModel.SelectedFolder, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" AutomationProperties.Name="{x:Bind Localization.NewFolder, Mode=OneWay}" Click="OnCreateFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.NewFolder, Mode=OneWay}"><FontIcon Glyph="&#xE8B7;" FontSize="12" /></Button>
+                    <Button Grid.Column="3" AutomationProperties.AutomationId="ChatOS.Notepad.CreateNote" AutomationProperties.Name="{x:Bind Localization.NewNote, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanReload, Mode=OneWay}" Click="OnCreateNoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.NewNote, Mode=OneWay}"><FontIcon Glyph="&#xE710;" FontSize="12" /></Button>
+                </Grid>
+
                 <Border Grid.Row="2" Background="{StaticResource ChatOSBorderBrush}" />
-                <Grid Grid.Row="3" Padding="10,8"><TextBlock Text="{x:Bind Localization.Notes, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" /><Button HorizontalAlignment="Right" Click="OnCreateNoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.NewNote, Mode=OneWay}"><FontIcon Glyph="&#xE710;" /></Button></Grid>
-                <ListView Grid.Row="4" ItemsSource="{x:Bind ViewModel.Notes}" IsItemClickEnabled="True" ItemClick="OnNoteClick" SelectionMode="Single" SelectedItem="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" Padding="8">
-                    <ListView.ItemTemplate><DataTemplate x:DataType="core:NotepadNote">
-                        <StackPanel Padding="5" Spacing="2"><TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="{x:Bind Folder}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                    </DataTemplate></ListView.ItemTemplate>
-                </ListView>
+
+                <Grid Grid.Row="3">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Padding="10,10,10,20" Spacing="4">
+                            <ToggleButton AutomationProperties.AutomationId="ChatOS.Notepad.RootFolder" AutomationProperties.Name="{x:Bind Localization.RootFolder, Mode=OneWay}" IsChecked="{x:Bind ViewModel.IsRootFolderSelected, Mode=OneWay}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Click="OnRootFolderClick" Padding="10,7">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <FontIcon Glyph="&#xE8B7;" FontSize="12" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind Localization.RootFolder, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                </Grid>
+                            </ToggleButton>
+
+                            <ListView
+                                AutomationProperties.AutomationId="ChatOS.Notepad.Folders"
+                                AutomationProperties.Name="{x:Bind Localization.Folders, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.Folders}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnFolderClick"
+                                SelectionChanged="OnFolderSelectionChanged"
+                                SelectionMode="Single"
+                                SelectedItem="{x:Bind ViewModel.SelectedFolderItem, Mode=OneWay}">
+                                <ListView.ItemTemplate><DataTemplate x:DataType="core:NotepadFolderItem">
+                                    <Grid Padding="5" ColumnSpacing="5">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="20" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <FontIcon Glyph="&#xE8B7;" FontSize="12" />
+                                        <StackPanel Grid.Column="1"><TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="{x:Bind Path}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                        <Button Grid.Column="2" AutomationProperties.Name="重命名文件夹" Click="OnRenameFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}"><FontIcon Glyph="&#xE70F;" FontSize="11" /></Button>
+                                        <Button Grid.Column="3" AutomationProperties.Name="删除文件夹" Click="OnDeleteFolderClick" Style="{StaticResource ChatOSToolbarButtonStyle}"><FontIcon Glyph="&#xE74D;" FontSize="11" Foreground="{StaticResource ChatOSFailureBrush}" /></Button>
+                                    </Grid>
+                                </DataTemplate></ListView.ItemTemplate>
+                            </ListView>
+
+                            <Border Height="1" Margin="0,6" Background="{StaticResource ChatOSBorderBrush}" />
+                            <TextBlock Margin="8,0,0,4" Text="{x:Bind Localization.Notes, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <ListView
+                                AutomationProperties.AutomationId="ChatOS.Notepad.Notes"
+                                AutomationProperties.Name="{x:Bind Localization.Notes, Mode=OneWay}"
+                                ItemsSource="{x:Bind ViewModel.Notes}"
+                                IsItemClickEnabled="True"
+                                ItemClick="OnNoteClick"
+                                SelectionMode="Single"
+                                SelectedItem="{x:Bind ViewModel.SelectedResultNote, Mode=OneWay}">
+                                <ListView.ItemTemplate><DataTemplate x:DataType="core:NotepadNote">
+                                    <StackPanel Padding="5" Spacing="2"><TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="{x:Bind Folder}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                </DataTemplate></ListView.ItemTemplate>
+                            </ListView>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasNotes, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                        <FontIcon Glyph="&#xE70B;" FontSize="28" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind FormatEmptyNotesTitle(ViewModel.IsSearchActive, Localization.Language), Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind FormatEmptyNotesDescription(ViewModel.IsSearchActive, Localization.Language), Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                </Grid>
             </Grid>
+
             <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
-            <Grid Grid.Column="2" Padding="18" RowSpacing="12">
-                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="1" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <TextBox Header="{x:Bind Localization.Title, Mode=OneWay}" Text="{x:Bind ViewModel.Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" />
-                    <Button Grid.Column="1" Content="{x:Bind Localization.Preview, Mode=OneWay}" Click="OnPreviewModeClick" />
-                    <Button Grid.Column="2" Content="{x:Bind Localization.Edit, Mode=OneWay}" Click="OnEditModeClick" />
-                    <Button Grid.Column="3" Content="{x:Bind Localization.Split, Mode=OneWay}" Click="OnSplitModeClick" />
-                    <Button Grid.Column="4" Content="{x:Bind Localization.Export, Mode=OneWay}" Click="OnExportClick" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" />
-                    <Button Grid.Column="5" Content="{x:Bind Localization.Delete, Mode=OneWay}" Click="OnDeleteNoteClick" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" />
-                    <Button Grid.Column="6" Content="{x:Bind Localization.Save, Mode=OneWay}" Command="{x:Bind ViewModel.SaveCommand}" IsEnabled="{x:Bind ViewModel.IsDirty, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+
+            <Grid Grid.Column="2" Background="{StaticResource ChatOSContentBackgroundBrush}">
+                <Grid.RowDefinitions><RowDefinition Height="52" /><RowDefinition Height="1" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+
+                <Grid Padding="14,0" ColumnSpacing="7">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid VerticalAlignment="Center" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="{x:Bind ViewModel.Title, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock Grid.Column="1" AutomationProperties.AutomationId="ChatOS.Notepad.Unsaved" Text="{x:Bind FormatUnsavedChanges(Localization.Language), Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.IsDirty, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    </Grid>
+                    <StackPanel Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <RadioButton x:Name="EditModeButton" MinWidth="0" MinHeight="34" GroupName="NotepadDisplayMode" AutomationProperties.AutomationId="ChatOS.Notepad.Mode.Edit" Content="{x:Bind Localization.Edit, Mode=OneWay}" Checked="OnEditModeClick" />
+                        <RadioButton x:Name="PreviewModeButton" MinWidth="0" MinHeight="34" GroupName="NotepadDisplayMode" AutomationProperties.AutomationId="ChatOS.Notepad.Mode.Preview" Content="{x:Bind Localization.Preview, Mode=OneWay}" Checked="OnPreviewModeClick" />
+                        <RadioButton x:Name="SplitModeButton" MinWidth="0" MinHeight="34" GroupName="NotepadDisplayMode" AutomationProperties.AutomationId="ChatOS.Notepad.Mode.Split" Content="{x:Bind Localization.Split, Mode=OneWay}" Checked="OnSplitModeClick" />
+                    </StackPanel>
+                    <Button Grid.Column="4" Width="Auto" Padding="8,0" Content="{x:Bind Localization.Export, Mode=OneWay}" Click="OnExportClick" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
+                    <Button Grid.Column="5" Width="Auto" Padding="8,0" AutomationProperties.AutomationId="ChatOS.Notepad.Copy" AutomationProperties.Name="{x:Bind Localization.Copy, Mode=OneWay}" Content="{x:Bind Localization.Copy, Mode=OneWay}" Click="OnCopyClick" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
+                    <Button Grid.Column="6" Width="Auto" Padding="8,0" AutomationProperties.AutomationId="ChatOS.Notepad.Save" Content="{x:Bind Localization.Save, Mode=OneWay}" Command="{x:Bind ViewModel.SaveCommand}" IsEnabled="{x:Bind ViewModel.CanSave, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                        <Button.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="S" Modifiers="Control" ScopeOwner="{x:Bind NotepadRoot}" Invoked="OnSaveAcceleratorInvoked" />
+                        </Button.KeyboardAccelerators>
+                    </Button>
+                    <Button Grid.Column="7" Width="Auto" Padding="8,0" Content="{x:Bind Localization.Delete, Mode=OneWay}" Click="OnDeleteNoteClick" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
                 </Grid>
-                <TextBox Grid.Row="1" Header="{x:Bind Localization.Tags, Mode=OneWay}" PlaceholderText="{x:Bind Localization.CommaSeparated, Mode=OneWay}" Text="{x:Bind ViewModel.TagsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{x:Bind ViewModel.HasSelection, Mode=OneWay}" />
-                <Border Grid.Row="2" Background="{StaticResource ChatOSBorderBrush}" />
-                <Grid Grid.Row="3" ColumnSpacing="12">
-                    <Grid.ColumnDefinitions><ColumnDefinition x:Name="PreviewColumn" Width="*" /><ColumnDefinition x:Name="EditorColumn" Width="0" /></Grid.ColumnDefinitions>
-                    <Border Padding="16" Style="{StaticResource ChatOSCardStyle}" Visibility="{x:Bind ViewModel.IsPreviewVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"><ScrollViewer VerticalScrollBarVisibility="Auto"><RichTextBlock x:Name="MarkdownPreview" IsTextSelectionEnabled="True" /></ScrollViewer></Border>
-                    <TextBox Grid.Column="1" AcceptsReturn="True" FontFamily="Cascadia Mono, Consolas" ScrollViewer.HorizontalScrollBarVisibility="Auto" Text="{x:Bind ViewModel.Content, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="NoWrap" ScrollViewer.VerticalScrollBarVisibility="Auto" Visibility="{x:Bind ViewModel.IsEditorVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                    <StackPanel Grid.ColumnSpan="2" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}"><FontIcon Glyph="&#xE70B;" FontSize="34" Foreground="{StaticResource ChatOSTertiaryTextBrush}" /><TextBlock Text="{x:Bind Localization.SelectOrCreateNote, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" /></StackPanel>
+
+                <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+                <Grid Grid.Row="2" Padding="14">
+                    <Grid RowSpacing="8" Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                        <TextBox IsReadOnly="{x:Bind ViewModel.IsEditorReadOnly, Mode=OneWay}" AutomationProperties.AutomationId="ChatOS.Notepad.Title" AutomationProperties.Name="{x:Bind Localization.Title, Mode=OneWay}" PlaceholderText="{x:Bind Localization.Title, Mode=OneWay}" Text="{x:Bind ViewModel.Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBox Grid.Row="1" IsReadOnly="{x:Bind ViewModel.IsEditorReadOnly, Mode=OneWay}" AutomationProperties.AutomationId="ChatOS.Notepad.Tags" AutomationProperties.Name="{x:Bind Localization.Tags, Mode=OneWay}" PlaceholderText="{x:Bind Localization.CommaSeparated, Mode=OneWay}" Text="{x:Bind ViewModel.TagsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <Grid x:Name="BodyPanes" Grid.Row="2">
+                            <Grid.ColumnDefinitions><ColumnDefinition x:Name="EditorColumn" Width="0" /><ColumnDefinition x:Name="PreviewColumn" Width="*" /></Grid.ColumnDefinitions>
+                            <TextBox IsReadOnly="{x:Bind ViewModel.IsEditorReadOnly, Mode=OneWay}" AutomationProperties.AutomationId="ChatOS.Notepad.Content" AutomationProperties.Name="{x:Bind Localization.NoteContent, Mode=OneWay}" AcceptsReturn="True" FontFamily="Cascadia Mono, Consolas" ScrollViewer.HorizontalScrollBarVisibility="Auto" Text="{x:Bind ViewModel.Content, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="NoWrap" ScrollViewer.VerticalScrollBarVisibility="Auto" Visibility="{x:Bind ViewModel.IsEditorVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Border Grid.Column="1" Padding="14" Style="{StaticResource ChatOSCardStyle}" Visibility="{x:Bind ViewModel.IsPreviewVisible, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"><ScrollViewer VerticalScrollBarVisibility="Auto"><RichTextBlock x:Name="MarkdownPreview" IsTextSelectionEnabled="True" /></ScrollViewer></Border>
+                        </Grid>
+                    </Grid>
+
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind ViewModel.HasSelection, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                        <FontIcon Glyph="&#xE70B;" FontSize="32" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind Localization.SelectNote, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind Localization.SelectNoteDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
                 </Grid>
             </Grid>
         </Grid>
+
+        </ScrollViewer>
+
         <StackPanel Grid.Row="3" Margin="14,6" Spacing="3"><TextBlock Text="{x:Bind ViewModel.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" /><TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" /></StackPanel>
     </Grid>
 </UserControl>

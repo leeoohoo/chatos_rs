@@ -76,23 +76,28 @@ public sealed partial class StoryStudioViewModel
         var status = segment.PendingVideoJobStatus ?? "unknown";
         var digest = segment.PendingVideoRequestDigest!;
         var guidance = segment.PendingVideoGuidance;
+        var session = _session;
         segment.ClearPendingVideoJob();
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             await PersistCurrentAsync(cancellationToken);
-            StatusMessage = "已清除本机视频任务记录，可以重新提交视频";
+            if (session == _session)
+                StatusMessage = "已清除本机视频任务记录，可以重新提交视频";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             segment.SetPendingVideoJob(id, status, digest, guidance);
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
         }
         finally
         {
-            IsBusy = false;
-            NotifyVideoJobChanged();
+            if (session == _session)
+            {
+                IsBusy = false;
+                NotifyVideoJobChanged();
+            }
         }
     }
 
@@ -105,8 +110,16 @@ public sealed partial class StoryStudioViewModel
     {
         var context = CaptureGenerationContext();
         var model = ProjectVideoModel;
-        if (context is null || model is null || (resume && !CanResumeSelectedVideo) ||
-            (!resume && !CanGenerateVideo)) return;
+        if (context is null || model is null) return;
+        var canStart = resume
+            ? CanResumeSelectedVideo
+            : confirmedRegeneration
+                ? context.Segment.VideoPath is { Length: > 0 } &&
+                  (requestedGuidance == StoryVideoGuidance.SourceVideo
+                      ? CanUseSourceVideo(context.Segment, model)
+                      : CanGenerateVideo)
+                : CanGenerateVideo;
+        if (!canStart) return;
         if (expectedSegmentId is not null && expectedSegmentId != context.Segment.Id) return;
         if (!resume && context.Segment.VideoPath is { Length: > 0 })
         {
@@ -145,20 +158,29 @@ public sealed partial class StoryStudioViewModel
         }
         catch (OperationCanceledException)
         {
-            VideoProgress = null;
-            StatusMessage = context.Segment.HasPendingVideoJob
-                ? "已停止等待；任务记录已保存，稍后可继续查询和下载"
-                : "已停止等待剧情视频";
+            if (context.Session == _session)
+            {
+                VideoProgress = null;
+                StatusMessage = context.Segment.HasPendingVideoJob
+                    ? "已停止等待；任务记录已保存，稍后可继续查询和下载"
+                    : "已停止等待剧情视频";
+            }
         }
         catch (Exception exception)
         {
-            ErrorMessage = exception.Message;
-            VideoProgress = new VideoGenerationProgress("failed");
+            if (context.Session == _session)
+            {
+                ErrorMessage = exception.Message;
+                VideoProgress = new VideoGenerationProgress("failed");
+            }
         }
         finally
         {
-            IsBusy = false;
-            NotifyVideoJobChanged();
+            if (context.Session == _session)
+            {
+                IsBusy = false;
+                NotifyVideoJobChanged();
+            }
         }
     }
 
@@ -216,9 +238,34 @@ public sealed partial class StoryStudioViewModel
         {
             result = await _media.GenerateVideoAsync(request, progress, cancellationToken);
         }
-        var history = await _history.SaveVideoAsync(context.Owner, prompt, result, cancellationToken);
-        var relative = await _store.ImportAssetAsync(
-            context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, cancellationToken);
+        MediaStudioVideoHistoryItem history;
+        try
+        {
+            history = await _history.SaveVideoAsync(context.Owner, prompt, result, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"视频已生成，但未能保存到本机历史：{exception.Message}", exception);
+        }
+
+        string relative;
+        try
+        {
+            relative = await _store.ImportAssetAsync(
+                context.Owner, context.ProjectId, context.Segment.Id, history.FilePath, true, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"视频已保存到创作记录，但未能导入剧情项目：{exception.Message}", exception);
+        }
         EnsureContext(context);
         context.Segment.SetVideo(
             relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
@@ -243,6 +290,8 @@ public sealed partial class StoryStudioViewModel
         StoryVideoGuidance guidance,
         VideoGenerationProgress value)
     {
+        if (context.Session != _session || _ownerUserId != context.Owner ||
+            _current?.Id != context.ProjectId || !Segments.Contains(context.Segment)) return;
         VideoProgress = value;
         if (string.IsNullOrWhiteSpace(value.JobId)) return;
         try

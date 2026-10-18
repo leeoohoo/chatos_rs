@@ -319,6 +319,48 @@ public sealed class ConnectorGatewayHttpClientTests
         ], paths);
     }
 
+    [Fact]
+    public async Task ResolvesUnifiedSystemMcpKeysToBuiltinCapabilities()
+    {
+        var client = Client(_ => Task.FromResult(Json(HttpStatusCode.OK, """
+          {
+            "agent_key":"local_agent_execution_agent",
+            "owner_user_id":"owner-1",
+            "policy_revision":"policy-10",
+            "agent_enabled":true,
+            "mcps":[{
+              "resource":{
+                "id":"system_mcp_code_maintainer_read",
+                "name":"project-read",
+                "display_name":"Project Read",
+                "enabled":true,
+                "runtime":{
+                  "kind":"builtin",
+                  "builtin_kind":null,
+                  "system_key":"code_maintainer_read",
+                  "server_name":"project-read",
+                  "headers":{}
+                }
+              },
+              "binding":{"enabled":true,"required":false},
+              "available":true,
+              "status":"available",
+              "tool_snapshot":[]
+            }],
+            "plugins":[]
+          }
+          """)));
+
+        var capability = await client.GetAgentCapabilityAsync(
+            new Uri("https://gateway.example"),
+            "token",
+            "local_agent_execution_agent");
+
+        var runtime = Assert.Single(capability.Mcps!).Resource.Runtime;
+        Assert.Equal("code_maintainer_read", runtime.SystemKey);
+        Assert.Equal("CodeMaintainerRead", runtime.ResolvedBuiltinKind);
+    }
+
     private static ConnectorGatewayHttpClient Client(
         Func<HttpRequestMessage, Task<HttpResponseMessage>> response) =>
         new(new FakeHttpClientFactory(new HttpClient(new DelegateHandler(response))));

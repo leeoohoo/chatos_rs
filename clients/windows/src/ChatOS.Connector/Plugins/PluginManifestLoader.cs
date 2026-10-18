@@ -207,7 +207,44 @@ internal sealed partial class PluginManifestLoader
             .ToArray();
     }
 
+    internal async Task<InstalledPluginCatalogMetadata> ReadCatalogMetadataAsync(
+        InstalledPluginRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        var installationPath = Path.GetFullPath(record.InstallationPath);
+        if (!Directory.Exists(installationPath))
+        {
+            throw new PluginRuntimeException("Installed Plugin directory is unavailable.");
+        }
+
+        VerifyFileHash(record, installationPath, "chatos.plugin.json");
+        var manifest = await ReadJsonAsync<PluginManifest>(
+            Path.Combine(installationPath, "chatos.plugin.json"),
+            MaximumManifestBytes,
+            cancellationToken).ConfigureAwait(false);
+        if (manifest.SchemaVersion != 3 ||
+            !string.Equals(manifest.Version, record.Version, StringComparison.Ordinal))
+        {
+            throw new PluginRuntimeException("Plugin manifest does not match the installed Release.");
+        }
+
+        return new InstalledPluginCatalogMetadata(
+            string.IsNullOrWhiteSpace(manifest.Interface?.DisplayName)
+                ? manifest.Name
+                : manifest.Interface.DisplayName.Trim(),
+            manifest.Description);
+    }
+
     internal async Task<IReadOnlyList<string>> ListMcpComponentsAsync(
+        InstalledPluginRecord record,
+        CancellationToken cancellationToken = default)
+    {
+        var choices = await ListMcpComponentChoicesAsync(record, cancellationToken)
+            .ConfigureAwait(false);
+        return choices.Select(value => value.ComponentKey).ToArray();
+    }
+
+    internal async Task<IReadOnlyList<PluginMcpComponentChoice>> ListMcpComponentChoicesAsync(
         InstalledPluginRecord record,
         CancellationToken cancellationToken = default)
     {
@@ -223,7 +260,17 @@ internal sealed partial class PluginManifestLoader
             throw new PluginRuntimeException("Plugin manifest does not match the installed Release.");
         }
 
-        return manifest.McpServers.Keys.Order(StringComparer.Ordinal).ToArray();
+        return manifest.McpServers
+            .OrderBy(value => value.Key, StringComparer.Ordinal)
+            .Select(value => new PluginMcpComponentChoice(
+                value.Key,
+                string.IsNullOrWhiteSpace(value.Value.Agent?.DisplayName)
+                    ? null
+                    : value.Value.Agent.DisplayName.Trim(),
+                string.IsNullOrWhiteSpace(value.Value.Agent?.Description)
+                    ? null
+                    : value.Value.Agent.Description.Trim()))
+            .ToArray();
     }
 
     private static string ApplicationDescription(PluginManifest manifest) =>
@@ -699,3 +746,7 @@ internal sealed partial class PluginManifestLoader
     }
 
 }
+
+internal sealed record InstalledPluginCatalogMetadata(
+    string DisplayName,
+    string Description);

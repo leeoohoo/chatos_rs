@@ -82,6 +82,40 @@ public sealed class LocalConnectorControlServiceTests
         Assert.False((await service.GetStatusAsync()).IsPaired);
     }
 
+    [Fact]
+    public async Task RefreshCredentialKeepsRegistrationAndRestartsTheConnectionRevision()
+    {
+        var connectorTokens = new MemoryConnectorTokenStore("expired-token");
+        var initial = State(Path.GetTempPath());
+        var stateStore = new MemoryStateStore { Value = initial };
+        var runtime = new ConnectorRuntimeContext(stateStore, connectorTokens);
+        var gateway = new GatewayDouble
+        {
+            ExchangeToken = "renewed-token",
+            ExchangeUser = new ConnectorGatewayUser("owner-1", "owner", "Owner Updated", "user"),
+        };
+        var connection = new ConnectorConnectionStateMachine();
+        var pairing = new ConnectorPairingService(
+            gateway,
+            new ConnectorDeviceIdentityProvider(new MemorySecretStore()),
+            connectorTokens,
+            runtime);
+        var service = new LocalConnectorControlService(
+            runtime, pairing, connection, gateway, connectorTokens);
+        _ = await service.GetStatusAsync();
+        var previousRevision = runtime.Snapshot.ConnectionRevision;
+
+        var refreshed = await service.RefreshCredentialAsync("fresh-ticket");
+
+        Assert.Equal("fresh-ticket", gateway.ExchangeTicket);
+        Assert.Equal("renewed-token", connectorTokens.Token);
+        Assert.Equal(initial.DeviceId, refreshed.DeviceId);
+        Assert.Equal("Owner Updated", stateStore.Value?.User.DisplayName);
+        Assert.Equal(initial.Workspaces, stateStore.Value?.Workspaces);
+        Assert.Equal("Stopped", refreshed.ConnectionPhase);
+        Assert.True(runtime.Snapshot.ConnectionRevision > previousRevision);
+    }
+
     private static ConnectorPersistentState State(string root) => new(
         new Uri("https://gateway.example"),
         new ConnectorUser("owner-1", "owner", "Owner", "user"),
@@ -95,16 +129,24 @@ public sealed class LocalConnectorControlServiceTests
     {
         public Exception? DisconnectError { get; init; }
 
+        public string ExchangeToken { get; init; } = "gateway-token";
+
+        public ConnectorGatewayUser ExchangeUser { get; init; } =
+            new("owner-1", "owner", "Owner", "user");
+
+        public string? ExchangeTicket { get; private set; }
+
         public string? DisconnectedDeviceId { get; private set; }
 
         public Task<ConnectorGatewayLogin> ExchangeTicketAsync(
             Uri gatewayBaseUri,
             string ticket,
             string deviceName,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(new ConnectorGatewayLogin(
-                "gateway-token",
-                new ConnectorGatewayUser("owner-1", "owner", "Owner", "user")));
+            CancellationToken cancellationToken = default)
+        {
+            ExchangeTicket = ticket;
+            return Task.FromResult(new ConnectorGatewayLogin(ExchangeToken, ExchangeUser));
+        }
 
         public Task<ConnectorGatewayDevice> CreateDeviceAsync(
             Uri gatewayBaseUri,

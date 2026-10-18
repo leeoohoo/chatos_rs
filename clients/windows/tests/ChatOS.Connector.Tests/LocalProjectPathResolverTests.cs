@@ -6,6 +6,15 @@ namespace ChatOS.Connector.Tests;
 public sealed class LocalProjectPathResolverTests
 {
     [Fact]
+    public void DriveRootContainsDescendantPath()
+    {
+        var root = Path.GetPathRoot(Path.GetTempPath());
+
+        Assert.False(string.IsNullOrWhiteSpace(root));
+        Assert.True(LocalProjectPathResolver.IsInside(Path.GetTempPath(), root!));
+    }
+
+    [Fact]
     public void ResolvesLogicalAndAbsolutePathsWithinPairedWorkspace()
     {
         using var workspace = TestWorkspace.Create();
@@ -19,6 +28,12 @@ public sealed class LocalProjectPathResolverTests
         Assert.Equal(Path.Combine(workspace.Root, "src"), logical.AbsolutePath);
         Assert.Equal("src", absolute.RelativePath);
         Assert.Null(absolute.LogicalPrefix);
+        Assert.Equal(
+            Path.GetFullPath(workspace.Root),
+            absolute.LogicalPath("."));
+        Assert.Equal(
+            Path.Combine(workspace.Root, "src"),
+            absolute.LogicalPath("src"));
     }
 
     [Theory]
@@ -30,7 +45,7 @@ public sealed class LocalProjectPathResolverTests
         using var workspace = TestWorkspace.Create();
         var resolver = new LocalProjectPathResolver(workspace.Context);
 
-        Assert.Throws<RelayRequestException>(() => resolver.Resolve(path));
+        Assert.ThrowsAny<RelayRequestException>(() => resolver.Resolve(path));
     }
 
     [Fact]
@@ -43,7 +58,7 @@ public sealed class LocalProjectPathResolverTests
         {
             var resolver = new LocalProjectPathResolver(workspace.Context);
 
-            Assert.Throws<RelayRequestException>(() => resolver.Resolve(outside));
+            Assert.ThrowsAny<RelayRequestException>(() => resolver.Resolve(outside));
         }
         finally
         {

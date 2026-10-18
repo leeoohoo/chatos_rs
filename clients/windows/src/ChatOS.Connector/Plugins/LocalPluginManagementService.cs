@@ -41,6 +41,7 @@ internal sealed class LocalPluginManagementService(
     IConnectorGatewayClient gateway,
     WindowsPluginPackageInstaller installer,
     IInstalledPluginStore store,
+    PluginManifestLoader manifestLoader,
     PluginCredentialVault credentials,
     PluginOAuthBroker oauth,
     PluginRuntimeSessionStore sessions,
@@ -54,9 +55,19 @@ internal sealed class LocalPluginManagementService(
             session.GatewayBaseUri,
             session.AccessToken,
             cancellationToken).ConfigureAwait(false);
-        var installed = (await store.ListAsync(cancellationToken).ConfigureAwait(false))
-            .ToDictionary(record => record.PluginId, StringComparer.Ordinal);
-        return sources.Select(source =>
+        var installed = await store.ListAsync(cancellationToken).ConfigureAwait(false);
+        return await MergeCatalogAsync(sources, installed, manifestLoader, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    internal static async Task<IReadOnlyList<LocalConnectorPlugin>> MergeCatalogAsync(
+        IReadOnlyList<ConnectorPluginSource> sources,
+        IReadOnlyList<InstalledPluginRecord> records,
+        PluginManifestLoader manifestLoader,
+        CancellationToken cancellationToken = default)
+    {
+        var installed = records.ToDictionary(record => record.PluginId, StringComparer.Ordinal);
+        var result = sources.Select(source =>
         {
             installed.TryGetValue(source.Catalog.Id, out var record);
             var version = source.Release.Version ?? source.Release.Id;
@@ -75,7 +86,42 @@ internal sealed class LocalPluginManagementService(
                 source.Release.NpmPackage is not null && IsSha256(source.Release.ArtifactSha256),
                 source.Preference?.Enabled ?? true,
                 record?.DeclaredPermissions ?? Array.Empty<string>());
-        }).ToArray();
+        }).ToList();
+
+        var catalogIds = sources.Select(source => source.Catalog.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var record in records
+            .Where(value => value.IsLocallyManaged && !catalogIds.Contains(value.PluginId))
+            .OrderBy(value => value.PluginId, StringComparer.Ordinal))
+        {
+            InstalledPluginCatalogMetadata metadata;
+            try
+            {
+                metadata = await manifestLoader.ReadCatalogMetadataAsync(record, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is PluginRuntimeException or IOException or UnauthorizedAccessException)
+            {
+                metadata = new InstalledPluginCatalogMetadata(
+                    string.IsNullOrWhiteSpace(record.PluginKey) ? record.PluginId : record.PluginKey,
+                    $"Local Plugin integrity validation failed: {exception.Message}");
+            }
+
+            result.Add(new LocalConnectorPlugin(
+                record.PluginId,
+                string.IsNullOrWhiteSpace(record.PluginKey) ? record.PluginId : record.PluginKey,
+                metadata.DisplayName,
+                metadata.Description,
+                LocalCategory(record.SourceKind),
+                "Local",
+                record.Version,
+                true,
+                false,
+                false,
+                record.IsLocallyEnabled,
+                record.DeclaredPermissions));
+        }
+
+        return result;
     }
 
     public async Task<InstalledPluginRecord> InstallAsync(
@@ -192,6 +238,19 @@ internal sealed class LocalPluginManagementService(
         bool enabled,
         CancellationToken cancellationToken = default)
     {
+        var record = await store.GetAsync(pluginId, cancellationToken).ConfigureAwait(false);
+        if (record?.IsLocallyManaged == true)
+        {
+            await store.SaveAsync(record with { LocalEnabled = enabled }, cancellationToken)
+                .ConfigureAwait(false);
+            if (!enabled)
+            {
+                await sessions.TerminatePluginAsync(pluginId).ConfigureAwait(false);
+                await applications.StopPluginAsync(pluginId).ConfigureAwait(false);
+            }
+            return;
+        }
+
         var session = await RequireSessionAsync(cancellationToken).ConfigureAwait(false);
         await gateway.UpdatePluginPreferenceAsync(
             session.GatewayBaseUri,
@@ -217,4 +276,11 @@ internal sealed class LocalPluginManagementService(
 
     private static bool IsSha256(string? value) =>
         value is { Length: 64 } && value.All(Uri.IsHexDigit);
+
+    private static string LocalCategory(string? sourceKind) => sourceKind switch
+    {
+        "gitRepository" => "Git Plugin",
+        "npmPackage" => "npm Plugin",
+        _ => "Local Plugin",
+    };
 }

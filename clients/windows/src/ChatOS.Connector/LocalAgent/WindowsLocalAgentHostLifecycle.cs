@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChatOS.Core.Abstractions;
 
@@ -6,7 +8,7 @@ namespace ChatOS.Connector.LocalAgent;
 
 public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsyncDisposable
 {
-    private const int ProtocolVersion = 41;
+    private const int ProtocolVersion = 42;
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -17,6 +19,8 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
     private readonly object _stateGate = new();
     private RunningHost? _running;
     private string? _activeOwnerUserId;
+    private byte[]? _credentialFingerprint;
+    private bool _workersEnabled;
     private ulong _generation;
     private bool _disposed;
     private int _disposeStarted;
@@ -64,7 +68,41 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                     return;
                 }
             }
-            await ReplaceAsync(ownerUserId, new Dictionary<string, string>(), cancellationToken)
+            await ReplaceAsync(
+                    ownerUserId,
+                    new Dictionary<string, string>(),
+                    workersEnabled: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _transition.Release();
+        }
+    }
+
+    public async Task StartForBootstrapAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateOwner(ownerUserId);
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            lock (_stateGate)
+            {
+                if (_running is { IsAlive: true } &&
+                    string.Equals(_activeOwnerUserId, ownerUserId, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+            await ReplaceAsync(
+                    ownerUserId,
+                    new Dictionary<string, string>(),
+                    workersEnabled: false,
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
@@ -84,11 +122,60 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         try
         {
             ThrowIfDisposed();
-            await ReplaceAsync(ownerUserId, credentialEnvironment, cancellationToken)
+            await ReplaceAsync(
+                    ownerUserId,
+                    credentialEnvironment,
+                    workersEnabled: true,
+                    cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
         {
+            _transition.Release();
+        }
+    }
+
+    public async Task RefreshCredentialsForOwnerAsync(
+        string ownerUserId,
+        IReadOnlyDictionary<string, string> credentialEnvironment,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateOwner(ownerUserId);
+        ValidateCredentialEnvironment(credentialEnvironment);
+        var fingerprint = CredentialFingerprint(credentialEnvironment);
+        await _transition.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            lock (_stateGate)
+            {
+                if (_running is { IsAlive: true } && _workersEnabled)
+                {
+                    if (!string.Equals(
+                            _activeOwnerUserId, ownerUserId, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Local Agent Host command owner does not match the active account.");
+                    }
+                    if (_credentialFingerprint is null ||
+                        !CryptographicOperations.FixedTimeEquals(
+                            _credentialFingerprint, fingerprint))
+                    {
+                        throw new LocalAgentCredentialRefreshDeferredException();
+                    }
+                    return;
+                }
+            }
+            await ReplaceAsync(
+                    ownerUserId,
+                    credentialEnvironment,
+                    workersEnabled: true,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(fingerprint);
             _transition.Release();
         }
     }
@@ -139,7 +226,7 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                 "Local Agent Host command owner does not match the active account.");
         }
 
-        var commandId = $"native-command-{Guid.NewGuid():N}";
+        var commandId = CreateCommandId(commandElement);
         byte[] payload;
         try
         {
@@ -159,16 +246,37 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         return DecodeResponse<TResponse>(payload, commandId);
     }
 
+    internal static string CreateCommandId(JsonElement command)
+    {
+        if (command.ValueKind == JsonValueKind.Object &&
+            command.TryGetProperty("type", out var type) &&
+            string.Equals(type.GetString(), "start_conversation_turn", StringComparison.Ordinal) &&
+            command.TryGetProperty("turn_id", out var turnId) &&
+            turnId.ValueKind == JsonValueKind.String &&
+            turnId.GetString() is { Length: > 0 } value)
+        {
+            return $"native-start-conversation-turn-{value}";
+        }
+
+        return $"native-command-{Guid.NewGuid():N}";
+    }
+
     private async Task ReplaceAsync(
         string ownerUserId,
         IReadOnlyDictionary<string, string> credentialEnvironment,
+        bool workersEnabled,
         CancellationToken cancellationToken)
     {
         var previous = DetachCurrent();
         if (previous is not null) await previous.DisposeAsync().ConfigureAwait(false);
 
         var process = await _launcher
-            .LaunchAsync(_options, ownerUserId, credentialEnvironment, cancellationToken)
+            .LaunchAsync(
+                _options,
+                ownerUserId,
+                credentialEnvironment,
+                workersEnabled,
+                cancellationToken)
             .ConfigureAwait(false);
         var generation = NextGeneration();
         var running = new RunningHost(process, generation, OnTransportFailed);
@@ -189,6 +297,8 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                 if (!ReferenceEquals(_running, running))
                     throw new InvalidOperationException("Local Agent Host exited during startup.");
                 _activeOwnerUserId = ownerUserId;
+                _workersEnabled = workersEnabled;
+                _credentialFingerprint = CredentialFingerprint(credentialEnvironment);
             }
         }
         catch
@@ -199,6 +309,7 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                 {
                     _running = null;
                     _activeOwnerUserId = null;
+                    ClearCredentialStateLocked();
                     _generation++;
                 }
             }
@@ -237,6 +348,7 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
             var previous = _running;
             _running = null;
             _activeOwnerUserId = null;
+            ClearCredentialStateLocked();
             _generation++;
             return previous;
         }
@@ -259,6 +371,7 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
             notify = _activeOwnerUserId is not null;
             _running = null;
             _activeOwnerUserId = null;
+            ClearCredentialStateLocked();
             _generation++;
         }
         _ = Task.Run(async () => await failed.DisposeAsync().ConfigureAwait(false));
@@ -302,6 +415,39 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
                     "Local Agent Host credential environment is invalid.",
                     nameof(credentialEnvironment));
             }
+        }
+    }
+
+    private static byte[] CredentialFingerprint(
+        IReadOnlyDictionary<string, string> credentialEnvironment)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var name in credentialEnvironment.Keys.Order(StringComparer.Ordinal))
+        {
+            AppendFingerprintValue(hash, name);
+            AppendFingerprintValue(hash, credentialEnvironment[name]);
+        }
+        return hash.GetHashAndReset();
+    }
+
+    private static void AppendFingerprintValue(IncrementalHash hash, string value)
+    {
+        var bytes = Encoding.UTF8.GetBytes(value);
+        Span<byte> length = stackalloc byte[sizeof(ulong)];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64BigEndian(
+            length, checked((ulong)bytes.Length));
+        hash.AppendData(length);
+        hash.AppendData(bytes);
+        CryptographicOperations.ZeroMemory(bytes);
+    }
+
+    private void ClearCredentialStateLocked()
+    {
+        _workersEnabled = false;
+        if (_credentialFingerprint is not null)
+        {
+            CryptographicOperations.ZeroMemory(_credentialFingerprint);
+            _credentialFingerprint = null;
         }
     }
 
@@ -473,6 +619,9 @@ public sealed class WindowsLocalAgentHostLifecycle : ILocalAgentHostClient, IAsy
         }
     }
 }
+
+public sealed class LocalAgentCredentialRefreshDeferredException() : InvalidOperationException(
+    "Local Agent credentials changed. To avoid interrupting active work, restart ChatOS after the current tasks finish to apply the new configuration.");
 
 public sealed class LocalAgentHostRequestException(
     string code,

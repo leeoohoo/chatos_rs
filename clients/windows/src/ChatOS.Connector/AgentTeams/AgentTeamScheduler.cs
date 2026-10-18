@@ -13,7 +13,8 @@ internal sealed partial class AgentTeamScheduler(
     AgentTeamModelGateway models,
     AgentTeamToolExecutor tools,
     AgentPluginToolRuntime? pluginTools = null,
-    AgentTeamRuntimeSettingsProvider? runtimeSettings = null)
+    AgentTeamRuntimeSettingsProvider? runtimeSettings = null,
+    IProjectRegistry? projects = null)
 {
     private readonly ConcurrentDictionary<(string OwnerUserId, AgentDeliveryLane Lane), SemaphoreSlim>
         _laneGates = new();
@@ -181,6 +182,9 @@ internal sealed partial class AgentTeamScheduler(
             throw new AgentTeamException(AgentTeamError.NotFound, "Target Agent is unavailable.");
         }
 
+        var projectType = await ResolveProjectTypeAsync(
+            delivery.OwnerUserId, room.ProjectId, cancellationToken).ConfigureAwait(false);
+
         var member = (await store.ListMembersAsync(delivery.OwnerUserId, room.Id,
                 includeRemoved: false, cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(value => string.Equals(
@@ -243,7 +247,7 @@ internal sealed partial class AgentTeamScheduler(
                 cancellationToken, selectedPluginIds).ConfigureAwait(false);
         var input = BuildInput(profile, member, room, delivery, recentMessages, todos, assets,
             todoProgress, executionTodo, sourceMessages, assetSnapshots,
-            pluginSession?.Instructions, references, multimodalAttachments);
+            pluginSession?.Instructions, references, multimodalAttachments, projectType);
         var definitions = tools.AllDefinitions(profile, room, delivery, executionTodo)
             .Concat(pluginSession?.Definitions ?? []).ToArray();
         var run = initialRun;
@@ -379,7 +383,8 @@ internal sealed partial class AgentTeamScheduler(
         IReadOnlyList<AgentTodoAssetSnapshot> assetSnapshots,
         string? pluginInstructions,
         AgentRunReferenceVault references,
-        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments)
+        IReadOnlyList<AgentMultimodalAttachment> multimodalAttachments,
+        LocalProjectTypeDefinition? projectType)
     {
         if (delivery.Trigger == AgentDeliveryTrigger.Todo)
         {
@@ -387,7 +392,7 @@ internal sealed partial class AgentTeamScheduler(
                 executionTodo ?? throw new AgentTeamException(AgentTeamError.Conflict,
                     "Todo executor contract is unavailable."),
                 sourceMessages, todos, assetSnapshots, todoProgress, pluginInstructions, references,
-                multimodalAttachments);
+                multimodalAttachments, projectType);
         }
         var lane = delivery.Trigger == AgentDeliveryTrigger.Todo ? "executor" : "manager";
         var authority = string.Equals(room.ProjectManagerAgentId, profile.Id, StringComparison.Ordinal)
@@ -405,6 +410,7 @@ internal sealed partial class AgentTeamScheduler(
             当前周期：{lane}
             {authority}
             {staffingAuthority}
+            {ProjectTypeGuidance(projectType)}
 
             {profile.Draft.RolePrompt}
 
@@ -499,6 +505,28 @@ internal sealed partial class AgentTeamScheduler(
             AgentTeamMultimodalInput.UserMessage(context.ToString(), multimodalAttachments),
         ];
     }
+
+    private async Task<LocalProjectTypeDefinition?> ResolveProjectTypeAsync(
+        string ownerUserId,
+        string projectId,
+        CancellationToken cancellationToken)
+    {
+        if (projects is null) return null;
+        var project = await projects.GetAsync(ownerUserId, projectId, cancellationToken)
+            .ConfigureAwait(false);
+        return project is { Status: LocalProjectStatus.Active }
+            ? LocalProjectTypeCatalog.Find(project.Draft.ProjectTypeKey)
+            : null;
+    }
+
+    private static string ProjectTypeGuidance(LocalProjectTypeDefinition? projectType) =>
+        projectType is null
+            ? string.Empty
+            : $"""
+              项目类型：{projectType.Label}（{projectType.Key}）
+              项目类型说明：{projectType.Description}
+              规划、实现和交付必须符合这个项目类型，不要把它误判为其他交付形态。
+              """;
 
     private async Task<IReadOnlyList<AgentTodoProgress>> TriggerTodoProgressAsync(
         AgentDelivery delivery,

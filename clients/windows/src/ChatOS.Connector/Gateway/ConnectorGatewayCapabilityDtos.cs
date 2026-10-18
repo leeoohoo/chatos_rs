@@ -83,6 +83,8 @@ public sealed partial class ConnectorGatewayHttpClient
         public required string Kind { get; init; }
         [JsonPropertyName("builtin_kind")]
         public string? BuiltinKind { get; init; }
+        [JsonPropertyName("system_key")]
+        public string? SystemKey { get; init; }
         [JsonPropertyName("server_name")]
         public string? ServerName { get; init; }
         [JsonPropertyName("url")]

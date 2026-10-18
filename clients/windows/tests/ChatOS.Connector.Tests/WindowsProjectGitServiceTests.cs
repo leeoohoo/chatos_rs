@@ -8,6 +8,20 @@ namespace ChatOS.Connector.Tests;
 public sealed class WindowsProjectGitServiceTests
 {
     [Fact]
+    public void CommandFailureUsesStandardOutputToRecognizeMergeConflicts()
+    {
+        var exception = ProjectGitOperationException.CommandFailed(
+            ["merge", "--no-edit", "feature/conflict"],
+            string.Empty,
+            "Auto-merging README.md\nCONFLICT (content): Merge conflict in README.md\nAutomatic merge failed",
+            truncated: false);
+
+        Assert.Equal(ProjectGitErrorCode.CommandFailed, exception.Code);
+        Assert.StartsWith("分支已进入冲突状态。请先处理冲突文件，再完成提交。", exception.Message);
+        Assert.EndsWith("操作：git merge --no-edit", exception.Message);
+    }
+
+    [Fact]
     [Trait("Category", "MachineIntegration")]
     public async Task LoadsStagesCommitsDiffsAndManagesRemotes()
     {

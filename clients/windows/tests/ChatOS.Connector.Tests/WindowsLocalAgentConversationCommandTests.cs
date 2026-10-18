@@ -61,6 +61,138 @@ public sealed class WindowsLocalAgentConversationCommandTests
     }
 
     [Fact]
+    public async Task AmbiguousStartFailureRetriesTheExactFrozenHostCommand()
+    {
+        var host = new ConversationHost { StartFailuresRemaining = 1 };
+        var model = Model();
+        var runtime = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        var bootstrap = Bootstrap(model);
+        runtime.Configure("user-1", bootstrap);
+        var service = CreateCommandService(host, runtime);
+        service.Configure("user-1", bootstrap);
+        var command = new ConversationSendCommand(
+            "conversation-1", "turn-retry", "create the file once", [], true);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SendNewTurnAsync(command));
+        var result = await service.SendNewTurnAsync(command);
+
+        Assert.True(result.Accepted);
+        Assert.Equal(2, host.Starts.Count);
+        Assert.Equal(host.Starts[0], host.Starts[1]);
+    }
+
+    [Fact]
+    public async Task RetryIdentityRejectsChangedTurnContent()
+    {
+        var host = new ConversationHost { StartFailuresRemaining = 1 };
+        var model = Model();
+        var runtime = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        var bootstrap = Bootstrap(model);
+        runtime.Configure("user-1", bootstrap);
+        var service = CreateCommandService(host, runtime);
+        service.Configure("user-1", bootstrap);
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SendNewTurnAsync(
+            new("conversation-1", "turn-retry", "original", [], true)));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SendNewTurnAsync(
+                new("conversation-1", "turn-retry", "changed", [], true)));
+
+        Assert.Contains("reused with different content", error.Message, StringComparison.Ordinal);
+        Assert.Single(host.Starts);
+    }
+
+    [Fact]
+    public async Task StartsTurnWithExactExplicitPluginComponentSelection()
+    {
+        var host = new ConversationHost();
+        var model = Model();
+        var runtime = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        var bootstrap = Bootstrap(model);
+        runtime.Configure("user-1", bootstrap);
+        var service = CreateCommandService(host, runtime);
+        service.Configure("user-1", bootstrap);
+
+        _ = await service.SendNewTurnAsync(new ConversationSendCommand(
+            "conversation-1",
+            "turn-1",
+            "create a solution",
+            [],
+            true,
+            new ConversationExplicitCapabilitySelection(
+                "plugin",
+                "Solution Authoring",
+                "solution-studio@chatos-marketplace",
+                "solution-authoring-mcp")));
+
+        var start = Assert.IsType<StartLocalConversationTurnCommand>(host.LastStart);
+        var selection = start.MessageMetadata.GetProperty("explicit_capability_selection");
+        Assert.Equal("plugin", selection.GetProperty("kind").GetString());
+        Assert.Equal("solution-studio@chatos-marketplace",
+            selection.GetProperty("plugin_key").GetString());
+        Assert.Equal("solution-authoring-mcp",
+            selection.GetProperty("component_key").GetString());
+    }
+
+    [Fact]
+    public async Task UsesOnlyTheDedicatedInstallerCapabilityForInstallerContact()
+    {
+        var host = new ConversationHost
+        {
+            ExistingResource = new WindowsLocalConversationResourceBinding(
+                "contact",
+                WindowsLocalAgentWorkspaceService.PluginInstallerContactId),
+        };
+        var model = Model();
+        var runtime = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        var bootstrap = Bootstrap(model);
+        runtime.Configure("user-1", bootstrap);
+        var service = CreateCommandService(host, runtime);
+        service.Configure("user-1", bootstrap);
+
+        _ = await service.SendNewTurnAsync(new ConversationSendCommand(
+            "conversation-1", "turn-installer", "inspect my local Plugin", []));
+
+        var start = Assert.IsType<StartLocalConversationTurnCommand>(host.LastStart);
+        Assert.Equal("installer-capability-revision", start.CapabilityPolicyRevision);
+        Assert.Equal(
+            "native_plugin_installer_chat",
+            start.MessageMetadata.GetProperty("source").GetString());
+    }
+
+    [Fact]
+    public async Task InstallerContactRejectsOrdinaryExplicitPluginSelection()
+    {
+        var host = new ConversationHost
+        {
+            ExistingResource = new WindowsLocalConversationResourceBinding(
+                "contact",
+                WindowsLocalAgentWorkspaceService.PluginInstallerContactId),
+        };
+        var model = Model();
+        var runtime = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        var bootstrap = Bootstrap(model);
+        runtime.Configure("user-1", bootstrap);
+        var service = CreateCommandService(host, runtime);
+        service.Configure("user-1", bootstrap);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SendNewTurnAsync(new ConversationSendCommand(
+                "conversation-1",
+                "turn-installer",
+                "use an ordinary Plugin",
+                [],
+                false,
+                new ConversationExplicitCapabilitySelection(
+                    "plugin", "Plugin", "plugin-key", "component-key"))));
+    }
+
+    [Fact]
     public async Task AuthorizesAttachmentsIntoTheLocalVault()
     {
         var host = new ConversationHost();
@@ -141,13 +273,21 @@ public sealed class WindowsLocalAgentConversationCommandTests
             "user-1",
             [model],
             [new ConversationModelOption("model-1", "Model 1", "gpt-test", "medium")],
+            [],
             new WindowsLocalAgentCapabilitySnapshot(
                 "user-1",
                 "main_chat",
                 "capability-revision",
                 null,
                 [],
-                []));
+                []),
+            new WindowsLocalAgentCapabilitySnapshot(
+                "user-1",
+                "main_chat",
+                "installer-capability-revision",
+                WindowsLocalAgentCapabilityCatalog.PluginInstallerInstructions,
+                [],
+                WindowsLocalAgentCapabilityCatalog.PluginInstallerTools));
 
     private static WindowsLocalAgentModelSnapshot Model() => new(
         "user-1",
@@ -171,8 +311,11 @@ public sealed class WindowsLocalAgentConversationCommandTests
     private sealed class ConversationHost : ILocalAgentHostClient
     {
         public StartLocalConversationTurnCommand? LastStart { get; private set; }
+        public List<StartLocalConversationTurnCommand> Starts { get; } = [];
+        public int StartFailuresRemaining { get; init; }
         public ListLocalConversationsCommand? LastList { get; private set; }
         public CreateLocalConversationCommand? LastCreate { get; private set; }
+        public WindowsLocalConversationResourceBinding? ExistingResource { get; init; }
 
         public string? ActiveOwnerUserId => "user-1";
 
@@ -208,10 +351,18 @@ public sealed class WindowsLocalAgentConversationCommandTests
                             true,
                             1,
                             1_000)),
+                GetLocalConversationCommand get when ExistingResource is not null =>
+                    new LocalConversationResult(
+                        "conversation",
+                        Detail(get.ConversationId) with
+                        {
+                            Conversation = Detail(get.ConversationId).Conversation with
+                            {
+                                Resource = ExistingResource,
+                            },
+                        }),
                 GetLocalConversationCommand => throw new LocalAgentHostRequestException(
-                    "not_found",
-                    "missing",
-                    false),
+                    "not_found", "missing", false),
                 CreateLocalConversationCommand create => Created(create),
                 ListLocalConversationsCommand list => Listed(list),
                 StartLocalConversationTurnCommand start => Started(start),
@@ -225,6 +376,11 @@ public sealed class WindowsLocalAgentConversationCommandTests
             StartLocalConversationTurnCommand start)
         {
             LastStart = start;
+            Starts.Add(start);
+            if (Starts.Count <= StartFailuresRemaining)
+            {
+                throw new TimeoutException("response lost after commit");
+            }
             var conversation = Detail(start.ConversationId).Conversation with { Version = 2 };
             var turn = new WindowsLocalConversationTurnRecord(
                 start.TurnId,

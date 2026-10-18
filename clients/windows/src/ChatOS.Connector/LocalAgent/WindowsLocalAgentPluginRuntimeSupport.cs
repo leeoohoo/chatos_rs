@@ -20,7 +20,8 @@ internal static class WindowsLocalAgentPluginRuntimeSupport
                 string.IsNullOrWhiteSpace(name.GetString()) ||
                 !names.Add(name.GetString()!) ||
                 !tool.TryGetProperty("inputSchema", out var schema) ||
-                schema.ValueKind != JsonValueKind.Object)
+                schema.ValueKind is not (JsonValueKind.Object or
+                    JsonValueKind.True or JsonValueKind.False))
             {
                 continue;
             }

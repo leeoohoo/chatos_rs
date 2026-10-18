@@ -1,4 +1,5 @@
 using ChatOS.Core.Domain;
+using ChatOS.Core.Abstractions;
 using ChatOS.Presentation.Projects;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Xaml;
@@ -8,15 +9,58 @@ namespace ChatOS.Desktop.Features.Projects;
 
 public sealed partial class ProjectGitPage : UserControl
 {
-    public ProjectGitPage(ProjectGitViewModel viewModel, LocalizationViewModel localization)
+    private readonly IProjectFilesystemService _filesystem;
+
+    public ProjectGitPage(
+        ProjectGitViewModel viewModel,
+        IProjectFilesystemService filesystem,
+        LocalizationViewModel localization)
     {
         ViewModel = viewModel;
+        _filesystem = filesystem;
         Localization = localization;
         InitializeComponent();
     }
 
     public ProjectGitViewModel ViewModel { get; }
     public LocalizationViewModel Localization { get; }
+
+    private async void OnPullClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.HasRemotes)
+        {
+            await ShowRemoteDialogAsync(null);
+            return;
+        }
+
+        await ViewModel.PullCommand.ExecuteAsync(null);
+    }
+
+    private async void OnPushClick(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.HasRemotes)
+        {
+            await ShowRemoteDialogAsync(null);
+            return;
+        }
+
+        await ViewModel.PushCommand.ExecuteAsync(null);
+    }
+
+    private async void OnOpenDiffFileClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.SelectedChange is not { } change) return;
+        try
+        {
+            await _filesystem.OpenExternallyAsync(
+                change.AbsolutePath,
+                ProjectFileExternalOpenMode.Default);
+        }
+        catch (Exception exception)
+        {
+            ViewModel.ErrorMessage = exception.Message;
+        }
+    }
 
     private async void OnWorkingDiffClick(object sender, RoutedEventArgs e)
     {
@@ -99,11 +143,14 @@ public sealed partial class ProjectGitPage : UserControl
             PrimaryButtonText = Localization.Create,
             CloseButtonText = Localization.Cancel,
             DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = false,
         };
+        name.TextChanged += (_, _) =>
+            dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
             await ViewModel.CreateBranchCommand.ExecuteAsync(new ProjectGitBranchDraft(
-                name.Text,
+                name.Text.Trim(),
                 switchToBranch.IsChecked == true));
         }
     }
@@ -168,13 +215,19 @@ public sealed partial class ProjectGitPage : UserControl
             PrimaryButtonText = Localization.Save,
             CloseButtonText = Localization.Cancel,
             DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text) &&
+                !string.IsNullOrWhiteSpace(url.Text),
         };
+        void RefreshSaveState() => dialog.IsPrimaryButtonEnabled =
+            !string.IsNullOrWhiteSpace(name.Text) && !string.IsNullOrWhiteSpace(url.Text);
+        name.TextChanged += (_, _) => RefreshSaveState();
+        url.TextChanged += (_, _) => RefreshSaveState();
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
         {
             await ViewModel.SaveRemoteCommand.ExecuteAsync(new ProjectGitRemoteDraft(
                 remote?.Name,
-                name.Text,
-                url.Text));
+                name.Text.Trim(),
+                url.Text.Trim()));
         }
     }
 }

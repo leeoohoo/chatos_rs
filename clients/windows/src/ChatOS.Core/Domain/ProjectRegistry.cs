@@ -12,7 +12,11 @@ public sealed class ProjectRegistryException(ProjectRegistryError code, string m
 
 // Host metadata only. Git facts, conversation data and plugin business data are not registry fields.
 public sealed record LocalProjectDraft(
-    string Name, string WorkspaceId, string RelativeRoot = "", string Description = "")
+    string Name,
+    string WorkspaceId,
+    string RelativeRoot = "",
+    string Description = "",
+    string ProjectTypeKey = LocalProjectTypeCatalog.LegacyProjectTypeKey)
 {
     public void Validate()
     {
@@ -21,6 +25,9 @@ public sealed record LocalProjectDraft(
         ProjectRegistryValidation.RelativeRoot(RelativeRoot);
         if (Description is null || Description.Contains('\0'))
             throw ProjectRegistryValidation.Invalid(nameof(Description));
+        ProjectRegistryValidation.RouteIdentifier(ProjectTypeKey, nameof(ProjectTypeKey));
+        if (LocalProjectTypeCatalog.Find(ProjectTypeKey) is null)
+            throw ProjectRegistryValidation.Invalid(nameof(ProjectTypeKey));
     }
 }
 

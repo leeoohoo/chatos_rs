@@ -134,6 +134,7 @@ internal sealed partial class GitProcess : IGitProcess
             throw ProjectGitOperationException.CommandFailed(
                 arguments,
                 output.StandardError,
+                output.StandardOutput,
                 output.StandardOutputTruncated || output.StandardErrorTruncated);
         }
 
@@ -258,10 +259,15 @@ internal sealed class ProjectGitOperationException : Exception
 
     public static ProjectGitOperationException CommandFailed(
         IReadOnlyList<string> arguments,
-        string message,
+        string standardError,
+        string standardOutput,
         bool truncated)
     {
-        var detail = GitProcess.UrlCredentialRegex().Replace(message.Trim(), "$1***:***@");
+        var diagnostics = new[] { standardError.Trim(), standardOutput.Trim() }
+            .Where(static value => !string.IsNullOrWhiteSpace(value));
+        var detail = GitProcess.UrlCredentialRegex().Replace(
+            string.Join(Environment.NewLine, diagnostics),
+            "$1***:***@");
         if (string.IsNullOrWhiteSpace(detail))
         {
             detail = "Git 命令执行失败。";

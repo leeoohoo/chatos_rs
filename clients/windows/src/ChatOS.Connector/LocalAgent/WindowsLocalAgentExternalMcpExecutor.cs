@@ -10,10 +10,12 @@ namespace ChatOS.Connector.LocalAgent;
 
 public sealed record WindowsLocalAgentExternalMcpTool(
     string ResourceId,
+    string ServerName,
     string PublicName,
     string UpstreamName,
     string Description,
     JsonElement InputSchema,
+    JsonElement? RemoteSkillGate,
     Uri Endpoint,
     IReadOnlyDictionary<string, string> Headers)
 {
@@ -80,12 +82,21 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
                     server, upstreamName, mcp.Resource.Id, usedNames);
                 routes.Add(publicName, new(
                     mcp.Resource.Id,
+                    server,
                     publicName,
                     upstreamName,
                     description,
                     schema,
+                    RemoteSkillGate(snapshot),
                     endpoint,
                     mcp.Resource.Runtime.Headers));
+            }
+            var configured = routes.Values.Where(value => value.ResourceId == mcp.Resource.Id).ToArray();
+            if (configured.Length > 200 ||
+                configured.Select(value => value.UpstreamName).Distinct(StringComparer.Ordinal).Count()
+                    != configured.Length)
+            {
+                throw new InvalidOperationException("The external MCP runtime configuration is invalid.");
             }
         }
         lock (_gate) _routes = routes;
@@ -112,13 +123,73 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
         lock (_gate)
         {
             if (!_routes.TryGetValue(invocation.ToolName, out route!))
-                throw new InvalidOperationException("The external MCP tool is unavailable.");
+                return Rejection("external_mcp_runtime_unavailable");
         }
         var runResult = await host.SendAsync<GetLocalRunCommand, GetLocalRunResult>(
             new("get_run", ownerUserId, invocation.RunId), cancellationToken).ConfigureAwait(false);
         if (runResult.Type != "run" || runResult.Run.OwnerUserId != ownerUserId ||
             !SelectedExternalMcpIds(runResult.Run.Input).Contains(route.ResourceId))
             throw new InvalidOperationException("This Task did not select the external MCP configuration.");
+
+        // Gateway snapshots do not yet carry trusted server-owned business Skill documents.
+        // A declared remote gate must therefore fail closed; the generic Product Skill cannot
+        // be treated as a substitute for arbitrary remote instructions.
+        if (route.RemoteSkillGate is not null)
+            return Rejection("external_mcp_skill_instructions_unavailable");
+
+        var bundleResult = await host.SendAsync<GetRunSkillBundleCommand, RunSkillBundleResult>(
+            new("get_run_skill_bundle", ownerUserId, invocation.RunId), cancellationToken)
+            .ConfigureAwait(false);
+        if (bundleResult.Type != "run_skill_bundle" || bundleResult.RunId != invocation.RunId)
+            throw new InvalidDataException("Local Agent Host returned an invalid Skill bundle result.");
+        if (bundleResult.Bundle is { ValueKind: JsonValueKind.Object } bundle &&
+            bundle.TryGetProperty("schema_version", out var schemaVersion) &&
+            schemaVersion.TryGetInt32(out var version) && version >= 2)
+        {
+            if (!TryFindBinding(bundle, route, invocation.ToolName, out var binding) ||
+                String(binding, "binding_id") !=
+                    WindowsLocalAgentExternalMcpSkillBundle.BindingId(
+                        RoutesForResource(route.ResourceId)))
+            {
+                return Rejection("external_mcp_snapshot_changed");
+            }
+            var activationResult = await host.SendAsync<
+                GetRunSkillActivationsCommand, RunSkillActivationsResult>(
+                new("get_run_skill_activations", ownerUserId, invocation.RunId), cancellationToken)
+                .ConfigureAwait(false);
+            if (activationResult.Type != "run_skill_activations" ||
+                activationResult.RunId != invocation.RunId)
+            {
+                throw new InvalidDataException("Local Agent Host returned an invalid Skill activation result.");
+            }
+            var activated = activationResult.SkillRefs.ToHashSet(StringComparer.Ordinal);
+            var required = new[]
+                {
+                    String(binding, "router_skill_ref"),
+                    String(binding, "specialist_skill_ref"),
+                }
+                .Where(value => !string.IsNullOrWhiteSpace(value) && !activated.Contains(value!))
+                .Select(value => value!)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            if (required.Length > 0)
+            {
+                return JsonSerializer.SerializeToElement(new
+                {
+                    is_error = true,
+                    content = new
+                    {
+                        error = "skill_activation_required",
+                        required_skill_refs = required,
+                    },
+                });
+            }
+        }
+
+        // The schema is part of the frozen gateway tool snapshot. Reject invalid or
+        // unsupported input before creating an HTTP request.
+        WindowsExternalToolSchemaValidator.Validate(invocation.Arguments, route.InputSchema);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, route.Endpoint);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -162,12 +233,59 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
             buffer.Write(chunk, 0, read);
         }
         using var document = JsonDocument.Parse(buffer.ToArray());
-        if (document.RootElement.ValueKind != JsonValueKind.Object ||
-            document.RootElement.TryGetProperty("error", out _) ||
-            !document.RootElement.TryGetProperty("result", out var result))
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("The external MCP returned an invalid response.");
+        if (document.RootElement.TryGetProperty("error", out var error) &&
+            error.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined)
+        {
+            return JsonSerializer.SerializeToElement(new
+            {
+                is_error = true,
+                content = new { error = "external_mcp_rpc_error", detail = error.Clone() },
+            });
+        }
+        if (!document.RootElement.TryGetProperty("result", out var result))
             throw new InvalidOperationException("The external MCP returned an invalid response.");
         return result.Clone();
     }
+
+    private IReadOnlyList<WindowsLocalAgentExternalMcpTool> RoutesForResource(string resourceId)
+    {
+        lock (_gate)
+            return _routes.Values.Where(value => value.ResourceId == resourceId)
+                .OrderBy(value => value.PublicName, StringComparer.Ordinal).ToArray();
+    }
+
+    private static bool TryFindBinding(
+        JsonElement bundle,
+        WindowsLocalAgentExternalMcpTool route,
+        string toolName,
+        out JsonElement binding)
+    {
+        binding = default;
+        if (!bundle.TryGetProperty("tool_skill_bindings", out var bindings) ||
+            bindings.ValueKind != JsonValueKind.Array) return false;
+        var providerId = WindowsLocalAgentExternalMcpSkillBundle.ProviderId(route.ResourceId);
+        foreach (var candidate in bindings.EnumerateArray())
+        {
+            if (candidate.ValueKind != JsonValueKind.Object ||
+                String(candidate, "provider_id") != providerId ||
+                !candidate.TryGetProperty("tool_names", out var toolNames) ||
+                toolNames.ValueKind != JsonValueKind.Array ||
+                !toolNames.EnumerateArray().Any(value =>
+                    value.ValueKind == JsonValueKind.String && value.GetString() == toolName))
+                continue;
+            binding = candidate.Clone();
+            return true;
+        }
+        return false;
+    }
+
+    private static JsonElement Rejection(string code) => JsonSerializer.SerializeToElement(new
+    {
+        is_error = true,
+        content = new { error = code },
+    });
 
     private static IReadOnlySet<string> SelectedExternalMcpIds(JsonElement input)
     {
@@ -182,6 +300,14 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Select(value => value!.Trim())
             .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static JsonElement? RemoteSkillGate(JsonElement snapshot)
+    {
+        if (!snapshot.TryGetProperty("_meta", out var metadata) ||
+            metadata.ValueKind != JsonValueKind.Object ||
+            !metadata.TryGetProperty("chatos/skillGate", out var gate)) return null;
+        return gate.Clone();
     }
 
     private static void ValidateEndpoint(Uri endpoint)
@@ -249,4 +375,17 @@ public sealed class WindowsLocalAgentExternalMcpExecutor(
 
     private static string? NonEmpty(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? String(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+
+    private sealed record GetRunSkillBundleCommand(string Type, string OwnerUserId, string RunId);
+    private sealed record RunSkillBundleResult(string Type, string RunId, JsonElement? Bundle);
+    private sealed record GetRunSkillActivationsCommand(string Type, string OwnerUserId, string RunId);
+    private sealed record RunSkillActivationsResult(
+        string Type,
+        string RunId,
+        IReadOnlyList<string> SkillRefs);
 }

@@ -11,6 +11,7 @@ public sealed partial class StoryStudioViewModel
     {
         var segment = SelectedSegment;
         if (!CanRestoreArchivedFrame || segment is null || !segment.ArchivedFrames.Contains(archived)) return;
+        var session = _session;
         if (archived.FilePath is not { Length: > 0 } path || !File.Exists(path))
         {
             ErrorMessage = "这个画面历史版本的本机文件已经不存在，无法恢复。";
@@ -38,8 +39,11 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
-            OnPropertyChanged(nameof(CanRestoreArchivedFrame));
+            if (session == _session)
+            {
+                IsBusy = false;
+                OnPropertyChanged(nameof(CanRestoreArchivedFrame));
+            }
         }
     }
 }

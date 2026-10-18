@@ -22,14 +22,15 @@ public sealed partial class PetWindow : Window
     private const int PetRowPadding = 16;
     private const int SummaryWidth = 360;
     private const int SummaryContentHeight = 145;
-    private const int ApprovalWidth = 430;
-    private const int ApprovalContentHeight = 350;
+    private const int ApprovalWidth = 460;
+    private const int ApprovalContentHeight = 410;
     private const int ExpandedWidth = 430;
     private const int ExpandedContentHeight = 480;
     private const int GwlExStyle = -20;
     private const long WsExLayered = 0x00080000L;
     private const long WsExToolWindow = 0x00000080L;
     private const uint LwaColorKey = 0x00000001;
+    private const int SwShownoactivate = 4;
     private readonly CommandApprovalCoordinator _approvals;
     private readonly IPetWindowPlacementStore _placementStore;
     private readonly UISettings _uiSettings = new();
@@ -49,6 +50,8 @@ public sealed partial class PetWindow : Window
     private int _spriteFrameIndex;
     private bool _isLoadingSprite;
     private int _petSize = (int)AppPreferences.DefaultPetSize;
+    private bool _approvalPlacementActive;
+    private PointInt32 _approvalReturnAnchor;
 
     private int CollapsedWidth => _petSize + CollapsedPadding;
     private int CollapsedHeight => _petSize + CollapsedPadding;
@@ -113,7 +116,13 @@ public sealed partial class PetWindow : Window
     public async Task ShowAsync(CancellationToken cancellationToken = default)
     {
         if (_isVisible) return;
-        Activate();
+        // The pet is a secondary always-on-top overlay. Showing it with Activate()
+        // makes it the process' first foreground window during session restoration,
+        // so Windows reports the transparent pet as the main window and the actual
+        // ChatOS shell appears to have disappeared. Show it without stealing focus;
+        // normal user clicks can still activate it afterwards.
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        ShowWindow(hwnd, SwShownoactivate);
         _isVisible = true;
         _ = EnsurePetSpriteAsync(cancellationToken);
         try
@@ -205,7 +214,7 @@ public sealed partial class PetWindow : Window
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        _ = DispatcherQueue.TryEnqueue(UpdateVisualState);
+        _ = DispatcherQueue.TryEnqueue(() => TryUpdateVisualState("pet view-model update"));
     }
 
     private void OnPendingApprovalsChanged(object? sender, EventArgs e) =>
@@ -315,7 +324,11 @@ public sealed partial class PetWindow : Window
         QuickChatEmptyHint.Visibility = quickChatVisible && !QuickChat.HasSelectedResource && !QuickChat.IsPreparing && !QuickChat.HasResources
             ? Visibility.Visible
             : Visibility.Collapsed;
-        QuickChatConversationRoot.Visibility = quickChatVisible && QuickChat.HasSelectedResource && !QuickChat.IsPreparing
+        var quickChatConversationReady = QuickChat.HasSelectedResource && QuickChat.Conversation.IsOpen;
+        QuickChatConversationRoot.Visibility = quickChatVisible && quickChatConversationReady && !QuickChat.IsPreparing
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        QuickChatWaiting.Visibility = quickChatVisible && QuickChat.HasSelectedResource && !QuickChat.Conversation.IsOpen && !QuickChat.IsPreparing
             ? Visibility.Visible
             : Visibility.Collapsed;
         QuickChatPreparing.Visibility = quickChatVisible && QuickChat.IsPreparing
@@ -338,9 +351,26 @@ public sealed partial class PetWindow : Window
                 : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ChatOSAccentBrush"];
         }
 
+        var approvalJustOpened = approvalVisible && !_approvalPlacementActive;
+        if (approvalJustOpened)
+        {
+            var position = AppWindow.Position;
+            var size = AppWindow.Size;
+            _approvalReturnAnchor = new PointInt32(position.X + size.Width, position.Y + size.Height);
+            _approvalPlacementActive = true;
+        }
+
         ResizeKeepingPetAnchor(
             approvalVisible ? ApprovalWidth : expanded || quickChatVisible ? ExpandedWidth : decisionVisible || summaryVisible ? SummaryWidth : CollapsedWidth,
             approvalVisible ? ApprovalHeight : expanded || quickChatVisible ? ExpandedHeight : decisionVisible || summaryVisible ? SummaryHeight : CollapsedHeight);
+        if (approvalJustOpened)
+        {
+            MoveApprovalToSafeTopRight();
+        }
+        else if (!approvalVisible && _approvalPlacementActive)
+        {
+            RestorePreApprovalPlacement();
+        }
 
         if (_spriteFrames is not null)
         {
@@ -349,15 +379,11 @@ public sealed partial class PetWindow : Window
         }
 
         PetSpriteImage.Visibility = Visibility.Collapsed;
-        PetCanvas.Visibility = Visibility.Visible;
-        var shouldAnimateFallback = _isDragging || ViewModel.AnimationState is PetAnimationState.Running or
-            PetAnimationState.Review or PetAnimationState.Waiting;
-        if (shouldAnimateFallback && !_animationTimer.IsEnabled) _animationTimer.Start();
-        if (!shouldAnimateFallback && _animationTimer.IsEnabled)
-        {
-            _animationTimer.Stop();
-            ResetPetPose();
-        }
+        // Do not revive the legacy vector pet while the atlas is loading or
+        // unavailable. The Windows client must show one consistent sprite set.
+        PetCanvas.Visibility = Visibility.Collapsed;
+        if (_animationTimer.IsEnabled) _animationTimer.Stop();
+        ResetPetPose();
     }
 
     private void ResizeKeepingPetAnchor(int width, int height)
@@ -365,89 +391,175 @@ public sealed partial class PetWindow : Window
         if (AppWindow.Size.Width == width && AppWindow.Size.Height == height) return;
         var old = AppWindow.Size;
         var position = AppWindow.Position;
+        var anchor = new PointInt32(position.X + old.Width, position.Y + old.Height);
         AppWindow.Resize(new SizeInt32(width, height));
+        var next = new PointInt32(anchor.X - width, anchor.Y - height);
+        var display = DisplayArea.GetFromPoint(anchor, DisplayAreaFallback.Nearest);
+        var work = display.WorkArea;
+        next.X = Math.Clamp(next.X, work.X, work.X + Math.Max(0, work.Width - width));
+        next.Y = Math.Clamp(next.Y, work.Y, work.Y + Math.Max(0, work.Height - height));
+        AppWindow.Move(next);
+    }
+
+    private void MoveApprovalToSafeTopRight()
+    {
+        const int edgeMargin = 20;
+        var position = AppWindow.Position;
+        var size = AppWindow.Size;
+        var display = DisplayArea.GetFromPoint(
+            new PointInt32(position.X + size.Width / 2, position.Y + size.Height / 2),
+            DisplayAreaFallback.Nearest);
+        var work = display.WorkArea;
         AppWindow.Move(new PointInt32(
-            position.X + old.Width - width,
-            position.Y + old.Height - height));
+            work.X + Math.Max(0, work.Width - size.Width - edgeMargin),
+            work.Y + edgeMargin));
+    }
+
+    private void RestorePreApprovalPlacement()
+    {
+        var size = AppWindow.Size;
+        var display = DisplayArea.GetFromPoint(_approvalReturnAnchor, DisplayAreaFallback.Nearest);
+        var work = display.WorkArea;
+        var restored = new PointInt32(
+            _approvalReturnAnchor.X - size.Width,
+            _approvalReturnAnchor.Y - size.Height);
+        restored.X = Math.Clamp(restored.X, work.X, work.X + Math.Max(0, work.Width - size.Width));
+        restored.Y = Math.Clamp(restored.Y, work.Y, work.Y + Math.Max(0, work.Height - size.Height));
+        AppWindow.Move(restored);
+        _approvalPlacementActive = false;
     }
 
     private void OnPetPointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (!GetCursorPos(out _dragStartCursor)) return;
-        _dragStartWindow = AppWindow.Position;
-        _isDragging = true;
-        _dragMoved = false;
-        PetHitTarget.CapturePointer(e.Pointer);
-        e.Handled = true;
-        UpdateVisualState();
+        try
+        {
+            if (!GetCursorPos(out _dragStartCursor)) return;
+            _dragStartWindow = AppWindow.Position;
+            _isDragging = true;
+            _dragMoved = false;
+            PetHitTarget.CapturePointer(e.Pointer);
+            e.Handled = true;
+            TryUpdateVisualState("pet pointer pressed");
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet pointer pressed", exception);
+            _isDragging = false;
+        }
     }
 
     private void OnPetPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (!_isDragging || !GetCursorPos(out var cursor)) return;
-        var deltaX = cursor.X - _dragStartCursor.X;
-        var deltaY = cursor.Y - _dragStartCursor.Y;
-        if (Math.Abs(deltaX) + Math.Abs(deltaY) >= 6) _dragMoved = true;
-        if (deltaX != 0)
+        try
         {
-            var isMovingRight = deltaX > 0;
-            PetDirectionTransform.ScaleX = isMovingRight ? 1 : -1;
-            if (_isDraggingRight != isMovingRight)
+            if (!_isDragging || !GetCursorPos(out var cursor)) return;
+            var deltaX = cursor.X - _dragStartCursor.X;
+            var deltaY = cursor.Y - _dragStartCursor.Y;
+            if (Math.Abs(deltaX) + Math.Abs(deltaY) >= 6) _dragMoved = true;
+            if (deltaX != 0)
             {
-                _isDraggingRight = isMovingRight;
-                if (_spriteFrames is not null) UpdatePetSpriteAnimation();
+                var isMovingRight = deltaX > 0;
+                PetDirectionTransform.ScaleX = isMovingRight ? 1 : -1;
+                if (_isDraggingRight != isMovingRight)
+                {
+                    _isDraggingRight = isMovingRight;
+                    if (_spriteFrames is not null) UpdatePetSpriteAnimation();
+                }
             }
-        }
 
-        var proposed = new PointInt32(_dragStartWindow.X + deltaX, _dragStartWindow.Y + deltaY);
-        var display = DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Nearest);
-        var work = display.WorkArea;
-        proposed.X = Math.Clamp(proposed.X, work.X, work.X + Math.Max(0, work.Width - AppWindow.Size.Width));
-        proposed.Y = Math.Clamp(proposed.Y, work.Y, work.Y + Math.Max(0, work.Height - AppWindow.Size.Height));
-        AppWindow.Move(proposed);
-        e.Handled = true;
+            var proposed = new PointInt32(_dragStartWindow.X + deltaX, _dragStartWindow.Y + deltaY);
+            var display = DisplayArea.GetFromPoint(cursor, DisplayAreaFallback.Nearest);
+            var work = display.WorkArea;
+            proposed.X = Math.Clamp(proposed.X, work.X, work.X + Math.Max(0, work.Width - AppWindow.Size.Width));
+            proposed.Y = Math.Clamp(proposed.Y, work.Y, work.Y + Math.Max(0, work.Height - AppWindow.Size.Height));
+            AppWindow.Move(proposed);
+            e.Handled = true;
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet pointer moved", exception);
+            _isDragging = false;
+        }
     }
 
     private async void OnPetPointerReleased(object sender, PointerRoutedEventArgs e)
     {
         if (!_isDragging) return;
-        PetHitTarget.ReleasePointerCapture(e.Pointer);
-        _isDragging = false;
-        if (!_dragMoved)
+        try
         {
-            if (QuickChat.IsOpen)
+            PetHitTarget.ReleasePointerCapture(e.Pointer);
+            _isDragging = false;
+            if (!_dragMoved)
             {
-                await QuickChat.CloseAsync();
+                if (QuickChat.IsOpen)
+                {
+                    await QuickChat.CloseAsync();
+                }
+                else
+                {
+                    ViewModel.IsExpanded = false;
+                    ViewModel.CloseDetail();
+                    QuickChat.Open();
+                }
             }
             else
-            {
-                ViewModel.IsExpanded = false;
-                ViewModel.CloseDetail();
-                QuickChat.Open();
-            }
-        }
-        else
-        {
-            try
             {
                 await _placementStore.SaveAsync(new PetWindowPlacement(
                     AppWindow.Position.X + AppWindow.Size.Width,
                     AppWindow.Position.Y + AppWindow.Size.Height));
             }
-            catch (Exception exception)
-            {
-                ViewModel.ErrorMessage = exception.Message;
-            }
         }
-        e.Handled = true;
-        UpdateVisualState();
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet pointer released", exception);
+        }
+        finally
+        {
+            _isDragging = false;
+            e.Handled = true;
+            TryUpdateVisualState("pet pointer release visual update");
+        }
     }
 
     private void OnPetPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
-        _isDragging = false;
-        PetHitTarget.ReleasePointerCapture(e.Pointer);
-        UpdateVisualState();
+        try
+        {
+            _isDragging = false;
+            PetHitTarget.ReleasePointerCapture(e.Pointer);
+            TryUpdateVisualState("pet pointer canceled");
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet pointer canceled", exception);
+        }
+    }
+
+    private void TryUpdateVisualState(string phase)
+    {
+        try
+        {
+            UpdateVisualState();
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure(phase, exception);
+        }
+    }
+
+    private void RecordPetInteractionFailure(string phase, Exception exception)
+    {
+        StartupDiagnostics.RecordUnhandled(phase, exception);
+        try
+        {
+            ViewModel.ErrorMessage = ViewModel.Localization.Text(
+                $"宠物操作失败：{exception.Message}",
+                $"Pet interaction failed: {exception.Message}");
+        }
+        catch
+        {
+            // Reporting an interaction failure must never throw from an input event.
+        }
     }
 
     private void OnAnimationTick(object? sender, object e)
@@ -480,7 +592,9 @@ public sealed partial class PetWindow : Window
             var frames = await PetSpriteAtlas.LoadAsync(cancellationToken);
             if (frames is null)
             {
-                StartupDiagnostics.RecordLifecycle("pet sprite atlas unavailable; using vector fallback");
+                PetSpriteImage.Visibility = Visibility.Collapsed;
+                PetCanvas.Visibility = Visibility.Collapsed;
+                StartupDiagnostics.RecordLifecycle("pet sprite atlas unavailable; no legacy fallback image shown");
                 return;
             }
             _spriteFrames = frames;
@@ -534,74 +648,141 @@ public sealed partial class PetWindow : Window
 
     private async void OnCompactActivityTapped(object sender, TappedRoutedEventArgs e)
     {
-        if (QuickChat.IsOpen) await QuickChat.CloseAsync();
-        ViewModel.IsExpanded = true;
-        if (ViewModel.Activities.FirstOrDefault() is { } activity)
+        await RunPetInteractionAsync("pet activity open", async () =>
         {
-            await ViewModel.SelectAsync(activity);
-        }
-        UpdateVisualState();
+            if (QuickChat.IsOpen) await QuickChat.CloseAsync();
+            ViewModel.IsExpanded = true;
+            if (ViewModel.Activities.FirstOrDefault() is { } activity)
+            {
+                await ViewModel.SelectAsync(activity);
+            }
+        });
     }
 
     private void OnQuickChatPropertyChanged(object? sender, PropertyChangedEventArgs e) =>
-        _ = DispatcherQueue.TryEnqueue(UpdateVisualState);
+        _ = DispatcherQueue.TryEnqueue(() => TryUpdateVisualState("pet quick-chat update"));
 
     private async void OnQuickChatResourceClicked(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is PetQuickChatResourceViewModel resource)
+        await RunPetInteractionAsync("pet quick-chat resource", async () =>
         {
-            await QuickChat.SelectAsync(resource);
-        }
+            if (e.ClickedItem is PetQuickChatResourceViewModel resource)
+            {
+                await QuickChat.SelectAsync(resource);
+            }
+        });
     }
 
-    private async void OnQuickChatBackClicked(object sender, RoutedEventArgs e) => await QuickChat.BackAsync();
+    private async void OnQuickChatBackClicked(object sender, RoutedEventArgs e) =>
+        await RunPetInteractionAsync("pet quick-chat back", () => QuickChat.BackAsync());
 
-    private async void OnCloseQuickChatClicked(object sender, RoutedEventArgs e) => await QuickChat.CloseAsync();
+    private async void OnCloseQuickChatClicked(object sender, RoutedEventArgs e) =>
+        await RunPetInteractionAsync("pet quick-chat close", () => QuickChat.CloseAsync());
 
     private async void OnOpenInboxFromChatClicked(object sender, RoutedEventArgs e)
     {
-        await QuickChat.CloseAsync();
-        ViewModel.IsExpanded = true;
+        await RunPetInteractionAsync("pet quick-chat open inbox", async () =>
+        {
+            await QuickChat.CloseAsync();
+            ViewModel.IsExpanded = true;
+        });
     }
 
-    private async void OnRefreshClicked(object sender, RoutedEventArgs e) => await ViewModel.RefreshAsync();
+    private async void OnRefreshClicked(object sender, RoutedEventArgs e) =>
+        await RunPetInteractionAsync("pet refresh", () => ViewModel.RefreshAsync());
 
     private void OnCloseInboxClicked(object sender, RoutedEventArgs e)
     {
-        ViewModel.IsExpanded = false;
-        ViewModel.CloseDetail();
+        try
+        {
+            ViewModel.IsExpanded = false;
+            ViewModel.CloseDetail();
+            TryUpdateVisualState("pet inbox close");
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet inbox close", exception);
+        }
     }
 
     private async void OnActivityItemClick(object sender, ItemClickEventArgs e)
     {
-        if (e.ClickedItem is PetActivityItemViewModel activity)
+        await RunPetInteractionAsync("pet activity select", async () =>
         {
-            await ViewModel.SelectAsync(activity);
+            if (e.ClickedItem is PetActivityItemViewModel activity)
+            {
+                await ViewModel.SelectAsync(activity);
+            }
+        });
+    }
+
+    private async void OnActivityOpenClicked(object sender, RoutedEventArgs e)
+    {
+        await RunPetInteractionAsync("pet activity open button", async () =>
+        {
+            if ((sender as FrameworkElement)?.Tag is PetActivityItemViewModel activity)
+            {
+                await ViewModel.SelectAsync(activity);
+            }
+        });
+    }
+
+    private void OnCloseDetailClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            ViewModel.CloseDetail();
+            TryUpdateVisualState("pet detail close");
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure("pet detail close", exception);
         }
     }
 
-    private void OnCloseDetailClicked(object sender, RoutedEventArgs e) => ViewModel.CloseDetail();
-
     private async void OnIgnoreActivityClicked(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.SelectedActivity is { } activity) await ViewModel.IgnoreAsync(activity);
+        await RunPetInteractionAsync("pet activity ignore", async () =>
+        {
+            if (ViewModel.SelectedActivity is { } activity) await ViewModel.IgnoreAsync(activity);
+        });
     }
 
     private async void OnMarkHandledClicked(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.SelectedActivity is { } activity) await ViewModel.MarkHandledAsync(activity);
+        await RunPetInteractionAsync("pet activity mark handled", async () =>
+        {
+            if (ViewModel.SelectedActivity is { } activity) await ViewModel.MarkHandledAsync(activity);
+        });
     }
 
-    private async void OnCancelTaskClicked(object sender, RoutedEventArgs e) => await ViewModel.CancelSelectedAsync();
+    private async void OnCancelTaskClicked(object sender, RoutedEventArgs e) =>
+        await RunPetInteractionAsync("pet task cancel", () => ViewModel.CancelSelectedAsync());
 
     private async void OnDeclineApproval(object sender, RoutedEventArgs e) =>
-        await ResolveApprovalAsync(ConnectorApprovalAction.Decline);
+        await RunPetInteractionAsync("pet approval decline", () => ResolveApprovalAsync(ConnectorApprovalAction.Decline));
 
     private async void OnAcceptApproval(object sender, RoutedEventArgs e) =>
-        await ResolveApprovalAsync(ConnectorApprovalAction.Accept);
+        await RunPetInteractionAsync("pet approval accept", () => ResolveApprovalAsync(ConnectorApprovalAction.Accept));
 
     private async void OnAcceptSessionApproval(object sender, RoutedEventArgs e) =>
-        await ResolveApprovalAsync(ConnectorApprovalAction.AcceptForSession);
+        await RunPetInteractionAsync("pet approval accept for session", () => ResolveApprovalAsync(ConnectorApprovalAction.AcceptForSession));
+
+    private async Task RunPetInteractionAsync(string phase, Func<Task> operation)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (Exception exception)
+        {
+            RecordPetInteractionFailure(phase, exception);
+        }
+        finally
+        {
+            TryUpdateVisualState($"{phase} visual update");
+        }
+    }
 
     private async Task ResolveApprovalAsync(ConnectorApprovalAction action)
     {
@@ -667,4 +848,8 @@ public sealed partial class PetWindow : Window
 
     private static IntPtr SetWindowLongPtr(IntPtr window, int index, IntPtr value) =>
         IntPtr.Size == 8 ? SetWindowLongPtr64(window, index, value) : SetWindowLongPtr32(window, index, value);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr window, int command);
 }

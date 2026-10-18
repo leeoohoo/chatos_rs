@@ -90,33 +90,11 @@ internal static partial class WindowsAppContainerSandbox
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr stringSid);
 
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint GetNamedSecurityInfo(
-        string objectName,
-        SeObjectType objectType,
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool SetFileSecurity(
+        string fileName,
         uint securityInformation,
-        out IntPtr owner,
-        out IntPtr group,
-        out IntPtr dacl,
-        out IntPtr sacl,
-        out IntPtr securityDescriptor);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint SetNamedSecurityInfo(
-        string objectName,
-        SeObjectType objectType,
-        uint securityInformation,
-        IntPtr owner,
-        IntPtr group,
-        IntPtr dacl,
-        IntPtr sacl);
-
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint SetEntriesInAcl(
-        uint entryCount,
-        ref ExplicitAccess explicitEntry,
-        IntPtr oldAcl,
-        out IntPtr newAcl);
+        byte[] securityDescriptor);
 
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr memory);
@@ -126,37 +104,11 @@ internal static partial class WindowsAppContainerSandbox
     [DllImport("advapi32.dll")]
     internal static extern IntPtr FreeSid(IntPtr sid);
 
-    private enum SeObjectType
+    private static bool DeleteControlledProfile(string profileName)
     {
-        FileObject = 1,
-    }
-
-    private enum TrusteeForm
-    {
-        Sid = 0,
-    }
-
-    private enum TrusteeType
-    {
-        Unknown = 0,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Trustee
-    {
-        public IntPtr MultipleTrustee;
-        public int MultipleTrusteeOperation;
-        public TrusteeForm TrusteeForm;
-        public TrusteeType TrusteeType;
-        public IntPtr Name;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ExplicitAccess
-    {
-        public uint AccessPermissions;
-        public uint AccessMode;
-        public uint Inheritance;
-        public Trustee Trustee;
+        var result = DeleteAppContainerProfile(profileName);
+        return result == 0 ||
+            result == unchecked((int)0x80070490) ||
+            result == unchecked((int)0x80070002);
     }
 }

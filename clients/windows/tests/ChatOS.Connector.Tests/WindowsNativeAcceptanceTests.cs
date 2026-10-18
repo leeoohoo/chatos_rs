@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Diagnostics;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using ChatOS.Connector.NetworkGuard;
 using ChatOS.Connector.Persistence;
 using ChatOS.Connector.Sandbox;
@@ -11,6 +13,73 @@ namespace ChatOS.Connector.Tests;
 [Trait("Category", "WindowsNative")]
 public sealed class WindowsNativeAcceptanceTests
 {
+    [Fact]
+    public void AncestorTraverseAclUpdateIsBoundedIdempotentAndDoesNotPropagateOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var workspace = TemporaryDirectory.Create();
+        var child = System.IO.Path.Combine(workspace.Path, "existing-child");
+        Directory.CreateDirectory(child);
+        var sid = "S-1-15-2-424242001-424242002-424242003-424242004-424242005-424242006-424242007";
+        var childBefore = AccessDescriptor(child);
+
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            WindowsAppContainerSandbox.UpdateTraverseAcl(workspace.Path, sid, remove: false);
+            WindowsAppContainerSandbox.UpdateTraverseAcl(workspace.Path, sid, remove: false);
+            stopwatch.Stop();
+
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), stopwatch.Elapsed.ToString());
+            var matching = ExplicitRules(workspace.Path, sid);
+            var rule = Assert.Single(matching);
+            Assert.Equal(InheritanceFlags.None, rule.InheritanceFlags);
+            Assert.Equal(PropagationFlags.None, rule.PropagationFlags);
+            Assert.True(rule.FileSystemRights.HasFlag(FileSystemRights.Traverse));
+            Assert.Equal(childBefore, AccessDescriptor(child));
+            Assert.Empty(ExplicitRules(child, sid));
+        }
+        finally
+        {
+            WindowsAppContainerSandbox.UpdateTraverseAcl(workspace.Path, sid, remove: true);
+        }
+
+        Assert.Empty(ExplicitRules(workspace.Path, sid));
+        Assert.Equal(childBefore, AccessDescriptor(child));
+    }
+
+    [Fact]
+    public async Task FailedControlledPreparationRemovesProfileAndCleanupJournalOnWindows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var workspace = TemporaryDirectory.Create();
+        var missing = System.IO.Path.Combine(workspace.Path, "missing-workspace");
+        var policy = new SandboxExecutionPolicy(
+            UseAppContainer: true,
+            PermissionProfile: ConnectorSandboxPermissionProfile.ReadOnly,
+            NetworkAccess: ConnectorSandboxNetworkAccess.Disabled);
+        var isolationKey = $"cleanup-regression-{Guid.NewGuid():N}";
+        var profileName = WindowsAppContainerSandbox.ProfileName(
+            missing,
+            policy.PermissionProfile,
+            isolationKey);
+
+        await Assert.ThrowsAsync<DirectoryNotFoundException>(() =>
+            WindowsAppContainerSandbox.PrepareAsync(
+                missing,
+                policy,
+                isolationKey,
+                CancellationToken.None));
+
+        Assert.False(WindowsAppContainerSandbox.HasPendingProfileCleanup(profileName));
+        Assert.False(Directory.Exists(System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Packages",
+            profileName.ToLowerInvariant())));
+    }
+
     [Fact]
     public async Task NativeCommandExecutorCapturesOutputOnWindows()
     {
@@ -31,6 +100,22 @@ public sealed class WindowsNativeAcceptanceTests
         Assert.Contains("CHATOS_NATIVE_EXEC_OK", result.StandardOutput, StringComparison.Ordinal);
         Assert.Equal(ConnectorSandboxPermissionProfile.FullAccess.ToString(), result.SandboxProfile);
         Assert.Equal(ConnectorSandboxNetworkAccess.Host.ToString(), result.SandboxNetwork);
+    }
+
+    private static byte[] AccessDescriptor(string path) =>
+        new DirectoryInfo(path)
+            .GetAccessControl(AccessControlSections.Access)
+            .GetSecurityDescriptorBinaryForm();
+
+    private static IReadOnlyList<FileSystemAccessRule> ExplicitRules(string path, string sid)
+    {
+        var identity = new SecurityIdentifier(sid);
+        return new DirectoryInfo(path)
+            .GetAccessControl(AccessControlSections.Access)
+            .GetAccessRules(includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier))
+            .OfType<FileSystemAccessRule>()
+            .Where(rule => identity.Equals(rule.IdentityReference))
+            .ToArray();
     }
 
     [Fact]

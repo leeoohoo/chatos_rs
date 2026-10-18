@@ -46,7 +46,7 @@ public sealed class AgentPluginToolRuntimeTests
             var definition = new AgentToolDefinition("mcp_0_0_0_echo", "Echo",
                 JsonSerializer.SerializeToElement(new { type = "object" }));
             var binding = new AgentPluginToolRuntime.PluginBinding(identity, "session-1",
-                directory, "workspace-1", "project-1", "Follow plugin instructions.",
+                directory, directory, "workspace-1", "project-1", "Follow plugin instructions.",
                 [new("mcp_0_0_0_echo", "echo", definition, PluginToolPolicy.Parse(
                     definitionDocument.RootElement))]);
 
@@ -87,7 +87,7 @@ public sealed class AgentPluginToolRuntimeTests
                 directory, directory, directory, "Example");
             var definition = new AgentToolDefinition("mcp_0_0_0_echo", "Echo", new { });
             var binding = new AgentPluginToolRuntime.PluginBinding(identity, "session-2",
-                directory, null, null, null,
+                directory, null, null, null, null,
                 [new("mcp_0_0_0_echo", "echo", definition, PluginToolPolicy.Parse(
                     JsonSerializer.SerializeToElement(new { }))) ]);
             await using var run = new AgentPluginRunSession(sessions,

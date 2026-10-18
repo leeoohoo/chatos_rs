@@ -18,6 +18,7 @@ public sealed class MediaGenerationServiceTests
               {"id":"video","name":"Sora Video","provider":"openai","model":"sora-2","enabled":true,"has_api_key":true},
               {"id":"disabled","name":"Disabled","model":"image","enabled":false,"has_api_key":true},
               {"id":"missing-key","name":"No Key","model":"image","enabled":true,"has_api_key":false},
+              {"id":"chat","name":"Aardvark Chat","provider":"openai","model":"gpt-5","enabled":true,"has_api_key":true},
               {"id":"image-b","name":"Beta","provider":"openai","model":"gpt-image-1","enabled":true,"has_api_key":true},
               {"id":"image-a","name":"Alpha","provider":"openai","model":"gpt-image-1","enabled":true,"has_api_key":true}
             ]
@@ -26,7 +27,26 @@ public sealed class MediaGenerationServiceTests
 
         var models = await service.FetchModelsAsync();
 
-        Assert.Equal(new[] { "image-a", "image-b", "video" }, models.Select(model => model.Id));
+        Assert.Equal(new[] { "image-a", "image-b", "chat", "video" }, models.Select(model => model.Id));
+    }
+
+    [Fact]
+    public async Task FetchModelsSkipsNullAndIncompleteGatewayEntries()
+    {
+        var store = TokenStore();
+        var api = ApiTestClient.Create(store, _ => StubHttpMessageHandler.Json("""
+            [
+              null,
+              {"id":null,"name":"Missing id","model":"image","enabled":true,"has_api_key":true},
+              {"id":"missing-name","name":null,"model":"image","enabled":true,"has_api_key":true},
+              {"id":"image","name":"Image","model":"gpt-image-1","enabled":true,"has_api_key":true}
+            ]
+            """));
+        var service = new MediaGenerationService(api, EmptyProviderFactory(), store);
+
+        var models = await service.FetchModelsAsync();
+
+        Assert.Equal("image", Assert.Single(models).Id);
     }
 
     [Fact]

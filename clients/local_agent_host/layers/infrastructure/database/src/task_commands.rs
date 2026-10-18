@@ -97,6 +97,57 @@ pub(super) async fn cancel_task(
     Ok(graph)
 }
 
+pub(super) async fn cancel_tasks_for_conversation_turn(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    turn_id: &str,
+    reason: &str,
+    command_prefix: &str,
+    run_event_prefix: &str,
+    now_unix_ms: i64,
+) -> Result<(), ClientStorageError> {
+    let rows = sqlx::query(
+        "SELECT task.task_id FROM local_tasks task \
+         JOIN local_task_graphs graph ON graph.graph_id = task.graph_id \
+         WHERE graph.owner_user_id = ? AND graph.source_entity_type = 'conversation_turn' \
+           AND graph.source_entity_id = ? \
+           AND task.status IN ('pending','ready','running','blocked') \
+         ORDER BY task.created_at_unix_ms, task.task_id LIMIT 501",
+    )
+    .bind(owner_user_id)
+    .bind(turn_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?;
+    if rows.len() > MAX_CASCADE_CANCEL_TASKS {
+        return Err(ClientStorageError::Conflict(
+            "too many active Tasks for one cancelled conversation Turn".to_string(),
+        ));
+    }
+
+    for (index, row) in rows.into_iter().enumerate() {
+        let task_id: String = row.try_get("task_id").db()?;
+        let derived_command = IdempotentCommand {
+            command_id: format!("{command_prefix}:task:{index}:{task_id}"),
+            request_fingerprint: format!("cancel-conversation-turn-task:{turn_id}:{task_id}"),
+            persist_receipt: false,
+        };
+        cancel_task(
+            connection,
+            &derived_command,
+            owner_user_id,
+            &task_id,
+            None,
+            reason,
+            &[],
+            &format!("{run_event_prefix}:task:{index}"),
+            now_unix_ms,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 async fn validate_replacement_tasks(
     connection: &mut SqliteConnection,
     owner_user_id: &str,

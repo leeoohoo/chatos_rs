@@ -151,7 +151,7 @@ internal sealed class AgentPluginToolRuntime(
                     PluginToolPolicy.Parse(tool.Raw));
             }).ToArray();
             return new PluginBinding(identity, adapterSessionId, launch.ArtifactPath,
-                project.WorkspaceId, project.ProjectId, initialized.Instructions, tools);
+                project.Root, project.WorkspaceId, project.ProjectId, initialized.Instructions, tools);
         }
         catch
         {
@@ -280,6 +280,7 @@ internal sealed class AgentPluginToolRuntime(
         PluginRuntimeIdentity Identity,
         string AdapterSessionId,
         string ArtifactDirectory,
+        string? ProjectRoot,
         string? WorkspaceId,
         string? ProjectId,
         string? Instructions,
@@ -370,6 +371,7 @@ internal sealed class AgentPluginRunSession(
             call.Id, target.Tool.OriginalName, arguments, target.Tool.Policy.Timeout,
             cancellationToken).ConfigureAwait(false);
         result = await artifacts.RegisterAsync(target.Binding.Identity, ownerUserId, deviceId,
+            target.Binding.ProjectRoot, sessions.Permissions(target.Binding.AdapterSessionId),
             target.Binding.ArtifactDirectory, target.Tool.OriginalName, result,
             cancellationToken).ConfigureAwait(false);
         return result.GetRawText();

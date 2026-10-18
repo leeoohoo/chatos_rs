@@ -21,6 +21,7 @@ internal interface ILocalAgentHostProcessLauncher
         LocalAgentHostOptions options,
         string ownerUserId,
         IReadOnlyDictionary<string, string> credentialEnvironment,
+        bool workersEnabled,
         CancellationToken cancellationToken);
 }
 
@@ -35,12 +36,13 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         LocalAgentHostOptions options,
         string ownerUserId,
         IReadOnlyDictionary<string, string> credentialEnvironment,
+        bool workersEnabled,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(options.DatabasePath)
             ?? throw new InvalidOperationException("Local Agent database path has no parent."));
-        var start = CreateStartInfo(options, ownerUserId, credentialEnvironment);
+        var start = CreateStartInfo(options, ownerUserId, credentialEnvironment, workersEnabled);
 
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         try
@@ -62,7 +64,8 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
     internal static ProcessStartInfo CreateStartInfo(
         LocalAgentHostOptions options,
         string ownerUserId,
-        IReadOnlyDictionary<string, string> credentialEnvironment)
+        IReadOnlyDictionary<string, string> credentialEnvironment,
+        bool workersEnabled = true)
     {
         var start = new ProcessStartInfo
         {
@@ -92,8 +95,10 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
             "remote_connection_controller_list_directory",
             "remote_connection_controller_read_file",
             "remote_connection_controller_download_file",
-            "capability_search", "capability_describe", "capability_skill_activate",
-            "capability_skill_read_resource",
+            "capability_search", "capability_describe", "agent_skill_activate",
+            "agent_skill_read_resource",
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInspectNpmToolName,
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInspectSourceToolName,
         })
         {
             start.ArgumentList.Add("--read-only-tool");
@@ -101,6 +106,13 @@ internal sealed class LocalAgentHostProcessLauncher : ILocalAgentHostProcessLaun
         }
         start.ArgumentList.Add("--approval-exempt-tool");
         start.ArgumentList.Add("capability_invoke");
+        start.ArgumentList.Add("--approval-exempt-tool");
+        start.ArgumentList.Add(
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInstallSourceToolName);
+        start.ArgumentList.Add("--approval-exempt-tool");
+        start.ArgumentList.Add(
+            WindowsLocalAgentCapabilityCatalog.PluginInstallerInstallNpmToolName);
+        if (!workersEnabled) start.ArgumentList.Add("--disable-workers");
         start.ArgumentList.Add("--stdio");
         start.Environment.Clear();
         foreach (var name in AllowedEnvironmentVariables)

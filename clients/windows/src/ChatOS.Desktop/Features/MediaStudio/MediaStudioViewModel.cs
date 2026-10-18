@@ -15,6 +15,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private readonly MediaStudioHistoryStore _historyStore;
     private string? _ownerUserId;
     private bool _initialized;
+    private CancellationTokenSource? _imageGenerationCancellation;
+    private CancellationTokenSource? _modelReloadCancellation;
+    private CancellationTokenSource? _referenceImagesCancellation;
+    private CancellationTokenSource? _videoFirstFrameCancellation;
+    private CancellationTokenSource? _videoReferenceAudioCancellation;
     private CancellationTokenSource? _videoGenerationCancellation;
     private MediaStudioHistoryCursor? _historyCursor;
     private MediaStudioHistoryCursor? _videoHistoryCursor;
@@ -71,12 +76,30 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public IReadOnlyList<string> VideoRatios => VideoGenerationProfile.Ratios;
 
-    public bool CanUseVideoReferenceAudio => VideoProfile.SupportsReferenceVideo;
+    public bool CanUseVideoReferenceAudio =>
+        VideoProfile.SupportsReferenceVideo && !IsLoadingVideoReferenceAudio && !IsGeneratingVideo;
 
-    public bool CanGenerate => !IsBusy && SelectedModel is not null &&
+    public bool CanChooseVideoFirstFrame => !IsLoadingVideoFirstFrame && !IsGeneratingVideo;
+
+    public bool ShowVideoRatio
+    {
+        get
+        {
+            var model = SelectedVideoModel?.ModelName ?? string.Empty;
+            return model.Contains("minimax", StringComparison.OrdinalIgnoreCase) ||
+                model.Contains("seedance", StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    public string VideoSizeLabel => ShowVideoRatio ? "分辨率" : "画幅";
+
+    public bool CanGenerate => !IsBusy && !IsLoadingReferenceImages && SelectedModel is not null &&
         !string.IsNullOrWhiteSpace(Prompt) && _ownerUserId is not null;
 
-    public bool CanGenerateVideo => !IsGeneratingVideo && SelectedVideoModel is not null &&
+    public bool CanReloadModels => !IsBusy;
+
+    public bool CanGenerateVideo => !IsGeneratingVideo && !IsLoadingVideoFirstFrame &&
+        !IsLoadingVideoReferenceAudio && SelectedVideoModel is not null &&
         !string.IsNullOrWhiteSpace(VideoPrompt) && _ownerUserId is not null;
 
     public bool HasImageModels => Models.Count > 0;
@@ -93,9 +116,9 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public bool HasReferenceImages => ReferenceImages.Count > 0;
 
-    public bool CanAddReferenceImages => !IsBusy && ReferenceImages.Count < 8;
+    public bool CanAddReferenceImages => !IsBusy && !IsLoadingReferenceImages && ReferenceImages.Count < 8;
 
-    public bool CanClearReferenceImages => !IsBusy && HasReferenceImages;
+    public bool CanClearReferenceImages => !IsBusy && !IsLoadingReferenceImages && HasReferenceImages;
 
     public string ReferenceImageCountLabel => $"{ReferenceImages.Count} / 8";
 
@@ -107,7 +130,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public string ImageEmptyDescription => HasReferenceImages
         ? "参考图已经添加。请在右侧描述希望保留、修改或重新设计的内容。"
-        : "选择图片模型、填写提示词并生成；也可以添加参考图进行图生图。";
+        : "从一个清晰的主体、场景或风格开始，也可以添加参考图进行图生图。";
 
     public string GenerateVideoActionLabel => VideoFirstFrame is null
         ? "生成视频"
@@ -127,6 +150,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public bool HasImageCanvasStatus => IsGeneratingImage || LatestImageBatch is not null;
 
+    public bool HasCompletedImageCanvasStatus => !IsGeneratingImage && LatestImageBatch is not null;
+
     public string VideoCanvasSubtitle => IsGeneratingVideo
         ? VideoProgressLabel
         : LatestVideo is { } latest
@@ -137,9 +162,8 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public string VideoProgressLabel => VideoProgress switch
     {
-        { Status: "downloading" } => "正在下载视频…",
-        { Percent: { } percent } => $"{VideoProgress.Status} · {percent:0}%",
-        { } value => value.Status,
+        { Percent: { } percent } value => $"{LocalizeVideoStatus(value.Status)} · {percent:0}%",
+        { } value => LocalizeVideoStatus(value.Status),
         _ => "选择视频模型并描述镜头",
     };
 
@@ -215,8 +239,20 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     private VideoGenerationInputAudio? _videoReferenceAudio;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChooseVideoFirstFrame))]
+    [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    private bool _isLoadingVideoFirstFrame;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanUseVideoReferenceAudio))]
+    [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
+    private bool _isLoadingVideoReferenceAudio;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanGenerateVideo))]
     [NotifyPropertyChangedFor(nameof(VideoCanvasSubtitle))]
+    [NotifyPropertyChangedFor(nameof(CanChooseVideoFirstFrame))]
+    [NotifyPropertyChangedFor(nameof(CanUseVideoReferenceAudio))]
     private bool _isGeneratingVideo;
 
     [ObservableProperty]
@@ -228,6 +264,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ImageCanvasSubtitle))]
     [NotifyPropertyChangedFor(nameof(ImageCanvasStatusLabel))]
     [NotifyPropertyChangedFor(nameof(HasImageCanvasStatus))]
+    [NotifyPropertyChangedFor(nameof(HasCompletedImageCanvasStatus))]
     private MediaStudioHistoryItem? _latestImageBatch;
 
     [ObservableProperty]
@@ -239,6 +276,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(ImageCanvasSubtitle))]
     [NotifyPropertyChangedFor(nameof(ImageCanvasStatusLabel))]
     [NotifyPropertyChangedFor(nameof(HasImageCanvasStatus))]
+    [NotifyPropertyChangedFor(nameof(HasCompletedImageCanvasStatus))]
     [NotifyPropertyChangedFor(nameof(GenerateImageActionLabel))]
     private bool _isGeneratingImage;
 
@@ -246,7 +284,14 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanGenerate))]
     [NotifyPropertyChangedFor(nameof(CanAddReferenceImages))]
     [NotifyPropertyChangedFor(nameof(CanClearReferenceImages))]
+    [NotifyPropertyChangedFor(nameof(CanReloadModels))]
     private bool _isBusy;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanGenerate))]
+    [NotifyPropertyChangedFor(nameof(CanAddReferenceImages))]
+    [NotifyPropertyChangedFor(nameof(CanClearReferenceImages))]
+    private bool _isLoadingReferenceImages;
 
     [ObservableProperty]
     private bool _isInitialLoading;
@@ -319,6 +364,7 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            StartupDiagnostics.RecordUnhandled("media studio workspace data loading", exception);
             if (session == _session)
             {
                 _initialized = false;
@@ -390,24 +436,43 @@ public sealed partial class MediaStudioViewModel : ObservableObject
 
     public async Task ReloadModelsAsync(CancellationToken cancellationToken = default)
     {
+        if (!CanReloadModels) return;
+        _modelReloadCancellation?.Cancel();
+        _modelReloadCancellation?.Dispose();
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _modelReloadCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
+        var owner = _ownerUserId;
         IsLoadingModels = true;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            ApplyModels(await _service.FetchModelsAsync(cancellationToken));
+            var models = await _service.FetchModelsAsync(token);
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
+            ApplyModels(models);
             StatusMessage = Models.Count == 0
                 ? "没有找到已配置的图片模型"
                 : $"已加载 {Models.Count} 个可用模型";
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
         }
         finally
         {
-            IsLoadingModels = false;
-            IsBusy = false;
+            if (session == _session && ReferenceEquals(_modelReloadCancellation, operation))
+            {
+                IsLoadingModels = false;
+                IsBusy = false;
+                _modelReloadCancellation.Dispose();
+                _modelReloadCancellation = null;
+            }
         }
     }
 
@@ -415,7 +480,14 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     {
         var owner = _ownerUserId;
         if (!CanGenerate || SelectedModel is null || owner is null) return;
+        _imageGenerationCancellation?.Cancel();
+        _imageGenerationCancellation?.Dispose();
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _imageGenerationCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
         var submittedPrompt = Prompt.Trim();
+        var generationCompleted = false;
         IsGeneratingImage = true;
         IsBusy = true;
         ErrorMessage = null;
@@ -429,25 +501,43 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     SelectedSize == "auto" ? null : SelectedSize,
                     SelectedCount,
                     ReferenceImages.Select(image => image.Input).ToArray()),
-                cancellationToken);
+                token);
+            token.ThrowIfCancellationRequested();
+            generationCompleted = true;
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
             var item = await _historyStore.SaveAsync(
                 owner,
                 submittedPrompt,
                 result,
-                cancellationToken);
+                token);
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
             History.Insert(0, item);
             ShowLatest(item);
             StatusMessage = $"已生成并保存 {item.Images.Count} 张图片";
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
-            StatusMessage = "生成失败";
+            if (session == _session)
+            {
+                ErrorMessage = generationCompleted
+                    ? $"图片已生成，但未能保存到本机：{exception.Message}"
+                    : exception.Message;
+                StatusMessage = generationCompleted ? "图片已生成，但保存失败" : "生成失败";
+            }
         }
         finally
         {
-            IsGeneratingImage = false;
-            IsBusy = false;
+            if (session == _session && ReferenceEquals(_imageGenerationCancellation, operation))
+            {
+                IsGeneratingImage = false;
+                IsBusy = false;
+                _imageGenerationCancellation.Dispose();
+                _imageGenerationCancellation = null;
+            }
         }
     }
 
@@ -456,13 +546,23 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         CancellationToken cancellationToken = default)
     {
         ErrorMessage = null;
+        if (paths.Count == 0) return;
         if (ReferenceImages.Count + paths.Count > 8)
         {
             ErrorMessage = "最多可以添加 8 张参考图。";
             return;
         }
+        _referenceImagesCancellation?.Cancel();
+        _referenceImagesCancellation?.Dispose();
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _referenceImagesCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
+        var owner = _ownerUserId;
+        IsLoadingReferenceImages = true;
         try
         {
+            var loaded = new List<MediaStudioReferenceImage>(paths.Count);
             foreach (var path in paths)
             {
                 var mimeType = Path.GetExtension(path).ToLowerInvariant() switch
@@ -472,20 +572,35 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     ".webp" => "image/webp",
                     _ => throw new InvalidDataException("参考图必须是 PNG、JPEG 或 WebP。"),
                 };
-                var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+                var bytes = await File.ReadAllBytesAsync(path, token);
                 if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
                     throw new InvalidDataException("参考图为空或超过 20 MB。");
-                ReferenceImages.Add(new MediaStudioReferenceImage(
+                loaded.Add(new MediaStudioReferenceImage(
                     new ImageGenerationInput(
                         Path.GetFileName(path),
                         mimeType,
                         Convert.ToBase64String(bytes)),
                     path));
             }
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
+            foreach (var image in loaded) ReferenceImages.Add(image);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
+        }
+        finally
+        {
+            if (session == _session && ReferenceEquals(_referenceImagesCancellation, operation))
+            {
+                IsLoadingReferenceImages = false;
+                _referenceImagesCancellation.Dispose();
+                _referenceImagesCancellation = null;
+            }
         }
     }
 
@@ -497,17 +612,39 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         string path,
         CancellationToken cancellationToken = default)
     {
+        _videoFirstFrameCancellation?.Cancel();
+        _videoFirstFrameCancellation?.Dispose();
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _videoFirstFrameCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
+        var owner = _ownerUserId;
         ErrorMessage = null;
+        IsLoadingVideoFirstFrame = true;
         try
         {
-            var input = await LoadImageInputAsync(path, cancellationToken);
+            var input = await LoadImageInputAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
             VideoFirstFramePreviewPath = path;
             VideoFirstFrame = input;
             VideoReferenceAudio = null;
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
+        }
+        finally
+        {
+            if (session == _session && ReferenceEquals(_videoFirstFrameCancellation, operation))
+            {
+                IsLoadingVideoFirstFrame = false;
+                _videoFirstFrameCancellation.Dispose();
+                _videoFirstFrameCancellation = null;
+            }
         }
     }
 
@@ -521,7 +658,15 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         string path,
         CancellationToken cancellationToken = default)
     {
+        _videoReferenceAudioCancellation?.Cancel();
+        _videoReferenceAudioCancellation?.Dispose();
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _videoReferenceAudioCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
+        var owner = _ownerUserId;
         ErrorMessage = null;
+        IsLoadingVideoReferenceAudio = true;
         try
         {
             var mimeType = Path.GetExtension(path).ToLowerInvariant() switch
@@ -532,9 +677,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                 ".aac" => "audio/aac",
                 _ => throw new InvalidDataException("参考音频必须是 MP3、WAV、M4A 或 AAC。"),
             };
-            var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+            var bytes = await File.ReadAllBytesAsync(path, token);
             if (bytes.Length == 0 || bytes.Length > MaximumImageBytes)
                 throw new InvalidDataException("参考音频为空或超过 20 MB。");
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
             VideoReferenceAudio = new VideoGenerationInputAudio(
                 Path.GetFileName(path),
                 mimeType,
@@ -542,9 +689,21 @@ public sealed partial class MediaStudioViewModel : ObservableObject
             VideoFirstFrame = null;
             VideoFirstFramePreviewPath = null;
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
+        }
+        finally
+        {
+            if (session == _session && ReferenceEquals(_videoReferenceAudioCancellation, operation))
+            {
+                IsLoadingVideoReferenceAudio = false;
+                _videoReferenceAudioCancellation.Dispose();
+                _videoReferenceAudioCancellation = null;
+            }
         }
     }
 
@@ -556,15 +715,24 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         if (!CanGenerateVideo || SelectedVideoModel is null || owner is null) return;
         _videoGenerationCancellation?.Cancel();
         _videoGenerationCancellation?.Dispose();
-        _videoGenerationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var token = _videoGenerationCancellation.Token;
+        var operation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _videoGenerationCancellation = operation;
+        var token = operation.Token;
+        var session = _session;
         var submittedPrompt = VideoPrompt.Trim();
+        var generationCompleted = false;
         IsGeneratingVideo = true;
         ErrorMessage = null;
         VideoProgress = new VideoGenerationProgress("submitting");
         try
         {
-            var progress = new Progress<VideoGenerationProgress>(value => VideoProgress = value);
+            var progress = new Progress<VideoGenerationProgress>(value =>
+            {
+                if (!token.IsCancellationRequested && session == _session &&
+                    string.Equals(owner, _ownerUserId, StringComparison.Ordinal) &&
+                    ReferenceEquals(_videoGenerationCancellation, operation))
+                    VideoProgress = value;
+            });
             var result = await _service.GenerateVideoAsync(
                 new VideoGenerationRequest(
                     SelectedVideoModel.Id,
@@ -577,30 +745,50 @@ public sealed partial class MediaStudioViewModel : ObservableObject
                     VideoRatio),
                 progress,
                 token);
+            token.ThrowIfCancellationRequested();
+            generationCompleted = true;
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal) ||
+                !ReferenceEquals(_videoGenerationCancellation, operation)) return;
             VideoProgress = new VideoGenerationProgress("saving", 100, result.Id);
             var item = await _historyStore.SaveVideoAsync(
                 owner,
                 submittedPrompt,
                 result,
                 token);
+            token.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal) ||
+                !ReferenceEquals(_videoGenerationCancellation, operation)) return;
             VideoHistory.Insert(0, item);
             LatestVideo = item;
             VideoProgress = new VideoGenerationProgress("completed", 100, result.Id);
             StatusMessage = "视频已生成并保存到本机";
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            VideoProgress = null;
-            StatusMessage = "已停止等待视频任务";
+            if (session == _session && ReferenceEquals(_videoGenerationCancellation, operation))
+            {
+                VideoProgress = null;
+                StatusMessage = "已停止等待视频任务";
+            }
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
-            VideoProgress = new VideoGenerationProgress("failed");
+            if (session == _session && ReferenceEquals(_videoGenerationCancellation, operation))
+            {
+                ErrorMessage = generationCompleted
+                    ? $"视频已生成，但未能保存到本机：{exception.Message}"
+                    : exception.Message;
+                VideoProgress = new VideoGenerationProgress("failed");
+            }
         }
         finally
         {
-            IsGeneratingVideo = false;
+            if (session == _session && ReferenceEquals(_videoGenerationCancellation, operation))
+            {
+                IsGeneratingVideo = false;
+                _videoGenerationCancellation.Dispose();
+                _videoGenerationCancellation = null;
+            }
         }
     }
 
@@ -615,6 +803,21 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     public void Reset()
     {
         _session = Guid.NewGuid();
+        _imageGenerationCancellation?.Cancel();
+        _imageGenerationCancellation?.Dispose();
+        _imageGenerationCancellation = null;
+        _modelReloadCancellation?.Cancel();
+        _modelReloadCancellation?.Dispose();
+        _modelReloadCancellation = null;
+        _referenceImagesCancellation?.Cancel();
+        _referenceImagesCancellation?.Dispose();
+        _referenceImagesCancellation = null;
+        _videoFirstFrameCancellation?.Cancel();
+        _videoFirstFrameCancellation?.Dispose();
+        _videoFirstFrameCancellation = null;
+        _videoReferenceAudioCancellation?.Cancel();
+        _videoReferenceAudioCancellation?.Dispose();
+        _videoReferenceAudioCancellation = null;
         _videoGenerationCancellation?.Cancel();
         _videoGenerationCancellation?.Dispose();
         _videoGenerationCancellation = null;
@@ -627,6 +830,11 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         IsInitialLoading = false;
         IsLoadingModels = false;
         IsGeneratingImage = false;
+        IsGeneratingVideo = false;
+        IsLoadingReferenceImages = false;
+        IsLoadingVideoFirstFrame = false;
+        IsLoadingVideoReferenceAudio = false;
+        IsBusy = false;
         IsLoadingMoreHistory = false;
         IsLoadingMoreVideoHistory = false;
         Models.Clear();
@@ -653,11 +861,17 @@ public sealed partial class MediaStudioViewModel : ObservableObject
     {
         var selectedId = SelectedModel?.Id;
         Models.Clear();
-        foreach (var model in values.Where(model => !model.IsLikelyVideoModel)) Models.Add(model);
+        // macOS keeps every enabled model with credentials in the image creation
+        // picker. A model's task flag (or its name looking video-like) does not
+        // make it unavailable for an independent creation request.
+        foreach (var model in values) Models.Add(model);
         SelectedModel = Models.FirstOrDefault(model => model.Id == selectedId) ?? Models.FirstOrDefault();
         var selectedVideoId = SelectedVideoModel?.Id;
         VideoModels.Clear();
-        foreach (var model in values.Where(model => model.IsLikelyVideoModel))
+        // Keep the video picker in lockstep with macOS: the current unified
+        // video transport is offered only for MiniMax-H3.
+        foreach (var model in values.Where(model =>
+                     string.Equals(model.ModelName.Trim(), "MiniMax-H3", StringComparison.OrdinalIgnoreCase)))
             VideoModels.Add(model);
         SelectedVideoModel = VideoModels.FirstOrDefault(model => model.Id == selectedVideoId) ??
             VideoModels.FirstOrDefault();
@@ -680,9 +894,27 @@ public sealed partial class MediaStudioViewModel : ObservableObject
         if (!profile.SupportsReferenceVideo) VideoReferenceAudio = null;
         OnPropertyChanged(nameof(VideoSizes));
         OnPropertyChanged(nameof(VideoDurations));
+        OnPropertyChanged(nameof(VideoSize));
+        OnPropertyChanged(nameof(VideoSeconds));
         OnPropertyChanged(nameof(CanUseVideoReferenceAudio));
         OnPropertyChanged(nameof(VideoReferenceAudioHint));
+        OnPropertyChanged(nameof(ShowVideoRatio));
+        OnPropertyChanged(nameof(VideoSizeLabel));
     }
+
+    private static string LocalizeVideoStatus(string status) => status switch
+    {
+        "submitting" => "提交中",
+        "uploading" => "上传素材中",
+        "queued" => "排队中",
+        "in_progress" => "生成中",
+        "unknown" => "等待状态更新",
+        "downloading" => "下载中",
+        "saving" => "保存中",
+        "failed" => "生成失败",
+        "completed" => "已完成",
+        _ => status,
+    };
 
     private static async Task<ImageGenerationInput> LoadImageInputAsync(
         string path,

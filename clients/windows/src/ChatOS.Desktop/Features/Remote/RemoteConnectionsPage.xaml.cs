@@ -28,8 +28,25 @@ public sealed partial class RemoteConnectionsPage : UserControl
     public event EventHandler<RemoteConnection>? OpenSftpRequested;
     public event EventHandler<RemoteConnection>? OpenTerminalRequested;
 
-    private async void OnLoaded(object sender, RoutedEventArgs e) { await ViewModel.OpenAsync(); SyncControls(); }
-    private async void OnRefreshClick(object sender, RoutedEventArgs e) => await ViewModel.OpenAsync();
+    private async void OnLoaded(object sender, RoutedEventArgs e) =>
+        await OpenSafelyAsync("remote connections loading", synchronizeControls: true);
+
+    private async void OnRefreshClick(object sender, RoutedEventArgs e) =>
+        await OpenSafelyAsync("remote connections refresh", synchronizeControls: false);
+
+    private async Task OpenSafelyAsync(string phase, bool synchronizeControls)
+    {
+        try
+        {
+            await ViewModel.OpenAsync();
+            if (synchronizeControls) SyncControls();
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled(phase, exception);
+            ViewModel.ErrorMessage = exception.Message;
+        }
+    }
     private void OnOpenSftpClick(object sender, RoutedEventArgs e)
     {
         if (ViewModel.SelectedConnection is { } connection) OpenSftpRequested?.Invoke(this, connection);

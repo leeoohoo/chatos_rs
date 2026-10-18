@@ -32,11 +32,31 @@ public sealed partial class PluginSettingsViewModel : ObservableObject
                 plugin.ApplyLabels(_localization);
             }
 
+            ApplyFilter();
             OnPropertyChanged(string.Empty);
         };
     }
 
     public ObservableCollection<PluginSettingsItem> Plugins { get; } = [];
+
+    public ObservableCollection<PluginSettingsItem> FilteredPlugins { get; } = [];
+
+    [ObservableProperty]
+    private string _searchText = string.Empty;
+
+    public bool HasFilteredPlugins => FilteredPlugins.Count > 0;
+
+    public string SearchPlaceholder => _localization.Text(
+        "搜索 Plugin、Skill 或发布者",
+        "Search plugins, skills, or publishers");
+
+    public string ResultsLabel => _localization.Text(
+        $"{FilteredPlugins.Count} 项",
+        $"{FilteredPlugins.Count} items");
+
+    public string EmptySearchLabel => string.IsNullOrWhiteSpace(SearchText)
+        ? _localization.Text("当前没有可用的插件。", "No plugins are currently available.")
+        : _localization.Text("没有找到匹配的插件。", "No matching plugins were found.");
 
     public string SectionDescription => _localization.Text(
         "管理这台 Windows 设备上的插件、权限、凭据和账号授权。Secret 只保存到 Windows 凭据管理器。",
@@ -94,8 +114,38 @@ public sealed partial class PluginSettingsViewModel : ObservableObject
                 {
                     Plugins.Add(item);
                 }
+
+                ApplyFilter();
             }, token).ConfigureAwait(false);
         }, cancellationToken);
+
+    partial void OnSearchTextChanged(string value) => ApplyFilter();
+
+    private void ApplyFilter()
+    {
+        var query = SearchText.Trim();
+        var matches = string.IsNullOrEmpty(query)
+            ? Plugins
+            : Plugins.Where(item =>
+                Contains(item.DisplayName, query) ||
+                Contains(item.Description, query) ||
+                Contains(item.Category, query) ||
+                Contains(item.Publisher, query) ||
+                Contains(item.PluginId, query));
+
+        FilteredPlugins.Clear();
+        foreach (var plugin in matches)
+        {
+            FilteredPlugins.Add(plugin);
+        }
+
+        OnPropertyChanged(nameof(HasFilteredPlugins));
+        OnPropertyChanged(nameof(ResultsLabel));
+        OnPropertyChanged(nameof(EmptySearchLabel));
+    }
+
+    private static bool Contains(string? value, string query) =>
+        value?.Contains(query, StringComparison.CurrentCultureIgnoreCase) == true;
 
     public Task InstallOrUpdateAsync(PluginSettingsItem item, CancellationToken cancellationToken = default) =>
         RunAsync(item, async token =>

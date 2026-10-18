@@ -71,8 +71,72 @@ public sealed class ProjectRequirementSurveysViewModelTests
         Assert.True(viewModel.CanRefresh);
     }
 
+    [Fact]
+    public async Task LoadsVersionedPlanAndConfirmsExactRevisionWithoutStartingWork()
+    {
+        var submitted = Survey("submitted", AgentRequirementSurveyStatus.Submitted, 100);
+        var plan = new AgentRequirementPlan(
+            "requirement-plan:submitted", 3, "owner", "project", "conversation",
+            "submitted", "run-plan", "方案 V3", "# 方案\n\n保持边界。", 200, null);
+        var service = new StubRequirementSurveyService
+        {
+            Surveys = [submitted],
+            Details = new(plan,
+                new(AgentRequirementPlanFollowUpState.Succeeded, "old reply"),
+                new(AgentRequirementPlanFollowUpState.Succeeded, plan.Markdown)),
+        };
+        using var viewModel = new ProjectRequirementSurveysViewModel(
+            service, new ImmediateUiDispatcher());
+
+        await viewModel.OpenAsync("owner", Project());
+        await WaitUntilAsync(() => viewModel.SelectedSurvey?.Details is not null);
+
+        Assert.Equal("方案版本 3", viewModel.SelectedSurvey!.PlanVersionText);
+        Assert.True(viewModel.SelectedSurvey.CanConfirmPlan);
+        Assert.True(await viewModel.ConfirmSelectedPlanAsync());
+        Assert.Equal((ulong)3, service.ConfirmedRevision);
+        Assert.True(viewModel.SelectedSurvey.IsPlanConfirmed);
+        Assert.Contains("不会自动执行", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExplicitlyAdoptsAndConfirmsAnExactLegacyFinalReply()
+    {
+        var submitted = Survey("submitted", AgentRequirementSurveyStatus.Submitted, 100);
+        var service = new StubRequirementSurveyService
+        {
+            Surveys = [submitted],
+            Details = new(null,
+                new(AgentRequirementPlanFollowUpState.Succeeded, "# 历史方案\n\n保持边界。"),
+                null),
+        };
+        using var viewModel = new ProjectRequirementSurveysViewModel(
+            service, new ImmediateUiDispatcher());
+
+        await viewModel.OpenAsync("owner", Project());
+        await WaitUntilAsync(() => viewModel.SelectedSurvey?.Details is not null);
+
+        Assert.True(viewModel.SelectedSurvey!.HasLegacyPlanCandidate);
+        Assert.True(viewModel.SelectedSurvey.CanAdoptLegacyPlan);
+        Assert.Equal("# 历史方案\n\n保持边界。",
+            viewModel.SelectedSurvey.LegacyPlanMarkdown);
+        Assert.True(await viewModel.AdoptAndConfirmSelectedPlanAsync());
+        Assert.Equal("# 历史方案\n\n保持边界。", service.AdoptedMarkdown);
+        Assert.Equal((ulong)1, service.ConfirmedRevision);
+        Assert.True(viewModel.SelectedSurvey.IsPlanConfirmed);
+        Assert.False(viewModel.SelectedSurvey.HasLegacyPlanCandidate);
+        Assert.Contains("不会自动执行", viewModel.StatusMessage);
+    }
+
     private static WorkspaceProject Project() =>
         new("project", "Parity", null, null, null);
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 100 && !condition(); attempt++)
+            await Task.Delay(10);
+        Assert.True(condition());
+    }
 
     private static AgentRequirementSurvey Survey(
         string id,
@@ -107,6 +171,10 @@ public sealed class ProjectRequirementSurveysViewModelTests
         public Exception? ListError { get; set; }
         public string? SubmittedProjectId { get; private set; }
         public string? SubmittedSurveyId { get; private set; }
+        public ulong? ConfirmedRevision { get; private set; }
+        public string? AdoptedMarkdown { get; private set; }
+        public AgentRequirementSurveyDetails Details { get; set; } = new(
+            null, new(AgentRequirementPlanFollowUpState.Processing), null);
 
         public Task<IReadOnlyList<AgentRequirementSurvey>> ListAsync(
             string ownerUserId,
@@ -137,6 +205,47 @@ public sealed class ProjectRequirementSurveysViewModelTests
             Changed?.Invoke(this, new ProjectRequirementSurveyChangedEventArgs(
                 ownerUserId, projectId));
             return Task.FromResult(updated);
+        }
+
+        public Task<AgentRequirementSurveyDetails> GetDetailsAsync(
+            string ownerUserId,
+            string projectId,
+            string surveyId,
+            CancellationToken cancellationToken = default) => Task.FromResult(Details);
+
+        public Task<AgentRequirementPlan> ConfirmPlanAsync(
+            string ownerUserId,
+            string projectId,
+            string surveyId,
+            ulong expectedRevision,
+            CancellationToken cancellationToken = default)
+        {
+            ConfirmedRevision = expectedRevision;
+            var plan = Details.Plan ?? throw new InvalidOperationException();
+            var confirmed = plan with { ConfirmedAtUnixMs = 300 };
+            Details = Details with { Plan = confirmed };
+            Changed?.Invoke(this, new(ownerUserId, projectId));
+            return Task.FromResult(confirmed);
+        }
+
+        public Task<AgentRequirementPlan> SaveSourceReplyAsPlanAsync(
+            string ownerUserId,
+            string projectId,
+            string surveyId,
+            string markdown,
+            CancellationToken cancellationToken = default)
+        {
+            AdoptedMarkdown = markdown;
+            var plan = new AgentRequirementPlan(
+                $"requirement-plan:{surveyId}", 1, ownerUserId, projectId, "conversation",
+                surveyId, "run-legacy", "历史方案", markdown.Trim(), 200, null);
+            Details = Details with
+            {
+                Plan = plan,
+                PlanFollowUp = new(AgentRequirementPlanFollowUpState.Succeeded, plan.Markdown),
+            };
+            Changed?.Invoke(this, new(ownerUserId, projectId));
+            return Task.FromResult(plan);
         }
     }
 }

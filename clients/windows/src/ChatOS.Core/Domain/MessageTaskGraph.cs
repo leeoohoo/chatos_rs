@@ -31,7 +31,8 @@ public sealed record MessageTaskLastRunSummary(
     string? ReportContent,
     string? ErrorMessage,
     DateTimeOffset? StartedAt,
-    DateTimeOffset? FinishedAt);
+    DateTimeOffset? FinishedAt,
+    MessageTaskAcceptanceReport? AcceptanceReport = null);
 
 public sealed record MessageTask(
     string Id,
@@ -68,7 +69,11 @@ public sealed record MessageTask(
     string? McpConfigJson,
     string? InputPayloadJson,
     DateTimeOffset? CreatedAt,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    MessageTaskAcceptanceContract? AcceptanceContract = null,
+    MessageTaskRequirementPlan? RequirementPlan = null,
+    string? ThinkingLevel = null,
+    string? DefaultModelConfigRevision = null);
 
 public sealed record MessageTaskGraphNode(
     MessageTask Task,
@@ -103,7 +108,20 @@ public sealed record MessageTaskRun(
     DateTimeOffset? FinishedAt,
     string? ResultSummary,
     string? ReportContent,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    MessageTaskAcceptanceReport? AcceptanceReport = null)
+{
+    public MessageTaskResultDisposition? ResultDisposition
+    {
+        get
+        {
+            var normalized = Status?.Trim().ToLowerInvariant();
+            if (normalized is "failed" or "error")
+                return MessageTaskResultDisposition.ExecutionFailed;
+            return normalized == "succeeded" ? AcceptanceReport?.Disposition : null;
+        }
+    }
+}
 
 public sealed record MessageTaskRunEvent(
     string Id,

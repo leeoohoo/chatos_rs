@@ -36,7 +36,7 @@ public sealed class QuickSearchActionRouter(
         }
     }
 
-    private async Task ExecuteBuiltInAsync(QuickSearchBuiltInAction? action, MainWindow mainWindow)
+    public async Task ExecuteBuiltInAsync(QuickSearchBuiltInAction? action, MainWindow mainWindow)
     {
         switch (action)
         {

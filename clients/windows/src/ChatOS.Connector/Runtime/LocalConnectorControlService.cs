@@ -74,6 +74,16 @@ public sealed class LocalConnectorControlService : ILocalConnectorControlService
         return Status();
     }
 
+    public async Task<LocalConnectorStatus> RefreshCredentialAsync(
+        string ticket,
+        CancellationToken cancellationToken = default)
+    {
+        await _runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        _ = await _pairing.RefreshCredentialAsync(ticket, cancellationToken).ConfigureAwait(false);
+        _connection.SetConfigured(true);
+        return Status();
+    }
+
     public async Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
         await _runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);

@@ -17,6 +17,7 @@ internal sealed class MediaStudioImagePreviewDialog
     private readonly TextBlock _zoomLabel;
     private readonly Button _previousButton;
     private readonly Button _nextButton;
+    private readonly bool _allowUseAsVideoFirstFrame;
     private BitmapImage? _bitmap;
     private int _index;
     private bool _fitToWindow = true;
@@ -25,8 +26,10 @@ internal sealed class MediaStudioImagePreviewDialog
     public MediaStudioImagePreviewDialog(
         XamlRoot xamlRoot,
         IReadOnlyList<MediaStudioImageItem> images,
-        int selectedIndex)
+        int selectedIndex,
+        bool allowUseAsVideoFirstFrame = true)
     {
+        _allowUseAsVideoFirstFrame = allowUseAsVideoFirstFrame;
         _images = images;
         _index = Math.Clamp(selectedIndex, 0, Math.Max(0, images.Count - 1));
         _viewportWidth = xamlRoot.Size.Width > 0
@@ -122,7 +125,7 @@ internal sealed class MediaStudioImagePreviewDialog
             XamlRoot = xamlRoot,
             Title = "图片预览",
             Content = content,
-            PrimaryButtonText = "用作视频首帧",
+            PrimaryButtonText = allowUseAsVideoFirstFrame ? "用作视频首帧" : string.Empty,
             CloseButtonText = "关闭",
             DefaultButton = ContentDialogButton.Close,
         };
@@ -173,7 +176,7 @@ internal sealed class MediaStudioImagePreviewDialog
             return;
         }
 
-        Dialog.IsPrimaryButtonEnabled = true;
+        Dialog.IsPrimaryButtonEnabled = _allowUseAsVideoFirstFrame;
         _bitmap = new BitmapImage(new Uri(path, UriKind.Absolute));
         _image.Source = _bitmap;
         ApplyZoom();

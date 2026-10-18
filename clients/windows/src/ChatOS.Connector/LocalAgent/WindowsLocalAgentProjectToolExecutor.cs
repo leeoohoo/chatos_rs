@@ -19,9 +19,16 @@ internal sealed record WindowsLocalAgentProjectContext(
 internal sealed record WindowsLocalAgentTaskToolAuthorization(
     bool RequiresExecution,
     IReadOnlySet<string> EnabledBuiltinKinds,
-    IReadOnlySet<string> PluginKeys,
+    IReadOnlyDictionary<string, WindowsLocalAgentPluginReleaseSnapshot> PluginReleaseSnapshots,
     bool IsLegacyUnrestricted)
 {
+    public IReadOnlySet<string> PluginKeys => PluginReleaseSnapshots.Values
+        .Select(value => value.PluginKey)
+        .ToHashSet(StringComparer.Ordinal);
+
+    public IReadOnlySet<string> PluginSelectionIds => PluginReleaseSnapshots.Keys
+        .ToHashSet(StringComparer.Ordinal);
+
     public bool Allows(string toolName)
     {
         if (IsLegacyUnrestricted) return true;
@@ -29,7 +36,7 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
         {
             return EnabledBuiltinKinds.Contains("CodeMaintainerRead");
         }
-        if (toolName == "project_write")
+        if (toolName is "project_write" or "project_copy" or "project_move")
         {
             return RequiresExecution && EnabledBuiltinKinds.Contains("CodeMaintainerWrite");
         }
@@ -44,7 +51,7 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
             return EnabledBuiltinKinds.Contains("RemoteConnectionController");
         }
         return WindowsLocalAgentCapabilityCatalog.PluginToolNames.Contains(toolName) &&
-            PluginKeys.Count > 0;
+            PluginReleaseSnapshots.Count > 0;
     }
 
     public static WindowsLocalAgentTaskToolAuthorization Resolve(JsonElement input)
@@ -53,7 +60,8 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
             !input.TryGetProperty("tool_options", out var options))
         {
             return new(true, new HashSet<string>(StringComparer.Ordinal),
-                new HashSet<string>(StringComparer.Ordinal), true);
+                new Dictionary<string, WindowsLocalAgentPluginReleaseSnapshot>(StringComparer.Ordinal),
+                true);
         }
         if (options.ValueKind != JsonValueKind.Object ||
             !options.TryGetProperty("requires_execution", out var requiresExecution) ||
@@ -64,10 +72,11 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
             throw new InvalidOperationException("Invalid Local Agent Task tool scope.");
         }
         var kinds = StringSet(rawKinds, "enabled_builtin_kinds");
-        var pluginKeys = options.TryGetProperty("plugin_hints", out var rawHints)
-            ? ParsePluginKeys(rawHints)
+        var selections = options.TryGetProperty("plugin_hints", out var rawHints)
+            ? ParsePluginSelections(rawHints)
             : new HashSet<string>(StringComparer.Ordinal);
-        return new(requiresExecution.GetBoolean(), kinds, pluginKeys, false);
+        var snapshots = ParsePluginReleaseSnapshots(options, selections);
+        return new(requiresExecution.GetBoolean(), kinds, snapshots, false);
     }
 
     private static HashSet<string> StringSet(JsonElement values, string field)
@@ -86,7 +95,7 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
         return output;
     }
 
-    private static HashSet<string> ParsePluginKeys(JsonElement hints)
+    private static HashSet<string> ParsePluginSelections(JsonElement hints)
     {
         if (hints.ValueKind != JsonValueKind.Array)
         {
@@ -99,12 +108,92 @@ internal sealed record WindowsLocalAgentTaskToolAuthorization(
                 !hint.TryGetProperty("plugin_key", out var rawKey) ||
                 rawKey.ValueKind != JsonValueKind.String ||
                 string.IsNullOrWhiteSpace(rawKey.GetString()) ||
-                !output.Add(rawKey.GetString()!.Trim()))
+                !hint.TryGetProperty("component_key", out var rawComponent) ||
+                rawComponent.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(rawComponent.GetString()) ||
+                !output.Add(WindowsLocalAgentPluginChoice.SelectionIdFor(
+                    rawKey.GetString()!.Trim(), rawComponent.GetString()!.Trim())))
             {
                 throw new InvalidOperationException("Invalid Local Agent Task Plugin scope.");
             }
         }
         return output;
+    }
+
+    private static IReadOnlyDictionary<string, WindowsLocalAgentPluginReleaseSnapshot>
+        ParsePluginReleaseSnapshots(JsonElement options, IReadOnlySet<string> selections)
+    {
+        if (!options.TryGetProperty("plugin_release_snapshots", out var rawSnapshots))
+        {
+            if (selections.Count == 0)
+            {
+                return new Dictionary<string, WindowsLocalAgentPluginReleaseSnapshot>(
+                    StringComparer.Ordinal);
+            }
+            throw new InvalidOperationException(
+                "Invalid Local Agent Task Plugin Release scope.");
+        }
+        if (rawSnapshots.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException(
+                "Invalid Local Agent Task Plugin Release scope.");
+        }
+        var output = new Dictionary<string, WindowsLocalAgentPluginReleaseSnapshot>(
+            StringComparer.Ordinal);
+        foreach (var raw in rawSnapshots.EnumerateArray())
+        {
+            var snapshot = WindowsLocalAgentPluginReleaseSnapshot.Parse(raw);
+            var selectionId = WindowsLocalAgentPluginChoice.SelectionIdFor(
+                snapshot.PluginKey, snapshot.ComponentKey);
+            if (!output.TryAdd(selectionId, snapshot))
+            {
+                throw new InvalidOperationException(
+                    "Invalid Local Agent Task Plugin Release scope.");
+            }
+        }
+        if (!output.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(selections))
+        {
+            throw new InvalidOperationException(
+                "The Local Agent Task Plugin Release scope does not match its selected components.");
+        }
+        return output;
+    }
+}
+
+internal sealed record WindowsLocalAgentPluginReleaseSnapshot(
+    string PluginKey,
+    string ComponentKey,
+    string PluginId,
+    string ReleaseId,
+    string Version,
+    string ArtifactSha256)
+{
+    public static WindowsLocalAgentPluginReleaseSnapshot Parse(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException(
+                "Invalid Local Agent Task Plugin Release scope.");
+        }
+        return new(
+            Required(value, "plugin_key"),
+            Required(value, "component_key"),
+            Required(value, "plugin_id"),
+            Required(value, "release_id"),
+            Required(value, "version"),
+            Required(value, "artifact_sha256"));
+    }
+
+    private static string Required(JsonElement value, string name)
+    {
+        if (!value.TryGetProperty(name, out var property) ||
+            property.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(property.GetString()))
+        {
+            throw new InvalidOperationException(
+                "Invalid Local Agent Task Plugin Release scope.");
+        }
+        return property.GetString()!.Trim();
     }
 }
 
@@ -227,7 +316,8 @@ public sealed class WindowsLocalAgentProjectToolExecutor
         {
             throw new InvalidOperationException("Unsupported Local Agent project tool.");
         }
-        if ((invocation.ToolName is "project_write" or "terminal_exec") &&
+        if ((invocation.ToolName is
+                "project_write" or "project_copy" or "project_move" or "terminal_exec") &&
             (!invocation.RequiresApproval || invocation.ApprovalStatus != "approved"))
         {
             throw new InvalidOperationException(
@@ -275,8 +365,17 @@ public sealed class WindowsLocalAgentProjectToolExecutor
             "project_search" => Search(context.Files, invocation.Arguments, cancellationToken),
             "project_write" => context.Files.Write(
                 RequiredString(invocation.Arguments, "path"),
-                RequiredString(invocation.Arguments, "content"),
+                RequiredStringAllowEmpty(invocation.Arguments, "content"),
                 OptionalBool(invocation.Arguments, "create_only") ?? false),
+            "project_copy" => context.Files.Copy(
+                RequiredString(invocation.Arguments, "source_path"),
+                RequiredString(invocation.Arguments, "target_path"),
+                OptionalBool(invocation.Arguments, "replace_existing") ?? false,
+                cancellationToken),
+            "project_move" => context.Files.Move(
+                RequiredString(invocation.Arguments, "source_path"),
+                RequiredString(invocation.Arguments, "target_path"),
+                OptionalBool(invocation.Arguments, "replace_existing") ?? false),
             "terminal_exec" => await ExecuteCommandAsync(
                 context, invocation.Arguments, cancellationToken).ConfigureAwait(false),
             _ => throw new InvalidOperationException("Unsupported Local Agent project tool."),
@@ -515,7 +614,7 @@ public sealed class WindowsLocalAgentProjectToolExecutor
         return result;
     }
 
-    private static string RequiredStringAllowEmpty(JsonElement value, string name)
+    internal static string RequiredStringAllowEmpty(JsonElement value, string name)
     {
         if (value.ValueKind != JsonValueKind.Object ||
             !value.TryGetProperty(name, out var property) ||
@@ -533,7 +632,7 @@ public sealed class WindowsLocalAgentProjectToolExecutor
             ? property.GetString()
             : null;
 
-    private static bool? OptionalBool(JsonElement value, string name) =>
+    internal static bool? OptionalBool(JsonElement value, string name) =>
         value.ValueKind == JsonValueKind.Object &&
         value.TryGetProperty(name, out var property) &&
         property.ValueKind is JsonValueKind.True or JsonValueKind.False

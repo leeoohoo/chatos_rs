@@ -56,6 +56,20 @@ public sealed class WindowsLocalAgentControlPlaneClient(ILocalAgentHostClient ho
             : throw new InvalidDataException("Local Agent Host returned an invalid model snapshots result.");
     }
 
+    public async Task<WindowsLocalAgentModelSnapshot> ModelAsync(
+        string ownerUserId,
+        string modelConfigRef,
+        string modelConfigRevision,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await host.SendAsync<GetModelCommand, ModelResult>(
+            new("get_model_config_snapshot", ownerUserId, modelConfigRef, modelConfigRevision),
+            cancellationToken).ConfigureAwait(false);
+        return response.Type == "model_config_snapshot"
+            ? response.Snapshot
+            : throw new InvalidDataException("Local Agent Host returned an invalid model snapshot result.");
+    }
+
     public async Task<WindowsLocalAgentCapabilitySnapshot> PublishCapabilitiesAsync(
         WindowsLocalAgentCapabilitySnapshot snapshot,
         CancellationToken cancellationToken = default)
@@ -93,12 +107,18 @@ public sealed class WindowsLocalAgentControlPlaneClient(ILocalAgentHostClient ho
         string Type,
         string OwnerUserId);
 
+    internal sealed record GetModelCommand(
+        string Type,
+        string OwnerUserId,
+        string ModelConfigRef,
+        string ModelConfigRevision);
+
     private sealed record GetLatestCapabilityCommand(
         string Type,
         string OwnerUserId,
         string ProfileKey);
 
-    private sealed record ModelResult(
+    internal sealed record ModelResult(
         string Type,
         WindowsLocalAgentModelSnapshot Snapshot);
 

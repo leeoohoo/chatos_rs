@@ -30,6 +30,8 @@ public sealed partial class ProjectRunPage : UserControl
     public ProjectRunViewModel ViewModel { get; }
     public LocalizationViewModel Localization { get; }
 
+    public event EventHandler? RemoveProjectRequested;
+
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(ProjectRunViewModel.ProjectId)) SyncFavoriteSwitch();
@@ -71,7 +73,7 @@ public sealed partial class ProjectRunPage : UserControl
 
     private void OnStopInstanceClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: ProjectRunInstance instance })
+        if (sender is Button { DataContext: ProjectRunInstanceItemViewModel instance })
         {
             ViewModel.StopCommand.Execute(instance);
         }
@@ -79,7 +81,7 @@ public sealed partial class ProjectRunPage : UserControl
 
     private void OnDeleteInstanceClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: ProjectRunInstance instance })
+        if (sender is Button { DataContext: ProjectRunInstanceItemViewModel instance })
         {
             ViewModel.DeleteInstanceCommand.Execute(instance);
         }
@@ -92,4 +94,7 @@ public sealed partial class ProjectRunPage : UserControl
             ViewModel.RemoveEnvironmentVariableCommand.Execute(variable);
         }
     }
+
+    private void OnRemoveProjectClick(object sender, RoutedEventArgs e) =>
+        RemoveProjectRequested?.Invoke(this, EventArgs.Empty);
 }

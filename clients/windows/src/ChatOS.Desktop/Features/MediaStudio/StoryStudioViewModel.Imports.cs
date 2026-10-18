@@ -14,11 +14,13 @@ public sealed partial class StoryStudioViewModel
         var resource = SelectedResource;
         var session = _session;
         if (!CanImportResourceAsset || owner is null || project is null || resource is null) return;
+        var source = BeginGenerationCancellation(cancellationToken);
+        var token = source.Token;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            await PersistCurrentAsync(cancellationToken);
+            await PersistCurrentAsync(token);
             var context = new ResourceGenerationContext(owner, project.Id, resource, session);
             var relative = await _store.ImportAssetAsync(
                 owner,
@@ -26,17 +28,25 @@ public sealed partial class StoryStudioViewModel
                 $"resource-{resource.Id}",
                 sourcePath,
                 false,
-                cancellationToken);
+                token);
             EnsureResourceContext(context);
             resource.SetImage(relative, _store.ResolveAssetPath(owner, project.Id, relative)!);
-            await PersistCurrentAsync(cancellationToken);
+            await PersistCurrentAsync(token);
             StatusMessage = $"已导入{resource.KindLabel}“{resource.Name}”的参考图";
+        }
+        catch (OperationCanceledException)
+        {
+            if (session == _session) StatusMessage = "已停止导入剧情素材图";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ErrorMessage = exception.Message;
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            EndGenerationCancellation(source);
+            if (session == _session) IsBusy = false;
+        }
     }
 
     public Task ImportFirstFrameAsync(string sourcePath, CancellationToken cancellationToken = default) =>
@@ -55,11 +65,13 @@ public sealed partial class StoryStudioViewModel
     {
         var context = CaptureGenerationContext();
         if (!CanImportSegmentAsset || context is null) return;
+        var source = BeginGenerationCancellation(cancellationToken);
+        var token = source.Token;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            await PersistCurrentAsync(cancellationToken);
+            await PersistCurrentAsync(token);
             var isVideo = kind == SegmentAssetKind.Video;
             var relative = await _store.ImportAssetAsync(
                 context.Owner,
@@ -67,19 +79,27 @@ public sealed partial class StoryStudioViewModel
                 context.Segment.Id,
                 sourcePath,
                 isVideo,
-                cancellationToken);
+                token);
             EnsureContext(context);
             var fullPath = _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!;
             if (isVideo) context.Segment.SetVideo(relative, fullPath);
             else context.Segment.SetFrame(kind == SegmentAssetKind.LastFrame, relative, fullPath);
-            await PersistCurrentAsync(cancellationToken);
+            await PersistCurrentAsync(token);
             StatusMessage = $"已为 {context.Segment.Title} 导入{AssetKindLabel(kind)}";
+        }
+        catch (OperationCanceledException)
+        {
+            if (context.Session == _session) StatusMessage = $"已停止导入{AssetKindLabel(kind)}";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ErrorMessage = exception.Message;
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            EndGenerationCancellation(source);
+            if (context.Session == _session) IsBusy = false;
+        }
     }
 
     private static string AssetKindLabel(SegmentAssetKind kind) => kind switch

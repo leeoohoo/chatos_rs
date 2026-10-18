@@ -1,4 +1,6 @@
+using System.ComponentModel;
 using ChatOS.Core.Domain;
+using ChatOS.Desktop.DesignSystem;
 using ChatOS.Presentation.AgentTeams;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -7,22 +9,68 @@ namespace ChatOS.Desktop.Features.AgentTeams;
 
 public sealed partial class ProjectRequirementSurveysPage : UserControl
 {
+    private ProjectRequirementSurveyItemViewModel? _observedSurvey;
+
     public ProjectRequirementSurveysPage(ProjectRequirementSurveysViewModel viewModel)
     {
         ViewModel = viewModel;
-        ViewModel.PropertyChanged += (_, _) => Bindings.Update();
         InitializeComponent();
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ObserveSelectedSurvey();
     }
 
     public ProjectRequirementSurveysViewModel ViewModel { get; }
-    public string Notice => ViewModel.ErrorMessage ?? ViewModel.StatusMessage;
+    public string Notice => FriendlyNotice(ViewModel.ErrorMessage) ?? ViewModel.StatusMessage;
     public bool HasNotice => !string.IsNullOrWhiteSpace(Notice);
     public InfoBarSeverity NoticeSeverity => ViewModel.ErrorMessage is null
         ? InfoBarSeverity.Informational
         : InfoBarSeverity.Error;
 
+    private static string? FriendlyNotice(string? message) =>
+        message?.Contains("optional local agent host is not installed",
+            StringComparison.OrdinalIgnoreCase) == true
+            ? "未安装可选的 Local Agent Host，项目需求调研暂不可用。"
+            : message;
+
     private async void OnRefreshClick(object sender, RoutedEventArgs e) =>
         await ViewModel.RefreshAsync();
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        Bindings.Update();
+        if (args.PropertyName == nameof(ProjectRequirementSurveysViewModel.SelectedSurvey))
+            ObserveSelectedSurvey();
+    }
+
+    private void ObserveSelectedSurvey()
+    {
+        if (_observedSurvey is not null) _observedSurvey.PropertyChanged -= OnSurveyPropertyChanged;
+        _observedSurvey = ViewModel.SelectedSurvey;
+        if (_observedSurvey is not null) _observedSurvey.PropertyChanged += OnSurveyPropertyChanged;
+        RenderPlan();
+    }
+
+    private void OnSurveyPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        Bindings.Update();
+        if (args.PropertyName is nameof(ProjectRequirementSurveyItemViewModel.PlanMarkdown) or
+            nameof(ProjectRequirementSurveyItemViewModel.LegacyPlanMarkdown))
+            RenderPlan();
+    }
+
+    private void RenderPlan()
+    {
+        MarkdownRichTextRenderer.Render(
+            PlanMarkdownPreview, ViewModel.SelectedSurvey?.PlanMarkdown ?? string.Empty);
+        MarkdownRichTextRenderer.Render(
+            LegacyPlanMarkdownPreview, ViewModel.SelectedSurvey?.LegacyPlanMarkdown ?? string.Empty);
+    }
+
+    private async void OnConfirmPlanClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.ConfirmSelectedPlanAsync();
+
+    private async void OnAdoptPlanClick(object sender, RoutedEventArgs e) =>
+        await ViewModel.AdoptAndConfirmSelectedPlanAsync();
 
     private async void OnFillSurveyClick(object sender, RoutedEventArgs e)
     {

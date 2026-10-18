@@ -32,11 +32,44 @@ public sealed class SqliteProjectRegistryTests : IAsyncLifetime
     [Fact]
     public async Task OfflineCreateSurvivesReopenAndIsAccountScoped()
     {
-        var project = await _registry.CreateAsync("alice", _draft);
+        var project = await _registry.CreateAsync(
+            "alice",
+            _draft with { ProjectTypeKey = "desktop_application" });
         var reopened = new SqliteProjectRegistry(new LocalStateDatabase(Path.Combine(_directory, "projects.db")));
         Assert.Equal(project, Assert.Single(await reopened.ListAsync("alice")));
+        Assert.Equal("desktop_application", project.Draft.ProjectTypeKey);
         Assert.Empty(await reopened.ListAsync("bob"));
         Assert.Null(await reopened.GetAsync("bob", project.Id));
+    }
+
+    [Fact]
+    public async Task VersionOneDatabaseMigratesExistingProjectsToLegacyType()
+    {
+        var path = Path.Combine(_directory, "legacy-projects.db");
+        await using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            await connection.OpenAsync();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                CREATE TABLE local_project_records (
+                    owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
+                    description TEXT NOT NULL, workspace_id TEXT NOT NULL, relative_root TEXT NOT NULL,
+                    revision INTEGER NOT NULL, status TEXT NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
+                    PRIMARY KEY(owner_user_id, id));
+                CREATE TABLE local_project_schema_migrations (version INTEGER PRIMARY KEY NOT NULL);
+                INSERT INTO local_project_schema_migrations(version) VALUES (1);
+                INSERT INTO local_project_records VALUES (
+                    'alice', 'legacy', '旧项目', '', 'workspace-1', '', 1, 'active', 1, 1);
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var migratedDatabase = new LocalStateDatabase(path);
+        await migratedDatabase.InitializeAsync();
+        var migrated = Assert.Single(await new SqliteProjectRegistry(migratedDatabase).ListAsync("alice"));
+
+        Assert.Equal(LocalProjectTypeCatalog.LegacyProjectTypeKey, migrated.Draft.ProjectTypeKey);
     }
 
     [Fact]

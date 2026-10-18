@@ -30,6 +30,42 @@ public sealed class WindowsLocalAgentConversationRuntimeSettingsTests
     }
 
     [Fact]
+    public async Task NewConversationPrefersTaskCapableModelOverMediaOnlyCatalogEntry()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            GetError = new LocalAgentHostRequestException(
+                "not_found",
+                "missing",
+                false),
+        };
+        var image = Model("image", "image-revision", null, "gpt-image-1.5");
+        var text = Model("text", "text-revision", "medium", "gpt-5.6-sol");
+        var service = new WindowsLocalAgentConversationRuntimeSettingsService(
+            new WindowsLocalAgentConversationRuntimeSettingsClient(host));
+        service.Configure("user-1", new WindowsLocalAgentBootstrapSnapshot(
+            "user-1",
+            [image, text],
+            [
+                new ConversationModelOption(
+                    "image", "Image", "gpt-image-1.5", null, TaskEnabled: false),
+                new ConversationModelOption(
+                    "text", "Text", "gpt-5.6-sol", "medium", TaskEnabled: true),
+            ],
+            [],
+            Capability("main"),
+            Capability("installer", WindowsLocalAgentCapabilityCatalog.PluginInstallerTools)));
+
+        var settings = await service.FetchAsync("conversation-installer");
+
+        Assert.Equal("text", settings.SelectedModelId);
+        Assert.Equal(
+            "text-revision",
+            Assert.IsType<PutLocalConversationRuntimeSettingsCommand>(host.LastPut)
+                .SelectedModelConfigRevision);
+    }
+
+    [Fact]
     public async Task ModelUpdateUsesSnapshotRevisionAndExpectedVersion()
     {
         var host = new RuntimeSettingsHost
@@ -69,41 +105,185 @@ public sealed class WindowsLocalAgentConversationRuntimeSettingsTests
         Assert.Equal((ulong)3, put.ExpectedVersion);
     }
 
+    [Fact]
+    public async Task ReasoningLevelUpdatePersistsTheSelectedProviderLevel()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("model-1", "revision-1", "high", true, 4),
+        };
+        var service = CreateService(host, Model("model-1", "revision-1", "high"));
+
+        var settings = await service.UpdateReasoningLevelAsync("conversation-1", "low");
+
+        Assert.True(settings.ReasoningEnabled);
+        Assert.Equal("low", settings.SelectedThinkingLevel);
+        Assert.Equal("low", Assert.IsType<PutLocalConversationRuntimeSettingsCommand>(host.LastPut).SelectedThinkingLevel);
+    }
+
+    [Fact]
+    public async Task RemoteConnectionUpdatePreservesModelAndReasoningSettings()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("model-1", "revision-1", "high", true, 5),
+        };
+        var service = CreateService(host, Model("model-1", "revision-1", "high"));
+
+        var settings = await service.UpdateRemoteConnectionAsync(
+            "conversation-1",
+            "remote-1");
+
+        Assert.Equal("remote-1", settings.RemoteConnectionId);
+        Assert.Equal("model-1", settings.SelectedModelId);
+        Assert.True(settings.ReasoningEnabled);
+        var put = Assert.IsType<PutLocalConversationRuntimeSettingsCommand>(host.LastPut);
+        Assert.Equal("remote-1", put.RemoteConnectionId);
+        Assert.Equal("high", put.SelectedThinkingLevel);
+        Assert.Equal((ulong)5, put.ExpectedVersion);
+    }
+
+    [Fact]
+    public async Task FetchRejectsAStaleRevisionWithoutRewritingThePersistedSelection()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("model-1", "revision-old", "high", true, 8) with
+            {
+                RemoteConnectionId = "remote-1",
+            },
+        };
+        var service = CreateService(host, Model("model-1", "revision-new", "medium"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.FetchAsync("conversation-1"));
+
+        Assert.Contains("revision is unavailable", error.Message, StringComparison.Ordinal);
+        Assert.Null(host.LastPut);
+    }
+
+    [Fact]
+    public async Task ExplicitModelUpdateReplacesAStaleRevisionWithTheExactCurrentSnapshot()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("model-1", "revision-old", "high", true, 8) with
+            {
+                RemoteConnectionId = "remote-1",
+            },
+        };
+        var service = CreateService(host, Model("model-1", "revision-new", "medium"));
+
+        var settings = await service.UpdateModelAsync("conversation-1", "model-1");
+
+        Assert.Equal("model-1", settings.SelectedModelId);
+        Assert.Equal("medium", settings.SelectedThinkingLevel);
+        Assert.Equal("remote-1", settings.RemoteConnectionId);
+        var put = Assert.IsType<PutLocalConversationRuntimeSettingsCommand>(host.LastPut);
+        Assert.Equal("revision-new", put.SelectedModelConfigRevision);
+        Assert.Equal((ulong)8, put.ExpectedVersion);
+        Assert.Equal("remote-1", put.RemoteConnectionId);
+    }
+
+    [Fact]
+    public async Task FetchRejectsARemovedModelWithoutRewritingThePersistedSelection()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("removed-model", "removed-revision", "high", true, 2),
+        };
+        var service = CreateService(host, Model("model-available", "revision-1", "medium"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.FetchAsync("conversation-1"));
+
+        Assert.Contains("revision is unavailable", error.Message, StringComparison.Ordinal);
+        Assert.Null(host.LastPut);
+    }
+
+    [Fact]
+    public async Task SolCapabilityRepairsLegacyOffToLowAndCannotBeDisabled()
+    {
+        var host = new RuntimeSettingsHost
+        {
+            Current = Settings("sol", "revision-1", "none", false, 6),
+        };
+        var service = CreateService(
+            host,
+            Model("sol", "revision-1", "disabled", "gpt-6.1-sol-2026-10-09"));
+
+        var fetched = await service.FetchAsync("conversation-1");
+        var options = await service.FetchAvailableModelsAsync();
+
+        Assert.Equal("low", fetched.SelectedThinkingLevel);
+        Assert.True(fetched.ReasoningEnabled);
+        Assert.Equal(["low", "medium", "high", "xhigh", "max"],
+            Assert.Single(options).EffectiveThinkingLevels);
+        var disabled = await service.UpdateReasoningAsync("conversation-1", false);
+        Assert.Equal("low", disabled.SelectedThinkingLevel);
+        Assert.True(disabled.ReasoningEnabled);
+    }
+
     private static WindowsLocalAgentConversationRuntimeSettingsService CreateService(
         RuntimeSettingsHost host,
         params WindowsLocalAgentModelSnapshot[] models)
     {
         var service = new WindowsLocalAgentConversationRuntimeSettingsService(
             new WindowsLocalAgentConversationRuntimeSettingsClient(host));
-        var options = models.Select(model => new ConversationModelOption(
-            model.ModelConfigRef,
-            model.Model,
-            model.Model,
-            model.ThinkingLevel)).ToArray();
+        var options = models.Select(model =>
+        {
+            var capability = WindowsModelReasoningCapabilities.ForModel(model.Model);
+            return new ConversationModelOption(
+                model.ModelConfigRef,
+                model.Model,
+                model.Model,
+                capability?.Normalize(model.ThinkingLevel) ?? model.ThinkingLevel,
+                ThinkingLevels: capability?.Levels ??
+                    new[] { "none", "low", "medium", "high", "xhigh" });
+        }).ToArray();
         service.Configure("user-1", new WindowsLocalAgentBootstrapSnapshot(
             "user-1",
             models,
             options,
+            [],
             new WindowsLocalAgentCapabilitySnapshot(
                 "user-1",
                 "main_chat",
                 "revision",
                 null,
                 [],
-                [])));
+                []),
+            new WindowsLocalAgentCapabilitySnapshot(
+                "user-1",
+                "main_chat",
+                "installer-revision",
+                WindowsLocalAgentCapabilityCatalog.PluginInstallerInstructions,
+                [],
+                WindowsLocalAgentCapabilityCatalog.PluginInstallerTools)));
         return service;
     }
+
+    private static WindowsLocalAgentCapabilitySnapshot Capability(
+        string revision,
+        IReadOnlyList<System.Text.Json.JsonElement>? tools = null) => new(
+        "user-1",
+        "main_chat",
+        revision,
+        null,
+        [],
+        tools ?? []);
 
     private static WindowsLocalAgentModelSnapshot Model(
         string id,
         string revision,
-        string? thinkingLevel) => new(
+        string? thinkingLevel,
+        string? modelName = null) => new(
             "user-1",
             id,
             revision,
             $"env:CHATOS_LOCAL_AGENT_MODEL_{id.ToUpperInvariant().Replace('-', '_')}",
             "https://example.invalid/v1",
-            id,
+            modelName ?? id,
             "openai",
             true,
             false,

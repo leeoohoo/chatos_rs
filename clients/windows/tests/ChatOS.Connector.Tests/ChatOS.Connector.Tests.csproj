@@ -8,14 +8,20 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\ChatOS.Connector\ChatOS.Connector.csproj" />
     <ProjectReference Include="..\..\src\ChatOS.Presentation\ChatOS.Presentation.csproj" />
+    <Compile Include="..\..\src\ChatOS.Desktop\AppShell\DesktopShutdown.cs"
+             Link="Desktop\DesktopShutdown.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\PluginSettingsViewModel.cs"
              Link="Desktop\PluginSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\CustomPluginInstallerViewModel.cs"
+             Link="Desktop\CustomPluginInstallerViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\ApprovalSettingsViewModel.cs"
              Link="Desktop\ApprovalSettingsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\ModelSettingsViewModel.cs"
              Link="Desktop\ModelSettingsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\SandboxSettingsViewModel.cs"
              Link="Desktop\SandboxSettingsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\WeChatCompanionSettingsViewModel.cs"
+             Link="Desktop\WeChatCompanionSettingsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Settings\SettingsOperationRunner.cs"
              Link="Desktop\SettingsOperationRunner.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\AppShell\ShellResourceViewModel.cs"
@@ -34,6 +40,10 @@
              Link="Desktop\PluginVisualSessionsViewModel.cs" />
     <Compile Include="..\..\src\ChatOS.Desktop\Features\Plugins\PluginArtifactsViewModel.cs"
              Link="Desktop\PluginArtifactsViewModel.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\MediaStudioHistoryStore.cs"
+             Link="Desktop\MediaStudioHistoryStore.cs" />
+    <Compile Include="..\..\src\ChatOS.Desktop\Features\MediaStudio\MediaStudioViewModel.cs"
+             Link="Desktop\MediaStudioViewModel.cs" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

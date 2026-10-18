@@ -617,6 +617,8 @@ fn windows_task_tools_follow_the_same_declared_capability_scope() {
         json!({"name": "project_read"}),
         json!({"name": "project_search"}),
         json!({"name": "project_write"}),
+        json!({"name": "project_copy"}),
+        json!({"name": "project_move"}),
         json!({"name": "terminal_exec"}),
         json!({"name": "capability_search"}),
     ];
@@ -633,6 +635,8 @@ fn windows_task_tools_follow_the_same_declared_capability_scope() {
             "project_read",
             "project_search",
             "project_write",
+            "project_copy",
+            "project_move",
             "capability_search"
         ]
     );

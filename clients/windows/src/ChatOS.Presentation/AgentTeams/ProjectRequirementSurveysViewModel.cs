@@ -12,6 +12,7 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
     private readonly IUiDispatcher _dispatcher;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private CancellationTokenSource? _sessionCancellation;
+    private CancellationTokenSource? _detailCancellation;
     private string? _ownerUserId;
     private string? _projectId;
     private long _generation;
@@ -44,6 +45,17 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
     [NotifyPropertyChangedFor(nameof(HasSelection))]
     [NotifyPropertyChangedFor(nameof(CanSubmitSelected))]
     private ProjectRequirementSurveyItemViewModel? _selectedSurvey;
+
+    partial void OnSelectedSurveyChanged(ProjectRequirementSurveyItemViewModel? value)
+    {
+        _detailCancellation?.Cancel();
+        _detailCancellation?.Dispose();
+        _detailCancellation = value is null || _sessionCancellation is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(_sessionCancellation.Token);
+        if (value is not null && _detailCancellation is not null)
+            _ = LoadDetailsAsync(value, _detailCancellation.Token);
+    }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSubmitSelected))]
@@ -154,6 +166,137 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
         }
     }
 
+    public async Task<bool> ConfirmSelectedPlanAsync()
+    {
+        var item = SelectedSurvey;
+        var plan = item?.Details?.Plan;
+        if (item is null || plan is null || !item.CanConfirmPlan) return false;
+        var context = RequireContext(CancellationToken.None);
+        try
+        {
+            item.SetPlanBusy(true, null);
+            Interlocked.Increment(ref _localMutationCount);
+            try
+            {
+                await _service.ConfirmPlanAsync(
+                    context.Owner, context.Project, item.Id, plan.Revision, context.Token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _localMutationCount);
+            }
+            EnsureCurrent(context.Generation, context.Token);
+            await LoadDetailsAsync(item, context.Token).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (ReferenceEquals(SelectedSurvey, item))
+                    StatusMessage = "方案已确认，本次不会自动执行任何任务。";
+            }, context.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (context.Token.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            await _dispatcher.InvokeAsync(() => item.SetPlanBusy(false,
+                $"确认未完成：{exception.Message} 请刷新后重新查看当前版本。"),
+                CancellationToken.None).ConfigureAwait(false);
+            return false;
+        }
+        finally
+        {
+            context.Dispose();
+        }
+    }
+
+    public async Task<bool> AdoptAndConfirmSelectedPlanAsync()
+    {
+        var item = SelectedSurvey;
+        var markdown = item?.LegacyPlanMarkdown;
+        if (item is null || !item.CanAdoptLegacyPlan || string.IsNullOrWhiteSpace(markdown))
+            return false;
+        var context = RequireContext(CancellationToken.None);
+        try
+        {
+            item.SetPlanBusy(true, null);
+            Interlocked.Increment(ref _localMutationCount);
+            AgentRequirementPlan saved;
+            try
+            {
+                saved = await _service.SaveSourceReplyAsPlanAsync(
+                    context.Owner, context.Project, item.Id, markdown, context.Token)
+                    .ConfigureAwait(false);
+                await _service.ConfirmPlanAsync(
+                    context.Owner, context.Project, item.Id, saved.Revision, context.Token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _localMutationCount);
+            }
+            EnsureCurrent(context.Generation, context.Token);
+            await LoadDetailsAsync(item, context.Token).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (ReferenceEquals(SelectedSurvey, item))
+                    StatusMessage = "方案已保存并确认，本次不会自动执行任何任务。";
+            }, context.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (context.Token.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            // Saving and confirming are separate optimistic operations. If save
+            // succeeded but confirm conflicted, refresh so the pending v1 remains
+            // visible instead of encouraging a duplicate save.
+            await LoadDetailsAsync(item, CancellationToken.None).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() => item.SetPlanBusy(false,
+                $"保存或确认未完成：{exception.Message} 请刷新后查看当前方案。"),
+                CancellationToken.None).ConfigureAwait(false);
+            return false;
+        }
+        finally
+        {
+            context.Dispose();
+        }
+    }
+
+    private async Task LoadDetailsAsync(
+        ProjectRequirementSurveyItemViewModel item,
+        CancellationToken cancellationToken)
+    {
+        if (_ownerUserId is null || _projectId is null) return;
+        try
+        {
+            await _dispatcher.InvokeAsync(() => item.SetPlanBusy(true, null), cancellationToken)
+                .ConfigureAwait(false);
+            var details = await _service.GetDetailsAsync(
+                _ownerUserId, _projectId, item.Id, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (ReferenceEquals(SelectedSurvey, item)) item.SetDetails(details);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (ReferenceEquals(SelectedSurvey, item))
+                    item.SetPlanBusy(false, $"暂时无法读取方案：{exception.Message}");
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
     private void ReplaceSurveys(IEnumerable<AgentRequirementSurvey> surveys)
     {
         var selectedId = SelectedSurvey?.Id;
@@ -236,6 +379,9 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
         _sessionCancellation?.Cancel();
         _sessionCancellation?.Dispose();
         _sessionCancellation = null;
+        _detailCancellation?.Cancel();
+        _detailCancellation?.Dispose();
+        _detailCancellation = null;
         OnPropertyChanged(nameof(IsOpen));
         OnPropertyChanged(nameof(CanRefresh));
     }
@@ -258,8 +404,12 @@ public sealed partial class ProjectRequirementSurveysViewModel : ObservableObjec
     }
 }
 
-public sealed class ProjectRequirementSurveyItemViewModel
+public sealed class ProjectRequirementSurveyItemViewModel : ObservableObject
 {
+    private AgentRequirementSurveyDetails? _details;
+    private bool _isPlanBusy;
+    private string? _planError;
+
     public ProjectRequirementSurveyItemViewModel(AgentRequirementSurvey survey)
     {
         Survey = survey;
@@ -326,6 +476,79 @@ public sealed class ProjectRequirementSurveyItemViewModel
     public IReadOnlyList<ProjectRequirementSurveyQuestionViewModel> Questions { get; }
     public IReadOnlyList<AgentRequirementExecutionStep> ExecutionSteps =>
         Survey.Resolution?.ExecutionSteps ?? [];
+
+    public AgentRequirementSurveyDetails? Details => _details;
+    public AgentRequirementPlan? Plan => _details?.Plan;
+    public bool IsPlanBusy => _isPlanBusy;
+    public bool HasPlanError => !string.IsNullOrWhiteSpace(_planError);
+    public string PlanError => _planError ?? string.Empty;
+    public bool HasPlan => Plan is not null;
+    public bool IsPlanConfirmed => Plan?.ConfirmedAtUnixMs is not null;
+    public bool IsPlanPendingConfirmation => HasPlan && !IsPlanConfirmed;
+    public string PlanVersionText => Plan is null ? string.Empty : $"方案版本 {Plan.Revision}";
+    public string PlanMarkdown => Plan?.Markdown ?? string.Empty;
+    public string LegacyPlanMarkdown => !HasPlan &&
+        _details?.SurveyFollowUp.State == AgentRequirementPlanFollowUpState.Succeeded
+            ? _details.SurveyFollowUp.Markdown ?? string.Empty
+            : string.Empty;
+    public bool HasLegacyPlanCandidate => !string.IsNullOrWhiteSpace(LegacyPlanMarkdown);
+    public bool CanAdoptLegacyPlan => HasLegacyPlanCandidate && !IsPlanBusy;
+    public bool PlanGenerationSucceeded => _details?.PlanFollowUp?.State is
+        AgentRequirementPlanFollowUpState.Succeeded or
+        AgentRequirementPlanFollowUpState.SucceededWithoutReply;
+    public bool CanConfirmPlan => IsPlanPendingConfirmation && PlanGenerationSucceeded && !IsPlanBusy;
+    public string PlanStatusText => IsPlanConfirmed
+        ? "方案已确认"
+        : IsPlanPendingConfirmation
+            ? "等待 Human 确认"
+            : FollowUpText(_details?.SurveyFollowUp.State);
+    public string PlanFollowUpText => FollowUpText(
+        _details?.PlanFollowUp?.State ?? _details?.SurveyFollowUp.State);
+    public string PlanBoundaryText => IsPlanConfirmed
+        ? "方案已确认，本次不会自动执行任何任务。需要评审、生成文档或开始实施时，请返回原对话安排下一步。"
+        : "确认仅认可当前方案，不会自动开始任务。后续创建的任务将固定引用此版本；修改方案后需要重新确认。";
+
+    public void SetDetails(AgentRequirementSurveyDetails details)
+    {
+        _details = details;
+        _isPlanBusy = false;
+        _planError = null;
+        NotifyPlanChanged();
+    }
+
+    public void SetPlanBusy(bool value, string? error)
+    {
+        _isPlanBusy = value;
+        _planError = error;
+        NotifyPlanChanged();
+    }
+
+    private void NotifyPlanChanged()
+    {
+        foreach (var property in new[]
+        {
+            nameof(Details), nameof(Plan), nameof(IsPlanBusy), nameof(HasPlanError),
+            nameof(PlanError), nameof(HasPlan), nameof(IsPlanConfirmed),
+            nameof(IsPlanPendingConfirmation), nameof(PlanVersionText), nameof(PlanMarkdown),
+            nameof(LegacyPlanMarkdown), nameof(HasLegacyPlanCandidate),
+            nameof(CanAdoptLegacyPlan),
+            nameof(PlanGenerationSucceeded), nameof(CanConfirmPlan), nameof(PlanStatusText),
+            nameof(PlanFollowUpText), nameof(PlanBoundaryText),
+        }) OnPropertyChanged(property);
+    }
+
+    private static string FollowUpText(AgentRequirementPlanFollowUpState? state) => state switch
+    {
+        AgentRequirementPlanFollowUpState.AwaitingAnswers => "请先填写并提交调研。",
+        AgentRequirementPlanFollowUpState.Processing => "正在根据你的回答整理需求与后续方案…",
+        AgentRequirementPlanFollowUpState.Succeeded => "方案生成已完成。",
+        AgentRequirementPlanFollowUpState.SucceededWithoutReply => "后续处理已结束，暂无方案回复。",
+        AgentRequirementPlanFollowUpState.WaitingForInput => "还需要补充信息，请查看待填写调研或原对话。",
+        AgentRequirementPlanFollowUpState.NeedsReview => "后续处理已暂停，请在原对话中查看需要处理的事项。",
+        AgentRequirementPlanFollowUpState.Failed => "后续处理未完成，请在原对话中查看原因并重试。",
+        AgentRequirementPlanFollowUpState.Cancelled => "后续处理已取消，你提交的回答仍已保留。",
+        _ => "正在读取方案状态…",
+    };
 }
 
 public sealed record ProjectRequirementSurveyQuestionViewModel(

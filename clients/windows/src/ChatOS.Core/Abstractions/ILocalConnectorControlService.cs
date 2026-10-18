@@ -16,5 +16,9 @@ public interface ILocalConnectorControlService
         string ticket,
         CancellationToken cancellationToken = default);
 
+    Task<LocalConnectorStatus> RefreshCredentialAsync(
+        string ticket,
+        CancellationToken cancellationToken = default);
+
     Task DisconnectAsync(CancellationToken cancellationToken = default);
 }

@@ -30,6 +30,22 @@ public sealed partial class AgentTeamWorkspaceViewModel
                 .ConfigureAwait(false);
         });
 
+    public Task CreateTeamForProjectAsync(
+        string projectId,
+        string name,
+        string goal,
+        string managerAgentId) =>
+        MutateAsync("正在创建团队…", async context =>
+        {
+            if (!IsGlobalWorkspace)
+                throw new InvalidOperationException("只能从全局 Agent 工作区选择项目创建团队。");
+            var room = await _service.CreateTeamAsync(context.Owner, projectId,
+                new AgentRoomDraft(name.Trim(), goal.Trim()), managerAgentId, context.Token)
+                .ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() => SelectedRoom = room, context.Token)
+                .ConfigureAwait(false);
+        });
+
     public Task OpenDirectAsync(string agentId) =>
         MutateAsync("正在打开私聊…", async context =>
         {
@@ -66,12 +82,19 @@ public sealed partial class AgentTeamWorkspaceViewModel
                 managerAgentId, context.Token).ConfigureAwait(false);
         });
 
-    public Task SendMessageAsync(IReadOnlyList<string>? mentionedAgentIds = null) =>
-        MutateRoomAsync("正在发送…", async (context, room) =>
+    public Task SendMessageAsync(IReadOnlyList<string>? mentionedAgentIds = null)
+    {
+        var content = MessageText.Trim();
+        var attachments = PendingAttachments.ToArray();
+        if (content.Length == 0 && attachments.Length == 0)
         {
-            var content = MessageText.Trim();
+            return Task.CompletedTask;
+        }
+
+        return MutateRoomAsync("正在发送…", async (context, room) =>
+        {
             await _service.PostHumanMessageAsync(context.Owner, room.Id, content,
-                mentionedAgentIds, PendingAttachments.ToArray(), context.Token).ConfigureAwait(false);
+                mentionedAgentIds, attachments, context.Token).ConfigureAwait(false);
             await _dispatcher.InvokeAsync(() =>
             {
                 MessageText = string.Empty;
@@ -80,6 +103,7 @@ public sealed partial class AgentTeamWorkspaceViewModel
             }, context.Token)
                 .ConfigureAwait(false);
         });
+    }
 
     public Task CreateTodoAsync(
         string agentId,

@@ -14,6 +14,40 @@ public enum AgentRequirementQuestionKind
     Boolean,
 }
 
+public enum AgentRequirementPlanFollowUpState
+{
+    AwaitingAnswers,
+    Processing,
+    Succeeded,
+    SucceededWithoutReply,
+    WaitingForInput,
+    NeedsReview,
+    Failed,
+    Cancelled,
+}
+
+public sealed record AgentRequirementPlan(
+    string PlanId,
+    ulong Revision,
+    string OwnerUserId,
+    string ProjectId,
+    string SourceConversationId,
+    string SourceSurveyId,
+    string SourceRunId,
+    string Title,
+    string Markdown,
+    long CreatedAtUnixMs,
+    long? ConfirmedAtUnixMs);
+
+public sealed record AgentRequirementPlanFollowUp(
+    AgentRequirementPlanFollowUpState State,
+    string? Markdown = null);
+
+public sealed record AgentRequirementSurveyDetails(
+    AgentRequirementPlan? Plan,
+    AgentRequirementPlanFollowUp SurveyFollowUp,
+    AgentRequirementPlanFollowUp? PlanFollowUp);
+
 public sealed record AgentRequirementOption(string Id, string Label)
 {
     public void Validate()

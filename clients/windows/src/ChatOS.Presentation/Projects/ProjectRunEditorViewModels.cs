@@ -76,6 +76,62 @@ public sealed partial class ProjectRunToolchainSelectionViewModel : ObservableOb
 
 public sealed record ProjectRunToolchainChoice(string Id, string Label, string Path);
 
+public sealed partial class ProjectRunInstanceItemViewModel : ObservableObject
+{
+    private ProjectRunInstance _instance;
+
+    public ProjectRunInstanceItemViewModel(ProjectRunInstance instance)
+    {
+        _instance = instance;
+    }
+
+    public ProjectRunInstance Instance => _instance;
+
+    public string Id => _instance.Id;
+
+    public string Name => _instance.Name;
+
+    public string? WorkingDirectory => _instance.WorkingDirectory;
+
+    public string Status => _instance.Status;
+
+    public bool IsBusy => _instance.IsBusy;
+
+    public bool IsRunning => _instance.IsRunning;
+
+    public string LogText => _instance.Log ?? string.Empty;
+
+    public bool HasLog => !string.IsNullOrWhiteSpace(_instance.Log);
+
+    public string? StartedAtLabel => _instance.StartedAt?.ToLocalTime().ToString("HH:mm:ss");
+
+    public int? ExitCode => _instance.ExitCode;
+
+    public bool HasExitCode => _instance.ExitCode is not null;
+
+    [ObservableProperty]
+    private bool _isExpanded;
+
+    [RelayCommand]
+    private void ToggleExpanded() => IsExpanded = !IsExpanded;
+
+    public void Update(ProjectRunInstance instance)
+    {
+        _instance = instance;
+        OnPropertyChanged(nameof(Instance));
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(WorkingDirectory));
+        OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(IsRunning));
+        OnPropertyChanged(nameof(LogText));
+        OnPropertyChanged(nameof(HasLog));
+        OnPropertyChanged(nameof(StartedAtLabel));
+        OnPropertyChanged(nameof(ExitCode));
+        OnPropertyChanged(nameof(HasExitCode));
+    }
+}
+
 public sealed partial class ProjectRunEnvironmentVariableViewModel : ObservableObject
 {
     public ProjectRunEnvironmentVariableViewModel(string key = "", string value = "")

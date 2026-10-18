@@ -10,35 +10,55 @@ internal sealed record WindowsProjectRunAnalysis(
 
 internal static class WindowsProjectRunAnalyzer
 {
+    private const int MaximumDirectories = 2_500;
+    private const int MaximumDepth = 6;
+    private const int MaximumTargets = 100;
+    private static readonly HashSet<string> IgnoredDirectories = new(
+        [
+            ".chatos", ".git", ".idea", ".next", ".venv", ".vscode", "bin",
+            "build", "dist", "node_modules", "obj", "target", "venv", "vendor",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+    private static readonly EnumerationOptions TopLevelEnumerationOptions = new()
+    {
+        IgnoreInaccessible = true,
+        RecurseSubdirectories = false,
+        ReturnSpecialDirectories = false,
+    };
+
     public static WindowsProjectRunAnalysis Analyze(string root)
     {
         var targets = new List<ProjectRunTarget>();
         var configurations = new List<ProjectRunConfigurationFile>();
-        AddPackageJson(root, targets, configurations);
-        AddManifestTarget(
-            root,
-            "Cargo.toml",
-            "cargo:run",
-            "Cargo run",
-            "cargo",
-            "rust",
-            "cargo run",
-            ["cargo"],
-            targets,
-            configurations);
-        AddManifestTarget(
-            root,
-            "Package.swift",
-            "swift:run",
-            "Swift run",
-            "swift",
-            "swift",
-            "swift run",
-            ["swift"],
-            targets,
-            configurations);
-        AddDotNet(root, targets, configurations);
-        AddPython(root, targets, configurations);
+        var pending = new Queue<(string Directory, int Depth)>();
+        pending.Enqueue((root, 0));
+        var visited = 0;
+        while (pending.TryDequeue(out var item) &&
+               visited++ < MaximumDirectories &&
+               targets.Count < MaximumTargets)
+        {
+            AddPackageJson(root, item.Directory, targets, configurations);
+            AddRust(root, item.Directory, targets, configurations);
+            AddSwift(root, item.Directory, targets, configurations);
+            AddDotNet(root, item.Directory, targets, configurations);
+            AddPython(root, item.Directory, targets, configurations);
+            if (item.Depth >= MaximumDepth) continue;
+            foreach (var directory in AccessibleDirectories(item.Directory))
+            {
+                try
+                {
+                    var info = new DirectoryInfo(directory);
+                    if ((info.Attributes & FileAttributes.ReparsePoint) != 0 ||
+                        IgnoredDirectories.Contains(info.Name))
+                    {
+                        continue;
+                    }
+                    pending.Enqueue((directory, item.Depth + 1));
+                }
+                catch (UnauthorizedAccessException) { }
+                catch (IOException) { }
+            }
+        }
         var requiredKinds = targets.SelectMany(value => value.RequiredToolchains)
             .Distinct(StringComparer.Ordinal)
             .OrderBy(value => value, StringComparer.Ordinal)
@@ -48,17 +68,27 @@ internal static class WindowsProjectRunAnalyzer
             kind => (IReadOnlyList<ProjectRunToolchainOption>)FindToolchains(kind),
             StringComparer.Ordinal);
         return new(
-            targets.OrderBy(value => value.Label, StringComparer.CurrentCultureIgnoreCase).ToArray(),
+            targets
+                .DistinctBy(value => value.Id, StringComparer.Ordinal)
+                .OrderByDescending(Priority)
+                .ThenBy(value => value.Label, StringComparer.CurrentCultureIgnoreCase)
+                .Take(MaximumTargets)
+                .ToArray(),
             toolchains,
-            configurations.OrderBy(value => value.Path, StringComparer.Ordinal).ToArray());
+            configurations
+                .DistinctBy(value => value.Path, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value.Path, StringComparer.Ordinal)
+                .Take(60)
+                .ToArray());
     }
 
     private static void AddPackageJson(
         string root,
+        string directory,
         ICollection<ProjectRunTarget> targets,
         ICollection<ProjectRunConfigurationFile> configurations)
     {
-        var path = Path.Combine(root, "package.json");
+        var path = Path.Combine(directory, "package.json");
         if (!File.Exists(path)) return;
         configurations.Add(Configuration(root, path, "package", "package.json"));
         try
@@ -72,18 +102,23 @@ internal static class WindowsProjectRunAnalyzer
             foreach (var script in scripts.EnumerateObject())
             {
                 if (script.Value.ValueKind != JsonValueKind.String ||
+                    script.Name is not ("dev" or "start" or "serve" or "test" or "build") ||
                     script.Name.Any(character =>
                         !char.IsAsciiLetterOrDigit(character) && character is not ':' and not '_' and not '-'))
                 {
                     continue;
                 }
                 targets.Add(new ProjectRunTarget(
-                    $"npm:{script.Name}",
-                    $"npm · {script.Name}",
+                    ScopedId(root, directory, $"npm:{script.Name}"),
+                    $"Node · npm {script.Name}",
                     "npm",
                     "javascript",
-                    root,
-                    $"npm run {ShellArgument(script.Name)}",
+                    directory,
+                    // Script names are restricted above to shell-safe characters. Avoid
+                    // quoting them here: cmd.exe receives the generated command through
+                    // ProcessStartInfo.ArgumentList, where embedded quotes become literal
+                    // npm script-name characters (for example, \"start\").
+                    $"npm run {script.Name}",
                     "package.json",
                     false,
                     null,
@@ -98,10 +133,11 @@ internal static class WindowsProjectRunAnalyzer
 
     private static void AddDotNet(
         string root,
+        string directory,
         ICollection<ProjectRunTarget> targets,
         ICollection<ProjectRunConfigurationFile> configurations)
     {
-        foreach (var path in TopLevelFiles(root, "*.csproj"))
+        foreach (var path in AccessibleFiles(directory, "*.csproj"))
         {
             var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
             configurations.Add(Configuration(root, path, "dotnet", Path.GetFileName(path)));
@@ -122,24 +158,25 @@ internal static class WindowsProjectRunAnalyzer
 
     private static void AddPython(
         string root,
+        string directory,
         ICollection<ProjectRunTarget> targets,
         ICollection<ProjectRunConfigurationFile> configurations)
     {
-        var manifest = Path.Combine(root, "pyproject.toml");
+        var manifest = Path.Combine(directory, "pyproject.toml");
         if (File.Exists(manifest))
         {
             configurations.Add(Configuration(root, manifest, "python", "pyproject.toml"));
         }
         var entrypoint = new[] { "main.py", "app.py" }
-            .Select(name => Path.Combine(root, name))
+            .Select(name => Path.Combine(directory, name))
             .FirstOrDefault(File.Exists);
         if (entrypoint is null) return;
         targets.Add(new ProjectRunTarget(
-            $"python:{Path.GetFileName(entrypoint)}",
+            ScopedId(root, directory, $"python:{Path.GetFileName(entrypoint)}"),
             $"Python · {Path.GetFileName(entrypoint)}",
             "python",
             "python",
-            root,
+            directory,
             $"python {ShellArgument(entrypoint)}",
             "project",
             false,
@@ -148,8 +185,60 @@ internal static class WindowsProjectRunAnalyzer
             ["python"]));
     }
 
+    private static void AddRust(
+        string root,
+        string directory,
+        ICollection<ProjectRunTarget> targets,
+        ICollection<ProjectRunConfigurationFile> configurations)
+    {
+        var manifest = Path.Combine(directory, "Cargo.toml");
+        if (!File.Exists(manifest)) return;
+        configurations.Add(Configuration(root, manifest, "cargo", "Cargo.toml"));
+        if (File.Exists(Path.Combine(directory, "src", "main.rs")))
+        {
+            targets.Add(new ProjectRunTarget(
+                ScopedId(root, directory, "cargo:run"),
+                "Rust · cargo run",
+                "cargo",
+                "rust",
+                directory,
+                "cargo run",
+                "Cargo.toml",
+                false,
+                "src/main.rs",
+                Path.GetRelativePath(root, manifest).Replace('\\', '/'),
+                ["cargo"]));
+        }
+        targets.Add(new ProjectRunTarget(
+            ScopedId(root, directory, "cargo:test"),
+            "Rust · cargo test",
+            "cargo",
+            "rust",
+            directory,
+            "cargo test",
+            "Cargo.toml",
+            false,
+            null,
+            Path.GetRelativePath(root, manifest).Replace('\\', '/'),
+            ["cargo"]));
+    }
+
+    private static void AddSwift(
+        string root,
+        string directory,
+        ICollection<ProjectRunTarget> targets,
+        ICollection<ProjectRunConfigurationFile> configurations)
+    {
+        AddManifestTarget(root, directory, "Package.swift", "swift:run", "Swift · swift run",
+            "swift", "swift", "swift run", ["swift"], targets, configurations);
+        AddManifestTarget(root, directory, "Package.swift", "swift:test", "Swift · swift test",
+            "swift", "swift", "swift test", ["swift"], targets, configurations,
+            addConfiguration: false);
+    }
+
     private static void AddManifestTarget(
         string root,
+        string directory,
         string manifestName,
         string id,
         string label,
@@ -158,43 +247,73 @@ internal static class WindowsProjectRunAnalyzer
         string command,
         IReadOnlyList<string> toolchains,
         ICollection<ProjectRunTarget> targets,
-        ICollection<ProjectRunConfigurationFile> configurations)
+        ICollection<ProjectRunConfigurationFile> configurations,
+        bool addConfiguration = true)
     {
-        var path = Path.Combine(root, manifestName);
+        var path = Path.Combine(directory, manifestName);
         if (!File.Exists(path)) return;
-        configurations.Add(Configuration(root, path, kind, manifestName));
+        if (addConfiguration) configurations.Add(Configuration(root, path, kind, manifestName));
         targets.Add(new ProjectRunTarget(
-            id,
+            ScopedId(root, directory, id),
             label,
             kind,
             language,
-            root,
+            directory,
             command,
             manifestName,
             false,
             null,
-            manifestName,
+            Path.GetRelativePath(root, path).Replace('\\', '/'),
             toolchains));
     }
 
-    private static IEnumerable<string> TopLevelFiles(string root, string pattern)
+    private static string ScopedId(string root, string directory, string id)
     {
-        foreach (var path in Directory.EnumerateFiles(root, pattern, SearchOption.TopDirectoryOnly))
+        var relative = Path.GetRelativePath(root, directory).Replace('\\', '/');
+        return relative == "." ? id : $"{id}:{relative}";
+    }
+
+    private static int Priority(ProjectRunTarget target)
+    {
+        var command = target.Command.ToLowerInvariant();
+        if (command.Contains("npm run dev", StringComparison.Ordinal) ||
+            command.Contains("npm run start", StringComparison.Ordinal)) return 100;
+        if (command == "cargo run" || command == "swift run") return 84;
+        if (command.Contains("main.py", StringComparison.Ordinal) ||
+            command.Contains("app.py", StringComparison.Ordinal)) return 88;
+        if (command.Contains("test", StringComparison.Ordinal)) return 40;
+        return 70;
+    }
+
+    private static IReadOnlyList<string> AccessibleFiles(string directory, string pattern)
+    {
+        try
         {
-            yield return path;
+            return Directory.GetFiles(directory, pattern, TopLevelEnumerationOptions);
         }
-        foreach (var directory in Directory.EnumerateDirectories(root))
+        catch (UnauthorizedAccessException)
         {
-            var info = new DirectoryInfo(directory);
-            if ((info.Attributes & FileAttributes.ReparsePoint) != 0 ||
-                info.Name is "bin" or "obj" or "node_modules" or ".git")
-            {
-                continue;
-            }
-            foreach (var path in Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly))
-            {
-                yield return path;
-            }
+            return [];
+        }
+        catch (IOException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<string> AccessibleDirectories(string directory)
+    {
+        try
+        {
+            return Directory.GetDirectories(directory, "*", TopLevelEnumerationOptions);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return [];
+        }
+        catch (IOException)
+        {
+            return [];
         }
     }
 

@@ -33,6 +33,7 @@ public sealed class ProjectGitViewModelTests
 
         await viewModel.StageChangeCommand.ExecuteAsync(viewModel.Changes[0]);
         Assert.True(viewModel.HasStagedChanges);
+        Assert.Null(viewModel.SelectedDiff);
         viewModel.CommitMessage = "docs: update readme";
         await viewModel.CommitCommand.ExecuteAsync(null);
 
@@ -40,6 +41,68 @@ public sealed class ProjectGitViewModelTests
         Assert.Empty(viewModel.Changes);
         Assert.Equal(string.Empty, viewModel.CommitMessage);
         Assert.Equal("提交已创建。", viewModel.ActionMessage);
+    }
+
+    [Fact]
+    public async Task CommitIsBlockedWhileGitStatusIsLoading()
+    {
+        var service = new GitServiceDouble();
+        using var viewModel = new ProjectGitViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("root-1"));
+        await viewModel.StageChangeCommand.ExecuteAsync(viewModel.Changes[0]);
+        viewModel.CommitMessage = "docs: update readme";
+
+        Assert.True(viewModel.CanCommit);
+        viewModel.IsLoading = true;
+
+        Assert.False(viewModel.CanCommit);
+    }
+
+    [Fact]
+    public async Task FailedMergeRefreshesConflictStateAndPreservesTheFailure()
+    {
+        var service = new FailingMergeGitServiceDouble();
+        using var viewModel = new ProjectGitViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("root-1"));
+        var branch = new ProjectGitBranch("feature/conflict", false, null);
+        viewModel.Branches.Add(branch);
+
+        await viewModel.MergeBranchCommand.ExecuteAsync(branch);
+
+        Assert.Equal(2, service.SnapshotCount);
+        Assert.Equal("merge conflict", viewModel.ErrorMessage);
+        var conflict = Assert.Single(viewModel.Changes);
+        Assert.Equal(ProjectGitChangeKind.Conflicted, conflict.Kind);
+    }
+
+    [Fact]
+    public async Task ClosingDiffClearsTheSelectedChangeAndDiff()
+    {
+        var service = new GitServiceDouble();
+        using var viewModel = new ProjectGitViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("root-1"));
+        var change = Assert.Single(viewModel.Changes);
+        await viewModel.OpenDiffCommand.ExecuteAsync(new ProjectGitDiffRequest(change, false));
+
+        viewModel.CloseDiffCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedChange);
+        Assert.Null(viewModel.SelectedDiff);
+    }
+
+    [Fact]
+    public async Task RepositoryInitializationIsDisabledWhileSnapshotIsLoading()
+    {
+        var service = new DelayedGitServiceDouble();
+        using var viewModel = new ProjectGitViewModel(service, new ImmediateUiDispatcher());
+
+        var opening = viewModel.OpenAsync(Project("root-1"));
+        await service.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.False(viewModel.CanInitializeRepository);
+
+        viewModel.CancelOperationCommand.Execute(null);
+        await opening;
     }
 
     [Fact]
@@ -150,7 +213,7 @@ public sealed class ProjectGitViewModelTests
 
         public Task CreateBranchAsync(string projectRoot, string name, bool switchToBranch, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task MergeBranchAsync(string projectRoot, string branch, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public virtual Task MergeBranchAsync(string projectRoot, string branch, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task SaveRemoteAsync(string projectRoot, string? originalName, string name, string url, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -211,6 +274,45 @@ public sealed class ProjectGitViewModelTests
             FirstStarted.TrySetResult();
             await _release.Task.WaitAsync(cancellationToken);
             return Snapshot("first");
+        }
+    }
+
+    private sealed class FailingMergeGitServiceDouble : GitServiceDouble
+    {
+        private bool _mergeAttempted;
+
+        public int SnapshotCount { get; private set; }
+
+        public override Task<ProjectGitSnapshot> SnapshotAsync(
+            string projectRoot,
+            CancellationToken cancellationToken = default)
+        {
+            SnapshotCount++;
+            if (!_mergeAttempted)
+            {
+                return base.SnapshotAsync(projectRoot, cancellationToken);
+            }
+
+            ProjectGitChange[] changes =
+            [
+                new(
+                    "README.md",
+                    null,
+                    Path.Combine(Path.GetTempPath(), "README.md"),
+                    "U",
+                    "U",
+                    ProjectGitChangeKind.Conflicted),
+            ];
+            return Task.FromResult(Snapshot("main", changes));
+        }
+
+        public override Task MergeBranchAsync(
+            string projectRoot,
+            string branch,
+            CancellationToken cancellationToken = default)
+        {
+            _mergeAttempted = true;
+            throw new InvalidOperationException("merge conflict");
         }
     }
 }

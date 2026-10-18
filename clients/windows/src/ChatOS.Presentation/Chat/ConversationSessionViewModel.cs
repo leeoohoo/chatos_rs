@@ -23,10 +23,15 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
     private readonly ConversationHistoryStore _historyStore;
     private readonly IUiDispatcher _dispatcher;
     private readonly LocalizationViewModel? _localization;
+    private readonly IRemoteConnectionMetadataService? _remoteConnections;
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private CancellationTokenSource? _sessionCancellation;
     private Task? _realtimeTask;
+    private Task? _historyRetryTask;
+    private CancellationTokenSource? _historyRetryCancellation;
+    private int _historyRetryAttempt;
     private long _requestGeneration;
+    private PendingNewTurnRetry? _pendingNewTurnRetry;
 
     public ConversationSessionViewModel(
         IConversationHistoryService historyService,
@@ -37,7 +42,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         IRealtimeClient realtimeClient,
         ConversationHistoryStore historyStore,
         IUiDispatcher dispatcher,
-        LocalizationViewModel? localization = null)
+        LocalizationViewModel? localization = null,
+        IRemoteConnectionMetadataService? remoteConnections = null)
     {
         _historyService = historyService;
         _cacheStore = cacheStore;
@@ -48,8 +54,13 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         _historyStore = historyStore;
         _dispatcher = dispatcher;
         _localization = localization;
+        _remoteConnections = remoteConnections;
         if (_localization is not null) _localization.PropertyChanged += OnLocalizationChanged;
-        Turns.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
+        Turns.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(IsEmpty));
+            OnPropertyChanged(nameof(AutomationStatus));
+        };
         LiveProcesses.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasLiveProcesses));
         PendingPrompts.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPendingPrompts));
         Attachments.CollectionChanged += (_, _) =>
@@ -58,6 +69,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
             OnPropertyChanged(nameof(AttachmentTotalSizeLabel));
             OnPropertyChanged(nameof(CanSendDraft));
         };
+        Capabilities.CollectionChanged += (_, _) =>
+            OnPropertyChanged(nameof(HasCapabilityOptions));
     }
 
     public ObservableCollection<ConversationTurnItemViewModel> Turns { get; } = [];
@@ -68,13 +81,52 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
     public ObservableCollection<ConversationModelOption> Models { get; } = [];
 
+    public ObservableCollection<string> ReasoningLevels { get; } = [];
+
+    public ObservableCollection<ConversationRemoteConnectionOption> RemoteConnections { get; } = [];
+
+    public ObservableCollection<ConversationCapabilityOption> Capabilities { get; } = [];
+
     public ObservableCollection<ConversationAttachmentDraft> Attachments { get; } = [];
 
     public bool IsEmpty => Turns.Count == 0;
 
+    public string AutomationIdentity => string.IsNullOrWhiteSpace(ConversationId)
+        ? "conversation=none"
+        : $"conversation={ConversationId}";
+
+    public string AutomationStatus
+    {
+        get
+        {
+            var state = !IsOpen
+                ? "closed"
+                : IsLoading
+                    ? "loading"
+                    : IsSending
+                        ? "sending"
+                        : IsRunning
+                            ? "running"
+                            : string.IsNullOrWhiteSpace(ErrorMessage)
+                                ? "ready"
+                                : "failed";
+            return $"state={state}; turns={Turns.Count}";
+        }
+    }
+
     public bool HasLiveProcesses => LiveProcesses.Count > 0;
 
     public bool HasPendingPrompts => PendingPrompts.Count > 0;
+
+    public bool HasReasoningLevels => ReasoningLevels.Count > 0;
+
+    public bool HasCapabilityOptions => !IsPluginInstaller && Capabilities.Count > 1;
+
+    public string CapabilityPickerLabel => L("能力", "Capability");
+
+    public string PluginInstallerBoundaryText => L(
+        "直接告诉我想预检或安装的本地 MCP / Plugin 文件夹。安装工具只在此对话可用，并且不会获得项目编辑或通用终端权限。",
+        "Tell me which local MCP or Plugin folder to inspect or install. Installation tools are available only in this conversation and have no project-editing or general terminal access.");
 
     public bool HasAttachments => Attachments.Count > 0;
 
@@ -87,10 +139,15 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
             $"{Attachments.Count} attachment{(Attachments.Count == 1 ? string.Empty : "s")} · {FormatByteCount(Attachments.Sum(static value => value.Size))}");
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomationIdentity))]
     private string? _conversationId;
 
     [ObservableProperty]
     private string _title = "ChatOS";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCapabilityOptions))]
+    private bool _isPluginInstaller;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSendDraft))]
@@ -98,9 +155,11 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSendDraft))]
+    [NotifyPropertyChangedFor(nameof(AutomationStatus))]
     private bool _isOpen;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomationStatus))]
     private bool _isLoading;
 
     [ObservableProperty]
@@ -108,9 +167,11 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanSendDraft))]
+    [NotifyPropertyChangedFor(nameof(AutomationStatus))]
     private bool _isSending;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomationStatus))]
     private bool _isRunning;
 
     [ObservableProperty]
@@ -128,30 +189,83 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         $"{UnreadNewerCount} new task update{(UnreadNewerCount == 1 ? string.Empty : "s")}");
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomationStatus))]
     private string? _errorMessage;
 
     [ObservableProperty]
     private string? _attachmentError;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveReasoningLevel))]
+    private string? _selectedThinkingLevel;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveReasoningLevel))]
     private ConversationModelOption? _selectedModel;
 
     [ObservableProperty]
+    private ConversationRemoteConnectionOption? _selectedRemoteConnection;
+
+    [ObservableProperty]
+    private ConversationCapabilityOption? _selectedCapability;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EffectiveReasoningLevel))]
     private bool _reasoningEnabled;
 
     [ObservableProperty]
     private bool _isApplyingSettings;
 
+    public string DefaultReasoningLevel
+    {
+        get
+        {
+            var levels = SelectedModel?.EffectiveThinkingLevels ?? Array.Empty<string>();
+            if (!string.IsNullOrWhiteSpace(SelectedModel?.ThinkingLevel) &&
+                levels.Contains(SelectedModel.ThinkingLevel, StringComparer.OrdinalIgnoreCase))
+            {
+                return SelectedModel.ThinkingLevel.Trim().ToLowerInvariant();
+            }
+
+            return levels.FirstOrDefault(level =>
+                       string.Equals(level, "auto", StringComparison.OrdinalIgnoreCase))
+                   ?? levels.FirstOrDefault(level =>
+                       string.Equals(level, "medium", StringComparison.OrdinalIgnoreCase))
+                   ?? levels.FirstOrDefault(level =>
+                       !string.Equals(level, "none", StringComparison.OrdinalIgnoreCase))
+                   ?? "none";
+        }
+    }
+
+    public string EffectiveReasoningLevel =>
+        !ReasoningEnabled
+            ? "none"
+            : ReasoningLevels.FirstOrDefault(level =>
+                  string.Equals(level, SelectedThinkingLevel, StringComparison.OrdinalIgnoreCase))
+              ?? DefaultReasoningLevel;
+
     public async Task OpenAsync(
         string? conversationId,
         string title,
+        CancellationToken cancellationToken = default) =>
+        await OpenAsync(
+            conversationId,
+            title,
+            isPluginInstaller: false,
+            cancellationToken).ConfigureAwait(false);
+
+    public async Task OpenAsync(
+        string? conversationId,
+        string title,
+        bool isPluginInstaller,
         CancellationToken cancellationToken = default)
     {
         CancelCurrentSession();
         var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _sessionCancellation = linked;
         var token = linked.Token;
-        await _dispatcher.InvokeAsync(() => ResetVisualState(conversationId, title), token);
+        await _dispatcher.InvokeAsync(
+            () => ResetVisualState(conversationId, title, isPluginInstaller), token);
         if (string.IsNullOrWhiteSpace(conversationId))
         {
             return;
@@ -177,9 +291,10 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         {
             await _dispatcher.InvokeAsync(() =>
             {
-                ErrorMessage = exception.Message;
+                ErrorMessage = PresentConversationError(exception);
                 IsLoading = false;
             }, CancellationToken.None).ConfigureAwait(false);
+            ScheduleHistoryRetry(conversationId);
         }
     }
 
@@ -195,6 +310,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         {
             await RefreshLatestInternalAsync(conversationId, _sessionCancellation.Token);
             await LoadPromptsAsync(conversationId, _sessionCancellation.Token);
+            ResetHistoryRetry();
         }
         catch (OperationCanceledException) when (_sessionCancellation.IsCancellationRequested)
         {
@@ -202,6 +318,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         catch (Exception exception)
         {
             ErrorMessage = exception.Message;
+            ScheduleHistoryRetry(conversationId);
         }
     }
 
@@ -271,6 +388,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         }
 
         var token = _sessionCancellation.Token;
+        var explicitSelection = ToExplicitSelection(SelectedCapability);
+        var consumedExplicitSelection = false;
         IsSending = true;
         ErrorMessage = null;
         AttachmentError = null;
@@ -298,7 +417,9 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                         conversationId,
                         text,
                         outgoingAttachments,
+                        explicitSelection,
                         token).ConfigureAwait(false);
+                    consumedExplicitSelection = explicitSelection is not null;
                 }
             }
             else
@@ -307,10 +428,18 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                     conversationId,
                     text,
                     outgoingAttachments,
+                    explicitSelection,
                     token).ConfigureAwait(false);
+                consumedExplicitSelection = explicitSelection is not null;
             }
 
             await RefreshLatestInternalAsync(conversationId, token).ConfigureAwait(false);
+            if (consumedExplicitSelection)
+            {
+                await _dispatcher.InvokeAsync(() =>
+                    SelectedCapability = Capabilities.FirstOrDefault(), token)
+                    .ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -326,7 +455,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
                 RestoreAttachments(outgoingAttachments);
 
-                ErrorMessage = exception.Message;
+                ErrorMessage = PresentConversationError(exception);
             }).ConfigureAwait(false);
         }
         finally
@@ -462,19 +591,54 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         }).ConfigureAwait(false);
     }
 
-    public Task SetReasoningAsync(bool enabled)
+    public Task SetReasoningAsync(bool enabled) =>
+        SetReasoningLevelAsync(enabled ? DefaultReasoningLevel : "none");
+
+    public Task SetReasoningLevelAsync(string level)
     {
         if (ConversationId is not { } conversationId ||
             IsApplyingSettings ||
-            enabled == ReasoningEnabled)
+            string.IsNullOrWhiteSpace(level))
+        {
+            return Task.CompletedTask;
+        }
+
+        var normalized = level.Trim().ToLowerInvariant();
+        if (ReasoningLevels.Count > 0 &&
+            !ReasoningLevels.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            return Task.CompletedTask;
+        }
+        if (string.Equals(SelectedThinkingLevel, normalized, StringComparison.OrdinalIgnoreCase) &&
+            ReasoningEnabled == !string.Equals(normalized, "none", StringComparison.Ordinal))
         {
             return Task.CompletedTask;
         }
 
         return ApplySettingsAsync(async token =>
         {
-            var settings = await _runtimeService.UpdateReasoningAsync(conversationId, enabled, token)
+            var settings = await _runtimeService.UpdateReasoningLevelAsync(conversationId, normalized, token)
                 .ConfigureAwait(false);
+            await ApplyRuntimeSettingsAsync(settings, token).ConfigureAwait(false);
+        });
+    }
+
+    public Task SetRemoteConnectionAsync(ConversationRemoteConnectionOption? connection)
+    {
+        if (ConversationId is not { } conversationId ||
+            connection is null ||
+            IsApplyingSettings ||
+            string.Equals(connection.Id, SelectedRemoteConnection?.Id, StringComparison.Ordinal))
+        {
+            return Task.CompletedTask;
+        }
+
+        return ApplySettingsAsync(async token =>
+        {
+            var settings = await _runtimeService.UpdateRemoteConnectionAsync(
+                conversationId,
+                connection.Id,
+                token).ConfigureAwait(false);
             await ApplyRuntimeSettingsAsync(settings, token).ConfigureAwait(false);
         });
     }
@@ -496,6 +660,52 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         }
     }
 
+    public async Task LocalAgentRuntimeDidBecomeReadyAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (ConversationId is not { } conversationId || _sessionCancellation is null)
+        {
+            return;
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _sessionCancellation.Token);
+        var token = linkedCancellation.Token;
+        try
+        {
+            await LoadRuntimeAsync(conversationId, token).ConfigureAwait(false);
+            if (!string.Equals(ConversationId, conversationId, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            await RefreshLatestInternalAsync(conversationId, token).ConfigureAwait(false);
+            await LoadPromptsAsync(conversationId, token).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                ErrorMessage = null;
+                IsLoading = false;
+            }, token).ConfigureAwait(false);
+            ResetHistoryRetry();
+            if (_realtimeTask is null || _realtimeTask.IsCompleted)
+            {
+                _realtimeTask = ConsumeRealtimeAsync(conversationId, _sessionCancellation.Token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await _dispatcher.InvokeAsync(() =>
+            {
+                ErrorMessage = PresentConversationError(exception);
+                IsLoading = false;
+            }, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
     public void Dispose()
     {
         CancelCurrentSession();
@@ -507,11 +717,24 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         string conversationId,
         string text,
         IReadOnlyList<ConversationAttachmentDraft> attachments,
+        ConversationExplicitCapabilitySelection? explicitSelection,
         CancellationToken cancellationToken)
     {
         var snapshot = _historyStore.Snapshot(conversationId);
         var now = DateTimeOffset.UtcNow;
-        var turnId = $"turn_{Guid.NewGuid():N}";
+        var retry = _pendingNewTurnRetry;
+        var turnId = retry is not null && retry.Matches(
+            conversationId,
+            text,
+            attachments,
+            ReasoningEnabled,
+            explicitSelection)
+            ? retry.TurnId
+            : $"turn_{Guid.NewGuid():N}";
+        if (!string.Equals(retry?.TurnId, turnId, StringComparison.Ordinal))
+        {
+            _pendingNewTurnRetry = null;
+        }
         var optimistic = new ConversationTurn(
             turnId,
             conversationId,
@@ -543,15 +766,56 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                     turnId,
                     text,
                     attachments,
-                    ReasoningEnabled),
+                    ReasoningEnabled,
+                    explicitSelection),
                 cancellationToken).ConfigureAwait(false);
+            if (string.Equals(_pendingNewTurnRetry?.TurnId, turnId, StringComparison.Ordinal))
+            {
+                _pendingNewTurnRetry = null;
+            }
         }
-        catch
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             _historyStore.DiscardOptimisticTurn(conversationId, turnId);
             await ApplySnapshotAsync(conversationId, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
+        catch
+        {
+            _pendingNewTurnRetry = new(
+                conversationId,
+                turnId,
+                text,
+                attachments.Select(static attachment => attachment.Id).ToArray(),
+                ReasoningEnabled,
+                explicitSelection);
+            _historyStore.DiscardOptimisticTurn(conversationId, turnId);
+            await ApplySnapshotAsync(conversationId, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private sealed record PendingNewTurnRetry(
+        string ConversationId,
+        string TurnId,
+        string Content,
+        IReadOnlyList<string> AttachmentIds,
+        bool ReasoningEnabled,
+        ConversationExplicitCapabilitySelection? ExplicitSelection)
+    {
+        internal bool Matches(
+            string conversationId,
+            string content,
+            IReadOnlyList<ConversationAttachmentDraft> attachments,
+            bool reasoningEnabled,
+            ConversationExplicitCapabilitySelection? explicitSelection) =>
+            string.Equals(ConversationId, conversationId, StringComparison.Ordinal) &&
+            string.Equals(Content, content, StringComparison.Ordinal) &&
+            ReasoningEnabled == reasoningEnabled &&
+            Equals(ExplicitSelection, explicitSelection) &&
+            AttachmentIds.SequenceEqual(
+                attachments.Select(static attachment => attachment.Id),
+                StringComparer.Ordinal);
     }
 
     private async Task RefreshLatestInternalAsync(
@@ -600,11 +864,7 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                 return;
             }
 
-            Turns.Clear();
-            foreach (var turn in snapshot.Turns)
-            {
-                Turns.Add(new ConversationTurnItemViewModel(turn));
-            }
+            ApplyTimelineSnapshot(snapshot.Turns);
 
             HasOlder = snapshot.HasOlder;
             UnreadNewerCount = snapshot.UnreadNewerCount;
@@ -614,38 +874,48 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
     private async Task LoadRuntimeAsync(string conversationId, CancellationToken cancellationToken)
     {
-        var settingsTask = _runtimeService.FetchAsync(conversationId, cancellationToken);
-        var modelsTask = _runtimeService.FetchAvailableModelsAsync(cancellationToken);
-        await Task.WhenAll(settingsTask, modelsTask).ConfigureAwait(false);
+        // Publish the recovery choices before validating the persisted selection. A stale
+        // model revision must remain fail-closed, but it must not hide the exact catalog entry
+        // that the human can explicitly select to recover the conversation.
+        var models = await _runtimeService.FetchAvailableModelsAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var capabilities = await _runtimeService.FetchAvailableCapabilitiesAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var remotes = await LoadRemoteConnectionsAsync(cancellationToken).ConfigureAwait(false);
         await _dispatcher.InvokeAsync(() =>
         {
             Models.Clear();
-            foreach (var model in modelsTask.Result)
+            foreach (var model in models)
             {
                 Models.Add(model);
             }
 
-            ApplyRuntimeSettings(settingsTask.Result);
-        }, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task LoadPromptsAsync(string conversationId, CancellationToken cancellationToken)
-    {
-        var prompts = await _askUserService.FetchPromptsAsync(
-            conversationId,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        await _dispatcher.InvokeAsync(() =>
-        {
-            PendingPrompts.Clear();
-            foreach (var prompt in prompts.Where(static prompt => prompt.IsPending))
+            Capabilities.Clear();
+            Capabilities.Add(new ConversationCapabilityOption(
+                "none",
+                L("自动选择", "Automatic"),
+                L("由 ChatOS 根据本条消息选择必要能力", "Let ChatOS choose capabilities for this message")));
+            foreach (var capability in capabilities)
             {
-                PendingPrompts.Add(new AskUserPromptViewModel(
-                    prompt,
-                    _askUserService,
-                    () => LoadPromptsAsync(conversationId, cancellationToken),
-                    _localization));
+                Capabilities.Add(capability);
+            }
+            SelectedCapability = Capabilities.FirstOrDefault();
+
+            RemoteConnections.Clear();
+            RemoteConnections.Add(new ConversationRemoteConnectionOption(
+                null,
+                L("未绑定远端", "No remote")));
+            foreach (var remote in remotes)
+            {
+                RemoteConnections.Add(new ConversationRemoteConnectionOption(
+                    remote.Id,
+                    L($"远端：{remote.Name}", $"Remote: {remote.Name}")));
             }
         }, cancellationToken).ConfigureAwait(false);
+
+        var settings = await _runtimeService.FetchAsync(conversationId, cancellationToken)
+            .ConfigureAwait(false);
+        await ApplyRuntimeSettingsAsync(settings, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ConsumeRealtimeAsync(string conversationId, CancellationToken cancellationToken)
@@ -667,7 +937,8 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
                     await LoadPromptsAsync(conversationId, cancellationToken).ConfigureAwait(false);
                 }
 
-                if (signal.Kind is ConversationRealtimeKind.Persisted or
+                if (signal.Kind is ConversationRealtimeKind.Reconcile or
+                    ConversationRealtimeKind.Persisted or
                     ConversationRealtimeKind.Completed or
                     ConversationRealtimeKind.Failed or
                     ConversationRealtimeKind.Cancelled)
@@ -685,6 +956,53 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
         {
             await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
                 .ConfigureAwait(false);
+            ScheduleHistoryRetry(conversationId);
+        }
+    }
+
+    private void ScheduleHistoryRetry(string conversationId)
+    {
+        var sessionCancellation = _sessionCancellation;
+        if (sessionCancellation is null || sessionCancellation.IsCancellationRequested ||
+            _historyRetryTask is not null || _historyRetryAttempt >= 4)
+        {
+            return;
+        }
+
+        var delays = new[] { 2, 5, 10, 20 };
+        var delay = TimeSpan.FromSeconds(delays[_historyRetryAttempt++]);
+        _historyRetryCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            sessionCancellation.Token);
+        _historyRetryTask = RetryHistoryAsync(
+            conversationId,
+            delay,
+            _historyRetryCancellation.Token);
+    }
+
+    private async Task RetryHistoryAsync(
+        string conversationId,
+        TimeSpan delay,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(ConversationId, conversationId, StringComparison.Ordinal)) return;
+            await RefreshLatestInternalAsync(conversationId, cancellationToken).ConfigureAwait(false);
+            await LoadPromptsAsync(conversationId, cancellationToken).ConfigureAwait(false);
+            ResetHistoryRetry();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message)
+                .ConfigureAwait(false);
+            _historyRetryCancellation?.Dispose();
+            _historyRetryCancellation = null;
+            _historyRetryTask = null;
+            ScheduleHistoryRetry(conversationId);
         }
     }
 
@@ -739,9 +1057,92 @@ public sealed partial class ConversationSessionViewModel : ObservableObject, IDi
 
     private void ApplyRuntimeSettings(ConversationRuntimeSettings settings)
     {
-        ReasoningEnabled = settings.ReasoningEnabled;
-        SelectedModel = Models.FirstOrDefault(model =>
-            string.Equals(model.Id, settings.SelectedModelId, StringComparison.Ordinal));
+        var wasApplyingSettings = IsApplyingSettings;
+        IsApplyingSettings = true;
+        try
+        {
+            SelectedModel = Models.FirstOrDefault(model =>
+                string.Equals(model.Id, settings.SelectedModelId, StringComparison.Ordinal));
+            var reasoningLevels = SelectedModel?.EffectiveThinkingLevels
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? [];
+            if (!ReasoningLevels.SequenceEqual(reasoningLevels, StringComparer.Ordinal))
+            {
+                ReasoningLevels.Clear();
+                foreach (var level in reasoningLevels)
+                {
+                    ReasoningLevels.Add(level);
+                }
+            }
+            OnPropertyChanged(nameof(HasReasoningLevels));
+            OnPropertyChanged(nameof(DefaultReasoningLevel));
+            // Keep an unchanged collection intact so WinUI does not discard its SelectedItem
+            // during a duplicate runtime-ready refresh. Runtime settings are deserialized
+            // independently from the model catalog, so bind a changed selection to the
+            // canonical string instance already in ReasoningLevels.
+            SelectedThinkingLevel = ReasoningLevels.FirstOrDefault(level =>
+                string.Equals(level, settings.SelectedThinkingLevel, StringComparison.OrdinalIgnoreCase))
+                ?? settings.SelectedThinkingLevel;
+            ReasoningEnabled = settings.ReasoningEnabled;
+            SelectedRemoteConnection = RemoteConnections.FirstOrDefault(connection =>
+                string.Equals(connection.Id, settings.RemoteConnectionId, StringComparison.Ordinal))
+                ?? RemoteConnections.FirstOrDefault();
+        }
+        finally
+        {
+            IsApplyingSettings = wasApplyingSettings;
+        }
+    }
+
+    private string PresentConversationError(Exception exception)
+    {
+        var message = exception.Message.Trim();
+        if (message.Contains(
+                "selected Local Agent model revision is unavailable",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return L(
+                "此对话保存的模型版本已不可用。请选择当前可用模型以明确更新此对话；在选择前不会自动改写模型或推理配置。",
+                "The saved model revision for this conversation is unavailable. Select a current model to explicitly update this conversation; its model and reasoning settings will not be rewritten before you choose.");
+        }
+
+        if (message.Contains("403 Forbidden", StringComparison.OrdinalIgnoreCase) &&
+            message.Contains("vip", StringComparison.OrdinalIgnoreCase))
+        {
+            return L(
+                "当前账号没有权限使用所选 AI 模型（vip 分组）。请在设置 → AI 模型配置中选择有权限的模型，或联系管理员开通权限。",
+                "This account is not allowed to use the selected AI model (vip group). Choose an authorized model in Settings → AI model configuration, or ask an administrator to grant access.");
+        }
+
+        return message;
+    }
+
+    private static ConversationExplicitCapabilitySelection? ToExplicitSelection(
+        ConversationCapabilityOption? option) =>
+        option is not null && string.Equals(option.Kind, "plugin", StringComparison.Ordinal)
+            ? new ConversationExplicitCapabilitySelection(
+                option.Kind,
+                option.DisplayName,
+                option.PluginKey,
+                option.ComponentKey)
+            : null;
+
+    private async Task<IReadOnlyList<RemoteConnection>> LoadRemoteConnectionsAsync(
+        CancellationToken cancellationToken)
+    {
+        if (_remoteConnections is null)
+        {
+            return Array.Empty<RemoteConnection>();
+        }
+
+        try
+        {
+            return await _remoteConnections.ListAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException)
+        {
+            return Array.Empty<RemoteConnection>();
+        }
     }
 
 }

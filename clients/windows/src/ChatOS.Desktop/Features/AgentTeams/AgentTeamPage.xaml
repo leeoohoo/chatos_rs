@@ -5,15 +5,18 @@
     xmlns:domain="using:ChatOS.Core.Domain"
     xmlns:presentation="using:ChatOS.Presentation.AgentTeams">
 
-    <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
-        <Grid Padding="28,22,28,26" RowSpacing="14">
+    <Grid
+        AutomationProperties.AutomationId="ChatOS.AgentTeam.Root"
+        AutomationProperties.Name="Agent 团队工作区"
+        Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
+        <Grid RowSpacing="0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <Grid ColumnSpacing="18">
+            <Grid MinHeight="64" Padding="14,10" ColumnSpacing="18" Background="{StaticResource ChatOSSidebarBackgroundBrush}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -23,19 +26,19 @@
                         <Border Width="34" Height="34" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
                             <FontIcon Glyph="&#xE716;" FontSize="17" Foreground="{StaticResource ChatOSPurpleBrush}" />
                         </Border>
-                        <TextBlock VerticalAlignment="Center" Style="{StaticResource ChatOSPageTitleTextStyle}" Text="Agent 团队" />
+                        <TextBlock VerticalAlignment="Center" Style="{StaticResource ChatOSHeadlineTextStyle}" Text="{x:Bind SelectedRoomName, Mode=OneTime}" />
                     </StackPanel>
-                    <TextBlock Margin="44,0,0,0" Text="{x:Bind ViewModel.ProjectName, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                    <TextBlock Margin="44,0,0,0" MaxWidth="820" Text="{x:Bind SelectedRoomGoal, Mode=OneTime}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
                     <Button Click="OnOpenDirectClick" Content="打开私聊" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
                     <Button Click="OnNewAgentClick" Content="新建 Agent" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                    <Button Click="OnNewTeamClick" Content="新建团队" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                    <Button Click="OnRunAgentsClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="运行等待队列">
+                    <Button Click="OnNewTeamClick" Content="新建团队" IsEnabled="{x:Bind ViewModel.CanCreateTeam, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                    <Button AutomationProperties.Name="运行等待队列" Click="OnRunAgentsClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="运行等待队列">
                         <FontIcon Glyph="&#xE768;" />
                     </Button>
-                    <Button Click="OnRefreshClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="刷新">
+                    <Button AutomationProperties.Name="刷新 Agent 团队" Click="OnRefreshClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="刷新">
                         <FontIcon Glyph="&#xE72C;" />
                     </Button>
                 </StackPanel>
@@ -43,13 +46,124 @@
 
             <InfoBar
                 Grid.Row="1"
-                IsOpen="{x:Bind HasNotice, Mode=OneWay}"
+                Margin="10,6"
+                IsOpen="{x:Bind HasNotice, Mode=OneTime}"
                 IsClosable="False"
-                Message="{x:Bind Notice, Mode=OneWay}"
-                Severity="{x:Bind NoticeSeverity, Mode=OneWay}" />
+                Message="{x:Bind Notice, Mode=OneTime}"
+                Severity="{x:Bind NoticeSeverity, Mode=OneTime}" />
 
-            <Pivot Grid.Row="2">
-                <PivotItem Header="对话">
+            <Grid Grid.Row="2" Padding="14,0,14,14" ColumnSpacing="14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="248" />
+                </Grid.ColumnDefinitions>
+
+                <Pivot
+                    x:Name="TeamPivot"
+                    AutomationProperties.AutomationId="ChatOS.AgentTeam.Navigation"
+                    AutomationProperties.Name="团队页面导航"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch">
+                    <PivotItem Header="总览">
+                        <ScrollViewer Margin="0,10,0,0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel Spacing="12">
+                                <Border Style="{StaticResource ChatOSSectionCardStyle}">
+                                    <Grid ColumnSpacing="18">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="260" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="7">
+                                            <TextBlock Text="当前阶段" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock Text="{x:Bind OverviewStageTitle, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                <Border Padding="8,3" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="8">
+                                                    <TextBlock Text="{x:Bind OverviewStageStatus, Mode=OneTime}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </Border>
+                                            </StackPanel>
+                                            <TextBlock MaxWidth="760" Text="{x:Bind OverviewStageDescription, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="8">
+                                            <Grid>
+                                                <TextBlock Text="任务完成度" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                <TextBlock HorizontalAlignment="Right" Text="{x:Bind TodoProgressLabel, Mode=OneTime}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            </Grid>
+                                            <ProgressBar Height="6" Maximum="100" Value="{x:Bind TodoProgressPercent, Mode=OneTime}" />
+                                            <StackPanel Orientation="Horizontal" Spacing="18">
+                                                <TextBlock><Run Text="{x:Bind ActiveTodoCount, Mode=OneTime}" /><Run Text=" 进行中" /></TextBlock>
+                                                <TextBlock><Run Text="{x:Bind PendingTodoCount, Mode=OneTime}" /><Run Text=" 等待" /></TextBlock>
+                                                <TextBlock><Run Text="{x:Bind BlockedTodoCount, Mode=OneTime}" /><Run Text=" 需处理" /></TextBlock>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource ChatOSSectionCardStyle}">
+                                        <StackPanel Spacing="9">
+                                            <Grid>
+                                                <TextBlock Text="需要你处理" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                <Border HorizontalAlignment="Right" Padding="8,3" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="8">
+                                                    <TextBlock Text="{x:Bind PendingProposalCount, Mode=OneTime}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </Border>
+                                            </Grid>
+                                            <TextBlock Text="仅显示必须由你决定的成员变更提案" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <ListView MaxHeight="220" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.StaffingProposals}" SelectionMode="None">
+                                                <ListView.ItemTemplate>
+                                                    <DataTemplate x:DataType="domain:AgentStaffingProposal">
+                                                        <Border Margin="0,0,0,7" Padding="11" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9">
+                                                            <Grid ColumnSpacing="10">
+                                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                                <StackPanel Spacing="3">
+                                                                    <TextBlock Text="{x:Bind Draft.Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                                    <TextBlock Text="{x:Bind Draft.Rationale}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                                </StackPanel>
+                                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="5">
+                                                                    <Button Click="OnApproveStaffingProposalClick" Content="批准" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                                    <Button Click="OnRejectStaffingProposalClick" Content="拒绝" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ListView.ItemTemplate>
+                                            </ListView>
+                                            <TextBlock HorizontalAlignment="Center" Text="当前没有需要处理的事项" Foreground="{StaticResource ChatOSSuccessBrush}" Visibility="{x:Bind HasPendingProposals, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource ChatOSSectionCardStyle}">
+                                        <StackPanel Spacing="9">
+                                            <TextBlock Text="当前执行" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                            <TextBlock Text="任务状态由系统实时汇总" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <ProgressBar Height="6" Maximum="100" Value="{x:Bind TodoProgressPercent, Mode=OneTime}" />
+                                            <TextBlock Text="{x:Bind ExecutionSummary, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource ChatOSSectionCardStyle}">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="里程碑" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                            <TextBlock Text="由项目经理维护，任务事实由系统校验" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="{x:Bind MilestoneSummary, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource ChatOSSectionCardStyle}">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="项目经理简报" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                            <TextBlock Text="尚未生成" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="项目经理会在收到任务状态、调研和审批变化后维护阶段判断、风险与下一步。" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                            <Button HorizontalAlignment="Right" Click="OnOpenRequirementSurveysClick" Content="查看需求调研" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </PivotItem>
+
+                    <PivotItem Header="聊天">
                     <Grid Margin="0,10,0,0" ColumnSpacing="14">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="268" />
@@ -124,8 +238,8 @@
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <StackPanel Spacing="3">
-                                        <TextBlock Text="{x:Bind SelectedRoomName, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBlock MaxWidth="620" Text="{x:Bind SelectedRoomGoal, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind SelectedRoomName, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                        <TextBlock MaxWidth="620" Text="{x:Bind SelectedRoomGoal, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
                                         <Button Click="OnConfigureTeamClick" Content="团队设置" IsEnabled="{x:Bind ViewModel.CanConfigureTeam, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
@@ -177,7 +291,7 @@
                                                             <DataTemplate x:DataType="domain:AgentMessageAttachment">
                                                                 <StackPanel Margin="0,2,0,0" Orientation="Horizontal" Spacing="4">
                                                                     <Button Click="OnPreviewAttachmentClick" Content="{x:Bind Name}" Style="{StaticResource ChatOSSecondaryButtonStyle}" FontSize="11" />
-                                                                    <Button Click="OnDownloadAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="另存为"><FontIcon Glyph="&#xE896;" FontSize="12" /></Button>
+                                                    <Button AutomationProperties.Name="下载附件" Click="OnDownloadAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="另存为"><FontIcon Glyph="&#xE896;" FontSize="12" /></Button>
                                                                 </StackPanel>
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
@@ -208,7 +322,7 @@
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <Button Click="OnAddAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="添加附件">
+                                                <Button AutomationProperties.Name="添加附件" Click="OnAddAttachmentClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="添加附件">
                                             <FontIcon Glyph="&#xE723;" />
                                         </Button>
                                         <TextBox Grid.Column="1" AcceptsReturn="True" MaxHeight="140" PlaceholderText="给团队发消息；未选择 @ 时会路由给默认 Agent" Text="{x:Bind ViewModel.MessageText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextWrapping="Wrap" />
@@ -221,44 +335,7 @@
                     </Grid>
                 </PivotItem>
 
-                <PivotItem Header="Agents">
-                    <Grid Margin="0,10,0,0" RowSpacing="12">
-                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-                        <Grid>
-                            <StackPanel Spacing="3">
-                                <TextBlock Text="团队成员" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                <TextBlock Text="配置角色、模型和职责，或直接发起私聊。" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                            </StackPanel>
-                            <Button HorizontalAlignment="Right" Click="OnNewAgentClick" Content="新建 Agent" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                        </Grid>
-                        <ListView Grid.Row="1" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.Agents}" SelectionMode="None">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="domain:AgentProfile">
-                                    <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
-                                        <Grid ColumnSpacing="14">
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <Border Width="42" Height="42" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
-                                                <FontIcon Glyph="&#xE77B;" FontSize="18" Foreground="{StaticResource ChatOSPurpleBrush}" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1" Spacing="3">
-                                                <TextBlock Text="{x:Bind Draft.Name}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                <TextBlock Text="{x:Bind Draft.Description}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                                <TextBlock Text="{x:Bind Draft.ModelConfigId}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
-                                                <Button Click="OnDirectAgentClick" Content="私聊" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                                                <Button Click="OnEditAgentClick" Content="编辑" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnArchiveAgentClick" Content="归档" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                    </Grid>
-                </PivotItem>
-
-                <PivotItem Header="Todo">
+                    <PivotItem Header="任务">
                     <Grid Margin="0,10,0,0" RowSpacing="12">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid>
@@ -268,35 +345,55 @@
                             </StackPanel>
                             <Button HorizontalAlignment="Right" Click="OnNewTodoClick" Content="新建 Todo" IsEnabled="{x:Bind ViewModel.HasRoom, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                         </Grid>
-                        <ListView Grid.Row="1" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.TodoItems}" SelectionMode="None">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="presentation:AgentTodoItemViewModel">
-                                    <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
-                                        <Grid ColumnSpacing="12">
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <StackPanel Spacing="4">
-                                                <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                                    <Border Padding="9,4" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="9"><TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
-                                                    <Border Padding="9,4" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9"><TextBlock Text="{x:Bind AssigneeLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
-                                                    <Border Padding="9,4" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9"><TextBlock Text="{x:Bind PriorityLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                        <Grid Grid.Row="1">
+                            <ListView Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.TodoItems}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="presentation:AgentTodoItemViewModel">
+                                        <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <StackPanel Spacing="4">
+                                                    <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                    <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                                        <Border Padding="9,4" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="9"><TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                                        <Border Padding="9,4" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9"><TextBlock Text="{x:Bind AssigneeLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                                        <Border Padding="9,4" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9"><TextBlock Text="{x:Bind PriorityLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                                    </StackPanel>
                                                 </StackPanel>
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
-                                                <Button Click="OnTodoUpClick" Content="↑" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
-                                                <Button Click="OnTodoDownClick" Content="↓" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
-                                                <Button Click="OnEditTodoClick" Content="更新" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="6">
+                                                    <Button Click="OnTodoUpClick" Content="↑" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
+                                                    <Button Click="OnTodoDownClick" Content="↓" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSToolbarButtonStyle}" />
+                                                    <Button Click="OnEditTodoClick" Content="更新" Tag="{x:Bind Todo}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind HasTodos, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE9D5;" FontSize="24" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                <TextBlock HorizontalAlignment="Center" Text="暂无团队任务" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="选择团队后创建任务，并分派给对应 Agent。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </Grid>
                     </Grid>
                 </PivotItem>
 
-                <PivotItem Header="资产">
+                    <PivotItem Header="需求调研">
+                        <Grid Margin="0,10,0,0">
+                            <StackPanel MaxWidth="440" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="11">
+                                <Border Style="{StaticResource ChatOSEmptyStateIconStyle}">
+                                    <FontIcon Glyph="&#xE9D5;" FontSize="23" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                </Border>
+                                <TextBlock HorizontalAlignment="Center" Text="需求调研已迁移" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="Task 调研由本机任务保存并恢复 Run。打开项目需求调研后可查看问题、填写答案并继续执行。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                <Button AutomationProperties.AutomationId="ChatOS.AgentTeam.OpenRequirementSurveys" AutomationProperties.Name="打开需求调研" Click="OnOpenRequirementSurveysClick" Content="打开需求调研" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </StackPanel>
+                        </Grid>
+                    </PivotItem>
+
+                    <PivotItem Header="共享资产">
                     <Grid Margin="0,10,0,0" RowSpacing="12">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid>
@@ -306,61 +403,44 @@
                             </StackPanel>
                             <Button HorizontalAlignment="Right" Click="OnNewAssetClick" Content="新建团队资产" IsEnabled="{x:Bind ViewModel.HasRoom, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                         </Grid>
-                        <ListView Grid.Row="1" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.Assets}" SelectionMode="None">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="domain:AgentTeamAsset">
-                                    <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
-                                        <Grid ColumnSpacing="12">
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <Expander HorizontalAlignment="Stretch">
-                                                <Expander.Header>
-                                                    <StackPanel Spacing="3">
-                                                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                                        <TextBlock Text="{x:Bind Category, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                                    </StackPanel>
-                                                </Expander.Header>
-                                                <TextBlock Margin="0,10,0,4" IsTextSelectionEnabled="True" Text="{x:Bind Markdown}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                            </Expander>
-                                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
-                                                <Button Click="OnAssetHistoryClick" Content="版本历史" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnEditAssetClick" Content="编辑" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                                <Button Click="OnArchiveAssetClick" Content="归档" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
+                        <Grid Grid.Row="1">
+                            <ListView Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.Assets}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="domain:AgentTeamAsset">
+                                        <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
+                                            <Grid ColumnSpacing="12">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <Expander HorizontalAlignment="Stretch">
+                                                    <Expander.Header>
+                                                        <StackPanel Spacing="3">
+                                                            <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                                            <TextBlock Text="{x:Bind Category, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        </StackPanel>
+                                                    </Expander.Header>
+                                                    <TextBlock Margin="0,10,0,4" IsTextSelectionEnabled="True" Text="{x:Bind Markdown}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                                </Expander>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
+                                                    <Button Click="OnAssetHistoryClick" Content="版本历史" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    <Button Click="OnEditAssetClick" Content="编辑" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                    <Button Click="OnArchiveAssetClick" Content="归档" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel AutomationProperties.AutomationId="ChatOS.AgentTeam.Assets.Empty" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="{x:Bind HasAssets, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <Border Style="{StaticResource ChatOSEmptyStateIconStyle}">
+                                    <FontIcon Glyph="&#xE8A5;" FontSize="23" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                </Border>
+                                <TextBlock HorizontalAlignment="Center" Text="还没有共享资产" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock MaxWidth="420" Text="在这里维护项目背景、进度、技术栈和架构决策。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </Grid>
                     </Grid>
                 </PivotItem>
 
-                <PivotItem Header="成员提案">
-                    <ListView Margin="0,10,0,0" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.StaffingProposals}" SelectionMode="None">
-                        <ListView.ItemTemplate>
-                            <DataTemplate x:DataType="domain:AgentStaffingProposal">
-                                <Border Margin="0,0,0,9" Style="{StaticResource ChatOSSectionCardStyle}">
-                                    <Grid ColumnSpacing="14">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                            <TextBlock Text="{x:Bind Draft.Name}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                            <TextBlock Text="{x:Bind Draft.Kind, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                            <TextBlock Text="{x:Bind Draft.Role}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                            <TextBlock Text="{x:Bind Draft.Rationale}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                            <TextBlock Text="{x:Bind Draft.Reason}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                            <TextBlock Text="{x:Bind Status, Converter={StaticResource AgentTeamDisplayTextConverter}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                        </StackPanel>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="7">
-                                            <Button Click="OnApproveStaffingProposalClick" Content="批准" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                                            <Button Click="OnRejectStaffingProposalClick" Content="拒绝" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                                        </StackPanel>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ListView.ItemTemplate>
-                    </ListView>
-                </PivotItem>
-
-                <PivotItem Header="运行">
+                    <PivotItem Header="运行">
                     <Grid Margin="0,10,0,0" RowSpacing="12">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
                         <Grid ColumnSpacing="12">
@@ -399,8 +479,57 @@
                             </StackPanel>
                         </Grid>
                     </Grid>
-                </PivotItem>
-            </Pivot>
+                    </PivotItem>
+                </Pivot>
+
+                <Border Grid.Column="1" Margin="0,10,0,0" Padding="0" Style="{StaticResource ChatOSSectionCardStyle}">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="1" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid Padding="14,13" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="团队成员" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                <TextBlock Text="点击成员查看职责" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <Border Grid.Column="1" VerticalAlignment="Top" Padding="8,3" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                <TextBlock Text="{x:Bind MemberCount, Mode=OneTime}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </Border>
+                        </Grid>
+                        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+                        <Grid Grid.Row="2">
+                            <ListView AutomationProperties.AutomationId="ChatOS.AgentTeam.Members" AutomationProperties.Name="团队成员" Padding="8" Background="Transparent" BorderThickness="0" ItemsSource="{x:Bind ViewModel.Members}" SelectionMode="None">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="domain:AgentRoomMember">
+                                        <Button Margin="0,0,0,7" Padding="10" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Click="OnMemberClick" Style="{StaticResource ChatOSSecondaryButtonStyle}">
+                                            <Grid ColumnSpacing="9">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <Border Width="34" Height="34" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="10">
+                                                    <FontIcon Glyph="&#xE77B;" FontSize="15" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                                </Border>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                                    <TextBlock Text="{x:Bind Draft.Role}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind Draft.Responsibility}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Button>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="7" Visibility="{x:Bind HasMembers, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE77B;" FontSize="23" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                                <TextBlock Text="尚未添加团队成员" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock MaxWidth="190" Text="先创建 Agent，再将其加入当前团队。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </Grid>
+                        <Button Grid.Row="3" Margin="12" HorizontalAlignment="Stretch" Click="OnAddMemberClick" Content="添加成员" IsEnabled="{x:Bind ViewModel.CanConfigureTeam, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </UserControl>

@@ -493,6 +493,8 @@ public sealed partial class PetActivityItemViewModel : ObservableObject
 
     public string Id => Activity.Id;
 
+    public string ActivityAutomationId => $"ChatOS.Pet.Activity.{Id}";
+
     public string Title => Activity.Title;
 
     public string Detail => Activity.Detail ?? string.Empty;

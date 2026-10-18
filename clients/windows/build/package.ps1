@@ -20,8 +20,12 @@ if (-not $IsWindows) {
 $runtimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
 $rustTarget = if ($Platform -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
 $monorepoRoot = (Resolve-Path (Join-Path $repoRoot "..\..")).Path
+$desktopProject = Join-Path $repoRoot "src\ChatOS.Desktop\ChatOS.Desktop.csproj"
 $signingEnabled = -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)
 $packagesRoot = Join-Path $repoRoot "src\ChatOS.Desktop\AppPackages\$Platform"
+$previousAwsLcNoAsm = $env:AWS_LC_SYS_NO_ASM
+$previousAwsLcPrebuiltNasm = $env:AWS_LC_SYS_PREBUILT_NASM
+$previousCMake = $env:CMAKE
 
 if ($signingEnabled) {
     $CertificateThumbprint = $CertificateThumbprint.Replace(" ", "").ToUpperInvariant()
@@ -37,7 +41,31 @@ if ($signingEnabled) {
     }
 }
 
-Push-Location $repoRoot
+# Packaging always builds an optimized Host. aws-lc-sys rejects NO_ASM in
+# Release, so use its checked-in x64 NASM objects when NASM is unavailable.
+# Apply these only after certificate validation so early validation failures do
+# not mutate the caller's environment.
+$env:AWS_LC_SYS_NO_ASM = $null
+if ($Platform -eq "x64" -and -not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+    $env:AWS_LC_SYS_PREBUILT_NASM = "1"
+}
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+    $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vsWhere -PathType Leaf) {
+        $visualStudioRoot = & $vsWhere -latest -products * -property installationPath
+        if ($visualStudioRoot) {
+            $visualStudioCMake = Join-Path $visualStudioRoot "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            if (Test-Path $visualStudioCMake -PathType Leaf) {
+                $env:CMAKE = $visualStudioCMake
+            }
+        }
+    }
+}
+
+# Match build.ps1: invoke the SDK from the monorepo root and pass an absolute
+# project path. This avoids making packaging depend on the caller's directory
+# while CI still installs the pinned .NET 8 SDK before invoking the script.
+Push-Location $monorepoRoot
 try {
     & (Join-Path $repoRoot "build\ensure-package-assets.ps1")
     cargo build --manifest-path (Join-Path $monorepoRoot "Cargo.toml") `
@@ -56,7 +84,7 @@ try {
 
     $publishArguments = @(
         "publish",
-        ".\src\ChatOS.Desktop\ChatOS.Desktop.csproj",
+        $desktopProject,
         "-c", "Release",
         "-p:Platform=$Platform",
         "-p:RuntimeIdentifier=$runtimeIdentifier",
@@ -106,4 +134,7 @@ try {
 }
 finally {
     Pop-Location
+    $env:AWS_LC_SYS_NO_ASM = $previousAwsLcNoAsm
+    $env:AWS_LC_SYS_PREBUILT_NASM = $previousAwsLcPrebuiltNasm
+    $env:CMAKE = $previousCMake
 }

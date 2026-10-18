@@ -12,9 +12,7 @@ public sealed record ResolvedLocalProjectPath(
     {
         if (LogicalPrefix is null)
         {
-            return relativePath == "."
-                ? AbsolutePath
-                : Path.Combine(Workspace.AbsoluteRoot, relativePath);
+            return Path.GetFullPath(Path.Combine(Workspace.AbsoluteRoot, relativePath));
         }
 
         return relativePath == "."
@@ -113,6 +111,9 @@ public sealed class LocalProjectPathResolver : ILocalProjectPathResolver
         var fullChild = Path.GetFullPath(child);
         var fullParent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(parent));
         return string.Equals(fullChild, fullParent, comparison) ||
-            fullChild.StartsWith(fullParent + Path.DirectorySeparatorChar, comparison);
+            fullChild.StartsWith(DirectoryPrefix(fullParent), comparison);
     }
+
+    private static string DirectoryPrefix(string path) =>
+        Path.EndsInDirectorySeparator(path) ? path : path + Path.DirectorySeparatorChar;
 }

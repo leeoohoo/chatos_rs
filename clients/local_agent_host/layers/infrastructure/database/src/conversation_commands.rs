@@ -145,6 +145,16 @@ pub(super) async fn cancel_conversation_turn(
         .await?;
         let current =
             fetch_owned_turn_run(&mut connection, &turn.conversation_id, &turn.turn_id).await?;
+        super::task_commands::cancel_tasks_for_conversation_turn(
+            &mut connection,
+            &turn.owner_user_id,
+            &turn.turn_id,
+            &turn.reason,
+            &command.command_id,
+            event_id,
+            now_unix_ms,
+        )
+        .await?;
         let run = run_commands::cancel_run_on(
             &mut connection,
             &current.run_id,

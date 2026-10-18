@@ -58,6 +58,22 @@ public sealed class ModelSettingsViewModelTests
         Assert.Equal(10, viewModel.ModelRequestMaxRetries);
     }
 
+    [Fact]
+    public async Task MissingLocalAgentConfigurationUsesFriendlyLocalizedError()
+    {
+        var viewModel = Create(
+            new ThrowingRuntimeSettingsService(
+                new InvalidOperationException("Local Agent conversation settings are not configured.")),
+            new MemoryModelSettingsStore(ConnectorModelSettings.Default));
+
+        await viewModel.LoadAsync();
+
+        Assert.Equal(
+            "本机 Connector 尚未完成模型配置，请先在“设备与网关”中完成连接后再刷新。",
+            viewModel.ErrorMessage);
+        Assert.False(viewModel.IsBusy);
+    }
+
     private static ModelSettingsViewModel Create(
         IConversationRuntimeSettingsService service,
         IConnectorModelSettingsStore store)
@@ -82,6 +98,27 @@ public sealed class ModelSettingsViewModelTests
                 new("model-two", "Model Two", "provider/model-two", "high"),
                 new("chat-only", "Chat Only", "provider/chat-only", null, false),
             ]);
+
+        public Task<ConversationRuntimeSettings> UpdateModelAsync(
+            string conversationId,
+            string modelId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<ConversationRuntimeSettings> UpdateReasoningAsync(
+            string conversationId,
+            bool enabled,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingRuntimeSettingsService(Exception exception)
+        : IConversationRuntimeSettingsService
+    {
+        public Task<ConversationRuntimeSettings> FetchAsync(
+            string conversationId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ConversationModelOption>> FetchAvailableModelsAsync(
+            CancellationToken cancellationToken = default) => Task.FromException<IReadOnlyList<ConversationModelOption>>(exception);
 
         public Task<ConversationRuntimeSettings> UpdateModelAsync(
             string conversationId,

@@ -86,6 +86,10 @@ public sealed partial class StoryStudioViewModel
             NotifyOptimizationChanged();
             StatusMessage = "AI 优化候选已生成，确认采用前不会覆盖当前内容";
         }
+        catch (OperationCanceledException)
+        {
+            if (_session == session) StatusMessage = "已停止 AI 优化，当前内容未被修改";
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ErrorMessage = exception.Message;
@@ -93,7 +97,7 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
+            if (_session == session) IsBusy = false;
         }
     }
 

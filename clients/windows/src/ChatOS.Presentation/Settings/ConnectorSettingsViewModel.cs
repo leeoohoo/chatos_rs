@@ -51,6 +51,10 @@ public sealed partial class ConnectorSettingsViewModel : ObservableObject, IDisp
     public IReadOnlyList<LocalConnectorWorkspaceStatus> PairedWorkspaces =>
         Status?.Workspaces ?? Array.Empty<LocalConnectorWorkspaceStatus>();
 
+    public string PairedWorkspaceCountLabel => L(
+        $"{PairedWorkspaces.Count} 个工作区",
+        $"{PairedWorkspaces.Count} workspace{(PairedWorkspaces.Count == 1 ? string.Empty : "s")}");
+
     public bool CanPair => !IsBusy && !IsPaired && Workspaces.Count > 0 &&
         Uri.TryCreate(GatewayBaseUrl, UriKind.Absolute, out var gateway) &&
         gateway.Scheme is "http" or "https" && DeviceName.Trim().Length > 0;
@@ -96,6 +100,7 @@ public sealed partial class ConnectorSettingsViewModel : ObservableObject, IDisp
     [NotifyPropertyChangedFor(nameof(GatewayLabel))]
     [NotifyPropertyChangedFor(nameof(LastSeenLabel))]
     [NotifyPropertyChangedFor(nameof(PairedWorkspaces))]
+    [NotifyPropertyChangedFor(nameof(PairedWorkspaceCountLabel))]
     private LocalConnectorStatus? _status;
 
     [ObservableProperty]

@@ -6,33 +6,208 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <NavigationView
-        x:Name="WorkspaceNavigation"
-        AutomationProperties.AutomationId="ChatOS.Workspace.Navigation"
-        IsBackButtonVisible="Collapsed"
-        IsSettingsVisible="False"
-        PaneDisplayMode="Top"
-        SelectionChanged="OnSelectionChanged">
-        <NavigationView.MenuItems>
-            <NavigationViewItem x:Name="ChatItem" AutomationProperties.AutomationId="ChatOS.Workspace.Chat" Content="{x:Bind Localization.Chat, Mode=OneWay}" Tag="chat">
-                <NavigationViewItem.Icon><SymbolIcon Symbol="Message" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem x:Name="FilesItem" AutomationProperties.AutomationId="ChatOS.Workspace.Files" Content="{x:Bind Localization.Files, Mode=OneWay}" Tag="files">
-                <NavigationViewItem.Icon><SymbolIcon Symbol="Folder" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem x:Name="GitItem" AutomationProperties.AutomationId="ChatOS.Workspace.Git" Content="{x:Bind Localization.Git, Mode=OneWay}" Tag="git">
-                <NavigationViewItem.Icon><FontIcon Glyph="&#xE943;" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem x:Name="RunItem" AutomationProperties.AutomationId="ChatOS.Workspace.Run" Content="{x:Bind Localization.Run, Mode=OneWay}" Tag="run">
-                <NavigationViewItem.Icon><SymbolIcon Symbol="Play" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem x:Name="AgentTeamItem" AutomationProperties.AutomationId="ChatOS.Workspace.AgentTeam" Content="Agent 团队" Tag="agent-team">
-                <NavigationViewItem.Icon><SymbolIcon Symbol="People" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-            <NavigationViewItem x:Name="RequirementSurveysItem" AutomationProperties.AutomationId="ChatOS.Workspace.RequirementSurveys" Content="需求调研" Tag="requirement-surveys">
-                <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D5;" /></NavigationViewItem.Icon>
-            </NavigationViewItem>
-        </NavigationView.MenuItems>
-        <ContentControl x:Name="WorkspacePageContent" AutomationProperties.AutomationId="ChatOS.Workspace.Content" />
-    </NavigationView>
+    <Grid
+        AutomationProperties.AutomationId="ChatOS.Workspace.Root"
+        AutomationProperties.Name="{x:Bind ViewModel.SelectedResource.Subtitle, Mode=OneWay}"
+        AutomationProperties.HelpText="{x:Bind ViewModel.Conversation.ConversationId, Mode=OneWay}"
+        AutomationProperties.ItemStatus="{x:Bind ViewModel.SelectedResource.Id, Mode=OneWay}"
+        Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.Resources>
+            <Style x:Key="WorkspaceSegmentButtonStyle" TargetType="Button" BasedOn="{StaticResource ChatOSTabButtonStyle}">
+                <Setter Property="Height" Value="28" />
+                <Setter Property="Padding" Value="12,4" />
+                <Setter Property="Margin" Value="2,0" />
+                <Setter Property="CornerRadius" Value="7" />
+                <Setter Property="Background" Value="{StaticResource ChatOSSurfaceSubtleBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition x:Name="WorkspaceNavigationRow" Height="44" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border
+            x:Name="WorkspaceNavigationHost"
+            Grid.Row="0"
+            Background="{StaticResource ChatOSContentBackgroundBrush}"
+            BorderBrush="{StaticResource ChatOSBorderBrush}"
+            BorderThickness="0,0,0,1">
+            <StackPanel
+                x:Name="WorkspaceNavigation"
+                AutomationProperties.AutomationId="ChatOS.Workspace.Navigation"
+                Width="460"
+                Margin="65,8,0,8"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Center"
+                Orientation="Horizontal">
+                <Button
+                    x:Name="DirectoryItem"
+                    AutomationProperties.AutomationId="ChatOS.Workspace.Directory"
+                    AutomationProperties.Name="{x:Bind Localization.ProjectDirectory, Mode=OneWay}"
+                    Click="OnWorkspaceNavigationClicked"
+                    Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                    Tag="directory"
+                    ToolTipService.ToolTip="项目目录">
+                    <Grid Height="28">
+                        <TextBlock VerticalAlignment="Center" Text="项目目录" />
+                    </Grid>
+                </Button>
+                <Button
+                    x:Name="ChatItem"
+                    AutomationProperties.AutomationId="ChatOS.Workspace.Chat"
+                    AutomationProperties.Name="{x:Bind Localization.Chat, Mode=OneWay}"
+                    Click="OnWorkspaceNavigationClicked"
+                    Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                    Tag="chat"
+                    ToolTipService.ToolTip="用户消息">
+                    <Grid Height="28">
+                        <TextBlock VerticalAlignment="Center" Text="用户消息" />
+                    </Grid>
+                </Button>
+                <Button
+                    x:Name="RunItem"
+                    AutomationProperties.AutomationId="ChatOS.Workspace.Run"
+                    AutomationProperties.Name="{x:Bind Localization.ProjectSettings, Mode=OneWay}"
+                    Click="OnWorkspaceNavigationClicked"
+                    Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                    Tag="run"
+                    ToolTipService.ToolTip="项目设置">
+                    <Grid Height="28">
+                        <TextBlock VerticalAlignment="Center" Text="项目设置" />
+                    </Grid>
+                </Button>
+                <Button
+                    x:Name="AgentTeamItem"
+                    AutomationProperties.AutomationId="ChatOS.Workspace.AgentTeam"
+                    AutomationProperties.Name="Agent Team"
+                    Click="OnWorkspaceNavigationClicked"
+                    Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                    Tag="agent-team"
+                    ToolTipService.ToolTip="Agent 团队"
+                    Visibility="Collapsed">
+                    <Grid Height="28">
+                        <TextBlock VerticalAlignment="Center" Text="Agent 团队" />
+                    </Grid>
+                </Button>
+                <Button
+                    x:Name="RequirementSurveysItem"
+                    AutomationProperties.AutomationId="ChatOS.Workspace.RequirementSurveys"
+                    AutomationProperties.Name="需求调研"
+                    Click="OnWorkspaceNavigationClicked"
+                    Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                    Tag="requirement-surveys"
+                    ToolTipService.ToolTip="需求调研"
+                    Visibility="Collapsed">
+                    <Grid Height="28">
+                        <TextBlock VerticalAlignment="Center" Text="需求调研" />
+                    </Grid>
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <Grid x:Name="ProjectDirectoryView" Grid.Row="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="38" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border
+                Grid.Row="0"
+                Background="{StaticResource ChatOSContentBackgroundBrush}"
+                BorderBrush="{StaticResource ChatOSBorderBrush}"
+                BorderThickness="0,0,0,1">
+                <StackPanel
+                    x:Name="DirectoryNavigation"
+                    Width="220"
+                    Margin="125,5,0,5"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center"
+                    Orientation="Horizontal">
+                    <Button
+                        x:Name="FilesItem"
+                        AutomationProperties.AutomationId="ChatOS.Workspace.Files"
+                        AutomationProperties.Name="{x:Bind Localization.Files, Mode=OneWay}"
+                        Click="OnDirectoryNavigationClicked"
+                        Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                        Tag="files"
+                        ToolTipService.ToolTip="{x:Bind Localization.Files, Mode=OneWay}">
+                        <Grid Height="28">
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.Files, Mode=OneWay}" />
+                        </Grid>
+                    </Button>
+                    <Button
+                        x:Name="GitItem"
+                        AutomationProperties.AutomationId="ChatOS.Workspace.Git"
+                        AutomationProperties.Name="{x:Bind Localization.Git, Mode=OneWay}"
+                        Click="OnDirectoryNavigationClicked"
+                        Style="{StaticResource WorkspaceSegmentButtonStyle}"
+                        Tag="git"
+                        ToolTipService.ToolTip="{x:Bind Localization.Git, Mode=OneWay}">
+                        <Grid Height="28">
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.Git, Mode=OneWay}" />
+                        </Grid>
+                    </Button>
+                </StackPanel>
+            </Border>
+            <ContentControl
+                x:Name="DirectoryPageContent"
+                Grid.Row="1"
+                AutomationProperties.AutomationId="ChatOS.Workspace.DirectoryContent" />
+        </Grid>
+
+        <ContentControl
+            x:Name="WorkspacePageContent"
+            Grid.Row="1"
+            AutomationProperties.AutomationId="ChatOS.Workspace.Content"
+            HorizontalContentAlignment="Stretch"
+            VerticalContentAlignment="Stretch"
+            Visibility="Collapsed" />
+
+        <Grid
+            Grid.Row="1"
+            AutomationProperties.AutomationId="ChatOS.Workspace.ProjectChatPreparing"
+            Background="{StaticResource ChatOSContentBackgroundBrush}"
+            Visibility="{x:Bind ViewModel.IsPreparingConversation, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel
+                MaxWidth="520"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="12">
+                <ProgressRing Width="32" Height="32" HorizontalAlignment="Center" IsActive="{x:Bind ViewModel.IsPreparingConversation, Mode=OneWay}" />
+                <TextBlock HorizontalAlignment="Center" Text="{x:Bind Localization.PreparingProjectConversation, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                <TextBlock Text="{x:Bind Localization.PreparingProjectConversationNotice, Mode=OneWay}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+            </StackPanel>
+        </Grid>
+
+        <Grid
+            Grid.Row="1"
+            AutomationProperties.AutomationId="ChatOS.Workspace.ProjectChatError"
+            Background="{StaticResource ChatOSContentBackgroundBrush}"
+            Visibility="{x:Bind ViewModel.HasProjectConversationError, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel
+                MaxWidth="560"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="12">
+                <Border HorizontalAlignment="Center" Style="{StaticResource ChatOSEmptyStateIconStyle}">
+                    <FontIcon Glyph="&#xE783;" FontSize="22" Foreground="{StaticResource ChatOSWarningBrush}" />
+                </Border>
+                <TextBlock HorizontalAlignment="Center" Text="{x:Bind Localization.ProjectConversationUnavailable, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                <TextBlock
+                    AutomationProperties.AutomationId="ChatOS.Workspace.ProjectChatErrorMessage"
+                    Text="{x:Bind ViewModel.ProjectConversationErrorMessage, Mode=OneWay}"
+                    TextAlignment="Center"
+                    TextWrapping="Wrap"
+                    Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                <Button
+                    AutomationProperties.AutomationId="ChatOS.Workspace.ProjectChatRetry"
+                    AutomationProperties.Name="{x:Bind Localization.RetryProjectConversation, Mode=OneWay}"
+                    HorizontalAlignment="Center"
+                    Click="OnRetryProjectConversationClicked"
+                    Content="{x:Bind Localization.RetryProjectConversation, Mode=OneWay}"
+                    Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+            </StackPanel>
+        </Grid>
+    </Grid>
 </UserControl>

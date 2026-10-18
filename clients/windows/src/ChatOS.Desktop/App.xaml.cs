@@ -50,7 +50,13 @@ public partial class App : Application
             InitializeComponent();
             StartupDiagnostics.RecordStage("application resources initialized");
 
-            var builder = Host.CreateApplicationBuilder();
+            var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+            {
+                // A packaged or copied desktop app can be launched from an
+                // arbitrary working directory. Keep default configuration
+                // discovery and file watching inside the application payload.
+                ContentRootPath = AppContext.BaseDirectory,
+            });
             var packagedSettings = DesktopRuntimeSettings.Load();
             StartupDiagnostics.RecordStage("runtime settings loaded");
             var apiBaseUrl = Environment.GetEnvironmentVariable("CHATOS_API_BASE_URL")
@@ -94,15 +100,18 @@ public partial class App : Application
             builder.Services.AddSingleton<MediaStudioPage>();
             builder.Services.AddSingleton<SettingsPage>();
             builder.Services.AddSingleton<PluginSettingsViewModel>();
+            builder.Services.AddSingleton<CustomPluginInstallerViewModel>();
             builder.Services.AddSingleton<ApprovalSettingsViewModel>();
             builder.Services.AddSingleton<ModelSettingsViewModel>();
             builder.Services.AddSingleton<SandboxSettingsViewModel>();
+            builder.Services.AddSingleton<WeChatCompanionSettingsViewModel>();
             builder.Services.AddSingleton<NotepadPage>();
             builder.Services.AddSingleton<RemoteConnectionsPage>();
             builder.Services.AddSingleton<RemoteSftpPage>();
             builder.Services.AddSingleton<RemoteTerminalPage>();
             builder.Services.AddSingleton<LocalTerminalPage>();
             builder.Services.AddSingleton<PetWindow>();
+            builder.Services.AddSingleton<PetFileWorkbenchWindow>();
             builder.Services.AddSingleton<PetWindowController>();
             builder.Services.AddSingleton<PetQuickChatViewModel>();
             builder.Services.AddSingleton<PluginVisualSessionsViewModel>();
@@ -197,39 +206,56 @@ public partial class App : Application
     private static void OnProcessExit(object? sender, EventArgs args) =>
         StartupDiagnostics.RecordLifecycle("process exit requested");
 
-    private static void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args) =>
-        StartupDiagnostics.ReportFatal("WinUI", args.Exception);
+    private void OnUnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs args)
+    {
+        if (_window is not MainWindow mainWindow)
+        {
+            StartupDiagnostics.ReportFatal("WinUI startup", args.Exception);
+            return;
+        }
+
+        StartupDiagnostics.RecordUnhandled("WinUI runtime", args.Exception);
+        args.Handled = true;
+        mainWindow.ViewModel.ErrorMessage = mainWindow.ViewModel.Localization.Text(
+            $"当前页面操作失败：{args.Exception.Message}",
+            $"The current page operation failed: {args.Exception.Message}");
+    }
 
     private void OnMainWindowClosed(object sender, WindowEventArgs args)
     {
         StartupDiagnostics.RecordLifecycle("main window closed");
-        _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().Stop();
-        _host.Services.GetRequiredService<QuickSearchCoordinator>().Dispose();
-        _host.Services.GetRequiredService<WindowsScreenRecordingCoordinator>().Dispose();
-        try
+        // Never block the UI thread while transports and terminal sessions stop:
+        // their pending callbacks may need that same dispatcher to finish.
+        _ = Task.Run(async () =>
         {
-            _host.Services.GetRequiredService<TerminalSessionManager>()
-                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
-        }
-        catch
-        {
-        }
-        try
-        {
-            _host.Services.GetRequiredService<RemoteTerminalSessionManager>()
-                .CloseAllAsync(CancellationToken.None).GetAwaiter().GetResult();
-        }
-        catch
-        {
-        }
-        try
-        {
-            _host.Services.GetService<ILocalAgentHostLifecycle>()?
-                .StopAsync(CancellationToken.None).GetAwaiter().GetResult();
-        }
-        catch
-        {
-        }
+            await DesktopShutdown.RunAsync(
+                [
+                    _ =>
+                    {
+                        _host.Services.GetRequiredService<WindowsClipboardHistoryMonitor>().Stop();
+                        return Task.CompletedTask;
+                    },
+                    _ =>
+                    {
+                        _host.Services.GetRequiredService<QuickSearchCoordinator>().Dispose();
+                        return Task.CompletedTask;
+                    },
+                    _ =>
+                    {
+                        _host.Services.GetRequiredService<WindowsScreenRecordingCoordinator>().Dispose();
+                        return Task.CompletedTask;
+                    },
+                    token => _host.Services.GetRequiredService<TerminalSessionManager>().CloseAllAsync(token),
+                    token => _host.Services.GetRequiredService<RemoteTerminalSessionManager>().CloseAllAsync(token),
+                    token => _host.Services.GetService<ILocalAgentHostLifecycle>()?.StopAsync(token) ?? Task.CompletedTask,
+                ],
+                TimeSpan.FromSeconds(3),
+                exception => StartupDiagnostics.RecordUnhandled("application shutdown", exception));
+            StartupDiagnostics.RecordLifecycle("application cleanup completed; process exiting");
+            // Hidden utility windows can keep WinUI alive after the main window
+            // closes. End the process only after each cleanup has had its chance.
+            Environment.Exit(0);
+        });
     }
 
 }

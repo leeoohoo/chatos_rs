@@ -58,6 +58,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentProjectToolExecutor>();
             services.AddSingleton<IWindowsLocalAgentPluginToolExecutor,
                 WindowsLocalAgentPluginToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentPluginInstallerToolExecutor>();
             services.AddSingleton<WindowsLocalAgentExternalMcpExecutor>();
             services.AddSingleton<WindowsLocalAgentToolApprovalHandler>();
             services.AddSingleton<WindowsLocalAgentPlatformToolWorker>();
@@ -117,6 +118,8 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<WindowsLocalAgentProjectToolExecutor>();
             services.AddSingleton<IWindowsLocalAgentPluginToolExecutor,
                 WindowsLocalAgentPluginToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentPluginInstallerToolExecutor>();
+            services.AddSingleton<WindowsLocalAgentExternalMcpExecutor>();
             services.AddSingleton<WindowsLocalAgentToolApprovalHandler>();
             services.AddSingleton<WindowsLocalAgentPlatformToolWorker>();
             services.AddSingleton<WindowsLocalAgentConversationCommandService>();
@@ -144,6 +147,7 @@ public static class ServiceCollectionExtensions
             services.AddSingleton<IMessageTaskGraphService>(provider =>
                 provider.GetRequiredService<WindowsLocalAgentMessageTaskGraphService>());
         }
+        services.AddSingleton<WindowsLocalAgentArtifactClient>();
         services.AddSingleton<IAuthTokenStore, WindowsCredentialTokenStore>();
         services.AddSingleton<IConnectorAccessTokenStore, WindowsCredentialConnectorTokenStore>();
         services.AddSingleton<IConnectorSecretStore, WindowsCredentialConnectorSecretStore>();
@@ -184,6 +188,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IExternalUriLauncher, WindowsExternalUriLauncher>();
         services.AddSingleton<PluginOAuthBroker>();
         services.AddSingleton<WindowsPluginPackageInstaller>();
+        services.AddSingleton(provider => new WindowsCustomPluginInstaller(
+            provider.GetRequiredService<PluginManifestLoader>(),
+            provider.GetRequiredService<IPluginMcpClientFactory>(),
+            provider.GetRequiredService<IInstalledPluginStore>()));
+        services.AddSingleton<ILocalPluginSourceInstaller>(provider =>
+            provider.GetRequiredService<WindowsCustomPluginInstaller>());
         services.AddSingleton<ILocalPluginManagementService, LocalPluginManagementService>();
         services.AddSingleton<IPluginConfigurationService, PluginConfigurationService>();
         services.AddSingleton<PluginManifestLoader>();

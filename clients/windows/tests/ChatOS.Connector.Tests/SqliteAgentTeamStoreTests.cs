@@ -58,6 +58,7 @@ public sealed class SqliteAgentTeamStoreTests : IAsyncLifetime
         Assert.Equal(2, (await _store.ListMembersAsync("alice", room.Id)).Count);
         Assert.Single(await _store.ListRoomsAsync("alice", "project-1"));
         Assert.Equal(2, (await _store.ListRoomsAsync("alice", "direct")).Count);
+        Assert.Equal(3, (await _store.ListRoomsAsync("alice", null)).Count);
         Assert.Empty(await _store.ListAgentsAsync("bob"));
         Assert.Empty(await _store.ListRoomsAsync("bob", "project-1"));
     }

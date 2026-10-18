@@ -10,6 +10,7 @@ public sealed partial class StoryStudioViewModel
     {
         var segment = SelectedSegment;
         if (!CanRestoreArchivedVideo || segment is null || !segment.ArchivedVideos.Contains(archived)) return;
+        var session = _session;
         if (archived.FilePath is not { Length: > 0 } path || !File.Exists(path))
         {
             ErrorMessage = "这个视频历史版本的本机文件已经不存在，无法恢复。";
@@ -37,8 +38,11 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
-            NotifyVideoVersionsChanged();
+            if (session == _session)
+            {
+                IsBusy = false;
+                NotifyVideoVersionsChanged();
+            }
         }
     }
 

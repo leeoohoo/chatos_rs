@@ -383,6 +383,7 @@ public sealed partial class ConnectorGatewayHttpClient : IConnectorGatewayClient
                     new ConnectorMcpRuntime(
                         value.Resource.Runtime.Kind,
                         value.Resource.Runtime.BuiltinKind,
+                        value.Resource.Runtime.SystemKey,
                         value.Resource.Runtime.ServerName,
                         value.Resource.Runtime.Url,
                         value.Resource.Runtime.Headers)),

@@ -74,7 +74,7 @@ public sealed record RelayResponse
     public required JsonElement Body { get; init; }
 }
 
-public sealed class RelayRequestException : Exception
+public class RelayRequestException : Exception
 {
     public RelayRequestException(int statusCode, string message)
         : base(message)

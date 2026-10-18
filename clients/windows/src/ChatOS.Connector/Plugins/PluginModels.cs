@@ -12,7 +12,17 @@ public sealed record InstalledPluginRecord(
     DateTimeOffset InstalledAt,
     IReadOnlyList<string> DeclaredPermissions,
     IReadOnlyDictionary<string, string>? PackageFileSha256 = null,
-    string? PluginKey = null);
+    string? PluginKey = null,
+    string? SourceKind = null,
+    string? SourceSummary = null,
+    bool? LocalEnabled = null)
+{
+    public bool IsLocallyManaged =>
+        !string.IsNullOrWhiteSpace(SourceKind) ||
+        ReleaseId.StartsWith("custom:", StringComparison.Ordinal);
+
+    public bool IsLocallyEnabled => LocalEnabled ?? true;
+}
 
 public interface IInstalledPluginStore
 {
@@ -222,11 +232,28 @@ internal sealed record PluginMcpServer
     [JsonPropertyName("requiresExclusiveExecution")]
     public bool RequiresExclusiveExecution { get; init; }
 
+    [JsonPropertyName("agent")]
+    public PluginAgentPresentation? Agent { get; init; }
+
     [JsonIgnore]
     public string EffectiveTransport =>
         (Transport ?? Type)?.Trim().ToLowerInvariant() ??
         (Bin is not null && Url is null ? "stdio" : Url is not null && Bin is null ? "http" : string.Empty);
 }
+
+internal sealed record PluginAgentPresentation
+{
+    [JsonPropertyName("displayName")]
+    public string? DisplayName { get; init; }
+
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
+}
+
+internal sealed record PluginMcpComponentChoice(
+    string ComponentKey,
+    string? DisplayName,
+    string? Description);
 
 internal sealed record PluginPermission
 {

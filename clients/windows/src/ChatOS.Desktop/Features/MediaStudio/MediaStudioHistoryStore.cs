@@ -371,6 +371,8 @@ public sealed record MediaStudioHistoryItem(
 
     public IReadOnlyList<MediaStudioImageItem> PreviewImages => Images.Take(2).ToArray();
 
+    public MediaStudioImageItem? CoverImage => Images.FirstOrDefault();
+
     public string ImageCountLabel => $"{Images.Count} 张";
 }
 

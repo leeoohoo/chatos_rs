@@ -3,6 +3,7 @@ using ChatOS.Connector.Approval;
 using ChatOS.Presentation.Settings;
 using ChatOS.Presentation.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 
 namespace ChatOS.Desktop.Features.Settings;
 
@@ -13,6 +14,16 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
     private readonly LocalizationViewModel _localization;
     private readonly IUiDispatcher _dispatcher;
     private readonly SettingsOperationRunner _operations;
+    private readonly object _lifecycleGate = new();
+    private readonly CancellationTokenSource _lifetime = new();
+    private volatile bool _disposed;
+    private bool _cancellationFinished;
+    private int _activeOperations;
+    private long _historyChangeVersion;
+    private bool _historyRefreshPending;
+    private IReadOnlyList<ConnectorApprovalHistoryEntry> _history = [];
+    private int _historyPageIndex;
+    private int _historyPageSize = 10;
 
     public ApprovalSettingsViewModel(
         CommandApprovalCoordinator coordinator,
@@ -26,6 +37,7 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
         _operations = new SettingsOperationRunner(dispatcher);
         _reviewerReadiness = reviewerReadiness;
         _coordinator.PendingChanged += OnPendingChanged;
+        _coordinator.DecisionRecorded += OnDecisionRecorded;
         _localization.PropertyChanged += OnLocalizationChanged;
     }
 
@@ -33,19 +45,121 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
 
     public ObservableCollection<ApprovalHistoryItemViewModel> History { get; } = [];
 
+    public bool HasPending => Pending.Count > 0;
+
+    public bool HasHistory => _history.Count > 0;
+
+    public IReadOnlyList<int> HistoryPageSizeOptions { get; } = Array.AsReadOnly(new[] { 10, 20, 50 });
+
+    public int HistoryCount => _history.Count;
+    public int HistoryPageIndex => _historyPageIndex;
+    public int HistoryPageCount => Math.Max(1, (HistoryCount + HistoryPageSize - 1) / HistoryPageSize);
+    public bool HasHistoryPagination => HistoryCount > HistoryPageSizeOptions[0];
+    public bool CanRefreshHistory => !IsBusy && !IsHistoryRefreshing;
+
+    public int HistoryPageSize
+    {
+        get => _historyPageSize;
+        set
+        {
+            if (!HistoryPageSizeOptions.Contains(value) || !SetProperty(ref _historyPageSize, value)) return;
+            _historyPageIndex = 0;
+            ApplyHistoryPage();
+        }
+    }
+
+    public string HistoryRangeLabel => HistoryCount == 0
+        ? _localization.Text("0 条", "0 entries")
+        : $"{HistoryPageIndex * HistoryPageSize + 1}–{Math.Min(HistoryCount, (HistoryPageIndex + 1) * HistoryPageSize)} / {HistoryCount}";
+
+    public string HistoryPageLabel => _localization.Text(
+        $"第 {HistoryPageIndex + 1} 页，共 {HistoryPageCount} 页",
+        $"Page {HistoryPageIndex + 1} of {HistoryPageCount}");
+
+    public string HistoryScopeLabel => _localization.Text("本机最近 1,000 条审批记录", "Up to 1,000 recent approvals on this device");
+    public string HistoryPageSizeLabel => _localization.Text("每页条数", "Entries per page");
+    public string PreviousHistoryPageLabel => _localization.Text("上一页", "Previous page");
+    public string NextHistoryPageLabel => _localization.Text("下一页", "Next page");
+
+    private bool CanPreviousHistoryPage() => HistoryPageIndex > 0;
+    private bool CanNextHistoryPage() => HistoryPageIndex + 1 < HistoryPageCount;
+
+    [RelayCommand(CanExecute = nameof(CanPreviousHistoryPage))]
+    private void PreviousHistoryPage()
+    {
+        if (!CanPreviousHistoryPage()) return;
+        _historyPageIndex--;
+        ApplyHistoryPage();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanNextHistoryPage))]
+    private void NextHistoryPage()
+    {
+        if (!CanNextHistoryPage()) return;
+        _historyPageIndex++;
+        ApplyHistoryPage();
+    }
+
+    public string NoPendingLabel => _localization.Text(
+        "当前没有等待审批的操作",
+        "There are no operations awaiting approval");
+
+    public string NoPendingDescription => _localization.Text(
+        "任务会停在这里，直到用户或审批模型作出决定。",
+        "Tasks wait here until the user or approval model makes a decision.");
+
+    public string NoHistoryLabel => _localization.Text(
+        "还没有审批记录",
+        "There is no approval history yet");
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ModeDescription))]
     [NotifyPropertyChangedFor(nameof(AutomaticReviewerStatus))]
+    [NotifyPropertyChangedFor(nameof(CanRetryReviewerReadiness))]
     private ConnectorApprovalMode _mode = ConnectorApprovalMode.RequestApproval;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRefreshHistory))]
+    [NotifyPropertyChangedFor(nameof(CanRetryReviewerReadiness))]
     private bool _isBusy;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanRefreshHistory))]
+    [NotifyPropertyChangedFor(nameof(CanRetryReviewerReadiness))]
+    private bool _isHistoryRefreshing;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutomaticReviewerStatus))]
+    [NotifyPropertyChangedFor(nameof(CanRetryReviewerReadiness))]
+    private bool _isReviewerReadinessChecking;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReviewerReadinessError))]
+    [NotifyPropertyChangedFor(nameof(AutomaticReviewerStatus))]
+    private string? _reviewerReadinessErrorMessage;
+
+    public bool HasReviewerReadinessError => !string.IsNullOrEmpty(ReviewerReadinessErrorMessage);
+    public bool CanRetryReviewerReadiness => Mode == ConnectorApprovalMode.AutoApproval &&
+        !IsBusy && !IsHistoryRefreshing && !IsReviewerReadinessChecking;
+    public string ReviewerReadinessErrorDescription => _localization.Text(
+        "审批模型状态检查失败，当前审批模式仍然有效。可重试检查。",
+        "Could not check the approval model. The current approval mode remains in effect. Retry the check.");
+    public string RetryReviewerReadinessLabel => _localization.Text("重新检查审批模型", "Check approval model again");
 
     [ObservableProperty]
     private string? _errorMessage;
 
     [ObservableProperty]
     private string? _actionMessage;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasHistorySyncError))]
+    private string? _historySyncErrorMessage;
+
+    public bool HasHistorySyncError => !string.IsNullOrEmpty(HistorySyncErrorMessage);
+    public string HistorySyncErrorDescription => _localization.Text(
+        "审批记录未能刷新，已保留上次记录。请点击刷新重试。",
+        "Approval history could not be refreshed. Previous entries are preserved. Select Refresh to retry.");
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(AutomaticReviewerStatus))]
@@ -70,7 +184,13 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
     };
 
     public string AutomaticReviewerStatus => Mode == ConnectorApprovalMode.AutoApproval
-        ? ReviewerReadinessState switch
+        ? IsReviewerReadinessChecking
+            ? _localization.Text("正在检查本机审批模型状态…", "Checking the local approval model…")
+            : HasReviewerReadinessError
+                ? _localization.Text(
+                    "无法确认本机审批模型状态；模型未就绪或无法判断时仍会请求用户确认。",
+                    "The local approval model status is unknown; unavailable or uncertain reviews still ask the user.")
+                : ReviewerReadinessState switch
         {
             ApprovalReviewerReadinessState.Ready => _localization.Text(
                 "Windows AI 审批已就绪；无法判断时仍会安全回退为用户确认。",
@@ -92,16 +212,15 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
         await RunAsync(async token =>
         {
             await _coordinator.InitializeAsync(token).ConfigureAwait(false);
-            var historyTask = _coordinator.ReadHistoryAsync(30, token);
-            var readinessTask = CheckReadinessAsync(token);
-            await Task.WhenAll(historyTask, readinessTask).ConfigureAwait(false);
-            var pending = _coordinator.Snapshot();
-            await _dispatcher.InvokeAsync(() =>
+            await UpdateAsync(() =>
             {
-                ReviewerReadinessState = readinessTask.Result.State;
-                Apply(_coordinator.Mode, pending, historyTask.Result);
-            }, token)
-                .ConfigureAwait(false);
+                Mode = _coordinator.Mode;
+                ApplyPending(_coordinator.Snapshot());
+                ResetReviewerReadiness();
+            }, token).ConfigureAwait(false);
+            await Task.WhenAll(
+                ReadHistoryCoreAsync(token, reportActionError: true),
+                RefreshReviewerReadinessCoreAsync(token)).ConfigureAwait(false);
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -111,16 +230,50 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
         CancellationToken cancellationToken = default) => RunAsync(async token =>
     {
         await _coordinator.SetModeAsync(mode, riskConfirmed, token).ConfigureAwait(false);
-        var readiness = await CheckReadinessAsync(token).ConfigureAwait(false);
-        await _dispatcher.InvokeAsync(() =>
+        await UpdateAsync(() =>
         {
             Mode = _coordinator.Mode;
-            ReviewerReadinessState = readiness.State;
+            ResetReviewerReadiness();
             ActionMessage = _localization.Text(
                 "审批模式已更新。",
                 "The approval mode was updated.");
-        }, token).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        await RefreshReviewerReadinessCoreAsync(token).ConfigureAwait(false);
     }, cancellationToken);
+
+    public Task RefreshReviewerReadinessAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(RefreshReviewerReadinessCoreAsync, cancellationToken, preserveMessages: true);
+
+    private void ResetReviewerReadiness()
+    {
+        ReviewerReadinessErrorMessage = null;
+        ReviewerReadinessState = ApprovalReviewerReadinessState.ManagedConfigurationInvalid;
+        IsReviewerReadinessChecking = false;
+    }
+
+    private async Task RefreshReviewerReadinessCoreAsync(CancellationToken cancellationToken)
+    {
+        if (Mode != ConnectorApprovalMode.AutoApproval) return;
+        await UpdateAsync(() =>
+        {
+            ResetReviewerReadiness();
+            IsReviewerReadinessChecking = true;
+        }, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var readiness = await CheckReadinessAsync(cancellationToken).ConfigureAwait(false);
+            await UpdateAsync(() => ReviewerReadinessState = readiness.State, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await UpdateAsync(() => ReviewerReadinessErrorMessage = exception.Message, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            await UpdateAsync(() => IsReviewerReadinessChecking = false).ConfigureAwait(false);
+        }
+    }
 
     private Task<ApprovalReviewerReadiness> CheckReadinessAsync(CancellationToken cancellationToken) =>
         _reviewerReadiness?.CheckAsync(cancellationToken) ?? Task.FromResult(
@@ -138,40 +291,176 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
                 "This approval was already resolved or is no longer active."));
         }
 
-        var history = await _coordinator.ReadHistoryAsync(30, token).ConfigureAwait(false);
-        await _dispatcher.InvokeAsync(() =>
+        await UpdateAsync(() =>
         {
             ApplyPending(_coordinator.Snapshot());
-            ApplyHistory(history);
             ActionMessage = _localization.Text("审批已处理。", "The approval was resolved.");
         }, token).ConfigureAwait(false);
+        await ReadEventHistoryAsync(token).ConfigureAwait(false);
     }, cancellationToken);
 
     public void Dispose()
     {
+        lock (_lifecycleGate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
         _coordinator.PendingChanged -= OnPendingChanged;
+        _coordinator.DecisionRecorded -= OnDecisionRecorded;
         _localization.PropertyChanged -= OnLocalizationChanged;
-        _operations.Dispose();
+        try
+        {
+            _lifetime.Cancel();
+        }
+        finally
+        {
+            lock (_lifecycleGate)
+            {
+                _cancellationFinished = true;
+                DisposeOperationsIfIdle();
+            }
+        }
     }
 
     private async Task RunAsync(
         Func<CancellationToken, Task> operation,
-        CancellationToken cancellationToken)
-        => await _operations.RunAsync(
-            operation,
-            () => { IsBusy = true; ErrorMessage = null; ActionMessage = null; },
-            message => ErrorMessage = message,
-            () => IsBusy = false,
-            cancellationToken).ConfigureAwait(false);
-
-    private void Apply(
-        ConnectorApprovalMode mode,
-        IReadOnlyList<ConnectorPendingApproval> pending,
-        IReadOnlyList<ConnectorApprovalHistoryEntry> history)
+        CancellationToken cancellationToken,
+        bool background = false,
+        bool preserveMessages = false)
     {
-        Mode = mode;
-        ApplyPending(pending);
-        ApplyHistory(history);
+        CancellationTokenSource linked;
+        lock (_lifecycleGate)
+        {
+            if (_disposed) return;
+            linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+            _activeOperations++;
+        }
+
+        using (linked)
+        {
+            var token = linked.Token;
+            try
+            {
+                await _operations.RunAsync(
+                    async current =>
+                    {
+                        current.ThrowIfCancellationRequested();
+                        await operation(current).ConfigureAwait(false);
+                    },
+                    () =>
+                    {
+                        if (_disposed || token.IsCancellationRequested || background) return;
+                        IsBusy = true;
+                        if (!preserveMessages)
+                        {
+                            ErrorMessage = null;
+                            ActionMessage = null;
+                        }
+                    },
+                    message =>
+                    {
+                        if (_disposed || token.IsCancellationRequested) return;
+                        if (background) HistorySyncErrorMessage = message;
+                        else ErrorMessage = message;
+                    },
+                    () =>
+                    {
+                        if (_disposed || background) return;
+                        IsBusy = false;
+                        ScheduleHistoryRefresh();
+                    },
+                    token).ConfigureAwait(false);
+                token.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (_disposed)
+            {
+                // Closing the view model cancels queued work without surfacing an action failure.
+            }
+            finally
+            {
+                lock (_lifecycleGate)
+                {
+                    _activeOperations--;
+                    DisposeOperationsIfIdle();
+                }
+            }
+        }
+    }
+
+    private void DisposeOperationsIfIdle()
+    {
+        if (!_cancellationFinished || _activeOperations != 0) return;
+        _operations.Dispose();
+        _lifetime.Dispose();
+    }
+
+    private Task UpdateAsync(Action action, CancellationToken cancellationToken = default) =>
+        _dispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed && !cancellationToken.IsCancellationRequested) action();
+        }, cancellationToken);
+
+    private void ScheduleHistoryRefresh()
+    {
+        if (_disposed || IsBusy || !_historyRefreshPending || IsHistoryRefreshing) return;
+        _historyRefreshPending = false;
+        IsHistoryRefreshing = true;
+        _ = RefreshEventHistoryAsync();
+    }
+
+    private async Task RefreshEventHistoryAsync()
+    {
+        try
+        {
+            await RunAsync(ReadEventHistoryAsync, CancellationToken.None, background: true).ConfigureAwait(false);
+        }
+        catch
+        {
+            // A dispatcher that is shutting down cannot receive an error notification.
+        }
+        finally
+        {
+            try
+            {
+                await UpdateAsync(() =>
+                {
+                    IsHistoryRefreshing = false;
+                    ScheduleHistoryRefresh();
+                }).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Do not let an unobserved event refresh crash application shutdown.
+            }
+        }
+    }
+
+    private Task ReadEventHistoryAsync(CancellationToken cancellationToken) => ReadHistoryCoreAsync(cancellationToken);
+
+    private async Task ReadHistoryCoreAsync(CancellationToken cancellationToken, bool reportActionError = false)
+    {
+        var historyVersion = Interlocked.Read(ref _historyChangeVersion);
+        try
+        {
+            var history = await _coordinator.ReadHistoryAsync(1_000, cancellationToken).ConfigureAwait(false);
+            await UpdateAsync(() =>
+            {
+                if (historyVersion != Interlocked.Read(ref _historyChangeVersion)) return;
+                _historyRefreshPending = false;
+                ApplyHistory(history);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await UpdateAsync(() =>
+            {
+                if (historyVersion != Interlocked.Read(ref _historyChangeVersion)) return;
+                _historyRefreshPending = false;
+                HistorySyncErrorMessage = exception.Message;
+                if (reportActionError) ErrorMessage = exception.Message;
+            }, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private void ApplyPending(IReadOnlyList<ConnectorPendingApproval> pending)
@@ -181,42 +470,78 @@ public sealed partial class ApprovalSettingsViewModel : ObservableObject, IDispo
         {
             Pending.Add(new ApprovalPendingItemViewModel(item, _localization));
         }
+
+        OnPropertyChanged(nameof(HasPending));
     }
 
     private void ApplyHistory(IReadOnlyList<ConnectorApprovalHistoryEntry> history)
     {
+        HistorySyncErrorMessage = null;
+        _history = history.Take(1_000).ToArray();
+        ApplyHistoryPage();
+    }
+
+    private void ApplyHistoryPage()
+    {
+        _historyPageIndex = Math.Clamp(_historyPageIndex, 0, HistoryPageCount - 1);
         History.Clear();
-        foreach (var item in history.Take(30))
+        foreach (var item in _history.Skip(HistoryPageIndex * HistoryPageSize).Take(HistoryPageSize))
         {
             History.Add(new ApprovalHistoryItemViewModel(item, _localization));
         }
+
+        OnPropertyChanged(nameof(HasHistory));
+        OnPropertyChanged(nameof(HistoryCount));
+        OnPropertyChanged(nameof(HistoryPageIndex));
+        OnPropertyChanged(nameof(HistoryPageCount));
+        OnPropertyChanged(nameof(HasHistoryPagination));
+        OnPropertyChanged(nameof(HistoryRangeLabel));
+        OnPropertyChanged(nameof(HistoryPageLabel));
+        PreviousHistoryPageCommand.NotifyCanExecuteChanged();
+        NextHistoryPageCommand.NotifyCanExecuteChanged();
     }
 
     private async void OnPendingChanged(object? sender, EventArgs e)
     {
-        var pending = _coordinator.Snapshot();
-        await _dispatcher.InvokeAsync(() => ApplyPending(pending));
+        await ProcessApprovalNotificationAsync().ConfigureAwait(false);
+    }
+
+    private async void OnDecisionRecorded(object? sender, ConnectorApprovalDecisionEventArgs e) =>
+        await ProcessApprovalNotificationAsync().ConfigureAwait(false);
+
+    private async Task ProcessApprovalNotificationAsync()
+    {
+        Interlocked.Increment(ref _historyChangeVersion);
+        try
+        {
+            await UpdateAsync(() =>
+            {
+                ApplyPending(_coordinator.Snapshot());
+                _historyRefreshPending = true;
+                ScheduleHistoryRefresh();
+            }).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Approval notifications must not escape async event handlers during shutdown.
+        }
     }
 
     private async void OnLocalizationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        var pending = _coordinator.Snapshot();
-        IReadOnlyList<ConnectorApprovalHistoryEntry> history;
         try
         {
-            history = await _coordinator.ReadHistoryAsync(30).ConfigureAwait(false);
+            await UpdateAsync(() =>
+            {
+                ApplyPending(_coordinator.Snapshot());
+                ApplyHistoryPage();
+                OnPropertyChanged(string.Empty);
+            }).ConfigureAwait(false);
         }
         catch
         {
-            history = History.Select(value => value.Entry).ToArray();
+            // The dispatcher may already be unavailable while the application is closing.
         }
-
-        await _dispatcher.InvokeAsync(() =>
-        {
-            ApplyPending(pending);
-            ApplyHistory(history);
-            OnPropertyChanged(string.Empty);
-        });
     }
 }
 

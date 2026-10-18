@@ -12,13 +12,50 @@ public sealed partial class AgentTeamPage : UserControl
     public AgentTeamPage(AgentTeamWorkspaceViewModel viewModel)
     {
         ViewModel = viewModel;
-        ViewModel.PropertyChanged += (_, _) => Bindings.Update();
         InitializeComponent();
+        ViewModel.PropertyChanged += (_, _) => Bindings.Update();
+        ViewModel.Members.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.Todos.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.TodoItems.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.Assets.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.StaffingProposals.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.Runs.CollectionChanged += (_, _) => Bindings.Update();
     }
+
+    public event EventHandler? RequirementSurveysRequested;
 
     public AgentTeamWorkspaceViewModel ViewModel { get; }
     public string SelectedRoomName => ViewModel.SelectedRoom?.Draft.Name ?? "请选择团队或私聊";
     public string SelectedRoomGoal => ViewModel.SelectedRoom?.Draft.Goal ?? string.Empty;
+    public string OverviewStageTitle => ViewModel.SelectedRoom?.Draft.Name ?? "等待创建或选择团队";
+    public string OverviewStageStatus => ViewModel.HasRoom ? "正常" : "待开始";
+    public string OverviewStageDescription => ViewModel.SelectedRoom?.Draft.Goal ??
+        "创建团队并选择项目经理后，这里会汇总目标、执行进度、待处理事项和阶段判断。";
+    public int MemberCount => ViewModel.Members.Count;
+    public bool HasMembers => MemberCount > 0;
+    public bool HasTodos => ViewModel.TodoItems.Count > 0;
+    public bool HasAssets => ViewModel.Assets.Count > 0;
+    public int ActiveTodoCount => ViewModel.Todos.Count(todo => todo.Status == AgentTodoStatus.InProgress);
+    public int PendingTodoCount => ViewModel.Todos.Count(todo =>
+        todo.Status is AgentTodoStatus.Pending or AgentTodoStatus.Ready);
+    public int BlockedTodoCount => ViewModel.Todos.Count(todo => todo.Status == AgentTodoStatus.Blocked);
+    public int CompletedTodoCount => ViewModel.Todos.Count(todo => todo.Status == AgentTodoStatus.Completed);
+    public int CountedTodoCount => ViewModel.Todos.Count(todo => todo.Status != AgentTodoStatus.Cancelled);
+    public double TodoProgressPercent => CountedTodoCount == 0
+        ? 0
+        : CompletedTodoCount * 100d / CountedTodoCount;
+    public string TodoProgressLabel => CountedTodoCount == 0
+        ? "0%"
+        : $"{Math.Round(TodoProgressPercent):0}%";
+    public int PendingProposalCount => ViewModel.StaffingProposals.Count(proposal =>
+        proposal.Status == AgentStaffingProposalStatus.Pending);
+    public bool HasPendingProposals => PendingProposalCount > 0;
+    public string ExecutionSummary => CountedTodoCount == 0
+        ? "尚未创建团队任务。"
+        : $"{CompletedTodoCount} 个已完成，{ActiveTodoCount} 个执行中，{PendingTodoCount} 个等待，{BlockedTodoCount} 个需要处理。";
+    public string MilestoneSummary => CountedTodoCount == 0
+        ? "项目经理尚未建立里程碑。"
+        : $"当前共 {CountedTodoCount} 个有效任务，已完成 {CompletedTodoCount} 个。";
     public string Notice => ViewModel.ErrorMessage ?? ViewModel.StatusMessage;
     public bool HasNotice => !string.IsNullOrWhiteSpace(Notice);
     public InfoBarSeverity NoticeSeverity => ViewModel.ErrorMessage is null
@@ -33,6 +70,9 @@ public sealed partial class AgentTeamPage : UserControl
 
     private async void OnRunAgentsClick(object sender, RoutedEventArgs e) =>
         await IgnoreFailureAsync(ViewModel.DrainAsync);
+
+    private void OnOpenRequirementSurveysClick(object sender, RoutedEventArgs e) =>
+        RequirementSurveysRequested?.Invoke(this, EventArgs.Empty);
 
     private async void OnRoomSelectionChanged(object sender, SelectionChangedEventArgs e) =>
         await IgnoreFailureAsync(() => ViewModel.SelectRoomAsync(ViewModel.SelectedRoom));

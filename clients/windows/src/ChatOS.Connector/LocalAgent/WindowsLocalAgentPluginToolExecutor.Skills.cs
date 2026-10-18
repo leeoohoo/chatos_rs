@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using ChatOS.Connector.Plugins;
 
@@ -10,10 +11,8 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
-        var option = Option(session, arguments);
+        var (option, skillName) = SkillIdentity(session, arguments);
         var plugin = await LoadAsync(session, option, cancellationToken).ConfigureAwait(false);
-        var skillName = WindowsLocalAgentProjectToolExecutor.RequiredString(
-            arguments, "skill_name");
         EnsureSkillAvailable(plugin, skillName);
         var snapshot = PluginSkillSnapshotLoader.CreateLocalSnapshot(
             option.Record, skillName);
@@ -29,10 +28,8 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
-        var option = Option(session, arguments);
+        var (option, skillName) = SkillIdentity(session, arguments);
         var plugin = await LoadAsync(session, option, cancellationToken).ConfigureAwait(false);
-        var skillName = WindowsLocalAgentProjectToolExecutor.RequiredString(
-            arguments, "skill_name");
         if (!plugin.ActivatedSkills.Contains(skillName) ||
             !plugin.SkillSnapshots.TryGetValue(skillName, out var snapshot))
         {
@@ -49,19 +46,36 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor
 
     private static void EnsureSkillAvailable(LoadedPlugin plugin, string skillName)
     {
-        var available = plugin.Tools
-            .SelectMany(tool =>
-                tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>())
-            .Contains(skillName, StringComparer.Ordinal);
-        if (!available)
-        {
-            throw new InvalidOperationException(
-                "The Plugin Skill is not required by the described tools.");
-        }
+        WindowsAgentCapabilityAuthorization.RequireDisclosedSkill(
+            plugin.Tools.Select(tool => new WindowsAgentCapabilitySkillGate(
+                tool.Token,
+                tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>())),
+            plugin.DescribedTools,
+            skillName);
     }
 
-    private static int? Integer(JsonElement value, string name) =>
-        value.TryGetProperty(name, out var property) && property.TryGetInt32(out var result)
-            ? result
-            : null;
+    private static (PluginOption Option, string SkillName) SkillIdentity(
+        RunSession session,
+        JsonElement arguments)
+    {
+        var skillRef = WindowsLocalAgentProjectToolExecutor.RequiredString(
+            arguments, "skill_ref");
+        var (optionToken, skillName) = WindowsAgentCapabilityAuthorization.ParseSkillRef(
+            skillRef,
+            session.Options.Select(value => value.Token).ToHashSet(StringComparer.Ordinal));
+        var option = session.Options.FirstOrDefault(value => value.Token == optionToken)
+            ?? throw new UnreachableException();
+        return (option, skillName);
+    }
+
+    private static int? Integer(JsonElement value, string name)
+    {
+        if (!value.TryGetProperty(name, out var property) ||
+            property.ValueKind == JsonValueKind.Null) return null;
+        if (!property.TryGetInt32(out var result))
+        {
+            throw new WindowsAgentCapabilityDisclosureException();
+        }
+        return result;
+    }
 }

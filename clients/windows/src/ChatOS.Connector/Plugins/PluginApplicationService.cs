@@ -43,8 +43,11 @@ internal sealed class LocalPluginApplicationService(
         var applications = new List<LocalPluginApplication>();
         foreach (var record in records)
         {
-            if (!sourceById.TryGetValue(record.PluginId, out var source) ||
-                source.Preference?.Enabled == false)
+            if (sourceById.TryGetValue(record.PluginId, out var source))
+            {
+                if (source.Preference?.Enabled == false) continue;
+            }
+            else if (!record.IsLocallyManaged || !record.IsLocallyEnabled)
             {
                 continue;
             }
@@ -77,16 +80,23 @@ internal sealed class LocalPluginApplicationService(
             cancellationToken).ConfigureAwait(false);
         var source = sources.FirstOrDefault(value =>
             string.Equals(value.Catalog.Id, pluginId, StringComparison.Ordinal));
+        var record = await installed.GetAsync(pluginId, cancellationToken).ConfigureAwait(false)
+            ?? throw new PluginRuntimeException("Plugin is not installed.");
         if (source is null)
         {
-            throw new PluginRuntimeException("Plugin is no longer available in the catalog.");
+            if (!record.IsLocallyManaged)
+            {
+                throw new PluginRuntimeException("Plugin is no longer available in the catalog.");
+            }
+            if (!record.IsLocallyEnabled)
+            {
+                throw new PluginRuntimeException("Plugin is disabled.");
+            }
         }
-        if (source.Preference?.Enabled == false)
+        else if (source.Preference?.Enabled == false)
         {
             throw new PluginRuntimeException("Plugin is disabled.");
         }
-        var record = await installed.GetAsync(pluginId, cancellationToken).ConfigureAwait(false)
-            ?? throw new PluginRuntimeException("Plugin is not installed.");
 
         string? workspaceId = null;
         string? workspaceRoot = null;

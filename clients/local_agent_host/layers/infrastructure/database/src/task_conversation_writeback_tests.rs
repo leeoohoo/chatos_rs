@@ -696,6 +696,35 @@ fn callback_detail_hides_runtime_secrets_ids_and_transient_errors() {
 }
 
 #[test]
+fn completed_callback_preserves_negated_timeout_result_summary() {
+    let outcome = json!({
+        "result_summary": "文件已创建并回读一致，未发生超时或失败。",
+        "content": "文件已创建并回读一致。"
+    });
+
+    let content = super::callback_content_with_status(
+        "创建并回读文件",
+        "创建并回读文件",
+        "task.completed",
+        Some(&outcome),
+        false,
+        "completed",
+    );
+    let detail = super::user_visible_callback_detail(
+        "创建并回读文件",
+        "task.completed",
+        Some(&outcome),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(content, "文件已创建并回读一致，未发生超时或失败。");
+    assert_eq!(detail.0, "result_summary");
+    assert_eq!(detail.1, content);
+    assert_ne!(content, "服务暂时不可用，请稍后重试。");
+}
+
+#[test]
 fn completed_callback_keeps_documented_authentication_placeholders() {
     let outcome = json!({
         "content": "## 扫码报工当前流程\n\n确认结论：扫码入口按二维码类型分流。\n\nAPI 客户端从 storage 读取 `wms_access_token` 并附带 `Authorization: Bearer ...`，401 会清除 token。"

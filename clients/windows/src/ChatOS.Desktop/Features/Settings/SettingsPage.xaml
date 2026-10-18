@@ -8,6 +8,22 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
+    <UserControl.Resources>
+        <Style x:Key="SettingsNavigationItemStyle" TargetType="ListViewItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="MinHeight" Value="32" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Margin" Value="0,1" />
+            <Setter Property="CornerRadius" Value="7" />
+        </Style>
+        <Style x:Key="SettingsGroupTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource ChatOSBodyStrongTextStyle}">
+            <Setter Property="Margin" Value="2,4,0,0" />
+        </Style>
+        <Style x:Key="SettingsRowDescriptionStyle" TargetType="TextBlock" BasedOn="{StaticResource ChatOSCaptionTextStyle}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </UserControl.Resources>
+
     <Grid
         AutomationProperties.AutomationId="ChatOS.Settings.Root"
         AutomationProperties.Name="{x:Bind Localization.Settings, Mode=OneWay}"
@@ -39,128 +55,426 @@
 
         <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
 
-        <ScrollViewer Grid.Row="2" Padding="24" VerticalScrollBarVisibility="Auto">
-            <StackPanel MaxWidth="860" HorizontalAlignment="Center" Spacing="18">
-                <TextBlock Text="{x:Bind Localization.General, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="180" MinWidth="160" MaxWidth="210" />
+                <ColumnDefinition Width="1" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-                <Border Style="{StaticResource ChatOSCardStyle}">
-                    <Grid RowSpacing="18" ColumnSpacing="28">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="220" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
+            <Border Background="{StaticResource ChatOSSidebarBackgroundBrush}">
+                <ScrollViewer Padding="8,14" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="6">
+                        <TextBlock Margin="10,0,0,2" Text="ChatOS" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <ListView
+                            x:Name="SettingsNavigation"
+                            AutomationProperties.AutomationId="ChatOS.Settings.Navigation"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ItemContainerStyle="{StaticResource SettingsNavigationItemStyle}"
+                            SelectedIndex="0"
+                            SelectionChanged="OnSettingsNavigationChanged"
+                            SelectionMode="Single">
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.General" AutomationProperties.Name="常规与账号" Tag="general">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE713;" FontSize="14" /><TextBlock Text="常规与账号" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.WeChat" AutomationProperties.Name="微信小程序" Tag="wechat">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE8BD;" FontSize="14" /><TextBlock Text="微信小程序" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Pet" AutomationProperties.Name="宠物" Tag="pet">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE91A;" FontSize="14" /><TextBlock Text="宠物" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Utilities" AutomationProperties.Name="全局工具" Tag="utilities">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE74C;" FontSize="14" /><TextBlock Text="全局工具" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Models" AutomationProperties.Name="AI 模型配置" Tag="models">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE945;" FontSize="14" /><TextBlock Text="AI 模型配置" /></StackPanel>
+                            </ListViewItem>
+                        </ListView>
 
-                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.LanguageLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <ComboBox
-                            x:Name="LanguagePicker"
-                            AutomationProperties.AutomationId="ChatOS.Settings.Language"
-                            AutomationProperties.Name="{x:Bind Localization.LanguageLabel, Mode=OneWay}"
-                            Grid.Column="1"
-                            MinWidth="220"
-                            HorizontalAlignment="Left"
-                            SelectionChanged="OnLanguageChanged">
-                            <ComboBoxItem Tag="SimplifiedChinese" Content="{x:Bind Localization.SimplifiedChinese, Mode=OneWay}" />
-                            <ComboBoxItem Tag="English" Content="{x:Bind Localization.English, Mode=OneWay}" />
-                        </ComboBox>
+                        <TextBlock Margin="10,8,0,2" Text="本机连接器" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <ListView
+                            x:Name="LocalSettingsNavigation"
+                            AutomationProperties.AutomationId="ChatOS.Settings.LocalNavigation"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ItemContainerStyle="{StaticResource SettingsNavigationItemStyle}"
+                            SelectionChanged="OnSettingsNavigationChanged"
+                            SelectionMode="Single">
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Connector" AutomationProperties.Name="设备与网关" Tag="connector">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE968;" FontSize="14" /><TextBlock Text="设备与网关" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Plugins" AutomationProperties.Name="插件与 Skills" Tag="plugins">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE71D;" FontSize="14" /><TextBlock Text="插件与 Skills" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Approvals" AutomationProperties.Name="命令审批" Tag="approvals">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE73E;" FontSize="14" /><TextBlock Text="命令审批" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Runtime" AutomationProperties.Name="运行与系统权限" Tag="runtime">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE7BA;" FontSize="14" /><TextBlock Text="运行与系统权限" /></StackPanel>
+                            </ListViewItem>
+                            <ListViewItem AutomationProperties.AutomationId="ChatOS.Settings.Nav.Access" AutomationProperties.Name="权限控制" Tag="access">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE72E;" FontSize="14" /><TextBlock Text="权限控制" /></StackPanel>
+                            </ListViewItem>
+                        </ListView>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+            <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
 
-                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.ThemeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <ComboBox
-                            x:Name="ThemePicker"
-                            AutomationProperties.AutomationId="ChatOS.Settings.Theme"
-                            AutomationProperties.Name="{x:Bind Localization.ThemeLabel, Mode=OneWay}"
-                            Grid.Row="1"
-                            Grid.Column="1"
-                            MinWidth="220"
-                            HorizontalAlignment="Left"
-                            SelectionChanged="OnThemeChanged">
-                            <ComboBoxItem Tag="System" Content="{x:Bind Localization.SystemTheme, Mode=OneWay}" />
-                            <ComboBoxItem Tag="Light" Content="{x:Bind Localization.LightTheme, Mode=OneWay}" />
-                            <ComboBoxItem Tag="Dark" Content="{x:Bind Localization.DarkTheme, Mode=OneWay}" />
-                        </ComboBox>
+            <ScrollViewer x:Name="SettingsContentScroller" Grid.Column="2" Padding="28,18,28,28" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="900" HorizontalAlignment="Center" Spacing="14">
+                <StackPanel Margin="0,0,0,12" HorizontalAlignment="Center" Spacing="4">
+                    <TextBlock x:Name="SettingsSectionTitle" HorizontalAlignment="Center" Text="常规与账号" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock x:Name="SettingsSectionDescription" MaxWidth="680" HorizontalAlignment="Center" Text="语言、外观、运行行为与当前账号。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
 
-                        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="{x:Bind Localization.FontSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="12">
-                            <Slider
-                                x:Name="FontScaleSlider"
-                                AutomationProperties.AutomationId="ChatOS.Settings.FontScale"
-                                AutomationProperties.Name="{x:Bind Localization.FontSizeLabel, Mode=OneWay}"
-                                Width="300"
-                                Minimum="0.85"
-                                Maximum="1.30"
-                                StepFrequency="0.05"
-                                ValueChanged="OnFontScaleChanged" />
-                            <TextBlock x:Name="FontScaleLabel" MinWidth="52" VerticalAlignment="Center" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                <StackPanel Orientation="Horizontal" Spacing="8"
+                    Visibility="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <ProgressRing Width="18" Height="18" IsActive="{x:Bind ViewModel.IsSaving, Mode=OneWay}" />
+                    <TextBlock Text="{x:Bind Localization.SavingPreferences, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                </StackPanel>
+                <InfoBar AutomationProperties.AutomationId="ChatOS.Settings.SaveError"
+                    IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}" IsClosable="False" Severity="Error"
+                    Title="{x:Bind Localization.PreferencesSaveFailed, Mode=OneWay}"
+                    Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+
+                <StackPanel x:Name="GeneralSettingsSection" Spacing="10">
+                    <TextBlock Text="语言与外观" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="0">
+                            <Grid Padding="0,2,0,12" ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.LanguageLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="修改后客户端界面会立即切换。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <ComboBox
+                                    x:Name="LanguagePicker"
+                                    AutomationProperties.AutomationId="ChatOS.Settings.Language"
+                                    AutomationProperties.Name="{x:Bind Localization.LanguageLabel, Mode=OneWay}"
+                                    Grid.Column="1"
+                                    Width="180"
+                                    VerticalAlignment="Center"
+                                    SelectionChanged="OnLanguageChanged">
+                                    <ComboBoxItem Tag="SimplifiedChinese" Content="{x:Bind Localization.SimplifiedChinese, Mode=OneWay}" />
+                                    <ComboBoxItem Tag="English" Content="{x:Bind Localization.English, Mode=OneWay}" />
+                                </ComboBox>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,12,0,2" ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.ThemeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="跟随 Windows，或固定使用浅色与深色外观。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <ComboBox
+                                    x:Name="ThemePicker"
+                                    AutomationProperties.AutomationId="ChatOS.Settings.Theme"
+                                    AutomationProperties.Name="{x:Bind Localization.ThemeLabel, Mode=OneWay}"
+                                    Grid.Column="1"
+                                    Width="180"
+                                    VerticalAlignment="Center"
+                                    SelectionChanged="OnThemeChanged">
+                                    <ComboBoxItem Tag="System" Content="{x:Bind Localization.SystemTheme, Mode=OneWay}" />
+                                    <ComboBoxItem Tag="Light" Content="{x:Bind Localization.LightTheme, Mode=OneWay}" />
+                                    <ComboBoxItem Tag="Dark" Content="{x:Bind Localization.DarkTheme, Mode=OneWay}" />
+                                </ComboBox>
+                            </Grid>
                         </StackPanel>
+                    </Border>
 
-                        <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <ToggleSwitch
-                            x:Name="PetEnabledSwitch"
-                            AutomationProperties.AutomationId="ChatOS.Settings.PetEnabled"
-                            AutomationProperties.Name="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}"
-                            Grid.Row="3"
-                            Grid.Column="1"
-                            HorizontalAlignment="Left"
-                            Toggled="OnPetEnabledToggled" />
+                    <TextBlock Margin="2,10,0,0" Text="显示" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="24">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind Localization.FontSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="标题、正文和辅助信息会保持相同的层级比例。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                                <FontIcon Glyph="&#xE8E9;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                <Slider
+                                    x:Name="FontScaleSlider"
+                                    AutomationProperties.AutomationId="ChatOS.Settings.FontScale"
+                                    AutomationProperties.Name="{x:Bind Localization.FontSizeLabel, Mode=OneWay}"
+                                    Width="220"
+                                    Minimum="0.85"
+                                    Maximum="1.30"
+                                    StepFrequency="0.05"
+                                    ValueChanged="OnFontScaleChanged" />
+                                <FontIcon Glyph="&#xE8E9;" FontSize="18" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                <TextBlock x:Name="FontScaleLabel" MinWidth="48" VerticalAlignment="Center" TextAlignment="Right" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                <Button AutomationProperties.AutomationId="ChatOS.Settings.ResetFontScale"
+                                    Content="{x:Bind Localization.ResetDefaults, Mode=OneWay}"
+                                    Click="OnResetFontScaleClicked" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
 
-                        <TextBlock Grid.Row="4" VerticalAlignment="Center" Text="{x:Bind Localization.PetSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="12">
-                            <Slider
-                                x:Name="PetSizeSlider"
-                                AutomationProperties.AutomationId="ChatOS.Settings.PetSize"
-                                AutomationProperties.Name="{x:Bind Localization.PetSizeLabel, Mode=OneWay}"
-                                Width="300"
-                                Minimum="72"
-                                Maximum="180"
-                                StepFrequency="4"
-                                ValueChanged="OnPetSizeChanged" />
-                            <TextBlock x:Name="PetSizeValueLabel" MinWidth="52" VerticalAlignment="Center" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Margin="2,10,0,0" Text="账号" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border x:Name="GeneralAccountCard" Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Border Width="40" Height="40" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="20">
+                                <FontIcon Glyph="&#xE77B;" FontSize="19" Foreground="{StaticResource ChatOSAccentBrush}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                <TextBlock Text="{x:Bind Connector.UsernameLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="当前登录的 ChatOS 平台身份。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                            </StackPanel>
+                            <Border Grid.Column="2" Padding="9,4" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
+                                <TextBlock Text="user" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel x:Name="PetSettingsSection" Spacing="10" Visibility="Collapsed">
+                    <TextBlock Text="全局展示" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="24">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="关闭后宠物窗口会立即隐藏，但任务提醒设置会保留。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="PetEnabledSwitch"
+                                AutomationProperties.AutomationId="ChatOS.Settings.PetEnabled"
+                                AutomationProperties.Name="{x:Bind Localization.PetEnabledLabel, Mode=OneWay}"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Toggled="OnPetEnabledToggled" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Margin="2,10,0,0" Text="事件提醒" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="0">
+                            <Grid Padding="0,2,0,12" ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="显示正在执行的任务、关键步骤和可取消状态。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <ToggleSwitch x:Name="PetShowProcessSwitch" AutomationProperties.AutomationId="ChatOS.Settings.PetShowProcess" AutomationProperties.Name="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}" Grid.Column="1" VerticalAlignment="Center" Toggled="OnPetShowProcessToggled" />
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,12,0,2" ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="任务完成后保留反馈，并允许继续查看详情。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <ToggleSwitch x:Name="PetShowCompletionsSwitch" AutomationProperties.AutomationId="ChatOS.Settings.PetShowCompletions" AutomationProperties.Name="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}" Grid.Column="1" VerticalAlignment="Center" Toggled="OnPetShowCompletionsToggled" />
+                            </Grid>
                         </StackPanel>
+                    </Border>
 
-                        <TextBlock Grid.Row="5" VerticalAlignment="Center" Text="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <Button
-                            AutomationProperties.AutomationId="ChatOS.Settings.PetResetPosition"
-                            AutomationProperties.Name="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}"
-                            Click="OnPetResetPositionClicked"
-                            Content="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}"
-                            Grid.Row="5"
-                            Grid.Column="1"
-                            HorizontalAlignment="Left" />
+                    <TextBlock Margin="2,10,0,0" Text="外观与位置" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnSpacing="24">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.PetSizeLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="只改变宠物本体尺寸，消息卡片会保持易读。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE91A;" FontSize="13" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                    <Slider x:Name="PetSizeSlider" AutomationProperties.AutomationId="ChatOS.Settings.PetSize" AutomationProperties.Name="{x:Bind Localization.PetSizeLabel, Mode=OneWay}" Width="240" Minimum="72" Maximum="180" StepFrequency="4" ValueChanged="OnPetSizeChanged" />
+                                    <FontIcon Glyph="&#xE91A;" FontSize="20" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                    <TextBlock x:Name="PetSizeValueLabel" MinWidth="52" VerticalAlignment="Center" TextAlignment="Right" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="当前宠物资源" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="枫团 · 秋日小狐狸（macOS 同款 88 帧精灵图）" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                                </StackPanel>
+                                <Button x:Name="PetResetPositionButton" AutomationProperties.AutomationId="ChatOS.Settings.PetResetPosition" AutomationProperties.Name="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}" Grid.Column="1" VerticalAlignment="Center" Click="OnPetResetPositionClicked" Content="{x:Bind Localization.PetResetPositionLabel, Mode=OneWay}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
-                        <TextBlock Grid.Row="6" VerticalAlignment="Center" Text="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <ToggleSwitch
-                            x:Name="PetShowProcessSwitch"
-                            AutomationProperties.AutomationId="ChatOS.Settings.PetShowProcess"
-                            AutomationProperties.Name="{x:Bind Localization.PetShowProcessLabel, Mode=OneWay}"
-                            Grid.Row="6"
-                            Grid.Column="1"
-                            HorizontalAlignment="Left"
-                            Toggled="OnPetShowProcessToggled" />
+                <StackPanel x:Name="WeChatSettingsSection" Spacing="14" Visibility="Collapsed">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="微信账号绑定" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="扫码后仍需在这台已登录的 Windows 电脑上确认。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="14">
+                            <StackPanel HorizontalAlignment="Center" Spacing="8"
+                                Visibility="{x:Bind WeChatSettings.IsLoading, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ProgressRing Width="26" Height="26" IsActive="{x:Bind WeChatSettings.IsLoading, Mode=OneWay}" />
+                                <TextBlock Text="正在读取绑定状态…" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
 
-                        <TextBlock Grid.Row="7" VerticalAlignment="Center" Text="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <ToggleSwitch
-                            x:Name="PetShowCompletionsSwitch"
-                            AutomationProperties.AutomationId="ChatOS.Settings.PetShowCompletions"
-                            AutomationProperties.Name="{x:Bind Localization.PetShowCompletionsLabel, Mode=OneWay}"
-                            Grid.Row="7"
-                            Grid.Column="1"
-                            HorizontalAlignment="Left"
-                            Toggled="OnPetShowCompletionsToggled" />
+                            <Grid ColumnSpacing="14" Visibility="{x:Bind WeChatSettings.IsBound, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="34" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE73E;" FontSize="28" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                    <TextBlock Text="微信小程序已绑定" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="可从微信查看设备、继续会话和处理交互请求。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <Button Grid.Column="2" VerticalAlignment="Center" Click="OnUnbindWeChatClicked" Content="解除绑定" IsEnabled="{x:Bind WeChatSettings.CanMutate, Mode=OneWay}" />
+                            </Grid>
+
+                            <Grid ColumnSpacing="16" Visibility="{x:Bind WeChatSettings.ShowUnbound, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="尚未绑定微信" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="小程序码两分钟内有效，并且只能使用一次。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                                <Button AutomationProperties.AutomationId="ChatOS.Settings.WeChatGenerateCode" AutomationProperties.Name="生成小程序码" Grid.Column="1" VerticalAlignment="Center" Click="OnGenerateWeChatTicketClicked" Content="生成小程序码" IsEnabled="{x:Bind WeChatSettings.CanMutate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </Grid>
+
+                            <Grid ColumnSpacing="24" Visibility="{x:Bind WeChatSettings.HasTicket, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Width="200" Height="200" Padding="8" Background="White" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="14">
+                                    <Image x:Name="WeChatQrImage" Stretch="Uniform" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="10">
+                                    <TextBlock Text="{x:Bind WeChatSettings.TicketHeading, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                    <TextBlock Text="{x:Bind WeChatSettings.TicketDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <TextBlock Text="{x:Bind WeChatSettings.ExpiryText, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Click="OnConfirmWeChatTicketClicked" Content="确认绑定" IsEnabled="{x:Bind WeChatSettings.CanConfirm, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" Visibility="{x:Bind WeChatSettings.CanConfirm, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Button Click="OnGenerateWeChatTicketClicked" Content="重新生成" IsEnabled="{x:Bind WeChatSettings.CanMutate, Mode=OneWay}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+
+                            <TextBlock Text="{x:Bind WeChatSettings.Notice, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" Visibility="{x:Bind WeChatSettings.Notice, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                            <TextBlock Text="{x:Bind WeChatSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" Visibility="{x:Bind WeChatSettings.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Margin="0,8,0,0" Spacing="3">
+                        <TextBlock Text="小程序登录设备" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="撤销丢失设备或不再使用的登录。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Border MinHeight="84" Style="{StaticResource ChatOSCardStyle}">
+                        <Grid>
+                            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="暂无小程序登录记录。" Style="{StaticResource ChatOSCaptionTextStyle}"
+                                Visibility="{x:Bind WeChatSettings.HasSessions, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                            <ItemsControl ItemsSource="{x:Bind WeChatSettings.Sessions, Mode=OneWay}"
+                                Visibility="{x:Bind WeChatSettings.HasSessions, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="settings:WeChatSessionItemViewModel">
+                                        <Grid Padding="0,9" ColumnSpacing="12">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <FontIcon Glyph="&#xE8EA;" FontSize="18" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                <TextBlock Text="{x:Bind Detail, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            </StackPanel>
+                                            <Button Grid.Column="2" VerticalAlignment="Center" Click="OnRevokeWeChatSessionClicked" Content="{x:Bind StatusLabel, Mode=OneWay}" Visibility="{x:Bind IsRevoked, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                            <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{x:Bind StatusLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind IsRevoked, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel x:Name="UtilitiesSettingsSection" Spacing="14" Visibility="Collapsed">
+                    <TextBlock Text="全局工具" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="24">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="启用全局快捷工具" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="关闭后会注销全部 ChatOS 全局快捷键，不再在后台响应这些组合键。" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="GlobalUtilitiesSwitch"
+                                AutomationProperties.AutomationId="ChatOS.Settings.GlobalUtilitiesEnabled"
+                                AutomationProperties.Name="启用全局快捷工具"
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Toggled="OnGlobalUtilitiesToggled" />
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Margin="2,10,0,0" Text="全局快捷键" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="0">
+                            <Grid Padding="0,5,0,12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <ToggleSwitch x:Name="GlobalScreenshotSwitch" AutomationProperties.AutomationId="ChatOS.Settings.GlobalScreenshot" AutomationProperties.Name="截图全局快捷键" VerticalAlignment="Center" Toggled="OnGlobalScreenshotToggled" />
+                                <FontIcon Grid.Column="1" Glyph="&#xE722;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                <StackPanel Grid.Column="2" Spacing="2"><TextBlock Text="截图" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="GlobalScreenshotStatus" Text="未注册" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                <Border Grid.Column="3" MinWidth="122" Padding="10,5" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="6"><TextBlock x:Name="GlobalScreenshotShortcut" HorizontalAlignment="Center" FontFamily="Consolas" Text="Ctrl+Shift+A" /></Border>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <ToggleSwitch x:Name="GlobalRecordingSwitch" AutomationProperties.AutomationId="ChatOS.Settings.GlobalRecording" AutomationProperties.Name="录屏全局快捷键" VerticalAlignment="Center" Toggled="OnGlobalRecordingToggled" />
+                                <FontIcon Grid.Column="1" Glyph="&#xE714;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                <StackPanel Grid.Column="2" Spacing="2"><TextBlock Text="录屏" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="GlobalRecordingStatus" Text="未注册" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                <Border Grid.Column="3" MinWidth="122" Padding="10,5" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="6"><TextBlock x:Name="GlobalRecordingShortcut" HorizontalAlignment="Center" FontFamily="Consolas" Text="Ctrl+Shift+Q" /></Border>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <ToggleSwitch x:Name="GlobalClipboardSwitch" AutomationProperties.AutomationId="ChatOS.Settings.GlobalClipboard" AutomationProperties.Name="剪贴板历史全局快捷键" VerticalAlignment="Center" Toggled="OnGlobalClipboardToggled" />
+                                <FontIcon Grid.Column="1" Glyph="&#xE8C8;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                <StackPanel Grid.Column="2" Spacing="2"><TextBlock Text="剪贴板历史" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="GlobalClipboardStatus" Text="未注册" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                <Border Grid.Column="3" MinWidth="122" Padding="10,5" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="6"><TextBlock x:Name="GlobalClipboardShortcut" HorizontalAlignment="Center" FontFamily="Consolas" Text="Ctrl+Shift+E" /></Border>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <ToggleSwitch x:Name="GlobalQuickSearchSwitch" AutomationProperties.AutomationId="ChatOS.Settings.GlobalQuickSearch" AutomationProperties.Name="快速搜索全局快捷键" VerticalAlignment="Center" Toggled="OnGlobalQuickSearchToggled" />
+                                <FontIcon Grid.Column="1" Glyph="&#xE721;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                                <StackPanel Grid.Column="2" Spacing="2"><TextBlock Text="快速搜索" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="GlobalQuickSearchStatus" Text="未注册" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
+                                <Border Grid.Column="3" MinWidth="122" Padding="10,5" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="6"><TextBlock x:Name="GlobalQuickSearchShortcut" HorizontalAlignment="Center" FontFamily="Consolas" Text="Ctrl+Space" /></Border>
+                            </Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Button Margin="0,12,0,0" HorizontalAlignment="Left" Click="OnRestoreGlobalUtilityDefaultsClicked" Content="恢复默认快捷键" />
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Margin="2,10,0,0" Text="隐私" Style="{StaticResource SettingsGroupTitleStyle}" />
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE72E;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="未经你明确点击，截图、录屏和剪贴板内容不会上传到 ChatOS 服务端；本地搜索结果也只在这台 Windows 设备上处理。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel x:Name="RuntimeSettingsSection" Spacing="14" Visibility="Collapsed">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="系统权限" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <TextBlock Text="每项能力都说明 Windows 上准确的执行目标和当前状态。" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" VerticalAlignment="Bottom" Click="OnRefreshRuntimePermissionsClicked" Content="重新检测" />
                     </Grid>
-                </Border>
+                    <Border Style="{StaticResource ChatOSCardStyle}">
+                        <StackPanel Spacing="0">
+                            <Grid Padding="0,11" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Border Width="28" Height="28" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8"><FontIcon Glyph="&#xE756;" FontSize="15" Foreground="{StaticResource ChatOSSuccessBrush}" /></Border><StackPanel Grid.Column="1" Spacing="3"><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="本机终端执行" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="RuntimeTerminalStatus" Text="检测中" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel><TextBlock Text="由 Windows 本机 Connector 启动进程，并受工作区边界与审批策略约束。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,11" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Border Width="28" Height="28" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="8"><FontIcon Glyph="&#xE7BA;" FontSize="15" Foreground="{StaticResource ChatOSAccentBrush}" /></Border><StackPanel Grid.Column="1" Spacing="3"><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="屏幕与系统录制" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="RuntimeCaptureStatus" Text="检测中" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel><TextBlock Text="授权目标是当前 ChatOS App；开始捕获时由 Windows 显示系统选择界面。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
+                            <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                            <Grid Padding="0,11" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="32" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Border Width="28" Height="28" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8"><FontIcon Glyph="&#xE72E;" FontSize="15" Foreground="{StaticResource ChatOSSuccessBrush}" /></Border><StackPanel Grid.Column="1" Spacing="3"><StackPanel Orientation="Horizontal" Spacing="8"><TextBlock Text="文件与网络边界" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock x:Name="RuntimeBoundaryStatus" Text="检测中" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel><TextBlock Text="由 AppContainer、工作区 ACL、进程树回收和可选的签名域名网络共同执行。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" /></StackPanel></Grid>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="Windows 下没有 macOS 的辅助功能与完全磁盘访问授权项；对应边界由本机沙箱、系统选择器和命令审批执行。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                </StackPanel>
 
-                <TextBlock Margin="0,8,0,0" Text="{x:Bind Connector.SectionLabel, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                <TextBlock x:Name="ConnectorSectionHeading" Margin="0,8,0,0" Text="连接状态" Style="{StaticResource SettingsGroupTitleStyle}" />
 
-                <Border Style="{StaticResource ChatOSCardStyle}">
+                <Border x:Name="ConnectorSectionCard" Style="{StaticResource ChatOSCardStyle}">
                     <StackPanel Spacing="16">
                         <Grid ColumnSpacing="12">
                             <Grid.ColumnDefinitions>
@@ -286,6 +600,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="160" />
@@ -299,8 +614,10 @@
                                 <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind Connector.DeviceNameLabel, Mode=OneWay}" />
                                 <TextBlock Grid.Row="3" Text="Device ID" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                 <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind Connector.DeviceIdLabel, Mode=OneWay}" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="4" Text="{x:Bind Connector.LastConnectionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind Connector.LastSeenLabel, Mode=OneWay}" />
+                                <TextBlock Grid.Row="4" Text="{x:Bind Connector.GatewayAddressLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind Connector.GatewayLabel, Mode=OneWay}" FontFamily="Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="5" Text="{x:Bind Connector.LastConnectionLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind Connector.LastSeenLabel, Mode=OneWay}" />
                             </Grid>
 
                             <StackPanel Spacing="6">
@@ -345,21 +662,57 @@
                     </StackPanel>
                 </Border>
 
-                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                <TextBlock
+                    x:Name="ConnectorBoundaryHeading"
+                    Margin="0,8,0,0"
+                    Text="本机边界"
+                    Style="{StaticResource SettingsGroupTitleStyle}"
+                    Visibility="{x:Bind Connector.IsPaired, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <Border
+                    x:Name="ConnectorBoundaryCard"
+                    Style="{StaticResource ChatOSCardStyle}"
+                    Visibility="{x:Bind Connector.IsPaired, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel Spacing="0">
+                        <Grid Padding="0,4,0,12" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE8B7;" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                            <TextBlock Grid.Column="1" Text="文件路由" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind Connector.PairedWorkspaceCountLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                        <Grid Padding="0,12" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE72E;" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                            <TextBlock Grid.Column="1" Text="权限控制" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <TextBlock Grid.Column="2" Text="由 Windows 本机 Connector 强制执行" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                        <Grid Padding="0,12" ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <FontIcon Glyph="&#xE950;" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                            <TextBlock Grid.Column="1" Text="运行方式" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <TextBlock Grid.Column="2" Text="原生 .NET 本机进程" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </Grid>
+                        <Border Height="1" Background="{StaticResource ChatOSBorderBrush}" />
+                        <TextBlock Margin="0,12,0,0" Text="云端请求必须先经过设备签名、工作区边界与命令审批；展示层不会直接访问文件或执行命令。" TextWrapping="Wrap" Style="{StaticResource SettingsRowDescriptionStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <Grid x:Name="SandboxSectionHeading" Margin="0,8,0,0" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
-                        <TextBlock Text="{x:Bind Localization.Sandbox, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                        <TextBlock Text="{x:Bind SandboxSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="默认任务权限" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="新任务在没有项目级覆盖时使用这套 Windows 本机策略。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
                     </StackPanel>
                     <ProgressRing Grid.Column="1" Width="20" Height="20" VerticalAlignment="Bottom" IsActive="{x:Bind SandboxSettings.IsBusy, Mode=OneWay}" />
                     <Button AutomationProperties.AutomationId="ChatOS.Settings.SandboxSave" Grid.Column="2" VerticalAlignment="Bottom" Click="OnSaveSandboxClicked" Content="{x:Bind Localization.SaveSettings, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                 </Grid>
 
-                <Border Style="{StaticResource ChatOSCardStyle}">
+                <Border x:Name="SandboxSectionCard" Style="{StaticResource ChatOSCardStyle}">
                     <Grid RowSpacing="15" ColumnSpacing="24">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -430,35 +783,66 @@
                     </Grid>
                 </Border>
 
-                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                <TextBlock x:Name="SandboxBackendHeading" Margin="0,8,0,0" Text="运行后端" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                <Border x:Name="SandboxBackendCard" Style="{StaticResource ChatOSCardStyle}">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="32" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="28" Height="28" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8">
+                            <FontIcon Glyph="&#xE950;" FontSize="15" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="7">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <TextBlock Text="Windows 本机进程" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="ready" FontFamily="Cascadia Mono, Consolas" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <TextBlock Text="{x:Bind SandboxSettings.BackendDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Border Padding="7,3" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8" Visibility="{x:Bind SandboxSettings.IsFilesystemIsolated, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="✓ 文件隔离" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                <Border Padding="7,3" Background="{StaticResource ChatOSWarningSoftBrush}" CornerRadius="8" Visibility="{x:Bind SandboxSettings.IsFilesystemIsolated, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}"><TextBlock Text="— 文件隔离" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                <Border Padding="7,3" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8" Visibility="{x:Bind SandboxSettings.IsNetworkIsolated, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}"><TextBlock Text="✓ 网络隔离" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                <Border Padding="7,3" Background="{StaticResource ChatOSWarningSoftBrush}" CornerRadius="8" Visibility="{x:Bind SandboxSettings.IsNetworkIsolated, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}"><TextBlock Text="— 网络隔离" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                                <Border Padding="7,3" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="8"><TextBlock Text="✓ 进程树控制" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" /></Border>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="3">
+                            <TextBlock HorizontalAlignment="Right" Text="当前 Profile" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <TextBlock HorizontalAlignment="Right" Text="{x:Bind SandboxSettings.CurrentProfileLabel, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="ModelsSectionHeading" Margin="0,8,0,0" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
-                        <TextBlock Text="{x:Bind Localization.Models, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="统一模型配置" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                         <TextBlock Text="{x:Bind ModelSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
                     </StackPanel>
                     <Button Grid.Column="1" VerticalAlignment="Bottom" Click="OnRefreshModelsClicked" Content="{x:Bind Localization.SyncModels, Mode=OneWay}" />
                     <Button Grid.Column="2" VerticalAlignment="Bottom" Click="OnSaveModelsClicked" Content="{x:Bind Localization.SaveSettings, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                 </Grid>
 
-                <Border Style="{StaticResource ChatOSCardStyle}">
-                    <Grid RowSpacing="16" ColumnSpacing="24">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="220" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock VerticalAlignment="Center" Text="{x:Bind Localization.LocalApprovalModel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <StackPanel Grid.Column="1" HorizontalAlignment="Left" Orientation="Horizontal" Spacing="8">
+                <Border x:Name="ModelsSectionCard" Style="{StaticResource ChatOSCardStyle}">
+                    <StackPanel Spacing="18">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="本机自动审批模型" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                            <TextBlock Text="在本机只保存模型选择；审批仍受设备、工作区和权限策略约束。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
                             <ComboBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.ModelPicker"
+                                AutomationProperties.Name="本机自动审批模型"
                                 MinWidth="360"
                                 ItemsSource="{x:Bind ModelSettings.AvailableModels}"
                                 SelectedItem="{x:Bind ModelSettings.SelectedApprovalModel, Mode=TwoWay}"
@@ -472,42 +856,55 @@
                                     </DataTemplate>
                                 </ComboBox.ItemTemplate>
                             </ComboBox>
-                            <Button Click="OnClearApprovalModelClicked" Content="{x:Bind Localization.ClearSelection, Mode=OneWay}" />
-                        </StackPanel>
-
-                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="{x:Bind Localization.ModelRequestRetries, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                        <NumberBox
-                            Grid.Row="1"
-                            Grid.Column="1"
-                            Width="130"
-                            HorizontalAlignment="Left"
-                            Minimum="0"
-                            Maximum="10"
-                            SpinButtonPlacementMode="Inline"
-                            Value="{x:Bind ModelSettings.ModelRequestMaxRetries, Mode=OneWay}"
-                            ValueChanged="OnModelRetriesChanged" />
-                        <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{x:Bind ModelSettings.ReviewerHint, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
-                        <Grid Grid.Row="3" Grid.ColumnSpan="2">
-                            <ProgressRing Width="20" Height="20" HorizontalAlignment="Left" IsActive="{x:Bind ModelSettings.IsBusy, Mode=OneWay}" />
-                            <TextBlock Text="{x:Bind ModelSettings.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                            <TextBlock Text="{x:Bind ModelSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            <Button Grid.Column="1" Click="OnClearApprovalModelClicked" Content="{x:Bind Localization.ClearSelection, Mode=OneWay}" />
                         </Grid>
-                    </Grid>
+
+                        <Rectangle Height="1" Fill="{StaticResource ChatOSBorderBrush}" />
+                        <Grid ColumnSpacing="18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind Localization.ModelRequestRetries, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="网络波动、限流或上游暂时不可用时的最大重试次数。" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <NumberBox
+                                Grid.Column="1"
+                                AutomationProperties.Name="模型请求最大重试次数"
+                                Width="130"
+                                Minimum="0"
+                                Maximum="10"
+                                SpinButtonPlacementMode="Inline"
+                                Value="{x:Bind ModelSettings.ModelRequestMaxRetries, Mode=OneWay}"
+                                ValueChanged="OnModelRetriesChanged" />
+                        </Grid>
+
+                        <Border Padding="12" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="配置状态" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="{x:Bind ModelSettings.ReviewerHint, Mode=OneWay}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                                <ProgressRing Width="20" Height="20" HorizontalAlignment="Left" IsActive="{x:Bind ModelSettings.IsBusy, Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind ModelSettings.ActionMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ModelSettings.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                <TextBlock Text="{x:Bind ModelSettings.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" Visibility="{x:Bind ModelSettings.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                 </Border>
 
-                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                <Grid x:Name="ApprovalSectionHeading" Margin="0,8,0,0" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
-                        <TextBlock Text="{x:Bind Localization.Approval, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                        <TextBlock Text="默认审批级别" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                         <TextBlock Text="{x:Bind ApprovalSettings.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
                     </StackPanel>
                     <ProgressRing Grid.Column="1" Width="20" Height="20" VerticalAlignment="Bottom" IsActive="{x:Bind ApprovalSettings.IsBusy, Mode=OneWay}" />
                 </Grid>
 
-                <Border Style="{StaticResource ChatOSCardStyle}">
+                <Border x:Name="ApprovalSectionCard" Style="{StaticResource ChatOSCardStyle}">
                     <StackPanel Spacing="14">
                         <Grid ColumnSpacing="18">
                             <Grid.ColumnDefinitions>
@@ -535,6 +932,20 @@
                             Style="{StaticResource ChatOSCaptionTextStyle}"
                             TextWrapping="Wrap"
                             Visibility="{x:Bind ApprovalSettings.AutomaticReviewerStatus, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <StackPanel Spacing="6"
+                            AutomationProperties.AutomationId="ChatOS.Settings.ApprovalReviewerReadinessError"
+                            Visibility="{x:Bind ApprovalSettings.HasReviewerReadinessError, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="{x:Bind ApprovalSettings.ReviewerReadinessErrorDescription, Mode=OneWay}"
+                                Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind ApprovalSettings.ReviewerReadinessErrorMessage, Mode=OneWay}"
+                                Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            <Button HorizontalAlignment="Left"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalReviewerReadinessRetry"
+                                IsEnabled="{x:Bind ApprovalSettings.CanRetryReviewerReadiness, Mode=OneWay}"
+                                Click="OnRetryApprovalReviewerReadinessClicked"
+                                Content="{x:Bind ApprovalSettings.RetryReviewerReadinessLabel, Mode=OneWay}"
+                                Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                        </StackPanel>
                         <TextBlock
                             Text="{x:Bind ApprovalSettings.ActionMessage, Mode=OneWay}"
                             Foreground="{StaticResource ChatOSSuccessBrush}"
@@ -549,62 +960,144 @@
                     </StackPanel>
                 </Border>
 
-                <Expander Header="{x:Bind Localization.PendingApprovals, Mode=OneWay}" IsExpanded="True">
-                    <ItemsControl ItemsSource="{x:Bind ApprovalSettings.Pending}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="settings:ApprovalPendingItemViewModel">
-                                <Border Margin="0,0,0,8" Style="{StaticResource ChatOSCardStyle}">
-                                    <StackPanel Spacing="9">
-                                        <Grid ColumnSpacing="8">
+                <StackPanel x:Name="PendingApprovalsSection" Margin="0,8,0,0" Spacing="8">
+                    <TextBlock Text="{x:Bind Localization.PendingApprovals, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                    <Border MinHeight="112" Style="{StaticResource ChatOSCardStyle}">
+                        <Grid>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
+                                Visibility="{x:Bind ApprovalSettings.HasPending, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE823;" FontSize="20" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                <TextBlock HorizontalAlignment="Center" Text="{x:Bind ApprovalSettings.NoPendingLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock HorizontalAlignment="Center" Text="{x:Bind ApprovalSettings.NoPendingDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ItemsControl ItemsSource="{x:Bind ApprovalSettings.Pending}"
+                                Visibility="{x:Bind ApprovalSettings.HasPending, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="settings:ApprovalPendingItemViewModel">
+                                        <Border Margin="0,0,0,8" Padding="12" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                                            <StackPanel Spacing="9">
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{x:Bind RiskLabel}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind Source}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Grid.Column="2" Text="{x:Bind CreatedLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </Grid>
+                                                <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                                <TextBlock Text="{x:Bind WorkingDirectory}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{x:Bind Reason}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
+                                                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
+                                                    <Button Click="OnDeclinePendingApproval" Content="{x:Bind DeclineLabel}" />
+                                                    <Button Click="OnAcceptPendingApproval" Content="{x:Bind AcceptLabel}" />
+                                                    <Button Click="OnAcceptSessionPendingApproval" Content="{x:Bind AcceptForSessionLabel}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel x:Name="ApprovalHistorySection" Margin="0,8,0,0" Spacing="8">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="{x:Bind Localization.ApprovalHistory, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
+                            <TextBlock Text="{x:Bind ApprovalSettings.HistoryScopeLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="1" VerticalAlignment="Bottom"
+                            AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistoryRefresh"
+                            IsEnabled="{x:Bind ApprovalSettings.CanRefreshHistory, Mode=OneWay}"
+                            Click="OnRefreshApprovalHistoryClicked"
+                            AutomationProperties.Name="{x:Bind Localization.Refresh, Mode=OneWay}"
+                            Style="{StaticResource ChatOSSecondaryButtonStyle}">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <ProgressRing Width="14" Height="14" IsActive="{x:Bind ApprovalSettings.IsHistoryRefreshing, Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind Localization.Refresh, Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <StackPanel Spacing="3"
+                        AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistorySyncError"
+                        Visibility="{x:Bind ApprovalSettings.HasHistorySyncError, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <TextBlock Text="{x:Bind ApprovalSettings.HistorySyncErrorDescription, Mode=OneWay}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        <TextBlock Text="{x:Bind ApprovalSettings.HistorySyncErrorMessage, Mode=OneWay}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Border MinHeight="88" Style="{StaticResource ChatOSCardStyle}">
+                        <Grid>
+                            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Text="{x:Bind ApprovalSettings.NoHistoryLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}"
+                                Visibility="{x:Bind ApprovalSettings.HasHistory, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                            <ItemsControl ItemsSource="{x:Bind ApprovalSettings.History}"
+                                Visibility="{x:Bind ApprovalSettings.HasHistory, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="settings:ApprovalHistoryItemViewModel">
+                                        <Grid Padding="4,10" ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Text="{x:Bind RiskLabel}" Foreground="{StaticResource ChatOSWarningBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                            <TextBlock Grid.Column="1" Text="{x:Bind Source}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock Text="{x:Bind DecisionLabel}" Foreground="{StaticResource ChatOSAccentBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                            <StackPanel Grid.Column="1" Spacing="3">
+                                                <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}">
+                                                    <Run Text="{x:Bind Source}" /><Run Text=" · " /><Run Text="{x:Bind ReviewerLabel}" /><Run Text=" · " /><Run Text="{x:Bind Reason}" />
+                                                </TextBlock>
+                                            </StackPanel>
                                             <TextBlock Grid.Column="2" Text="{x:Bind CreatedLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </Grid>
-                                        <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
-                                        <TextBlock Text="{x:Bind WorkingDirectory}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{x:Bind Reason}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" TextWrapping="Wrap" />
-                                        <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="8">
-                                            <Button Click="OnDeclinePendingApproval" Content="{x:Bind DeclineLabel}" />
-                                            <Button Click="OnAcceptPendingApproval" Content="{x:Bind AcceptLabel}" />
-                                            <Button Click="OnAcceptSessionPendingApproval" Content="{x:Bind AcceptForSessionLabel}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-                                        </StackPanel>
-                                    </StackPanel>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </Expander>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </Grid>
+                    </Border>
+                    <StackPanel Spacing="8"
+                        Visibility="{x:Bind ApprovalSettings.HasHistoryPagination, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind ApprovalSettings.HistoryRangeLabel, Mode=OneWay}"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistoryRange"
+                                Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <ComboBox Grid.Column="1" MinWidth="120"
+                                Header="{x:Bind ApprovalSettings.HistoryPageSizeLabel, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind ApprovalSettings.HistoryPageSizeLabel, Mode=OneWay}"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistoryPageSize"
+                                ItemsSource="{x:Bind ApprovalSettings.HistoryPageSizeOptions}"
+                                SelectedItem="{x:Bind ApprovalSettings.HistoryPageSize, Mode=TwoWay}" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                            <Button Command="{x:Bind ApprovalSettings.PreviousHistoryPageCommand}"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistoryPrevious"
+                                Content="{x:Bind ApprovalSettings.PreviousHistoryPageLabel, Mode=OneWay}"
+                                Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                            <TextBlock VerticalAlignment="Center" Text="{x:Bind ApprovalSettings.HistoryPageLabel, Mode=OneWay}"
+                                Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <Button Command="{x:Bind ApprovalSettings.NextHistoryPageCommand}"
+                                AutomationProperties.AutomationId="ChatOS.Settings.ApprovalHistoryNext"
+                                Content="{x:Bind ApprovalSettings.NextHistoryPageLabel, Mode=OneWay}"
+                                Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
 
-                <Expander Header="{x:Bind Localization.ApprovalHistory, Mode=OneWay}">
-                    <ItemsControl ItemsSource="{x:Bind ApprovalSettings.History}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="settings:ApprovalHistoryItemViewModel">
-                                <Grid Padding="4,8" ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{x:Bind DecisionLabel}" Foreground="{StaticResource ChatOSAccentBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                                    <StackPanel Grid.Column="1" Spacing="3">
-                                        <TextBlock Text="{x:Bind Command}" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Style="{StaticResource ChatOSCaptionTextStyle}">
-                                            <Run Text="{x:Bind Source}" /><Run Text=" · " /><Run Text="{x:Bind ReviewerLabel}" /><Run Text=" · " /><Run Text="{x:Bind Reason}" />
-                                        </TextBlock>
-                                    </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="{x:Bind CreatedLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </Expander>
-
-                <Grid Margin="0,8,0,0" ColumnSpacing="12">
+                <Grid x:Name="PluginsSectionHeading" Margin="0,8,0,0" ColumnSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -624,22 +1117,236 @@
                             <TextBlock Text="{x:Bind PluginSettings.RefreshLabel, Mode=OneWay}" />
                         </StackPanel>
                     </Button>
+                    <Border Grid.Row="1" Grid.ColumnSpan="2" Margin="0,12,0,0" Style="{StaticResource ChatOSCardStyle}">
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.PluginSearch"
+                                Header="查找 Plugin"
+                                PlaceholderText="{x:Bind PluginSettings.SearchPlaceholder, Mode=OneWay}"
+                                Text="{x:Bind PluginSettings.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Grid.Column="1" Margin="0,24,0,0" VerticalAlignment="Center" Text="{x:Bind PluginSettings.ResultsLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </Grid>
+                    </Border>
                 </Grid>
 
-                <TextBlock
+                <Border x:Name="CustomPluginInstallerCard" Style="{StaticResource ChatOSCardStyle}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Spacing="3">
+                            <TextBlock Text="{x:Bind CustomPluginInstaller.SectionTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                            <TextBlock Text="{x:Bind CustomPluginInstaller.SectionDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <ToggleSwitch
+                            AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmMode"
+                            Header="{x:Bind CustomPluginInstaller.NpmModeLabel, Mode=OneWay}"
+                            IsOn="{x:Bind CustomPluginInstaller.UseNpmPackage, Mode=TwoWay}" />
+                        <ToggleSwitch
+                            AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginGitMode"
+                            Header="{x:Bind CustomPluginInstaller.GitModeLabel, Mode=OneWay}"
+                            IsOn="{x:Bind CustomPluginInstaller.UseGitRepository, Mode=TwoWay}" />
+                        <Grid
+                            ColumnSpacing="10"
+                            RowSpacing="8"
+                            Visibility="{x:Bind CustomPluginInstaller.IsGitSource, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginGitUrl"
+                                Header="{x:Bind CustomPluginInstaller.GitRepositoryHeader, Mode=OneWay}"
+                                PlaceholderText="https://github.com/owner/plugin.git"
+                                Text="{x:Bind CustomPluginInstaller.GitRepositoryUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginGitReference"
+                                Grid.Column="1"
+                                Header="{x:Bind CustomPluginInstaller.GitReferenceHeader, Mode=OneWay}"
+                                PlaceholderText="refs/tags/v1.0.0"
+                                Text="{x:Bind CustomPluginInstaller.GitReference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginGitSubdirectory"
+                                Grid.Column="2"
+                                Header="{x:Bind CustomPluginInstaller.GitSubdirectoryHeader, Mode=OneWay}"
+                                PlaceholderText="plugins/example"
+                                Text="{x:Bind CustomPluginInstaller.GitSubdirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginGitInspect"
+                                Grid.Column="3"
+                                Margin="0,24,0,0"
+                                Click="OnInspectCustomPluginClicked"
+                                Content="{x:Bind CustomPluginInstaller.InspectLabel, Mode=OneWay}"
+                                IsEnabled="{x:Bind CustomPluginInstaller.CanInspect, Mode=OneWay}"
+                                Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                        </Grid>
+                        <Grid
+                            ColumnSpacing="10"
+                            Visibility="{x:Bind CustomPluginInstaller.IsLocalSource, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginSourcePath"
+                                Header="{x:Bind CustomPluginInstaller.SourceHeader, Mode=OneWay}"
+                                PlaceholderText="{x:Bind CustomPluginInstaller.SourcePlaceholder, Mode=OneWay}"
+                                Text="{x:Bind CustomPluginInstaller.SourcePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginChooseFolder"
+                                Grid.Column="1"
+                                Margin="0,24,0,0"
+                                Click="OnChooseCustomPluginFolderClicked"
+                                Content="{x:Bind CustomPluginInstaller.ChooseFolderLabel, Mode=OneWay}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginInspect"
+                                Grid.Column="2"
+                                Margin="0,24,0,0"
+                                Click="OnInspectCustomPluginClicked"
+                                Content="{x:Bind CustomPluginInstaller.InspectLabel, Mode=OneWay}"
+                                IsEnabled="{x:Bind CustomPluginInstaller.CanInspect, Mode=OneWay}"
+                                Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                        </Grid>
+                        <Grid
+                            ColumnSpacing="10"
+                            RowSpacing="8"
+                            Visibility="{x:Bind CustomPluginInstaller.IsNpmSource, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmPackage"
+                                Header="{x:Bind CustomPluginInstaller.NpmPackageNameHeader, Mode=OneWay}"
+                                PlaceholderText="rea-agents"
+                                Text="{x:Bind CustomPluginInstaller.NpmPackageName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmVersion"
+                                Grid.Column="1"
+                                Header="{x:Bind CustomPluginInstaller.NpmVersionHeader, Mode=OneWay}"
+                                PlaceholderText="6.5.0"
+                                Text="{x:Bind CustomPluginInstaller.NpmPackageVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmBinary"
+                                Grid.Column="2"
+                                Header="{x:Bind CustomPluginInstaller.NpmBinaryHeader, Mode=OneWay}"
+                                PlaceholderText="rea"
+                                Text="{x:Bind CustomPluginInstaller.NpmBinaryName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmComponent"
+                                Grid.Row="1"
+                                Header="{x:Bind CustomPluginInstaller.NpmComponentHeader, Mode=OneWay}"
+                                PlaceholderText="reverse-engineer-anything"
+                                Text="{x:Bind CustomPluginInstaller.NpmComponentKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmDisplayName"
+                                Grid.Row="1"
+                                Grid.Column="1"
+                                Header="{x:Bind CustomPluginInstaller.NpmDisplayNameHeader, Mode=OneWay}"
+                                PlaceholderText="REA"
+                                Text="{x:Bind CustomPluginInstaller.NpmDisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmArguments"
+                                Grid.Row="1"
+                                Grid.Column="2"
+                                Header="{x:Bind CustomPluginInstaller.NpmArgumentsHeader, Mode=OneWay}"
+                                PlaceholderText="[&quot;mcp&quot;]"
+                                Text="{x:Bind CustomPluginInstaller.NpmArgumentsJson, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmDescription"
+                                Grid.Row="2"
+                                Grid.ColumnSpan="2"
+                                Header="{x:Bind CustomPluginInstaller.NpmDescriptionHeader, Mode=OneWay}"
+                                Text="{x:Bind CustomPluginInstaller.NpmDescription, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginNpmInspect"
+                                Grid.Row="2"
+                                Grid.Column="2"
+                                Margin="0,24,0,0"
+                                HorizontalAlignment="Right"
+                                Click="OnInspectCustomPluginClicked"
+                                Content="{x:Bind CustomPluginInstaller.InspectLabel, Mode=OneWay}"
+                                IsEnabled="{x:Bind CustomPluginInstaller.CanInspect, Mode=OneWay}"
+                                Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                        </Grid>
+                        <TextBlock
+                            Foreground="{StaticResource ChatOSSecondaryTextBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            Text="{x:Bind CustomPluginInstaller.SafetyLabel, Mode=OneWay}"
+                            TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind CustomPluginInstaller.IsBusy, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <ProgressRing Width="16" Height="16" IsActive="{x:Bind CustomPluginInstaller.IsBusy, Mode=OneWay}" />
+                            <TextBlock Text="{x:Bind CustomPluginInstaller.BusyLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </StackPanel>
+                        <TextBlock
+                            Foreground="{StaticResource ChatOSFailureBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            Text="{x:Bind CustomPluginInstaller.ErrorMessage, Mode=OneWay}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind CustomPluginInstaller.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <TextBlock
+                            Foreground="{StaticResource ChatOSSuccessBrush}"
+                            Style="{StaticResource ChatOSCaptionTextStyle}"
+                            Text="{x:Bind CustomPluginInstaller.ActionMessage, Mode=OneWay}"
+                            TextWrapping="Wrap"
+                            Visibility="{x:Bind CustomPluginInstaller.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                        <Border
+                            Padding="12"
+                            Background="{StaticResource ChatOSProcessBackgroundBrush}"
+                            CornerRadius="8"
+                            Visibility="{x:Bind CustomPluginInstaller.HasInspection, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="{x:Bind CustomPluginInstaller.InspectionPassedLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind CustomPluginInstaller.InspectionTitle, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind CustomPluginInstaller.InspectionSource, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind CustomPluginInstaller.InspectionComponents, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind CustomPluginInstaller.InspectionFingerprint, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button
+                                    AutomationProperties.AutomationId="ChatOS.Settings.CustomPluginInstall"
+                                    Grid.Column="1"
+                                    VerticalAlignment="Bottom"
+                                    Click="OnInstallCustomPluginClicked"
+                                    Content="{x:Bind CustomPluginInstaller.InstallLabel, Mode=OneWay}"
+                                    IsEnabled="{x:Bind CustomPluginInstaller.CanInstall, Mode=OneWay}"
+                                    Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="PluginActionMessage"
                     Text="{x:Bind PluginSettings.ActionMessage, Mode=OneWay}"
                     Foreground="{StaticResource ChatOSSuccessBrush}"
                     Style="{StaticResource ChatOSCaptionTextStyle}"
                     TextWrapping="Wrap"
                     Visibility="{x:Bind PluginSettings.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
-                <TextBlock
+                <TextBlock x:Name="PluginErrorMessage"
                     Text="{x:Bind PluginSettings.ErrorMessage, Mode=OneWay}"
                     Foreground="{StaticResource ChatOSFailureBrush}"
                     Style="{StaticResource ChatOSCaptionTextStyle}"
                     TextWrapping="Wrap"
                     Visibility="{x:Bind PluginSettings.ErrorMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
 
-                <ItemsControl ItemsSource="{x:Bind PluginSettings.Plugins, Mode=OneWay}">
+                <TextBlock x:Name="PluginEmptyMessage" HorizontalAlignment="Center" Margin="0,28" Text="{x:Bind PluginSettings.EmptySearchLabel, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}"
+                    Visibility="{x:Bind PluginSettings.HasFilteredPlugins, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+
+                <ItemsControl x:Name="PluginsSectionList" ItemsSource="{x:Bind PluginSettings.FilteredPlugins, Mode=OneWay}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="settings:PluginSettingsItem">
                             <Border Margin="0,0,0,12" Style="{StaticResource ChatOSCardStyle}">
@@ -655,6 +1362,9 @@
                                             <StackPanel Orientation="Horizontal" Spacing="8">
                                                 <TextBlock Text="{x:Bind DisplayName}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                                                 <TextBlock Text="{x:Bind InstallationStatus, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" VerticalAlignment="Center" />
+                                                <Border Padding="7,2" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                                                    <TextBlock Text="{x:Bind Category}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </Border>
                                             </StackPanel>
                                             <TextBlock Text="{x:Bind Publisher}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
@@ -773,6 +1483,7 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </StackPanel>
-        </ScrollViewer>
+            </ScrollViewer>
+        </Grid>
     </Grid>
 </UserControl>

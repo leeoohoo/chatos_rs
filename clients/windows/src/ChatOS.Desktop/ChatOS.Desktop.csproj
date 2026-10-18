@@ -30,6 +30,9 @@
     <Content Update="Assets\Pets\fengtuan\frames\*.png"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="chatos.runtime.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LocalAgentHostExecutable)"
              Condition="'$(LocalAgentHostExecutable)' != '' and Exists('$(LocalAgentHostExecutable)')"
              Link="chatos_local_agent_host.exe"

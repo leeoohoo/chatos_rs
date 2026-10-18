@@ -224,9 +224,12 @@ internal sealed class WindowsPluginProcessLauncher : IPluginProcessLauncher
                 process,
                 job,
                 sandbox,
-                new FileStream(inputWrite, FileAccess.Write, 16 * 1024, isAsync: true),
-                new FileStream(outputRead, FileAccess.Read, 16 * 1024, isAsync: true),
-                new FileStream(errorRead, FileAccess.Read, 16 * 1024, isAsync: true));
+                // CreatePipe returns synchronous handles. FileStream still supports the
+                // async APIs over them, but declaring them as overlapped handles causes the
+                // constructor to reject the real AppContainer transport on Windows.
+                new FileStream(inputWrite, FileAccess.Write, 16 * 1024, isAsync: false),
+                new FileStream(outputRead, FileAccess.Read, 16 * 1024, isAsync: false),
+                new FileStream(errorRead, FileAccess.Read, 16 * 1024, isAsync: false));
             job = null;
             sandbox = null;
             inputWrite = null;

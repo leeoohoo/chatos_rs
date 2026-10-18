@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using ChatOS.Connector.Connection;
 using ChatOS.Connector.Security;
@@ -93,6 +95,39 @@ public sealed class ConnectorDeviceIdentityTests
         Assert.True(monitor.CompleteHeartbeat(connectedAt.AddSeconds(6)));
     }
 
+    [Fact]
+    public async Task HandshakePreservesAndExplainsAnAlreadyActiveConnectorConflict()
+    {
+        using var handler = new ConnectorHandshakeResponseHandler(new StubHttpHandler(
+            HttpStatusCode.Conflict,
+            """
+            {"error":"another Local Connector client is already active for this user","code":"connector_already_active"}
+            """));
+        using var client = new HttpMessageInvoker(handler);
+
+        var error = await Assert.ThrowsAsync<ConnectorHandshakeException>(() =>
+            client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://gateway.example"), default));
+
+        Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
+        Assert.Equal("connector_already_active", error.Code);
+        Assert.Contains("另一个 Local Connector 客户端在线", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandshakeIncludesServerErrorWhenTheCodeIsUnknown()
+    {
+        using var handler = new ConnectorHandshakeResponseHandler(new StubHttpHandler(
+            HttpStatusCode.Unauthorized,
+            """{"error":"device signature is invalid","code":"signature_invalid"}"""));
+        using var client = new HttpMessageInvoker(handler);
+
+        var error = await Assert.ThrowsAsync<ConnectorHandshakeException>(() =>
+            client.SendAsync(new HttpRequestMessage(HttpMethod.Get, "https://gateway.example"), default));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
+        Assert.Contains("device signature is invalid", error.Message, StringComparison.Ordinal);
+    }
+
     private static bool Verify(string publicKey, byte[] payload, string signature)
     {
         var key = new Ed25519PublicKeyParameters(Decode(publicKey["ed25519:".Length..]));
@@ -136,5 +171,16 @@ public sealed class ConnectorDeviceIdentityTests
     private sealed class FixedTimeProvider(DateTimeOffset value) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => value;
+    }
+
+    private sealed class StubHttpHandler(HttpStatusCode statusCode, string payload)
+        : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+        });
     }
 }

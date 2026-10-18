@@ -65,6 +65,55 @@ public sealed class ProjectRunViewModelTests
     }
 
     [Fact]
+    public async Task RunLogExpansionSurvivesAnAuthoritativeRefresh()
+    {
+        var service = new RunServiceDouble();
+        using var viewModel = new ProjectRunViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("project-1"));
+        var instance = Assert.Single(viewModel.Instances);
+        instance.ToggleExpandedCommand.Execute(null);
+
+        await viewModel.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Same(instance, Assert.Single(viewModel.Instances));
+        Assert.True(instance.IsExpanded);
+    }
+
+    [Fact]
+    public async Task AdvancedEnvironmentEditorStartsCollapsedAndCanBeExpanded()
+    {
+        var service = new RunServiceDouble();
+        using var viewModel = new ProjectRunViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("project-1"));
+
+        Assert.False(viewModel.IsEnvironmentAdvancedExpanded);
+        Assert.False(viewModel.IsEnvironmentReady);
+
+        viewModel.ToggleEnvironmentAdvancedCommand.Execute(null);
+
+        Assert.True(viewModel.IsEnvironmentAdvancedExpanded);
+    }
+
+    [Fact]
+    public async Task StartIsBlockedWhileRunPageIsLoadingOrAnInstanceIsBusy()
+    {
+        var service = new RunServiceDouble { EnvironmentHasIssue = false };
+        using var viewModel = new ProjectRunViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync(Project("project-1"));
+
+        Assert.True(viewModel.CanStart);
+
+        viewModel.IsLoading = true;
+        Assert.False(viewModel.CanStart);
+        Assert.False(viewModel.CanMutate);
+
+        viewModel.IsLoading = false;
+        viewModel.IsBusy = true;
+        Assert.False(viewModel.CanStart);
+        Assert.True(viewModel.CanMutate);
+    }
+
+    [Fact]
     public async Task OlderProjectLoadCannotOverwriteNewProject()
     {
         var service = new DelayedProjectRunService();

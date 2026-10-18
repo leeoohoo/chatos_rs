@@ -35,6 +35,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
         ValidationIssues.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(HasValidationIssues));
+            OnPropertyChanged(nameof(IsEnvironmentReady));
             OnPropertyChanged(nameof(CanStart));
         };
         Toolchains.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasToolchains));
@@ -44,7 +45,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<ProjectRunTarget> Targets { get; } = [];
 
-    public ObservableCollection<ProjectRunInstance> Instances { get; } = [];
+    public ObservableCollection<ProjectRunInstanceItemViewModel> Instances { get; } = [];
 
     public ObservableCollection<ProjectRunValidationIssue> ValidationIssues { get; } = [];
 
@@ -66,13 +67,24 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
 
     public bool HasConfigurationFiles => ConfigurationFiles.Count > 0;
 
-    public bool CanStart => SelectedTarget is not null && !HasValidationIssues && !IsMutating;
+    public bool CanStart => SelectedTarget is not null &&
+        !HasValidationIssues &&
+        !IsMutating &&
+        !IsLoading &&
+        !IsBusy;
 
-    public bool CanMutate => !IsMutating;
+    // IsBusy describes a running instance; Stop/Delete must remain available
+    // while that instance is active, so it is intentionally not a mutation gate.
+    public bool CanMutate => !IsMutating && !IsLoading;
+
+    public bool IsEnvironmentReady => !HasValidationIssues;
 
     public string RunStatusLabel => LocalizeStatus(RunStatus);
 
+    public bool IsOpen => !string.IsNullOrWhiteSpace(ProjectId);
+
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOpen))]
     private string? _projectId;
 
     [ObservableProperty]
@@ -88,9 +100,12 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
     private bool _isRunning;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
     private bool _isBusy;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanStart))]
+    [NotifyPropertyChangedFor(nameof(CanMutate))]
     private bool _isLoading;
 
     [ObservableProperty]
@@ -104,6 +119,9 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private bool _terminalUiEnabled;
+
+    [ObservableProperty]
+    private bool _isEnvironmentAdvancedExpanded;
 
     [ObservableProperty]
     private string? _catalogErrorMessage;
@@ -302,6 +320,10 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
         EnvironmentVariables.Add(new ProjectRunEnvironmentVariableViewModel());
 
     [RelayCommand]
+    private void ToggleEnvironmentAdvanced() =>
+        IsEnvironmentAdvancedExpanded = !IsEnvironmentAdvancedExpanded;
+
+    [RelayCommand]
     private void RemoveEnvironmentVariable(ProjectRunEnvironmentVariableViewModel? variable)
     {
         if (variable is not null)
@@ -314,7 +336,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
     private async Task StartAsync()
     {
         var targetId = SelectedTarget?.Id;
-        if (targetId is null || HasValidationIssues ||
+        if (!CanStart || targetId is null || HasValidationIssues ||
             !TryBeginMutation(out var projectId, out var session, out var mutation, out var token))
         {
             return;
@@ -341,7 +363,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task StopAsync(ProjectRunInstance? instance)
+    private async Task StopAsync(ProjectRunInstanceItemViewModel? instance)
     {
         var instanceId = instance?.Id;
         if (instanceId is null ||
@@ -371,7 +393,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task DeleteInstanceAsync(ProjectRunInstance? instance)
+    private async Task DeleteInstanceAsync(ProjectRunInstanceItemViewModel? instance)
     {
         var instanceId = instance?.Id;
         if (instanceId is null ||
@@ -644,10 +666,25 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
         RunStatus = state.Status;
         IsBusy = state.IsBusy;
         IsRunning = state.IsRunning;
-        Instances.Clear();
+        var existing = Instances.ToDictionary(static value => value.Id, StringComparer.Ordinal);
+        var next = new List<ProjectRunInstanceItemViewModel>(state.Instances.Count);
         foreach (var instance in state.Instances)
         {
-            Instances.Add(instance);
+            if (existing.TryGetValue(instance.Id, out var item))
+            {
+                item.Update(instance);
+                next.Add(item);
+            }
+            else
+            {
+                next.Add(new ProjectRunInstanceItemViewModel(instance));
+            }
+        }
+
+        Instances.Clear();
+        foreach (var item in next)
+        {
+            Instances.Add(item);
         }
     }
 
@@ -706,6 +743,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
         IsMutating = false;
         SelectedTarget = null;
         TerminalUiEnabled = false;
+        IsEnvironmentAdvancedExpanded = false;
         CatalogErrorMessage = null;
         ErrorMessage = null;
         NoticeMessage = null;
@@ -730,6 +768,7 @@ public sealed partial class ProjectRunViewModel : ObservableObject, IDisposable
         IsMutating = false;
         SelectedTarget = null;
         TerminalUiEnabled = false;
+        IsEnvironmentAdvancedExpanded = false;
         CatalogErrorMessage = null;
         ErrorMessage = null;
         NoticeMessage = null;

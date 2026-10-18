@@ -47,11 +47,23 @@ public sealed partial class MediaGenerationService : IMediaGenerationService
             "model-configs",
             cancellationToken).ConfigureAwait(false);
         return models
-            .Where(model => model.Enabled != false && model.HasApiKey != false)
+            .OfType<MediaModelDto>()
+            .Where(model =>
+                !string.IsNullOrWhiteSpace(model.Id) &&
+                !string.IsNullOrWhiteSpace(model.Name) &&
+                model.Enabled != false &&
+                model.HasApiKey != false)
             .Select(model => model.ToDomain())
-            .OrderBy(model => model.IsLikelyVideoModel)
+            .OrderBy(ImageModelRank)
+            .ThenBy(model => model.IsLikelyVideoModel)
             .ThenBy(model => model.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+    }
+
+    private static int ImageModelRank(MediaGenerationModel model)
+    {
+        var searchable = $"{model.Name} {model.ModelName}";
+        return searchable.Contains("image", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
     }
 
     public async Task<ImageGenerationResult> GenerateImageAsync(
@@ -304,15 +316,15 @@ public sealed partial class MediaGenerationService : IMediaGenerationService
 
     private sealed record MediaModelDto
     {
-        [JsonPropertyName("id")] public required string Id { get; init; }
-        [JsonPropertyName("name")] public required string Name { get; init; }
+        [JsonPropertyName("id")] public string? Id { get; init; }
+        [JsonPropertyName("name")] public string? Name { get; init; }
         [JsonPropertyName("provider")] public string? Provider { get; init; }
         [JsonPropertyName("model")] public string? Model { get; init; }
         [JsonPropertyName("enabled")] public bool? Enabled { get; init; }
         [JsonPropertyName("task_enabled")] public bool? TaskEnabled { get; init; }
         [JsonPropertyName("has_api_key")] public bool? HasApiKey { get; init; }
         public MediaGenerationModel ToDomain() => new(
-            Id, Name, Provider ?? string.Empty, Model ?? Name,
+            Id!, Name!, Provider ?? string.Empty, Model ?? Name!,
             Enabled != false, TaskEnabled != false, HasApiKey != false);
     }
 

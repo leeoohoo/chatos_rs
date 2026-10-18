@@ -23,6 +23,62 @@
                     </StackPanel>
                 </Grid>
             </DataTemplate>
+            <DataTemplate x:Key="ContactResourceTemplate" x:DataType="shell:ShellResourceViewModel">
+                <Grid Padding="6,4" ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="20" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon
+                        Width="18"
+                        HorizontalAlignment="Center"
+                        FontSize="15"
+                        Foreground="{StaticResource ChatOSAccentBrush}"
+                        Glyph="{x:Bind Glyph}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                    <FontIcon
+                        Grid.Column="2"
+                        Width="18"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        FontSize="14"
+                        Foreground="{StaticResource ChatOSSecondaryTextBrush}"
+                        Glyph="&#xE724;" />
+                </Grid>
+            </DataTemplate>
+            <DataTemplate x:Key="ProjectResourceTemplate" x:DataType="shell:ShellResourceViewModel">
+                <Grid Padding="6,4" ColumnSpacing="10">
+                    <Grid.ContextFlyout>
+                        <MenuFlyout>
+                            <MenuFlyoutItem
+                                Tag="{x:Bind Id}"
+                                Text="{Binding Rename, Source={StaticResource ChatOSLocalization}}"
+                                Click="OnRenameLocalProjectClicked">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem
+                                Tag="{x:Bind Id}"
+                                Text="{Binding Delete, Source={StaticResource ChatOSLocalization}}"
+                                Click="OnRemoveLocalProjectClicked">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </Grid.ContextFlyout>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Width="18" HorizontalAlignment="Center" Glyph="{x:Bind Glyph}" FontSize="15" Foreground="{StaticResource ChatOSAccentBrush}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSBodyStrongTextStyle}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{x:Bind Subtitle}" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
         </Grid.Resources>
         <Grid x:Name="LoginRoot" AutomationProperties.AutomationId="ChatOS.Login.Root" AutomationProperties.Name="ChatOS sign in" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
             <Grid.RowDefinitions>
@@ -49,12 +105,13 @@
                         <Grid Width="132" Height="143" HorizontalAlignment="Left">
                             <Image
                                 x:Name="LoginPetSpriteImage"
+                                AutomationProperties.AccessibilityView="Content"
                                 AutomationProperties.AutomationId="ChatOS.Login.PetSprite"
                                 AutomationProperties.Name="枫团"
                                 IsHitTestVisible="False"
                                 Stretch="Uniform"
                                 Visibility="Collapsed" />
-                            <Viewbox x:Name="LoginPetFallback" Stretch="Uniform">
+                            <Viewbox x:Name="LoginPetFallback" Stretch="Uniform" Visibility="Collapsed">
                                 <Canvas Width="150" Height="150">
                                 <Ellipse Canvas.Left="22" Canvas.Top="112" Width="108" Height="18" Fill="#22000000" />
                                 <Path Data="M35,72 C12,64 8,91 29,105 C14,105 10,117 28,120 C50,123 59,105 57,91 Z" Fill="#D9703A" Stroke="#A84E2D" StrokeThickness="2" />
@@ -105,7 +162,7 @@
                                     </StackPanel>
                                     <TextBlock x:Name="LoginErrorText" AutomationProperties.AutomationId="ChatOS.Login.Error" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" />
                                     <Grid>
-                                        <Button x:Name="LoginButton" AutomationProperties.AutomationId="ChatOS.Login.Submit" AutomationProperties.Name="Sign in" Height="44" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Command="{x:Bind ViewModel.LoginCommand}" Content="{x:Bind ViewModel.Localization.SignIn, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                                        <Button x:Name="LoginButton" AutomationProperties.AutomationId="ChatOS.Login.Submit" AutomationProperties.Name="Sign in" Height="44" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Click="OnLoginClicked" Content="{x:Bind ViewModel.Localization.SignIn, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanLogin, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                                         <ProgressRing x:Name="LoginProgress" Width="20" Height="20" Margin="14,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" IsHitTestVisible="False" />
                                     </Grid>
                                     <StackPanel HorizontalAlignment="Center" Orientation="Horizontal" Spacing="6">
@@ -208,7 +265,7 @@
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                                 <MenuFlyoutSeparator />
-                                <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.SignOut, Mode=OneWay}" Command="{x:Bind ViewModel.LogoutCommand}">
+                                <MenuFlyoutItem AutomationProperties.AutomationId="ChatOS.Shell.SignOut" AutomationProperties.Name="{x:Bind ViewModel.Localization.SignOut, Mode=OneWay}" Text="{x:Bind ViewModel.Localization.SignOut, Mode=OneWay}" Command="{x:Bind ViewModel.LogoutCommand}">
                                     <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8AC;" /></MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
                             </MenuFlyout>
@@ -225,7 +282,12 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Grid Grid.Column="0" Background="{StaticResource ChatOSSidebarBackgroundBrush}">
+                <Border
+                    Grid.Column="0"
+                    Margin="6,6,0,6"
+                    Background="{StaticResource ChatOSSidebarBackgroundBrush}"
+                    CornerRadius="16">
+                <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="52" />
                         <RowDefinition Height="*" />
@@ -245,39 +307,45 @@
                         <Button Grid.Column="1" AutomationProperties.AutomationId="ChatOS.Shell.CreateResource" AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind ViewModel.Localization.CreateResource, Mode=OneWay}">
                             <Button.Flyout>
                                 <MenuFlyout>
-                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.CreateLocalProject, Mode=OneWay}" Click="OnCreateLocalProjectClicked" />
-                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.RenameLocalProject, Mode=OneWay}" Click="OnRenameLocalProjectClicked" />
-                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.RemoveLocalProject, Mode=OneWay}" Click="OnRemoveLocalProjectClicked" />
+                                    <MenuFlyoutItem
+                                        AutomationProperties.AutomationId="ChatOS.Shell.CreateProject"
+                                        AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateLocalProject, Mode=OneWay}"
+                                        Text="{x:Bind ViewModel.Localization.CreateLocalProject, Mode=OneWay}"
+                                        Click="OnCreateLocalProjectClicked">
+                                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
                                     <MenuFlyoutSeparator />
-                                    <MenuFlyoutItem Text="{x:Bind ViewModel.Localization.CreateLocalTerminal, Mode=OneWay}" Click="OnCreateLocalTerminalClicked">
+                                    <MenuFlyoutItem
+                                        AutomationProperties.AutomationId="ChatOS.Shell.CreateTerminal"
+                                        AutomationProperties.Name="{x:Bind ViewModel.Localization.CreateLocalTerminal, Mode=OneWay}"
+                                        Text="{x:Bind ViewModel.Localization.CreateLocalTerminal, Mode=OneWay}"
+                                        Click="OnCreateLocalTerminalClicked">
                                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE756;" /></MenuFlyoutItem.Icon>
                                     </MenuFlyoutItem>
                                 </MenuFlyout>
                             </Button.Flyout>
                             <FontIcon Glyph="&#xE710;" />
                         </Button>
-                        <TextBlock Grid.Column="2" Margin="7,0,0,0" VerticalAlignment="Center" Text="资源" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                         <ProgressRing Grid.Column="3" Width="18" Height="18" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
                     </Grid>
 
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <StackPanel Padding="10,4,10,22" Spacing="6">
                             <TextBlock Text="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Contacts" AutomationProperties.Name="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Contacts}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" SelectionMode="Single" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Contacts" AutomationProperties.Name="{x:Bind ViewModel.Localization.Contacts, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Contacts}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" IsItemClickEnabled="True" ItemClick="OnSidebarItemClicked" SelectionMode="Single" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ContactResourceTemplate}" />
 
                             <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                             <TextBlock x:Name="ProjectsEmptyText" Margin="10,4,8,7" Text="项目保存在本机。点击上方 + 创建第一个项目。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="Collapsed" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Projects" AutomationProperties.Name="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Projects}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Projects" AutomationProperties.Name="{x:Bind ViewModel.Localization.Projects, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Projects}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" IsItemClickEnabled="True" ItemClick="OnSidebarItemClicked" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ProjectResourceTemplate}" />
 
-                            <TextBlock Margin="0,10,0,0" Text="工作台" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Applications" AutomationProperties.Name="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.ApplicationResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.Applications" AutomationProperties.Name="{x:Bind ViewModel.Localization.Applications, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.ApplicationResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" IsItemClickEnabled="True" ItemClick="OnSidebarItemClicked" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
                             <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.LocalResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.LocalResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.LocalResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Local, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.LocalResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" IsItemClickEnabled="True" ItemClick="OnSidebarItemClicked" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
 
                             <TextBlock Margin="0,10,0,0" Text="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" Style="{StaticResource ChatOSSectionLabelTextStyle}" />
                             <TextBlock x:Name="RemoteEmptyText" Margin="10,4,8,7" Text="还没有远端连接" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="Collapsed" />
-                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.RemoteResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.RemoteResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
+                            <ListView AutomationProperties.AutomationId="ChatOS.Shell.RemoteResources" AutomationProperties.Name="{x:Bind ViewModel.Localization.Remote, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.RemoteResources}" SelectedItem="{x:Bind ViewModel.SelectedResource, Mode=OneWay}" SelectionChanged="OnSidebarSelectionChanged" IsItemClickEnabled="True" ItemClick="OnSidebarItemClicked" Style="{StaticResource ChatOSSidebarListStyle}" ItemContainerStyle="{StaticResource ChatOSSidebarItemStyle}" ItemTemplate="{StaticResource ShellResourceTemplate}" />
                         </StackPanel>
                     </ScrollViewer>
 
@@ -303,11 +371,16 @@
                         </Grid>
                     </Border>
                 </Grid>
+                </Border>
 
                 <Border Grid.Column="1" Background="{StaticResource ChatOSBorderBrush}" />
 
                 <Grid Grid.Column="2" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
-                    <ContentControl x:Name="WorkspaceContent" AutomationProperties.AutomationId="ChatOS.Shell.Workspace" />
+                    <ContentControl
+                        x:Name="WorkspaceContent"
+                        AutomationProperties.AutomationId="ChatOS.Shell.Workspace"
+                        HorizontalContentAlignment="Stretch"
+                        VerticalContentAlignment="Stretch" />
                     <Grid x:Name="EmptyWorkspaceState" Visibility="Collapsed">
                         <StackPanel MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
                             <Border Style="{StaticResource ChatOSEmptyStateIconStyle}">
@@ -323,6 +396,30 @@
                     </Grid>
                 </Grid>
             </Grid>
+        </Grid>
+
+        <Grid
+            x:Name="AuxiliaryOverlay"
+            AutomationProperties.AutomationId="ChatOS.AuxiliaryOverlay.Root"
+            AutomationProperties.Name="Auxiliary window"
+            Background="#66000000"
+            Visibility="Collapsed">
+            <Border
+                x:Name="AuxiliaryOverlayCard"
+                MaxWidth="1300"
+                MaxHeight="840"
+                Margin="48,72,48,48"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                Background="{StaticResource ChatOSContentBackgroundBrush}"
+                BorderBrush="{StaticResource ChatOSBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="18">
+                <ContentControl
+                    x:Name="AuxiliaryOverlayContent"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch" />
+            </Border>
         </Grid>
 
         <Border
@@ -355,7 +452,11 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
                         <TextBlock Text="{x:Bind ViewModel.Localization.LocalOperationAwaitingApproval, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                        <TextBlock x:Name="ApprovalSourceText" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        <TextBlock
+                            x:Name="ApprovalSourceText"
+                            AutomationProperties.AutomationId="ChatOS.Approval.Source"
+                            AutomationProperties.Name="Approval source"
+                            Style="{StaticResource ChatOSCaptionTextStyle}" />
                     </StackPanel>
                     <Border
                         x:Name="ApprovalRiskBadge"
@@ -364,7 +465,11 @@
                         VerticalAlignment="Top"
                         Background="{StaticResource ChatOSProcessBackgroundBrush}"
                         CornerRadius="10">
-                        <TextBlock x:Name="ApprovalRiskText" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                        <TextBlock
+                            x:Name="ApprovalRiskText"
+                            AutomationProperties.AutomationId="ChatOS.Approval.Risk"
+                            AutomationProperties.Name="Approval risk"
+                            Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                     </Border>
                 </Grid>
 
@@ -376,6 +481,8 @@
                     <ScrollViewer MaxHeight="170" VerticalScrollBarVisibility="Auto">
                         <TextBlock
                             x:Name="ApprovalCommandText"
+                            AutomationProperties.AutomationId="ChatOS.Approval.Command"
+                            AutomationProperties.Name="Approval command"
                             FontFamily="Cascadia Mono, Consolas"
                             FontSize="12"
                             IsTextSelectionEnabled="True"
@@ -388,12 +495,16 @@
                         <FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
                         <TextBlock
                             x:Name="ApprovalWorkingDirectoryText"
+                            AutomationProperties.AutomationId="ChatOS.Approval.WorkingDirectory"
+                            AutomationProperties.Name="Approval working directory"
                             Style="{StaticResource ChatOSSecondaryBodyTextStyle}"
                             IsTextSelectionEnabled="True"
                             TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                     <TextBlock
                         x:Name="ApprovalReasonText"
+                        AutomationProperties.AutomationId="ChatOS.Approval.Reason"
+                        AutomationProperties.Name="Approval reason"
                         Foreground="{StaticResource ChatOSSecondaryTextBrush}"
                         Style="{StaticResource ChatOSSecondaryBodyTextStyle}"
                         TextWrapping="Wrap" />
@@ -401,6 +512,8 @@
 
                 <TextBlock
                     x:Name="ApprovalQueueText"
+                    AutomationProperties.AutomationId="ChatOS.Approval.Queue"
+                    AutomationProperties.Name="Approval queue status"
                     Grid.Row="3"
                     Style="{StaticResource ChatOSCaptionTextStyle}" />
 

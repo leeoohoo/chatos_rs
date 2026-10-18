@@ -52,6 +52,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string Local => Text("本机", "Local");
     public string Remote => Text("远端", "Remote");
     public string Chat => Text("聊天", "Chat");
+    public string ProjectDirectory => Text("项目目录", "Project directory");
     public string Files => Text("文件", "Files");
     public string Git => "Git";
     public string Run => Text("运行", "Run");
@@ -76,6 +77,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string WaitingForPluginFrame => Text("正在等待插件画面…", "Waiting for the plugin frame…");
     public string Settings => Text("设置", "Settings");
     public string Back => Text("返回", "Back");
+    public string Close => Text("关闭", "Close");
     public string SignOut => Text("退出登录", "Sign out");
     public string RefreshResources => Text("刷新资源", "Refresh resources");
     public string CreateResource => Text("新建资源", "Create resource");
@@ -83,10 +85,25 @@ public sealed class LocalizationViewModel : ObservableObject
     public string CreateLocalProject => Text("新建本地项目", "New local project");
     public string RenameLocalProject => Text("重命名所选项目", "Rename selected project");
     public string RemoveLocalProject => Text("移除所选项目", "Remove selected project");
+    public string ProjectSettings => Text("项目设置", "Project settings");
+    public string RunTargetCommand => Text("命令", "Command");
+    public string RunTargetWorkingDirectory => Text("工作目录", "Working directory");
+    public string RunTargetLanguage => Text("语言", "Language");
+    public string RunTargetSource => Text("来源", "Source");
+    public string RunTargetManifest => Text("清单", "Manifest");
+    public string RunTargetEntrypoint => Text("入口", "Entrypoint");
+    public string RemoveProjectFromChatOS => Text("从 ChatOS 删除项目", "Remove project from ChatOS");
+    public string RemoveProjectKeepFilesNotice => Text(
+        "只删除项目记录和运行状态，不会删除本机项目文件夹。",
+        "Removes the project record and run state without deleting the local project folder.");
+    public string DeleteProject => Text("删除项目", "Delete project");
     public string Terminal => Text("终端", "Terminal");
     public string StopTerminal => Text("停止终端", "Stop terminal");
     public string TerminalCommandPlaceholder => Text("输入命令后按 Enter", "Enter a command and press Enter");
     public string Send => Text("发送", "Send");
+    public string ReasoningOn => Text("推理开", "Reasoning on");
+    public string ReasoningOff => Text("推理关", "Reasoning off");
+    public string ConversationRemote => Text("会话远端", "Conversation remote");
     public string Cancel => Text("取消", "Cancel");
     public string Create => Text("创建", "Create");
     public string New => Text("新建", "New");
@@ -144,7 +161,25 @@ public sealed class LocalizationViewModel : ObservableObject
     public string SearchFilesAndContent => Text("搜索文件名和内容", "Search file names and content");
     public string Search => Text("搜索", "Search");
     public string SearchResults => Text("搜索结果", "Search results");
+    public string ClearSearch => Text("清空搜索", "Clear search");
+    public string SearchingFilesAndContent => Text("正在搜索文件和内容…", "Searching files and content…");
+    public string NoFileSearchResults => Text("未找到匹配的文件或内容", "No matching files or content");
+    public string EmptyProjectDirectory => Text("此项目目录为空", "This project directory is empty");
+    public string ToggleDirectoryView => Text("切换目录视图", "Toggle directory view");
     public string Edit => Text("编辑", "Edit");
+    public string Copy => Text("复制", "Copy");
+    public string UnsavedFileChanges => Text("文件有未保存的修改", "Unsaved file changes");
+    public string UnsavedFileChangesNotice => Text(
+        "继续操作前，要保存当前文件的修改吗？",
+        "Do you want to save the current file before continuing?");
+    public string SaveAndContinue => Text("保存并继续", "Save and continue");
+    public string DiscardChanges => Text("放弃修改", "Discard changes");
+    public string ImagePreviewFailed => Text("无法预览这张图片", "This image could not be previewed");
+    public string OpenInPet => Text("宠物中打开", "Open in Pet");
+    public string PetFileWorkbench => Text("宠物文件工作台", "Pet File Workbench");
+    public string RevealInExplorer => Text("在资源管理器中显示", "Show in File Explorer");
+    public string OpenWithDefaultApplication => Text("使用默认应用打开", "Open with default app");
+    public string MoreFileActions => Text("更多文件操作", "More file actions");
     public string Line => Text("行", "Line");
     public string Column => Text("列", "Column");
     public string FindDefinition => Text("查定义", "Go to definition");
@@ -181,6 +216,8 @@ public sealed class LocalizationViewModel : ObservableObject
     public string SelectChangeToViewDiff => Text("选择修改查看 Diff", "Select a change to view its diff");
     public string SplitDiffNotice => Text("同一个文件可能同时有暂存修改和工作区修改。", "A file may have both staged and working-tree changes.");
     public string NoTextDiff => Text("这部分修改没有文本 Diff。", "This change has no text diff.");
+    public string GitActionStatus => Text("Git 操作状态", "Git action status");
+    public string GitError => Text("Git 错误", "Git error");
     public string Branches => Text("分支", "Branches");
     public string Switch => Text("切换", "Switch");
     public string Merge => Text("合并", "Merge");
@@ -194,6 +231,8 @@ public sealed class LocalizationViewModel : ObservableObject
     public string TargetsSuffix => Text("个目标", "targets");
     public string Reanalyze => Text("重新分析", "Analyze again");
     public string RefreshRunStatus => Text("刷新运行状态", "Refresh run status");
+    public string DismissNotice => Text("关闭提示", "Dismiss notice");
+    public string DismissError => Text("关闭错误", "Dismiss error");
     public string FavoriteProject => Text("设为常用项目", "Favorite project");
     public string FavoriteProjectDescription => Text("开启后，点击桌面宠物即可查看这个项目的最近消息并直接发送新消息。", "When enabled, select the desktop pet to view recent messages and send new messages for this project.");
     public string RunPreflight => Text("运行预检", "Run preflight");
@@ -206,6 +245,19 @@ public sealed class LocalizationViewModel : ObservableObject
     public string NoRunInstances => Text("还没有运行实例。", "No run instances yet.");
     public string Stop => Text("停止", "Stop");
     public string RequiredEnvironment => Text("启动所需环境", "Required environment");
+    public string RuntimeReady => Text("运行环境已准备好", "Runtime ready");
+    public string RuntimeReadyDescription => Text("已找到当前运行目标所需的本机工具，通常无需修改自动选择。", "The local tools required by the current run target were found. You usually do not need to change the automatic selections.");
+    public string RuntimeIssuesNeedAttention => Text("启动前还需要处理环境问题", "Runtime issues need attention");
+    public string RuntimeIssuesDescription => Text("请先处理上方运行预检中报告的缺失工具或配置问题。", "Resolve the missing tools or configuration issues reported by the run preflight checks above.");
+    public string AdvancedEnvironmentVariables => Text("高级设置：环境变量", "Advanced: environment variables");
+    public string AdvancedEnvironmentVariablesDescription => Text("只有项目明确要求 PORT、NODE_ENV 等变量时才需要设置。", "Only configure these when the project explicitly requires variables such as PORT or NODE_ENV.");
+    public string EnvironmentVariablesLocalNotice => Text("这些值只会传给这台 Windows 电脑上由 ChatOS 启动的项目进程。", "These values are only passed to project processes started by ChatOS on this Windows PC.");
+    public string ExpandRunLog => Text("展开运行日志", "Expand run log");
+    public string CollapseRunLog => Text("收起运行日志", "Collapse run log");
+    public string LiveRunLog => Text("实时运行日志", "Live run log");
+    public string NoRunLogYet => Text("进程已经启动，暂时还没有日志输出。", "The process has started, but no log output is available yet.");
+    public string RefreshEverySecond => Text("每秒刷新", "Refreshes every second");
+    public string ExitCode => Text("退出码", "Exit code");
     public string NoManualToolchain => Text("没有需要手动选择的工具链，当前目标可使用系统自动发现的环境。", "No toolchain requires manual selection; the selected target can use the automatically detected environment.");
     public string EnvironmentVariables => Text("环境变量", "Environment variables");
     public string AddVariable => Text("添加变量", "Add variable");
@@ -231,6 +283,8 @@ public sealed class LocalizationViewModel : ObservableObject
     public string RunningGuidanceAvailable => Text("执行中 · 可以继续发送引导", "Running · you can continue sending guidance");
     public string RefreshConversation => Text("刷新会话", "Refresh conversation");
     public string AiExecutionProcess => Text("AI 执行过程", "AI execution process");
+    public string ViewProcess => Text("查看过程", "View process");
+    public string TaskGraphLabel => Text("任务图", "Task graph");
     public string StartNewConversation => Text("开始一段新对话", "Start a new conversation");
     public string NoConversationMessages => Text("这个会话还没有消息。", "This conversation has no messages yet.");
     public string MessageComposerPlaceholder => Text("发送消息；执行中会作为追加指导", "Send a message; while running, it will be appended as guidance");
@@ -238,11 +292,57 @@ public sealed class LocalizationViewModel : ObservableObject
     public string RemoveAttachment => Text("移除附件", "Remove attachment");
     public string NoAvailableConversation => Text("这个资源还没有可用会话", "This resource has no available conversation");
     public string ConversationPreparationNotice => Text("项目会自动准备默认会话；联系人需要已有会话。", "Projects prepare a default conversation automatically; contacts require an existing conversation.");
+    public string PreparingProjectConversation => Text("正在准备项目对话…", "Preparing the project conversation…");
+    public string PreparingProjectConversationNotice => Text(
+        "正在绑定项目目录和本机执行环境，完成后即可读取、搜索和修改项目。",
+        "Binding the project directory and local execution environment. You can read, search, and modify the project when this completes.");
+    public string ProjectConversationUnavailable => Text("项目对话暂时不可用", "Project conversation is unavailable");
+    public string RetryProjectConversation => Text("重试项目对话", "Retry project conversation");
     public string TaskDetails => Text("任务详情", "Task details");
+    public string LoadingTaskDetails => Text("正在加载任务详情", "Loading task details");
+    public string LoadingTaskEvents => Text("正在加载执行过程", "Loading execution events");
+    public string ApplyingTaskAction => Text("正在处理任务操作", "Applying task action");
+    public string WaitingForTaskGraph => Text("正在同步任务图…", "Syncing the task graph…");
+    public string EmptyTaskGraph => Text("当前消息没有任务图", "No task graph for this message");
+    public string EmptyTaskGraphHint => Text("AI 尚未为这条消息创建任务节点，可稍后刷新。", "The AI has not created task nodes for this message yet. Refresh to check again.");
+    public string TaskGraphLoadFailed => Text("任务图加载失败", "Task graph could not be loaded");
+    public string UsingPreviousTaskGraph => Text("暂时无法更新任务图，正在显示上次结果。", "The task graph could not be updated. Showing the previous results.");
+    public string TaskGraphRealtimeInterrupted => Text("实时进度连接已中断，活动任务将继续自动刷新。", "Live progress was disconnected. Active tasks will continue to refresh automatically.");
     public string AuthoritativeTaskStatus => Text("状态与运行过程保存在本机 Local Agent Host", "Status and run events are stored by the on-device Local Agent Host");
+    public string FrozenTaskModel => Text("冻结的执行模型", "Frozen execution model");
+    public string FrozenTaskReasoning => Text("冻结的推理等级", "Frozen reasoning level");
+    public string FrozenTaskModelRevision => Text("模型配置版本", "Model configuration revision");
+    public string FrozenTaskModelNotice => Text(
+        "任务与重试始终使用创建时固定的模型配置；设置刷新不会改写历史任务。",
+        "Tasks and retries keep the model configuration frozen at creation; settings refresh never rewrites history.");
     public string RunResult => Text("运行结果", "Run result");
+    public string TaskAcceptanceResult => Text("验收结果", "Acceptance result");
+    public string TaskAcceptanceStatus => Text("上报状态", "Reported status");
+    public string TaskAcceptanceReason => Text("上报原因", "Reported reason");
+    public string TaskAcceptanceFinalResponse => Text("最终交付原文", "Original final delivery");
+    public string TaskAcceptanceCharacterCount => Text("Unicode 字符数 / 上限", "Unicode characters / limit");
+    public string TaskAcceptanceWorkerNotice => Text(
+        "验收依据来自执行者报告，不等同于独立审计或工具运行状态。",
+        "Acceptance evidence is worker-reported; it is not an independent audit or tool status.");
+    public string TaskAcceptanceReportMissing => Text(
+        "本次执行已结束，但结构化验收报告缺失或无效；不能据此判定验收通过。",
+        "Execution finished, but its structured acceptance report is missing or invalid; acceptance cannot be considered passed.");
+    public string FrozenRequirementPlan => Text("引用的需求方案", "Referenced requirement plan");
+    public string RequirementPlanVersion => Text("方案版本", "Plan revision");
+    public string FrozenRequirementPlanNotice => Text(
+        "这是创建任务时固定的已确认方案；历史任务和重试始终使用此版本。",
+        "This confirmed plan was frozen when the task was created; history and retries always use this revision.");
+    public string RequirementPlanScope => Text("冻结的任务范围", "Frozen task scope");
+    public string RequirementPlanPrompt => Text("任务指令", "Task prompt");
+    public string RequirementPlanExpectedOutputs => Text("预期交付", "Expected outputs");
+    public string RequirementPlanAcceptanceCriteria => Text("验收标准", "Acceptance criteria");
+    public string RequirementPlanHash => Text("方案正文 SHA-256", "Plan body SHA-256");
+    public string NoTaskRunYet => Text("该任务尚未产生运行记录。", "This task has not started a run yet.");
+    public string PrerequisiteTasks => Text("前置任务", "Prerequisite tasks");
+    public string NoPrerequisiteTasks => Text("无前置任务", "No prerequisite tasks");
     public string ExecutionProcess => Text("执行过程", "Execution process");
-    public string LoadEarlierProcess => Text("加载更早过程", "Load earlier events");
+    public string NoTaskRunEvents => Text("暂无运行事件", "No run events yet");
+    public string LoadMoreRunEvents => Text("加载更多运行事件", "Load more run events");
     public string TaskActions => Text("任务操作", "Task actions");
     public string OptionalCancelReason => Text("取消原因（可选）", "Cancellation reason (optional)");
     public string CancelTask => Text("取消任务", "Cancel task");
@@ -263,6 +363,11 @@ public sealed class LocalizationViewModel : ObservableObject
     public string Replying => Text("正在回复…", "Replying…");
     public string Remove => Text("移除", "Remove");
     public string CloseNotepad => Text("关闭记事本", "Close notepad");
+    public string CurrentFolderLabel => Text("当前目录：", "Current folder:");
+    public string RootFolder => Text("根目录", "Root");
+    public string Folders => Text("文件夹", "Folders");
+    public string SelectNote => Text("选择一条笔记", "Select a note");
+    public string SelectNoteDescription => Text("从左侧打开笔记，或新建一条笔记。", "Open a note from the sidebar, or create a new one.");
     public string SearchNotes => Text("搜索标题、标签和内容", "Search titles, tags, and content");
     public string AllNotes => Text("全部笔记", "All notes");
     public string Notes => Text("笔记", "Notes");
@@ -272,6 +377,7 @@ public sealed class LocalizationViewModel : ObservableObject
     public string Split => Text("分栏", "Split");
     public string Export => Text("导出", "Export");
     public string Tags => Text("标签", "Tags");
+    public string NoteContent => Text("笔记正文", "Note content");
     public string CommaSeparated => Text("用逗号分隔", "Separate with commas");
     public string SelectOrCreateNote => Text("选择或新建一篇笔记", "Select or create a note");
     public string Confirm => Text("确认", "Confirm");
@@ -298,6 +404,9 @@ public sealed class LocalizationViewModel : ObservableObject
     public string LanguageLabel => Text("界面语言", "Interface language");
     public string ThemeLabel => Text("外观", "Appearance");
     public string FontSizeLabel => Text("字体大小", "Font size");
+    public string ResetDefaults => Text("恢复默认", "Reset");
+    public string SavingPreferences => Text("正在保存设置…", "Saving settings…");
+    public string PreferencesSaveFailed => Text("设置未保存，请重试", "Settings were not saved. Please try again");
     public string PetEnabledLabel => Text("显示全局宠物", "Show global pet");
     public string PetSizeLabel => Text("宠物大小", "Pet size");
     public string PetResetPositionLabel => Text("恢复默认位置", "Reset position");

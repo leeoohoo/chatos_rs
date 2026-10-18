@@ -71,6 +71,7 @@ impl LocalAgentTaskStore for SqliteClientStorage {
             if let Some(replay) = Self::replay(&mut connection, command).await.db()? {
                 return Ok(replay);
             }
+            validate_active_conversation_turn_source(&mut connection, graph).await?;
             super::task_followup_gate::guard_creation(&mut connection, graph).await?;
             super::task_replacement_validation::validate_stopped_sources(&mut connection, graph)
                 .await?;
@@ -440,6 +441,46 @@ impl LocalAgentTaskStore for SqliteClientStorage {
         .await;
         Self::finish_write(&mut connection, result).await
     }
+}
+
+async fn validate_active_conversation_turn_source(
+    connection: &mut SqliteConnection,
+    graph: &CreateTaskGraphCommand,
+) -> Result<(), ClientStorageError> {
+    if graph.source_entity_type != "conversation_turn" {
+        return Ok(());
+    }
+
+    let (status, was_stopped) = sqlx::query_as::<_, (String, i64)>(
+        "SELECT turn.status, EXISTS( \
+             SELECT 1 FROM local_agent_command_receipts receipt \
+             WHERE CASE WHEN json_valid(receipt.request_fingerprint) \
+                        THEN json_extract(receipt.request_fingerprint, '$.type') END \
+                       = 'cancel_conversation_turn' \
+               AND CASE WHEN json_valid(receipt.request_fingerprint) \
+                        THEN json_extract(receipt.request_fingerprint, '$.owner_user_id') END \
+                       = conversation.owner_user_id \
+               AND CASE WHEN json_valid(receipt.request_fingerprint) \
+                        THEN json_extract(receipt.request_fingerprint, '$.turn_id') END \
+                       = turn.turn_id \
+         ) FROM local_conversation_turns turn \
+         JOIN local_conversations conversation \
+           ON conversation.conversation_id = turn.conversation_id \
+         WHERE turn.turn_id = ? AND conversation.owner_user_id = ?",
+    )
+    .bind(&graph.source_entity_id)
+    .bind(&graph.owner_user_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .db()?
+    .ok_or_else(|| ClientStorageError::NotFound(graph.source_entity_id.clone()))?;
+    if status == "cancelled" && was_stopped != 0 {
+        return Err(ClientStorageError::Conflict(format!(
+            "source conversation Turn was cancelled: {}",
+            graph.source_entity_id
+        )));
+    }
+    Ok(())
 }
 
 async fn insert_graph(

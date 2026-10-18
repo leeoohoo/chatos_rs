@@ -21,6 +21,7 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
     { _service = service; _dispatcher = dispatcher; _localization = localization; }
 
     public ObservableCollection<RemoteFileEntry> Entries { get; } = [];
+    public ObservableCollection<RemoteFileEntry> VisibleEntries { get; } = [];
     public bool HasConnection => !string.IsNullOrWhiteSpace(ConnectionId);
     public bool HasVerificationChallenge => !string.IsNullOrWhiteSpace(VerificationPrompt);
 
@@ -30,6 +31,9 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
     [ObservableProperty] private RemoteFileEntry? _selectedEntry;
     [ObservableProperty] private string _previewText = string.Empty;
     [ObservableProperty] private bool _isBusy;
+    [ObservableProperty] private string _searchText = string.Empty;
+    [ObservableProperty] private bool _showsHiddenFiles;
+    [ObservableProperty] private string? _transferLabel;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _actionMessage;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasVerificationChallenge))] private string? _verificationPrompt;
@@ -43,6 +47,9 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
         PreviewText = string.Empty;
         await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    partial void OnSearchTextChanged(string value) => RebuildVisibleEntries();
+    partial void OnShowsHiddenFilesChanged(bool value) => RebuildVisibleEntries();
 
     [RelayCommand] private Task RefreshAsync() => RefreshCoreAsync(CancellationToken.None);
 
@@ -82,13 +89,24 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
         ? Task.CompletedTask
         : MutateAndRefreshAsync(token => _service.DeleteAsync(ConnectionId!, request.Entry.FullPath, request.Recursive, VerificationCode, token));
 
-    public async Task DownloadAsync(RemoteFileEntry entry, Stream destination, CancellationToken cancellationToken = default) =>
-        await ExecuteAsync(token => _service.DownloadAsync(ConnectionId!, entry.FullPath, destination, VerificationCode, token), cancellationToken).ConfigureAwait(false);
+    public async Task DownloadAsync(RemoteFileEntry entry, Stream destination, CancellationToken cancellationToken = default)
+    {
+        TransferLabel = L($"正在下载 {entry.Name}…", $"Downloading {entry.Name}…");
+        try { await ExecuteAsync(token => _service.DownloadAsync(ConnectionId!, entry.FullPath, destination, VerificationCode, token), cancellationToken).ConfigureAwait(false); }
+        finally { TransferLabel = null; }
+        if (ErrorMessage is null) ActionMessage = L($"已下载 {entry.Name}。", $"Downloaded {entry.Name}.");
+    }
 
     public async Task UploadAsync(Stream source, string fileName, bool overwrite, CancellationToken cancellationToken = default)
     {
-        await ExecuteAsync(token => _service.UploadAsync(ConnectionId!, source, Resolve(fileName), overwrite, VerificationCode, token), cancellationToken).ConfigureAwait(false);
-        if (ErrorMessage is null) await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
+        TransferLabel = L($"正在上传 {fileName}…", $"Uploading {fileName}…");
+        try { await ExecuteAsync(token => _service.UploadAsync(ConnectionId!, source, Resolve(fileName), overwrite, VerificationCode, token), cancellationToken).ConfigureAwait(false); }
+        finally { TransferLabel = null; }
+        if (ErrorMessage is null)
+        {
+            await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
+            if (ErrorMessage is null) ActionMessage = L($"已上传 {fileName}。", $"Uploaded {fileName}.");
+        }
     }
 
     private async Task PreviewAsync(RemoteFileEntry entry)
@@ -111,6 +129,7 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
             {
                 Entries.Clear();
                 foreach (var value in values) Entries.Add(value);
+                RebuildVisibleEntries();
                 ActionMessage = L(
                     $"已加载 {values.Count} 个条目。",
                     $"Loaded {values.Count} item{(values.Count == 1 ? string.Empty : "s")}." );
@@ -129,7 +148,15 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
         if (IsBusy) return;
         IsBusy = true;
         ErrorMessage = ActionMessage = VerificationPrompt = null;
-        try { await action(token).ConfigureAwait(false); }
+        try
+        {
+            await action(token).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                VerificationPrompt = null;
+                VerificationCode = string.Empty;
+            }).ConfigureAwait(false);
+        }
         catch (RemoteVerificationRequiredException challenge)
         { await _dispatcher.InvokeAsync(() => VerificationPrompt = challenge.Prompt).ConfigureAwait(false); }
         catch (Exception exception) when (exception is not OperationCanceledException)
@@ -138,6 +165,17 @@ public sealed partial class RemoteSftpViewModel : ObservableObject
     }
 
     private string Resolve(string path) => path.StartsWith('/') || path.StartsWith('~') ? path.Trim() : CurrentPath.TrimEnd('/') + "/" + path.Trim();
+    private void RebuildVisibleEntries()
+    {
+        var query = SearchText.Trim();
+        VisibleEntries.Clear();
+        foreach (var entry in Entries)
+        {
+            if (!ShowsHiddenFiles && entry.Name.StartsWith(".", StringComparison.Ordinal)) continue;
+            if (query.Length > 0 && entry.Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            VisibleEntries.Add(entry);
+        }
+    }
     private string L(string chinese, string english) => _localization?.Text(chinese, english) ?? chinese;
     private static string Parent(string path)
     {

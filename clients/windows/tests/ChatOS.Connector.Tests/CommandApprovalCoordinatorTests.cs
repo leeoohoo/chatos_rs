@@ -1,4 +1,8 @@
 using ChatOS.Connector.Approval;
+using ChatOS.Connector.LocalAgent;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace ChatOS.Connector.Tests;
 
@@ -238,6 +242,114 @@ public sealed class CommandApprovalCoordinatorTests
         Assert.False((await retry).Approved);
     }
 
+    [Fact]
+    public async Task CancelledRunRemovesPendingToolApprovalWithoutAUserDecision()
+    {
+        var store = new MemoryApprovalStore();
+        var coordinator = new CommandApprovalCoordinator(store);
+
+        var outcome = await WindowsLocalAgentToolApprovalHandler
+            .WaitForApprovalWhileRunIsActionableAsync(
+                token => coordinator.RequestAsync(
+                    Request("invocation-1", "project-write:conversation-1"),
+                    Risk(),
+                    token),
+                async token =>
+                {
+                    await WaitUntilAsync(() => coordinator.Snapshot().Count == 1);
+                    token.ThrowIfCancellationRequested();
+                    return "cancelled";
+                },
+                TimeSpan.FromMilliseconds(1),
+                CancellationToken.None);
+
+        Assert.Null(outcome);
+        Assert.Empty(coordinator.Snapshot());
+        var history = Assert.Single(store.History);
+        Assert.False(history.Approved);
+        Assert.Equal(ConnectorApprovalReviewer.System, history.Reviewer);
+        Assert.Contains("cancelled", history.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ProjectWriteApprovalBindsExactContentAndWriteMode()
+    {
+        var first = WindowsLocalAgentToolApprovalHandler.ProjectMutationPresentation(
+            ProjectInvocation("project_write", new
+            {
+                path = "note.txt",
+                content = "FIRST\nMARKER",
+                create_only = true,
+            }),
+            "C:\\workspace");
+        var changed = WindowsLocalAgentToolApprovalHandler.ProjectMutationPresentation(
+            ProjectInvocation("project_write", new
+            {
+                path = "note.txt",
+                content = "SECOND\nMARKER",
+                create_only = false,
+            }),
+            "C:\\workspace");
+
+        Assert.Equal("project_write", first.Command);
+        Assert.Equal("note.txt", first.Arguments[0]);
+        Assert.Equal("--create-only=true", first.Arguments[1]);
+        Assert.Equal("--content-utf8-bytes=12", first.Arguments[2]);
+        Assert.StartsWith("--content-sha256=", first.Arguments[3], StringComparison.Ordinal);
+        Assert.Equal(64, first.Arguments[3]["--content-sha256=".Length..].Length);
+        Assert.Equal("--create-only=false", changed.Arguments[1]);
+        Assert.NotEqual(first.Arguments[3], changed.Arguments[3]);
+        Assert.Contains("fingerprint", first.Risk.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ProjectWriteApprovalAcceptsExactEmptyOrWhitespaceContent(string content)
+    {
+        var presentation = WindowsLocalAgentToolApprovalHandler.ProjectMutationPresentation(
+            ProjectInvocation("project_write", new
+            {
+                path = "empty.txt",
+                content,
+                create_only = true,
+            }),
+            "C:\\workspace");
+
+        Assert.Equal("project_write", presentation.Command);
+        Assert.Equal($"--content-utf8-bytes={Encoding.UTF8.GetByteCount(content)}",
+            presentation.Arguments[2]);
+        Assert.Equal(
+            $"--content-sha256={Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant()}",
+            presentation.Arguments[3]);
+        Assert.Equal(content,
+            WindowsLocalAgentProjectToolExecutor.RequiredStringAllowEmpty(
+                ProjectInvocation("project_write", new { content }).Arguments,
+                "content"));
+    }
+
+    [Theory]
+    [InlineData("project_copy")]
+    [InlineData("project_move")]
+    public void ReplacingProjectCopyOrMoveApprovalIsExplicitAndHighRisk(string toolName)
+    {
+        var presentation = WindowsLocalAgentToolApprovalHandler.ProjectMutationPresentation(
+            ProjectInvocation(toolName, new
+            {
+                source_path = "source.txt",
+                target_path = "target.txt",
+                replace_existing = true,
+            }),
+            "C:\\workspace");
+
+        Assert.Equal(toolName, presentation.Command);
+        Assert.Equal(
+            ["source.txt", "target.txt", "--replace-existing=true"],
+            presentation.Arguments);
+        Assert.Equal(ConnectorApprovalRiskLevel.High, presentation.Risk.Level);
+        Assert.Contains("replace", presentation.Risk.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("git status", ConnectorApprovalRiskLevel.Low)]
     [InlineData("git push origin main", ConnectorApprovalRiskLevel.Medium)]
@@ -263,6 +375,30 @@ public sealed class CommandApprovalCoordinatorTests
 
     private static ConnectorApprovalRisk Risk() =>
         new(ConnectorApprovalRiskLevel.Low);
+
+    private static WindowsLocalToolInvocation ProjectInvocation(
+        string toolName,
+        object arguments) => new(
+        "invocation-1",
+        "run-1",
+        "batch-1",
+        "call-1",
+        toolName,
+        JsonSerializer.SerializeToElement(arguments),
+        SideEffecting: true,
+        RequiresApproval: true,
+        ApprovalStatus: "pending",
+        ApprovalDecidedBy: null,
+        ApprovalReason: null,
+        ApprovalDecidedAtUnixMs: null,
+        Status: "pending",
+        Result: null,
+        Error: null,
+        Version: 1,
+        ClaimToken: null,
+        ClaimUntilUnixMs: null,
+        CreatedAtUnixMs: 1,
+        UpdatedAtUnixMs: 1);
 
     private static async Task WaitUntilAsync(Func<bool> condition)
     {

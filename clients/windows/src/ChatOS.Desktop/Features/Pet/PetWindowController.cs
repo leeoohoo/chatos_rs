@@ -7,6 +7,7 @@ namespace ChatOS.Desktop.Features.Pet;
 public sealed class PetWindowController : IDisposable
 {
     private readonly PetWindow _window;
+    private readonly PetFileWorkbenchWindow _fileWorkbench;
     private readonly AppPreferencesManager _preferences;
     private readonly IUiDispatcher _dispatcher;
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -14,10 +15,12 @@ public sealed class PetWindowController : IDisposable
 
     public PetWindowController(
         PetWindow window,
+        PetFileWorkbenchWindow fileWorkbench,
         AppPreferencesManager preferences,
         IUiDispatcher dispatcher)
     {
         _window = window;
+        _fileWorkbench = fileWorkbench;
         _preferences = preferences;
         _dispatcher = dispatcher;
         _preferences.Changed += OnPreferencesChanged;
@@ -47,6 +50,12 @@ public sealed class PetWindowController : IDisposable
             _visibilityGate.Release();
         }
     }
+
+    public Task OpenFileAsync(
+        string path,
+        int? targetLine = null,
+        CancellationToken cancellationToken = default) =>
+        _fileWorkbench.OpenAsync(path, targetLine, cancellationToken);
 
     public void Dispose()
     {

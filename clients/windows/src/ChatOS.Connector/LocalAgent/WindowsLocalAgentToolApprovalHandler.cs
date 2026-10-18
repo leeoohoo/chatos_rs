@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChatOS.Connector.Approval;
 using ChatOS.Connector.Workspaces;
@@ -27,6 +29,7 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
     CommandRiskEvaluator riskEvaluator)
 {
     private const string ReviewerId = "windows-local-approval";
+    private static readonly TimeSpan RunStatusPollInterval = TimeSpan.FromMilliseconds(250);
 
     internal async Task<bool> ResolveNextPendingAsync(
         string ownerUserId,
@@ -43,7 +46,8 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
         }
 
         var invocation = result.Invocations.FirstOrDefault(value =>
-            value.ToolName is "project_write" or "terminal_exec" or
+            value.ToolName is
+                "project_write" or "project_copy" or "project_move" or "terminal_exec" or
                 "remote_connection_controller_run_command" or
                 "remote_connection_controller_upload_file");
         if (invocation is null) return false;
@@ -83,7 +87,7 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
             return true;
         }
 
-        var outcome = await approvals.RequestAsync(new CommandApprovalRequest(
+        var request = new CommandApprovalRequest(
             invocation.InvocationId,
             ownerUserId,
             deviceId,
@@ -92,9 +96,29 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
             presentation.Arguments,
             presentation.WorkingDirectory,
             "Local Agent Task",
-            $"{presentation.Scope}:{context.ConversationId}"),
-            presentation.Risk,
+            $"{presentation.Scope}:{context.ConversationId}");
+        var outcome = await WaitForApprovalWhileRunIsActionableAsync(
+            token => approvals.RequestAsync(request, presentation.Risk, token),
+            async token =>
+            {
+                var run = await host.SendAsync<GetLocalRunCommand, GetLocalRunResult>(
+                    new("get_run", ownerUserId, invocation.RunId), token).ConfigureAwait(false);
+                if (run.Type != "run" ||
+                    !string.Equals(run.Run.RunId, invocation.RunId, StringComparison.Ordinal) ||
+                    !string.Equals(run.Run.OwnerUserId, ownerUserId, StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException("Invalid Local Agent Run result.");
+                }
+                return run.Run.Status;
+            },
+            RunStatusPollInterval,
             cancellationToken).ConfigureAwait(false);
+        if (outcome is null)
+        {
+            // Cancelling a conversation Run also fails its still-open Host invocations. Do not
+            // send a stale approval decision after that authoritative transition.
+            return true;
+        }
         await DecideAsync(
             ownerUserId,
             invocation,
@@ -102,6 +126,91 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
             Limit(outcome.Reason, 4_000),
             cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    internal static async Task<ConnectorApprovalOutcome?> WaitForApprovalWhileRunIsActionableAsync(
+        Func<CancellationToken, Task<ConnectorApprovalOutcome>> requestApproval,
+        Func<CancellationToken, Task<string>> readRunStatus,
+        TimeSpan pollInterval,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(requestApproval);
+        ArgumentNullException.ThrowIfNull(readRunStatus);
+        if (pollInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pollInterval));
+        }
+
+        using var approvalLifetime =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var approvalTask = requestApproval(approvalLifetime.Token);
+        var runMonitorTask = MonitorRunAsync(
+            readRunStatus, pollInterval, approvalLifetime.Token);
+        var completed = await Task.WhenAny(approvalTask, runMonitorTask).ConfigureAwait(false);
+        if (completed == approvalTask)
+        {
+            try
+            {
+                return await approvalTask.ConfigureAwait(false);
+            }
+            finally
+            {
+                approvalLifetime.Cancel();
+                await IgnoreMonitorCancellationAsync(runMonitorTask).ConfigureAwait(false);
+            }
+        }
+
+        try
+        {
+            await runMonitorTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // A lost or invalid Host Run cannot safely receive an approval. Fail closed and
+            // remove the local pending card instead of leaving a stale action behind.
+        }
+
+        approvalLifetime.Cancel();
+        try
+        {
+            _ = await approvalTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (approvalLifetime.IsCancellationRequested)
+        {
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return null;
+    }
+
+    private static async Task MonitorRunAsync(
+        Func<CancellationToken, Task<string>> readRunStatus,
+        TimeSpan pollInterval,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            await Task.Delay(pollInterval, cancellationToken).ConfigureAwait(false);
+            var status = await readRunStatus(cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(status, "waiting_tool_result", StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+    }
+
+    private static async Task IgnoreMonitorCancellationAsync(Task monitor)
+    {
+        try
+        {
+            await monitor.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
     }
 
     private async Task DecideAsync(
@@ -191,22 +300,83 @@ public sealed class WindowsLocalAgentToolApprovalHandler(
                 "local-agent-terminal");
         }
 
+        if (invocation.ToolName is "project_copy" or "project_move")
+        {
+            return ProjectMutationPresentation(invocation, context.ProjectRoot);
+        }
+
+        return ProjectMutationPresentation(invocation, context.ProjectRoot);
+    }
+
+    internal static ApprovalPresentation ProjectMutationPresentation(
+        WindowsLocalToolInvocation invocation,
+        string projectRoot)
+    {
+        if (invocation.ToolName is "project_copy" or "project_move")
+        {
+            var sourcePath = WindowsLocalAgentProjectToolExecutor.RequiredString(
+                invocation.Arguments, "source_path");
+            var targetPath = WindowsLocalAgentProjectToolExecutor.RequiredString(
+                invocation.Arguments, "target_path");
+            var replaceExisting = WindowsLocalAgentProjectToolExecutor.OptionalBool(
+                invocation.Arguments, "replace_existing") ?? false;
+            var isCopy = invocation.ToolName == "project_copy";
+            return new ApprovalPresentation(
+                invocation.ToolName,
+                [
+                    sourcePath,
+                    targetPath,
+                    $"--replace-existing={replaceExisting.ToString().ToLowerInvariant()}",
+                ],
+                projectRoot,
+                new ConnectorApprovalRisk(
+                    replaceExisting
+                        ? ConnectorApprovalRiskLevel.High
+                        : ConnectorApprovalRiskLevel.Medium,
+                    replaceExisting
+                        ? isCopy
+                            ? "The local task requests permission to copy a project entry and replace the target if it exists."
+                            : "The local task requests permission to move or rename a project entry and replace the target if it exists."
+                        : isCopy
+                            ? "The local task requests permission to copy a project entry without replacing an existing target."
+                            : "The local task requests permission to move or rename a project entry without replacing an existing target."),
+                isCopy ? "local-agent-project-copy" : "local-agent-project-move");
+        }
+
+        if (invocation.ToolName != "project_write")
+        {
+            throw new InvalidOperationException("Unsupported Local Agent project approval.");
+        }
+
         var path = WindowsLocalAgentProjectToolExecutor.RequiredString(
             invocation.Arguments, "path");
+        var content = WindowsLocalAgentProjectToolExecutor.RequiredStringAllowEmpty(
+            invocation.Arguments, "content");
+        var createOnly = WindowsLocalAgentProjectToolExecutor.OptionalBool(
+            invocation.Arguments, "create_only") ?? false;
+        var contentBytes = Encoding.UTF8.GetBytes(content);
+        var contentSha256 = Convert.ToHexString(SHA256.HashData(contentBytes)).ToLowerInvariant();
         return new ApprovalPresentation(
             "project_write",
-            [path],
-            context.ProjectRoot,
+            [
+                path,
+                $"--create-only={createOnly.ToString().ToLowerInvariant()}",
+                $"--content-utf8-bytes={contentBytes.Length}",
+                $"--content-sha256={contentSha256}",
+            ],
+            projectRoot,
             new ConnectorApprovalRisk(
                 ConnectorApprovalRiskLevel.Medium,
-                "The local task requests permission to modify a project file."),
+                createOnly
+                    ? "The local task requests permission to create a project file with the displayed content fingerprint."
+                    : "The local task requests permission to create or replace a project file with the displayed content fingerprint."),
             "local-agent-project-write");
     }
 
     private static string Limit(string value, int maximum) =>
         value.Length <= maximum ? value : value[..maximum];
 
-    private sealed record ApprovalPresentation(
+    internal sealed record ApprovalPresentation(
         string Command,
         IReadOnlyList<string> Arguments,
         string WorkingDirectory,

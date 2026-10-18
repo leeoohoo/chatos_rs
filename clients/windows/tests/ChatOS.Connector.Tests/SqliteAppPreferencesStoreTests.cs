@@ -39,6 +39,11 @@ public sealed class SqliteAppPreferencesStoreTests : IAsyncLifetime
             false,
             132,
             false,
+            false,
+            false,
+            false,
+            false,
+            false,
             false);
 
         await store.SaveAsync(expected);
@@ -71,6 +76,11 @@ public sealed class SqliteAppPreferencesStoreTests : IAsyncLifetime
         Assert.Equal(AppPreferences.DefaultPetSize, loaded.PetSize);
         Assert.True(loaded.PetShowProcess);
         Assert.True(loaded.PetShowCompletions);
+        Assert.True(loaded.GlobalUtilitiesEnabled);
+        Assert.True(loaded.GlobalScreenshotEnabled);
+        Assert.True(loaded.GlobalRecordingEnabled);
+        Assert.True(loaded.GlobalClipboardEnabled);
+        Assert.True(loaded.GlobalQuickSearchEnabled);
     }
 
     [Fact]

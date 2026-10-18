@@ -131,8 +131,11 @@ public sealed partial class StoryStudioViewModel
         }
         catch (OperationCanceledException)
         {
-            BatchCurrentLabel = string.Empty;
-            StatusMessage = $"批量生产已停止；已完成 {BatchCompleted} 项，再次启动会继续未完成项";
+            if (session == _session)
+            {
+                BatchCurrentLabel = string.Empty;
+                StatusMessage = $"批量生产已停止；已完成 {BatchCompleted} 项，再次启动会继续未完成项";
+            }
         }
         finally
         {
@@ -141,10 +144,13 @@ public sealed partial class StoryStudioViewModel
                 _generationCancellation = null;
                 source.Dispose();
             }
-            IsBatchRunning = false;
-            IsBusy = false;
-            NotifyBatchPlanChanged();
-            NotifyBatchProgressChanged();
+            if (session == _session)
+            {
+                IsBatchRunning = false;
+                IsBusy = false;
+                NotifyBatchPlanChanged();
+                NotifyBatchProgressChanged();
+            }
         }
     }
 
@@ -273,7 +279,9 @@ public sealed partial class StoryStudioViewModel
         work.Add(new BatchWorkItem(
             kind,
             $"{label} · {segment.NumberLabel} {segment.Title}",
-            !string.IsNullOrWhiteSpace(prompt),
+            segment.IsRefined && !string.IsNullOrWhiteSpace(prompt) &&
+            (kind != BatchWorkKind.Video ||
+             segment.FirstFramePath is { Length: > 0 } firstFrame && File.Exists(firstFrame)),
             null,
             segment));
     }

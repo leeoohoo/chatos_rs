@@ -400,6 +400,8 @@ internal sealed class PluginRelayHandler(
             identity,
             connectorState.User.Id,
             connectorState.DeviceId,
+            scope.ProjectRoot,
+            sessions.Permissions(adapterSessionId),
             sessions.ArtifactDirectory(adapterSessionId),
             toolName,
             result,

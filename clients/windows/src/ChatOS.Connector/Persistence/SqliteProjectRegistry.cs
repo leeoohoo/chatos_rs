@@ -7,7 +7,7 @@ namespace ChatOS.Connector.Persistence;
 /// <summary>Local-only, account-scoped authority. Database failures propagate, never become an empty list.</summary>
 public sealed class SqliteProjectRegistry(LocalStateDatabase database) : IProjectRegistry
 {
-    private const string Columns = "owner_user_id, id, name, description, workspace_id, relative_root, revision, status, created_at_unix_ms, updated_at_unix_ms";
+    private const string Columns = "owner_user_id, id, name, description, workspace_id, relative_root, project_type_key, revision, status, created_at_unix_ms, updated_at_unix_ms";
 
     public async Task<IReadOnlyList<LocalProjectRecord>> ListAsync(
         string ownerUserId, bool includeInactive = false, CancellationToken cancellationToken = default)
@@ -62,10 +62,12 @@ public sealed class SqliteProjectRegistry(LocalStateDatabase database) : IProjec
         record.Validate();
         using var command = Command(connection, transaction, """
             UPDATE local_project_records SET name = @p0, description = @p1, workspace_id = @p2,
-                relative_root = @p3, revision = @p4, status = @p5, updated_at_unix_ms = @p6
-            WHERE owner_user_id = @p7 AND id = @p8 AND revision = @p9
+                relative_root = @p3, project_type_key = @p4, revision = @p5,
+                status = @p6, updated_at_unix_ms = @p7
+            WHERE owner_user_id = @p8 AND id = @p9 AND revision = @p10
             """, draft.Name, draft.Description, draft.WorkspaceId, draft.RelativeRoot,
-            record.Revision, StatusText(status), record.UpdatedAtUnixMs, ownerUserId, id, expectedRevision);
+            draft.ProjectTypeKey, record.Revision, StatusText(status), record.UpdatedAtUnixMs,
+            ownerUserId, id, expectedRevision);
         if (await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false) != 1)
             throw new ProjectRegistryException(ProjectRegistryError.RevisionConflict, "Project has changed.");
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -88,16 +90,16 @@ public sealed class SqliteProjectRegistry(LocalStateDatabase database) : IProjec
         SqliteConnection connection, SqliteTransaction? transaction, LocalProjectRecord record, CancellationToken cancellationToken)
     {
         using var command = Command(connection, transaction,
-            $"INSERT INTO local_project_records ({Columns}) VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9)",
+            $"INSERT INTO local_project_records ({Columns}) VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10)",
             record.OwnerUserId, record.Id, record.Draft.Name, record.Draft.Description,
-            record.Draft.WorkspaceId, record.Draft.RelativeRoot, record.Revision, StatusText(record.Status),
-            record.CreatedAtUnixMs, record.UpdatedAtUnixMs);
+            record.Draft.WorkspaceId, record.Draft.RelativeRoot, record.Draft.ProjectTypeKey,
+            record.Revision, StatusText(record.Status), record.CreatedAtUnixMs, record.UpdatedAtUnixMs);
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static LocalProjectRecord ReadRecord(SqliteDataReader reader)
     {
-        var status = reader.GetString(7) switch
+        var status = reader.GetString(8) switch
         {
             "active" => LocalProjectStatus.Active,
             "archived" => LocalProjectStatus.Archived,
@@ -105,8 +107,8 @@ public sealed class SqliteProjectRegistry(LocalStateDatabase database) : IProjec
             _ => throw new InvalidDataException("Invalid project status."),
         };
         var record = new LocalProjectRecord(reader.GetString(1), reader.GetString(0),
-            new(reader.GetString(2), reader.GetString(4), reader.GetString(5), reader.GetString(3)),
-            reader.GetInt64(6), status, reader.GetInt64(8), reader.GetInt64(9));
+            new(reader.GetString(2), reader.GetString(4), reader.GetString(5), reader.GetString(3), reader.GetString(6)),
+            reader.GetInt64(7), status, reader.GetInt64(9), reader.GetInt64(10));
         record.Validate();
         return record;
     }

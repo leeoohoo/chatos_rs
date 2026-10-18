@@ -2,6 +2,7 @@ using ChatOS.Connector.Gateway;
 using ChatOS.Connector.Relay;
 using ChatOS.Connector.Runtime;
 using ChatOS.Connector.Security;
+using ChatOS.Connector.Workspaces;
 
 namespace ChatOS.Connector.Tests;
 
@@ -100,6 +101,43 @@ public sealed class ConnectorPairingServiceTests
         Assert.Null(runtime.Snapshot.State);
     }
 
+    [Fact]
+    public async Task CredentialRefreshPreservesDeviceAndWorkspacesAndRestartsConnection()
+    {
+        using var root = TestDirectory.Create();
+        var state = new ConnectorPersistentState(
+            new Uri("https://gateway.example"),
+            new ConnectorUser("owner-1", "old-name", "Old name", "user"),
+            "device-existing",
+            "Windows PC",
+            [new ConnectorWorkspace("workspace-existing", "Workspace", root.Path, "fingerprint")],
+            new RemoteControlTrust(true, 300, new Dictionary<string, string>()));
+        var secrets = new MemorySecretStore();
+        var gateway = new FakeGateway(
+            (await new ConnectorDeviceIdentityProvider(secrets).GetAsync()).PublicKey);
+        var tokens = new MemoryTokenStore("expired-token");
+        var store = new MemoryStateStore { Value = state };
+        var runtime = new ConnectorRuntimeContext(store, tokens);
+        await runtime.InitializeAsync();
+        var previousConnectionRevision = runtime.Snapshot.ConnectionRevision;
+        var service = new ConnectorPairingService(
+            gateway,
+            new ConnectorDeviceIdentityProvider(secrets),
+            tokens,
+            runtime);
+
+        var refreshed = await service.RefreshCredentialAsync("fresh-ticket");
+
+        Assert.Equal("new-token", await tokens.GetAccessTokenAsync());
+        Assert.Equal("device-existing", refreshed.DeviceId);
+        Assert.Equal("workspace-existing", Assert.Single(refreshed.Workspaces).Id);
+        Assert.Equal("owner", refreshed.User.Username);
+        Assert.True(runtime.Snapshot.ConnectionRevision > previousConnectionRevision);
+        Assert.Same(refreshed, store.Value);
+        Assert.Equal(0, gateway.CreatedWorkspaceCount);
+        Assert.Null(gateway.RegisteredPublicKey);
+    }
+
     private sealed class FakeGateway(string publicKey) : IConnectorGatewayClient
     {
         public IReadOnlyList<ConnectorGatewayWorkspace> Workspaces { get; init; } = [];
@@ -195,7 +233,7 @@ public sealed class ConnectorPairingServiceTests
 
     private sealed class MemoryStateStore : IConnectorPersistentStateStore
     {
-        public ConnectorPersistentState? Value { get; private set; }
+        public ConnectorPersistentState? Value { get; set; }
 
         public bool FailSave { get; init; }
 

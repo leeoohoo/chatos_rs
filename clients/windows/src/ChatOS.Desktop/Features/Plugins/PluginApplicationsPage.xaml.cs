@@ -63,6 +63,8 @@ public sealed partial class PluginApplicationsPage : Page
 
     private readonly ILocalPluginApplicationService _applications;
     private readonly ILocalProjectsService _projects;
+    private CancellationTokenSource? _catalogCancellation;
+    private long _catalogGeneration;
     private CancellationTokenSource? _launchCancellation;
     private LocalPluginApplication? _selectedApplication;
     private ShellResourceViewModel? _selectedProject;
@@ -91,12 +93,15 @@ public sealed partial class PluginApplicationsPage : Page
     public ObservableCollection<PluginApplicationCardViewModel> Applications { get; } = [];
 
     public string CatalogDescription => Localization.Text(
-        "打开已安装并启用的插件应用。项目身份和目录始终由客户端提供。",
-        "Open installed and enabled plugin applications. Project identity and paths always come from the client.");
+        "打开已安装并启用的插件应用。",
+        "Open installed and enabled plugin applications.");
+    public string LoadingApplicationsText => Localization.Text("正在读取插件应用…", "Loading plugin apps…");
+    public string ApplicationsFailedTitle => Localization.Text("应用加载失败", "Applications failed to load");
     public string EmptyApplicationsTitle => Localization.Text("还没有插件应用", "No plugin applications");
     public string EmptyApplicationsDescription => Localization.Text(
-        "请先在插件管理中安装并启用一个带工作台页面的插件。",
-        "Install and enable a plugin with a workbench page in Plugin Management first.");
+        "请先在插件市场安装一个带页面的插件，并保持它处于启用状态。",
+        "Install a plugin with a workbench page from the marketplace and keep it enabled.");
+    public string OpenPluginManagementText => Localization.Text("打开插件管理", "Open Plugin Management");
     public string ChooseProjectTitle => Localization.Text("选择应用项目", "Choose an application project");
     public string ChooseProjectDescription => Localization.Text(
         "插件会为当前 ChatOS 用户和项目使用独立数据目录；Git 和项目目录仍由客户端管理。",
@@ -104,20 +109,33 @@ public sealed partial class PluginApplicationsPage : Page
     public string NoProjectsDescription => Localization.Text(
         "当前没有可用项目。请先从侧栏创建本地项目。",
         "No project is available. Create a local project from the sidebar first.");
+    public string SharedProjectTitle => Localization.Text("公共项目", "Shared Project");
+    public string SharedProjectDescription => Localization.Text(
+        "用于没有关联 ChatOS 项目的图形和数据。",
+        "For diagrams and data that are not tied to a ChatOS project.");
     public string StartingApplicationText => Localization.Text("正在启动插件应用…", "Starting plugin application…");
     public string ApplicationFailedTitle => Localization.Text("应用无法打开", "Application could not open");
     public string ApplicationHostName => Localization.Text("插件应用工作台", "Plugin application workbench");
     public string RetryText => Localization.Text("重试", "Try again");
     public string SwitchProjectText => Localization.Text("切换项目", "Switch project");
 
+    public event EventHandler? OpenPluginManagementRequested;
+
     public async Task OpenAsync(CancellationToken cancellationToken = default)
     {
         ShowCatalog();
-        await LoadApplicationsAsync(cancellationToken);
+        if (Applications.Count == 0)
+        {
+            await LoadApplicationsAsync(cancellationToken);
+        }
     }
 
     public async Task ResetAsync()
     {
+        _catalogGeneration++;
+        _catalogCancellation?.Cancel();
+        _catalogCancellation?.Dispose();
+        _catalogCancellation = null;
         _launchCancellation?.Cancel();
         _launchCancellation?.Dispose();
         _launchCancellation = null;
@@ -126,6 +144,8 @@ public sealed partial class PluginApplicationsPage : Page
         _projectContext = null;
         _launch = null;
         _allowedUrl = null;
+        Applications.Clear();
+        Shell.UpdatePluginApplicationCount(null);
         if (_webViewInitialized)
         {
             PluginWebView.CoreWebView2.Navigate("about:blank");
@@ -136,35 +156,64 @@ public sealed partial class PluginApplicationsPage : Page
 
     private async Task LoadApplicationsAsync(CancellationToken cancellationToken = default)
     {
-        CatalogProgress.IsActive = true;
-        CatalogMessageCard.Visibility = Visibility.Collapsed;
+        _catalogCancellation?.Cancel();
+        _catalogCancellation?.Dispose();
+        _catalogCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = _catalogCancellation.Token;
+        var generation = ++_catalogGeneration;
+        var accountGeneration = Shell.AccountGeneration;
+        var owner = Shell.CurrentOwnerUserId;
+        var isInitialLoad = Applications.Count == 0;
+        RefreshApplicationsButton.IsEnabled = false;
+        CatalogProgress.IsActive = isInitialLoad;
+        CatalogLoadingState.Visibility = isInitialLoad ? Visibility.Visible : Visibility.Collapsed;
+        CatalogErrorState.Visibility = Visibility.Collapsed;
+        EmptyApplications.Visibility = Visibility.Collapsed;
+        ApplicationGrid.Visibility = isInitialLoad ? Visibility.Collapsed : Visibility.Visible;
         try
         {
-            var values = await _applications.ListAsync(cancellationToken);
+            var values = await _applications.ListAsync(token);
+            token.ThrowIfCancellationRequested();
+            if (generation != _catalogGeneration ||
+                accountGeneration != Shell.AccountGeneration ||
+                !string.Equals(owner, Shell.CurrentOwnerUserId, StringComparison.Ordinal)) return;
             Applications.Clear();
             foreach (var value in values)
             {
                 Applications.Add(new PluginApplicationCardViewModel(value, Localization));
             }
+            Shell.UpdatePluginApplicationCount(Applications.Count);
             EmptyApplications.Visibility = Applications.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             ApplicationGrid.Visibility = Applications.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+        }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            Applications.Clear();
-            ApplicationGrid.Visibility = Visibility.Collapsed;
-            EmptyApplications.Visibility = Visibility.Collapsed;
+            if (generation != _catalogGeneration ||
+                accountGeneration != Shell.AccountGeneration ||
+                !string.Equals(owner, Shell.CurrentOwnerUserId, StringComparison.Ordinal)) return;
             CatalogMessageText.Text = exception.Message;
-            CatalogMessageCard.Visibility = Visibility.Visible;
+            CatalogErrorState.Visibility = Applications.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            ApplicationGrid.Visibility = Applications.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
         finally
         {
-            CatalogProgress.IsActive = false;
+            if (generation == _catalogGeneration)
+            {
+                CatalogProgress.IsActive = false;
+                CatalogLoadingState.Visibility = Visibility.Collapsed;
+                RefreshApplicationsButton.IsEnabled = true;
+            }
         }
     }
 
     private async void OnRefreshApplicationsClicked(object sender, RoutedEventArgs e) =>
         await LoadApplicationsAsync();
+
+    private void OnOpenPluginManagementClicked(object sender, RoutedEventArgs e) =>
+        OpenPluginManagementRequested?.Invoke(this, EventArgs.Empty);
 
     private async void OnApplicationClicked(object sender, ItemClickEventArgs e)
     {
@@ -185,8 +234,12 @@ public sealed partial class PluginApplicationsPage : Page
 
     private void ShowProjectPicker()
     {
+        var allowsDeviceContext = AllowsDeviceContext(_selectedApplication);
         ContextPicker.Visibility = Visibility.Visible;
-        NoProjectsMessage.Visibility = Shell.Projects.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        SharedProjectButton.Visibility = allowsDeviceContext ? Visibility.Visible : Visibility.Collapsed;
+        NoProjectsMessage.Visibility = Shell.Projects.Count == 0 && !allowsDeviceContext
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         ProjectList.Visibility = Shell.Projects.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         LaunchProgress.Visibility = Visibility.Collapsed;
         LaunchError.Visibility = Visibility.Collapsed;
@@ -201,6 +254,14 @@ public sealed partial class PluginApplicationsPage : Page
         if (e.ClickedItem is not ShellResourceViewModel { Kind: WorkspaceResourceKind.Project } project) return;
         _selectedProject = project;
         await LaunchAsync(project);
+    }
+
+    private async void OnSharedProjectClicked(object sender, RoutedEventArgs e)
+    {
+        if (!AllowsDeviceContext(_selectedApplication)) return;
+        _selectedProject = null;
+        _projectContext = null;
+        await LaunchAsync(null);
     }
 
     private async Task LaunchAsync(ShellResourceViewModel? project)
@@ -370,16 +431,34 @@ public sealed partial class PluginApplicationsPage : Page
         return (owner, context);
     }
 
-    private void OnBackToApplicationsClicked(object sender, RoutedEventArgs e) => ShowCatalog();
-
-    private void OnSwitchProjectClicked(object sender, RoutedEventArgs e)
+    private async void OnBackToApplicationsClicked(object sender, RoutedEventArgs e)
     {
-        _launchCancellation?.Cancel();
+        await StopCurrentApplicationAsync();
+        ShowCatalog();
+    }
+
+    private async void OnSwitchProjectClicked(object sender, RoutedEventArgs e)
+    {
+        await StopCurrentApplicationAsync();
         _selectedProject = null;
         _projectContext = null;
+        ShowProjectPicker();
+    }
+
+    private async Task StopCurrentApplicationAsync()
+    {
+        _launchCancellation?.Cancel();
+        _launchCancellation?.Dispose();
+        _launchCancellation = null;
         _launch = null;
         _allowedUrl = null;
-        ShowProjectPicker();
+        _adapterSessionId = string.Empty;
+        _hostSessionNonce = string.Empty;
+        if (_webViewInitialized)
+        {
+            PluginWebView.CoreWebView2.Navigate("about:blank");
+        }
+        await _applications.StopAllAsync();
     }
 
     private void OnReloadApplicationClicked(object sender, RoutedEventArgs e)
@@ -460,6 +539,10 @@ public sealed partial class PluginApplicationsPage : Page
 
     private static bool RequiresProject(LocalPluginApplication application) =>
         application.ContextScope is "project" or "workspace";
+
+    private static bool AllowsDeviceContext(LocalPluginApplication? application) =>
+        application is not null && RequiresProject(application) &&
+        string.Equals(application.MissingContext, "device", StringComparison.Ordinal);
 
     private static string? ReadString(JsonElement value, string name) =>
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String

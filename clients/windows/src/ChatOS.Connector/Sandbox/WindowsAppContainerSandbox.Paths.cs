@@ -130,12 +130,14 @@ internal static partial class WindowsAppContainerSandbox
                      state.Metadata.TemporaryDirectory,
                      temporaryDirectory,
                      StringComparison.OrdinalIgnoreCase) ||
-                 state.Metadata.LoopbackExempt != loopbackExempt))
+                  state.Metadata.LoopbackExempt != loopbackExempt))
             {
                 throw new InvalidOperationException(
                     "Controlled AppContainer profile identity changed while it was active.");
             }
-            state.Metadata ??= metadata;
+            state.Metadata = state.Metadata is null
+                ? metadata
+                : state.Metadata with { LoopbackExempt = loopbackExempt };
             await SaveProfileMetadataAsync(state.Metadata, cancellationToken).ConfigureAwait(false);
         }
         finally

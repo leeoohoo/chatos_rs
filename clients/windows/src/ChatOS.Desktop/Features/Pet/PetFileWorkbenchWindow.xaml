@@ -1,0 +1,71 @@
+<Window
+    x:Class="ChatOS.Desktop.Features.Pet.PetFileWorkbenchWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:designSystem="using:ChatOS.Desktop.DesignSystem"
+    Title="ChatOS Pet File">
+    <Grid x:Name="WindowRoot" AutomationProperties.AutomationId="ChatOS.Pet.FileWorkbench" Background="{StaticResource ChatOSContentBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Padding="16,12" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="FileNameText" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                <TextBlock x:Name="FilePathText" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </StackPanel>
+            <Button x:Name="EditButton" Grid.Column="1" Click="OnEditClick" Content="{x:Bind Localization.Edit, Mode=OneWay}" Visibility="Collapsed" />
+            <Button x:Name="SaveButton" Grid.Column="2" Click="OnSaveClick" Content="{x:Bind Localization.Save, Mode=OneWay}" Visibility="Collapsed" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+            <Button x:Name="CancelEditButton" Grid.Column="3" Click="OnCancelEditClick" Content="{x:Bind Localization.Cancel, Mode=OneWay}" Visibility="Collapsed" />
+            <Button Grid.Column="4" Click="OnRevealClick" Content="{x:Bind Localization.RevealInExplorer, Mode=OneWay}" />
+            <Button Grid.Column="5" Click="OnOpenDefaultClick" Content="{x:Bind Localization.OpenWithDefaultApplication, Mode=OneWay}" />
+            <Button Grid.Column="6" Click="OnCloseClick" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                <FontIcon Glyph="&#xE711;" FontSize="12" />
+            </Button>
+        </Grid>
+        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Grid Grid.Row="2">
+            <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            <TextBox
+                x:Name="CodePreview"
+                AutomationProperties.AutomationId="ChatOS.Pet.FileWorkbench.CodePreview"
+                Margin="14"
+                AcceptsReturn="True"
+                FontFamily="Cascadia Mono, Consolas"
+                IsReadOnly="True"
+                ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                ScrollViewer.VerticalScrollBarVisibility="Auto"
+                TextWrapping="NoWrap"
+                Visibility="Collapsed" />
+            <ScrollViewer x:Name="MarkdownScroll" AutomationProperties.AutomationId="ChatOS.Pet.FileWorkbench.MarkdownPreview" Padding="24" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                <RichTextBlock x:Name="MarkdownPreview" IsTextSelectionEnabled="True" />
+            </ScrollViewer>
+            <Border x:Name="ImagePanel" AutomationProperties.AutomationId="ChatOS.Pet.FileWorkbench.ImagePreview" Margin="14" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="9" Visibility="Collapsed">
+                <Grid>
+                    <designSystem:CheckerboardCanvas />
+                    <Image x:Name="ImagePreview" Margin="24" Stretch="Uniform" />
+                </Grid>
+            </Border>
+            <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8" Visibility="Collapsed">
+                <FontIcon x:Name="EmptyStateIcon" Glyph="&#xE7C3;" FontSize="36" Foreground="{StaticResource ChatOSTertiaryTextBrush}" />
+                <TextBlock x:Name="EmptyStateTitle" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                <TextBlock x:Name="EmptyStateDescription" MaxWidth="440" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </StackPanel>
+        </Grid>
+
+        <TextBlock x:Name="StatusText" Grid.Row="3" Margin="16,8" TextWrapping="Wrap" Foreground="{StaticResource ChatOSFailureBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+    </Grid>
+</Window>

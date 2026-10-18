@@ -8,7 +8,7 @@ using ChatOS.Presentation.Threading;
 
 namespace ChatOS.Connector.Tests;
 
-public sealed class ApprovalSettingsViewModelTests
+public sealed partial class ApprovalSettingsViewModelTests
 {
     [Fact]
     public async Task LoadsPersistedModeAndRecentHistory()
@@ -21,6 +21,8 @@ public sealed class ApprovalSettingsViewModelTests
 
         Assert.Equal(ConnectorApprovalMode.AutoApproval, viewModel.Mode);
         Assert.Single(viewModel.History);
+        Assert.True(viewModel.HasHistory);
+        Assert.False(viewModel.HasPending);
         Assert.Contains("安全回退", viewModel.AutomaticReviewerStatus);
     }
 
@@ -52,10 +54,13 @@ public sealed class ApprovalSettingsViewModelTests
             ConnectorApprovalRiskLevel.High,
             "destructive"));
         await WaitUntilAsync(() => viewModel.Pending.Count == 1);
+        Assert.True(viewModel.HasPending);
 
         await viewModel.ResolveAsync(viewModel.Pending[0], ConnectorApprovalAction.Decline);
 
         Assert.Empty(viewModel.Pending);
+        Assert.False(viewModel.HasPending);
+        Assert.True(viewModel.HasHistory);
         Assert.False((await request).Approved);
         Assert.Single(viewModel.History);
         Assert.Equal("已拒绝", viewModel.History[0].DecisionLabel);
@@ -108,7 +113,13 @@ public sealed class ApprovalSettingsViewModelTests
     private sealed class MemoryApprovalStore : IConnectorApprovalStore
     {
         public ConnectorApprovalMode? Mode { get; set; }
+        public int ModeSaveCount { get; private set; }
+        public Exception? ModeSaveError { get; set; }
+        public Action? ModeSaved { get; set; }
         public List<ConnectorApprovalHistoryEntry> History { get; } = [];
+        public int HistoryReadCount { get; private set; }
+        public Exception? HistoryReadError { get; set; }
+        public Func<CancellationToken, Task<IReadOnlyList<ConnectorApprovalHistoryEntry>>>? HistoryReadHandler { get; set; }
 
         public Task<ConnectorApprovalMode?> ReadModeAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Mode);
@@ -117,7 +128,10 @@ public sealed class ApprovalSettingsViewModelTests
             ConnectorApprovalMode mode,
             CancellationToken cancellationToken = default)
         {
+            ModeSaveCount++;
+            if (ModeSaveError is { } error) return Task.FromException(error);
             Mode = mode;
+            ModeSaved?.Invoke();
             return Task.CompletedTask;
         }
 
@@ -131,8 +145,14 @@ public sealed class ApprovalSettingsViewModelTests
 
         public Task<IReadOnlyList<ConnectorApprovalHistoryEntry>> ReadHistoryAsync(
             int limit = 1_000,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<ConnectorApprovalHistoryEntry>>(History.Take(limit).ToArray());
+            CancellationToken cancellationToken = default)
+        {
+            HistoryReadCount++;
+            if (HistoryReadHandler is { } handler) return handler(cancellationToken);
+            return HistoryReadError is { } error
+                ? Task.FromException<IReadOnlyList<ConnectorApprovalHistoryEntry>>(error)
+                : Task.FromResult<IReadOnlyList<ConnectorApprovalHistoryEntry>>(History.Take(limit).ToArray());
+        }
     }
 
     private sealed class MemoryPreferencesStore : IAppPreferencesStore

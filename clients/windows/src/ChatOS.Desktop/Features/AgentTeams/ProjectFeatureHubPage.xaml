@@ -6,59 +6,50 @@
     xmlns:shell="using:ChatOS.Desktop.AppShell">
 
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
-        <ScrollViewer Padding="30" VerticalScrollBarVisibility="Auto">
-            <StackPanel MaxWidth="1040" HorizontalAlignment="Center" Spacing="22">
-                <Grid ColumnSpacing="14">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="52" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Border Width="48" Height="48" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="14">
-                        <FontIcon Glyph="{x:Bind FeatureGlyph, Mode=OneWay}" FontSize="22" Foreground="{StaticResource ChatOSPurpleBrush}" />
-                    </Border>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
-                        <TextBlock Text="{x:Bind FeatureTitle, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
-                        <TextBlock Text="{x:Bind FeatureDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                    </StackPanel>
-                </Grid>
-
-                <Border Padding="14,12" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="11">
-                    <Grid ColumnSpacing="10">
+        <ScrollViewer Padding="28,24,28,28" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="1200" HorizontalAlignment="Stretch" Spacing="16">
+                <Border Padding="18" Background="{StaticResource ChatOSSurfaceSubtleBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="14">
+                    <Grid ColumnSpacing="14">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="52" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <FontIcon Glyph="&#xE946;" FontSize="15" Foreground="{StaticResource ChatOSAccentBrush}" />
-                        <TextBlock Grid.Column="1" Text="{x:Bind FeatureHelpText, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <Border Width="48" Height="48" Background="{StaticResource ChatOSPurpleBrush}" CornerRadius="14">
+                            <FontIcon Glyph="{x:Bind FeatureGlyph, Mode=OneTime}" FontSize="22" Foreground="White" />
+                        </Border>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                            <TextBlock Text="{x:Bind FeatureTitle, Mode=OneTime}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                            <TextBlock Text="{x:Bind FeatureDescription, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                        </StackPanel>
+                        <Grid x:Name="SurveySummaryPanel" Grid.Column="2" VerticalAlignment="Center" ColumnSpacing="24">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel MinWidth="52" HorizontalAlignment="Center" Spacing="2">
+                                <TextBlock HorizontalAlignment="Center" Foreground="{StaticResource ChatOSPurpleBrush}" Text="{x:Bind PendingSurveyCount, Mode=OneTime}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                                <TextBlock HorizontalAlignment="Center" Text="待填写" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" MinWidth="52" HorizontalAlignment="Center" Spacing="2">
+                                <TextBlock HorizontalAlignment="Center" Foreground="{StaticResource ChatOSSuccessBrush}" Text="{x:Bind ResolvedSurveyCount, Mode=OneTime}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                                <TextBlock HorizontalAlignment="Center" Text="已恢复" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <Button Grid.Column="2" Click="OnRefreshSurveySummaryClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="刷新需求调研">
+                                <Grid>
+                                    <FontIcon Glyph="&#xE72C;" FontSize="13" Visibility="{x:Bind IsLoadingSurveySummary, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                    <ProgressRing Width="16" Height="16" IsActive="{x:Bind IsLoadingSurveySummary, Mode=OneTime}" Visibility="{x:Bind IsLoadingSurveySummary, Mode=OneTime, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                </Grid>
+                            </Button>
+                        </Grid>
                     </Grid>
                 </Border>
 
-                <Grid x:Name="SurveySummaryPanel" ColumnSpacing="10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <Border Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
-                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind PendingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="待 Human 填写" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                    </Border>
-                    <Border Grid.Column="1" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
-                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind AwaitingSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="处理中" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                    </Border>
-                    <Border Grid.Column="2" Padding="14" Style="{StaticResource ChatOSSectionCardStyle}">
-                        <StackPanel Spacing="3"><TextBlock Text="{x:Bind ResolvedSurveyCount, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" /><TextBlock Text="已有解决方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                    </Border>
-                    <StackPanel Grid.Column="3" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
-                        <ProgressRing Width="20" Height="20" IsActive="{x:Bind IsLoadingSurveySummary, Mode=OneWay}" />
-                        <Button Click="OnRefreshSurveySummaryClick" Content="刷新汇总" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
-                    </StackPanel>
-                </Grid>
-
-                <StackPanel Spacing="5">
-                    <TextBlock Text="{x:Bind FeatureListTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                    <TextBlock Text="{x:Bind FeatureListDescription, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                    <TextBlock Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind SurveySummaryError, Mode=OneWay}" TextWrapping="Wrap" />
+                <StackPanel Spacing="3">
+                    <TextBlock Text="{x:Bind FeatureListTitle, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock Text="{x:Bind FeatureListDescription, Mode=OneTime}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <TextBlock Foreground="{StaticResource ChatOSFailureBrush}" Text="{x:Bind SurveySummaryError, Mode=OneTime}" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <ListView
@@ -71,31 +62,30 @@
                     ItemClick="OnProjectClicked"
                     ItemsSource="{x:Bind Shell.Projects}"
                     SelectionMode="None">
-                    <ListView.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <ItemsStackPanel Orientation="Vertical" />
-                        </ItemsPanelTemplate>
-                    </ListView.ItemsPanel>
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Width" Value="340" />
+                            <Setter Property="Height" Value="100" />
+                            <Setter Property="Margin" Value="0,0,10,10" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="340" ItemHeight="100" /></ItemsPanelTemplate></ListView.ItemsPanel>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="shell:ShellResourceViewModel">
-                            <Border Margin="0,0,0,10" Style="{StaticResource ChatOSSectionCardStyle}">
-                                <Grid ColumnSpacing="14">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="44" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Width="42" Height="42" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="12">
-                                        <FontIcon Glyph="&#xE8B7;" FontSize="18" Foreground="{StaticResource ChatOSAccentBrush}" />
+                            <Border Padding="13" Style="{StaticResource ChatOSSectionCardStyle}">
+                                <Grid ColumnSpacing="11">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="36" Height="36" VerticalAlignment="Top" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="10">
+                                        <FontIcon Glyph="&#xE8B7;" FontSize="16" Foreground="{StaticResource ChatOSAccentBrush}" />
                                     </Border>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
-                                        <TextBlock Text="{x:Bind Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                        <TextBlock Text="{x:Bind Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                         <TextBlock Text="{x:Bind Subtitle}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                     </StackPanel>
-                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="8">
-                                        <TextBlock Text="打开" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                        <FontIcon Glyph="&#xE76C;" FontSize="13" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
-                                    </StackPanel>
+                                    <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -112,41 +102,45 @@
                     ItemClick="OnSurveyProjectClicked"
                     ItemsSource="{x:Bind SurveyProjects}"
                     SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="Width" Value="266" />
+                            <Setter Property="Height" Value="100" />
+                            <Setter Property="Margin" Value="0,0,10,10" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="266" ItemHeight="100" /></ItemsPanelTemplate></ListView.ItemsPanel>
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="agent:ProjectSurveySummary">
-                            <Border Margin="0,0,0,10" Style="{StaticResource ChatOSSectionCardStyle}">
-                                <Grid ColumnSpacing="14">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <Border Width="42" Height="42" Background="{StaticResource ChatOSPurpleSoftBrush}" CornerRadius="12">
-                                        <FontIcon Glyph="&#xE9D5;" FontSize="18" Foreground="{StaticResource ChatOSPurpleBrush}" />
+                            <Border Padding="13" Background="{StaticResource ChatOSSurfaceSubtleBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="12">
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="36" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="34" Height="34" VerticalAlignment="Top" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="9">
+                                        <FontIcon Glyph="&#xE8B7;" FontSize="15" Foreground="{StaticResource ChatOSSuccessBrush}" />
                                     </Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
-                                        <TextBlock Text="{x:Bind Project.Title}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                        <TextBlock Text="{x:Bind StatusLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Text="{x:Bind Project.Title}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                        <TextBlock Text="{x:Bind StatusLabel}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Border Padding="6,2" Background="{StaticResource ChatOSContentBackgroundBrush}" CornerRadius="8"><TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind PendingCount}" /><Run Text=" 待填写" /></TextBlock></Border>
+                                            <Border Padding="6,2" Background="{StaticResource ChatOSContentBackgroundBrush}" CornerRadius="8"><TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind ResolvedCount}" /><Run Text=" 已恢复" /></TextBlock></Border>
+                                        </StackPanel>
                                     </StackPanel>
-                                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Orientation="Horizontal" Spacing="14">
-                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind PendingCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="待填写" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind AwaitingCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="待方案" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                                        <StackPanel><TextBlock HorizontalAlignment="Center" Text="{x:Bind ResolvedCount}" Style="{StaticResource ChatOSBodyStrongTextStyle}" /><TextBlock Text="已解决" Style="{StaticResource ChatOSCaptionTextStyle}" /></StackPanel>
-                                        <FontIcon Glyph="&#xE76C;" FontSize="13" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
-                                    </StackPanel>
+                                    <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
 
-                <Border
-                    x:Name="NoProjectsPanel"
-                    MinHeight="300"
-                    Style="{StaticResource ChatOSSectionCardStyle}"
-                    Visibility="{x:Bind HasProjects, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                <Border x:Name="NoProjectsPanel" MinHeight="300" Style="{StaticResource ChatOSSectionCardStyle}" Visibility="{x:Bind HasProjects, Mode=OneTime, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
                     <StackPanel MaxWidth="420" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="11">
-                        <Border Style="{StaticResource ChatOSEmptyStateIconStyle}">
-                            <FontIcon Glyph="&#xE8B7;" FontSize="23" Foreground="{StaticResource ChatOSAccentBrush}" />
-                        </Border>
+                        <Border Style="{StaticResource ChatOSEmptyStateIconStyle}"><FontIcon Glyph="&#xE8B7;" FontSize="23" Foreground="{StaticResource ChatOSAccentBrush}" /></Border>
                         <TextBlock HorizontalAlignment="Center" Text="还没有本机项目" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                        <TextBlock Text="请从左侧的 + 菜单创建项目，然后回到这里配置 Agent 团队和需求调研。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <TextBlock Text="请从左侧的 + 菜单创建项目，然后回到这里查看需求调研。" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                     </StackPanel>
                 </Border>
             </StackPanel>

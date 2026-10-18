@@ -35,12 +35,30 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
 
     public bool HasFolders => Folders.Count > 0;
 
+    public NotepadFolderItem? SelectedFolderItem => Folders.FirstOrDefault(folder => folder.Path == SelectedFolder);
+
+    public bool IsRootFolderSelected => SelectedFolder.Length == 0;
+
     public bool HasNotes => Notes.Count > 0;
 
     public bool HasSelection => SelectedNote is not null;
 
+    // Search responses replace metadata instances. Bind list selection to the
+    // current result by ID, independently of the note retained in the editor.
+    public NotepadNote? SelectedResultNote => Notes.FirstOrDefault(note => note.Id == SelectedNote?.Id);
+
     public bool IsDirty => HasSelection &&
         (Title != _savedTitle || TagsText != _savedTags || Content != _savedContent);
+
+    public bool CanSave => CanReload && IsDirty;
+
+    public bool IsBusy => IsLoading || IsSaving || IsSearching;
+
+    public bool CanReload => IsOpen && !IsBusy && _sessionCancellation is { IsCancellationRequested: false };
+
+    public bool CanClose => !IsSaving;
+
+    public bool CanDiscardChanges => IsOpen && IsDirty && !IsSaving;
 
     public bool IsPreviewVisible => HasSelection && EditorMode is NotepadEditorMode.Preview or NotepadEditorMode.Split;
 
@@ -49,37 +67,84 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
     public bool IsSplitMode => EditorMode == NotepadEditorMode.Split;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(CanReload))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateNoteCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SearchCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSearch))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private bool _isOpen;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyPropertyChangedFor(nameof(CanReload))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateNoteCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SearchCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSearch))]
     private bool _isLoading;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(IsBusy))]
+    [NotifyPropertyChangedFor(nameof(CanClose))]
+    [NotifyPropertyChangedFor(nameof(CanReload))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateNoteCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SearchCommand))]
+    [NotifyPropertyChangedFor(nameof(CanSearch))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private bool _isSaving;
 
     [ObservableProperty]
     private string _searchQuery = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedFolderItem))]
+    [NotifyPropertyChangedFor(nameof(IsRootFolderSelected))]
     private string _selectedFolder = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelection))]
+    [NotifyPropertyChangedFor(nameof(SelectedResultNote))]
     [NotifyPropertyChangedFor(nameof(IsDirty))]
     [NotifyPropertyChangedFor(nameof(IsPreviewVisible))]
     [NotifyPropertyChangedFor(nameof(IsEditorVisible))]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private NotepadNote? _selectedNote;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDirty))]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private string _title = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDirty))]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private string _tagsText = string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsDirty))]
+    [NotifyPropertyChangedFor(nameof(CanSave))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyPropertyChangedFor(nameof(CanDiscardChanges))]
+    [NotifyCanExecuteChangedFor(nameof(DiscardChangesCommand))]
     private string _content = string.Empty;
 
     [ObservableProperty]
@@ -96,27 +161,34 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
 
     public async Task OpenAsync(CancellationToken cancellationToken = default)
     {
+        if (IsOpen && IsSaving && _sessionCancellation is { IsCancellationRequested: false }) return;
+
+        CancelSearch();
         _sessionCancellation?.Cancel();
         _sessionCancellation?.Dispose();
         _sessionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        IsSaving = false;
+        IsEditorReadOnly = false;
         IsOpen = true;
         await LoadAsync(forceInitialize: false, _sessionCancellation.Token).ConfigureAwait(false);
     }
 
     public Task CloseAsync(CancellationToken cancellationToken = default)
     {
-        _sessionCancellation?.Cancel();
-        _sessionCancellation?.Dispose();
+        CancelSearch();
+        var session = _sessionCancellation;
         _sessionCancellation = null;
+        session?.Cancel();
+        session?.Dispose();
         IsOpen = false;
+        IsSaving = false;
+        IsLoading = false;
+        IsEditorReadOnly = false;
         return Task.CompletedTask;
     }
 
-    [RelayCommand]
-    private Task RefreshAsync() => WithSession(token => LoadAsync(true, token));
-
-    [RelayCommand]
-    private Task SearchAsync() => WithSession(token => ReloadResourcesAsync(token, preserveSelection: true));
+    [RelayCommand(CanExecute = nameof(CanReload))]
+    private Task RefreshAsync() => !CanReload ? Task.CompletedTask : WithSession(token => LoadAsync(true, token));
 
     [RelayCommand]
     private void SelectFolder(NotepadFolderItem? folder)
@@ -128,25 +200,45 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task SelectNoteAsync(NotepadNote? note)
     {
-        if (note is null || _sessionCancellation is null || note.Id == SelectedNote?.Id)
+        if (note is null || !CanReload || note.Id == SelectedNote?.Id)
         {
             return;
         }
 
-        if (IsDirty && !await SaveCoreAsync(_sessionCancellation.Token).ConfigureAwait(false))
+        var token = _sessionCancellation!.Token;
+        if (IsDirty && (!await SaveCoreAsync(token).ConfigureAwait(false) || IsDirty))
         {
             return;
         }
 
-        await LoadNoteAsync(note.Id, _sessionCancellation.Token).ConfigureAwait(false);
+        if (IsCurrentSession(token))
+        {
+            await LoadNoteAsync(note.Id, token).ConfigureAwait(false);
+        }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanSave))]
     private Task SaveAsync() => WithSession(async token => _ = await SaveCoreAsync(token).ConfigureAwait(false));
+
+    [RelayCommand(CanExecute = nameof(CanDiscardChanges))]
+    private void DiscardChanges()
+    {
+        if (!CanDiscardChanges) return;
+        CancelSearch();
+        Title = _savedTitle;
+        TagsText = _savedTags;
+        Content = _savedContent;
+        ErrorMessage = null;
+        ActionMessage = L("未保存的更改已放弃。", "Unsaved changes discarded.");
+        NotifySavedStateChanged();
+    }
 
     [RelayCommand]
     private Task CreateFolderAsync(string? value)
     {
+        if (!CanReload) return Task.CompletedTask;
+        ErrorMessage = null;
+        ActionMessage = null;
         var folder = NormalizeFolder(value);
         if (folder.Length == 0)
         {
@@ -154,7 +246,8 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
             return Task.CompletedTask;
         }
 
-        if (SelectedFolder.Length > 0 && !folder.StartsWith(SelectedFolder + "/", StringComparison.Ordinal))
+        if (SelectedFolder.Length > 0 && folder != SelectedFolder &&
+            !folder.StartsWith(SelectedFolder + "/", StringComparison.Ordinal))
         {
             folder = $"{SelectedFolder}/{folder}";
         }
@@ -167,89 +260,35 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
             () => SelectedFolder = target);
     }
 
-    [RelayCommand]
-    private Task RenameFolderAsync(NotepadFolderRenameRequest? request)
-    {
-        if (request is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        var target = NormalizeFolder(request.To);
-        if (target.Length == 0)
-        {
-            ErrorMessage = L("文件夹名称不能为空。", "Folder name cannot be empty.");
-            return Task.CompletedTask;
-        }
-
-        return MutateAsync(
-            L("文件夹已重命名。", "Folder renamed."),
-            token => _service.RenameFolderAsync(request.From, target, token),
-            token => ReloadResourcesAsync(token, true),
-            () => SelectedFolder = target);
-    }
-
-    [RelayCommand]
-    private Task DeleteFolderAsync(NotepadFolderItem? folder) => folder is null
-        ? Task.CompletedTask
-        : MutateAsync(
-            L("文件夹及其中的笔记已删除。", "The folder and its notes were deleted."),
-            token => _service.DeleteFolderAsync(folder.Path, true, token),
-            token => ReloadResourcesAsync(token, false),
-            ResetEditor);
-
-    [RelayCommand]
-    private Task CreateNoteAsync(NotepadNoteCreationRequest? request)
-    {
-        if (request is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        var folder = NormalizeFolder(request.Folder ?? SelectedFolder);
-        return MutateAsync(
-            L("笔记已创建。", "Note created."),
-            async token =>
-            {
-                var detail = await _service.CreateNoteAsync(
-                    new NotepadNoteDraft(folder, request.Title.Trim(), string.Empty, []),
-                    token).ConfigureAwait(false);
-                await _dispatcher.InvokeAsync(() => ApplyDetail(detail), token).ConfigureAwait(false);
-            },
-            token => ReloadResourcesAsync(token, true));
-    }
-
-    [RelayCommand]
-    private Task DeleteNoteAsync(NotepadNote? note) => note is null
-        ? Task.CompletedTask
-        : MutateAsync(
-            L("笔记已删除。", "Note deleted."),
-            token => _service.DeleteNoteAsync(note.Id, token),
-            token => ReloadResourcesAsync(token, false),
-            ResetEditor);
-
     public void Dispose()
     {
-        _sessionCancellation?.Cancel();
-        _sessionCancellation?.Dispose();
+        _ = CloseAsync();
     }
 
     private async Task LoadAsync(bool forceInitialize, CancellationToken token)
     {
+        if (!IsCurrentSession(token)) return;
         IsLoading = true;
         ErrorMessage = null;
+        ActionMessage = null;
         try
         {
             if (!_initialized || forceInitialize)
             {
                 await _service.InitializeAsync(token).ConfigureAwait(false);
-                _initialized = true;
+                await InvokeForSessionAsync(() => _initialized = true, token).ConfigureAwait(false);
             }
 
+            if (!IsCurrentSession(token)) return;
             await ReloadResourcesAsync(token, preserveSelection: true).ConfigureAwait(false);
-            if (SelectedNote is null && Notes.FirstOrDefault() is { } first)
+            string? firstId = null;
+            await InvokeForSessionAsync(() =>
             {
-                await LoadNoteAsync(first.Id, token).ConfigureAwait(false);
+                if (SelectedNote is null) firstId = Notes.FirstOrDefault()?.Id;
+            }, token).ConfigureAwait(false);
+            if (firstId is not null)
+            {
+                await ReadNoteCoreAsync(firstId, token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -257,30 +296,41 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         }
         catch (Exception exception)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => ErrorMessage = exception.Message, token).ConfigureAwait(false);
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => IsLoading = false).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => IsLoading = false, token, allowCanceled: true).ConfigureAwait(false);
         }
     }
 
     private async Task ReloadResourcesAsync(CancellationToken token, bool preserveSelection)
     {
-        var selectedId = preserveSelection ? SelectedNote?.Id : null;
-        var foldersTask = _service.ListFoldersAsync(token);
-        var notesTask = _service.ListNotesAsync(SearchQuery.Trim(), 500, token);
-        await Task.WhenAll(foldersTask, notesTask).ConfigureAwait(false);
-        await _dispatcher.InvokeAsync(() =>
+        string? selectedId = null;
+        var query = string.Empty;
+        var captured = false;
+        await InvokeForSessionAsync(() =>
         {
-            Replace(Folders, NormalizeFolders(foldersTask.Result).Select(static path => new NotepadFolderItem(path)));
-            _allNotes.Clear();
-            _allNotes.AddRange(notesTask.Result.OrderByDescending(static note => note.UpdatedAt ?? note.CreatedAt));
-            ApplyFilter();
-            if (selectedId is not null)
+            selectedId = preserveSelection ? SelectedNote?.Id : null;
+            query = SearchQuery.Trim();
+            captured = true;
+        }, token).ConfigureAwait(false);
+        if (!captured) return;
+
+        var foldersTask = _service.ListFoldersAsync(token);
+        var notesTask = _service.ListNotesAsync(query.Length == 0 ? null : query, 500, token);
+        await Task.WhenAll(foldersTask, notesTask).ConfigureAwait(false);
+        await InvokeForSessionAsync(() =>
+        {
+            ReplaceFolders(NormalizeFolders(foldersTask.Result).Select(static path => new NotepadFolderItem(path)));
+            ApplyNoteResults(notesTask.Result, query);
+            if (selectedId is not null && SelectedNote?.Id == selectedId)
             {
-                SelectedNote = _allNotes.FirstOrDefault(note => note.Id == selectedId);
-                if (SelectedNote is null)
+                if (_allNotes.FirstOrDefault(note => note.Id == selectedId) is { } refreshed)
+                {
+                    SelectedNote = refreshed;
+                }
+                else if (query.Length == 0 && !IsDirty)
                 {
                     ResetEditor();
                 }
@@ -290,21 +340,65 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
 
     private async Task LoadNoteAsync(string id, CancellationToken token)
     {
-        IsLoading = true;
-        ErrorMessage = null;
+        var started = false;
+        await InvokeForSessionAsync(() =>
+        {
+            if (IsBusy || IsDirty) return;
+            IsLoading = true;
+            ErrorMessage = null;
+            ActionMessage = null;
+            started = true;
+        }, token).ConfigureAwait(false);
+        if (!started) return;
+
         try
         {
-            var detail = await _service.FetchNoteAsync(id, token).ConfigureAwait(false);
-            await _dispatcher.InvokeAsync(() => ApplyDetail(detail), token).ConfigureAwait(false);
+            await ReadNoteCoreAsync(id, token).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await InvokeForSessionAsync(() => ErrorMessage = exception.Message, token).ConfigureAwait(false);
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => IsLoading = false).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => IsLoading = false, token, allowCanceled: true).ConfigureAwait(false);
         }
+    }
+
+    private async Task ReadNoteCoreAsync(string id, CancellationToken token)
+    {
+        string? previousId = null;
+        var previousTitle = string.Empty;
+        var previousTags = string.Empty;
+        var previousContent = string.Empty;
+        var captured = false;
+        await InvokeForSessionAsync(() =>
+        {
+            if (IsDirty) return;
+            previousId = SelectedNote?.Id;
+            previousTitle = Title;
+            previousTags = TagsText;
+            previousContent = Content;
+            captured = true;
+        }, token).ConfigureAwait(false);
+        if (!captured) return;
+
+        var detail = await _service.FetchNoteAsync(id, token).ConfigureAwait(false);
+        await InvokeForSessionAsync(() =>
+        {
+            // A detail read must not replace input typed into the previous note
+            // while the request or its UI callback was waiting.
+            if (SelectedNote?.Id != previousId || Title != previousTitle || TagsText != previousTags || Content != previousContent)
+            {
+                ActionMessage = L("新的修改已保留在当前笔记中。保存后可再次打开目标笔记。",
+                    "Newer edits were kept in the current note. Save them before opening the requested note again.");
+                return;
+            }
+            ApplyDetail(detail);
+        }, token).ConfigureAwait(false);
     }
 
     private async Task<bool> SaveCoreAsync(CancellationToken token)
@@ -314,30 +408,97 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
             return true;
         }
 
+        if (IsBusy || !IsCurrentSession(token))
+        {
+            return false;
+        }
+
+        // Reject the same invalid title as the host without sending an update.
+        // Automatic save callers must also stay on the current draft.
+        if (string.IsNullOrWhiteSpace(Title))
+        {
+            ActionMessage = null;
+            ErrorMessage = L("笔记标题不能为空。", "Note title cannot be empty.");
+            return false;
+        }
+
+        var noteId = SelectedNote.Id;
+        var submittedTitle = Title;
+        var submittedTags = TagsText;
+        var submittedContent = Content;
         IsSaving = true;
         ErrorMessage = null;
+        ActionMessage = null;
         try
         {
             var detail = await _service.UpdateNoteAsync(
-                SelectedNote.Id,
-                new NotepadNoteUpdate(Title.Trim(), Content, Tags: ParseTags(TagsText)),
+                noteId,
+                new NotepadNoteUpdate(submittedTitle.Trim(), submittedContent, Tags: ParseTags(submittedTags)),
                 token).ConfigureAwait(false);
-            await _dispatcher.InvokeAsync(() =>
+            var applied = false;
+            await InvokeForSessionAsync(() =>
             {
-                ApplyDetail(detail);
-                ActionMessage = L("笔记已保存。", "Note saved.");
+                var existing = _allNotes.FindIndex(note => note.Id == noteId);
+                if (existing >= 0) _allNotes[existing] = detail.Note;
+                else if (!IsSearchActive) _allNotes.Add(detail.Note);
+                if (SelectedNote?.Id == noteId)
+                {
+                    // Save responses may contain metadata only. Keep the submitted body and
+                    // any edits made while saving, rather than rebuilding the editor buffer.
+                    SelectedNote = detail.Note;
+                    var normalizedTags = string.Join(", ", detail.Note.Tags);
+                    // Match macOS: normalize metadata only if the whole editor
+                    // still matches the submitted snapshot. A newer edit keeps
+                    // all three input buffers intact until the next save.
+                    if (Title == submittedTitle && TagsText == submittedTags && Content == submittedContent)
+                    {
+                        Title = detail.Note.Title;
+                        TagsText = normalizedTags;
+                    }
+                    _savedTitle = detail.Note.Title;
+                    _savedTags = normalizedTags;
+                    _savedContent = submittedContent;
+                    NotifySavedStateChanged();
+                    ActionMessage = IsDirty
+                        ? L("先前的修改已保存；当前仍有未保存的修改。", "Earlier changes were saved; newer edits are still unsaved.")
+                        : L("笔记已保存。", "Note saved.");
+                }
+                ApplyFilter();
+                applied = true;
             }, token).ConfigureAwait(false);
-            return true;
+            return applied;
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return false;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => ErrorMessage = exception.Message, token).ConfigureAwait(false);
             return false;
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => IsSaving = false).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => IsSaving = false, token, allowCanceled: true).ConfigureAwait(false);
         }
+    }
+
+    private bool IsCurrentSession(CancellationToken token, bool allowCanceled = false) =>
+        (allowCanceled || !token.IsCancellationRequested) && _sessionCancellation is { } session && session.Token == token;
+
+    private Task InvokeForSessionAsync(Action action, CancellationToken token, bool allowCanceled = false) =>
+        _dispatcher.InvokeAsync(() =>
+        {
+            if (IsCurrentSession(token, allowCanceled)) action();
+        });
+
+    private void NotifySavedStateChanged()
+    {
+        OnPropertyChanged(nameof(IsDirty));
+        OnPropertyChanged(nameof(CanSave));
+        OnPropertyChanged(nameof(CanDiscardChanges));
+        SaveCommand.NotifyCanExecuteChanged();
+        DiscardChangesCommand.NotifyCanExecuteChanged();
     }
 
     private async Task MutateAsync(
@@ -346,48 +507,52 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         Func<CancellationToken, Task>? refresh = null,
         Action? after = null)
     {
-        if (_sessionCancellation is null || IsLoading || IsSaving)
+        if (!CanReload)
         {
             return;
         }
 
-        var token = _sessionCancellation.Token;
+        var token = _sessionCancellation!.Token;
         IsLoading = true;
         ErrorMessage = null;
         ActionMessage = null;
         try
         {
             await mutation(token).ConfigureAwait(false);
+            if (!IsCurrentSession(token)) return;
             if (refresh is not null)
             {
                 await refresh(token).ConfigureAwait(false);
             }
 
-            await _dispatcher.InvokeAsync(() =>
+            await InvokeForSessionAsync(() =>
             {
                 after?.Invoke();
                 ApplyFilter();
                 ActionMessage = success;
             }, token).ConfigureAwait(false);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await InvokeForSessionAsync(() => ErrorMessage = exception.Message, token).ConfigureAwait(false);
         }
         finally
         {
-            await _dispatcher.InvokeAsync(() => IsLoading = false).ConfigureAwait(false);
+            await InvokeForSessionAsync(() => IsLoading = false, token, allowCanceled: true).ConfigureAwait(false);
         }
     }
 
     private Task WithSession(Func<CancellationToken, Task> action) =>
         _sessionCancellation is null ? Task.CompletedTask : action(_sessionCancellation.Token);
 
-    private void ApplyDetail(NotepadNoteDetail detail)
+    private void ApplyDetail(NotepadNoteDetail detail, bool includeInResults = true)
     {
         var existing = _allNotes.FindIndex(note => note.Id == detail.Note.Id);
         if (existing >= 0) _allNotes[existing] = detail.Note;
-        else _allNotes.Add(detail.Note);
+        else if (includeInResults) _allNotes.Add(detail.Note);
         SelectedNote = detail.Note;
         SelectedFolder = NormalizeFolder(detail.Note.Folder);
         Title = detail.Note.Title;
@@ -397,13 +562,14 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         _savedTags = TagsText;
         _savedContent = Content;
         ApplyFilter();
-        OnPropertyChanged(nameof(IsDirty));
+        NotifySavedStateChanged();
     }
 
     private void ApplyFilter()
     {
         var folder = NormalizeFolder(SelectedFolder);
-        Replace(Notes, _allNotes.Where(note => NormalizeFolder(note.Folder) == folder));
+        Replace(Notes, IsSearchActive ? _allNotes : _allNotes.Where(note => NormalizeFolder(note.Folder) == folder));
+        OnPropertyChanged(nameof(SelectedResultNote));
     }
 
     private void ResetEditor()
@@ -415,7 +581,7 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         _savedTitle = string.Empty;
         _savedTags = string.Empty;
         _savedContent = string.Empty;
-        OnPropertyChanged(nameof(IsDirty));
+        NotifySavedStateChanged();
     }
 
     private static string NormalizeFolder(string? value) => string.Join(
@@ -437,6 +603,14 @@ public sealed partial class NotepadViewModel : ObservableObject, IDisposable
         .Split([',', '，', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.CurrentCultureIgnoreCase)
         .ToArray();
+
+    private void ReplaceFolders(IEnumerable<NotepadFolderItem> values)
+    {
+        Replace(Folders, values);
+        // Native collection consumers must receive the new items before the
+        // selected item binding points at one of those instances.
+        OnPropertyChanged(nameof(SelectedFolderItem));
+    }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
     {

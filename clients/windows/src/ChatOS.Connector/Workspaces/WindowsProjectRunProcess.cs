@@ -10,8 +10,10 @@ internal sealed class WindowsProjectRunProcess : IDisposable
     private readonly object _gate = new();
     private readonly Process _process;
     private readonly StringBuilder _log;
+    private readonly WindowsProcessJob? _windowsJob;
     private string _status = "starting";
     private bool _isRunning;
+    private bool _stopRequested;
     private int? _exitCode;
 
     public WindowsProjectRunProcess(
@@ -25,6 +27,7 @@ internal sealed class WindowsProjectRunProcess : IDisposable
         Target = target;
         StartedAt = DateTimeOffset.UtcNow;
         _log = new StringBuilder($"> {target.Command}{Environment.NewLine}");
+        _windowsJob = OperatingSystem.IsWindows() ? new WindowsProcessJob() : null;
         _process = new Process
         {
             StartInfo = StartInfo(target, environment),
@@ -53,6 +56,7 @@ internal sealed class WindowsProjectRunProcess : IDisposable
                 {
                     throw new InvalidOperationException("The project process did not start.");
                 }
+                _windowsJob?.Assign(_process);
                 _status = "running";
                 _isRunning = true;
             }
@@ -72,11 +76,13 @@ internal sealed class WindowsProjectRunProcess : IDisposable
         lock (_gate)
         {
             if (!_isRunning) return;
+            _stopRequested = true;
             _status = "stopping";
         }
         try
         {
-            _process.Kill(entireProcessTree: true);
+            if (_windowsJob is not null) _windowsJob.Terminate();
+            else _process.Kill(entireProcessTree: true);
         }
         catch (InvalidOperationException)
         {
@@ -105,10 +111,18 @@ internal sealed class WindowsProjectRunProcess : IDisposable
     {
         try
         {
-            if (!_process.HasExited) _process.Kill(entireProcessTree: true);
+            if (!_process.HasExited)
+            {
+                if (_windowsJob is not null) _windowsJob.Terminate();
+                else _process.Kill(entireProcessTree: true);
+            }
         }
         catch (InvalidOperationException)
         {
+        }
+        finally
+        {
+            _windowsJob?.Dispose();
         }
         _process.Dispose();
     }
@@ -116,16 +130,27 @@ internal sealed class WindowsProjectRunProcess : IDisposable
     private void Complete()
     {
         int? exitCode = null;
-        try { exitCode = _process.ExitCode; }
+        try
+        {
+            // A shell may exit while a detached descendant still owns the output
+            // handles. End the job before draining redirected output so the run
+            // cannot outlive its instance and the exit marker stays last.
+            _windowsJob?.Terminate();
+            _process.WaitForExit();
+            exitCode = _process.ExitCode;
+        }
         catch (InvalidOperationException) { }
         lock (_gate)
         {
             _exitCode = exitCode;
             _isRunning = false;
-            _status = exitCode is 0 ? "exited" : "failed";
+            _status = FinalStatus(_stopRequested, exitCode);
             AppendLocked($"[process exited with code {exitCode?.ToString() ?? "unknown"}]");
         }
     }
+
+    internal static string FinalStatus(bool stopRequested, int? exitCode) =>
+        stopRequested ? "stopped" : exitCode is 0 ? "exited" : "failed";
 
     private void Append(string? line)
     {

@@ -15,6 +15,7 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
     private readonly string _directory = Path.Combine(
         Path.GetTempPath(), "chatos-agent-scheduler-tests", Guid.NewGuid().ToString("N"));
     private SqliteAgentTeamStore _store = null!;
+    private SqliteProjectRegistry _projects = null!;
 
     [Fact]
     public void ManagedRuntimeSettingsReplaceDefaultsAndRejectInvalidValues()
@@ -36,6 +37,7 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         var database = new LocalStateDatabase(Path.Combine(_directory, "state.db"));
         await database.InitializeAsync();
         _store = new SqliteAgentTeamStore(database);
+        _projects = new SqliteProjectRegistry(database);
     }
 
     public Task DisposeAsync()
@@ -109,6 +111,42 @@ public sealed class AgentTeamSchedulerTests : IAsyncLifetime
         Assert.Equal(delivery.Id, run.DeliveryId);
         Assert.Equal(AgentRunStatus.Completed, run.Status);
         Assert.Equal(1, run.ModelCalls);
+    }
+
+    [Fact]
+    public async Task SchedulerBindsPersistedProjectTypeToAgentRun()
+    {
+        var project = await _projects.CreateAsync("alice", new LocalProjectDraft(
+            "Desktop client",
+            "workspace",
+            ProjectTypeKey: "desktop_application"));
+        var profile = await _store.CreateAgentAsync("alice", Profile().Draft);
+        var room = await _store.CreateRoomAsync("alice", project.Id,
+            new("桌面团队", "完成 Windows 客户端"), profile.Id);
+        await CompleteInitialMaintenanceAsync();
+        _ = await _store.PostMessageAsync("alice", room.Id,
+            new(AgentMessageSenderKind.Human, null, "开始"));
+        string? requestBody = null;
+        var gateway = CreateGateway(async request =>
+        {
+            requestBody = await request.Content!.ReadAsStringAsync();
+            return Json("""
+                {"status":"completed","output":[
+                  {"type":"message","content":[{"type":"output_text","text":"已按桌面项目处理。"}]}
+                ]}
+                """);
+        });
+        var scheduler = new AgentTeamScheduler(
+            _store,
+            gateway,
+            new AgentTeamToolExecutor(_store, null!),
+            projects: _projects);
+
+        await scheduler.DrainAsync("alice");
+
+        Assert.Contains("desktop_application", requestBody, StringComparison.Ordinal);
+        Assert.Equal(AgentRunStatus.Completed,
+            Assert.Single(await _store.ListRunsAsync("alice", room.Id)).Status);
     }
 
     [Fact]

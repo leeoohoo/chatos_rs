@@ -42,13 +42,18 @@ public sealed class WindowsLocalAgentProjectConversationService(
 
         try
         {
+            var conversationId = WindowsLocalAgentWorkspaceService.NewConversationId();
             var created = await conversations.CreateAsync(
                 ownerUserId,
-                WindowsLocalAgentWorkspaceService.NewConversationId(),
+                conversationId,
                 project.Name,
                 binding,
                 cancellationToken).ConfigureAwait(false);
-            return created.Conversation.ConversationId;
+            return WindowsLocalAgentWorkspaceService.RequireCreatedBinding(
+                created.Conversation,
+                ownerUserId,
+                conversationId,
+                binding).ConversationId;
         }
         catch (LocalAgentHostRequestException exception) when (exception.Code == "conflict")
         {
@@ -61,9 +66,20 @@ public sealed class WindowsLocalAgentProjectConversationService(
     private async Task<WindowsLocalConversationRecord?> FindAsync(
         string ownerUserId,
         WindowsLocalConversationResourceBinding binding,
-        CancellationToken cancellationToken) =>
-        (await workspace.ListAllAsync(ownerUserId, cancellationToken).ConfigureAwait(false))
-        .FirstOrDefault(value => value.Resource == binding);
+        CancellationToken cancellationToken)
+    {
+        var matches = (await workspace.ListAllAsync(ownerUserId, cancellationToken)
+            .ConfigureAwait(false))
+            .Where(value => value.Resource == binding)
+            .Take(2)
+            .ToArray();
+        if (matches.Length > 1)
+        {
+            throw new InvalidOperationException(
+                "The project is bound to more than one Local Agent conversation.");
+        }
+        return matches.SingleOrDefault();
+    }
 
     private string RequireOwner()
     {

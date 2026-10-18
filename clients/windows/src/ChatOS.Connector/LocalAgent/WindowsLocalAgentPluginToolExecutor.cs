@@ -42,16 +42,40 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         CancellationToken cancellationToken)
     {
         var installed = (await installedPlugins.ListAsync(cancellationToken).ConfigureAwait(false))
-            .Select(record => record.PluginId)
-            .ToHashSet(StringComparer.Ordinal);
-        return (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
-            .Where(plugin => plugin.Installed && plugin.Enabled && installed.Contains(plugin.PluginId))
+            .ToDictionary(record => record.PluginId, StringComparer.Ordinal);
+        var plugins = (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
+            .Where(plugin => plugin.Installed && plugin.Enabled)
             .OrderBy(plugin => plugin.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(plugin => plugin.PluginId, StringComparer.Ordinal)
-            .Select(plugin => new WindowsLocalAgentPluginChoice(
+            .ToArray();
+        var choices = new List<WindowsLocalAgentPluginChoice>();
+        foreach (var plugin in plugins)
+        {
+            if (!installed.TryGetValue(plugin.PluginId, out var record)) continue;
+            var installedKey = string.IsNullOrWhiteSpace(record.PluginKey)
+                ? record.PluginId
+                : record.PluginKey.Trim();
+            if (!string.Equals(installedKey, plugin.PluginKey, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Installed Plugin identity does not match the enabled catalog.");
+            }
+            var components = await manifestLoader.ListMcpComponentChoicesAsync(
+                record, cancellationToken).ConfigureAwait(false);
+            choices.AddRange(components.Select(component => new WindowsLocalAgentPluginChoice(
                 plugin.PluginKey,
-                plugin.DisplayName,
-                plugin.Description))
+                component.ComponentKey,
+                record.PluginId,
+                record.ReleaseId,
+                record.Version,
+                record.ArtifactSha256,
+                component.DisplayName ?? plugin.DisplayName,
+                component.Description ?? plugin.Description)));
+        }
+        return choices
+            .OrderBy(choice => choice.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(choice => choice.PluginKey, StringComparer.Ordinal)
+            .ThenBy(choice => choice.ComponentKey, StringComparer.Ordinal)
             .ToArray();
     }
 
@@ -83,9 +107,9 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
             "capability_search" => Search(session, arguments),
             "capability_describe" => await DescribeAsync(
                 session, arguments, cancellationToken).ConfigureAwait(false),
-            "capability_skill_activate" => await ActivateSkillAsync(
+            "agent_skill_activate" => await ActivateSkillAsync(
                 session, arguments, cancellationToken).ConfigureAwait(false),
-            "capability_skill_read_resource" => await ReadSkillResourceAsync(
+            "agent_skill_read_resource" => await ReadSkillResourceAsync(
                 session, arguments, cancellationToken).ConfigureAwait(false),
             "capability_invoke" => await InvokeAsync(
                 session, callId, arguments, cancellationToken).ConfigureAwait(false),
@@ -125,19 +149,27 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         var enabled = (await pluginManagement.ListAsync(cancellationToken).ConfigureAwait(false))
             .Where(value => value.Installed && value.Enabled)
             .ToDictionary(value => value.PluginId, StringComparer.Ordinal);
-        var records = await installedPlugins.ListAsync(cancellationToken).ConfigureAwait(false);
-        var selectedPluginKeys = context.Authorization.PluginKeys;
-        var options = records
-            .Where(record => enabled.ContainsKey(record.PluginId))
-            .Where(record => context.Authorization.IsLegacyUnrestricted ||
-                selectedPluginKeys.Contains(enabled[record.PluginId].PluginKey))
-            .OrderBy(record => record.PluginId, StringComparer.Ordinal)
-            .Take(MaximumPlugins)
-            .Select((record, index) => new PluginOption(
-                $"plugin_{index + 1}",
-                enabled[record.PluginId],
-                record))
-            .ToArray();
+        var records = (await installedPlugins.ListAsync(cancellationToken).ConfigureAwait(false))
+            .ToDictionary(value => value.PluginId, StringComparer.Ordinal);
+        var selected = context.Authorization.IsLegacyUnrestricted
+            ? (await ListChoicesAsync(cancellationToken).ConfigureAwait(false))
+                .Take(MaximumPlugins)
+                .ToArray()
+            : context.Authorization.PluginReleaseSnapshots.Values
+                .OrderBy(value => value.PluginKey, StringComparer.Ordinal)
+                .ThenBy(value => value.ComponentKey, StringComparer.Ordinal)
+                .Take(MaximumPlugins)
+                .Select(snapshot => ValidateFrozenChoice(snapshot, enabled, records))
+                .ToArray();
+        var options = selected.Select((choice, index) =>
+        {
+            if (!records.TryGetValue(choice.PluginId, out var record))
+            {
+                throw new InvalidOperationException(
+                    "The Local Agent Task Plugin component is no longer installed.");
+            }
+            return new PluginOption($"plugin_{index + 1}", choice, record);
+        }).ToArray();
         var deviceId = workspaces.DeviceId
             ?? throw new InvalidOperationException("The local Connector is not paired.");
         var created = new RunSession(
@@ -187,7 +219,8 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
             StringSplitOptions.TrimEntries);
         var lexicalMatches = session.Options.Where(option =>
         {
-            var searchable = $"{option.Catalog.DisplayName} {option.Catalog.Description}";
+            var searchable = $"{option.Choice.DisplayName} {option.Choice.Description} " +
+                $"{option.Choice.PluginKey} {option.Choice.ComponentKey}";
             return terms.Any(term => searchable.Contains(term, StringComparison.OrdinalIgnoreCase));
         }).ToArray();
         // The Task already froze this run's trusted Plugin selections. A translated
@@ -197,9 +230,9 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         var matches = visibleOptions.Take(12).Select(option => new
         {
             plugin_option = option.Token,
-            name = option.Catalog.DisplayName,
+            name = option.Choice.DisplayName,
                 description = WindowsLocalAgentPluginRuntimeSupport.Limit(
-                    option.Catalog.Description, 1_000),
+                    option.Choice.Description, 1_000),
         });
         return JsonSerializer.SerializeToElement(new { matches }, JsonOptions);
     }
@@ -211,26 +244,34 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
     {
         var option = Option(session, arguments);
         var plugin = await LoadAsync(session, option, cancellationToken).ConfigureAwait(false);
-        return JsonSerializer.SerializeToElement(new
+        var toolOption = OptionalString(arguments, "tool_option");
+        var response = WindowsAgentCapabilityDisclosure.Response(
+            new WindowsAgentCapabilityDescriptor(
+                option.Token,
+                option.Choice.DisplayName,
+                option.Choice.PluginKey,
+                option.Choice.ComponentKey,
+                plugin.Tools.Select(tool => new WindowsAgentCapabilityToolDescriptor(
+                    tool.Token,
+                    tool.Name,
+                    tool.Description,
+                    tool.InputSchema,
+                    tool.Policy.ApprovalMode,
+                    (tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>())
+                        .Select(name => SkillRef(option.Token, name))
+                        .ToArray())).ToArray()),
+            toolOption,
+            OptionalString(arguments, "query"),
+            Integer(arguments, "offset") ?? 0,
+            Integer(arguments, "limit") ?? 8,
+            Integer(arguments, "schema_offset"));
+        if (toolOption is not null &&
+            response.TryGetProperty("view", out var view) &&
+            view.GetString() == "tool")
         {
-            plugin_option = option.Token,
-            name = option.Catalog.DisplayName,
-            tools = plugin.Tools.Select(tool => new
-            {
-                tool_option = tool.Token,
-                name = tool.Name,
-                description = tool.Description,
-                input_schema = tool.InputSchema,
-                approval = tool.Policy.ApprovalMode,
-                required_skills = tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>(),
-            }),
-            skills = plugin.Tools
-                .SelectMany(tool =>
-                    tool.SkillGate?.CatalogSkillNames ?? Array.Empty<string>())
-                .Distinct(StringComparer.Ordinal)
-                .Order(StringComparer.Ordinal)
-                .Select(name => new { name, role = "leaf" }),
-        }, JsonOptions);
+            plugin.DescribedTools.Add(toolOption);
+        }
+        return response;
     }
 
     private async Task<JsonElement> InvokeAsync(
@@ -245,11 +286,17 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
             arguments, "tool_option");
         var tool = plugin.Tools.FirstOrDefault(value => value.Token == toolOption)
             ?? throw new InvalidOperationException("The Plugin tool option is invalid or expired.");
+        WindowsAgentCapabilityAuthorization.RequireDescribedTool(
+            plugin.DescribedTools, toolOption);
         if (!arguments.TryGetProperty("arguments", out var toolArguments) ||
             toolArguments.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidOperationException("The Plugin tool arguments are invalid.");
         }
+
+        // Validate the frozen schema before Skill, permission, approval, or process work.
+        // Unsupported third-party assertions fail closed instead of being ignored.
+        WindowsExternalToolSchemaValidator.Validate(toolArguments, tool.InputSchema);
 
         if (tool.SkillGate is { } skillGate)
         {
@@ -308,6 +355,8 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
             tool.Identity,
             session.OwnerUserId,
             session.DeviceId,
+            session.ProjectRoot,
+            runtimeSessions.Permissions(tool.AdapterSessionId),
             runtimeSessions.ArtifactDirectory(tool.AdapterSessionId),
             tool.Name,
             result,
@@ -327,90 +376,85 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
     {
         if (session.Loaded.TryGetValue(option.Token, out var existing)) return existing;
 
-        var componentKeys = await manifestLoader.ListMcpComponentsAsync(
-            option.Record, cancellationToken).ConfigureAwait(false);
         var tools = new List<PluginTool>();
         var adapterSessions = new List<string>();
         try
         {
-            foreach (var componentKey in componentKeys)
+            var componentKey = option.Choice.ComponentKey;
+            var adapterSessionId = Guid.NewGuid().ToString("D").ToLowerInvariant();
+            var launch = await manifestLoader.PrepareAsync(
+                option.Record,
+                componentKey,
+                null,
+                adapterSessionId,
+                session.ProjectRoot,
+                option.Record.DeclaredPermissions.ToHashSet(StringComparer.Ordinal),
+                session.OwnerUserId,
+                session.DeviceId,
+                session.WorkspaceId,
+                session.ProjectId,
+                option.Choice.DisplayName,
+                cancellationToken).ConfigureAwait(false);
+            var client = clientFactory.Create(launch);
+            var registered = false;
+            try
             {
-                if (tools.Count >= MaximumTools) break;
-                var adapterSessionId = Guid.NewGuid().ToString("D").ToLowerInvariant();
-                var launch = await manifestLoader.PrepareAsync(
-                    option.Record,
-                    componentKey,
-                    null,
+                await client.StartAsync(cancellationToken).ConfigureAwait(false);
+                var initialized = await client.InitializeAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                var definitions = WindowsLocalAgentPluginRuntimeSupport.ValidTools(
+                    initialized.Tools);
+                var identity = new PluginRuntimeIdentity(
+                    session.RunId,
+                    option.Record.PluginId,
+                    option.Record.ReleaseId,
+                    option.Record.Version,
+                    option.Record.ArtifactSha256,
+                    launch.ComponentKey,
                     adapterSessionId,
-                    session.ProjectRoot,
-                    option.Record.DeclaredPermissions.ToHashSet(StringComparer.Ordinal),
-                    session.OwnerUserId,
-                    session.DeviceId,
                     session.WorkspaceId,
-                    session.ProjectId,
-                    option.Catalog.DisplayName,
-                    cancellationToken).ConfigureAwait(false);
-                var client = clientFactory.Create(launch);
-                var registered = false;
-                try
+                    session.ProjectId);
+                await runtimeSessions.InsertAsync(
+                    identity,
+                    client,
+                    definitions,
+                    option.Record.DeclaredPermissions.ToHashSet(StringComparer.Ordinal),
+                    launch.Server.RequiresExclusiveExecution,
+                    launch.InstallationPath,
+                    launch.ArtifactPath,
+                    launch.VisualSessionPath,
+                    launch.DisplayName).ConfigureAwait(false);
+                registered = true;
+                adapterSessions.Add(adapterSessionId);
+                foreach (var definition in definitions)
                 {
-                    await client.StartAsync(cancellationToken).ConfigureAwait(false);
-                    var initialized = await client.InitializeAsync(cancellationToken)
-                        .ConfigureAwait(false);
-                    var definitions = WindowsLocalAgentPluginRuntimeSupport.ValidTools(
-                        initialized.Tools);
-                    var identity = new PluginRuntimeIdentity(
-                        session.RunId,
-                        option.Record.PluginId,
-                        option.Record.ReleaseId,
-                        option.Record.Version,
-                        option.Record.ArtifactSha256,
-                        launch.ComponentKey,
+                    if (tools.Count >= MaximumTools) break;
+                    var name = definition.GetProperty("name").GetString()!;
+                    tools.Add(new PluginTool(
+                        $"tool_{tools.Count + 1}",
+                        name,
+                        WindowsLocalAgentPluginRuntimeSupport.Description(definition),
+                        definition.GetProperty("inputSchema").Clone(),
+                        PluginToolPolicy.Parse(definition),
+                        WindowsLocalAgentPluginRuntimeSupport.SkillGate(definition),
                         adapterSessionId,
-                        session.WorkspaceId,
-                        session.ProjectId);
-                    await runtimeSessions.InsertAsync(
-                        identity,
-                        client,
-                        definitions,
-                        option.Record.DeclaredPermissions.ToHashSet(StringComparer.Ordinal),
-                        launch.Server.RequiresExclusiveExecution,
-                        launch.InstallationPath,
-                        launch.ArtifactPath,
-                        launch.VisualSessionPath,
-                        launch.DisplayName).ConfigureAwait(false);
-                    registered = true;
-                    adapterSessions.Add(adapterSessionId);
-                    foreach (var definition in definitions)
-                    {
-                        if (tools.Count >= MaximumTools) break;
-                        var name = definition.GetProperty("name").GetString()!;
-                        tools.Add(new PluginTool(
-                            $"tool_{tools.Count + 1}",
-                            name,
-                            WindowsLocalAgentPluginRuntimeSupport.Description(definition),
-                            definition.GetProperty("inputSchema").Clone(),
-                            PluginToolPolicy.Parse(definition),
-                            WindowsLocalAgentPluginRuntimeSupport.SkillGate(definition),
-                            adapterSessionId,
-                            identity));
-                    }
+                        identity));
                 }
-                catch
+            }
+            catch
+            {
+                if (registered)
                 {
-                    if (registered)
-                    {
-                        await runtimeSessions.CancelAsync(
-                            adapterSessionId, null, session.WorkspaceId, session.ProjectId)
-                            .ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await client.TerminateAsync().ConfigureAwait(false);
-                        await client.DisposeAsync().ConfigureAwait(false);
-                    }
-                    throw;
+                    await runtimeSessions.CancelAsync(
+                        adapterSessionId, null, session.WorkspaceId, session.ProjectId)
+                        .ConfigureAwait(false);
                 }
+                else
+                {
+                    await client.TerminateAsync().ConfigureAwait(false);
+                    await client.DisposeAsync().ConfigureAwait(false);
+                }
+                throw;
             }
             if (tools.Count == 0)
             {
@@ -433,6 +477,40 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         }
     }
 
+    internal static WindowsLocalAgentPluginChoice ValidateFrozenChoice(
+        WindowsLocalAgentPluginReleaseSnapshot snapshot,
+        IReadOnlyDictionary<string, LocalConnectorPlugin> enabled,
+        IReadOnlyDictionary<string, InstalledPluginRecord> records)
+    {
+        if (!enabled.TryGetValue(snapshot.PluginId, out var plugin) ||
+            !records.TryGetValue(snapshot.PluginId, out var record))
+        {
+            throw new InvalidOperationException(
+                "The Local Agent Task Plugin component is no longer installed or enabled.");
+        }
+        var installedKey = string.IsNullOrWhiteSpace(record.PluginKey)
+            ? record.PluginId
+            : record.PluginKey.Trim();
+        if (!string.Equals(plugin.PluginKey, snapshot.PluginKey, StringComparison.Ordinal) ||
+            !string.Equals(installedKey, snapshot.PluginKey, StringComparison.Ordinal) ||
+            !string.Equals(record.ReleaseId, snapshot.ReleaseId, StringComparison.Ordinal) ||
+            !string.Equals(record.Version, snapshot.Version, StringComparison.Ordinal) ||
+            !string.Equals(record.ArtifactSha256, snapshot.ArtifactSha256, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The Plugin Release frozen by this Task has changed; create a new Task.");
+        }
+        return new WindowsLocalAgentPluginChoice(
+            snapshot.PluginKey,
+            snapshot.ComponentKey,
+            snapshot.PluginId,
+            snapshot.ReleaseId,
+            snapshot.Version,
+            snapshot.ArtifactSha256,
+            plugin.DisplayName,
+            plugin.Description);
+    }
+
     private static PluginOption Option(RunSession session, JsonElement arguments)
     {
         var token = WindowsLocalAgentProjectToolExecutor.RequiredString(
@@ -440,6 +518,20 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor(
         return session.Options.FirstOrDefault(value => value.Token == token)
             ?? throw new InvalidOperationException("The Plugin option is invalid or expired.");
     }
+
+    private static string? OptionalString(JsonElement value, string name)
+    {
+        if (!value.TryGetProperty(name, out var property) ||
+            property.ValueKind == JsonValueKind.Null) return null;
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            throw new WindowsAgentCapabilityDisclosureException();
+        }
+        return property.GetString();
+    }
+
+    private static string SkillRef(string pluginOption, string skillName) =>
+        $"plugin-skill:{pluginOption}:{skillName}";
 
     private void RefreshExpiration(RunSession session)
     {

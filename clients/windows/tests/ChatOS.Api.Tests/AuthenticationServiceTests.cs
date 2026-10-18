@@ -59,6 +59,27 @@ public sealed class AuthenticationServiceTests
     }
 
     [Fact]
+    public async Task RestorePersistsRefreshedTokenReturnedByUserService()
+    {
+        var store = new MemoryTokenStore();
+        store.Seed("token-old");
+        var client = ApiTestClient.Create(store, _ =>
+        {
+            var response = StubHttpMessageHandler.Json("""
+                {"user":{"id":"u1","username":"lilei","display_name":null,"role":"user"}}
+                """);
+            response.Headers.TryAddWithoutValidation("X-Access-Token", "token-refreshed");
+            return response;
+        });
+        var service = new AuthenticationService(client, store);
+
+        var session = await service.RestoreSessionAsync();
+
+        Assert.NotNull(session);
+        Assert.Equal("token-refreshed", store.Token);
+    }
+
+    [Fact]
     public async Task RestoreDoesNotCallGatewayWithoutStoredToken()
     {
         var called = false;

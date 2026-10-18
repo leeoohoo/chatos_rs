@@ -142,6 +142,8 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
                     | "commit_edit_session"
                     | "abort_edit_session"
                     | "project_write"
+                    | "project_copy"
+                    | "project_move"
             ) {
                 return (requires_execution && enabled.contains("CodeMaintainerWrite"))
                     .then_some(tool);

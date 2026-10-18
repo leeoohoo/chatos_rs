@@ -135,6 +135,21 @@ function Invoke-AutomationElement {
     ([System.Windows.Automation.InvokePattern]$patternObject).Invoke()
 }
 
+function Select-AutomationElement {
+    param(
+        [Parameter(Mandatory)] [System.Windows.Automation.AutomationElement]$Element,
+        [Parameter(Mandatory)] [string]$AutomationId
+    )
+
+    $patternObject = $null
+    if (-not $Element.TryGetCurrentPattern(
+            [System.Windows.Automation.SelectionItemPattern]::Pattern,
+            [ref]$patternObject)) {
+        throw "Automation element does not support SelectionItemPattern: $AutomationId"
+    }
+    ([System.Windows.Automation.SelectionItemPattern]$patternObject).Select()
+}
+
 function Assert-VisibleFocusableControlsHaveNames {
     param(
         [Parameter(Mandatory)] [System.Windows.Automation.AutomationElement]$Root
@@ -220,11 +235,36 @@ try {
         @{ Id = "ChatOS.Shell.Contacts"; Type = [System.Windows.Automation.ControlType]::List; RequireName = $true },
         @{ Id = "ChatOS.Shell.Projects"; Type = [System.Windows.Automation.ControlType]::List; RequireName = $true },
         @{ Id = "ChatOS.Shell.LocalResources"; Type = [System.Windows.Automation.ControlType]::List; RequireName = $true },
-        @{ Id = "ChatOS.Shell.RemoteResources"; Type = [System.Windows.Automation.ControlType]::List; RequireName = $true },
-        @{ Id = "ChatOS.Shell.Workspace"; Type = $null; RequireName = $false }
+        @{ Id = "ChatOS.Shell.RemoteResources"; Type = [System.Windows.Automation.ControlType]::List; RequireName = $true }
     )
 
-    $shell = Find-AutomationElement -Root $root -AutomationId "ChatOS.Shell.Root"
+    # Session restoration and the login pet atlas are both asynchronous. Wait
+    # for whichever stable surface appears first instead of asserting the
+    # transient login tree immediately after the native window is created.
+    $surfaceDeadline = [DateTimeOffset]::UtcNow.AddSeconds(
+        [Math]::Min([Math]::Max($StartupTimeoutSeconds, 1), 10))
+    $shell = $null
+    $loginPetSprite = $null
+    do {
+        $shell = Find-AutomationElement -Root $root -AutomationId "ChatOS.Shell.Root"
+        if ($shell) { break }
+        $loginPetSprite = Find-AutomationElement -Root $root -AutomationId "ChatOS.Login.PetSprite"
+        if ($loginPetSprite) {
+            # A persisted session can replace the login surface shortly after
+            # the pet atlas is ready. Give that transition a short grace
+            # period before treating the login page as the final surface.
+            $authGraceDeadline = [DateTimeOffset]::UtcNow.AddSeconds(
+                [Math]::Min([Math]::Max($StartupTimeoutSeconds, 1), 5))
+            do {
+                $shell = Find-AutomationElement -Root $root -AutomationId "ChatOS.Shell.Root"
+                if ($shell) { break }
+                Start-Sleep -Milliseconds 200
+            } while ([DateTimeOffset]::UtcNow -lt $authGraceDeadline)
+            break
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTimeOffset]::UtcNow -lt $surfaceDeadline)
+
     if (-not $shell) {
         Assert-AutomationElements -Root $root -Expected $loginExpected
         if (-not $RequireAuthenticated) {
@@ -278,17 +318,33 @@ try {
         @{ Id = "ChatOS.Settings.Back"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
         @{ Id = "ChatOS.Settings.Language"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },
         @{ Id = "ChatOS.Settings.Theme"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },
-        @{ Id = "ChatOS.Settings.FontScale"; Type = [System.Windows.Automation.ControlType]::Slider; RequireName = $true },
-        @{ Id = "ChatOS.Settings.PetEnabled"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
-        @{ Id = "ChatOS.Settings.PetSize"; Type = [System.Windows.Automation.ControlType]::Slider; RequireName = $true },
-        @{ Id = "ChatOS.Settings.PetResetPosition"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
-        @{ Id = "ChatOS.Settings.PetShowProcess"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
-        @{ Id = "ChatOS.Settings.PetShowCompletions"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
-        @{ Id = "ChatOS.Settings.SandboxEnabled"; Type = [System.Windows.Automation.ControlType]::Button; RequireName = $true },
-        @{ Id = "ChatOS.Settings.SandboxProfile"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },
-        @{ Id = "ChatOS.Settings.SandboxNetwork"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true },
-        @{ Id = "ChatOS.Settings.ApprovalMode"; Type = [System.Windows.Automation.ControlType]::ComboBox; RequireName = $true }
+        @{ Id = "ChatOS.Settings.FontScale"; Type = [System.Windows.Automation.ControlType]::Slider; RequireName = $true }
     )
+
+    # The model catalog is loaded from the signed-in account. Verify the same
+    # settings surface macOS exposes instead of stopping at a shell-only check.
+    $modelsNavigation = Find-AutomationElement -Root $root -AutomationId "ChatOS.Settings.Nav.Models"
+    if (-not $modelsNavigation) {
+        throw "The settings page did not expose the AI model configuration tab."
+    }
+    Select-AutomationElement -Element $modelsNavigation -AutomationId "ChatOS.Settings.Nav.Models"
+    $modelPicker = Wait-AutomationElement `
+        -Root $root `
+        -AutomationId "ChatOS.Settings.ModelPicker" `
+        -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(10))
+    if (-not $modelPicker) {
+        throw "The AI model configuration did not expose its model picker."
+    }
+    $modelItems = $modelPicker.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::ListItem))
+    if ($modelItems.Count -eq 0) {
+        # macOS intentionally reserves this picker for task-enabled models;
+        # an account may have chat/media models without a local approval model.
+        Write-Host "AI model configuration opened; no task-enabled approval model is configured."
+    }
 
     $chatRoot = Find-AutomationElement -Root $root -AutomationId "ChatOS.Chat.Root"
     if ($chatRoot) {

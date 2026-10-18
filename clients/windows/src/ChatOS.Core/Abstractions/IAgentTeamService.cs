@@ -36,7 +36,7 @@ public interface IAgentTeamService
 
     Task<IReadOnlyList<AgentRoom>> ListRoomsAsync(
         string ownerUserId,
-        string projectId,
+        string? projectId,
         CancellationToken cancellationToken = default);
 
     Task<AgentRoom> CreateTeamAsync(

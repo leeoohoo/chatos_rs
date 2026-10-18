@@ -14,4 +14,28 @@
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="SSH.NET" />
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSModelCapabilities\Resources\ModelReasoningCapabilities.json"
+                      Link="Resources\ModelReasoningCapabilities.json" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-external-mcp\SKILL.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-external-mcp.SKILL.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-external-mcp\references\scenarios-and-verification.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-external-mcp.references.scenarios-and-verification.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-external-mcp\references\errors-and-recovery.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-external-mcp.references.errors-and-recovery.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-main-chat-invariants\SKILL.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-main-chat-invariants.SKILL.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-skill-runtime\SKILL.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-skill-runtime.SKILL.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-async-task-orchestration\SKILL.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-async-task-orchestration.SKILL.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-async-task-orchestration\references\*.md">
+      <LogicalName>ChatOS.AgentSkills.chatos-async-task-orchestration.references.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-requirement-discovery\SKILL.md"
+                      LogicalName="ChatOS.AgentSkills.chatos-requirement-discovery.SKILL.md" />
+    <EmbeddedResource Include="..\..\..\macos\Sources\ChatOSCore\AgentSkills\Skills\chatos-requirement-discovery\references\*.md">
+      <LogicalName>ChatOS.AgentSkills.chatos-requirement-discovery.references.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

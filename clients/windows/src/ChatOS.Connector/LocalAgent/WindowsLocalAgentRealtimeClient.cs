@@ -54,12 +54,26 @@ public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
             if (!string.Equals(update.OwnerUserId, owner, StringComparison.Ordinal)) continue;
             if (!update.IsReconcile && !EventsAffectConversation(
                     update.Events, conversationId, observedRunIds)) continue;
+            var graphUpdate = update.Events.LastOrDefault(value =>
+                value.EventType is "task_graph_written_back" or "task_state_reconciled" &&
+                EventAffectsConversation(value, conversationId, observedRunIds));
             var current = await GetConversationOrNullAsync(
                 owner, conversationId, cancellationToken).ConfigureAwait(false);
             if (current is null) continue;
             observedRunIds = current.Turns.Select(value => value.RunId)
                 .ToHashSet(StringComparer.Ordinal);
-            if (observedVersion == current.Conversation.Version) continue;
+            if (observedVersion == current.Conversation.Version)
+            {
+                // Task projections can change without a new conversation-history version.
+                if (graphUpdate is not null)
+                {
+                    yield return new ConversationRealtimeSignal(
+                        $"local-{conversationId}-{graphUpdate.EventId}", graphUpdate.Cursor,
+                        conversationId, null, ConversationRealtimeKind.Reconcile,
+                        "local_task_graph_changed", DateTimeOffset.FromUnixTimeMilliseconds(graphUpdate.CreatedAtUnixMs));
+                }
+                continue;
+            }
             observedVersion = current.Conversation.Version;
             yield return Signal(conversationId, current);
         }
@@ -98,11 +112,15 @@ public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
         IReadOnlyList<WindowsLocalAgentEvent> events,
         string conversationId,
         IReadOnlySet<string> knownRunIds) => events.Any(value =>
-            knownRunIds.Contains(value.RunId) ||
-            value.Payload is { ValueKind: System.Text.Json.JsonValueKind.Object } payload &&
-            payload.TryGetProperty("conversation_id", out var routed) &&
-            routed.ValueKind == System.Text.Json.JsonValueKind.String &&
-            string.Equals(routed.GetString(), conversationId, StringComparison.Ordinal));
+            EventAffectsConversation(value, conversationId, knownRunIds));
+
+    private static bool EventAffectsConversation(
+        WindowsLocalAgentEvent value, string conversationId, IReadOnlySet<string> knownRunIds) =>
+        knownRunIds.Contains(value.RunId) ||
+        value.Payload is { ValueKind: System.Text.Json.JsonValueKind.Object } payload &&
+        payload.TryGetProperty("conversation_id", out var routed) &&
+        routed.ValueKind == System.Text.Json.JsonValueKind.String &&
+        string.Equals(routed.GetString(), conversationId, StringComparison.Ordinal);
 
     internal static bool ShouldRefreshPet(IReadOnlyList<WindowsLocalAgentEvent> events)
     {
@@ -124,7 +142,7 @@ public sealed class WindowsLocalAgentRealtimeClient : IRealtimeClient
             Clamp(detail.Conversation.Version),
             conversationId,
             null,
-            ConversationRealtimeKind.Updated,
+            ConversationRealtimeKind.Reconcile,
             "local_conversation_changed",
             DateTimeOffset.FromUnixTimeMilliseconds(detail.Conversation.UpdatedAtUnixMs));
 

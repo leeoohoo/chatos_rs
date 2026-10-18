@@ -163,6 +163,60 @@ public sealed class ConnectorPairingService
         return nextState;
     }
 
+    public async Task<ConnectorPersistentState> RefreshCredentialAsync(
+        string ticket,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ticket);
+        await _runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        var current = _runtime.Snapshot.State
+            ?? throw new InvalidOperationException("The local connector is not paired.");
+        var login = await _gateway.ExchangeTicketAsync(
+            current.GatewayBaseUri,
+            ticket.Trim(),
+            current.DeviceName,
+            cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(login.User.Id, current.User.Id, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "The current ChatOS account does not own the paired connector device.");
+        }
+
+        var nextState = current with
+        {
+            User = new ConnectorUser(
+                login.User.Id,
+                login.User.Username,
+                login.User.DisplayName,
+                login.User.Role),
+        };
+        var previousToken = await _tokens.GetAccessTokenAsync(cancellationToken)
+            .ConfigureAwait(false);
+        await _tokens.SetAccessTokenAsync(login.Token, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // Persisting the same device and workspace registration increments the connection
+            // revision so the active socket immediately reconnects with the renewed credential.
+            await _runtime.ReplaceAsync(nextState, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (string.IsNullOrWhiteSpace(previousToken))
+            {
+                await _tokens.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await _tokens.SetAccessTokenAsync(previousToken, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        return nextState;
+    }
+
     private static void ValidateRequest(ConnectorPairingRequest request)
     {
         if (!request.GatewayBaseUri.IsAbsoluteUri ||

@@ -20,7 +20,12 @@ public sealed record AppPreferences(
     bool PetEnabled,
     double PetSize = 104,
     bool PetShowProcess = true,
-    bool PetShowCompletions = true)
+    bool PetShowCompletions = true,
+    bool GlobalUtilitiesEnabled = true,
+    bool GlobalScreenshotEnabled = true,
+    bool GlobalRecordingEnabled = true,
+    bool GlobalClipboardEnabled = true,
+    bool GlobalQuickSearchEnabled = true)
 {
     public const double MinimumFontScale = 0.85;
     public const double MaximumFontScale = 1.30;

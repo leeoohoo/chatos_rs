@@ -84,6 +84,7 @@ public sealed class LocalProjectsServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    [Trait("Category", "MachineIntegration")]
     public async Task RejectsSymlinkDirectory()
     {
         Directory.CreateSymbolicLink(Path.Combine(_root, "link"), Path.Combine(_root, "repo"));

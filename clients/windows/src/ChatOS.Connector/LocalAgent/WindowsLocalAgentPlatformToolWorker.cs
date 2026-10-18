@@ -1,4 +1,6 @@
 using System.Text.Json;
+using ChatOS.Connector.Plugins;
+using ChatOS.Connector.Workspaces;
 using ChatOS.Core.Abstractions;
 
 namespace ChatOS.Connector.LocalAgent;
@@ -49,6 +51,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
     private readonly WindowsLocalAgentAttachmentVault _vault;
     private readonly WindowsLocalAgentProjectToolExecutor? _projectTools;
     private readonly IWindowsLocalAgentPluginToolExecutor? _pluginTools;
+    private readonly WindowsLocalAgentPluginInstallerToolExecutor? _pluginInstallerTools;
     private readonly WindowsLocalAgentExternalMcpExecutor? _externalMcps;
     private readonly WindowsLocalAgentToolApprovalHandler? _approvals;
     private readonly WindowsLocalAgentEventHub? _eventHub;
@@ -64,6 +67,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         WindowsLocalAgentAttachmentVault vault,
         WindowsLocalAgentProjectToolExecutor projectTools,
         IWindowsLocalAgentPluginToolExecutor pluginTools,
+        WindowsLocalAgentPluginInstallerToolExecutor pluginInstallerTools,
         WindowsLocalAgentExternalMcpExecutor externalMcps,
         WindowsLocalAgentToolApprovalHandler approvals,
         WindowsLocalAgentEventHub eventHub)
@@ -73,6 +77,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
         _vault = vault;
         _projectTools = projectTools;
         _pluginTools = pluginTools;
+        _pluginInstallerTools = pluginInstallerTools;
         _externalMcps = externalMcps;
         _approvals = approvals;
         _eventHub = eventHub;
@@ -204,6 +209,7 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                 var result = await _host.SendAsync<ClaimLocalToolCommand, ClaimLocalToolResult>(new(
                     "claim_next_tool", owner, "windows-platform-tool-worker", 30_000,
                     WindowsLocalAgentCapabilityCatalog.TaskExecutionToolNames
+                        .Concat(WindowsLocalAgentCapabilityCatalog.PluginInstallerToolNames)
                         .Concat(
                             _externalMcps?.ToolNames() ??
                             new HashSet<string>(StringComparer.Ordinal))
@@ -317,6 +323,21 @@ public sealed class WindowsLocalAgentPlatformToolWorker
                     cancellationToken).ConfigureAwait(false);
                 return JsonSerializer.SerializeToElement(new { type = "succeeded", output = externalOutput });
             }
+            if (WindowsLocalAgentCapabilityCatalog.PluginInstallerToolNames.Contains(
+                    claim.Invocation.ToolName))
+            {
+                if (_pluginInstallerTools is null)
+                    throw new InvalidOperationException("Local Plugin installer tools are unavailable.");
+                var installerOutput = await _pluginInstallerTools.ExecuteAsync(
+                    owner,
+                    claim.Invocation,
+                    cancellationToken).ConfigureAwait(false);
+                return JsonSerializer.SerializeToElement(new
+                {
+                    type = "succeeded",
+                    output = installerOutput,
+                });
+            }
             if (WindowsLocalAgentCapabilityCatalog.PluginToolNames.Contains(
                     claim.Invocation.ToolName))
             {
@@ -366,14 +387,80 @@ public sealed class WindowsLocalAgentPlatformToolWorker
             var attachmentOutput = _vault.Resolve(attachment, owner, conversationId, offset, limit);
             return JsonSerializer.SerializeToElement(new { type = "succeeded", output = attachmentOutput });
         }
-        catch
+        catch (Exception exception)
         {
+            return FailureOutcome(claim.Invocation, exception);
+        }
+    }
+
+    internal static JsonElement FailureOutcome(
+        WindowsLocalToolInvocation invocation,
+        Exception exception)
+    {
+        if (exception is WindowsExternalToolSchemaException)
+        {
+            // Schema preflight runs before any executor side effect, so even a tool
+            // declared side-effecting can be retried with corrected arguments.
+            var schemaSummary = SafeErrorSummary(exception);
             return JsonSerializer.SerializeToElement(new {
-                type = claim.Invocation.SideEffecting ? "needs_review" : "failed",
-                error = "Local platform tool failed.",
-                reason = "Local platform tool failed.",
-                detail = new { tool_name = claim.Invocation.ToolName, phase = "native_platform_execution" },
+                type = "failed",
+                error = schemaSummary,
+                reason = schemaSummary,
+                detail = new {
+                    tool_name = invocation.ToolName,
+                    phase = "native_platform_schema_preflight",
+                },
             });
         }
+
+        if (exception is WorkspaceRequestException workspaceFailure &&
+            WindowsLocalAgentCapabilityCatalog.ProjectToolNames.Contains(invocation.ToolName))
+        {
+            // WorkspaceRequestException is raised only by path/filesystem validation with
+            // deliberately path-free messages. It occurs before a requested mutation is
+            // committed, so the model can safely correct and retry instead of treating the
+            // invocation as an unknown side effect.
+            return JsonSerializer.SerializeToElement(new {
+                type = "failed",
+                error = workspaceFailure.Message,
+                reason = workspaceFailure.Message,
+                detail = new {
+                    tool_name = invocation.ToolName,
+                    phase = "native_project_workspace_validation",
+                    code = workspaceFailure.Code,
+                    status_code = workspaceFailure.StatusCode,
+                },
+            });
+        }
+
+        var summary = SafeErrorSummary(exception);
+        return JsonSerializer.SerializeToElement(new {
+            type = invocation.SideEffecting ? "needs_review" : "failed",
+            error = summary,
+            reason = summary,
+            detail = new { tool_name = invocation.ToolName, phase = "native_platform_execution" },
+        });
+    }
+
+    internal static string SafeErrorSummary(Exception exception)
+    {
+        // Product validation errors are deliberately path- and secret-free and help the
+        // installer assistant correct a bad source. Arbitrary native exception messages
+        // may contain filesystem paths, process arguments or credentials and stay hidden.
+        var summary = exception is PluginPackageException or WorkspaceRequestException or
+            WindowsExternalToolSchemaException or WindowsAgentCapabilityDisclosureException or
+            WindowsAgentCapabilityAuthorizationException
+            ? exception.Message
+            : "Local platform tool failed.";
+        var lowered = summary.ToLowerInvariant();
+        if (lowered.Contains("authorization", StringComparison.Ordinal) ||
+            lowered.Contains("api_key", StringComparison.Ordinal) ||
+            lowered.Contains("apikey", StringComparison.Ordinal) ||
+            lowered.Contains("access_token", StringComparison.Ordinal) ||
+            lowered.Contains("password", StringComparison.Ordinal))
+        {
+            return "Local platform tool failed; sensitive details were hidden.";
+        }
+        return summary.Length <= 1_000 ? summary : summary[..1_000];
     }
 }

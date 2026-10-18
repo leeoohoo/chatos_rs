@@ -144,9 +144,41 @@ public sealed record ConnectorCapabilityBinding(bool Enabled, bool Required);
 public sealed record ConnectorMcpRuntime(
     string Kind,
     string? BuiltinKind,
+    string? SystemKey,
     string? ServerName,
     string? Url,
-    IReadOnlyDictionary<string, string> Headers);
+    IReadOnlyDictionary<string, string> Headers)
+{
+    public string? ResolvedBuiltinKind
+    {
+        get
+        {
+            var builtinKind = Normalize(BuiltinKind);
+            if (builtinKind is not null) return builtinKind;
+            return (Normalize(SystemKey) ?? Normalize(ServerName))?.ToLowerInvariant() switch
+            {
+                "code_maintainer_read" => "CodeMaintainerRead",
+                "code_maintainer_write" => "CodeMaintainerWrite",
+                "terminal_controller" => "TerminalController",
+                "notepad" => "Notepad",
+                "agent_builder" => "AgentBuilder",
+                "ask_user" => "AskUser",
+                "remote_connection_controller" => "RemoteConnectionController",
+                "memory_skill_reader" => "MemorySkillReader",
+                "memory_command_reader" => "MemoryCommandReader",
+                "memory_plugin_reader" => "MemoryPluginReader",
+                _ => null,
+            };
+        }
+    }
+
+    public bool IsExternalHttp =>
+        Kind.Trim().Equals("http", StringComparison.OrdinalIgnoreCase) &&
+        Normalize(Url) is not null;
+
+    private static string? Normalize(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+}
 
 public sealed record ConnectorMcpResource(
     string Id,

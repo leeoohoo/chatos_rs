@@ -166,7 +166,7 @@ public sealed partial class StoryStudioViewModel
                 Error = applied ? null : "规划已暂停，可从本机记录恢复。",
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
-            await SavePlanningRunBestEffortAsync(owner, run);
+            await SavePlanningRunBestEffortAsync(owner, run, session);
             if (_session == session)
                 StatusMessage = applied ? "规划已应用" : "规划已暂停，可稍后恢复";
         }
@@ -178,7 +178,7 @@ public sealed partial class StoryStudioViewModel
                 Error = exception.Message,
                 UpdatedAt = DateTimeOffset.UtcNow,
             };
-            await SavePlanningRunBestEffortAsync(owner, run);
+            await SavePlanningRunBestEffortAsync(owner, run, session);
             if (_session == session)
             {
                 ErrorMessage = exception.Message;
@@ -308,11 +308,15 @@ public sealed partial class StoryStudioViewModel
         }
     }
 
-    private async Task SavePlanningRunBestEffortAsync(string owner, StoryPlanningRunDocument run)
+    private async Task SavePlanningRunBestEffortAsync(
+        string owner,
+        StoryPlanningRunDocument run,
+        Guid session)
     {
         try { await _store.SavePlanningRunAsync(owner, run); }
         catch { /* The project or provider error remains the primary user-facing failure. */ }
-        if (_current?.Id == run.ProjectId) PublishPlanningRun(run);
+        if (_session == session && _ownerUserId == owner && _current?.Id == run.ProjectId)
+            PublishPlanningRun(run);
     }
 
     private void PublishPlanningRun(StoryPlanningRunDocument run)

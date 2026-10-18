@@ -24,16 +24,18 @@ public sealed partial class RemoteTerminalViewModel : ObservableObject, IDisposa
 
     public ObservableCollection<RemoteTerminalLine> Lines { get; } = [];
     public bool CanSubmit => !IsRunning && !string.IsNullOrWhiteSpace(Command) && ConnectionId is not null;
+    public bool CanCancel => IsRunning;
     public bool HasVerificationChallenge => !string.IsNullOrWhiteSpace(VerificationPrompt);
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSubmit))] private string? _connectionId;
     [ObservableProperty] private string _connectionName = string.Empty;
     [ObservableProperty] private string _workingDirectory = "~";
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSubmit))] private string _command = string.Empty;
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSubmit))] private bool _isRunning;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSubmit))] [NotifyPropertyChangedFor(nameof(CanCancel))] private bool _isRunning;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(HasVerificationChallenge))] private string? _verificationPrompt;
     [ObservableProperty] private string _verificationCode = string.Empty;
     [ObservableProperty] private string? _errorMessage;
+    [ObservableProperty] private string _searchText = string.Empty;
 
     public void Open(RemoteConnection connection)
     {
@@ -55,8 +57,14 @@ public sealed partial class RemoteTerminalViewModel : ObservableObject, IDisposa
     {
         var value = _pendingVerificationCommand ?? Command.Trim();
         if (IsRunning || ConnectionId is null || string.IsNullOrWhiteSpace(value)) return;
+        if (_pendingVerificationCommand is not null && string.IsNullOrWhiteSpace(VerificationCode))
+        {
+            ErrorMessage = L("请输入验证码。", "Enter the verification code.");
+            return;
+        }
         var revision = _revision;
-        _execution = new CancellationTokenSource();
+        var execution = new CancellationTokenSource();
+        _execution = execution;
         IsRunning = true;
         ErrorMessage = null;
         VerificationPrompt = null;
@@ -67,7 +75,7 @@ public sealed partial class RemoteTerminalViewModel : ObservableObject, IDisposa
         }
         try
         {
-            var result = await _service.ExecuteAsync(ConnectionId, value, WorkingDirectory, VerificationCode, _execution.Token).ConfigureAwait(false);
+            var result = await _service.ExecuteAsync(ConnectionId, value, WorkingDirectory, VerificationCode, execution.Token).ConfigureAwait(false);
             await _dispatcher.InvokeAsync(() =>
             {
                 if (revision != _revision) return;
@@ -90,24 +98,57 @@ public sealed partial class RemoteTerminalViewModel : ObservableObject, IDisposa
                 VerificationPrompt = challenge.Prompt;
             }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (_execution.IsCancellationRequested)
+        catch (OperationCanceledException) when (execution.IsCancellationRequested)
         {
-            await _dispatcher.InvokeAsync(() => Lines.Add(new RemoteTerminalLine(L("命令已取消。", "Command cancelled."), true, false))).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (revision == _revision)
+                    Lines.Add(new RemoteTerminalLine(L("命令已取消。", "Command cancelled."), true, false));
+            }).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            await _dispatcher.InvokeAsync(() => ErrorMessage = exception.Message).ConfigureAwait(false);
+            await _dispatcher.InvokeAsync(() =>
+            {
+                if (revision == _revision) ErrorMessage = exception.Message;
+            }).ConfigureAwait(false);
         }
         finally
         {
-            _execution.Dispose();
-            _execution = null;
-            await _dispatcher.InvokeAsync(() => IsRunning = false).ConfigureAwait(false);
+            if (ReferenceEquals(_execution, execution))
+            {
+                _execution = null;
+                await _dispatcher.InvokeAsync(() => IsRunning = false).ConfigureAwait(false);
+            }
+            execution.Dispose();
         }
     }
 
     [RelayCommand]
     private void Cancel() => _execution?.Cancel();
+
+    [RelayCommand]
+    private void CancelVerification()
+    {
+        _pendingVerificationCommand = null;
+        VerificationPrompt = null;
+        VerificationCode = string.Empty;
+        ErrorMessage = L("SSH 二次验证已取消。", "SSH verification was cancelled.");
+    }
+
+    [RelayCommand]
+    private void ClearOutput() => Lines.Clear();
+
+    public IReadOnlyList<int> FindMatches()
+    {
+        var query = SearchText.Trim();
+        return query.Length == 0
+            ? Array.Empty<int>()
+            : Lines.Select((line, index) => (line, index))
+                .Where(item => item.line.Text.Contains(query, StringComparison.OrdinalIgnoreCase))
+                .Select(item => item.index)
+                .ToArray();
+    }
 
     public void Dispose() { Cancel(); _execution?.Dispose(); }
 

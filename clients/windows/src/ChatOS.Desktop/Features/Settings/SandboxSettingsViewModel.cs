@@ -35,15 +35,21 @@ public sealed partial class SandboxSettingsViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Description))]
+    [NotifyPropertyChangedFor(nameof(CurrentProfileLabel))]
+    [NotifyPropertyChangedFor(nameof(IsFilesystemIsolated))]
+    [NotifyPropertyChangedFor(nameof(IsNetworkIsolated))]
     private bool _isEnabled = true;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Description))]
+    [NotifyPropertyChangedFor(nameof(CurrentProfileLabel))]
+    [NotifyPropertyChangedFor(nameof(IsFilesystemIsolated))]
     private ConnectorSandboxPermissionProfile _permissionProfile =
         ConnectorSandboxPermissionProfile.WorkspaceWrite;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(Description))]
+    [NotifyPropertyChangedFor(nameof(IsNetworkIsolated))]
     private ConnectorSandboxNetworkAccess _networkAccess =
         ConnectorSandboxNetworkAccess.Disabled;
 
@@ -76,6 +82,23 @@ public sealed partial class SandboxSettingsViewModel : ObservableObject
     public string NetworkDisabledLabel => _localization.Text("禁止网络", "Network disabled");
     public string HostNetworkLabel => _localization.Text("允许主机网络", "Allow host network");
     public string ControlledNetworkLabel => _localization.Text("仅允许签名域名", "Signed domains only");
+
+    public string CurrentProfileLabel => !IsEnabled ||
+        PermissionProfile is ConnectorSandboxPermissionProfile.FullAccess
+            ? FullAccessLabel
+            : PermissionProfile is ConnectorSandboxPermissionProfile.ReadOnly
+                ? ReadOnlyLabel
+                : WorkspaceWriteLabel;
+
+    public bool IsFilesystemIsolated => IsEnabled &&
+        PermissionProfile is not ConnectorSandboxPermissionProfile.FullAccess;
+
+    public bool IsNetworkIsolated => IsEnabled &&
+        NetworkAccess is not ConnectorSandboxNetworkAccess.Host;
+
+    public string BackendDescription => _localization.Text(
+        "Windows 本机进程后端通过 AppContainer、工作区 ACL 和 Job Object 执行当前策略。",
+        "The Windows local-process backend enforces this policy with AppContainer, workspace ACLs, and Job Objects.");
 
     public string Description
     {

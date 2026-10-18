@@ -14,7 +14,8 @@ public sealed class ConversationSessionFactory(
     IRealtimeClient realtimeClient,
     ConversationHistoryStore historyStore,
     IUiDispatcher dispatcher,
-    LocalizationViewModel? localization = null)
+    LocalizationViewModel? localization = null,
+    IRemoteConnectionMetadataService? remoteConnections = null)
 {
     public ConversationSessionViewModel Create() => new(
         historyService,
@@ -25,5 +26,6 @@ public sealed class ConversationSessionFactory(
         realtimeClient,
         historyStore,
         dispatcher,
-        localization);
+        localization,
+        remoteConnections);
 }

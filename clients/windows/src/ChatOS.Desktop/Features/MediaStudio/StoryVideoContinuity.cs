@@ -9,13 +9,20 @@ public sealed partial class StoryStudioViewModel
     {
         var context = CaptureGenerationContext();
         if (!CanExtractSelectedVideoLastFrame || context?.Segment.VideoPath is not { } path) return;
+        var source = BeginGenerationCancellation(cancellationToken);
+        var token = source.Token;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            await ExtractVideoLastFrameCoreAsync(context, path, cancellationToken);
-            await PersistCurrentAsync(cancellationToken);
+            await ExtractVideoLastFrameCoreAsync(context, path, token);
+            await PersistCurrentAsync(token);
             StatusMessage = "已提取成片末帧；生成下一段首帧时会自动作为连续性参考";
+        }
+        catch (OperationCanceledException)
+        {
+            if (context.Session == _session)
+                StatusMessage = "已停止提取成片末帧";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -23,7 +30,8 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
+            EndGenerationCancellation(source);
+            if (context.Session == _session) IsBusy = false;
             NotifyVideoContinuityChanged();
         }
     }

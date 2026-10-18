@@ -7,7 +7,7 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor
 {
     private sealed record PluginOption(
         string Token,
-        LocalConnectorPlugin Catalog,
+        WindowsLocalAgentPluginChoice Choice,
         InstalledPluginRecord Record);
 
     private sealed record PluginTool(
@@ -29,6 +29,7 @@ internal sealed partial class WindowsLocalAgentPluginToolExecutor
         public Dictionary<string, JsonElement> SkillSnapshots { get; } =
             new(StringComparer.Ordinal);
         public HashSet<string> ActivatedSkills { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> DescribedTools { get; } = new(StringComparer.Ordinal);
     }
 
     private sealed class RunSession(

@@ -10,9 +10,13 @@ using ChatOS.Desktop.Features.Terminal;
 using ChatOS.Desktop.Features.Clipboard;
 using ChatOS.Desktop.Features.AgentTeams;
 using ChatOS.Desktop.Features.MediaStudio;
+using ChatOS.Desktop.Features.Projects;
 using ChatOS.Connector.Approval;
+using ChatOS.Api.Http;
+using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
+using ChatOS.Presentation.Projects;
 using ChatOS.Presentation.Settings;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -26,6 +30,8 @@ public sealed partial class MainWindow : Window
     private ShellResourceViewModel? _lastWorkspaceResource;
     private bool _postActivationInitializationComplete;
     private bool? _renderedAuthenticationState;
+    private bool _sidebarSelectionPending;
+    private bool _restoringSidebarSelection;
 
     public MainWindow(
         MainWindowViewModel viewModel,
@@ -45,7 +51,8 @@ public sealed partial class MainWindow : Window
         PluginApplicationsPage pluginApplicationsPage,
         ProjectFeatureHubPage projectFeatureHubPage,
         MediaStudioPage mediaStudioPage,
-        AgentWorkspacePage agentWorkspacePage)
+        AgentWorkspacePage agentWorkspacePage,
+        IProjectFilesystemService projectFilesystem)
     {
         ViewModel = viewModel;
         WorkspaceHost = workspaceHostPage;
@@ -65,6 +72,7 @@ public sealed partial class MainWindow : Window
         ProjectFeatureHubPage = projectFeatureHubPage;
         MediaStudioPage = mediaStudioPage;
         AgentWorkspacePage = agentWorkspacePage;
+        ProjectFilesystem = projectFilesystem;
         InitializeComponent();
 
         ExtendsContentIntoTitleBar = true;
@@ -82,16 +90,39 @@ public sealed partial class MainWindow : Window
         RemoteSftpPage.CloseRequested += OnRemoteSftpCloseRequested;
         RemoteTerminalPage.CloseRequested += OnRemoteTerminalCloseRequested;
         LocalTerminalPage.CloseRequested += OnLocalTerminalCloseRequested;
+        LocalTerminalPage.NewTerminalRequested += OnLocalTerminalNewRequested;
         NotepadPage.CloseRequested += OnNotepadCloseRequested;
         Preferences.Changed += OnPreferencesChanged;
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ChatOSApiClient.AuthenticationExpired += OnAuthenticationExpired;
         ViewModel.Projects.CollectionChanged += (_, _) => RefreshSidebarState();
         ViewModel.RemoteResources.CollectionChanged += (_, _) => RefreshSidebarState();
         WorkspaceHost.ProjectTabRequested += async (_, tab) => await ViewModel.OpenProjectTabAsync(tab);
+        WorkspaceHost.ProjectRemoveRequested += OnProjectRemoveRequested;
+        PluginApplicationsPage.OpenPluginManagementRequested += (_, _) =>
+        {
+            SettingsPage.OpenSection("plugins");
+            ShowSettings();
+        };
         ProjectFeatureHubPage.FeatureRequested += OnProjectFeatureRequested;
         AgentWorkspacePage.FeatureRequested += OnProjectFeatureRequested;
+        AgentWorkspacePage.OpenSkillManagementRequested += (_, _) =>
+        {
+            SettingsPage.OpenSection("plugins");
+            ShowSettings();
+        };
         Approvals.PendingChanged += OnPendingApprovalsChanged;
         Activated += OnActivated;
+        // Defer the maximize until after the Activated handler is subscribed;
+        // resizing the overlapped presenter synchronously can otherwise consume
+        // the first activation and skip session restoration/pet loading.
+        _ = DispatcherQueue.TryEnqueue(() =>
+        {
+            if (AppWindow.Presenter is OverlappedPresenter presenter)
+            {
+                presenter.Maximize();
+            }
+        });
     }
 
     private PluginApplicationsPage PluginApplicationsPage { get; }
@@ -102,7 +133,17 @@ public sealed partial class MainWindow : Window
 
     private AgentWorkspacePage AgentWorkspacePage { get; }
 
+    private IProjectFilesystemService ProjectFilesystem { get; }
+
     public MainWindowViewModel ViewModel { get; }
+
+    private void OnAuthenticationExpired(object? sender, EventArgs e)
+    {
+        // API requests complete on background threads. All account-scoped observable
+        // collections and WinUI controls must be reset on the window's UI queue.
+        _ = DispatcherQueue.TryEnqueue(() =>
+            _ = ViewModel.HandleAuthenticationExpiredAsync());
+    }
 
     public WorkspaceHostPage WorkspaceHost { get; }
 
@@ -166,8 +207,16 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            // Keep the authenticated shell alive when an optional secondary window,
+            // Connector, approval store, or local-agent integration fails. macOS keeps the
+            // login/workspace phase usable and surfaces the failure in-app; exiting here made
+            // Windows look like a crash and prevented the user from retrying the affected tool.
             StartupDiagnostics.ReportFatal("main window post-activation initialization", exception);
-            Application.Current.Exit();
+            ViewModel.ErrorMessage = ViewModel.Localization.Text(
+                $"加载桌面功能失败：{exception.Message}",
+                $"A desktop feature failed to initialize: {exception.Message}");
+            _postActivationInitializationComplete = true;
+            UpdateVisualState();
         }
     }
 
@@ -176,7 +225,9 @@ public sealed partial class MainWindow : Window
         var frames = await PetSpriteAtlas.LoadAsync();
         if (frames is not { Count: > 0 })
         {
-            StartupDiagnostics.RecordLifecycle("login pet sprite atlas unavailable; using vector fallback");
+            LoginPetSpriteImage.Visibility = Visibility.Collapsed;
+            LoginPetFallback.Visibility = Visibility.Collapsed;
+            StartupDiagnostics.RecordLifecycle("login pet sprite atlas unavailable; no legacy fallback image shown");
             return;
         }
 
@@ -191,18 +242,83 @@ public sealed partial class MainWindow : Window
         ViewModel.Password = ((PasswordBox)sender).Password;
     }
 
+    private async void OnLoginClicked(object sender, RoutedEventArgs e)
+    {
+        // PasswordBox does not expose a bindable Password property.  Native
+        // UI automation can update the control without raising PasswordChanged
+        // before the button command runs, so take the authoritative value from
+        // the control at submit time.
+        await Task.Yield();
+        ViewModel.Password = LoginPasswordBox.Password;
+        await ViewModel.LoginCommand.ExecuteAsync(null);
+    }
+
     private void OnConfirmPasswordChanged(object sender, RoutedEventArgs e)
     {
         ViewModel.ConfirmPassword = ((PasswordBox)sender).Password;
     }
 
-    private void OnSidebarSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void OnSidebarSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_restoringSidebarSelection)
+        {
+            return;
+        }
+
         if (e.AddedItems.FirstOrDefault() is not ShellResourceViewModel selected) return;
         if (ViewModel.SelectedResource is { } current &&
             current.Kind == selected.Kind && current.Id == selected.Id) return;
 
-        ViewModel.SelectedResource = selected;
+        var previous = ViewModel.SelectedResource;
+        _sidebarSelectionPending = true;
+        try
+        {
+            if (!await WorkspaceHost.ConfirmCanChangeResourceAsync())
+            {
+                if (sender is ListView list)
+                {
+                    _restoringSidebarSelection = true;
+                    try
+                    {
+                        list.SelectedItem = previous is not null && list.Items.Contains(previous)
+                            ? previous
+                            : null;
+                    }
+                    finally
+                    {
+                        _restoringSidebarSelection = false;
+                    }
+                }
+                return;
+            }
+
+            ViewModel.SelectedResource = selected;
+        }
+        finally
+        {
+            _sidebarSelectionPending = false;
+        }
+    }
+
+    private void OnSidebarItemClicked(object sender, ItemClickEventArgs e)
+    {
+        if (_sidebarSelectionPending) return;
+        if (e.ClickedItem is not ShellResourceViewModel selected) return;
+        if (ViewModel.SelectedResource is not { } current ||
+            current.Kind != selected.Kind || current.Id != selected.Id)
+        {
+            ViewModel.SelectedResource = selected;
+            return;
+        }
+
+        // Separate sidebar ListViews can retain their own selected item after another section
+        // opens. ItemClick still fires for that retained row, so explicitly reopen a project and
+        // restore its default directory/files view even when SelectionChanged does not fire.
+        if (selected.Kind == WorkspaceResourceKind.Project)
+        {
+            _lastWorkspaceResource = selected;
+            ShowWorkspace();
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -220,6 +336,14 @@ public sealed partial class MainWindow : Window
         {
             if (e.PropertyName == nameof(MainWindowViewModel.SelectedResource))
             {
+                var preservesActiveProjectTab =
+                    ViewModel.IsPreparingConversation &&
+                    ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.Project &&
+                    _lastWorkspaceResource?.Kind == WorkspaceResourceKind.Project &&
+                    string.Equals(
+                        ViewModel.SelectedResource.Id,
+                        _lastWorkspaceResource.Id,
+                        StringComparison.Ordinal);
                 if (ViewModel.SelectedResource?.Kind == WorkspaceResourceKind.LocalConnector)
                 {
                     ShowSettings();
@@ -255,7 +379,10 @@ public sealed partial class MainWindow : Window
                 else
                 {
                     _lastWorkspaceResource = ViewModel.SelectedResource;
-                    ShowWorkspace();
+                    if (!preservesActiveProjectTab)
+                    {
+                        ShowWorkspace();
+                    }
                 }
             }
             if (authenticationChanged && !ViewModel.IsAuthenticated)
@@ -314,7 +441,7 @@ public sealed partial class MainWindow : Window
 
     private async void OnNotepadClicked(object sender, RoutedEventArgs e)
     {
-        ShowContent(NotepadPage);
+        ShowAuxiliaryContent(NotepadPage);
         await NotepadPage.ViewModel.OpenAsync();
     }
 
@@ -327,7 +454,7 @@ public sealed partial class MainWindow : Window
     private void OnNotepadCloseRequested(object? sender, EventArgs e)
     {
         _ = NotepadPage.ViewModel.CloseAsync();
-        RestoreSelectedContent();
+        HideAuxiliaryContent();
     }
 
     private async void OnSettingsCloseRequested(object? sender, EventArgs e)
@@ -337,12 +464,12 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.SelectedResource = _lastWorkspaceResource;
         }
-        RestoreSelectedContent();
+        HideAuxiliaryContent();
     }
 
     public void OpenSettings() => ShowSettings();
 
-    private void ShowSettings() => ShowContent(SettingsPage);
+    private void ShowSettings() => ShowAuxiliaryContent(SettingsPage);
 
     private async void OnOpenSftpRequested(object? sender, RemoteConnection connection)
     {
@@ -382,6 +509,9 @@ public sealed partial class MainWindow : Window
         ShowWorkspace();
     }
 
+    private async void OnLocalTerminalNewRequested(object? sender, EventArgs e) =>
+        await CreateLocalTerminalAsync();
+
     private async void OnCreateLocalProjectClicked(object sender, RoutedEventArgs e)
     {
         var account = ViewModel.AccountGeneration;
@@ -391,41 +521,58 @@ public sealed partial class MainWindow : Window
             if (account != ViewModel.AccountGeneration || !ViewModel.IsAuthenticated) return;
             var workspaces = ViewModel.LocalConnectorStatus?.Workspaces ?? [];
             if (workspaces.Count == 0)
-                throw new InvalidOperationException(ViewModel.Localization.Text(
-                    "请先在设置中为本机 Connector 添加授权工作区。",
-                    "Add an authorized workspace for the local Connector in Settings first."));
-            var name = new TextBox { Header = ViewModel.Localization.Text("项目名称", "Project name") };
-            var workspace = new ComboBox
             {
-                Header = ViewModel.Localization.Text("授权工作区", "Authorized workspace"),
-                ItemsSource = workspaces,
-                DisplayMemberPath = nameof(LocalConnectorWorkspaceStatus.AbsoluteRoot),
-                SelectedIndex = 0,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-            };
-            var relative = new TextBox
-            {
-                Header = ViewModel.Localization.Text("已有子目录（留空使用工作区根目录）", "Existing subdirectory (blank for workspace root)"),
-                PlaceholderText = "apps/example",
-            };
-            var content = new StackPanel { Spacing = 12, MinWidth = 400 };
-            content.Children.Add(name);
-            content.Children.Add(workspace);
-            content.Children.Add(relative);
-            content.Children.Add(new TextBlock
-            {
-                Text = ViewModel.Localization.Text("项目只保存在本机，不会创建 Git 仓库或上传文件。", "Projects are stored on this device. No Git repository is created and no files are uploaded."),
-                TextWrapping = TextWrapping.Wrap,
-            });
-            var dialog = new ContentDialog
+                await ShowConnectorSetupRequiredAsync(forProject: true);
+                return;
+            }
+            using var createViewModel = new CreateProjectViewModel(
+                ViewModel.LocalConnectorStatus,
+                ProjectFilesystem,
+                ViewModel.Localization);
+            var content = new CreateProjectDialogContent(createViewModel);
+            var dialog = new AutomationContentDialog
             {
                 XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.CreateLocalProject,
                 Content = content, PrimaryButtonText = ViewModel.Localization.Text("创建", "Create"),
                 CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+                DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
+                MinWidth = 760,
+                MaxWidth = 780,
             };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (workspace.SelectedItem is not LocalConnectorWorkspaceStatus selected) return;
-            await ViewModel.CreateProjectAsync(account, new LocalProjectDraft(name.Text.Trim(), selected.Id, relative.Text.Trim()), selected.AbsoluteRoot);
+            content.StateChanged += (_, _) =>
+                dialog.IsPrimaryButtonEnabled = createViewModel.CanCreate;
+            dialog.Opened += (_, _) =>
+            {
+                dialog.SetButtonAutomationProperties(
+                    "PrimaryButton",
+                    "ChatOS.CreateProject.Submit",
+                    ViewModel.Localization.Text("创建项目", "Create project"));
+                dialog.SetButtonAutomationProperties(
+                    "CloseButton",
+                    "ChatOS.CreateProject.Cancel",
+                    ViewModel.Localization.Text("取消创建项目", "Cancel project creation"));
+            };
+            dialog.PrimaryButtonClick += async (_, args) =>
+            {
+                var deferral = args.GetDeferral();
+                args.Cancel = true;
+                try
+                {
+                    dialog.IsPrimaryButtonEnabled = false;
+                    var created = await createViewModel.SaveAsync(
+                        (draft, root, _) => ViewModel.CreateProjectAsync(account, draft, root));
+                    args.Cancel = !created;
+                }
+                finally
+                {
+                    dialog.IsPrimaryButtonEnabled = createViewModel.CanCreate;
+                    deferral.Complete();
+                }
+            };
+            await content.LoadAsync();
+            dialog.IsPrimaryButtonEnabled = createViewModel.CanCreate;
+            _ = await dialog.ShowAsync();
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -436,20 +583,63 @@ public sealed partial class MainWindow : Window
 
     private async void OnRenameLocalProjectClicked(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.SelectedResource is not { Kind: WorkspaceResourceKind.Project } selected) return;
+        var selected = ResolveProjectResource(sender);
+        if (selected is null) return;
         var account = ViewModel.AccountGeneration;
         try
         {
             var project = await ViewModel.GetLocalProjectAsync(account, selected.Id);
-            var name = new TextBox { Text = project.Draft.Name, MinWidth = 360 };
+            var name = new TextBox
+            {
+                Header = ViewModel.Localization.Text("项目名称", "Project name"),
+                Text = project.Draft.Name,
+                MinWidth = 380,
+                SelectionStart = 0,
+                SelectionLength = project.Draft.Name.Length,
+            };
+            var error = new TextBlock
+            {
+                Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ChatOSFailureBrush"],
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
+            var content = new StackPanel { Spacing = 10 };
+            content.Children.Add(name);
+            content.Children.Add(error);
             var dialog = new ContentDialog
             {
-                XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.RenameLocalProject,
-                Content = name, PrimaryButtonText = ViewModel.Localization.Text("保存", "Save"),
+                XamlRoot = RootGrid.XamlRoot,
+                Title = ViewModel.Localization.Text("重命名本地项目", "Rename local project"),
+                Content = content, PrimaryButtonText = ViewModel.Localization.Text("保存", "Save"),
                 CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+                DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = project.Draft.Name.Trim().Length > 0,
             };
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-                await ViewModel.RenameProjectAsync(account, project, name.Text.Trim());
+            name.TextChanged += (_, _) =>
+                dialog.IsPrimaryButtonEnabled = name.Text.Trim().Length > 0;
+            dialog.PrimaryButtonClick += async (_, args) =>
+            {
+                var deferral = args.GetDeferral();
+                args.Cancel = true;
+                dialog.IsPrimaryButtonEnabled = false;
+                error.Visibility = Visibility.Collapsed;
+                try
+                {
+                    await ViewModel.RenameProjectAsync(account, project, name.Text.Trim());
+                    args.Cancel = false;
+                }
+                catch (Exception exception)
+                {
+                    error.Text = exception.Message;
+                    error.Visibility = Visibility.Visible;
+                }
+                finally
+                {
+                    dialog.IsPrimaryButtonEnabled = name.Text.Trim().Length > 0;
+                    deferral.Complete();
+                }
+            };
+            _ = await dialog.ShowAsync();
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -460,19 +650,33 @@ public sealed partial class MainWindow : Window
 
     private async void OnRemoveLocalProjectClicked(object sender, RoutedEventArgs e)
     {
+        var selected = ResolveProjectResource(sender);
+        if (selected is null) return;
+        await RemoveLocalProjectAsync(selected);
+    }
+
+    private async void OnProjectRemoveRequested(object? sender, EventArgs e)
+    {
         if (ViewModel.SelectedResource is not { Kind: WorkspaceResourceKind.Project } selected) return;
+        await RemoveLocalProjectAsync(selected);
+    }
+
+    private async Task RemoveLocalProjectAsync(ShellResourceViewModel selected)
+    {
         var account = ViewModel.AccountGeneration;
         try
         {
             var project = await ViewModel.GetLocalProjectAsync(account, selected.Id);
             var dialog = new ContentDialog
             {
-                XamlRoot = RootGrid.XamlRoot, Title = ViewModel.Localization.RemoveLocalProject,
+                XamlRoot = RootGrid.XamlRoot,
+                Title = ViewModel.Localization.Text("删除项目？", "Delete project?"),
                 Content = ViewModel.Localization.Text(
-                    $"移除“{project.Draft.Name}”？只移除本机项目记录，保留目录、Git 仓库、历史会话及插件数据。",
-                    $"Remove '{project.Draft.Name}'? Only the local project entry is removed. Files, Git, conversations and plugin data are retained."),
-                PrimaryButtonText = ViewModel.Localization.Text("移除", "Remove"),
+                    $"“{project.Draft.Name}”会从本机项目列表移除，不会删除文件夹、聊天历史或插件数据。",
+                    $"'{project.Draft.Name}' will be removed from this device's project list. Files, conversations and plugin data will be kept."),
+                PrimaryButtonText = ViewModel.Localization.Delete,
                 CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+                DefaultButton = ContentDialogButton.Close,
             };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary)
                 await ViewModel.RemoveProjectAsync(account, project);
@@ -480,19 +684,45 @@ public sealed partial class MainWindow : Window
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {
-            if (account == ViewModel.AccountGeneration) ViewModel.ErrorMessage = exception.Message;
+            if (account != ViewModel.AccountGeneration) return;
+            ViewModel.ErrorMessage = exception.Message;
+            var failure = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                Title = ViewModel.Localization.Text("项目删除失败", "Project deletion failed"),
+                Content = exception.Message,
+                CloseButtonText = ViewModel.Localization.Text("好", "OK"),
+                DefaultButton = ContentDialogButton.Close,
+            };
+            _ = await failure.ShowAsync();
         }
     }
 
+    private ShellResourceViewModel? ResolveProjectResource(object sender)
+    {
+        if (sender is FrameworkElement { Tag: string projectId })
+        {
+            return ViewModel.Projects.FirstOrDefault(project =>
+                string.Equals(project.Id, projectId, StringComparison.Ordinal));
+        }
+
+        return ViewModel.SelectedResource is { Kind: WorkspaceResourceKind.Project } selected
+            ? selected
+            : null;
+    }
+
     private async void OnCreateLocalTerminalClicked(object sender, RoutedEventArgs e)
+    {
+        await CreateLocalTerminalAsync();
+    }
+
+    private async Task CreateLocalTerminalAsync()
     {
         await ViewModel.RefreshLocalConnectorAsync();
         var workspaces = ViewModel.LocalConnectorStatus?.Workspaces ?? [];
         if (workspaces.Count == 0)
         {
-            ViewModel.ErrorMessage = ViewModel.Localization.Text(
-                "请先在设置中配对本机 Connector 并添加工作区。",
-                "Pair the local Connector and add a workspace in Settings first.");
+            await ShowConnectorSetupRequiredAsync(forProject: false);
             return;
         }
 
@@ -525,6 +755,35 @@ public sealed partial class MainWindow : Window
         if (selected is not null)
         {
             ViewModel.CreateLocalTerminalResource(selected);
+        }
+    }
+
+    private async Task ShowConnectorSetupRequiredAsync(bool forProject)
+    {
+        var paired = ViewModel.LocalConnectorStatus?.IsPaired == true;
+        var action = forProject
+            ? ViewModel.Localization.Text("创建项目", "create a project")
+            : ViewModel.Localization.Text("新建终端", "create a terminal");
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = paired
+                ? ViewModel.Localization.Text("需要授权工作区", "An authorized workspace is required")
+                : ViewModel.Localization.Text("本机 Connector 尚未就绪", "Local Connector is not ready"),
+            Content = paired
+                ? ViewModel.Localization.Text(
+                    $"要{action}，请先为本机 Connector 添加一个授权工作区。",
+                    $"To {action}, add an authorized workspace to the Local Connector first.")
+                : ViewModel.Localization.Text(
+                    $"要{action}，请先配对本机 Connector 并授权一个工作区。",
+                    $"To {action}, pair the Local Connector and authorize a workspace first."),
+            PrimaryButtonText = ViewModel.Localization.Text("打开 Connector 设置", "Open Connector settings"),
+            CloseButtonText = ViewModel.Localization.Text("取消", "Cancel"),
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            ShowSettings();
         }
     }
 
@@ -575,6 +834,23 @@ public sealed partial class MainWindow : Window
         RefreshWorkspaceEmptyState();
     }
 
+    private void ShowAuxiliaryContent(object content)
+    {
+        var isSettings = ReferenceEquals(content, SettingsPage);
+        AuxiliaryOverlayCard.MaxWidth = isSettings ? 840 : 1300;
+        AuxiliaryOverlayCard.MaxHeight = isSettings ? 640 : 840;
+        AuxiliaryOverlayContent.Content = content;
+        AuxiliaryOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void HideAuxiliaryContent()
+    {
+        AuxiliaryOverlayCard.MaxWidth = 1300;
+        AuxiliaryOverlayCard.MaxHeight = 840;
+        AuxiliaryOverlay.Visibility = Visibility.Collapsed;
+        AuxiliaryOverlayContent.Content = null;
+    }
+
     private void RefreshSidebarState()
     {
         if (ProjectsEmptyText is null || RemoteEmptyText is null) return;
@@ -589,10 +865,10 @@ public sealed partial class MainWindow : Window
     private void RefreshWorkspaceEmptyState()
     {
         if (EmptyWorkspaceState is null) return;
-        EmptyWorkspaceState.Visibility = ReferenceEquals(WorkspaceContent.Content, WorkspaceHost) &&
-            ViewModel.SelectedResource is null
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        var isEmpty = ReferenceEquals(WorkspaceContent.Content, WorkspaceHost) &&
+            ViewModel.SelectedResource is null;
+        EmptyWorkspaceState.Visibility = isEmpty ? Visibility.Visible : Visibility.Collapsed;
+        WorkspaceContent.Visibility = isEmpty ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void OnPreferencesChanged(object? sender, AppPreferences preferences)
@@ -619,7 +895,10 @@ public sealed partial class MainWindow : Window
         ApplyAuthenticationVisualState(ViewModel.IsAuthenticated);
         LoginForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Collapsed : Visibility.Visible;
         RegistrationForm.Visibility = ViewModel.IsRegistrationMode ? Visibility.Visible : Visibility.Collapsed;
-        LoginButton.IsEnabled = !ViewModel.IsBusy;
+        // Keep the native control state aligned with the bindable validation
+        // property; this method also runs during startup before x:Bind has
+        // delivered the first property notification.
+        LoginButton.IsEnabled = ViewModel.CanLogin;
         LoginErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Collapsed
             : Visibility.Visible;
@@ -671,6 +950,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
+            HideAuxiliaryContent();
             LoginRoot.Visibility = Visibility.Visible;
             SetTitleBar(LoginTitleBar);
             ShellRoot.Visibility = Visibility.Collapsed;
@@ -687,6 +967,7 @@ public sealed partial class MainWindow : Window
 
     private void RefreshApprovalOverlay()
     {
+        var previousApprovalId = ActiveApproval?.Id;
         var pending = Approvals.Snapshot();
         ActiveApproval = pending.FirstOrDefault();
         ApprovalOverlay.Visibility = ActiveApproval is null
@@ -716,6 +997,10 @@ public sealed partial class MainWindow : Window
             ConnectorApprovalRiskLevel.Medium => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ChatOSWarningBrush"],
             _ => (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ChatOSSuccessBrush"],
         };
+        if (!string.Equals(previousApprovalId, approval.Id, StringComparison.Ordinal))
+        {
+            _ = DeclineApprovalButton.Focus(FocusState.Programmatic);
+        }
     }
 
     private async void OnDeclineApproval(object sender, RoutedEventArgs e) =>
@@ -759,5 +1044,15 @@ public sealed partial class MainWindow : Window
         DeclineApprovalButton.IsEnabled = enabled;
         AcceptApprovalButton.IsEnabled = enabled;
         AcceptSessionApprovalButton.IsEnabled = enabled;
+    }
+
+    private sealed class AutomationContentDialog : ContentDialog
+    {
+        public void SetButtonAutomationProperties(string templatePart, string automationId, string name)
+        {
+            if (GetTemplateChild(templatePart) is not Button button) return;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(button, automationId);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, name);
+        }
     }
 }

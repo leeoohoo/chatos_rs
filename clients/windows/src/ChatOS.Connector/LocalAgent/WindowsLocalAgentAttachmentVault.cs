@@ -83,6 +83,37 @@ public sealed class WindowsLocalAgentAttachmentVault
         });
     }
 
+    internal Uri? ResolveDisplayUri(
+        WindowsLocalConversationAttachmentRecord record,
+        string ownerUserId,
+        string conversationId)
+    {
+        if (!record.AuthorizedLocalRef.StartsWith(Prefix, StringComparison.Ordinal) ||
+            record.ByteSize is 0 or > MaximumAttachmentBytes)
+        {
+            return null;
+        }
+
+        var token = record.AuthorizedLocalRef[Prefix.Length..];
+        if (!Guid.TryParseExact(token, "D", out var parsed) ||
+            parsed.ToString("D") != token)
+        {
+            return null;
+        }
+
+        var directory = Path.GetFullPath(ScopedDirectory(ownerUserId, conversationId));
+        var path = Path.GetFullPath(Path.Combine(directory, token));
+        if (!string.Equals(Path.GetDirectoryName(path), directory, StringComparison.OrdinalIgnoreCase) ||
+            !File.Exists(path) ||
+            (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0 ||
+            new FileInfo(path).Length != checked((long)record.ByteSize))
+        {
+            return null;
+        }
+
+        return new Uri(path);
+    }
+
     private string ScopedDirectory(string owner, string conversation) =>
         Path.Combine(_root, Hex(Encoding.UTF8.GetBytes(owner)), Hex(Encoding.UTF8.GetBytes(conversation)));
 

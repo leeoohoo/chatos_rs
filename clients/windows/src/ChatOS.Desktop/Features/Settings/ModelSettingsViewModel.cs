@@ -155,9 +155,17 @@ public sealed partial class ModelSettingsViewModel : ObservableObject
         => await _operations.RunAsync(
             operation,
             () => { IsBusy = true; ErrorMessage = null; ActionMessage = null; },
-            message => ErrorMessage = message,
+            message => ErrorMessage = LocalizeErrorMessage(message),
             () => IsBusy = false,
             cancellationToken).ConfigureAwait(false);
+
+    private string LocalizeErrorMessage(string message) => message switch
+    {
+        "Local Agent conversation settings are not configured." => _localization.Text(
+            "本机 Connector 尚未完成模型配置，请先在“设备与网关”中完成连接后再刷新。",
+            "The local Connector has no model configuration yet. Connect it in Devices & Gateway, then refresh."),
+        _ => message,
+    };
 }
 
 public sealed partial class ConnectorModelOptionViewModel : ObservableObject

@@ -73,6 +73,35 @@ public sealed class RemoteConnectionsViewModelTests
         Assert.True(viewModel.CanSave);
     }
 
+    [Fact]
+    public async Task JumpHostValidationRejectsUnknownConnectionAndCertificateWithoutKey()
+    {
+        var service = new ServiceDouble();
+        var viewModel = new RemoteConnectionsViewModel(
+            service,
+            new ConnectorDouble(),
+            new ImmediateUiDispatcher());
+        await viewModel.OpenAsync();
+
+        viewModel.Host = "target.example";
+        viewModel.Username = "deploy";
+        viewModel.AuthenticationType = RemoteAuthenticationType.Password;
+        viewModel.Password = "secret";
+        viewModel.JumpEnabled = true;
+        viewModel.JumpConnectionId = "missing";
+        Assert.False(viewModel.CanSave);
+
+        viewModel.JumpConnectionId = null;
+        viewModel.JumpHost = "jump.example";
+        viewModel.JumpUsername = "jump-user";
+        viewModel.JumpCertificatePath = "C:\\jump-cert.pub";
+        viewModel.JumpPrivateKeyPath = string.Empty;
+        Assert.False(viewModel.CanSave);
+
+        viewModel.JumpPrivateKeyPath = "C:\\jump-key";
+        Assert.True(viewModel.CanSave);
+    }
+
     private sealed class ServiceDouble : IRemoteConnectionService
     {
         public List<RemoteConnection> Values { get; } = [Connection("remote-1")];
@@ -128,6 +157,8 @@ public sealed class RemoteConnectionsViewModelTests
                 [new LocalConnectorWorkspaceStatus("workspace-1", "Work", "C:\\Work")]));
 
         public Task<LocalConnectorStatus> PairAsync(LocalConnectorPairingDraft draft, string ticket, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+        public Task<LocalConnectorStatus> RefreshCredentialAsync(string ticket, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public Task DisconnectAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }

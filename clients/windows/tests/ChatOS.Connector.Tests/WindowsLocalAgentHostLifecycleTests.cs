@@ -8,7 +8,7 @@ namespace ChatOS.Connector.Tests;
 public sealed class WindowsLocalAgentHostLifecycleTests
 {
     [Fact]
-    public async Task UsesProtocol41AndCorrelatesConcurrentResponses()
+    public async Task UsesProtocol42AndCorrelatesConcurrentResponses()
     {
         await using var process = new FakeProcess();
         await using var lifecycle = new WindowsLocalAgentHostLifecycle(
@@ -24,7 +24,7 @@ public sealed class WindowsLocalAgentHostLifecycleTests
         Assert.Same(fast, await Task.WhenAny(slow, fast));
         Assert.Equal("fast", (await fast).Value);
         Assert.Equal("slow", (await slow).Value);
-        Assert.All(process.ProtocolVersions, value => Assert.Equal(41, value));
+        Assert.All(process.ProtocolVersions, value => Assert.Equal(42, value));
     }
 
     [Fact]
@@ -46,6 +46,35 @@ public sealed class WindowsLocalAgentHostLifecycleTests
     }
 
     [Fact]
+    public void ConversationStartCommandUsesStableTurnScopedIdentity()
+    {
+        var first = JsonSerializer.SerializeToElement(new
+        {
+            type = "start_conversation_turn",
+            turn_id = "turn-retry-1",
+            message = "first",
+        });
+        var changedPayload = JsonSerializer.SerializeToElement(new
+        {
+            type = "start_conversation_turn",
+            turn_id = "turn-retry-1",
+            message = "second",
+        });
+        var ordinary = JsonSerializer.SerializeToElement(new
+        {
+            type = "get_conversation",
+            conversation_id = "conversation-1",
+        });
+
+        Assert.Equal(
+            WindowsLocalAgentHostLifecycle.CreateCommandId(first),
+            WindowsLocalAgentHostLifecycle.CreateCommandId(changedPayload));
+        Assert.NotEqual(
+            WindowsLocalAgentHostLifecycle.CreateCommandId(ordinary),
+            WindowsLocalAgentHostLifecycle.CreateCommandId(ordinary));
+    }
+
+    [Fact]
     public async Task DisposeIsIdempotent()
     {
         await using var process = new FakeProcess();
@@ -57,6 +86,84 @@ public sealed class WindowsLocalAgentHostLifecycleTests
         await lifecycle.DisposeAsync();
 
         Assert.Null(lifecycle.ActiveOwnerUserId);
+    }
+
+    [Fact]
+    public async Task BootstrapDisablesWorkersAndIdenticalRefreshReusesActiveWorker()
+    {
+        var launcher = new SequenceLauncher();
+        await using var lifecycle = new WindowsLocalAgentHostLifecycle(Options(), launcher);
+        var credentials = new Dictionary<string, string>
+        {
+            ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "model-secret",
+            ["CHATOS_MEMORY_ACCESS_TOKEN"] = "memory-secret",
+        };
+
+        await lifecycle.StartForBootstrapAsync("owner-1");
+        Assert.False(launcher.Launches.Single().WorkersEnabled);
+        var bootstrap = launcher.Launches.Single().Process;
+
+        await lifecycle.RefreshCredentialsForOwnerAsync("owner-1", credentials);
+        Assert.True(bootstrap.HasExited);
+        Assert.Equal(2, launcher.Launches.Count);
+        Assert.True(launcher.Launches[1].WorkersEnabled);
+        var worker = launcher.Launches[1].Process;
+
+        await lifecycle.RefreshCredentialsForOwnerAsync(
+            "owner-1",
+            new Dictionary<string, string>
+            {
+                ["CHATOS_MEMORY_ACCESS_TOKEN"] = "memory-secret",
+                ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "model-secret",
+            });
+
+        Assert.Equal(2, launcher.Launches.Count);
+        Assert.False(worker.HasExited);
+    }
+
+    [Fact]
+    public async Task ChangedCredentialRefreshIsDeferredWithoutReplacingWorker()
+    {
+        var launcher = new SequenceLauncher();
+        await using var lifecycle = new WindowsLocalAgentHostLifecycle(Options(), launcher);
+        await lifecycle.RefreshCredentialsForOwnerAsync(
+            "owner-1",
+            new Dictionary<string, string>
+            {
+                ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "original-secret",
+            });
+        var worker = launcher.Launches.Single().Process;
+
+        await Assert.ThrowsAsync<LocalAgentCredentialRefreshDeferredException>(() =>
+            lifecycle.RefreshCredentialsForOwnerAsync(
+                "owner-1",
+                new Dictionary<string, string>
+                {
+                    ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "rotated-secret",
+                }));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            lifecycle.RefreshCredentialsForOwnerAsync(
+                "owner-2",
+                new Dictionary<string, string>
+                {
+                    ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "original-secret",
+                }));
+
+        Assert.Single(launcher.Launches);
+        Assert.False(worker.HasExited);
+        Assert.DoesNotContain("original-secret", lifecycle.ToString(), StringComparison.Ordinal);
+
+        await lifecycle.StopAsync();
+        await lifecycle.RefreshCredentialsForOwnerAsync(
+            "owner-1",
+            new Dictionary<string, string>
+            {
+                ["CHATOS_LOCAL_AGENT_MODEL_TEST"] = "rotated-secret",
+            });
+
+        Assert.Equal(2, launcher.Launches.Count);
+        Assert.True(worker.HasExited);
+        Assert.True(launcher.Launches[1].WorkersEnabled);
     }
 
     private static LocalAgentHostOptions Options() => new(
@@ -76,8 +183,28 @@ public sealed class WindowsLocalAgentHostLifecycleTests
             LocalAgentHostOptions options,
             string ownerUserId,
             IReadOnlyDictionary<string, string> credentialEnvironment,
+            bool workersEnabled,
             CancellationToken cancellationToken) => Task.FromResult<ILocalAgentHostProcess>(process);
     }
+
+    private sealed class SequenceLauncher : ILocalAgentHostProcessLauncher
+    {
+        internal List<LaunchRecord> Launches { get; } = [];
+
+        public Task<ILocalAgentHostProcess> LaunchAsync(
+            LocalAgentHostOptions options,
+            string ownerUserId,
+            IReadOnlyDictionary<string, string> credentialEnvironment,
+            bool workersEnabled,
+            CancellationToken cancellationToken)
+        {
+            var process = new FakeProcess();
+            Launches.Add(new LaunchRecord(process, workersEnabled));
+            return Task.FromResult<ILocalAgentHostProcess>(process);
+        }
+    }
+
+    private sealed record LaunchRecord(FakeProcess Process, bool WorkersEnabled);
 
     private sealed class FakeProcess : ILocalAgentHostProcess
     {
@@ -140,7 +267,7 @@ public sealed class WindowsLocalAgentHostLifecycleTests
                 await Task.Delay(delayMilliseconds, _lifetime.Token).ConfigureAwait(false);
             var payload = JsonSerializer.SerializeToUtf8Bytes(new
             {
-                protocol_version = 41,
+                protocol_version = 42,
                 command_id = commandId,
                 ok = true,
                 result,

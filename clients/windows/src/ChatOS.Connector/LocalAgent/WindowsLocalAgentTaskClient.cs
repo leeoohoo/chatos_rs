@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ChatOS.Core.Abstractions;
 
 namespace ChatOS.Connector.LocalAgent;
@@ -6,7 +7,11 @@ namespace ChatOS.Connector.LocalAgent;
 internal sealed record WindowsLocalTask(
     string GraphId, string OwnerUserId, string SourceEntityType, string SourceEntityId,
     string TaskId, string Title, string ModelConfigRef, JsonElement Input, string Status,
-    string? ActiveRunId, ulong Version, long CreatedAtUnixMs, long UpdatedAtUnixMs);
+    string? ActiveRunId, ulong Version, long CreatedAtUnixMs, long UpdatedAtUnixMs)
+{
+    [JsonPropertyName("model_config_revision")]
+    public string? ModelConfigRevision { get; init; }
+}
 internal sealed record WindowsLocalTaskDependency(string TaskId, string PrerequisiteTaskId);
 internal sealed record WindowsLocalTaskGraph(
     string GraphId, string OwnerUserId, string SourceEntityType, string SourceEntityId,

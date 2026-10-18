@@ -20,6 +20,7 @@ public sealed partial class ProjectFeatureHubPage : Page
         Shell = shell;
         _surveys = surveys;
         InitializeComponent();
+        _surveys.Changed += OnRequirementSurveysChanged;
         Shell.Projects.CollectionChanged += (_, _) =>
         {
             Bindings.Update();
@@ -97,6 +98,16 @@ public sealed partial class ProjectFeatureHubPage : Page
     private async void OnRefreshSurveySummaryClick(object sender, RoutedEventArgs e) =>
         await LoadSurveySummaryAsync();
 
+    private void OnRequirementSurveysChanged(
+        object? sender,
+        ProjectRequirementSurveyChangedEventArgs args)
+    {
+        if (_feature != WorkspaceResourceKind.RequirementSurveys ||
+            !string.Equals(args.OwnerUserId, Shell.CurrentOwnerUserId, StringComparison.Ordinal))
+            return;
+        _ = DispatcherQueue.TryEnqueue(() => _ = LoadSurveySummaryAsync());
+    }
+
     private async Task LoadSurveySummaryAsync()
     {
         var generation = Interlocked.Increment(ref _summaryGeneration);
@@ -107,11 +118,21 @@ public sealed partial class ProjectFeatureHubPage : Page
         try
         {
             if (string.IsNullOrWhiteSpace(owner)) throw new InvalidOperationException("请先登录后查看需求调研汇总。");
+            var projects = Shell.Projects.ToArray();
             var summaries = new List<ProjectSurveySummary>();
-            foreach (var project in Shell.Projects.ToArray())
+            string? firstError = null;
+            foreach (var project in projects)
             {
-                var surveys = await _surveys.ListAsync(owner, project.Id);
-                summaries.Add(ProjectSurveySummary.Create(project, surveys));
+                try
+                {
+                    var surveys = await _surveys.ListAsync(owner, project.Id);
+                    summaries.Add(ProjectSurveySummary.Create(project, surveys));
+                }
+                catch (Exception exception)
+                {
+                    summaries.Add(new ProjectSurveySummary(project, 0, 0, 0));
+                    firstError ??= FriendlySurveyError(exception);
+                }
             }
             if (generation != _summaryGeneration || _feature != WorkspaceResourceKind.RequirementSurveys) return;
             SurveyProjects.Clear();
@@ -122,10 +143,11 @@ public sealed partial class ProjectFeatureHubPage : Page
             {
                 SurveyProjects.Add(summary);
             }
+            SurveySummaryError = firstError ?? string.Empty;
         }
         catch (Exception exception)
         {
-            if (generation == _summaryGeneration) SurveySummaryError = exception.Message;
+            if (generation == _summaryGeneration) SurveySummaryError = FriendlySurveyError(exception);
         }
         finally
         {
@@ -137,6 +159,12 @@ public sealed partial class ProjectFeatureHubPage : Page
             }
         }
     }
+
+    private static string FriendlySurveyError(Exception exception) =>
+        exception.Message.Contains("optional local agent host is not installed",
+            StringComparison.OrdinalIgnoreCase)
+            ? "未安装可选的 Local Agent Host，当前只能显示项目列表，调研数据暂不可用。"
+            : exception.Message;
 
     private void RefreshFeatureVisibility()
     {
@@ -171,7 +199,7 @@ public sealed class ProjectSurveySummary
 
     public string StatusLabel => PendingCount > 0
         ? $"有 {PendingCount} 张问卷等待 Human 填写"
-        : ResolvedCount > 0 ? "当前调研均已提交" : "暂无需求调研";
+        : ResolvedCount > 0 ? "当前调研均已提交" : "暂无本地任务调研";
 
     public static ProjectSurveySummary Create(
         ShellResourceViewModel project,

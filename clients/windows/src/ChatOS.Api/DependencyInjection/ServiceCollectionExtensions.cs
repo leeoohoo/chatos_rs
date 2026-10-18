@@ -1,6 +1,7 @@
 using ChatOS.Api.Http;
 using ChatOS.Api.Authentication;
 using ChatOS.Api.Media;
+using ChatOS.Api.WeChat;
 using ChatOS.Core.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ILocalConnectorPairingTicketService, LocalConnectorPairingTicketService>();
         services.AddSingleton<IMediaGenerationService, MediaGenerationService>();
         services.AddSingleton<IStoryPlanningService, StoryPlanningService>();
+        services.AddSingleton<IWeChatCompanionService, WeChatCompanionService>();
         return services;
     }
 }

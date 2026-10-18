@@ -47,6 +47,19 @@ public sealed partial class RemoteSftpPage : UserControl
         Initialize(picker);
         var file = await picker.PickSaveFileAsync();
         if (file is null) return;
+        if (File.Exists(file.Path))
+        {
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = Localization.Text($"覆盖“{file.Name}”？", $"Overwrite “{file.Name}”?"),
+                Content = Localization.Text("本机已存在同名文件。", "A local file with the same name already exists."),
+                PrimaryButtonText = Localization.Text("覆盖", "Overwrite"),
+                CloseButtonText = Localization.Cancel,
+                DefaultButton = ContentDialogButton.Close
+            };
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        }
         await using var stream = await file.OpenStreamForWriteAsync();
         stream.SetLength(0);
         await ViewModel.DownloadAsync(entry, stream);

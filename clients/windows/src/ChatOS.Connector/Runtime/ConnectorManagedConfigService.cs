@@ -1,5 +1,7 @@
+using System.Net;
 using ChatOS.Connector.Gateway;
 using ChatOS.Connector.AgentTeams;
+using ChatOS.Core.Abstractions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -46,17 +48,25 @@ public sealed class ConnectorManagedConfigSynchronizer
 
 public sealed class ConnectorManagedConfigBackgroundService : BackgroundService
 {
+    private static readonly TimeSpan CredentialRefreshCooldown = TimeSpan.FromMinutes(1);
     private readonly ConnectorRuntimeContext _runtime;
     private readonly ConnectorManagedConfigSynchronizer _synchronizer;
+    private readonly ConnectorPairingService _pairing;
+    private readonly ILocalConnectorPairingTicketService _pairingTickets;
     private readonly ILogger<ConnectorManagedConfigBackgroundService> _logger;
+    private DateTimeOffset? _lastCredentialRefreshAttempt;
 
     public ConnectorManagedConfigBackgroundService(
         ConnectorRuntimeContext runtime,
         ConnectorManagedConfigSynchronizer synchronizer,
+        ConnectorPairingService pairing,
+        ILocalConnectorPairingTicketService pairingTickets,
         ILogger<ConnectorManagedConfigBackgroundService> logger)
     {
         _runtime = runtime;
         _synchronizer = synchronizer;
+        _pairing = pairing;
+        _pairingTickets = pairingTickets;
         _logger = logger;
     }
 
@@ -72,6 +82,19 @@ public sealed class ConnectorManagedConfigBackgroundService : BackgroundService
                     _logger.LogInformation("Local Connector managed trust configuration was refreshed.");
                 }
             }
+            catch (ConnectorGatewayException exception)
+                when (exception.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                if (await TryRefreshCredentialAsync(stoppingToken).ConfigureAwait(false))
+                {
+                    _logger.LogInformation(
+                        "Local Connector credential was renewed after gateway rejection.");
+                    continue;
+                }
+
+                _logger.LogWarning(
+                    "Local Connector credential was rejected and could not be renewed yet.");
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
@@ -84,6 +107,36 @@ public sealed class ConnectorManagedConfigBackgroundService : BackgroundService
             }
 
             await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<bool> TryRefreshCredentialAsync(CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_lastCredentialRefreshAttempt is { } lastAttempt &&
+            now - lastAttempt < CredentialRefreshCooldown)
+        {
+            return false;
+        }
+
+        _lastCredentialRefreshAttempt = now;
+        try
+        {
+            var ticket = await _pairingTickets.IssueAsync(cancellationToken).ConfigureAwait(false);
+            _ = await _pairing.RefreshCredentialAsync(ticket, cancellationToken)
+                .ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _logger.LogWarning(
+                "Unable to renew the rejected Local Connector credential. Failure type: {FailureType}.",
+                exception.GetType().Name);
+            return false;
         }
     }
 }

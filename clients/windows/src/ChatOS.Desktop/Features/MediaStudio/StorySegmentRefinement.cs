@@ -61,7 +61,7 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
+            if (_session == session) IsBusy = false;
         }
     }
 
@@ -74,6 +74,7 @@ public sealed partial class StoryStudioViewModel
             segment.ImagePrompt, segment.VideoPrompt, segment.ContinuityIn,
             segment.ContinuityOut, segment.ShotPlan, string.Empty);
         var wasRefined = segment.IsRefined;
+        var session = _session;
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -96,7 +97,7 @@ public sealed partial class StoryStudioViewModel
         }
         finally
         {
-            IsBusy = false;
+            if (_session == session) IsBusy = false;
         }
     }
 

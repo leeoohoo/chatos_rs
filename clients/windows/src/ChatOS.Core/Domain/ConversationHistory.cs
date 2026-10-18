@@ -21,7 +21,10 @@ public sealed record ChatMessage(
     ChatMessageRole Role,
     string Text,
     DateTimeOffset CreatedAt,
-    IReadOnlyList<ConversationAttachmentReference> Attachments);
+    IReadOnlyList<ConversationAttachmentReference> Attachments)
+{
+    public ulong? StorageOrdinal { get; init; }
+}
 
 public sealed record TurnProcessEvent(
     string Id,
@@ -60,7 +63,10 @@ public sealed record ConversationTurn(
     bool IsTaskGraphAvailable,
     TurnStatus Status,
     DateTimeOffset StartedAt,
-    DateTimeOffset? CompletedAt);
+    DateTimeOffset? CompletedAt)
+{
+    public IReadOnlyList<ChatMessage> AdditionalUserMessages { get; init; } = [];
+}
 
 public sealed record ConversationHistoryQuery(
     string ConversationId,

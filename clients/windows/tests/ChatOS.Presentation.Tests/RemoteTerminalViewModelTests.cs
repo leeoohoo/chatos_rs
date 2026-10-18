@@ -60,6 +60,21 @@ public sealed class RemoteTerminalViewModelTests
         Assert.Contains(viewModel.Lines, line => line.Text == "命令已取消。");
     }
 
+    [Fact]
+    public async Task EmptyVerificationCodeDoesNotRetryCommand()
+    {
+        var service = new TerminalDouble { RequireVerification = true };
+        using var viewModel = new RemoteTerminalViewModel(service, new ImmediateUiDispatcher());
+        viewModel.Open(Connection());
+        viewModel.Command = "whoami";
+
+        await viewModel.SubmitCommand.ExecuteAsync(null);
+        await viewModel.SubmitCommand.ExecuteAsync(null);
+
+        Assert.Equal("请输入验证码。", viewModel.ErrorMessage);
+        Assert.Equal(string.Empty, service.LastCode);
+    }
+
     private static RemoteConnection Connection() => new(
         "remote-1", "Server", "server.example", 22, "deploy", RemoteAuthenticationType.Password,
         true, false, false, "/srv", RemoteHostKeyPolicy.Strict, "device-1", "workspace-1",

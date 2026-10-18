@@ -7,7 +7,12 @@
     xmlns:core="using:ChatOS.Core.Domain"
     mc:Ignorable="d">
 
-    <Grid Background="{StaticResource ChatOSContentBackgroundBrush}">
+    <Grid
+        AutomationProperties.AutomationId="ChatOS.ProjectGit.Root"
+        AutomationProperties.Name="{x:Bind ViewModel.ProjectName, Mode=OneWay}"
+        AutomationProperties.HelpText="{x:Bind ViewModel.ProjectRoot, Mode=OneWay}"
+        AutomationProperties.ItemStatus="{x:Bind ViewModel.RepositoryRoot, Mode=OneWay}"
+        Background="{StaticResource ChatOSContentBackgroundBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="52" />
             <RowDefinition Height="1" />
@@ -27,16 +32,18 @@
             </Grid.ColumnDefinitions>
             <FontIcon Glyph="&#xE943;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
             <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center" Spacing="1">
-                <TextBlock Text="{x:Bind ViewModel.HeadLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                <TextBlock Text="{x:Bind ViewModel.SyncLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                <TextBlock AutomationProperties.AutomationId="ChatOS.ProjectGit.Head" AutomationProperties.Name="{x:Bind ViewModel.HeadLabel, Mode=OneWay}" Text="{x:Bind ViewModel.HeadLabel, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                <TextBlock AutomationProperties.AutomationId="ChatOS.ProjectGit.Sync" AutomationProperties.Name="{x:Bind ViewModel.SyncLabel, Mode=OneWay}" Text="{x:Bind ViewModel.SyncLabel, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
             </StackPanel>
-            <Button Grid.Column="2" Content="{x:Bind Localization.Pull, Mode=OneWay}" Command="{x:Bind ViewModel.PullCommand}" IsEnabled="{x:Bind ViewModel.IsRepository, Mode=OneWay}" />
-            <Button Grid.Column="3" Content="{x:Bind Localization.Push, Mode=OneWay}" Command="{x:Bind ViewModel.PushCommand}" IsEnabled="{x:Bind ViewModel.IsRepository, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
-            <Button Grid.Column="4" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshGitStatus, Mode=OneWay}">
+            <Button Grid.Column="2" Content="{x:Bind Localization.Pull, Mode=OneWay}" Click="OnPullClick" IsEnabled="{x:Bind ViewModel.CanOperate, Mode=OneWay}" />
+            <Button Grid.Column="3" Content="{x:Bind Localization.Push, Mode=OneWay}" Click="OnPushClick" IsEnabled="{x:Bind ViewModel.CanOperate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+            <Button Grid.Column="4" AutomationProperties.AutomationId="ChatOS.ProjectGit.Refresh" AutomationProperties.Name="{x:Bind Localization.RefreshGitStatus, Mode=OneWay}" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshGitStatus, Mode=OneWay}">
                 <FontIcon Glyph="&#xE72C;" />
             </Button>
             <Button
                 Grid.Column="5"
+                AutomationProperties.AutomationId="ChatOS.ProjectGit.Cancel"
+                AutomationProperties.Name="{x:Bind Localization.CancelGitOperation, Mode=OneWay}"
                 Command="{x:Bind ViewModel.CancelOperationCommand}"
                 IsEnabled="{x:Bind ViewModel.CanCancel, Mode=OneWay}"
                 Style="{StaticResource ChatOSToolbarButtonStyle}"
@@ -50,6 +57,8 @@
 
         <Grid
             Grid.Row="2"
+            AutomationProperties.AutomationId="ChatOS.ProjectGit.NotRepository"
+            AutomationProperties.Name="{x:Bind Localization.NotGitRepository, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.IsRepository, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="420" Spacing="12">
                 <Border Width="58" Height="58" CornerRadius="16" Background="{StaticResource ChatOSProcessBackgroundBrush}">
@@ -62,8 +71,11 @@
                     Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                 <Button
                     HorizontalAlignment="Center"
+                    AutomationProperties.AutomationId="ChatOS.ProjectGit.Initialize"
+                    AutomationProperties.Name="{x:Bind Localization.InitializeGitRepository, Mode=OneWay}"
                     Content="{x:Bind Localization.InitializeGitRepository, Mode=OneWay}"
                     Command="{x:Bind ViewModel.InitializeRepositoryCommand}"
+                    IsEnabled="{x:Bind ViewModel.CanInitializeRepository, Mode=OneWay}"
                     Style="{StaticResource ChatOSPrimaryButtonStyle}" />
             </StackPanel>
         </Grid>
@@ -104,7 +116,7 @@
                         IsEnabled="{x:Bind ViewModel.HasStagedChanges, Mode=OneWay}" />
                 </Grid>
 
-                <ListView Grid.Row="1" Padding="8" ItemsSource="{x:Bind ViewModel.Changes}" SelectionMode="None">
+                <ListView Grid.Row="1" Padding="8" AutomationProperties.AutomationId="ChatOS.ProjectGit.Changes" AutomationProperties.Name="{x:Bind Localization.Changes, Mode=OneWay}" ItemsSource="{x:Bind ViewModel.Changes}" SelectionMode="None">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="core:ProjectGitChange">
                             <Border Margin="0,2" Padding="9" Style="{StaticResource ChatOSCardStyle}">
@@ -156,6 +168,8 @@
 
                 <StackPanel
                     Grid.Row="1"
+                    AutomationProperties.AutomationId="ChatOS.ProjectGit.ChangesEmpty"
+                    AutomationProperties.Name="{x:Bind Localization.NoWorkingTreeChanges, Mode=OneWay}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Spacing="8"
@@ -193,10 +207,21 @@
                     <RowDefinition Height="1" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <StackPanel Spacing="2">
-                    <TextBlock Text="{x:Bind ViewModel.SelectedDiff.Path, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                    <TextBlock Text="{x:Bind Localization.DiffReadOnlyNotice, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                </StackPanel>
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock AutomationProperties.AutomationId="ChatOS.ProjectGit.DiffPath" AutomationProperties.Name="{x:Bind ViewModel.SelectedDiff.Path, Mode=OneWay}" Text="{x:Bind ViewModel.SelectedDiff.Path, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock Text="{x:Bind Localization.DiffReadOnlyNotice, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Click="OnOpenDiffFileClick" Content="{x:Bind Localization.OpenWithDefaultApplication, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.HasDiff, Mode=OneWay}" />
+                    <Button Grid.Column="2" AutomationProperties.Name="{x:Bind Localization.Close, Mode=OneWay}" Command="{x:Bind ViewModel.CloseDiffCommand}" IsEnabled="{x:Bind ViewModel.HasDiff, Mode=OneWay}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="关闭差异">
+                        <FontIcon Glyph="&#xE711;" />
+                    </Button>
+                </Grid>
                 <Border Grid.Row="1" Margin="0,12" Background="{StaticResource ChatOSBorderBrush}" />
                 <ScrollViewer
                     Grid.Row="2"
@@ -204,6 +229,8 @@
                     VerticalScrollBarVisibility="Auto"
                     Visibility="{x:Bind ViewModel.HasDiff, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                     <TextBlock
+                        AutomationProperties.AutomationId="ChatOS.ProjectGit.DiffContent"
+                        AutomationProperties.Name="{x:Bind Localization.DiffReadOnlyNotice, Mode=OneWay}"
                         FontFamily="Cascadia Mono, Consolas"
                         FontSize="12"
                         IsTextSelectionEnabled="True"
@@ -222,6 +249,8 @@
                 </StackPanel>
                 <TextBlock
                     Grid.Row="2"
+                    AutomationProperties.AutomationId="ChatOS.ProjectGit.DiffEmpty"
+                    AutomationProperties.Name="{x:Bind Localization.NoTextDiff, Mode=OneWay}"
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Text="{x:Bind Localization.NoTextDiff, Mode=OneWay}"
@@ -280,10 +309,10 @@
                                                 <TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                                 <TextBlock Text="{x:Bind Url}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                             </StackPanel>
-                                            <Button Grid.Column="1" Click="OnEditRemoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding EditRemote, Source={StaticResource ChatOSLocalization}}">
+                                            <Button Grid.Column="1" AutomationProperties.Name="{Binding EditRemote, Source={StaticResource ChatOSLocalization}}" Click="OnEditRemoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding EditRemote, Source={StaticResource ChatOSLocalization}}">
                                                 <FontIcon Glyph="&#xE70F;" FontSize="12" />
                                             </Button>
-                                            <Button Grid.Column="2" Click="OnRemoveRemoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding RemoveRemote, Source={StaticResource ChatOSLocalization}}">
+                                            <Button Grid.Column="2" AutomationProperties.Name="{Binding RemoveRemote, Source={StaticResource ChatOSLocalization}}" Click="OnRemoveRemoteClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding RemoveRemote, Source={StaticResource ChatOSLocalization}}">
                                                 <FontIcon Glyph="&#xE74D;" FontSize="12" Foreground="{StaticResource ChatOSFailureBrush}" />
                                             </Button>
                                         </Grid>
@@ -324,11 +353,15 @@
 
         <StackPanel Grid.Row="3" Margin="14,6" Spacing="3">
             <TextBlock
+                AutomationProperties.AutomationId="ChatOS.ProjectGit.ActionStatus"
+                AutomationProperties.Name="{x:Bind Localization.GitActionStatus, Mode=OneWay}"
                 Text="{x:Bind ViewModel.ActionMessage, Mode=OneWay}"
                 Foreground="{StaticResource ChatOSSuccessBrush}"
                 Style="{StaticResource ChatOSCaptionTextStyle}"
                 Visibility="{x:Bind ViewModel.ActionMessage, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
             <TextBlock
+                AutomationProperties.AutomationId="ChatOS.ProjectGit.Error"
+                AutomationProperties.Name="{x:Bind Localization.GitError, Mode=OneWay}"
                 Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                 Foreground="{StaticResource ChatOSFailureBrush}"
                 Style="{StaticResource ChatOSCaptionTextStyle}"

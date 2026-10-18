@@ -17,11 +17,44 @@ if (-not $IsWindows) {
 $runtimeIdentifier = if ($Platform -eq "ARM64") { "win-arm64" } else { "win-x64" }
 $rustTarget = if ($Platform -eq "ARM64") { "aarch64-pc-windows-msvc" } else { "x86_64-pc-windows-msvc" }
 $monorepoRoot = (Resolve-Path (Join-Path $repoRoot "..\..")).Path
+$desktopProject = Join-Path $repoRoot "src\ChatOS.Desktop\ChatOS.Desktop.csproj"
 $cargoArguments = @("build", "--manifest-path", (Join-Path $monorepoRoot "Cargo.toml"), "-p", "chatos_local_agent_host", "--target", $rustTarget)
 if ($Configuration -eq "Release") { $cargoArguments += "--release" }
 $rustProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
+$previousAwsLcNoAsm = $env:AWS_LC_SYS_NO_ASM
+$previousAwsLcPrebuiltNasm = $env:AWS_LC_SYS_PREBUILT_NASM
+$previousCMake = $env:CMAKE
 
-Push-Location $repoRoot
+# aws-lc prefers NASM on x64, but a normal Visual Studio installation does not
+# necessarily put NASM or its bundled CMake on PATH. Fall back to aws-lc's CMake
+# build and discover the Visual Studio copy so a clean Windows checkout builds
+# without a separate NASM installation.
+if ($Configuration -eq "Release") {
+    # aws-lc-sys rejects NO_ASM for optimized builds. Its checked-in x64
+    # objects are the supported fallback when NASM is not installed.
+    $env:AWS_LC_SYS_NO_ASM = $null
+    if ($Platform -eq "x64" -and -not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+        $env:AWS_LC_SYS_PREBUILT_NASM = "1"
+    }
+}
+elseif (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+    $env:AWS_LC_SYS_NO_ASM = "1"
+}
+
+if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+    $vsWhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vsWhere -PathType Leaf) {
+        $visualStudioRoot = & $vsWhere -latest -products * -property installationPath
+        if ($visualStudioRoot) {
+            $visualStudioCMake = Join-Path $visualStudioRoot "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+            if (Test-Path $visualStudioCMake -PathType Leaf) {
+                $env:CMAKE = $visualStudioCMake
+            }
+        }
+    }
+}
+
+Push-Location $monorepoRoot
 try {
     cargo @cargoArguments
     if ($LASTEXITCODE -ne 0) {
@@ -31,7 +64,7 @@ try {
     if (-not (Test-Path $localAgentHost -PathType Leaf)) {
         throw "Local Agent Host executable was not produced at $localAgentHost."
     }
-    dotnet build .\src\ChatOS.Desktop\ChatOS.Desktop.csproj `
+    dotnet build $desktopProject `
         -c $Configuration `
         -p:Platform=$Platform `
         -p:RuntimeIdentifier=$runtimeIdentifier `
@@ -54,4 +87,7 @@ try {
 }
 finally {
     Pop-Location
+    $env:AWS_LC_SYS_NO_ASM = $previousAwsLcNoAsm
+    $env:AWS_LC_SYS_PREBUILT_NASM = $previousAwsLcPrebuiltNasm
+    $env:CMAKE = $previousCMake
 }

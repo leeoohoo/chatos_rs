@@ -14,6 +14,8 @@ using ChatOS.Connector.Terminal;
 namespace ChatOS.Desktop.AppShell;
 public sealed partial class MainWindowViewModel
 {
+    private int? _availablePluginApplicationCount;
+
     private void RebuildRemoteResources()
     {
         var selectedId = SelectedResource?.Kind == WorkspaceResourceKind.RemoteConnection
@@ -57,13 +59,19 @@ public sealed partial class MainWindowViewModel
         {
             var current = Contacts[index];
             var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value => value.Id == current.Id);
+            var conversation = _workspaceSnapshot.Conversations
+                .Where(static value => !value.IsArchived && value.ProjectId is null)
+                .OrderByDescending(static value => value.UpdatedAt)
+                .FirstOrDefault(value =>
+                    string.Equals(value.ContactId, current.Id, StringComparison.Ordinal) ||
+                    string.Equals(value.ContactAgentId, contact?.AgentId ?? current.Id, StringComparison.Ordinal));
             Contacts[index] = contact is null
                 ? current with
                 {
                     Title = Localization.Text("叽咕狸", "Jiguli"),
-                    Subtitle = Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
+                    Subtitle = conversation?.Title ?? Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
                 }
-                : current with { Subtitle = ContactSubtitle(contact.Status) };
+                : current with { Subtitle = conversation?.Title ?? ContactSubtitle(contact.Status) };
         }
 
         for (var index = 0; index < Projects.Count; index++)
@@ -80,6 +88,15 @@ public sealed partial class MainWindowViewModel
         {
             var current = LocalResources[index];
             if (current.Kind != WorkspaceResourceKind.LocalTerminal) continue;
+            if (current.Id == BuiltInLocalTerminalId)
+            {
+                LocalResources[index] = current with
+                {
+                    Title = Localization.Text("本机终端", "Local Terminal"),
+                    Subtitle = Localization.Text("可用", "Available"),
+                };
+                continue;
+            }
             var workspace = LocalConnectorStatus?.Workspaces.FirstOrDefault(value => value.Id == current.WorkspaceId);
             var alias = workspace?.Alias ?? current.Title.Split('·', 2)[0].Trim();
             LocalResources[index] = current with { Title = $"{alias} · {Localization.Terminal}" };
@@ -101,8 +118,32 @@ public sealed partial class MainWindowViewModel
         "applications",
         WorkspaceResourceKind.Applications,
         Localization.Applications,
-        Localization.InstalledPluginApplications,
+        _availablePluginApplicationCount is > 0
+            ? Localization.Text(
+                $"{_availablePluginApplicationCount} 个可用",
+                $"{_availablePluginApplicationCount} available")
+            : Localization.InstalledPluginApplications,
         "\uE71D");
+
+    public void UpdatePluginApplicationCount(int? count)
+    {
+        _availablePluginApplicationCount = count is null ? null : Math.Max(0, count.Value);
+        var index = -1;
+        for (var candidate = 0; candidate < ApplicationResources.Count; candidate++)
+        {
+            if (ApplicationResources[candidate].Kind != WorkspaceResourceKind.Applications) continue;
+            index = candidate;
+            break;
+        }
+        if (index < 0) return;
+
+        var updated = CreateApplicationsResource();
+        ApplicationResources[index] = updated;
+        if (SelectedResource?.Kind == WorkspaceResourceKind.Applications)
+        {
+            SetSelectedResourceWithoutActivation(updated);
+        }
+    }
 
     private void AddWorkspaceTools()
     {

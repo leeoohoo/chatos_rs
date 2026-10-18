@@ -11,6 +11,7 @@ namespace ChatOS.Desktop.Features.Remote;
 
 public sealed partial class RemoteTerminalPage : UserControl
 {
+    private int _searchCursor;
     public RemoteTerminalPage(RemoteTerminalViewModel viewModel, LocalizationViewModel localization)
     {
         ViewModel = viewModel;
@@ -25,6 +26,16 @@ public sealed partial class RemoteTerminalPage : UserControl
     public void Open(RemoteConnection connection) { ViewModel.Open(connection); CommandInput.Focus(FocusState.Programmatic); }
     private void OnBackClick(object sender, RoutedEventArgs e) { ViewModel.CancelCommand.Execute(null); CloseRequested?.Invoke(this, EventArgs.Empty); }
     private async void OnCommandKeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Enter && ViewModel.CanSubmit) { e.Handled = true; await ViewModel.SubmitCommand.ExecuteAsync(null); } }
+    private void OnClearClick(object sender, RoutedEventArgs e) => ViewModel.ClearOutputCommand.Execute(null);
+    private void OnNextMatchClick(object sender, RoutedEventArgs e) => ScrollToMatch(1);
+    private void OnPreviousMatchClick(object sender, RoutedEventArgs e) => ScrollToMatch(-1);
+    private void ScrollToMatch(int direction)
+    {
+        var matches = ViewModel.FindMatches();
+        if (matches.Count == 0) return;
+        _searchCursor = (_searchCursor + direction + matches.Count) % matches.Count;
+        OutputList.ScrollIntoView(ViewModel.Lines[matches[_searchCursor]]);
+    }
     private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         if (ViewModel.Lines.LastOrDefault() is { } line) _ = DispatcherQueue.TryEnqueue(() => OutputList.ScrollIntoView(line));

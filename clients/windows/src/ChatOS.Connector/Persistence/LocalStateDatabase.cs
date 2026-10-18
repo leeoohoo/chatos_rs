@@ -47,6 +47,7 @@ public sealed partial class LocalStateDatabase
             CREATE TABLE IF NOT EXISTS local_project_records (
                 owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,
                 description TEXT NOT NULL, workspace_id TEXT NOT NULL, relative_root TEXT NOT NULL,
+                project_type_key TEXT NOT NULL DEFAULT 'software_development',
                 revision INTEGER NOT NULL CHECK(revision > 0),
                 status TEXT NOT NULL CHECK(status IN ('active', 'archived', 'removed')),
                 created_at_unix_ms INTEGER NOT NULL, updated_at_unix_ms INTEGER NOT NULL,
@@ -629,6 +630,7 @@ public sealed partial class LocalStateDatabase
             VALUES (13, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
             """;
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        await MigrateLocalProjectTypesAsync(connection, cancellationToken).ConfigureAwait(false);
         await DropLegacyRequirementSurveysAsync(connection, cancellationToken)
             .ConfigureAwait(false);
         await MigrateAgentStaffingProposalsAsync(connection, cancellationToken)
@@ -638,6 +640,36 @@ public sealed partial class LocalStateDatabase
             .ConfigureAwait(false);
         await MigrateAgentTodoAssetSnapshotsAsync(connection, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    private static async Task MigrateLocalProjectTypesAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var hasProjectType = false;
+        using (var columns = connection.CreateCommand())
+        {
+            columns.CommandText = "PRAGMA table_info(local_project_records);";
+            await using var reader = await columns.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(reader.GetString(1), "project_type_key", StringComparison.OrdinalIgnoreCase))
+                {
+                    hasProjectType = true;
+                    break;
+                }
+            }
+        }
+
+        using var migration = connection.CreateCommand();
+        migration.CommandText = hasProjectType
+            ? "INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (2);"
+            : """
+                ALTER TABLE local_project_records
+                ADD COLUMN project_type_key TEXT NOT NULL DEFAULT 'software_development';
+                INSERT OR IGNORE INTO local_project_schema_migrations(version) VALUES (2);
+                """;
+        await migration.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task DropLegacyRequirementSurveysAsync(

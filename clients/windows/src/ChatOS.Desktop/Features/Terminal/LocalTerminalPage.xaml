@@ -4,50 +4,147 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid AutomationProperties.AutomationId="ChatOS.LocalTerminal.Root" AutomationProperties.Name="Local terminal" Background="{StaticResource ChatOSContentBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
+            <RowDefinition Height="44" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="40" />
             <RowDefinition Height="1" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="1" />
+            <RowDefinition Height="52" />
         </Grid.RowDefinitions>
-        <Grid Padding="12,0" ColumnSpacing="8">
+
+        <Grid Background="{StaticResource ChatOSSidebarBackgroundBrush}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Border Margin="10,6,0,0" Padding="11,0,5,0" Background="{StaticResource ChatOSAccentSoftBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1,1,1,0" CornerRadius="8,8,0,0">
+                <Grid ColumnSpacing="7">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE756;" FontSize="12" Foreground="{StaticResource ChatOSAccentBrush}" />
+                    <TextBlock x:Name="TitleText" Grid.Column="1" MinWidth="92" MaxWidth="180" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                    <Button
+                        AutomationProperties.AutomationId="ChatOS.LocalTerminal.Back"
+                        AutomationProperties.Name="{x:Bind Localization.CloseCurrentView, Mode=OneWay}"
+                        Grid.Column="2"
+                        Width="28"
+                        Height="28"
+                        Click="OnCloseClicked"
+                        Style="{StaticResource ChatOSToolbarButtonStyle}"
+                        ToolTipService.ToolTip="{x:Bind Localization.CloseCurrentView, Mode=OneWay}">
+                        <FontIcon Glyph="&#xE711;" FontSize="10" />
+                    </Button>
+                </Grid>
+            </Border>
+
+            <Button
+                Grid.Column="1"
+                Margin="5,4,0,0"
+                Width="32"
+                Height="32"
+                AutomationProperties.AutomationId="ChatOS.LocalTerminal.New"
+                AutomationProperties.Name="新建终端"
+                Click="OnNewTerminalClicked"
+                Style="{StaticResource ChatOSToolbarButtonStyle}"
+                ToolTipService.ToolTip="新建终端">
+                <FontIcon Glyph="&#xE710;" FontSize="12" />
+            </Button>
+
+            <TextBox
+                x:Name="SearchText"
+                AutomationProperties.AutomationId="ChatOS.LocalTerminal.Search"
+                AutomationProperties.Name="搜索终端输出"
+                Grid.Column="3"
+                Margin="0,5,0,5"
+                PlaceholderText="搜索终端输出"
+                KeyDown="OnSearchKeyDown" />
+            <Button
+                AutomationProperties.AutomationId="ChatOS.LocalTerminal.FindPrevious"
+                AutomationProperties.Name="上一个匹配项"
+                Grid.Column="4"
+                Margin="4,4,0,4"
+                Click="OnSearchPreviousClicked"
+                Style="{StaticResource ChatOSToolbarButtonStyle}">
+                <FontIcon Glyph="&#xE70E;" FontSize="12" />
+            </Button>
+            <Button
+                AutomationProperties.AutomationId="ChatOS.LocalTerminal.Find"
+                AutomationProperties.Name="下一个匹配项"
+                Grid.Column="5"
+                Margin="0,4,10,4"
+                Click="OnSearchClicked"
+                Style="{StaticResource ChatOSToolbarButtonStyle}">
+                <FontIcon Glyph="&#xE70D;" FontSize="12" />
+            </Button>
+        </Grid>
+
+        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Grid Grid.Row="2" Padding="14,0" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <Button AutomationProperties.AutomationId="ChatOS.LocalTerminal.Back" AutomationProperties.Name="{x:Bind Localization.Back, Mode=OneWay}" Click="OnCloseClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.Back, Mode=OneWay}">
-                <FontIcon Glyph="&#xE72B;" />
-            </Button>
-            <StackPanel Grid.Column="1" Margin="6,0" VerticalAlignment="Center" Spacing="1">
-                <TextBlock x:Name="TitleText" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                <TextBlock x:Name="PathText" Style="{StaticResource ChatOSCaptionTextStyle}" TextTrimming="CharacterEllipsis" />
-            </StackPanel>
-            <Button AutomationProperties.AutomationId="ChatOS.LocalTerminal.Stop" Grid.Column="2" Click="OnStopClicked" Content="{x:Bind Localization.StopTerminal, Mode=OneWay}" />
+            <FontIcon Glyph="&#xE8B7;" FontSize="12" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+            <TextBlock x:Name="PathText" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            <Border Grid.Column="2" Padding="9,3" VerticalAlignment="Center" Background="{StaticResource ChatOSSurfaceSubtleBrush}" CornerRadius="10">
+                <TextBlock Text="PowerShell" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            </Border>
+            <TextBlock x:Name="ConnectionStatusText" Grid.Column="3" VerticalAlignment="Center" Text="已连接" Foreground="{StaticResource ChatOSSuccessBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+            <Button
+                AutomationProperties.AutomationId="ChatOS.LocalTerminal.Stop"
+                AutomationProperties.Name="{x:Bind Localization.StopTerminal, Mode=OneWay}"
+                Grid.Column="4"
+                Click="OnStopClicked"
+                Content="{x:Bind Localization.StopTerminal, Mode=OneWay}"
+                Style="{StaticResource ChatOSToolbarButtonStyle}" />
         </Grid>
-        <Border Grid.Row="1" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Border Grid.Row="3" Background="{StaticResource ChatOSBorderBrush}" />
+
         <TextBox
             x:Name="OutputText"
-            Grid.Row="2"
-            Padding="14"
+            AutomationProperties.Name="终端输出"
+            Grid.Row="4"
+            Padding="16,12"
             AcceptsReturn="True"
+            Background="{StaticResource ChatOSContentBackgroundBrush}"
+            BorderThickness="0"
             FontFamily="Cascadia Mono, Consolas"
-            FontSize="12"
+            FontSize="13"
             IsReadOnly="True"
             TextWrapping="NoWrap"
             ScrollViewer.VerticalScrollBarVisibility="Auto"
             ScrollViewer.HorizontalScrollBarVisibility="Auto" />
-        <Grid Grid.Row="3" Padding="12" ColumnSpacing="8">
+
+        <Border Grid.Row="5" Background="{StaticResource ChatOSBorderBrush}" />
+
+        <Grid Grid.Row="6" Padding="12,8" ColumnSpacing="8" Background="{StaticResource ChatOSSidebarBackgroundBrush}">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
+            <TextBlock VerticalAlignment="Center" Text="PS›" Foreground="{StaticResource ChatOSAccentBrush}" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
             <TextBox
                 x:Name="InputText"
                 AutomationProperties.AutomationId="ChatOS.LocalTerminal.Input"
                 AutomationProperties.Name="{x:Bind Localization.TerminalCommandPlaceholder, Mode=OneWay}"
+                Grid.Column="1"
+                Background="Transparent"
+                BorderThickness="0"
+                FontFamily="Cascadia Mono, Consolas"
                 PlaceholderText="{x:Bind Localization.TerminalCommandPlaceholder, Mode=OneWay}"
                 KeyDown="OnInputKeyDown" />
-            <Button AutomationProperties.AutomationId="ChatOS.LocalTerminal.Send" Grid.Column="1" Click="OnSendClicked" Content="{x:Bind Localization.Send, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+            <Button AutomationProperties.AutomationId="ChatOS.LocalTerminal.Send" Grid.Column="2" Click="OnSendClicked" Content="{x:Bind Localization.Send, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
         </Grid>
     </Grid>
 </UserControl>

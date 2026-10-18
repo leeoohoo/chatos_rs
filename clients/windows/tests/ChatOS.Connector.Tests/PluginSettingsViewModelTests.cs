@@ -127,6 +127,27 @@ public sealed class PluginSettingsViewModelTests
         Assert.Empty(plugin.Credentials);
     }
 
+    [Fact]
+    public async Task Search_filters_plugins_without_changing_the_management_catalog()
+    {
+        var viewModel = CreateViewModel(new FakeManagementService(), new FakeConfigurationService());
+        await viewModel.OpenAsync();
+
+        Assert.Single(viewModel.FilteredPlugins);
+        Assert.True(viewModel.HasFilteredPlugins);
+
+        viewModel.SearchText = "missing publisher";
+
+        Assert.Empty(viewModel.FilteredPlugins);
+        Assert.False(viewModel.HasFilteredPlugins);
+        Assert.Single(viewModel.Plugins);
+
+        viewModel.SearchText = "chatos";
+
+        Assert.Single(viewModel.FilteredPlugins);
+        Assert.Contains("1", viewModel.ResultsLabel);
+    }
+
     private static PluginSettingsViewModel CreateViewModel(
         ILocalPluginManagementService management,
         IPluginConfigurationService configuration)

@@ -2,10 +2,11 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
-use chatos_local_agent_ports::{LocalAgentRunStore, RunTransition};
+use chatos_local_agent_ports::{LocalAgentRunStore, LocalAgentTaskStore, RunTransition};
 use chatos_local_agent_protocol::{
-    CancelConversationTurnCommand, GuideConversationTurnCommand, LocalAgentRunStatus,
-    LocalConversationAttachmentSpec, ResumeConversationTurnCommand,
+    CancelConversationTurnCommand, CreateTaskGraphCommand, GuideConversationTurnCommand,
+    LocalAgentRunStatus, LocalConversationAttachmentSpec, LocalTaskSpec, LocalTaskStatus,
+    ResumeConversationTurnCommand,
 };
 use serde_json::{json, Value};
 
@@ -506,6 +507,149 @@ async fn cancel_turn_reconciles_the_owned_run_without_assistant_message() {
         .expect("get cancelled conversation")
         .expect("conversation");
     assert_eq!(detail.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn cancel_turn_also_cancels_tasks_derived_from_that_turn() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-stop-tasks").await;
+    let initial = turn("conversation-stop-tasks", 1, "stop-tasks");
+    let started = start(&storage, &initial, 2_000).await.expect("start Turn");
+    storage
+        .create_task_graph(
+            &idempotency("create-stop-task-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "graph-stop-tasks".to_string(),
+                owner_user_id: "user-1".to_string(),
+                source_entity_type: "conversation_turn".to_string(),
+                source_entity_id: initial.turn_id.clone(),
+                tasks: vec![LocalTaskSpec {
+                    task_id: "task-stop-write".to_string(),
+                    title: "Write a project file".to_string(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"objective": "write a project file"}),
+                    max_iterations: 4,
+                }],
+                dependencies: Vec::new(),
+            },
+            2_100,
+        )
+        .await
+        .expect("create Task graph");
+    storage
+        .start_next_task_run_for_graph(
+            "user-1",
+            "graph-stop-tasks",
+            "run-stop-write",
+            "event-start-stop-write",
+            2_200,
+        )
+        .await
+        .expect("start Task Run")
+        .expect("ready Task");
+
+    let cancelled = storage
+        .cancel_conversation_turn(
+            &idempotency("cancel-conversation-turn-tasks"),
+            &CancelConversationTurnCommand {
+                owner_user_id: "user-1".to_string(),
+                conversation_id: "conversation-stop-tasks".to_string(),
+                expected_conversation_version: 2,
+                turn_id: initial.turn_id,
+                expected_run_version: Some(started.run.version),
+                reason: "user stopped".to_string(),
+            },
+            "event-stop-tasks",
+            3_000,
+        )
+        .await
+        .expect("cancel Turn and Tasks");
+
+    assert_eq!(cancelled.run.status, LocalAgentRunStatus::Cancelled);
+    let graph = storage
+        .get_task_graph("user-1", "graph-stop-tasks")
+        .await
+        .expect("get Task graph")
+        .expect("Task graph");
+    assert_eq!(graph.tasks[0].status, LocalTaskStatus::Cancelled);
+    assert!(graph.tasks[0].active_run_id.is_none());
+    let runs = storage
+        .list_task_runs("user-1", "task-stop-write", 10)
+        .await
+        .expect("list Task Runs");
+    assert_eq!(runs[0].status, LocalAgentRunStatus::Cancelled);
+}
+
+#[tokio::test]
+async fn cancelled_turn_cannot_create_a_late_task_graph() {
+    let storage = SqliteClientStorage::connect_memory()
+        .await
+        .expect("storage");
+    create(&storage, "conversation-stop-before-task").await;
+    let initial = turn("conversation-stop-before-task", 1, "stop-before-task");
+    let started = start(&storage, &initial, 2_000).await.expect("start Turn");
+    storage
+        .cancel_conversation_turn(
+            &IdempotentCommand {
+                command_id: "cancel-before-task-graph".to_string(),
+                request_fingerprint: json!({
+                    "type": "cancel_conversation_turn",
+                    "owner_user_id": "user-1",
+                    "turn_id": initial.turn_id,
+                })
+                .to_string(),
+                persist_receipt: true,
+            },
+            &CancelConversationTurnCommand {
+                owner_user_id: "user-1".to_string(),
+                conversation_id: "conversation-stop-before-task".to_string(),
+                expected_conversation_version: 2,
+                turn_id: initial.turn_id.clone(),
+                expected_run_version: Some(started.run.version),
+                reason: "user stopped".to_string(),
+            },
+            "event-stop-before-task",
+            3_000,
+        )
+        .await
+        .expect("cancel Turn before Task creation");
+
+    let error = storage
+        .create_task_graph(
+            &idempotency("late-task-graph"),
+            &CreateTaskGraphCommand {
+                graph_id: "graph-too-late".to_string(),
+                owner_user_id: "user-1".to_string(),
+                source_entity_type: "conversation_turn".to_string(),
+                source_entity_id: initial.turn_id,
+                tasks: vec![LocalTaskSpec {
+                    task_id: "task-too-late".to_string(),
+                    title: "Late project write".to_string(),
+                    profile_key: "task_execution".to_string(),
+                    model_config_ref: "model-1".to_string(),
+                    model_config_revision: "revision-1".to_string(),
+                    capability_policy_revision: "policy-1".to_string(),
+                    input: json!({"objective": "write after cancellation"}),
+                    max_iterations: 4,
+                }],
+                dependencies: Vec::new(),
+            },
+            3_001,
+        )
+        .await
+        .expect_err("cancelled source Turn must reject late Task creation");
+
+    assert!(matches!(error, ClientStorageError::Conflict(_)));
+    assert!(storage
+        .get_task_graph("user-1", "graph-too-late")
+        .await
+        .expect("query rejected graph")
+        .is_none());
 }
 
 #[tokio::test]

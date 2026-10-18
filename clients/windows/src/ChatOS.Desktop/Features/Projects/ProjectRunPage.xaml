@@ -25,7 +25,7 @@
             </Grid.ColumnDefinitions>
             <StackPanel VerticalAlignment="Center" Spacing="1">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="{x:Bind Localization.ProjectRun, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.ProjectName, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.RunStatusLabel, Mode=OneWay}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                 </StackPanel>
                 <TextBlock Text="{x:Bind ViewModel.ProjectRoot, Mode=OneWay}" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
@@ -33,7 +33,7 @@
             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{x:Bind ViewModel.Targets.Count, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
             <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="{x:Bind Localization.TargetsSuffix, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
             <Button Grid.Column="3" Command="{x:Bind ViewModel.AnalyzeCommand}" Content="{x:Bind Localization.Reanalyze, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanMutate, Mode=OneWay}" />
-            <Button Grid.Column="4" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshRunStatus, Mode=OneWay}">
+            <Button Grid.Column="4" AutomationProperties.Name="{x:Bind Localization.RefreshRunStatus, Mode=OneWay}" Command="{x:Bind ViewModel.RefreshCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{x:Bind Localization.RefreshRunStatus, Mode=OneWay}">
                 <FontIcon Glyph="&#xE72C;" />
             </Button>
         </Grid>
@@ -56,6 +56,7 @@
                         </StackPanel>
                         <ToggleSwitch
                             x:Name="FavoriteProjectSwitch"
+                            AutomationProperties.Name="{x:Bind Localization.FavoriteProject, Mode=OneWay}"
                             Grid.Column="2"
                             VerticalAlignment="Center"
                             Toggled="OnFavoriteProjectToggled" />
@@ -71,7 +72,7 @@
                         </Grid.ColumnDefinitions>
                         <FontIcon Glyph="&#xE73E;" Foreground="{StaticResource ChatOSSuccessBrush}" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{x:Bind ViewModel.NoticeMessage, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                        <Button Grid.Column="2" Command="{x:Bind ViewModel.DismissNoticeCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                        <Button Grid.Column="2" AutomationProperties.Name="{x:Bind Localization.DismissNotice, Mode=OneWay}" Command="{x:Bind ViewModel.DismissNoticeCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}">
                             <FontIcon Glyph="&#xE711;" FontSize="10" />
                         </Button>
                     </Grid>
@@ -86,7 +87,7 @@
                         </Grid.ColumnDefinitions>
                         <FontIcon Glyph="&#xE783;" Foreground="{StaticResource ChatOSFailureBrush}" />
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                        <Button Grid.Column="2" Command="{x:Bind ViewModel.DismissErrorCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}">
+                        <Button Grid.Column="2" AutomationProperties.Name="{x:Bind Localization.DismissError, Mode=OneWay}" Command="{x:Bind ViewModel.DismissErrorCommand}" Style="{StaticResource ChatOSToolbarButtonStyle}">
                             <FontIcon Glyph="&#xE711;" FontSize="10" />
                         </Button>
                     </Grid>
@@ -157,8 +158,32 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="5">
                                     <TextBlock Text="{x:Bind ViewModel.SelectedTarget.Label, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                                    <TextBlock Text="{x:Bind ViewModel.SelectedTarget.Command, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                                    <TextBlock Text="{x:Bind ViewModel.SelectedTarget.WorkingDirectory, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                    <Grid ColumnSpacing="12" RowSpacing="5">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="112" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <TextBlock Text="{x:Bind Localization.RunTargetCommand, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.Command, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                                        <TextBlock Grid.Row="1" Text="{x:Bind Localization.RunTargetWorkingDirectory, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.WorkingDirectory, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Grid.Row="2" Text="{x:Bind Localization.RunTargetLanguage, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.Language, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.Language, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.Language, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Grid.Row="3" Text="{x:Bind Localization.RunTargetSource, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.Source, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                        <TextBlock Grid.Row="4" Text="{x:Bind Localization.RunTargetManifest, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.ManifestPath, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Grid.Row="4" Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.ManifestPath, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.ManifestPath, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Grid.Row="5" Text="{x:Bind Localization.RunTargetEntrypoint, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.Entrypoint, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                        <TextBlock Grid.Row="5" Grid.Column="1" Text="{x:Bind ViewModel.SelectedTarget.Entrypoint, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" IsTextSelectionEnabled="True" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.SelectedTarget.Entrypoint, Mode=OneWay, Converter={StaticResource StringToVisibilityConverter}}" />
+                                    </Grid>
                                 </StackPanel>
                                 <Button Grid.Column="1" VerticalAlignment="Center" Command="{x:Bind ViewModel.StartCommand}" Content="{x:Bind Localization.StartNewInstance, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanStart, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                             </Grid>
@@ -176,9 +201,9 @@
                         <TextBlock Text="{x:Bind Localization.NoRunInstances, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.HasInstances, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Instances}" Visibility="{x:Bind ViewModel.HasInstances, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="core:ProjectRunInstance">
+                                <DataTemplate x:DataType="projects:ProjectRunInstanceItemViewModel">
                                     <Border Margin="0,4" Padding="13" Background="{StaticResource ChatOSSidebarBackgroundBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="9">
-                                        <StackPanel Spacing="9">
+                                        <StackPanel Spacing="11">
                                             <Grid ColumnSpacing="8">
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*" />
@@ -190,17 +215,53 @@
                                                         <TextBlock Text="{x:Bind Name}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
                                                         <TextBlock Text="{x:Bind Status}" Foreground="{StaticResource ChatOSPurpleBrush}" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                                     </StackPanel>
-                                                    <TextBlock Text="{x:Bind WorkingDirectory}" FontFamily="Cascadia Mono, Consolas" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                                        <TextBlock Text="{x:Bind StartedAtLabel}" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                        <TextBlock Text="{x:Bind WorkingDirectory}" FontFamily="Cascadia Mono, Consolas" TextTrimming="CharacterEllipsis" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </StackPanel>
                                                 </StackPanel>
                                                 <Button Grid.Column="1" Click="OnStopInstanceClick" Content="{Binding Stop, Source={StaticResource ChatOSLocalization}}" Visibility="{x:Bind IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 <Button Grid.Column="2" Click="OnDeleteInstanceClick" Content="{Binding Delete, Source={StaticResource ChatOSLocalization}}" Foreground="{StaticResource ChatOSFailureBrush}" />
                                             </Grid>
-                                            <Border MinHeight="72" MaxHeight="260" Padding="10" Background="#FF202124" CornerRadius="7">
-                                                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                                    <TextBlock Text="{x:Bind Log}" FontFamily="Cascadia Mono, Consolas" FontSize="12" Foreground="#FFF2F2F2" IsTextSelectionEnabled="True" TextWrapping="Wrap" />
-                                                </ScrollViewer>
-                                            </Border>
-                                            <TextBlock Text="{x:Bind ExitCode}" HorizontalAlignment="Right" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <Button
+                                                HorizontalAlignment="Stretch"
+                                                HorizontalContentAlignment="Stretch"
+                                                AutomationProperties.Name="{Binding ExpandRunLog, Source={StaticResource ChatOSLocalization}}"
+                                                Padding="0"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Command="{x:Bind ToggleExpandedCommand}">
+                                                <Grid ColumnSpacing="7">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <FontIcon Glyph="&#xE70D;" FontSize="11" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding ExpandRunLog, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSBodyStrongTextStyle}" Visibility="{x:Bind IsExpanded, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding CollapseRunLog, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSBodyStrongTextStyle}" Visibility="{x:Bind IsExpanded, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </Grid>
+                                            </Button>
+                                            <StackPanel Spacing="7" Visibility="{x:Bind IsExpanded, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <Grid>
+                                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                                        <FontIcon Glyph="&#xE8A5;" FontSize="11" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                                                        <TextBlock Text="{Binding LiveRunLog, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    </StackPanel>
+                                                    <TextBlock HorizontalAlignment="Right" Text="{Binding RefreshEverySecond, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind IsRunning, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </Grid>
+                                                <Border MinHeight="180" MaxHeight="360" Padding="10" Background="#FF202124" CornerRadius="7">
+                                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                                        <Grid>
+                                                            <TextBlock Text="{x:Bind LogText, Mode=OneWay}" FontFamily="Cascadia Mono, Consolas" FontSize="12" Foreground="#FFF2F2F2" IsTextSelectionEnabled="True" TextWrapping="Wrap" Visibility="{x:Bind HasLog, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                            <TextBlock Text="{Binding NoRunLogYet, Source={StaticResource ChatOSLocalization}}" FontFamily="Cascadia Mono, Consolas" FontSize="12" Foreground="#FFB8B8B8" TextWrapping="Wrap" Visibility="{x:Bind HasLog, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                                                        </Grid>
+                                                    </ScrollViewer>
+                                                </Border>
+                                                <StackPanel HorizontalAlignment="Right" Orientation="Horizontal" Spacing="4" Visibility="{x:Bind HasExitCode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <TextBlock Text="{Binding ExitCode, Source={StaticResource ChatOSLocalization}}" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                    <TextBlock Text="{x:Bind ExitCode}" FontFamily="Cascadia Mono, Consolas" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                                </StackPanel>
+                                            </StackPanel>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>
@@ -215,6 +276,24 @@
                             <FontIcon Glyph="&#xE90F;" Foreground="{StaticResource ChatOSAccentBrush}" />
                             <TextBlock Text="{x:Bind Localization.RequiredEnvironment, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                         </StackPanel>
+                        <Border Padding="13" Background="#102EA44F" CornerRadius="10" Visibility="{x:Bind ViewModel.IsEnvironmentReady, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal" Spacing="11">
+                                <FontIcon Glyph="&#xE73E;" Foreground="{StaticResource ChatOSSuccessBrush}" />
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.RuntimeReady, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind Localization.RuntimeReadyDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border Padding="13" Background="#10D97720" CornerRadius="10" Visibility="{x:Bind ViewModel.HasValidationIssues, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal" Spacing="11">
+                                <FontIcon Glyph="&#xE7BA;" Foreground="{StaticResource ChatOSWarningBrush}" />
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind Localization.RuntimeIssuesNeedAttention, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                    <TextBlock Text="{x:Bind Localization.RuntimeIssuesDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                         <TextBlock Text="{x:Bind Localization.NoManualToolchain, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Visibility="{x:Bind ViewModel.HasToolchains, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
                         <ItemsControl ItemsSource="{x:Bind ViewModel.Toolchains}">
                             <ItemsControl.ItemTemplate>
@@ -239,30 +318,46 @@
                         </ItemsControl>
 
                         <Border Margin="0,4,0,0" Background="{StaticResource ChatOSBorderBrush}" Height="1" />
-                        <Grid>
-                            <TextBlock Text="{x:Bind Localization.EnvironmentVariables, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
-                            <Button HorizontalAlignment="Right" Command="{x:Bind ViewModel.AddEnvironmentVariableCommand}" Content="{x:Bind Localization.AddVariable, Mode=OneWay}" />
-                        </Grid>
-                        <TextBlock Text="{x:Bind Localization.NoEnvironmentVariables, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.HasEnvironmentVariables, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
-                        <ItemsControl ItemsSource="{x:Bind ViewModel.EnvironmentVariables}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="projects:ProjectRunEnvironmentVariableViewModel">
-                                    <Grid Margin="0,3" ColumnSpacing="8">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="260" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox Text="{x:Bind Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{Binding EnvironmentVariableNamePlaceholder, Source={StaticResource ChatOSLocalization}}" FontFamily="Cascadia Mono, Consolas" />
-                                        <TextBox Grid.Column="1" Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{Binding Value, Source={StaticResource ChatOSLocalization}}" FontFamily="Cascadia Mono, Consolas" />
-                                        <Button Grid.Column="2" Click="OnRemoveEnvironmentVariableClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding DeleteEnvironmentVariable, Source={StaticResource ChatOSLocalization}}">
-                                            <FontIcon Glyph="&#xE74D;" Foreground="{StaticResource ChatOSFailureBrush}" />
-                                        </Button>
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                        <Button HorizontalAlignment="Right" Command="{x:Bind ViewModel.SaveEnvironmentCommand}" Content="{x:Bind Localization.SaveEnvironment, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanMutate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                        <Button
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Stretch"
+                            AutomationProperties.Name="{x:Bind Localization.AdvancedEnvironmentVariables, Mode=OneWay}"
+                            Padding="0"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Command="{x:Bind ViewModel.ToggleEnvironmentAdvancedCommand}">
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="{x:Bind Localization.AdvancedEnvironmentVariables, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="{x:Bind Localization.AdvancedEnvironmentVariablesDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                        </Button>
+                        <StackPanel Spacing="10" Visibility="{x:Bind ViewModel.IsEnvironmentAdvancedExpanded, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="{x:Bind Localization.EnvironmentVariablesLocalNotice, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            <Grid>
+                                <TextBlock Text="{x:Bind Localization.EnvironmentVariables, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <Button HorizontalAlignment="Right" Command="{x:Bind ViewModel.AddEnvironmentVariableCommand}" Content="{x:Bind Localization.AddVariable, Mode=OneWay}" />
+                            </Grid>
+                            <TextBlock Text="{x:Bind Localization.NoEnvironmentVariables, Mode=OneWay}" Style="{StaticResource ChatOSCaptionTextStyle}" Visibility="{x:Bind ViewModel.HasEnvironmentVariables, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}" />
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.EnvironmentVariables}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="projects:ProjectRunEnvironmentVariableViewModel">
+                                        <Grid Margin="0,3" ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="260" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{x:Bind Key, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{Binding EnvironmentVariableNamePlaceholder, Source={StaticResource ChatOSLocalization}}" FontFamily="Cascadia Mono, Consolas" />
+                                            <TextBox Grid.Column="1" Text="{x:Bind Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{Binding Value, Source={StaticResource ChatOSLocalization}}" FontFamily="Cascadia Mono, Consolas" />
+                                            <Button Grid.Column="2" AutomationProperties.Name="{Binding DeleteEnvironmentVariable, Source={StaticResource ChatOSLocalization}}" Click="OnRemoveEnvironmentVariableClick" Style="{StaticResource ChatOSToolbarButtonStyle}" ToolTipService.ToolTip="{Binding DeleteEnvironmentVariable, Source={StaticResource ChatOSLocalization}}">
+                                                <FontIcon Glyph="&#xE74D;" Foreground="{StaticResource ChatOSFailureBrush}" />
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <Button HorizontalAlignment="Right" Command="{x:Bind ViewModel.SaveEnvironmentCommand}" Content="{x:Bind Localization.SaveEnvironment, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanMutate, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 
@@ -285,6 +380,32 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource ChatOSCardStyle}">
+                    <StackPanel Spacing="14">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE74D;" Foreground="{StaticResource ChatOSFailureBrush}" />
+                            <TextBlock Text="{x:Bind Localization.ProjectSettings, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="18">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="{x:Bind Localization.RemoveProjectFromChatOS, Mode=OneWay}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="{x:Bind Localization.RemoveProjectKeepFilesNotice, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <Button
+                                Grid.Column="1"
+                                VerticalAlignment="Center"
+                                Click="OnRemoveProjectClick"
+                                Content="{x:Bind Localization.DeleteProject, Mode=OneWay}"
+                                Foreground="{StaticResource ChatOSFailureBrush}"
+                                IsEnabled="{x:Bind ViewModel.IsOpen, Mode=OneWay}" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>

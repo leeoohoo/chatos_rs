@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Net;
+using System.Text.Json;
 using ChatOS.Core.Abstractions;
 using ChatOS.Core.Domain;
 using ChatOS.Core.State;
@@ -12,20 +14,26 @@ using ChatOS.Presentation.Remote;
 using ChatOS.Connector.Remote;
 using ChatOS.Connector.Terminal;
 using ChatOS.Connector.LocalAgent;
+using ChatOS.Connector.Gateway;
+using ChatOS.Api.Http;
 
 namespace ChatOS.Desktop.AppShell;
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
+    private const string BuiltInLocalTerminalId = "terminal-local";
     private readonly IAuthenticationService _authenticationService;
     private readonly IWorkspaceRelationsService _workspaceRelations;
     private readonly IProjectRegistry _projectRegistry;
     private readonly ILocalProjectsService _localProjects;
+    private readonly ILocalConnectorPairingTicketService? _localConnectorPairingTickets;
     private string? _ownerUserId;
     private long _accountGeneration;
     private long _refreshGeneration;
     private CancellationTokenSource _accountCancellation = new();
     private readonly IProjectConversationService _projectConversations;
+    private readonly Dictionary<string, string> _verifiedProjectConversations =
+        new(StringComparer.Ordinal);
     private readonly ILocalConnectorControlService _localConnectorControl;
     private WorkspaceSnapshot _workspaceSnapshot = WorkspaceSnapshot.Empty;
     private CancellationTokenSource? _selectionCancellation;
@@ -35,6 +43,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly RemoteTerminalSessionManager? _remoteTerminalSessions;
     private readonly ILocalAgentHostLifecycle? _localAgentHost;
     private readonly WindowsLocalAgentBootstrapService? _localAgentBootstrap;
+    private readonly PetFavoriteProjectsManager? _petFavorites;
 
     public MainWindowViewModel(
         IAuthenticationService authenticationService,
@@ -54,7 +63,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         TerminalSessionManager? terminalSessions = null,
         RemoteTerminalSessionManager? remoteTerminalSessions = null,
         ILocalAgentHostLifecycle? localAgentHost = null,
-        WindowsLocalAgentBootstrapService? localAgentBootstrap = null)
+        WindowsLocalAgentBootstrapService? localAgentBootstrap = null,
+        PetFavoriteProjectsManager? petFavorites = null,
+        ILocalConnectorPairingTicketService? localConnectorPairingTickets = null)
     {
         _authenticationService = authenticationService;
         _workspaceRelations = workspaceRelations;
@@ -62,6 +73,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _localProjects = localProjects;
         _projectConversations = projectConversations;
         _localConnectorControl = localConnectorControl;
+        _localConnectorPairingTickets = localConnectorPairingTickets;
         Conversation = conversation;
         ProjectFiles = projectFiles;
         ProjectGit = projectGit;
@@ -74,6 +86,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _remoteTerminalSessions = remoteTerminalSessions;
         _localAgentHost = localAgentHost;
         _localAgentBootstrap = localAgentBootstrap;
+        _petFavorites = petFavorites;
         RemoteConnections.Connections.CollectionChanged += (_, _) => RebuildRemoteResources();
         Localization.PropertyChanged += (_, _) => RelocalizeResources();
         AddWorkspaceTools();
@@ -107,6 +120,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public LocalConnectorStatus? LocalConnectorStatus { get; private set; }
 
+    // Keep the sign-in affordance in sync with the macOS form: the request is
+    // not sent until both credentials have usable values.  This also prevents
+    // a blank-submit server round trip when PasswordBox has just been cleared.
+    public bool CanLogin => !IsBusy &&
+        !string.IsNullOrWhiteSpace(Username) &&
+        Password.Length > 0;
+
     public ShellResourceViewModel CreateLocalTerminalResource(LocalConnectorWorkspaceStatus workspace)
     {
         ArgumentNullException.ThrowIfNull(workspace);
@@ -121,6 +141,27 @@ public sealed partial class MainWindowViewModel : ObservableObject
         LocalResources.Add(resource);
         SelectedResource = resource;
         return resource;
+    }
+
+    private ShellResourceViewModel CreateBuiltInLocalTerminalResource(
+        LocalConnectorStatus? status,
+        string? statusMessage = null)
+    {
+        var workspace = status?.Workspaces.FirstOrDefault();
+        var root = workspace?.AbsoluteRoot;
+        if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root))
+        {
+            root = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        return new ShellResourceViewModel(
+            BuiltInLocalTerminalId,
+            WorkspaceResourceKind.LocalTerminal,
+            Localization.Text("本机终端", "Local Terminal"),
+            statusMessage ?? Localization.Text("可用", "Available"),
+            "\uE756",
+            WorkspaceId: workspace?.Id ?? BuiltInLocalTerminalId,
+            AbsoluteRoot: root);
     }
 
     public async Task<string> EnsureProjectConversationAsync(
@@ -139,10 +180,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             RequireAccount(generation);
             if (localProject?.Status != LocalProjectStatus.Active)
                 throw new InvalidOperationException("The local project is unavailable.");
-            var resource = Projects.FirstOrDefault(value =>
-                value.Kind == WorkspaceResourceKind.Project &&
-                string.Equals(value.Id, projectId, StringComparison.Ordinal));
-            if (resource?.ConversationId is { Length: > 0 } existing) return existing;
+            if (_verifiedProjectConversations.TryGetValue(projectId, out var existing))
+            {
+                ApplyPreparedProjectConversation(projectId, existing);
+                return existing;
+            }
             var project = _workspaceSnapshot.Projects.FirstOrDefault(value =>
                 string.Equals(value.Id, projectId, StringComparison.Ordinal))
                 ?? throw new KeyNotFoundException(Localization.Text(
@@ -152,7 +194,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 ProjectContext = await _localProjects.ResolveContextAsync(owner, projectId, cancellationToken),
             };
-            if (project.LatestConversationId is { Length: > 0 } cached) return cached;
             var contact = _workspaceSnapshot.Contacts.FirstOrDefault(value =>
                     string.Equals(value.AgentId, "jiguli", StringComparison.OrdinalIgnoreCase))
                 ?? _workspaceSnapshot.Contacts.FirstOrDefault()
@@ -163,18 +204,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 project,
                 contact,
                 cancellationToken);
+            if (string.IsNullOrWhiteSpace(conversationId))
+                throw new InvalidOperationException(Localization.Text(
+                    "本地智能体返回了无效的项目会话标识。",
+                    "The Local Agent returned an invalid project conversation identity."));
             RequireAccount(generation);
             var current = await _projectRegistry.GetAsync(owner, projectId, cancellationToken);
             RequireAccount(generation);
             if (current?.Status != LocalProjectStatus.Active)
                 throw new InvalidOperationException("The local project was removed while preparing the conversation.");
-            _workspaceSnapshot = _workspaceSnapshot with
-            {
-                Projects = _workspaceSnapshot.Projects.Select(value =>
-                    string.Equals(value.Id, projectId, StringComparison.Ordinal)
-                        ? value with { LatestConversationId = conversationId }
-                        : value).ToArray(),
-            };
+            _verifiedProjectConversations[projectId] = conversationId;
+            ApplyPreparedProjectConversation(projectId, conversationId);
             return conversationId;
         }
         finally
@@ -231,6 +271,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (project.OwnerUserId != owner) throw new InvalidOperationException("Project account mismatch.");
         await _localProjects.RemoveAsync(owner, project.Id, project.Revision, _accountCancellation.Token);
         RequireAccount(account);
+        _verifiedProjectConversations.Remove(project.Id);
+        if (_petFavorites is not null)
+        {
+            try
+            {
+                await _petFavorites.SetFavoriteAsync(project.Id, false, _accountCancellation.Token);
+            }
+            catch (OperationCanceledException) when (_accountCancellation.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // The registry removal is authoritative. A stale favorite is harmless and can be
+                // reconciled on the next favorite-project refresh; do not report a false deletion failure.
+            }
+        }
         await ReloadLocalProjectsAsync(account);
     }
 
@@ -254,9 +311,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _workspaceTitle = "ChatOS";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLogin))]
     private string _username = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLogin))]
     private string _password = string.Empty;
 
     [ObservableProperty]
@@ -269,6 +328,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _isAuthenticated;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanLogin))]
     private bool _isBusy;
 
     [ObservableProperty]
@@ -276,6 +336,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isPreparingConversation;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasProjectConversationError))]
+    private string? _projectConversationErrorMessage;
+
+    public bool HasProjectConversationError =>
+        !string.IsNullOrWhiteSpace(ProjectConversationErrorMessage);
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -294,8 +361,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (session is not null)
             {
                 ApplySession(session);
-                await StartLocalAgentAsync(session.User.Id, cancellationToken);
+                await EnsureLocalConnectorReadyAsync(cancellationToken);
+                await PrepareLocalAgentServicesAsync(session.User.Id, cancellationToken);
                 await ReloadWorkspaceCoreAsync(cancellationToken);
+                await StartLocalAgentWithoutBlockingWorkspaceAsync(session.User.Id, cancellationToken);
             }
         }
         catch (OperationCanceledException) { }
@@ -318,6 +387,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(Username) || Password.Length == 0)
+        {
+            ErrorMessage = Localization.Text(
+                "请输入账号和密码。",
+                "Enter your account and password.");
+            return;
+        }
+
         IsBusy = true;
         ErrorMessage = null;
         try
@@ -327,8 +404,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (authenticationGeneration != AccountGeneration) return;
             Password = string.Empty;
             ApplySession(session);
-            await StartLocalAgentAsync(session.User.Id, CancellationToken.None);
+            await EnsureLocalConnectorReadyAsync(CancellationToken.None);
+            await PrepareLocalAgentServicesAsync(session.User.Id, CancellationToken.None);
             await ReloadWorkspaceCoreAsync();
+            await StartLocalAgentWithoutBlockingWorkspaceAsync(session.User.Id, CancellationToken.None);
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -354,6 +433,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             await ReloadWorkspaceCoreAsync();
+            if (_ownerUserId is { } ownerUserId)
+            {
+                await StartLocalAgentWithoutBlockingWorkspaceAsync(
+                    ownerUserId,
+                    CancellationToken.None);
+            }
         }
         catch (OperationCanceledException) { }
         catch (Exception exception)
@@ -376,6 +461,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _accountGeneration++;
         _refreshGeneration++;
         _ownerUserId = null;
+        _verifiedProjectConversations.Clear();
         _workspaceSnapshot = WorkspaceSnapshot.Empty;
         LocalConnectorStatus = null;
         IsRegistrationMode = false;
@@ -414,6 +500,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await _authenticationService.LogoutAsync();
         await ProjectRun.CloseAsync();
         await ProjectGit.CloseAsync();
+        await ProjectFiles.CloseAsync();
         await Conversation.OpenAsync(null, "ChatOS");
         CurrentUserLabel = string.Empty;
         IsAuthenticated = false;
@@ -440,6 +527,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _accountGeneration++;
             _refreshGeneration++;
             _workspaceSnapshot = WorkspaceSnapshot.Empty;
+            _verifiedProjectConversations.Clear();
             Contacts.Clear();
             Projects.Clear();
             LocalResources.Clear();
@@ -469,6 +557,218 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await _localAgentHost.StartForOwnerAsync(ownerUserId, cancellationToken);
         }
+    }
+
+    private async Task PrepareLocalAgentServicesAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (_localAgentBootstrap is not null)
+            {
+                await _localAgentBootstrap.PrepareLocalServicesForOwnerAsync(
+                    ownerUserId,
+                    cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // macOS authenticates first and treats native-agent startup as an optional
+            // capability. A missing Connector/host must not prevent the authenticated
+            // shell and workspace from loading.
+            if (LocalConnectorStatus?.IsPaired == true)
+            {
+                ErrorMessage = LocalAgentFailureMessage(exception);
+            }
+        }
+    }
+
+    public async Task HandleAuthenticationExpiredAsync()
+    {
+        // Session expiry must win over any refresh/send busy state. macOS transitions to
+        // signed-out immediately even when a workspace operation is still in flight.
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        try
+        {
+            await LogoutAsync();
+            ErrorMessage = Localization.Text(
+                "登录状态已失效，请重新登录。",
+                "Your sign-in session has expired. Please sign in again.");
+        }
+        catch (Exception exception)
+        {
+            ErrorMessage = exception.Message;
+            IsAuthenticated = false;
+        }
+    }
+
+    private async Task EnsureLocalConnectorReadyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var status = await _localConnectorControl.GetStatusAsync(cancellationToken);
+            if (!status.IsPaired && _localConnectorPairingTickets is not null)
+            {
+                var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var root = Path.GetPathRoot(userProfile);
+                if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                {
+                    ApplyLocalConnectorStatus(status);
+                    return;
+                }
+
+                var gateway = Environment.GetEnvironmentVariable("CHATOS_LOCAL_CONNECTOR_CLOUD_BASE_URL")
+                    ?? "https://local-connector.jgoool.com";
+                var ticket = await _localConnectorPairingTickets.IssueAsync(cancellationToken);
+                status = await _localConnectorControl.PairAsync(
+                    new LocalConnectorPairingDraft(
+                        gateway,
+                        Environment.MachineName,
+                        [new LocalConnectorWorkspaceDraft(root, Localization.Text("本机文件系统", "Local file system"))]),
+                    ticket,
+                    cancellationToken);
+            }
+
+            ApplyLocalConnectorStatus(status);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Connector bootstrap is best effort. The shell and locally registered projects
+            // still load, while the create actions present an explicit setup path to the user.
+        }
+    }
+
+    private async Task StartLocalAgentWithoutBlockingWorkspaceAsync(
+        string ownerUserId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            try
+            {
+                await StartLocalAgentAsync(ownerUserId, cancellationToken);
+            }
+            catch (ConnectorGatewayException exception)
+                when (exception.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                // The Connector credential has a separate lifetime from the ChatOS session.
+                // Renew it with the current signed-in session and retry bootstrap once, matching
+                // the macOS re-pairing path without turning a Connector failure into a logout.
+                if (!await TryRefreshLocalConnectorCredentialAsync(cancellationToken))
+                {
+                    throw;
+                }
+
+                await StartLocalAgentAsync(ownerUserId, cancellationToken);
+            }
+            if (_localAgentBootstrap is not null)
+            {
+                // Match macOS: a conversation may be restored before the optional Local
+                // Agent control plane finishes bootstrapping. Reload only its runtime
+                // settings after configuration succeeds, preserving the visible history
+                // and any composer draft.
+                await Conversation.LocalAgentRuntimeDidBecomeReadyAsync(cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            // The account-scoped startup was superseded. The active account owns the next start.
+        }
+        catch (Exception exception)
+        {
+            // Local Agent setup is an optional authenticated capability. Missing Connector or
+            // model configuration must never hide projects or break the basic desktop shell.
+            if (LocalConnectorStatus?.IsPaired == true)
+            {
+                ErrorMessage = LocalAgentFailureMessage(exception);
+            }
+        }
+    }
+
+    private async Task<bool> TryRefreshLocalConnectorCredentialAsync(
+        CancellationToken cancellationToken)
+    {
+        if (_localConnectorPairingTickets is null || LocalConnectorStatus?.IsPaired != true)
+        {
+            return false;
+        }
+
+        var ticket = await _localConnectorPairingTickets.IssueAsync(cancellationToken);
+        var status = await _localConnectorControl.RefreshCredentialAsync(
+            ticket,
+            cancellationToken);
+        ApplyLocalConnectorStatus(status);
+        return true;
+    }
+
+    private string LocalAgentFailureMessage(Exception exception)
+    {
+        if (exception is ConnectorGatewayException { StatusCode: HttpStatusCode.Unauthorized })
+        {
+            return Localization.Text(
+                "本地智能体连接凭据已失效，请刷新资源后重试。",
+                "The Local Agent connection credential has expired. Refresh resources to try again.");
+        }
+
+        var detail = ReadableErrorDetail(exception.Message);
+        return Localization.Text(
+            $"本地智能体暂时不可用，请刷新资源后重试。{(detail is null ? string.Empty : $"（{detail}）")}",
+            $"Local Agent is temporarily unavailable. Refresh resources to try again.{(detail is null ? string.Empty : $" ({detail})")}");
+    }
+
+    private static string? ReadableErrorDetail(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var detail = message.Trim();
+        if (detail.StartsWith('{'))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(detail);
+                foreach (var key in new[] { "message", "detail", "error" })
+                {
+                    if (document.RootElement.TryGetProperty(key, out var value) &&
+                        value.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(value.GetString()))
+                    {
+                        detail = value.GetString()!.Trim();
+                        break;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        if (detail.Length > 240)
+        {
+            detail = detail[..240] + "…";
+        }
+
+        return string.IsNullOrEmpty(detail) ? null : detail;
     }
 
     private async Task ReloadWorkspaceCoreAsync(CancellationToken cancellationToken = default)
@@ -523,7 +823,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     contact.Id,
                     WorkspaceResourceKind.Contact,
                     contact.Name,
-                    ContactSubtitle(contact.Status),
+                    conversation?.Title ?? ContactSubtitle(contact.Status),
                     "\uE77B",
                     conversation?.Id));
             }
@@ -537,7 +837,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     "jiguli",
                     WorkspaceResourceKind.Contact,
                     Localization.Text("叽咕狸", "Jiguli"),
-                    Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
+                    conversation?.Title ?? Localization.Text("和叽咕狸开始对话", "Start a conversation with Jiguli"),
                     "\uE77B",
                     conversation?.Id));
             }
@@ -566,7 +866,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             IsPublishingWorkspace = false;
         }
         OnPropertyChanged(nameof(SelectedResource));
-        if (previous?.Kind != SelectedResource?.Kind || previous?.Id != SelectedResource?.Id)
+        if (previous?.Kind != SelectedResource?.Kind ||
+            previous?.Id != SelectedResource?.Id ||
+            previous?.ConversationId != SelectedResource?.ConversationId)
         {
             CancelSelectionActivation();
             _selectionCancellation = new CancellationTokenSource();
@@ -582,6 +884,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await ProjectRun.CloseAsync(cancellationToken);
             await ProjectGit.CloseAsync(cancellationToken);
+            await ProjectFiles.CloseAsync(cancellationToken);
             await Conversation.OpenAsync(null, "ChatOS", cancellationToken);
             return;
         }
@@ -621,7 +924,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await ProjectRun.CloseAsync(cancellationToken);
             await ProjectGit.CloseAsync(cancellationToken);
-            await Conversation.OpenAsync(resource.ConversationId, resource.Title, cancellationToken);
+            await ProjectFiles.CloseAsync(cancellationToken);
+            await Conversation.OpenAsync(
+                resource.ConversationId,
+                resource.Title,
+                string.Equals(resource.Id, "plugin-installer", StringComparison.Ordinal),
+                cancellationToken);
             return;
         }
 
@@ -632,6 +940,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ErrorMessage = Localization.Text(
                 "所选项目已不在当前工作区中，请刷新后重试。",
                 "The selected project is no longer in the current workspace. Refresh and try again.");
+            await ProjectFiles.CloseAsync(cancellationToken);
             await Conversation.OpenAsync(null, resource.Title, cancellationToken);
             return;
         }
@@ -649,28 +958,55 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var project = _workspaceSnapshot.Projects.FirstOrDefault(value => value.Id == resource.Id);
         if (project is null) return;
         var token = _selectionCancellation?.Token ?? CancellationToken.None;
+        if (!string.Equals(tab, "chat", StringComparison.Ordinal))
+        {
+            ProjectConversationErrorMessage = null;
+        }
         try
         {
             switch (tab)
             {
+                case "files":
+                    await ProjectRun.CloseAsync(token);
+                    await ProjectGit.CloseAsync(token);
+                    await ProjectFiles.OpenAsync(project, token);
+                    break;
                 case "chat":
+                    // Keep project feature sessions mutually exclusive.  macOS tears down
+                    // the previous project workspace before entering chat; doing the same
+                    // here prevents a stale Git/Run request from publishing into the page
+                    // the user just selected.
+                    await ProjectRun.CloseAsync(token);
+                    await ProjectGit.CloseAsync(token);
+                    await ProjectFiles.CloseAsync(token);
+                    ProjectConversationErrorMessage = null;
                     IsPreparingConversation = true;
                     var conversationId = await EnsureProjectConversationAsync(project.Id, token);
                     token.ThrowIfCancellationRequested();
                     await Conversation.OpenAsync(conversationId, project.Name, token);
                     break;
                 case "git":
+                    await ProjectRun.CloseAsync(token);
+                    await ProjectFiles.CloseAsync(token);
                     await ProjectGit.OpenAsync(project, token);
                     break;
                 case "run":
+                    await ProjectGit.CloseAsync(token);
+                    await ProjectFiles.CloseAsync(token);
                     await ProjectRun.OpenAsync(project, token);
                     break;
                 case "agent-team":
+                    await ProjectRun.CloseAsync(token);
+                    await ProjectGit.CloseAsync(token);
+                    await ProjectFiles.CloseAsync(token);
                     var owner = RequireAccount(AccountGeneration);
                     if (AgentTeam is not null)
                         await AgentTeam.OpenAsync(owner, project, token);
                     break;
                 case "requirement-surveys":
+                    await ProjectRun.CloseAsync(token);
+                    await ProjectGit.CloseAsync(token);
+                    await ProjectFiles.CloseAsync(token);
                     var surveyOwner = RequireAccount(AccountGeneration);
                     if (RequirementSurveys is not null)
                         await RequirementSurveys.OpenAsync(surveyOwner, project, token);
@@ -680,7 +1016,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {
-            if (!token.IsCancellationRequested) ErrorMessage = exception.Message;
+            if (!token.IsCancellationRequested)
+            {
+                if (string.Equals(tab, "chat", StringComparison.Ordinal))
+                {
+                    ProjectConversationErrorMessage = Localization.Text(
+                        $"无法准备项目对话：{exception.Message}",
+                        $"Unable to prepare the project conversation: {exception.Message}");
+                }
+                else
+                {
+                    ErrorMessage = exception.Message;
+                }
+            }
         }
         finally
         {
@@ -714,6 +1062,40 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _selectionCancellation?.Dispose();
         _selectionCancellation = null;
         IsPreparingConversation = false;
+        ProjectConversationErrorMessage = null;
+    }
+
+    private void ApplyPreparedProjectConversation(string projectId, string conversationId)
+    {
+        _workspaceSnapshot = _workspaceSnapshot with
+        {
+            Projects = _workspaceSnapshot.Projects.Select(value =>
+                string.Equals(value.Id, projectId, StringComparison.Ordinal)
+                    ? value with { LatestConversationId = conversationId }
+                    : value).ToArray(),
+        };
+
+        var index = -1;
+        for (var candidate = 0; candidate < Projects.Count; candidate++)
+        {
+            if (Projects[candidate].Kind == WorkspaceResourceKind.Project &&
+                string.Equals(Projects[candidate].Id, projectId, StringComparison.Ordinal))
+            {
+                index = candidate;
+                break;
+            }
+        }
+        if (index < 0) return;
+
+        var updated = Projects[index] with { ConversationId = conversationId };
+        Projects[index] = updated;
+        if (SelectedResource?.Kind == WorkspaceResourceKind.Project &&
+            string.Equals(SelectedResource.Id, projectId, StringComparison.Ordinal))
+        {
+            // Replacing the selected row keeps WinUI selection aligned with the collection.
+            // Suppress resource activation so the in-flight chat-open token is not cancelled.
+            SetSelectedResourceWithoutActivation(updated);
+        }
     }
 
     private string ContactSubtitle(string? status) => status?.ToLowerInvariant() switch
@@ -736,15 +1118,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             if (account != AccountGeneration || !IsAuthenticated) return;
-            var resource = new ShellResourceViewModel(
-                "local-connector",
-                WorkspaceResourceKind.LocalConnector,
-                Localization.Text("本机 Connector", "Local Connector"),
-                Localization.Text(
-                    $"状态读取失败：{exception.Message}",
-                    $"Unable to read status: {exception.Message}"),
-                "\uE968");
+            var resource = CreateBuiltInLocalTerminalResource(
+                LocalConnectorStatus,
+                Localization.Text("可用", "Available"));
             var connectorIndex = LocalResources.ToList().FindIndex(value =>
+                value.Id == BuiltInLocalTerminalId ||
                 value.Kind == WorkspaceResourceKind.LocalConnector);
             if (connectorIndex < 0)
             {
@@ -760,26 +1138,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public void ApplyLocalConnectorStatus(LocalConnectorStatus status)
     {
         LocalConnectorStatus = status;
-        var subtitle = status.ConnectionPhase switch
-        {
-            "Connected" => Localization.Text(
-                $"已连接 · {status.Workspaces.Count} 个工作区",
-                $"Connected · {status.Workspaces.Count} workspace{(status.Workspaces.Count == 1 ? string.Empty : "s")}"),
-            "Connecting" => Localization.Text("正在连接", "Connecting"),
-            "WaitingToReconnect" => Localization.Text("连接中断，等待重连", "Connection interrupted; waiting to reconnect"),
-            "Suspended" => Localization.Text("系统睡眠，连接已暂停", "Connection paused while the system sleeps"),
-            _ when status.IsPaired => Localization.Text(
-                $"已配对 · {status.Workspaces.Count} 个工作区",
-                $"Paired · {status.Workspaces.Count} workspace{(status.Workspaces.Count == 1 ? string.Empty : "s")}"),
-            _ => Localization.Text("尚未配对，点击设置", "Not paired; open Settings"),
-        };
-        var resource = new ShellResourceViewModel(
-            "local-connector",
-            WorkspaceResourceKind.LocalConnector,
-            status.DeviceName ?? Localization.Text("本机 Connector", "Local Connector"),
-            subtitle,
-            "\uE968");
+        var resource = CreateBuiltInLocalTerminalResource(status);
         var connectorIndex = LocalResources.ToList().FindIndex(value =>
+            value.Id == BuiltInLocalTerminalId ||
             value.Kind == WorkspaceResourceKind.LocalConnector);
         if (connectorIndex < 0)
         {
@@ -790,7 +1151,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             LocalResources[connectorIndex] = resource;
         }
 
-        if (SelectedResource?.Kind == WorkspaceResourceKind.LocalConnector)
+        if (SelectedResource is { } selected &&
+            (selected.Id == BuiltInLocalTerminalId ||
+             selected.Kind == WorkspaceResourceKind.LocalConnector))
         {
             SetSelectedResourceWithoutActivation(resource);
         }

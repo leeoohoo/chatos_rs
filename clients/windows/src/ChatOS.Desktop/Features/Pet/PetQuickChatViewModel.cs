@@ -55,6 +55,10 @@ public sealed partial class PetQuickChatViewModel : ObservableObject, IDisposabl
         "正在准备项目会话…",
         "Preparing the project conversation…");
 
+    public string WaitingHint => _localization.Text(
+        "正在等待默认联系人“叽咕狸”可用。",
+        "Waiting for the default contact Jiguli to become available.");
+
     public string SendLabel => _localization.Text("发送", "Send");
 
     public string BackLabel => _localization.Text("返回", "Back");
@@ -112,7 +116,7 @@ public sealed partial class PetQuickChatViewModel : ObservableObject, IDisposabl
                 resource = Resources.First(value => value.Id == resource.Id);
             }
 
-            if (string.IsNullOrWhiteSpace(conversationId))
+            if (string.IsNullOrWhiteSpace(conversationId) && resource.Kind == WorkspaceResourceKind.Project)
             {
                 throw new InvalidOperationException(_localization.Text(
                     "叽咕狸当前没有可用会话，请先在主界面刷新工作区。",

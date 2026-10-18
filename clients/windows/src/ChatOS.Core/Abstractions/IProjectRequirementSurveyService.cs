@@ -25,4 +25,24 @@ public interface IProjectRequirementSurveyService
         string surveyId,
         AgentRequirementSubmission submission,
         CancellationToken cancellationToken = default);
+
+    Task<AgentRequirementSurveyDetails> GetDetailsAsync(
+        string ownerUserId,
+        string projectId,
+        string surveyId,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentRequirementPlan> ConfirmPlanAsync(
+        string ownerUserId,
+        string projectId,
+        string surveyId,
+        ulong expectedRevision,
+        CancellationToken cancellationToken = default);
+
+    Task<AgentRequirementPlan> SaveSourceReplyAsPlanAsync(
+        string ownerUserId,
+        string projectId,
+        string surveyId,
+        string markdown,
+        CancellationToken cancellationToken = default);
 }

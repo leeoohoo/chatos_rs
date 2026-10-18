@@ -27,6 +27,7 @@ public sealed partial class RemoteConnectionsViewModel : ObservableObject
         _connector = connector;
         _dispatcher = dispatcher;
         _localization = localization;
+        Connections.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CanSave));
     }
 
     public ObservableCollection<RemoteConnection> Connections { get; } = [];
@@ -46,11 +47,34 @@ public sealed partial class RemoteConnectionsViewModel : ObservableObject
         _ => PrivateKeyPath.Trim().Length > 0 || SelectedConnection?.HasPrivateKeyPath == true,
     };
 
-    private bool HasJumpCredentials => !JumpEnabled ||
-        !string.IsNullOrWhiteSpace(JumpConnectionId) ||
-        (JumpHost.Trim().Length > 0 && JumpUsername.Trim().Length > 0 &&
-         (JumpPassword.Trim().Length > 0 || JumpPrivateKeyPath.Trim().Length > 0 ||
-          SelectedConnection?.HasJumpPassword == true || SelectedConnection?.HasJumpPrivateKeyPath == true));
+    private bool HasJumpCredentials
+    {
+        get
+        {
+            if (!JumpEnabled)
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(JumpConnectionId))
+            {
+                return Connections.Any(value => string.Equals(
+                    value.Id,
+                    JumpConnectionId.Trim(),
+                    StringComparison.Ordinal));
+            }
+
+            if (JumpHost.Trim().Length == 0 ||
+                JumpUsername.Trim().Length == 0 ||
+                JumpPort is < 1 or > 65535)
+            {
+                return false;
+            }
+
+            return JumpCertificatePath.Trim().Length == 0 ||
+                JumpPrivateKeyPath.Trim().Length > 0;
+        }
+    }
 
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(IsEditingExisting))] [NotifyPropertyChangedFor(nameof(CanSave))]
     private RemoteConnection? _selectedConnection;
@@ -68,11 +92,11 @@ public sealed partial class RemoteConnectionsViewModel : ObservableObject
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private bool _jumpEnabled;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string? _jumpConnectionId;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string _jumpHost = string.Empty;
-    [ObservableProperty] private int _jumpPort = 22;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private int _jumpPort = 22;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string _jumpUsername = string.Empty;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string _jumpPassword = string.Empty;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string _jumpPrivateKeyPath = string.Empty;
-    [ObservableProperty] private string _jumpCertificatePath = string.Empty;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private string _jumpCertificatePath = string.Empty;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(CanSave))] private bool _isBusy;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _actionMessage;

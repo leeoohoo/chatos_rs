@@ -2,6 +2,7 @@ namespace ChatOS.Core.Domain;
 
 public enum ConversationRealtimeKind
 {
+    Reconcile,
     Started,
     Updated,
     Persisted,

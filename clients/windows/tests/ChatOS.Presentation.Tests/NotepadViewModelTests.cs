@@ -53,6 +53,51 @@ public sealed class NotepadViewModelTests
         Assert.Contains(viewModel.Folders, folder => folder.Path == "work");
     }
 
+    [Theory]
+    [InlineData("work", "work", "work")]
+    [InlineData("work/child", " /work\\child/ ", "work/child")]
+    [InlineData("work", "child", "work/child")]
+    [InlineData("work", "work/child", "work/child")]
+    [InlineData("work", "workshop", "work/workshop")]
+    [InlineData("", "work", "work")]
+    public async Task CreateFolderResolvesRelativeAndCurrentPathsWithoutDuplicatingParent(
+        string current, string input, string expected)
+    {
+        var service = new NotepadServiceDouble();
+        using var viewModel = new NotepadViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync();
+        viewModel.SelectFolderCommand.Execute(new NotepadFolderItem(current));
+        viewModel.Content = "keep this draft";
+
+        await viewModel.CreateFolderCommand.ExecuteAsync(input);
+
+        Assert.Equal(expected, Assert.Single(service.CreatedFolders));
+        Assert.Equal(expected, viewModel.SelectedFolder);
+        Assert.Equal("note-1", viewModel.SelectedNote?.Id);
+        Assert.Equal("keep this draft", viewModel.Content);
+        Assert.True(viewModel.IsDirty);
+        Assert.Null(service.LastUpdate);
+        Assert.False(viewModel.IsBusy);
+    }
+
+    [Fact]
+    public async Task InvalidFolderCreationClearsPreviousSuccessAndCanBeRetried()
+    {
+        var service = new NotepadServiceDouble();
+        using var viewModel = new NotepadViewModel(service, new ImmediateUiDispatcher());
+        await viewModel.OpenAsync();
+        await viewModel.CreateFolderCommand.ExecuteAsync("work");
+        Assert.NotNull(viewModel.ActionMessage);
+        await viewModel.CreateFolderCommand.ExecuteAsync(" / ");
+        Assert.Null(viewModel.ActionMessage);
+        Assert.NotNull(viewModel.ErrorMessage);
+        Assert.Single(service.CreatedFolders);
+        await viewModel.CreateFolderCommand.ExecuteAsync("child");
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.NotNull(viewModel.ActionMessage);
+        Assert.Equal("work/child", viewModel.SelectedFolder);
+    }
+
     private sealed class NotepadServiceDouble : INotepadService
     {
         public List<NotepadNote> Notes { get; } =
@@ -63,12 +108,18 @@ public sealed class NotepadViewModelTests
 
         public NotepadNoteUpdate? LastUpdate { get; private set; }
 
+        public List<string> CreatedFolders { get; } = [];
+
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task<IReadOnlyList<string>> ListFoldersAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<string>>(["", "work"]);
 
-        public Task CreateFolderAsync(string folder, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task CreateFolderAsync(string folder, CancellationToken cancellationToken = default)
+        {
+            CreatedFolders.Add(folder);
+            return Task.CompletedTask;
+        }
 
         public Task RenameFolderAsync(string from, string to, CancellationToken cancellationToken = default) => Task.CompletedTask;
 

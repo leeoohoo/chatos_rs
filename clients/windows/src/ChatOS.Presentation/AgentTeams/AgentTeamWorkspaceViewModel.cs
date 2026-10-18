@@ -33,6 +33,8 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentProfile> Agents { get; } = [];
     public ObservableCollection<ConversationModelOption> Models { get; } = [];
     public ObservableCollection<AgentRoom> Rooms { get; } = [];
+    public ObservableCollection<AgentRoom> TeamRooms { get; } = [];
+    public ObservableCollection<AgentRoom> DirectRooms { get; } = [];
     public ObservableCollection<AgentRoomMember> Members { get; } = [];
     public ObservableCollection<AgentProfile> MemberProfiles { get; } = [];
     public ObservableCollection<AgentMessage> Messages { get; } = [];
@@ -49,10 +51,12 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
     public ObservableCollection<AgentMessageAttachment> PendingAttachments { get; } = [];
 
     public bool IsOpen => _ownerUserId is not null && ProjectId is not null;
+    public string? OwnerUserId => _ownerUserId;
     public bool IsGlobalWorkspace { get; private set; }
     public bool HasRoom => SelectedRoom is not null;
     public bool HasAgents => Agents.Count > 0;
     public bool CanConfigureTeam => SelectedRoom is { Kind: AgentConversationKind.ProjectTeam };
+    public bool CanCreateTeam => !IsGlobalWorkspace && TeamRooms.Count == 0;
     public bool HasPendingAttachments => PendingAttachments.Count > 0;
     public bool HasVisibleRuns => VisibleRunItems.Count > 0;
 
@@ -138,10 +142,13 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
         {
             await SetBusyAsync(true, null, context.Token).ConfigureAwait(false);
             var agentsTask = _service.ListAgentsAsync(context.Owner, false, context.Token);
-            var roomsTask = IsGlobalWorkspace
+            var roomsTask = _service.ListRoomsAsync(
+                context.Owner,
+                IsGlobalWorkspace ? null : context.Project,
+                context.Token);
+            var directsTask = IsGlobalWorkspace
                 ? Task.FromResult<IReadOnlyList<AgentRoom>>([])
-                : _service.ListRoomsAsync(context.Owner, context.Project, context.Token);
-            var directsTask = _service.ListRoomsAsync(context.Owner, "direct", context.Token);
+                : _service.ListRoomsAsync(context.Owner, "direct", context.Token);
             var shouldLoadModels = !_modelsLoaded;
             var modelsTask = shouldLoadModels
                 ? FetchModelsSafelyAsync(context.Token)
@@ -157,9 +164,16 @@ public sealed partial class AgentTeamWorkspaceViewModel : ObservableObject, IDis
                     _modelsLoaded = true;
                 }
                 var roomId = SelectedRoom?.Id;
-                Replace(Rooms, roomsTask.Result.Concat(directsTask.Result)
+                var rooms = roomsTask.Result.Concat(directsTask.Result)
+                    .DistinctBy(value => value.Id, StringComparer.Ordinal)
                     .OrderBy(value => value.IsDirect)
-                    .ThenByDescending(value => value.UpdatedAtUnixMs));
+                    .ThenByDescending(value => value.UpdatedAtUnixMs)
+                    .ToArray();
+                Replace(Rooms, rooms);
+                Replace(TeamRooms, rooms.Where(value =>
+                    value.Kind is AgentConversationKind.ProjectTeam));
+                Replace(DirectRooms, rooms.Where(value => value.IsDirect));
+                OnPropertyChanged(nameof(CanCreateTeam));
                 SelectedRoom = Rooms.FirstOrDefault(value => value.Id == roomId) ?? Rooms.FirstOrDefault();
                 SelectedAgent = Agents.FirstOrDefault(value => value.Id == SelectedAgent?.Id)
                     ?? Agents.FirstOrDefault();

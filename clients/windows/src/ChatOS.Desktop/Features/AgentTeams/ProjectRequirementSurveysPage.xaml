@@ -6,75 +6,45 @@
     AutomationProperties.AutomationId="ChatOS.RequirementSurveys.Root"
     AutomationProperties.Name="项目需求调研中心">
 
-    <Grid Padding="20" RowSpacing="12">
+    <Grid Padding="24" RowSpacing="14" Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Grid ColumnSpacing="12">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Spacing="4">
-                <TextBlock Style="{StaticResource ChatOSPageTitleTextStyle}" Text="需求调研" />
-                <TextBlock Opacity="0.65" Text="{x:Bind ViewModel.ProjectName, Mode=OneWay}" />
-                <TextBlock
-                    MaxWidth="900"
-                    Opacity="0.7"
-                    Text="本地任务需要补充项目要求时会发起调研；Human 填写后任务在本机继续执行，答案提交后不可修改。"
-                    TextWrapping="Wrap" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                <ProgressRing Width="22" Height="22" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
-                <Button
-                    AutomationProperties.AutomationId="ChatOS.RequirementSurveys.Refresh"
-                    AutomationProperties.Name="刷新需求调研"
-                    Click="OnRefreshClick"
-                    Content="刷新"
-                    IsEnabled="{x:Bind ViewModel.CanRefresh, Mode=OneWay}" />
-            </StackPanel>
-        </Grid>
+        <Border Padding="18" Background="{StaticResource ChatOSSurfaceSubtleBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="14">
+            <Grid ColumnSpacing="14">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="54" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Border Width="52" Height="52" Background="{StaticResource ChatOSPurpleBrush}" CornerRadius="14">
+                    <FontIcon Glyph="&#xE9D5;" FontSize="23" Foreground="White" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                    <TextBlock Text="{x:Bind ViewModel.ProjectName, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                    <TextBlock MaxWidth="820" Text="本地任务需要你补充信息时会在这里暂停。提交答案后，Local Agent Host 会保存答案并恢复原 Run。" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border Padding="9,5" Background="{StaticResource ChatOSAccentSoftBrush}" CornerRadius="9"><TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind ViewModel.PendingCount, Mode=OneWay}" /><Run Text=" 待填写" /></TextBlock></Border>
+                        <Border Padding="9,5" Background="{StaticResource ChatOSContentBackgroundBrush}" CornerRadius="9"><TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind ViewModel.AwaitingResolutionCount, Mode=OneWay}" /><Run Text=" 处理中" /></TextBlock></Border>
+                        <Border Padding="9,5" Background="{StaticResource ChatOSSuccessSoftBrush}" CornerRadius="9"><TextBlock Style="{StaticResource ChatOSCaptionTextStyle}"><Run Text="{x:Bind ViewModel.ResolvedCount, Mode=OneWay}" /><Run Text=" 已恢复" /></TextBlock></Border>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Top" Orientation="Horizontal" Spacing="8">
+                    <ProgressRing Width="20" Height="20" IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                    <Button AutomationProperties.AutomationId="ChatOS.RequirementSurveys.Refresh" AutomationProperties.Name="刷新需求调研" Click="OnRefreshClick" Content="刷新" IsEnabled="{x:Bind ViewModel.CanRefresh, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryButtonStyle}" />
+                </StackPanel>
+            </Grid>
+        </Border>
 
         <InfoBar
             Grid.Row="1"
             IsClosable="False"
-            IsOpen="{x:Bind HasNotice, Mode=OneWay}"
-            Message="{x:Bind Notice, Mode=OneWay}"
-            Severity="{x:Bind NoticeSeverity, Mode=OneWay}" />
+            IsOpen="{x:Bind HasNotice, Mode=OneTime}"
+            Message="{x:Bind Notice, Mode=OneTime}"
+            Severity="{x:Bind NoticeSeverity, Mode=OneTime}" />
 
-        <Grid Grid.Row="2" ColumnSpacing="10">
+        <Grid Grid.Row="2" ColumnSpacing="14">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Border Padding="12" Style="{StaticResource ChatOSCardStyle}">
-                <StackPanel>
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="{x:Bind ViewModel.PendingCount, Mode=OneWay}" />
-                    <TextBlock Opacity="0.65" Text="待填写" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="1" Padding="12" Style="{StaticResource ChatOSCardStyle}">
-                <StackPanel>
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="{x:Bind ViewModel.AwaitingResolutionCount, Mode=OneWay}" />
-                    <TextBlock Opacity="0.65" Text="处理中" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Padding="12" Style="{StaticResource ChatOSCardStyle}">
-                <StackPanel>
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="{x:Bind ViewModel.ResolvedCount, Mode=OneWay}" />
-                    <TextBlock Opacity="0.65" Text="已提交" />
-                </StackPanel>
-            </Border>
-        </Grid>
-
-        <Grid Grid.Row="3" ColumnSpacing="14">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="360" MinWidth="280" />
+                <ColumnDefinition Width="400" MinWidth="310" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
@@ -183,6 +153,72 @@
                         <StackPanel Spacing="5" Visibility="{x:Bind ViewModel.SelectedSurvey.IsSubmitted, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <TextBlock FontWeight="SemiBold" Text="补充备注" />
                             <TextBlock IsTextSelectionEnabled="True" Opacity="0.8" Text="{x:Bind ViewModel.SelectedSurvey.SubmissionNotes, Mode=OneWay}" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="方案与后续回复" />
+                            <ProgressRing Grid.Column="1" Width="18" Height="18" IsActive="{x:Bind ViewModel.SelectedSurvey.IsPlanBusy, Mode=OneWay}" />
+                        </Grid>
+                        <InfoBar
+                            IsClosable="False"
+                            IsOpen="{x:Bind ViewModel.SelectedSurvey.HasPlanError, Mode=OneWay}"
+                            Message="{x:Bind ViewModel.SelectedSurvey.PlanError, Mode=OneWay}"
+                            Severity="Error" />
+                        <StackPanel Spacing="10" Visibility="{x:Bind ViewModel.SelectedSurvey.HasPlan, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid ColumnSpacing="10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock FontWeight="SemiBold" Text="{x:Bind ViewModel.SelectedSurvey.PlanVersionText, Mode=OneWay}" />
+                                <TextBlock Grid.Column="1" FontWeight="SemiBold" Text="{x:Bind ViewModel.SelectedSurvey.PlanStatusText, Mode=OneWay}" />
+                            </Grid>
+                            <Border Padding="12" Background="{StaticResource ChatOSProcessBackgroundBrush}" CornerRadius="8">
+                                <RichTextBlock x:Name="PlanMarkdownPreview" IsTextSelectionEnabled="True" />
+                            </Border>
+                            <TextBlock Opacity="0.72" Text="{x:Bind ViewModel.SelectedSurvey.PlanBoundaryText, Mode=OneWay}" TextWrapping="Wrap" />
+                            <TextBlock Opacity="0.72" Text="{x:Bind ViewModel.SelectedSurvey.PlanFollowUpText, Mode=OneWay}" TextWrapping="Wrap" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.RequirementSurveys.ConfirmPlan"
+                                AutomationProperties.Name="确认当前需求方案"
+                                Click="OnConfirmPlanClick"
+                                Content="确认当前方案"
+                                HorizontalAlignment="Left"
+                                IsEnabled="{x:Bind ViewModel.SelectedSurvey.CanConfirmPlan, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.SelectedSurvey.IsPlanPendingConfirmation, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        </StackPanel>
+                        <StackPanel
+                            Spacing="10"
+                            Visibility="{x:Bind ViewModel.SelectedSurvey.HasPlan, Mode=OneWay, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                            <TextBlock
+                                Opacity="0.72"
+                                Text="{x:Bind ViewModel.SelectedSurvey.PlanFollowUpText, Mode=OneWay}"
+                                TextWrapping="Wrap" />
+                            <Border
+                                Padding="12"
+                                Background="{StaticResource ChatOSProcessBackgroundBrush}"
+                                CornerRadius="8"
+                                Visibility="{x:Bind ViewModel.SelectedSurvey.HasLegacyPlanCandidate, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <RichTextBlock x:Name="LegacyPlanMarkdownPreview" IsTextSelectionEnabled="True" />
+                            </Border>
+                            <TextBlock
+                                Opacity="0.72"
+                                Text="这份历史回复尚未保存为方案版本。确认仅认可方案，不会自动开始任务。"
+                                TextWrapping="Wrap"
+                                Visibility="{x:Bind ViewModel.SelectedSurvey.HasLegacyPlanCandidate, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            <Button
+                                AutomationProperties.AutomationId="ChatOS.RequirementSurveys.AdoptPlan"
+                                AutomationProperties.Name="保存并确认历史需求方案"
+                                Click="OnAdoptPlanClick"
+                                Content="保存并确认此方案"
+                                HorizontalAlignment="Left"
+                                IsEnabled="{x:Bind ViewModel.SelectedSurvey.CanAdoptLegacyPlan, Mode=OneWay}"
+                                Visibility="{x:Bind ViewModel.SelectedSurvey.HasLegacyPlanCandidate, Mode=OneWay, Converter={StaticResource BooleanToVisibilityConverter}}" />
                         </StackPanel>
 
                         <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />

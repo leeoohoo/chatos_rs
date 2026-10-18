@@ -62,4 +62,46 @@ public sealed class SqliteInstalledPluginStoreTests
             }
         }
     }
+
+    [Fact]
+    public async Task PersistsLocallyManagedSourceAndEnabledState()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"chatos-local-plugin-store-{Guid.NewGuid():N}");
+        try
+        {
+            var database = new LocalStateDatabase(Path.Combine(directory, "state.db"));
+            await database.InitializeAsync();
+            var store = new SqliteInstalledPluginStore(database);
+            var record = new InstalledPluginRecord(
+                "custom-plugin",
+                $"custom:{new string('d', 64)}",
+                "1.0.0",
+                new string('d', 64),
+                "C:\\Plugins\\custom",
+                DateTimeOffset.Parse("2026-10-17T12:00:00Z"),
+                [],
+                PluginKey: "custom-plugin-key",
+                SourceKind: "localFolder",
+                SourceSummary: "Portable Agent Plugin · Local folder",
+                LocalEnabled: false);
+
+            await store.SaveAsync(record);
+            var restored = Assert.IsType<InstalledPluginRecord>(await store.GetAsync(record.PluginId));
+
+            Assert.True(restored.IsLocallyManaged);
+            Assert.False(restored.IsLocallyEnabled);
+            Assert.Equal("localFolder", restored.SourceKind);
+            Assert.Equal(record.SourceSummary, restored.SourceSummary);
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
+        }
+    }
 }

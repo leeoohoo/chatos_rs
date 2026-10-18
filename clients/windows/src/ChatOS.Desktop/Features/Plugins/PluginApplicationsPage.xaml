@@ -11,31 +11,39 @@
     <Grid Background="{StaticResource ChatOSWorkspaceBackgroundBrush}">
         <Grid x:Name="CatalogView" AutomationProperties.AutomationId="ChatOS.Applications.Catalog" AutomationProperties.Name="{x:Bind Localization.Applications, Mode=OneWay}">
             <ScrollViewer Padding="28" VerticalScrollBarVisibility="Auto">
-                <StackPanel MaxWidth="1180" HorizontalAlignment="Center" Spacing="22">
+                <StackPanel HorizontalAlignment="Stretch" Spacing="22">
                     <Grid ColumnSpacing="12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <StackPanel Spacing="5">
                             <TextBlock Text="{x:Bind Localization.Applications, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
-                            <TextBlock Text="{x:Bind CatalogDescription, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                            <TextBlock Text="{x:Bind CatalogDescription, Mode=OneTime}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                         </StackPanel>
-                        <ProgressRing x:Name="CatalogProgress" Grid.Column="1" Width="22" Height="22" VerticalAlignment="Center" />
-                        <Button Grid.Column="2" AutomationProperties.AutomationId="ChatOS.Applications.Refresh" Click="OnRefreshApplicationsClicked" Content="{x:Bind Localization.Refresh, Mode=OneWay}" />
+                        <Button
+                            x:Name="RefreshApplicationsButton"
+                            Grid.Column="1"
+                            AutomationProperties.AutomationId="ChatOS.Applications.Refresh"
+                            AutomationProperties.Name="{x:Bind Localization.Refresh, Mode=OneWay}"
+                            Click="OnRefreshApplicationsClicked">
+                            <StackPanel Orientation="Horizontal" Spacing="7">
+                                <FontIcon Glyph="&#xE72C;" FontSize="13" />
+                                <TextBlock Text="{x:Bind Localization.Refresh, Mode=OneWay}" />
+                            </StackPanel>
+                        </Button>
                     </Grid>
 
-                    <Border x:Name="CatalogMessageCard" Padding="14" Background="{StaticResource ChatOSContentBackgroundBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="12" Visibility="Collapsed">
-                        <Grid ColumnSpacing="10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <FontIcon x:Name="CatalogMessageIcon" Glyph="&#xE783;" Foreground="{StaticResource ChatOSFailureBrush}" />
-                            <TextBlock x:Name="CatalogMessageText" Grid.Column="1" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                        </Grid>
-                    </Border>
+                    <StackPanel x:Name="CatalogLoadingState" MinHeight="220" HorizontalAlignment="Center" VerticalAlignment="Center" Orientation="Horizontal" Spacing="10" Visibility="Collapsed">
+                        <ProgressRing x:Name="CatalogProgress" Width="22" Height="22" />
+                        <TextBlock VerticalAlignment="Center" Text="{x:Bind LoadingApplicationsText, Mode=OneTime}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="CatalogErrorState" MinHeight="300" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" Visibility="Collapsed">
+                        <FontIcon HorizontalAlignment="Center" Glyph="&#xE783;" FontSize="36" Foreground="{StaticResource ChatOSFailureBrush}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind ApplicationsFailedTitle, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock x:Name="CatalogMessageText" MaxWidth="520" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                    </StackPanel>
 
                     <GridView
                         x:Name="ApplicationGrid"
@@ -52,7 +60,7 @@
                         </GridView.ItemsPanel>
                         <GridView.ItemTemplate>
                             <DataTemplate x:DataType="plugins:PluginApplicationCardViewModel">
-                                <Border Width="252" MinHeight="190" Margin="0,0,12,12" Padding="17" Background="{StaticResource ChatOSContentBackgroundBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="18">
+                                <Border Width="252" MinHeight="198" Margin="0,0,12,12" Padding="17" Background="{StaticResource ChatOSSurfaceSubtleBrush}" BorderBrush="{StaticResource ChatOSBorderBrush}" BorderThickness="1" CornerRadius="18">
                                     <Grid RowSpacing="14">
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
@@ -70,11 +78,12 @@
                                         </Grid>
                                         <StackPanel Grid.Row="1" Spacing="5">
                                             <TextBlock Text="{x:Bind Application.DisplayName}" Style="{StaticResource ChatOSHeadlineTextStyle}" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{x:Bind Description}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                                            <TextBlock MinHeight="47" Text="{x:Bind Description}" MaxLines="3" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
                                         </StackPanel>
-                                        <Border Grid.Row="2" Padding="8,4" HorizontalAlignment="Left" Background="{StaticResource ChatOSSidebarBackgroundBrush}" CornerRadius="10">
+                                        <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE7E8;" FontSize="11" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
                                             <TextBlock Text="{x:Bind RuntimeLabel}" Style="{StaticResource ChatOSCaptionTextStyle}" />
-                                        </Border>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -83,14 +92,21 @@
 
                     <StackPanel x:Name="EmptyApplications" MinHeight="300" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" Visibility="Collapsed">
                         <FontIcon HorizontalAlignment="Center" Glyph="&#xE71D;" FontSize="36" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
-                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind EmptyApplicationsTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
-                        <TextBlock MaxWidth="460" HorizontalAlignment="Center" Text="{x:Bind EmptyApplicationsDescription, Mode=OneWay}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <TextBlock HorizontalAlignment="Center" Text="{x:Bind EmptyApplicationsTitle, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                        <TextBlock MaxWidth="460" HorizontalAlignment="Center" Text="{x:Bind EmptyApplicationsDescription, Mode=OneTime}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <Button
+                            AutomationProperties.AutomationId="ChatOS.Applications.OpenPluginManagement"
+                            AutomationProperties.Name="{x:Bind OpenPluginManagementText, Mode=OneTime}"
+                            HorizontalAlignment="Center"
+                            Click="OnOpenPluginManagementClicked"
+                            Content="{x:Bind OpenPluginManagementText, Mode=OneTime}"
+                            Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                     </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </Grid>
 
-        <Grid x:Name="HostView" AutomationProperties.AutomationId="ChatOS.Applications.Host" AutomationProperties.Name="{x:Bind ApplicationHostName, Mode=OneWay}" Visibility="Collapsed">
+        <Grid x:Name="HostView" AutomationProperties.AutomationId="ChatOS.Applications.Host" AutomationProperties.Name="{x:Bind ApplicationHostName, Mode=OneTime}" Visibility="Collapsed">
             <Grid.RowDefinitions>
                 <RowDefinition Height="50" />
                 <RowDefinition Height="1" />
@@ -116,7 +132,7 @@
                         <TextBlock x:Name="ProjectBadgeText" Style="{StaticResource ChatOSCaptionTextStyle}" />
                     </Border>
                 </StackPanel>
-                <Button x:Name="SwitchProjectButton" Grid.Column="3" Click="OnSwitchProjectClicked" Content="{x:Bind SwitchProjectText, Mode=OneWay}" Visibility="Collapsed" />
+                <Button x:Name="SwitchProjectButton" Grid.Column="3" Click="OnSwitchProjectClicked" Content="{x:Bind SwitchProjectText, Mode=OneTime}" Visibility="Collapsed" />
                 <Button x:Name="ReloadApplicationButton" Grid.Column="4" AutomationProperties.AutomationId="ChatOS.Applications.Reload" Click="OnReloadApplicationClicked" Style="{StaticResource ChatOSToolbarButtonStyle}" Visibility="Collapsed">
                     <FontIcon Glyph="&#xE72C;" />
                 </Button>
@@ -126,13 +142,13 @@
             <Grid Grid.Row="2">
                 <StackPanel x:Name="ContextPicker" MaxWidth="720" Margin="32" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18" Visibility="Collapsed">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind ChooseProjectTitle, Mode=OneWay}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
-                        <TextBlock Text="{x:Bind ChooseProjectDescription, Mode=OneWay}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                        <TextBlock Text="{x:Bind ChooseProjectTitle, Mode=OneTime}" Style="{StaticResource ChatOSPageTitleTextStyle}" />
+                        <TextBlock Text="{x:Bind ChooseProjectDescription, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                     </StackPanel>
                     <ListView
                         x:Name="ProjectList"
                         AutomationProperties.AutomationId="ChatOS.Applications.ProjectPicker"
-                        AutomationProperties.Name="{x:Bind ChooseProjectTitle, Mode=OneWay}"
+                        AutomationProperties.Name="{x:Bind ChooseProjectTitle, Mode=OneTime}"
                         IsItemClickEnabled="True"
                         ItemClick="OnProjectClicked"
                         ItemsSource="{x:Bind Shell.Projects}"
@@ -159,22 +175,47 @@
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
-                    <TextBlock x:Name="NoProjectsMessage" Text="{x:Bind NoProjectsDescription, Mode=OneWay}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Visibility="Collapsed" />
+                    <Button
+                        x:Name="SharedProjectButton"
+                        AutomationProperties.AutomationId="ChatOS.Applications.SharedProject"
+                        AutomationProperties.Name="{x:Bind SharedProjectTitle, Mode=OneTime}"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Click="OnSharedProjectClicked"
+                        Style="{StaticResource ChatOSSecondaryButtonStyle}"
+                        Visibility="Collapsed">
+                        <Grid MinWidth="620" Padding="6" ColumnSpacing="13">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="42" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Width="42" Height="42" Background="#182563EB" CornerRadius="11">
+                                <FontIcon Glyph="&#xE77B;" Foreground="{StaticResource ChatOSAccentBrush}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <TextBlock Text="{x:Bind SharedProjectTitle, Mode=OneTime}" Style="{StaticResource ChatOSBodyStrongTextStyle}" />
+                                <TextBlock Text="{x:Bind SharedProjectDescription, Mode=OneTime}" TextWrapping="Wrap" Style="{StaticResource ChatOSCaptionTextStyle}" />
+                            </StackPanel>
+                            <FontIcon Grid.Column="2" VerticalAlignment="Center" Glyph="&#xE76C;" Foreground="{StaticResource ChatOSSecondaryTextBrush}" />
+                        </Grid>
+                    </Button>
+                    <TextBlock x:Name="NoProjectsMessage" Text="{x:Bind NoProjectsDescription, Mode=OneTime}" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" Visibility="Collapsed" />
                 </StackPanel>
 
                 <StackPanel x:Name="LaunchProgress" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Visibility="Collapsed">
                     <ProgressRing Width="34" Height="34" IsActive="True" />
-                    <TextBlock Text="{x:Bind StartingApplicationText, Mode=OneWay}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
+                    <TextBlock Text="{x:Bind StartingApplicationText, Mode=OneTime}" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
                 </StackPanel>
 
                 <StackPanel x:Name="LaunchError" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" Visibility="Collapsed">
                     <FontIcon HorizontalAlignment="Center" Glyph="&#xE783;" FontSize="34" Foreground="{StaticResource ChatOSFailureBrush}" />
-                    <TextBlock HorizontalAlignment="Center" Text="{x:Bind ApplicationFailedTitle, Mode=OneWay}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
+                    <TextBlock HorizontalAlignment="Center" Text="{x:Bind ApplicationFailedTitle, Mode=OneTime}" Style="{StaticResource ChatOSHeadlineTextStyle}" />
                     <TextBlock x:Name="LaunchErrorText" TextAlignment="Center" TextWrapping="Wrap" Style="{StaticResource ChatOSSecondaryBodyTextStyle}" />
-                    <Button HorizontalAlignment="Center" Click="OnRetryLaunchClicked" Content="{x:Bind RetryText, Mode=OneWay}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
+                    <Button HorizontalAlignment="Center" Click="OnRetryLaunchClicked" Content="{x:Bind RetryText, Mode=OneTime}" Style="{StaticResource ChatOSPrimaryButtonStyle}" />
                 </StackPanel>
 
-                <WebView2 x:Name="PluginWebView" AutomationProperties.AutomationId="ChatOS.Applications.WebView" AutomationProperties.Name="{x:Bind ApplicationHostName, Mode=OneWay}" Visibility="Collapsed" />
+                <WebView2 x:Name="PluginWebView" AutomationProperties.AutomationId="ChatOS.Applications.WebView" AutomationProperties.Name="{x:Bind ApplicationHostName, Mode=OneTime}" Visibility="Collapsed" />
             </Grid>
         </Grid>
 

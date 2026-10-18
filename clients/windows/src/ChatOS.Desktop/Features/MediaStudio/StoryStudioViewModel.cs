@@ -33,6 +33,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         _planner = planner;
         _history = history;
         _store = store;
+        Projects.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(ProjectCount));
+            OnPropertyChanged(nameof(ProjectCountLabel));
+        };
         Segments.CollectionChanged += (_, _) =>
         {
             UpdatePlanningInputLock();
@@ -73,6 +78,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public ObservableCollection<MediaGenerationModel> Models { get; } = [];
     public ObservableCollection<MediaGenerationModel> ImageModels { get; } = [];
     public ObservableCollection<MediaGenerationModel> VideoModels { get; } = [];
+    public int ProjectCount => Projects.Count;
+    public string ProjectCountLabel => $"{ProjectCount} 个剧情项目";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanLoadMoreProjects))]
     private bool _hasMoreProjects;
@@ -96,6 +103,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     ];
 
     public bool IsWorkspaceOpen => _current is not null;
+    public bool CanOpenCreate => !IsBusy;
     public bool IsPlanningInputsLocked => Segments.Count > 0;
     public bool CanEditPlanningInputs => !IsBusy && !IsPlanningInputsLocked;
     public string PlanningInputsLockLabel => IsPlanningInputsLocked
@@ -108,10 +116,12 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     public bool CanQuickSplit => CanSave && Segments.Count == 0 &&
         !string.IsNullOrWhiteSpace(ProjectSource) && _planningRunsReady && ResumablePlanningRun is null;
     public bool CanPlan => CanQuickSplit && Resources.Count == 0 && ProjectTextModel is not null;
-    public bool CanGenerateFrame => CanSave && SelectedSegment is not null &&
-        !string.IsNullOrWhiteSpace(SelectedSegment.ImagePrompt);
-    public bool CanGenerateVideo => CanSave && SelectedSegment is not null &&
-        !SelectedSegment.HasPendingVideoJob && !string.IsNullOrWhiteSpace(SelectedSegment.VideoPrompt);
+    public bool CanGenerateFrame => CanSave && SelectedSegment is { IsRefined: true } segment &&
+        !string.IsNullOrWhiteSpace(segment.ImagePrompt);
+    public bool CanGenerateVideo => CanSave && SelectedSegment is { IsRefined: true } segment &&
+        !segment.HasPendingVideoJob &&
+        segment.FirstFramePath is { Length: > 0 } firstFrame && File.Exists(firstFrame) &&
+        !string.IsNullOrWhiteSpace(segment.VideoPrompt);
     public bool CanGenerateResourceImage => CanSave && SelectedResource is not null &&
         !string.IsNullOrWhiteSpace(SelectedResource.ImagePrompt);
     public string WorkspaceSummary => _current is null
@@ -230,6 +240,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(CanRestoreArchivedFrame))]
     [NotifyPropertyChangedFor(nameof(CanRegenerateFromCurrentVideo))]
     [NotifyPropertyChangedFor(nameof(CanGenerateFromPreviousVideo))]
+    [NotifyPropertyChangedFor(nameof(CanOpenCreate))]
     private bool _isBusy;
     [ObservableProperty] private bool _isInitialLoading;
     [ObservableProperty] private string _statusMessage = "剧情项目只保存在本机";
@@ -261,6 +272,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            StartupDiagnostics.RecordUnhandled("story studio workspace data loading", exception);
             ErrorMessage = $"读取剧情工作台失败：{exception.Message}";
         }
         finally
@@ -304,6 +316,7 @@ public sealed partial class StoryStudioViewModel : ObservableObject
     {
         var owner = _ownerUserId;
         if (!CanCreate || owner is null || NewTextModel is null || NewImageModel is null || NewVideoModel is null) return;
+        var session = _session;
         var now = DateTimeOffset.UtcNow;
         var project = new StoryProjectDocument(
             Guid.NewGuid(), StoryProjectDocument.CurrentVersion, NewTitle.Trim(), NewDescription.Trim(), string.Empty, string.Empty,
@@ -314,6 +327,8 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         try
         {
             await _store.SaveAsync(owner, project, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (session != _session || !string.Equals(owner, _ownerUserId, StringComparison.Ordinal)) return;
             Projects.Insert(0, CreateProjectCard(project));
             NewTitle = string.Empty;
             NewDescription = string.Empty;
@@ -322,9 +337,12 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            if (session == _session) IsBusy = false;
+        }
     }
 
     public void OpenProject(StoryProjectDocument project)
@@ -458,24 +476,51 @@ public sealed partial class StoryStudioViewModel : ObservableObject
 
     public void CancelGeneration() => _generationCancellation?.Cancel();
 
+    private CancellationTokenSource BeginGenerationCancellation(CancellationToken cancellationToken)
+    {
+        _generationCancellation?.Cancel();
+        _generationCancellation?.Dispose();
+        var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _generationCancellation = source;
+        return source;
+    }
+
+    private void EndGenerationCancellation(CancellationTokenSource source)
+    {
+        if (!ReferenceEquals(_generationCancellation, source)) return;
+        _generationCancellation = null;
+        source.Dispose();
+    }
+
     private async Task GenerateFrameAsync(bool lastFrame, CancellationToken cancellationToken)
     {
         var context = CaptureGenerationContext();
         if (!CanGenerateFrame || context is null || ProjectImageModel is null) return;
+        var source = BeginGenerationCancellation(cancellationToken);
+        var token = source.Token;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            await PersistCurrentAsync(cancellationToken);
-            await GenerateFrameCoreAsync(context, ProjectImageModel, lastFrame, cancellationToken);
+            await PersistCurrentAsync(token);
+            await GenerateFrameCoreAsync(context, ProjectImageModel, lastFrame, token);
             var role = lastFrame ? "尾帧" : "首帧";
             StatusMessage = $"{context.Segment.Title} 的{role}已生成";
+        }
+        catch (OperationCanceledException)
+        {
+            if (context.Session == _session)
+                StatusMessage = "已停止等待剧情画面";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ErrorMessage = exception.Message;
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            EndGenerationCancellation(source);
+            if (context.Session == _session) IsBusy = false;
+        }
     }
 
     private async Task PersistCurrentAsync(CancellationToken cancellationToken)
@@ -533,8 +578,11 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         foreach (var model in models)
         {
             Models.Add(model);
-            if (model.IsLikelyVideoModel) VideoModels.Add(model);
-            else ImageModels.Add(model);
+            // macOS presents the complete enabled model catalog for each story
+            // role. The role is persisted separately; filtering by a name marker
+            // here can hide an otherwise valid account model before creation.
+            ImageModels.Add(model);
+            VideoModels.Add(model);
         }
         NewTextModel = Models.FirstOrDefault();
         NewImageModel = ImageModels.FirstOrDefault();
@@ -563,6 +611,13 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         IsInitialLoading = false;
         IsLoadingMoreProjects = false;
         IsLoadingMorePlanningRuns = false;
+        IsBusy = false;
+        IsBatchRunning = false;
+        BatchCurrentLabel = string.Empty;
+        BatchCompleted = 0;
+        BatchFailed = 0;
+        BatchSkipped = 0;
+        BatchTotal = 0;
         Projects.Clear();
         Segments.Clear();
         Resources.Clear();
@@ -638,25 +693,82 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         if (_ownerUserId is not { Length: > 0 } owner)
             return new StoryProjectCard(project, [], 0);
 
-        var relativeAssets = project.Resources
-            .Select(resource => resource.ImageAsset)
-            .Concat(project.Segments.SelectMany(segment => new[]
+        var historyImages = new List<StoryHistoryImageItem>();
+        var seenImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddImage(string id, string? asset, string title, string kindLabel)
+        {
+            var path = _store.ResolveAssetPath(owner, project.Id, asset);
+            if (path is not { Length: > 0 } || !File.Exists(path) || !seenImages.Add(path)) return;
+            historyImages.Add(new StoryHistoryImageItem(id, path, title, kindLabel));
+        }
+
+        foreach (var resource in project.Resources)
+        {
+            var kindLabel = resource.Kind switch
             {
-                segment.FirstFrameAsset,
-                segment.LastFrameAsset,
-                segment.ActualVideoLastFrameAsset,
-            }));
-        var imagePaths = relativeAssets
-            .Select(asset => _store.ResolveAssetPath(owner, project.Id, asset))
-            .Where(path => path is { Length: > 0 } && File.Exists(path))
-            .Select(path => path!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var previews = imagePaths
+                StoryResourceKind.Character => "人物",
+                StoryResourceKind.Scene => "场景",
+                StoryResourceKind.Prop => "道具",
+                _ => "素材",
+            };
+            AddImage($"resource-{resource.Id}", resource.ImageAsset, resource.Name, kindLabel);
+        }
+
+        foreach (var segment in project.Segments.Select((value, index) => (value, index)))
+        {
+            var number = segment.index + 1;
+            AddImage($"segment-{segment.value.Id}-first", segment.value.FirstFrameAsset,
+                $"第 {number} 段 · {segment.value.Title}", "首帧");
+            AddImage($"segment-{segment.value.Id}-last", segment.value.LastFrameAsset,
+                $"第 {number} 段 · {segment.value.Title}", "尾帧");
+            AddImage($"segment-{segment.value.Id}-video-last", segment.value.ActualVideoLastFrameAsset,
+                $"第 {number} 段 · {segment.value.Title}", "成片末帧");
+        }
+
+        var previews = historyImages
             .Take(4)
-            .Select(path => new StoryProjectThumbnail(path))
+            .Select(image => new StoryProjectThumbnail(image.FilePath))
             .ToArray();
-        return new StoryProjectCard(project, previews, imagePaths.Length);
+        var modelName = Models.FirstOrDefault(model => model.Id == project.VideoModelConfigId)?.ModelName
+            ?? project.VideoModelConfigId;
+        var historyVideos = new List<StoryHistoryVideoItem>();
+        foreach (var segment in project.Segments.Select((value, index) => (value, index)))
+        {
+            var number = segment.index + 1;
+            var currentPath = _store.ResolveAssetPath(owner, project.Id, segment.value.VideoAsset);
+            if (currentPath is { Length: > 0 } && File.Exists(currentPath))
+            {
+                historyVideos.Add(new StoryHistoryVideoItem(
+                    $"segment-{segment.value.Id}-current",
+                    currentPath,
+                    segment.value.Title,
+                    number,
+                    segment.value.Seconds,
+                    modelName,
+                    true));
+            }
+
+            foreach (var archived in segment.value.ArchivedVideos.Select((value, index) => (value, index)))
+            {
+                var archivedPath = _store.ResolveAssetPath(owner, project.Id, archived.value.Asset);
+                if (archivedPath is not { Length: > 0 } || !File.Exists(archivedPath)) continue;
+                historyVideos.Add(new StoryHistoryVideoItem(
+                    $"segment-{segment.value.Id}-archived-{archived.index}",
+                    archivedPath,
+                    string.IsNullOrWhiteSpace(archived.value.Label) ? segment.value.Title : archived.value.Label,
+                    number,
+                    segment.value.Seconds,
+                    modelName,
+                    false));
+            }
+        }
+
+        return new StoryProjectCard(project, previews, historyImages.Count)
+        {
+            HistoryImages = historyImages,
+            HistoryVideos = historyVideos,
+        };
     }
 
     partial void OnSelectedSegmentChanged(StorySegmentEditor? oldValue, StorySegmentEditor? newValue)
@@ -750,10 +862,35 @@ public sealed partial class StoryStudioViewModel : ObservableObject
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, references),
             cancellationToken);
-        var history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
+        MediaStudioHistoryItem history;
+        try
+        {
+            history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"图片已生成，但未能保存到本机历史：{exception.Message}", exception);
+        }
+
         var source = history.Images.First().FilePath;
-        var relative = await _store.ImportAssetAsync(
-            context.Owner, context.ProjectId, context.Segment.Id, source, false, cancellationToken);
+        string relative;
+        try
+        {
+            relative = await _store.ImportAssetAsync(
+                context.Owner, context.ProjectId, context.Segment.Id, source, false, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"图片已保存到创作记录，但未能导入剧情项目：{exception.Message}", exception);
+        }
         EnsureContext(context);
         context.Segment.SetFrame(
             lastFrame, relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);

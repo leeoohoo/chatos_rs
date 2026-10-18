@@ -189,11 +189,43 @@ public static class StoryStudioOptions
 
 public sealed record StoryProjectThumbnail(string FilePath);
 
+public sealed record StoryHistoryImageItem(
+    string Id,
+    string FilePath,
+    string Title,
+    string KindLabel);
+
+public sealed record StoryHistoryVideoItem(
+    string Id,
+    string FilePath,
+    string Title,
+    int SegmentNumber,
+    int Seconds,
+    string ModelName,
+    bool IsCurrentVersion)
+{
+    public string SegmentLabel => $"第 {SegmentNumber} 段";
+    public string VersionLabel => IsCurrentVersion ? "当前成片" : "历史版本";
+    public string DetailLabel => $"{Seconds}s · {ModelName}";
+}
+
+public enum StoryProjectStatusTone
+{
+    Draft,
+    Production,
+    Review,
+    Complete,
+}
+
 public sealed record StoryProjectCard(
     StoryProjectDocument Project,
     IReadOnlyList<StoryProjectThumbnail> PreviewImages,
     int ImageCount)
 {
+    public IReadOnlyList<StoryHistoryImageItem> HistoryImages { get; init; } = [];
+    public IReadOnlyList<StoryHistoryVideoItem> HistoryVideos { get; init; } = [];
+    public bool HasHistoryImages => HistoryImages.Count > 0;
+    public bool HasHistoryVideos => HistoryVideos.Count > 0;
     public Guid Id => Project.Id;
     public string Title => Project.Title;
     public string Description => string.IsNullOrWhiteSpace(Project.Description) ? "暂无描述" : Project.Description;
@@ -201,11 +233,20 @@ public sealed record StoryProjectCard(
     public double CompletionRatio => Project.Segments.Count == 0
         ? 0
         : (double)Project.CompletedCount / Project.Segments.Count;
+    public bool HasUnresolvedJobs => Project.Segments.Any(segment =>
+        !string.IsNullOrWhiteSpace(segment.PendingVideoJobId));
     public string StatusLabel => Project.Segments.Count == 0
         ? "待规划"
         : Project.CompletedCount == Project.Segments.Count
             ? "已完成"
-            : "制作中";
+            : HasUnresolvedJobs
+                ? "任务待核对"
+                : "制作中";
+    public StoryProjectStatusTone StatusTone => Project.Segments.Count == 0
+        ? StoryProjectStatusTone.Draft
+        : Project.CompletedCount == Project.Segments.Count
+            ? StoryProjectStatusTone.Complete
+            : HasUnresolvedJobs ? StoryProjectStatusTone.Review : StoryProjectStatusTone.Production;
     public string SegmentCountLabel => $"{Project.Segments.Count} 段";
     public string DurationLabel => $"{Project.TotalSeconds} 秒";
     public int CurrentVideoCount => Project.CompletedCount;
@@ -220,4 +261,5 @@ public sealed record StoryProjectCard(
         ? "待分段"
         : $"{Project.CompletedCount}/{Project.Segments.Count} 段完成 · {Project.TotalSeconds} 秒";
     public string UpdatedAtLabel => Project.UpdatedAt.ToLocalTime().ToString("MM-dd HH:mm");
+
 }

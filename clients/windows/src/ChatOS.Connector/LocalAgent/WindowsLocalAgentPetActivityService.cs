@@ -57,22 +57,29 @@ public sealed class WindowsLocalAgentPetActivityService : IPetActivityInboxServi
 
     private static PetActivity Map(WindowsLocalAgentRun run)
     {
-        var source = run.ProfileKey == "main_chat"
-            ? PetActivitySource.Chat
-            : PetActivitySource.TaskExecution;
         var conversationId = String(run.Input, "conversation_id")
             ?? String(run.Input, "source_conversation_id");
         var turnId = String(run.Input, "turn_id")
             ?? String(run.Input, "source_turn_id")
             ?? (run.OwnerEntityType == "conversation_turn" ? run.OwnerEntityId : null);
         var taskId = run.OwnerEntityType == "task" ? run.OwnerEntityId : null;
+        var source = run.Status == "waiting_user" && !string.IsNullOrWhiteSpace(conversationId)
+            ? PetActivitySource.AskUserPrompt
+            : run.ProfileKey == "main_chat"
+                ? PetActivitySource.Chat
+                : PetActivitySource.TaskExecution;
         var kind = Kind(run.Status);
         var updated = Date(run.UpdatedAtUnixMs);
         return new PetActivity(
             $"local-run:{run.RunId}",
             source,
             kind,
-            source == PetActivitySource.Chat ? "本地对话" : "本地任务",
+            source switch
+            {
+                PetActivitySource.AskUserPrompt => "需要你的回复",
+                PetActivitySource.Chat => "本地对话",
+                _ => "本地任务",
+            },
             Detail(run),
             new PetActivityRoute(
                 ConversationId: conversationId,

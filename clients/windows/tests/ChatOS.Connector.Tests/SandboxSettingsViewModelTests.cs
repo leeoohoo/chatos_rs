@@ -86,6 +86,26 @@ public sealed class SandboxSettingsViewModelTests
         Assert.Contains("白名单", viewModel.ErrorMessage, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Backend_summary_tracks_the_effective_isolation_policy()
+    {
+        var viewModel = Create(new MemoryStore(RestrictedSettings));
+        await viewModel.OpenAsync();
+
+        Assert.True(viewModel.IsFilesystemIsolated);
+        Assert.True(viewModel.IsNetworkIsolated);
+        Assert.Contains("AppContainer", viewModel.BackendDescription, StringComparison.Ordinal);
+        Assert.Contains("项目", viewModel.CurrentProfileLabel, StringComparison.Ordinal);
+
+        viewModel.PermissionProfile = ConnectorSandboxPermissionProfile.FullAccess;
+        viewModel.IsEnabled = false;
+        viewModel.NetworkAccess = ConnectorSandboxNetworkAccess.Host;
+
+        Assert.False(viewModel.IsFilesystemIsolated);
+        Assert.False(viewModel.IsNetworkIsolated);
+        Assert.Equal(viewModel.FullAccessLabel, viewModel.CurrentProfileLabel);
+    }
+
     private static SandboxSettingsViewModel Create(
         IConnectorSandboxSettingsStore store,
         IControlledNetworkGuardClient? networkGuard = null,

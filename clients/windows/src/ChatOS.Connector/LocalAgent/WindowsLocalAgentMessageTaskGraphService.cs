@@ -8,13 +8,18 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
 {
     private readonly WindowsLocalAgentTaskClient _tasks;
     private readonly WindowsLocalAgentRuntimeClient _runtime;
+    private readonly WindowsLocalAgentControlPlaneClient _controlPlane;
     private readonly object _gate = new();
     private string? _owner;
 
     public WindowsLocalAgentMessageTaskGraphService(
-        WindowsLocalAgentTaskClient tasks, WindowsLocalAgentRuntimeClient runtime)
+        WindowsLocalAgentTaskClient tasks,
+        WindowsLocalAgentRuntimeClient runtime,
+        WindowsLocalAgentControlPlaneClient controlPlane)
     {
-        _tasks = tasks; _runtime = runtime;
+        _tasks = tasks;
+        _runtime = runtime;
+        _controlPlane = controlPlane;
     }
 
     public void Configure(string ownerUserId) { lock (_gate) _owner = ownerUserId; }
@@ -24,19 +29,23 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
         string messageId, MessageTaskLookup? lookup,
         CancellationToken cancellationToken = default)
     {
-        if (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false) is { } graph)
-            return MapMessageGraph(graph, messageId, lookup);
+        if (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false) is
+            { Nodes.Count: > 0 } graph)
+            return await MapMessageGraphAsync(graph, messageId, lookup, cancellationToken)
+                .ConfigureAwait(false);
         var graphs = await GraphsAsync(lookup, null, cancellationToken).ConfigureAwait(false);
         var tasks = graphs.SelectMany(value => value.Tasks).ToArray();
         var dependencies = graphs.SelectMany(value => value.Dependencies).ToArray();
         var nonRoots = dependencies.Select(value => value.TaskId).ToHashSet(StringComparer.Ordinal);
         var roots = tasks.Select(value => value.TaskId).Where(value => !nonRoots.Contains(value)).ToArray();
         var depths = Depths(tasks, dependencies);
+        var mappedTasks = await Task.WhenAll(tasks.Select(task =>
+            MapTaskAsync(task, dependencies, tasks, cancellationToken))).ConfigureAwait(false);
         return new MessageTaskGraphSnapshot(
             roots,
-            tasks.Select(task => new MessageTaskGraphNode(
-                MapTask(task, dependencies), depths.GetValueOrDefault(task.TaskId),
-                roots.Contains(task.TaskId), true, [])).ToArray(),
+            mappedTasks.Select(task => new MessageTaskGraphNode(
+                task, depths.GetValueOrDefault(task.Id),
+                roots.Contains(task.Id), true, [])).ToArray(),
             dependencies.Select(value => new MessageTaskGraphEdge(
                 $"{value.PrerequisiteTaskId}->{value.TaskId}",
                 value.PrerequisiteTaskId, value.TaskId, "prerequisite")).ToArray(),
@@ -50,20 +59,25 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
         if (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false) is { } messageGraph &&
             messageGraph.Nodes.FirstOrDefault(value => value.Task.TaskId == taskId) is { } node)
         {
-            var mappedTask = MapTask(node.Task, MessageDependencies(messageGraph));
+            var messageTasks = messageGraph.Nodes.Select(value => value.Task).ToArray();
+            var mappedTask = await MapTaskAsync(
+                node.Task, MessageDependencies(messageGraph), messageTasks, cancellationToken)
+                .ConfigureAwait(false);
             var messageRuns = await _tasks.RunsAsync(RequireOwner(), taskId, cancellationToken)
                 .ConfigureAwait(false);
             return messageRuns.FirstOrDefault() is { } messageRun
-                ? Merge(mappedTask, MapRun(messageRun)) : mappedTask;
+                ? Merge(mappedTask, MapRun(messageRun, mappedTask.AcceptanceContract)) : mappedTask;
         }
         var graphs = await GraphsAsync(lookup, taskId, cancellationToken).ConfigureAwait(false);
         var graph = graphs.FirstOrDefault(value => value.Tasks.Any(task => task.TaskId == taskId))
             ?? throw new InvalidOperationException("The local task does not exist.");
         var task = graph.Tasks.First(value => value.TaskId == taskId);
-        var mapped = MapTask(task, graph.Dependencies);
+        var mapped = await MapTaskAsync(task, graph.Dependencies, graph.Tasks, cancellationToken)
+            .ConfigureAwait(false);
         var runs = await _tasks.RunsAsync(RequireOwner(), taskId, cancellationToken)
             .ConfigureAwait(false);
-        return runs.FirstOrDefault() is { } run ? Merge(mapped, MapRun(run)) : mapped;
+        return runs.FirstOrDefault() is { } run
+            ? Merge(mapped, MapRun(run, mapped.AcceptanceContract)) : mapped;
     }
 
     public async Task<MessageTaskRunDetail> FetchRunAsync(
@@ -80,7 +94,7 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
             : Array.Empty<WindowsLocalAgentEvent>();
         var offset = Math.Max(0, eventOffset);
         var selected = events.Skip(offset).Take(Math.Clamp(eventLimit, 1, 100)).ToArray();
-        return new(task, MapRun(run), selected.Select(MapEvent).ToArray(), events.Count,
+        return new(task, MapRun(run, task.AcceptanceContract), selected.Select(MapEvent).ToArray(), events.Count,
             events.Count > offset + selected.Length);
     }
 
@@ -90,18 +104,36 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
     {
         var owner = RequireOwner();
         var run = await _runtime.GetRunAsync(owner, runId, cancellationToken).ConfigureAwait(false);
-        WindowsLocalTask? task;
+        WindowsLocalTask? task = null;
         if (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false) is { } messageGraph)
             task = messageGraph.Nodes.Select(value => value.Task)
                 .FirstOrDefault(value => value.TaskId == run.OwnerEntityId);
-        else
+        if (task is null)
             task = (await GraphsAsync(lookup, run.OwnerEntityId, cancellationToken)
                 .ConfigureAwait(false)).SelectMany(value => value.Tasks)
                 .FirstOrDefault(value => value.TaskId == run.OwnerEntityId);
         if (task is null) throw new InvalidOperationException("The local task does not exist.");
+        var knownRunIds = (await _tasks.RunsAsync(owner, task.TaskId, cancellationToken)
+            .ConfigureAwait(false)).Select(value => value.RunId).ToHashSet(StringComparer.Ordinal);
         var graph = await _tasks.RetryAsync(
             owner, task, Normalize(instruction), cancellationToken).ConfigureAwait(false);
         var retried = graph.Tasks.First(value => value.TaskId == task.TaskId);
+        if (retried.ActiveRunId is null)
+        {
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var runs = await _tasks.RunsAsync(owner, task.TaskId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (runs.FirstOrDefault(value => !knownRunIds.Contains(value.RunId)) is { } createdRun)
+                {
+                    return MapRun(createdRun, null);
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(50 * (attempt + 1)), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
         return new(
             retried.ActiveRunId ?? $"pending-{retried.TaskId}-{retried.Version}",
             retried.TaskId, retried.Status, retried.Status,
@@ -112,11 +144,10 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
         string messageId, string taskId, MessageTaskLookup? lookup, string? reason,
         CancellationToken cancellationToken = default)
     {
-        WindowsLocalTask? task;
-        if (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false) is { } messageGraph)
-            task = messageGraph.Nodes.Select(value => value.Task)
-                .FirstOrDefault(value => value.TaskId == taskId);
-        else
+        var task = (await MessageGraphAsync(lookup, cancellationToken).ConfigureAwait(false))?
+            .Nodes.Select(value => value.Task)
+            .FirstOrDefault(value => value.TaskId == taskId);
+        if (task is null)
             task = (await GraphsAsync(lookup, taskId, cancellationToken).ConfigureAwait(false))
                 .SelectMany(value => value.Tasks).FirstOrDefault(value => value.TaskId == taskId);
         if (task is null) throw new InvalidOperationException("The local task does not exist.");
@@ -138,14 +169,22 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
             cancellationToken).ConfigureAwait(false);
     }
 
-    private static MessageTaskGraphSnapshot MapMessageGraph(
-        WindowsLocalMessageTaskGraph graph, string messageId, MessageTaskLookup? lookup)
+    private async Task<MessageTaskGraphSnapshot> MapMessageGraphAsync(
+        WindowsLocalMessageTaskGraph graph,
+        string messageId,
+        MessageTaskLookup? lookup,
+        CancellationToken cancellationToken)
     {
         var dependencies = MessageDependencies(graph);
+        var sourceTasks = graph.Nodes.Select(value => value.Task).ToArray();
+        var mappedTasks = await Task.WhenAll(sourceTasks.Select(task =>
+            MapTaskAsync(task, dependencies, sourceTasks, cancellationToken))).ConfigureAwait(false);
+        var tasksById = mappedTasks.ToDictionary(task => task.Id, StringComparer.Ordinal);
         return new MessageTaskGraphSnapshot(
             graph.RootTaskIds,
             graph.Nodes.Select(node => new MessageTaskGraphNode(
-                MapTask(node.Task, dependencies), checked((int)node.Depth), node.IsRoot,
+                tasksById[node.Task.TaskId],
+                checked((int)node.Depth), node.IsRoot,
                 node.IsCurrentMessage, [])).ToArray(),
             graph.Edges.Select(edge => new MessageTaskGraphEdge(
                 $"{edge.SourceTaskId}->{edge.TargetTaskId}", edge.SourceTaskId,
@@ -160,8 +199,55 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
         .Select(value => new WindowsLocalTaskDependency(value.TargetTaskId, value.SourceTaskId))
         .ToArray();
 
+    private async Task<MessageTask> MapTaskAsync(
+        WindowsLocalTask task,
+        IReadOnlyList<WindowsLocalTaskDependency> dependencies,
+        IReadOnlyList<WindowsLocalTask>? graphTasks,
+        CancellationToken cancellationToken)
+    {
+        var mapped = MapTask(task, dependencies, graphTasks);
+        if (string.IsNullOrWhiteSpace(task.ModelConfigRevision)) return mapped;
+        try
+        {
+            var snapshot = await _controlPlane.ModelAsync(
+                RequireOwner(), task.ModelConfigRef, task.ModelConfigRevision, cancellationToken)
+                .ConfigureAwait(false);
+            return mapped with
+            {
+                DefaultModelConfig = new MessageTaskModelConfigSummary(
+                    snapshot.ModelConfigRef, null, snapshot.Provider, snapshot.Model),
+                ThinkingLevel = mapped.ThinkingLevel ?? snapshot.ThinkingLevel,
+                DefaultModelConfigRevision = snapshot.ModelConfigRevision,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Historical Task metadata remains usable even if its exact model snapshot
+            // predates this Host or cannot currently be loaded. Never substitute latest.
+            return mapped;
+        }
+    }
+
     private static MessageTask MapTask(
-        WindowsLocalTask task, IReadOnlyList<WindowsLocalTaskDependency> dependencies) => new(
+        WindowsLocalTask task,
+        IReadOnlyList<WindowsLocalTaskDependency> dependencies,
+        IReadOnlyList<WindowsLocalTask>? graphTasks = null)
+    {
+        var prerequisiteIds = dependencies.Where(value => value.TaskId == task.TaskId)
+            .Select(value => value.PrerequisiteTaskId).Distinct(StringComparer.Ordinal).ToArray();
+        var graphTasksById = (graphTasks ?? [])
+            .ToDictionary(value => value.TaskId, StringComparer.Ordinal);
+        var prerequisiteTasks = prerequisiteIds.Select(id =>
+        {
+            graphTasksById.TryGetValue(id, out var prerequisite);
+            return new MessageTaskReference(id, prerequisite?.Title, prerequisite?.Status);
+        }).ToArray();
+
+        return new(
             Id: task.TaskId,
             Title: task.Title,
             Description: String(task.Input, "description"),
@@ -187,9 +273,8 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
             SourceTurnId: task.SourceEntityType == "conversation_turn" ? task.SourceEntityId
                 : String(task.Input, "source_turn_id"),
             SourceUserMessageId: null,
-            PrerequisiteTaskIds: dependencies.Where(value => value.TaskId == task.TaskId)
-                .Select(value => value.PrerequisiteTaskId).ToArray(),
-            PrerequisiteTasks: [],
+            PrerequisiteTaskIds: prerequisiteIds,
+            PrerequisiteTasks: prerequisiteTasks,
             ProjectTaskId: null,
             ExecutionClientRef: String(task.Input, "client_ref"),
             DependencyContextRefs: [],
@@ -198,22 +283,30 @@ public sealed class WindowsLocalAgentMessageTaskGraphService : IMessageTaskGraph
             McpConfigJson: null,
             InputPayloadJson: task.Input.GetRawText(),
             CreatedAt: Date(task.CreatedAtUnixMs),
-            UpdatedAt: Date(task.UpdatedAtUnixMs));
+            UpdatedAt: Date(task.UpdatedAtUnixMs),
+            AcceptanceContract: MessageTaskAcceptanceContract.Decode(task.Input),
+            RequirementPlan: MessageTaskRequirementPlan.Decode(task.Input, task.Title),
+            ThinkingLevel: String(task.Input, "thinking_level"),
+            DefaultModelConfigRevision: task.ModelConfigRevision);
+    }
 
     private static MessageTask Merge(MessageTask task, MessageTaskRun run) => task with {
         LastRunId = run.Id,
         LastRunStatus = run.Status,
         LastRun = new MessageTaskLastRunSummary(
             run.Id, run.Status, run.ModelPhaseStatus, run.ResultSummary, run.ReportContent,
-            run.ErrorMessage, run.StartedAt, run.FinishedAt),
+            run.ErrorMessage, run.StartedAt, run.FinishedAt, run.AcceptanceReport),
         ResultSummary = run.ResultSummary,
     };
 
-    private static MessageTaskRun MapRun(WindowsLocalAgentRun run) => new(
+    private static MessageTaskRun MapRun(
+        WindowsLocalAgentRun run,
+        MessageTaskAcceptanceContract? acceptanceContract) => new(
         run.RunId, run.OwnerEntityId, run.Status, run.Status,
         Date(run.CreatedAtUnixMs), IsTerminal(run.Status) ? Date(run.UpdatedAtUnixMs) : null,
         String(run.TerminalOutcome, "text"), String(run.TerminalOutcome, "report"),
-        String(run.TerminalOutcome, "error"));
+        String(run.TerminalOutcome, "error"),
+        MessageTaskAcceptanceReport.Decode(run.TerminalOutcome, acceptanceContract));
 
     private static MessageTaskRunEvent MapEvent(WindowsLocalAgentEvent value) => new(
         value.EventId, value.EventType,

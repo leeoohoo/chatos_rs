@@ -4,6 +4,8 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Diagnostics;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Pickers;
@@ -18,6 +20,9 @@ public sealed partial class MediaStudioPage : Page
     private string? _activeStoryVideoPath;
     private MediaPlaybackList? _storyPlaylist;
     private ContentDialog? _activeDialog;
+    private int _loadGeneration;
+    private bool _isPageLoaded;
+    private bool _isStoryCreateOpen;
 
     public MediaStudioPage(
         MediaStudioViewModel viewModel,
@@ -46,6 +51,7 @@ public sealed partial class MediaStudioPage : Page
 
     public void ResetSession()
     {
+        _isStoryCreateOpen = false;
         CloseActiveDialog();
         ReleaseStoryPlaylist();
         VideoPlayer.Source = null;
@@ -58,7 +64,13 @@ public sealed partial class MediaStudioPage : Page
         StoryViewModel.Reset();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => CloseActiveDialog();
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        _isPageLoaded = false;
+        _isStoryCreateOpen = false;
+        Interlocked.Increment(ref _loadGeneration);
+        CloseActiveDialog();
+    }
 
     private void OnStudioSectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs args)
     {
@@ -101,15 +113,41 @@ public sealed partial class MediaStudioPage : Page
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _isPageLoaded = true;
+        var loadGeneration = Interlocked.Increment(ref _loadGeneration);
         StartupDiagnostics.RecordLifecycle("media studio loaded event entered");
-        if (_shell.CurrentOwnerUserId is not { Length: > 0 } owner) return;
-        await ViewModel.OpenAsync(owner);
-        StartupDiagnostics.RecordLifecycle("media studio image workspace loaded");
-        await StoryViewModel.OpenAsync(owner);
-        StartupDiagnostics.RecordLifecycle("media studio story workspace loaded");
-        RefreshState();
-        StartupDiagnostics.RecordLifecycle("media studio loaded event completed");
+        try
+        {
+            if (_shell.CurrentOwnerUserId is not { Length: > 0 } owner)
+            {
+                StartupDiagnostics.RecordLifecycle("media studio load skipped because no owner session is available");
+                return;
+            }
+
+            await ViewModel.OpenAsync(owner);
+            if (!IsCurrentLoad(loadGeneration)) return;
+            StartupDiagnostics.RecordLifecycle("media studio image workspace loaded");
+
+            await StoryViewModel.OpenAsync(owner);
+            if (!IsCurrentLoad(loadGeneration)) return;
+            StartupDiagnostics.RecordLifecycle("media studio story workspace loaded");
+
+            RefreshState();
+            StartupDiagnostics.RecordLifecycle("media studio loaded event completed");
+        }
+        catch (Exception exception)
+        {
+            StartupDiagnostics.RecordUnhandled("media studio loading", exception);
+            if (IsCurrentLoad(loadGeneration))
+            {
+                ViewModel.ReportError($"加载 AI 创作工作区失败：{exception.Message}");
+                RefreshState();
+            }
+        }
     }
+
+    private bool IsCurrentLoad(int generation) =>
+        _isPageLoaded && generation == Volatile.Read(ref _loadGeneration);
 
     private void OnStoryProjectClick(object sender, ItemClickEventArgs e)
     {
@@ -128,8 +166,27 @@ public sealed partial class MediaStudioPage : Page
     private async void OnLoadMoreStoryProjectsClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.LoadMoreProjectsAsync();
 
-    private async void OnCreateStoryProjectClick(object sender, RoutedEventArgs e) =>
+    private void OnOpenStoryCreateClick(object sender, RoutedEventArgs e)
+    {
+        if (!StoryViewModel.CanOpenCreate) return;
+        _isStoryCreateOpen = true;
+        RefreshStoryState();
+    }
+
+    private void OnCancelStoryCreateClick(object sender, RoutedEventArgs e)
+    {
+        if (StoryViewModel.IsBusy) return;
+        _isStoryCreateOpen = false;
+        RefreshStoryState();
+    }
+
+    private async void OnCreateStoryProjectClick(object sender, RoutedEventArgs e)
+    {
         await StoryViewModel.CreateProjectAsync();
+        if (!StoryViewModel.IsWorkspaceOpen) return;
+        _isStoryCreateOpen = false;
+        RefreshStoryState();
+    }
 
     private void OnCloseStoryProjectClick(object sender, RoutedEventArgs e) =>
         StoryViewModel.CloseProject();
@@ -137,12 +194,67 @@ public sealed partial class MediaStudioPage : Page
     private async void OnSaveStoryProjectClick(object sender, RoutedEventArgs e) =>
         await StoryViewModel.SaveCurrentAsync();
 
-    private void OnOpenStoryPromptCenterClick(object sender, RoutedEventArgs e)
+    private async void OnOpenStoryPromptCenterClick(object sender, RoutedEventArgs e)
     {
-        if (StoryWorkspaceSectionBar is not null)
-            StoryWorkspaceSectionBar.SelectedItem = StorySourceSectionItem;
-        StoryPromptAuditExpander.IsExpanded = true;
-        DispatcherQueue.TryEnqueue(() => StoryPromptAuditExpander.StartBringIntoView());
+        if (StoryViewModel.IsWorkspaceOpen)
+        {
+            if (StoryWorkspaceSectionBar is not null)
+                StoryWorkspaceSectionBar.SelectedItem = StorySourceSectionItem;
+            StoryPromptAuditExpander.IsExpanded = true;
+            DispatcherQueue.TryEnqueue(() => StoryPromptAuditExpander.StartBringIntoView());
+            return;
+        }
+
+        var selector = new ComboBox
+        {
+            Header = "提示词",
+            ItemsSource = StoryViewModel.PromptAuditItems,
+            DisplayMemberPath = nameof(StoryPromptAuditItem.Name),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        var purpose = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            FontSize = 12,
+            Opacity = 0.72,
+        };
+        var content = new TextBox
+        {
+            AcceptsReturn = true,
+            IsReadOnly = true,
+            MinHeight = 300,
+            MaxHeight = 460,
+            TextWrapping = TextWrapping.Wrap,
+        };
+        void SelectPrompt()
+        {
+            if (selector.SelectedItem is not StoryPromptAuditItem item) return;
+            purpose.Text = $"{item.Key} · {item.Purpose}";
+            content.Text = item.Content;
+        }
+        selector.SelectionChanged += (_, _) => SelectPrompt();
+        selector.SelectedIndex = StoryViewModel.PromptAuditItems.Count > 0 ? 0 : -1;
+        SelectPrompt();
+        var panel = new StackPanel
+        {
+            Width = XamlRoot.Size.Width > 0 ? Math.Clamp(XamlRoot.Size.Width - 220, 480, 760) : 680,
+            Spacing = 12,
+        };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "查看剧情模式实际使用的提示词、上下文与工具协议；这里不会调用模型。",
+            TextWrapping = TextWrapping.Wrap,
+        });
+        panel.Children.Add(selector);
+        panel.Children.Add(purpose);
+        panel.Children.Add(content);
+        await ShowDialogAsync(new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "提示词中心",
+            Content = panel,
+            CloseButtonText = "关闭",
+        });
     }
 
     private void OnQuickSplitStoryClick(object sender, RoutedEventArgs e) =>
@@ -549,13 +661,11 @@ public sealed partial class MediaStudioPage : Page
     private void OnClearReferencesClick(object sender, RoutedEventArgs e) =>
         ViewModel.ClearReferenceImages();
 
-    private void OnImageHistoryCardClick(object sender, RoutedEventArgs e)
+    private async void OnImageHistoryCardClick(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { DataContext: MediaStudioHistoryItem item })
-        {
-            ViewModel.SelectHistoryItem(item);
-            StudioPivot.SelectedIndex = 0;
-        }
+        if (sender is not Button { DataContext: MediaStudioHistoryItem item } || item.Images.Count == 0) return;
+        var preview = new MediaStudioImagePreviewDialog(XamlRoot, item.Images, 0, false);
+        await ShowDialogAsync(preview.Dialog);
     }
 
     private void OnStoryHistoryProjectClick(object sender, RoutedEventArgs e)
@@ -566,18 +676,42 @@ public sealed partial class MediaStudioPage : Page
         StudioPivot.SelectedIndex = 2;
     }
 
-    private void OnStoryHistoryPlayClick(object sender, RoutedEventArgs e)
+    private async void OnStoryHistoryPlayClick(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: StoryProjectCard card } || !card.CanPlay) return;
-        StoryViewModel.OpenProject(card.Project);
-        StudioPivot.SelectedIndex = 2;
-        if (StoryWorkspaceSectionBar is not null)
-            StoryWorkspaceSectionBar.SelectedItem = StoryGraphSectionItem;
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            RefreshStoryState();
-            OnPlayStoryPlaylistClick(sender, e);
-        });
+        var videos = card.HistoryVideos
+            .Where(item => item.IsCurrentVersion)
+            .OrderBy(item => item.SegmentNumber)
+            .ToArray();
+        if (videos.Length == 0) return;
+
+        var playlist = new MediaPlaybackList();
+        foreach (var video in videos)
+            playlist.Items.Add(new MediaPlaybackItem(MediaSource.CreateFromUri(new Uri(video.FilePath, UriKind.Absolute))));
+        await ShowVideoDialogAsync(card.Title, playlist);
+    }
+
+    private async void OnStoryHistoryImageClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StoryHistoryImageItem image }) return;
+        var card = StoryViewModel.Projects.FirstOrDefault(project => project.HistoryImages.Contains(image));
+        var images = (card?.HistoryImages ?? [image])
+            .Select(item => new MediaStudioImageItem(item.Id, item.FilePath, ImageMimeType(item.FilePath), null))
+            .ToArray();
+        var selectedIndex = Array.FindIndex(images, item => item.Id == image.Id);
+        var preview = new MediaStudioImagePreviewDialog(XamlRoot, images, Math.Max(0, selectedIndex), false);
+        await ShowDialogAsync(preview.Dialog);
+    }
+
+    private async void OnStoryHistoryVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StoryHistoryVideoItem video })
+            await ShowVideoDialogAsync($"{video.SegmentLabel} · {video.Title}", video.FilePath);
+    }
+
+    private void OnRevealStoryHistoryVideoClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: StoryHistoryVideoItem video }) RevealInExplorer(video.FilePath);
     }
 
     private void SelectStorySourceSection()
@@ -715,19 +849,49 @@ public sealed partial class MediaStudioPage : Page
     private void OnRemoveVideoAudioClick(object sender, RoutedEventArgs e) =>
         ViewModel.RemoveVideoReferenceAudio();
 
+    private void OnVideoDurationSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: int seconds })
+            ViewModel.VideoSeconds = seconds;
+    }
+
+    private void OnVideoSizeSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: string { Length: > 0 } size })
+            ViewModel.VideoSize = size;
+    }
+
     private async void OnGenerateVideoClick(object sender, RoutedEventArgs e) =>
         await ViewModel.GenerateVideoAsync();
 
     private void OnCancelVideoClick(object sender, RoutedEventArgs e) =>
         ViewModel.CancelVideoGeneration();
 
-    private void OnVideoHistoryCardClick(object sender, RoutedEventArgs e)
+    private async void OnVideoHistoryCardClick(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: MediaStudioVideoHistoryItem item })
-        {
-            ViewModel.SelectVideoHistoryItem(item);
-            StudioPivot.SelectedIndex = 1;
-        }
+            await ShowVideoDialogAsync(item.Prompt, item.FilePath);
+    }
+
+    private void OnRevealVideoHistoryClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: MediaStudioVideoHistoryItem video }) RevealInExplorer(video.FilePath);
+    }
+
+    private void OnRevealImageHistoryClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: MediaStudioHistoryItem item } && item.Images.FirstOrDefault() is { } image)
+            RevealInExplorer(image.FilePath);
+    }
+
+    private void OnAdaptiveHistoryGridSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (sender is not ItemsControl { ItemsPanelRoot: ItemsWrapGrid panel } control ||
+            control.Tag is not string minimumText ||
+            !double.TryParse(minimumText, out var minimum)) return;
+        var available = Math.Max(minimum, control.ActualWidth);
+        var columns = Math.Max(1, (int)Math.Floor((available + 14) / (minimum + 14)));
+        panel.ItemWidth = Math.Max(minimum, Math.Floor(available / columns));
     }
 
     private async void OnLoadMoreVideoHistoryClick(object sender, RoutedEventArgs e) =>
@@ -784,6 +948,82 @@ public sealed partial class MediaStudioPage : Page
             ViewModel.ReportError($"保存视频失败：{exception.Message}");
         }
     }
+
+    private async Task ShowVideoDialogAsync(string title, string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            ViewModel.ReportError("视频文件不存在，可能已被移动或删除。");
+            return;
+        }
+
+        await ShowVideoDialogAsync(
+            title,
+            MediaSource.CreateFromUri(new Uri(filePath, UriKind.Absolute)));
+    }
+
+    private Task ShowVideoDialogAsync(string title, MediaPlaybackList playlist) =>
+        ShowVideoDialogAsync(title, (IMediaPlaybackSource)playlist);
+
+    private async Task ShowVideoDialogAsync(string title, IMediaPlaybackSource source)
+    {
+        var width = XamlRoot.Size.Width > 0
+            ? Math.Clamp(XamlRoot.Size.Width - 140, 420, 820)
+            : 720;
+        var player = new MediaPlayerElement
+        {
+            Width = width,
+            Height = Math.Min(500, width * 9 / 16),
+            AreTransportControlsEnabled = true,
+            AutoPlay = true,
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+            Source = source,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = string.IsNullOrWhiteSpace(title) ? "视频预览" : title,
+            Content = player,
+            CloseButtonText = "关闭",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        try
+        {
+            await ShowDialogAsync(dialog);
+        }
+        finally
+        {
+            player.Source = null;
+        }
+    }
+
+    private void RevealInExplorer(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            ViewModel.ReportError("文件不存在，可能已被移动或删除。");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{filePath}\"")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            ViewModel.ReportError($"无法打开文件位置：{exception.Message}");
+        }
+    }
+
+    private static string ImageMimeType(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
+    {
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
+        _ => "image/png",
+    };
 
     private void RefreshState()
     {
@@ -857,6 +1097,7 @@ public sealed partial class MediaStudioPage : Page
     private void RefreshStoryState()
     {
         var workspaceOpen = StoryViewModel.IsWorkspaceOpen;
+        if (workspaceOpen) _isStoryCreateOpen = false;
         StoryCreatePanel.Visibility = workspaceOpen
             ? Visibility.Collapsed
             : Visibility.Visible;
@@ -871,7 +1112,9 @@ public sealed partial class MediaStudioPage : Page
         StoryLandingLoadingState.Visibility = isStoryLoading ? Visibility.Visible : Visibility.Collapsed;
         StoryLandingEmptyState.Visibility = !isStoryLoading && !hasProjects ? Visibility.Visible : Visibility.Collapsed;
         StoryLandingProjects.Visibility = !isStoryLoading && hasProjects ? Visibility.Visible : Visibility.Collapsed;
-        StoryCreateForm.Visibility = isStoryLoading ? Visibility.Collapsed : Visibility.Visible;
+        StoryCreateOverlay.Visibility = !workspaceOpen && _isStoryCreateOpen
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         var hasSegment = StoryViewModel.SelectedSegment is not null;
         StorySegmentEmptyState.Visibility = hasSegment ? Visibility.Collapsed : Visibility.Visible;
         StorySegmentEditorPanel.Visibility = hasSegment ? Visibility.Visible : Visibility.Collapsed;

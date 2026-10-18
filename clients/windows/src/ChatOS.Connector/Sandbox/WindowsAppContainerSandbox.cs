@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -14,9 +16,6 @@ internal static partial class WindowsAppContainerSandbox
     internal const nuint ProcThreadAttributeSecurityCapabilities = 0x0002_0009;
     private const int ErrorAlreadyExistsHResult = unchecked((int)0x800700B7);
     private const uint DaclSecurityInformation = 0x0000_0004;
-    private const uint FileTraverse = 0x0000_0020;
-    private const uint GrantAccess = 1;
-    private const uint RevokeAccess = 4;
     private const string InternetClientSid = "S-1-15-3-1";
     private const string PrivateNetworkClientServerSid = "S-1-15-3-3";
     private static readonly ConcurrentDictionary<string, Lazy<Task>> PreparedWorkspaceAcls =
@@ -50,6 +49,12 @@ internal static partial class WindowsAppContainerSandbox
             throw new InvalidOperationException("An AppContainer context requires a restricted profile.");
         }
 
+        workspaceRoot = Path.GetFullPath(workspaceRoot);
+        if (!Directory.Exists(workspaceRoot))
+        {
+            throw new DirectoryNotFoundException("Sandbox workspace root was not found.");
+        }
+
         var profileName = ProfileName(workspaceRoot, policy.PermissionProfile, isolationKey);
         EphemeralProfileLease? profileLease = null;
         if (!string.IsNullOrWhiteSpace(isolationKey))
@@ -65,6 +70,24 @@ internal static partial class WindowsAppContainerSandbox
         {
             appContainerSid = CreateOrDeriveProfileSid(profileName);
             var sidText = SidToString(appContainerSid);
+            var temporaryDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ChatOS",
+                "WindowsClient",
+                "SandboxTemp",
+                profileName);
+            if (profileLease is not null)
+            {
+                // Persist a cleanup journal before the first ACL mutation. A cancelled or
+                // failed preparation can otherwise leave a registered profile and partial
+                // ancestor ACEs with no metadata from which the next run can recover.
+                await profileLease.RegisterAsync(
+                    Path.GetFullPath(workspaceRoot),
+                    sidText,
+                    temporaryDirectory,
+                    loopbackExempt: false,
+                    cancellationToken).ConfigureAwait(false);
+            }
             if (policy.NetworkAccess is ConnectorSandboxNetworkAccess.Loopback)
             {
                 if (profileLease is null)
@@ -75,6 +98,12 @@ internal static partial class WindowsAppContainerSandbox
                 await SetLoopbackExemptionAsync(profileName, enabled: true, cancellationToken)
                     .ConfigureAwait(false);
                 loopbackExempt = true;
+                await profileLease.RegisterAsync(
+                    Path.GetFullPath(workspaceRoot),
+                    sidText,
+                    temporaryDirectory,
+                    loopbackExempt: true,
+                    cancellationToken).ConfigureAwait(false);
             }
             await EnsureWorkspaceAclAsync(
                 workspaceRoot,
@@ -85,27 +114,12 @@ internal static partial class WindowsAppContainerSandbox
                 workspaceRoot,
                 sidText,
                 cancellationToken).ConfigureAwait(false);
-            var temporaryDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "ChatOS",
-                "WindowsClient",
-                "SandboxTemp",
-                profileName);
             Directory.CreateDirectory(temporaryDirectory);
             await EnsurePathAclAsync(
                 temporaryDirectory,
                 sidText,
                 "(OI)(CI)M",
                 cancellationToken).ConfigureAwait(false);
-            if (profileLease is not null)
-            {
-                await profileLease.RegisterAsync(
-                    Path.GetFullPath(workspaceRoot),
-                    sidText,
-                    temporaryDirectory,
-                    loopbackExempt,
-                    cancellationToken).ConfigureAwait(false);
-            }
             if (policy.GrantInternetCapabilities)
             {
                 capabilitySids.Add(CapabilitySid(InternetClientSid));
@@ -242,7 +256,14 @@ internal static partial class WindowsAppContainerSandbox
 
             var metadata = state.Metadata ?? await LoadProfileMetadataAsync(profileName)
                 .ConfigureAwait(false);
-            if (metadata is not null && await CleanupProfileAsync(metadata).ConfigureAwait(false))
+            if (metadata is null)
+            {
+                // Preparation can fail immediately after CreateAppContainerProfile and before
+                // the cleanup journal reaches disk. No ACL was intentionally granted yet, but
+                // the native profile must still be removed.
+                _ = DeleteControlledProfile(profileName);
+            }
+            else if (await CleanupProfileAsync(metadata).ConfigureAwait(false))
             {
                 DeleteProfileMetadata(profileName);
             }
@@ -420,83 +441,114 @@ internal static partial class WindowsAppContainerSandbox
         return Task.CompletedTask;
     }
 
-    private static void UpdateTraverseAcl(string path, string sid, bool remove)
+    internal static void UpdateTraverseAcl(string path, string sid, bool remove)
     {
-        var result = GetNamedSecurityInfo(
-            path,
-            SeObjectType.FileObject,
-            DaclSecurityInformation,
-            out _,
-            out _,
-            out var currentAcl,
-            out _,
-            out var securityDescriptor);
-        if (result != 0)
+        var directory = new DirectoryInfo(path);
+        var security = directory.GetAccessControl(AccessControlSections.Access);
+        var identity = new SecurityIdentifier(sid);
+        var originalDescriptor = security.GetSecurityDescriptorBinaryForm();
+        var descriptor = new RawSecurityDescriptor(originalDescriptor, 0);
+        var acl = descriptor.DiscretionaryAcl ?? new RawAcl(GenericAcl.AclRevision, 1);
+        var matchingIndexes = Enumerable.Range(0, acl.Count)
+            .Where(index => IsExplicitSidAce(acl[index], identity))
+            .ToArray();
+        if (remove)
         {
-            throw new Win32Exception(checked((int)result));
+            if (matchingIndexes.Length == 0)
+            {
+                return;
+            }
+        }
+        else
+        {
+            if (matchingIndexes.Length == 1 &&
+                acl[matchingIndexes[0]] is CommonAce existing &&
+                existing.AceQualifier is AceQualifier.AccessAllowed &&
+                existing.AceFlags is AceFlags.None &&
+                existing.AccessMask == (int)FileSystemRights.Traverse)
+            {
+                return;
+            }
         }
 
-        IntPtr sidPointer = IntPtr.Zero;
-        IntPtr updatedAcl = IntPtr.Zero;
-        try
+        foreach (var index in matchingIndexes.OrderDescending())
         {
-            if (!ConvertStringSidToSid(sid, out sidPointer))
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error());
-            }
-            var entry = new ExplicitAccess
-            {
-                AccessPermissions = FileTraverse,
-                AccessMode = remove ? RevokeAccess : GrantAccess,
-                Inheritance = 0,
-                Trustee = new Trustee
-                {
-                    TrusteeForm = TrusteeForm.Sid,
-                    TrusteeType = TrusteeType.Unknown,
-                    Name = sidPointer,
-                },
-            };
-            result = SetEntriesInAcl(1, ref entry, currentAcl, out updatedAcl);
-            if (result != 0)
-            {
-                throw new Win32Exception(checked((int)result));
-            }
-            result = SetNamedSecurityInfo(
-                path,
-                SeObjectType.FileObject,
-                DaclSecurityInformation,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                updatedAcl,
-                IntPtr.Zero);
-            if (result != 0)
-            {
-                throw new Win32Exception(checked((int)result));
-            }
+            acl.RemoveAce(index);
         }
-        finally
+        if (!remove)
         {
-            if (updatedAcl != IntPtr.Zero) _ = LocalFree(updatedAcl);
-            if (sidPointer != IntPtr.Zero) _ = LocalFree(sidPointer);
-            if (securityDescriptor != IntPtr.Zero) _ = LocalFree(securityDescriptor);
+            // The SID belongs to this isolated AppContainer profile. Replace its explicit
+            // entries to make retries idempotent. RawAcl is intentional: user-profile ACLs
+            // can be non-canonical, and the high-level SetAccessRule API refuses to preserve
+            // them. Insert before inherited entries without rewriting unrelated ACEs.
+            var insertionIndex = Enumerable.Range(0, acl.Count)
+                .FirstOrDefault(index => acl[index].AceFlags.HasFlag(AceFlags.Inherited), acl.Count);
+            acl.InsertAce(insertionIndex, new CommonAce(
+                AceFlags.None,
+                AceQualifier.AccessAllowed,
+                (int)FileSystemRights.Traverse,
+                identity,
+                isCallback: false,
+                opaque: null));
         }
+        descriptor.DiscretionaryAcl = acl;
+        var updatedDescriptor = new byte[descriptor.BinaryLength];
+        descriptor.GetBinaryForm(updatedDescriptor, 0);
+        if (!SetFileSecurity(ExtendedPath(path), DaclSecurityInformation, updatedDescriptor))
+        {
+            var error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(
+                error,
+                $"Windows could not update the non-propagating sandbox traverse ACL for '{path}'.");
+        }
+    }
+
+    private static bool IsExplicitSidAce(GenericAce ace, SecurityIdentifier identity) =>
+        !ace.AceFlags.HasFlag(AceFlags.Inherited) &&
+        ace is QualifiedAce qualified &&
+        identity.Equals(qualified.SecurityIdentifier);
+
+    private static string ExtendedPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (fullPath.StartsWith("\\\\?\\", StringComparison.Ordinal))
+        {
+            return fullPath;
+        }
+        return fullPath.StartsWith("\\\\", StringComparison.Ordinal)
+            ? "\\\\?\\UNC\\" + fullPath[2..]
+            : "\\\\?\\" + fullPath;
     }
 
     private static IEnumerable<string> AncestorDirectories(string path)
     {
         var fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
         var volumeRoot = Path.TrimEndingDirectorySeparator(Path.GetPathRoot(fullPath) ?? string.Empty);
+        var userProfile = Path.TrimEndingDirectorySeparator(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        var insideUserProfile = !string.IsNullOrWhiteSpace(userProfile) &&
+            (fullPath.Equals(userProfile, StringComparison.OrdinalIgnoreCase) ||
+             fullPath.StartsWith(userProfile + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
         var parent = Directory.GetParent(fullPath);
         while (parent is not null)
         {
+            var normalizedParent = Path.TrimEndingDirectorySeparator(parent.FullName);
             if (string.Equals(
-                    Path.TrimEndingDirectorySeparator(parent.FullName),
+                    normalizedParent,
                     volumeRoot,
                     StringComparison.OrdinalIgnoreCase))
             {
                 yield break;
             }
             yield return parent.FullName;
+            if (insideUserProfile &&
+                normalizedParent.Equals(userProfile, StringComparison.OrdinalIgnoreCase))
+            {
+                // The standard user-profile parent is traversable by AppContainers but is
+                // not user-owned. Mutating C:\Users would require elevation and would broaden
+                // the change beyond the selected per-user sandbox path.
+                yield break;
+            }
             parent = parent.Parent;
         }
     }

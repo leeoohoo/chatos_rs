@@ -49,4 +49,5 @@ public sealed record ConversationAttachmentReference(
     string? Bucket = null,
     string? ObjectKey = null,
     string? Url = null,
-    string? ViewUrl = null);
+    string? ViewUrl = null,
+    string? Sha256 = null);

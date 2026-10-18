@@ -16,7 +16,8 @@ public sealed class WorkspacePathGuard
         var root = Path.GetFullPath(workspaceRoot);
         if (!Directory.Exists(root))
         {
-            throw new Relay.RelayRequestException(404, "Workspace root does not exist.");
+            throw new WorkspaceRequestException(
+                404, "workspace_root_missing", "Workspace root does not exist.");
         }
 
         Root = ResolveRoot(root);
@@ -50,7 +51,10 @@ public sealed class WorkspacePathGuard
             EnsureExistsAndIsNotLink(parent);
             if (!Directory.Exists(parent))
             {
-                throw new Relay.RelayRequestException(400, "Workspace path parent is not a directory.");
+                throw new WorkspaceRequestException(
+                    400,
+                    "workspace_parent_not_directory",
+                    "Workspace path parent is not a directory.");
             }
         }
 
@@ -69,7 +73,8 @@ public sealed class WorkspacePathGuard
         var target = ResolveWritable(relativePath);
         if (!PathExists(target))
         {
-            throw new Relay.RelayRequestException(404, "Workspace entry does not exist.");
+            throw new WorkspaceRequestException(
+                404, "workspace_entry_missing", "Workspace entry does not exist.");
         }
 
         return target;
@@ -89,6 +94,16 @@ public sealed class WorkspacePathGuard
 
     public void EnsureMoveTargetIsOutsideSource(string source, string target)
     {
+        EnsureTargetIsOutsideSource(source, target, "moved");
+    }
+
+    public void EnsureCopyTargetIsOutsideSource(string source, string target)
+    {
+        EnsureTargetIsOutsideSource(source, target, "copied");
+    }
+
+    private void EnsureTargetIsOutsideSource(string source, string target, string operation)
+    {
         if (!Directory.Exists(source))
         {
             return;
@@ -97,7 +112,10 @@ public sealed class WorkspacePathGuard
         var sourcePrefix = Path.TrimEndingDirectorySeparator(source) + Path.DirectorySeparatorChar;
         if (target.StartsWith(sourcePrefix, _pathComparison))
         {
-            throw new Relay.RelayRequestException(400, "A directory cannot be moved into itself.");
+            throw new WorkspaceRequestException(
+                400,
+                "workspace_directory_overlap",
+                $"A directory cannot be {operation} into itself.");
         }
     }
 
@@ -109,7 +127,8 @@ public sealed class WorkspacePathGuard
             value.StartsWith('\\') ||
             Path.IsPathRooted(value))
         {
-            throw new Relay.RelayRequestException(400, "Workspace path is unsafe.");
+            throw new WorkspaceRequestException(
+                400, "workspace_path_unsafe", "Workspace path is unsafe.");
         }
 
         var components = value
@@ -122,12 +141,14 @@ public sealed class WorkspacePathGuard
                 component.IndexOfAny(['<', '>', '"', '|', '?', '*']) >= 0 ||
                 component.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
         {
-            throw new Relay.RelayRequestException(400, "Workspace path is unsafe.");
+            throw new WorkspaceRequestException(
+                400, "workspace_path_unsafe", "Workspace path is unsafe.");
         }
 
         if (!permitsRoot && components.Length == 0)
         {
-            throw new Relay.RelayRequestException(400, "Workspace root cannot be modified.");
+            throw new WorkspaceRequestException(
+                400, "workspace_root_mutation", "Workspace root cannot be modified.");
         }
 
         return components;
@@ -139,7 +160,8 @@ public sealed class WorkspacePathGuard
         if ((info.Attributes & FileAttributes.ReparsePoint) != 0)
         {
             info = info.ResolveLinkTarget(returnFinalTarget: true) as DirectoryInfo
-                ?? throw new Relay.RelayRequestException(400, "Workspace root link is invalid.");
+                ?? throw new WorkspaceRequestException(
+                    400, "workspace_root_link_invalid", "Workspace root link is invalid.");
         }
 
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(info.FullName));
@@ -152,10 +174,15 @@ public sealed class WorkspacePathGuard
             return;
         }
 
-        var rootPrefix = Root + Path.DirectorySeparatorChar;
+        var rootPrefix = Path.EndsInDirectorySeparator(Root)
+            ? Root
+            : Root + Path.DirectorySeparatorChar;
         if (!candidate.StartsWith(rootPrefix, _pathComparison))
         {
-            throw new Relay.RelayRequestException(400, "Workspace path escaped its authorized root.");
+            throw new WorkspaceRequestException(
+                400,
+                "workspace_path_escape",
+                "Workspace path escaped its authorized root.");
         }
     }
 
@@ -163,7 +190,8 @@ public sealed class WorkspacePathGuard
     {
         if (!PathExists(path))
         {
-            throw new Relay.RelayRequestException(404, "Workspace entry does not exist.");
+            throw new WorkspaceRequestException(
+                404, "workspace_entry_missing", "Workspace entry does not exist.");
         }
 
         EnsureIsNotLink(path);
@@ -173,7 +201,10 @@ public sealed class WorkspacePathGuard
     {
         if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
         {
-            throw new Relay.RelayRequestException(400, "Workspace operations cannot traverse a symbolic link or junction.");
+            throw new WorkspaceRequestException(
+                400,
+                "workspace_reparse_point",
+                "Workspace operations cannot traverse a symbolic link or junction.");
         }
     }
 

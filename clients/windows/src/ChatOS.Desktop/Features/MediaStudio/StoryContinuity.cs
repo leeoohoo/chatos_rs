@@ -40,22 +40,31 @@ public sealed partial class StoryStudioViewModel
     public async Task AutoFillContinuityAsync(CancellationToken cancellationToken = default)
     {
         if (!CanAutoFillContinuity) return;
+        var session = _session;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
             FillMissingContinuity();
             await PersistCurrentAsync(cancellationToken);
-            StatusMessage = "已补齐缺失的连续性说明和基础镜头计划";
+            if (session == _session)
+                StatusMessage = "已补齐缺失的连续性说明和基础镜头计划";
+        }
+        catch (OperationCanceledException)
+        {
+            if (session == _session) StatusMessage = "已停止补齐连续性说明";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ErrorMessage = exception.Message;
+            if (session == _session) ErrorMessage = exception.Message;
         }
         finally
         {
-            IsBusy = false;
-            RefreshContinuityAudit();
+            if (session == _session)
+            {
+                IsBusy = false;
+                RefreshContinuityAudit();
+            }
         }
     }
 

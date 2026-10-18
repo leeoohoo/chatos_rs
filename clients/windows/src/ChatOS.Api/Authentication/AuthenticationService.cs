@@ -61,7 +61,7 @@ public sealed class AuthenticationService : IAuthenticationService
             throw new ChatOSApiException("The login response did not include an access token.");
         }
 
-        await _tokenStore.SetAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        await _client.SetAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
         return new AuthSession(response.User.ToDomain());
     }
 
@@ -106,12 +106,12 @@ public sealed class AuthenticationService : IAuthenticationService
         if (token.Length == 0)
             throw new ChatOSApiException("The registration response did not include an access token.");
 
-        await _tokenStore.SetAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
+        await _client.SetAccessTokenAsync(token, cancellationToken).ConfigureAwait(false);
         return new AuthSession(response.User.ToDomain());
     }
 
     public ValueTask LogoutAsync(CancellationToken cancellationToken = default) =>
-        _tokenStore.ClearAsync(cancellationToken);
+        _client.SetAccessTokenAsync(null, cancellationToken);
 }
 
 internal sealed record LoginRequestDto(

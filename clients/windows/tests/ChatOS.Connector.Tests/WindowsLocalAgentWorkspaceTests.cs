@@ -7,7 +7,7 @@ namespace ChatOS.Connector.Tests;
 public sealed class WindowsLocalAgentWorkspaceTests
 {
     [Fact]
-    public async Task ListsBoundConversationsAndCreatesTheMainContactLocally()
+    public async Task ListsBoundConversationsAndCreatesSystemContactsLocally()
     {
         var host = new WorkspaceHost();
         host.Pages.Enqueue(new WindowsLocalConversationPage(
@@ -23,13 +23,23 @@ public sealed class WindowsLocalAgentWorkspaceTests
 
         var snapshot = await workspace.FetchWorkspaceRelationsAsync();
 
-        Assert.Equal("jiguli", Assert.Single(snapshot.Contacts).Id);
+        Assert.Equal(
+            ["jiguli", "plugin-installer"],
+            snapshot.Contacts.Select(value => value.Id).ToArray());
         Assert.Collection(
-            snapshot.Conversations.OrderBy(value => value.Id, StringComparer.Ordinal),
+            snapshot.Conversations.OrderBy(
+                value => value.ProjectId is null ? value.ContactId : $"zz-{value.ProjectId}",
+                StringComparer.Ordinal),
             contact =>
             {
                 Assert.Equal("jiguli", contact.ContactId);
                 Assert.Null(contact.ProjectId);
+            },
+            installer =>
+            {
+                Assert.Equal("plugin-installer", installer.ContactId);
+                Assert.Equal("plugin-installer", installer.ContactAgentId);
+                Assert.Null(installer.ProjectId);
             },
             project =>
             {
@@ -48,10 +58,10 @@ public sealed class WindowsLocalAgentWorkspaceTests
                 Assert.Equal(2_000, second.BeforeUpdatedAtUnixMs);
                 Assert.Equal("project-conversation", second.BeforeConversationId);
             });
-        var create = Assert.Single(host.Creates);
         Assert.Equal(
-            new WindowsLocalConversationResourceBinding("contact", "jiguli"),
-            create.Resource);
+            ["jiguli", "plugin-installer"],
+            host.Creates.Select(value => value.Resource!.ResourceId).ToArray());
+        Assert.All(host.Creates, create => Assert.Equal("contact", create.Resource?.Kind));
     }
 
     [Fact]
@@ -99,6 +109,110 @@ public sealed class WindowsLocalAgentWorkspaceTests
         Assert.Single(host.Creates);
     }
 
+    [Fact]
+    public async Task RejectsAmbiguousProjectBindingsWithoutCreatingAnotherConversation()
+    {
+        var host = new WorkspaceHost();
+        host.Pages.Enqueue(new WindowsLocalConversationPage(
+            [
+                Record("project-conversation-2", "project", "project-1", 2_000),
+                Record("project-conversation-1", "project", "project-1", 1_000),
+            ],
+            null,
+            null));
+        var workspace = Service(host);
+        var projectConversations = new WindowsLocalAgentProjectConversationService(
+            new WindowsLocalAgentConversationClient(host),
+            workspace);
+        projectConversations.Configure("user-1");
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            projectConversations.EnsureConversationAsync(
+                Project(),
+                WindowsLocalAgentWorkspaceService.MainContact));
+
+        Assert.Contains("more than one", error.Message, StringComparison.Ordinal);
+        Assert.Empty(host.Creates);
+    }
+
+    [Fact]
+    public async Task RejectsConversationPagesFromAnotherOwner()
+    {
+        var host = new WorkspaceHost();
+        host.Pages.Enqueue(new WindowsLocalConversationPage(
+            [Record("foreign-project", "project", "project-1") with { OwnerUserId = "user-2" }],
+            null,
+            null));
+        var workspace = Service(host);
+        var projectConversations = new WindowsLocalAgentProjectConversationService(
+            new WindowsLocalAgentConversationClient(host),
+            workspace);
+        projectConversations.Configure("user-1");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            projectConversations.EnsureConversationAsync(
+                Project(),
+                WindowsLocalAgentWorkspaceService.MainContact));
+
+        Assert.Contains("different owner", error.Message, StringComparison.Ordinal);
+        Assert.Empty(host.Creates);
+    }
+
+    [Fact]
+    public async Task RejectsRepeatedConversationPaginationCursor()
+    {
+        var host = new WorkspaceHost();
+        host.Pages.Enqueue(new WindowsLocalConversationPage([], 2_000, "cursor"));
+        host.Pages.Enqueue(new WindowsLocalConversationPage([], 2_000, "cursor"));
+        var workspace = Service(host);
+        workspace.Configure("user-1");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            workspace.FetchWorkspaceRelationsAsync());
+
+        Assert.Contains("repeated conversation cursor", error.Message, StringComparison.Ordinal);
+        Assert.Equal(2, host.Lists.Count);
+        Assert.Empty(host.Creates);
+    }
+
+    [Theory]
+    [InlineData("owner")]
+    [InlineData("conversation")]
+    [InlineData("resource")]
+    public async Task RejectsCreatedConversationWithMismatchedBinding(string mismatch)
+    {
+        var host = new WorkspaceHost { CreatedConversationMismatch = mismatch };
+        host.Pages.Enqueue(new WindowsLocalConversationPage([], null, null));
+        var workspace = Service(host);
+        var projectConversations = new WindowsLocalAgentProjectConversationService(
+            new WindowsLocalAgentConversationClient(host),
+            workspace);
+        projectConversations.Configure("user-1");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            projectConversations.EnsureConversationAsync(
+                Project(),
+                WindowsLocalAgentWorkspaceService.MainContact));
+
+        Assert.Contains("invalid conversation binding", error.Message, StringComparison.Ordinal);
+        Assert.Single(host.Creates);
+    }
+
+    [Fact]
+    public async Task RejectsCreatedSystemContactWithMismatchedOwner()
+    {
+        var host = new WorkspaceHost { CreatedConversationMismatch = "owner" };
+        host.Pages.Enqueue(new WindowsLocalConversationPage([], null, null));
+        var workspace = Service(host);
+        workspace.Configure("user-1");
+
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            workspace.FetchWorkspaceRelationsAsync());
+
+        Assert.Contains("invalid conversation binding", error.Message, StringComparison.Ordinal);
+        Assert.Single(host.Creates);
+    }
+
     private static WindowsLocalAgentWorkspaceService Service(WorkspaceHost host) =>
         new(new WindowsLocalAgentConversationClient(host));
 
@@ -136,6 +250,7 @@ public sealed class WindowsLocalAgentWorkspaceTests
         public List<ListLocalConversationsCommand> Lists { get; } = [];
         public List<CreateLocalConversationCommand> Creates { get; } = [];
         public bool ConflictOnCreate { get; init; }
+        public string? CreatedConversationMismatch { get; init; }
         public string? ActiveOwnerUserId => "user-1";
 
         public Task StartForOwnerAsync(
@@ -180,8 +295,16 @@ public sealed class WindowsLocalAgentWorkspaceTests
             return new("conversation", new WindowsLocalConversationDetail(
                 Record(command.ConversationId) with
                 {
+                    ConversationId = CreatedConversationMismatch == "conversation"
+                        ? "wrong-conversation"
+                        : command.ConversationId,
+                    OwnerUserId = CreatedConversationMismatch == "owner"
+                        ? "user-2"
+                        : command.OwnerUserId,
                     Title = command.Title,
-                    Resource = command.Resource,
+                    Resource = CreatedConversationMismatch == "resource"
+                        ? new WindowsLocalConversationResourceBinding("project", "wrong-project")
+                        : command.Resource,
                 },
                 [],
                 [],

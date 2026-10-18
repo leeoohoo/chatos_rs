@@ -69,7 +69,8 @@ public sealed class ConnectorSettingsViewModelTests
     [Fact]
     public async Task MonitorRefreshesStatusUntilClosed()
     {
-        var control = new ControlDouble();
+        var secondResponse = new TaskCompletionSource<LocalConnectorStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var control = new ControlDouble { MonitoredResponse = secondResponse.Task };
         using var viewModel = new ConnectorSettingsViewModel(
             control,
             new TicketDouble(),
@@ -80,6 +81,9 @@ public sealed class ConnectorSettingsViewModelTests
         await control.SecondRead.Task.WaitAsync(TimeSpan.FromSeconds(1));
         viewModel.Close();
         var readsAfterClose = control.ReadCount;
+        // Hold the in-flight read until Close cancels the monitor. A timer-only
+        // assertion races a new read that already passed the delay boundary.
+        secondResponse.SetResult(control.Current);
         await Task.Delay(40);
 
         Assert.True(readsAfterClose >= 2);
@@ -121,6 +125,8 @@ public sealed class ConnectorSettingsViewModelTests
         public TaskCompletionSource SecondRead { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public Task<LocalConnectorStatus>? MonitoredResponse { get; init; }
+
         public LocalConnectorPairingDraft? LastPairing { get; private set; }
 
         public string? LastTicket { get; private set; }
@@ -129,7 +135,11 @@ public sealed class ConnectorSettingsViewModelTests
 
         public Task<LocalConnectorStatus> GetStatusAsync(CancellationToken cancellationToken = default)
         {
-            if (Interlocked.Increment(ref _readCount) >= 2) SecondRead.TrySetResult();
+            if (Interlocked.Increment(ref _readCount) >= 2)
+            {
+                SecondRead.TrySetResult();
+                if (MonitoredResponse is { } response) return response;
+            }
             return Task.FromResult(Current);
         }
 
@@ -143,6 +153,11 @@ public sealed class ConnectorSettingsViewModelTests
             Current = PairedStatus();
             return Task.FromResult(Current);
         }
+
+        public Task<LocalConnectorStatus> RefreshCredentialAsync(
+            string ticket,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(Current);
 
         public Task DisconnectAsync(CancellationToken cancellationToken = default)
         {

@@ -95,22 +95,33 @@ public sealed partial class StoryStudioViewModel
         var resource = SelectedResource;
         var session = _session;
         if (!CanGenerateResourceImage || owner is null || project is null || resource is null || ProjectImageModel is null) return;
+        var source = BeginGenerationCancellation(cancellationToken);
+        var token = source.Token;
         IsBusy = true;
         ErrorMessage = null;
         try
         {
-            await PersistCurrentAsync(cancellationToken);
+            await PersistCurrentAsync(token);
             await GenerateResourceImageCoreAsync(
                 new ResourceGenerationContext(owner, project.Id, resource, session),
                 ProjectImageModel,
-                cancellationToken);
+                token);
             StatusMessage = $"{resource.KindLabel}“{resource.Name}”的参考图已生成";
+        }
+        catch (OperationCanceledException)
+        {
+            if (session == _session)
+                StatusMessage = "已停止等待剧情素材图";
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             ErrorMessage = exception.Message;
         }
-        finally { IsBusy = false; }
+        finally
+        {
+            EndGenerationCancellation(source);
+            if (session == _session) IsBusy = false;
+        }
     }
 
     private async Task GenerateResourceImageCoreAsync(
@@ -126,10 +137,35 @@ public sealed partial class StoryStudioViewModel
         var result = await _media.GenerateImageAsync(
             new ImageGenerationRequest(imageModel.Id, prompt, ImageSize(ProjectRatio), 1, []),
             cancellationToken);
-        var history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
-        var relative = await _store.ImportAssetAsync(
-            context.Owner, context.ProjectId, $"resource-{resource.Id}", history.Images.First().FilePath,
-            false, cancellationToken);
+        MediaStudioHistoryItem history;
+        try
+        {
+            history = await _history.SaveAsync(context.Owner, prompt, result, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"参考图已生成，但未能保存到本机历史：{exception.Message}", exception);
+        }
+
+        string relative;
+        try
+        {
+            relative = await _store.ImportAssetAsync(
+                context.Owner, context.ProjectId, $"resource-{resource.Id}", history.Images.First().FilePath,
+                false, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException($"参考图已保存到创作记录，但未能导入剧情项目：{exception.Message}", exception);
+        }
         EnsureResourceContext(context);
         resource.SetImage(relative, _store.ResolveAssetPath(context.Owner, context.ProjectId, relative)!);
         await PersistCurrentAsync(cancellationToken);
