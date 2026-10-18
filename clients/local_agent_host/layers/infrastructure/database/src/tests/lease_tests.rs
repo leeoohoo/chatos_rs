@@ -336,7 +336,7 @@ async fn version_two_database_migrates_through_conversation_schema() {
             .fetch_one(&storage.pool)
             .await
             .expect("schema version");
-    assert_eq!(schema_version, 32);
+    assert_eq!(schema_version, 33);
     let memory_tenant_indexes: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
          AND name = 'local_memory_outbox_tenant_runnable'",

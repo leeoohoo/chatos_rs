@@ -333,7 +333,7 @@ extension NativeLocalConnectorService {
         risk: NativeApprovalRisk,
         reason: String
     ) {
-        state.approvalHistory.insert(.init(
+        activityHistory.approvals.insert(.init(
             id: UUID().uuidString,
             command: ([command] + arguments).joined(separator: " "),
             cwd: cwd,
@@ -344,8 +344,8 @@ extension NativeLocalConnectorService {
             reason: reason,
             createdAt: ISO8601DateFormatter().string(from: Date())
         ), at: 0)
-        state.approvalHistory = Array(state.approvalHistory.prefix(1_000))
-        try? stateStore.save(state)
+        activityHistory.approvals = Array(activityHistory.approvals.prefix(1_000))
+        try? activityHistoryStore.save(activityHistory)
     }
 
     func appendCommandHistory(
@@ -354,7 +354,7 @@ extension NativeLocalConnectorService {
         workspace: LocalConnectorWorkspace,
         source: String
     ) {
-        state.commandHistory.insert(.init(
+        activityHistory.commands.insert(.init(
             id: UUID().uuidString,
             source: source,
             workspaceAlias: workspace.alias,
@@ -367,8 +367,8 @@ extension NativeLocalConnectorService {
             error: result.error,
             startedAt: ISO8601DateFormatter().string(from: Date())
         ), at: 0)
-        state.commandHistory = Array(state.commandHistory.prefix(1_000))
-        try? stateStore.save(state)
+        activityHistory.commands = Array(activityHistory.commands.prefix(1_000))
+        try? activityHistoryStore.save(activityHistory)
     }
 
     func sendRelayResponse(

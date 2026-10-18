@@ -132,6 +132,40 @@ struct NativePluginInstaller: Sendable {
         }
     }
 
+    @discardableResult
+    func removeUnreferencedInstallations(
+        referencedInstallationPaths: [String]
+    ) throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { return [] }
+        let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        let referencedTopLevelNames = Set(referencedInstallationPaths.compactMap { path -> String? in
+            let installation = URL(fileURLWithPath: path, isDirectory: true)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            guard installation.path.hasPrefix(rootPrefix) else { return nil }
+            let relative = String(installation.path.dropFirst(rootPrefix.count))
+            return relative.split(separator: "/").first.map(String.init)
+        })
+        let children = try FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsSubdirectoryDescendants]
+        )
+        var removed: [URL] = []
+        for child in children {
+            let name = child.lastPathComponent
+            guard !name.hasPrefix("."), !referencedTopLevelNames.contains(name) else { continue }
+            let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            let standardized = child.standardizedFileURL
+            guard standardized.deletingLastPathComponent() == root else { continue }
+            try FileManager.default.removeItem(at: standardized)
+            removed.append(standardized)
+        }
+        return removed
+    }
+
     private func withVerifiedPackage<T>(
         source: GatewayPluginSourceDTO,
         token: String,

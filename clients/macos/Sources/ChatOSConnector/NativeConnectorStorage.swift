@@ -18,8 +18,6 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var approvalMode: LocalConnectorApprovalMode = .requestApproval
     var commandApprovalModelConfigID: String?
     var commandApprovalThinkingLevel: String?
-    var approvalHistory: [LocalConnectorApprovalHistoryEntry] = []
-    var commandHistory: [LocalConnectorCommandHistoryEntry] = []
     var sandboxEnabled = true
     var permissionProfileID = ":workspace-write"
     var approvalPolicy = "per_call"
@@ -37,6 +35,45 @@ struct NativeConnectorPersistentState: Codable, Sendable {
     var localAgentTaskSkillChecksum: String?
 
     static let empty = NativeConnectorPersistentState()
+}
+
+struct NativeConnectorActivityHistory: Codable, Sendable, Equatable {
+    var approvals: [LocalConnectorApprovalHistoryEntry] = []
+    var commands: [LocalConnectorCommandHistoryEntry] = []
+
+    static let empty = NativeConnectorActivityHistory()
+}
+
+struct NativeConnectorActivityHistoryStore: Sendable {
+    static let maximumHistoryBytes = 16 * 1_024 * 1_024
+    let historyURL: URL
+
+    func load() throws -> NativeConnectorActivityHistory {
+        guard FileManager.default.fileExists(atPath: historyURL.path) else { return .empty }
+        return try JSONDecoder().decode(
+            NativeConnectorActivityHistory.self,
+            from: NativeBoundedFileReader.read(
+                historyURL,
+                maximumBytes: Self.maximumHistoryBytes
+            )
+        )
+    }
+
+    func save(_ history: NativeConnectorActivityHistory) throws {
+        try FileManager.default.createDirectory(
+            at: historyURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(history)
+        guard data.count <= Self.maximumHistoryBytes else {
+            throw NativeBoundedFileReadError.fileTooLarge(
+                maximumBytes: Self.maximumHistoryBytes
+            )
+        }
+        try data.write(to: historyURL, options: .atomic)
+    }
 }
 
 struct NativeInstalledPluginRecord: Codable, Sendable, Equatable {

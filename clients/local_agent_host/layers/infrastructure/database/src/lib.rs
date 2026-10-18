@@ -184,8 +184,11 @@ impl SqliteClientStorage {
             )));
         }
         let requires_migration = version < migration::SCHEMA_VERSION;
+        let should_compact = migration::requires_compaction(version)
+            && file_context.is_some_and(|(_, existed)| existed);
         if requires_migration {
             if let Some((path, true)) = file_context {
+                maintenance::remove_migration_backups(path)?;
                 maintenance::create_migration_backup(
                     &storage.pool,
                     path,
@@ -198,6 +201,15 @@ impl SqliteClientStorage {
         storage.migrate().await.db()?;
         if requires_migration {
             maintenance::verify_integrity(&storage.pool).await?;
+            if should_compact {
+                maintenance::compact_database(&storage.pool).await?;
+                maintenance::verify_integrity(&storage.pool).await?;
+            }
+            if let Some((path, _)) = file_context {
+                maintenance::remove_migration_backups(path)?;
+            }
+        } else if let Some((path, _)) = file_context {
+            maintenance::remove_migration_backups(path)?;
         }
         Ok(storage)
     }

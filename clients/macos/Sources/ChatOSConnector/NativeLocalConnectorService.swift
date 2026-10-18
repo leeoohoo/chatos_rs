@@ -37,7 +37,9 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     let ticketProvider: any LocalConnectorPairingTicketProviding
     let gateway: NativeConnectorGateway
     let stateStore: NativeConnectorStateStore
+    let activityHistoryStore: NativeConnectorActivityHistoryStore
     let pluginInstaller: NativePluginInstaller
+    let pluginIntegritySnapshots = NativePluginIntegritySnapshotCache()
     let pluginPermissionSnapshots = NativePluginPermissionSnapshotCache()
     let mcpCodeWriteStore = NativeMCPCodeWriteStore()
     let mcpTerminalStore = NativeMCPTerminalStore()
@@ -58,6 +60,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
     var pluginConfigurationChangedHandler: (@Sendable () async -> Void)?
     let secretStore: NativeConnectorSecretStore
     var state: NativeConnectorPersistentState
+    var activityHistory: NativeConnectorActivityHistory
     var cachedAccessToken: String?
     var hasLoadedAccessToken = false
     var cachedDeviceIdentity: NativeConnectorDeviceIdentity?
@@ -124,6 +127,10 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
         self.stateStore = NativeConnectorStateStore(stateURL: configuration.stateURL)
+        self.activityHistoryStore = NativeConnectorActivityHistoryStore(
+            historyURL: configuration.stateURL.deletingLastPathComponent()
+                .appendingPathComponent("activity-history.json")
+        )
         self.secretStore = NativeConnectorSecretStore(
             rootURL: configuration.stateURL.deletingLastPathComponent()
                 .appendingPathComponent("Secrets", isDirectory: true)
@@ -147,6 +154,12 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         )
         self.approvalMemoryProviderFactory = approvalMemoryProviderFactory
         self.state = (try? stateStore.load()) ?? .empty
+        self.activityHistory = (try? activityHistoryStore.load()) ?? .empty
+        _ = try? self.pluginInstaller.removeUnreferencedInstallations(
+            referencedInstallationPaths: (self.state.installedPluginRecords ?? [:]).values.map {
+                $0.installationPath
+            }
+        )
     }
 
     /// NSApplication's termination callback is synchronous. Keep this entry
@@ -429,7 +442,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             workspace: workspace
         )
         let now = ISO8601DateFormatter().string(from: Date())
-        state.commandHistory.insert(
+        activityHistory.commands.insert(
             .init(
                 id: UUID().uuidString,
                 source: "native-terminal",
@@ -445,22 +458,22 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             ),
             at: 0
         )
-        state.commandHistory = Array(state.commandHistory.prefix(1_000))
-        try stateStore.save(state)
+        activityHistory.commands = Array(activityHistory.commands.prefix(1_000))
+        try activityHistoryStore.save(activityHistory)
         return result
     }
 
     public func fetchCommandHistory(limit: Int) async throws -> [LocalConnectorCommandHistoryEntry] {
-        Array(state.commandHistory.prefix(max(1, min(limit, 200))))
+        Array(activityHistory.commands.prefix(max(1, min(limit, 200))))
     }
 
     public func clearCommandHistory() async throws {
-        state.commandHistory = []
-        try stateStore.save(state)
+        activityHistory.commands = []
+        try activityHistoryStore.save(activityHistory)
     }
 
     public func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
-        .init(defaultMode: state.approvalMode, history: state.approvalHistory)
+        .init(defaultMode: state.approvalMode, history: activityHistory.approvals)
     }
 
     public func updateDefaultApprovalMode(
@@ -482,7 +495,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         }
         state.approvalMode = mode
         try stateStore.save(state)
-        return .init(defaultMode: mode, history: state.approvalHistory)
+        return .init(defaultMode: mode, history: activityHistory.approvals)
     }
 
     public func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval] {
@@ -517,7 +530,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         let continuation = pendingApprovalContinuations.removeValue(forKey: id)
         let approvalScopeKey = pendingApprovalScopeKeys.removeValue(forKey: id)
         if let pending {
-            state.approvalHistory.insert(
+            activityHistory.approvals.insert(
                 .init(
                     id: UUID().uuidString,
                     command: pending.command,
@@ -532,7 +545,8 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 ),
                 at: 0
             )
-            try stateStore.save(state)
+            activityHistory.approvals = Array(activityHistory.approvals.prefix(1_000))
+            try activityHistoryStore.save(activityHistory)
             publishApprovalEvent(.init(
                 requestID: pending.requestID,
                 command: pending.command,

@@ -7,7 +7,8 @@ actor NativeMCPTerminalStore {
     private static let retainedLogBytesTarget = 1_536 * 1_024
     private static let maximumLogEntryBytes = 2 * 1_024 * 1_024
     static let maximumPendingOutputBytes = 512 * 1_024
-    private static let defaultMaximumRetainedExitedProcesses = 100
+    private static let defaultMaximumRetainedExitedProcesses = 24
+    private static let defaultMaximumRetainedExitedLogBytes = 32 * 1_024 * 1_024
     static let maximumOutputCharacters = 512 * 1_024
     static let maximumWaitMilliseconds = 2 * 60 * 60 * 1_000
     private static let defaultForegroundTimeoutMilliseconds = 5 * 60 * 1_000
@@ -17,12 +18,16 @@ actor NativeMCPTerminalStore {
     private var processes: [String: ManagedTerminalProcess] = [:]
     private var nextProcessSequence = 0
     private let maximumRetainedExitedProcesses: Int
+    private let maximumRetainedExitedLogBytes: Int
 
     init(
         maximumRetainedExitedProcesses: Int = NativeMCPTerminalStore
-            .defaultMaximumRetainedExitedProcesses
+            .defaultMaximumRetainedExitedProcesses,
+        maximumRetainedExitedLogBytes: Int = NativeMCPTerminalStore
+            .defaultMaximumRetainedExitedLogBytes
     ) {
         self.maximumRetainedExitedProcesses = max(1, maximumRetainedExitedProcesses)
+        self.maximumRetainedExitedLogBytes = max(1, maximumRetainedExitedLogBytes)
     }
 
     func execute(
@@ -626,8 +631,18 @@ actor NativeMCPTerminalStore {
         let exited = processes.values
             .filter { $0.status == "exited" }
             .sorted { $0.sequence > $1.sequence }
-        for process in exited.dropFirst(maximumRetainedExitedProcesses) {
-            processes.removeValue(forKey: process.id)
+        var retainedCount = 0
+        var retainedBytes = 0
+        for process in exited {
+            let fitsCount = retainedCount < maximumRetainedExitedProcesses
+            let fitsBytes = retainedBytes + process.retainedLogBytes
+                <= maximumRetainedExitedLogBytes
+            if fitsCount, fitsBytes {
+                retainedCount += 1
+                retainedBytes += process.retainedLogBytes
+            } else {
+                processes.removeValue(forKey: process.id)
+            }
         }
     }
 

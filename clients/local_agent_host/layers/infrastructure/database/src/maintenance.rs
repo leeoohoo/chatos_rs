@@ -112,6 +112,43 @@ pub(super) async fn create_migration_backup(
     Ok(backup_path)
 }
 
+pub(super) async fn compact_database(pool: &SqlitePool) -> Result<(), ClientStorageError> {
+    let mut connection = pool.acquire().await.db()?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut *connection)
+        .await
+        .db()?;
+    sqlx::query("VACUUM").execute(&mut *connection).await.db()?;
+    Ok(())
+}
+
+pub(super) fn remove_migration_backups(database_path: &Path) -> Result<(), ClientStorageError> {
+    let parent = database_path.parent().ok_or_else(|| {
+        ClientStorageError::InvalidState("database path has no parent directory".to_string())
+    })?;
+    let file_name = database_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            ClientStorageError::InvalidState(
+                "client storage path must have a valid UTF-8 file name".to_string(),
+            )
+        })?;
+    let prefix = format!("{file_name}.pre-migration-");
+    for entry in std::fs::read_dir(parent).map_err(ClientStorageError::database)? {
+        let entry = entry.map_err(ClientStorageError::database)?;
+        let path = entry.path();
+        let is_migration_backup = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".backup.sqlite"));
+        if is_migration_backup {
+            std::fs::remove_file(path).map_err(ClientStorageError::database)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 pub(super) fn restrict_file_permissions(path: &Path) -> Result<(), ClientStorageError> {
     use std::os::unix::fs::PermissionsExt;

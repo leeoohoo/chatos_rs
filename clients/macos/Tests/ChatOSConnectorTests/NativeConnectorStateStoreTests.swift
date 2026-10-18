@@ -577,6 +577,32 @@ struct NativeConnectorStateStoreTests {
         #expect(state.pluginPreferences["legacy-id"] == nil)
         #expect(state.pluginPreferences["current-id"] == true)
     }
+
+    @Test
+    func activityHistoryRoundTripsIndependentlyFromConnectorState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = NativeConnectorActivityHistoryStore(
+            historyURL: directory.appendingPathComponent("activity-history.json")
+        )
+        let history = NativeConnectorActivityHistory(
+            approvals: [.init(
+                id: "approval-1", command: "pwd", cwd: "/tmp", source: "test",
+                mode: .requestApproval, decision: "accept", risk: "low",
+                reason: nil, createdAt: "2026-10-19T00:00:00Z"
+            )],
+            commands: [.init(
+                id: "command-1", source: "test", workspaceAlias: "Project", cwd: "/tmp",
+                display: "pwd", status: "completed", exitCode: 0, stdoutPreview: "/tmp",
+                stderrPreview: nil, error: nil, startedAt: "2026-10-19T00:00:00Z"
+            )]
+        )
+
+        try store.save(history)
+
+        #expect(try store.load() == history)
+    }
 }
 
 private struct RejectingTicketProvider: LocalConnectorPairingTicketProviding {

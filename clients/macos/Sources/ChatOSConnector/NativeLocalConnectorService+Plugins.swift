@@ -6,28 +6,25 @@ extension NativeLocalConnectorService {
 
     public func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication] {
         let records = state.installedPluginRecords ?? [:]
-        return records.values
-            .filter { state.pluginPreferences[$0.pluginID] ?? true }
-            .flatMap { record -> [LocalConnectorPluginApplication] in
-                guard NativePluginInstallationIntegrity.status(record: record) == .verified,
-                      let manifest = try? installedPluginManifest(record: record) else {
-                    return []
-                }
-                return manifest.ui.compactMap { contribution in
-                    guard contribution.surface == "workbench" else { return nil }
-                    return pluginApplication(
-                        record: record,
-                        manifest: manifest,
-                        contribution: contribution
-                    )
-                }
+        var applications: [LocalConnectorPluginApplication] = []
+        for record in records.values where state.pluginPreferences[record.pluginID] ?? true {
+            guard await pluginIntegritySnapshots.status(record: record) == .verified,
+                  let manifest = try? installedPluginManifest(record: record) else { continue }
+            applications.append(contentsOf: manifest.ui.compactMap { contribution in
+                guard contribution.surface == "workbench" else { return nil }
+                return pluginApplication(
+                    record: record,
+                    manifest: manifest,
+                    contribution: contribution
+                )
+            })
+        }
+        return applications.sorted {
+            if $0.displayName != $1.displayName {
+                return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
             }
-            .sorted {
-                if $0.displayName != $1.displayName {
-                    return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-                }
-                return $0.id < $1.id
-            }
+            return $0.id < $1.id
+        }
     }
 
     public func launchPluginApplication(
@@ -125,9 +122,10 @@ extension NativeLocalConnectorService {
             let id = source.catalog.id
             let installedRecord = state.installedPluginRecords?[id]
             let installed = installedRecord != nil || state.installedPluginIDs.contains(id)
-            var installationIssue = Self.pluginInstallationIssue(
+            var installationIssue = await pluginInstallationIssue(
                 installed: installed,
-                record: installedRecord
+                record: installedRecord,
+                forceRefresh: forceRefresh
             )
             var installedManifest: NativePluginManifest?
             var permissions: [LocalConnectorPluginPermission] = []
@@ -236,19 +234,21 @@ extension NativeLocalConnectorService {
             guard changed else { return }
             try stateStore.save(state)
             await pluginPermissionSnapshots.invalidateAll()
+            await pluginIntegritySnapshots.invalidateAll()
             try? await publishPluginInstallationStatus()
         } catch {
             return
         }
     }
 
-    private static func pluginInstallationIssue(
+    private func pluginInstallationIssue(
         installed: Bool,
-        record: NativeInstalledPluginRecord?
-    ) -> LocalConnectorPluginInstallationIssue? {
+        record: NativeInstalledPluginRecord?,
+        forceRefresh: Bool
+    ) async -> LocalConnectorPluginInstallationIssue? {
         guard installed else { return nil }
         guard let record else { return .missingIntegrityRecord }
-        switch NativePluginInstallationIntegrity.status(record: record) {
+        switch await pluginIntegritySnapshots.status(record: record, forceRefresh: forceRefresh) {
         case .verified:
             return nil
         case .missingRecord:
@@ -285,6 +285,7 @@ extension NativeLocalConnectorService {
         let token = try requireAccessToken()
         let record = try await pluginInstaller.install(source: source, token: token, gateway: gateway)
         await pluginPermissionSnapshots.invalidateAll()
+        await pluginIntegritySnapshots.invalidateAll()
         var records = state.installedPluginRecords ?? [:]
         records[id] = record
         state.installedPluginRecords = records
@@ -452,7 +453,7 @@ extension NativeLocalConnectorService {
               let deviceID = state.deviceID else {
             return false
         }
-        guard NativePluginInstallationIntegrity.status(record: record) == .verified else {
+        guard await pluginIntegritySnapshots.status(record: record) == .verified else {
             return false
         }
         let manifest = try installedPluginManifest(record: record)
@@ -486,6 +487,7 @@ extension NativeLocalConnectorService {
         await pluginApplicationRuntime.stop(pluginID: id)
         try pluginInstaller.uninstall(pluginID: id)
         await pluginPermissionSnapshots.invalidateAll()
+        await pluginIntegritySnapshots.invalidateAll()
         state.installedPluginIDs.remove(id)
         state.installedPluginRecords?[id] = nil
         customPluginRuntimeHealth[id] = nil
@@ -551,7 +553,7 @@ extension NativeLocalConnectorService {
         return manifest
     }
 
-    private static func verifyTrustedPluginInstallation(
+    static func verifyTrustedPluginInstallation(
         _ record: NativeInstalledPluginRecord
     ) throws {
         switch NativePluginInstallationIntegrity.status(record: record) {

@@ -184,6 +184,7 @@ extension NativeLocalConnectorService {
         state.pluginPreferences[record.pluginID] = true
         try stateStore.save(state)
         await pluginPermissionSnapshots.invalidateAll()
+        await pluginIntegritySnapshots.invalidateAll()
         await pluginConfigurationChangedHandler?()
     }
 
@@ -196,8 +197,8 @@ extension NativeLocalConnectorService {
             .sorted { $0.pluginID < $1.pluginID }
         var result: [LocalConnectorPlugin] = []
         for record in records {
-            let issue = Self.customPluginInstallationIssue(record)
-            let manifest = issue == nil ? try? Self.loadCustomPluginManifest(record: record) : nil
+            let issue = await customPluginInstallationIssue(record, forceRefresh: forceRefresh)
+            let manifest = issue == nil ? try? Self.loadCustomPluginManifestUnchecked(record: record) : nil
             let enabled = state.pluginPreferences[record.pluginID] ?? true
             let hasMCP = manifest?.mcpServers.isEmpty == false
             if issue != nil || !hasMCP {
@@ -270,10 +271,11 @@ extension NativeLocalConnectorService {
         return result
     }
 
-    private static func customPluginInstallationIssue(
-        _ record: NativeInstalledPluginRecord
-    ) -> LocalConnectorPluginInstallationIssue? {
-        switch NativePluginInstallationIntegrity.status(record: record) {
+    private func customPluginInstallationIssue(
+        _ record: NativeInstalledPluginRecord,
+        forceRefresh: Bool
+    ) async -> LocalConnectorPluginInstallationIssue? {
+        switch await pluginIntegritySnapshots.status(record: record, forceRefresh: forceRefresh) {
         case .verified: nil
         case .missingRecord: .missingIntegrityRecord
         case .failed: .integrityCheckFailed
@@ -288,5 +290,18 @@ extension NativeLocalConnectorService {
         return try NativePluginManifestLoader.loadManifest(
             from: installationURL.appendingPathComponent("chatos.plugin.json")
         )
+    }
+
+    private static func loadCustomPluginManifestUnchecked(
+        record: NativeInstalledPluginRecord
+    ) throws -> NativePluginManifest {
+        let installationURL = URL(fileURLWithPath: record.installationPath, isDirectory: true)
+        let manifest = try NativePluginManifestLoader.loadManifest(
+            from: installationURL.appendingPathComponent("chatos.plugin.json")
+        )
+        guard manifest.name.isEmpty == false, manifest.version == record.version else {
+            throw NativeConnectorError.pluginInstallation("Plugin 权限清单与安装记录不一致")
+        }
+        return manifest
     }
 }
