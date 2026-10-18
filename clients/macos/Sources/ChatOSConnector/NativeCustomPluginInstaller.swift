@@ -60,15 +60,7 @@ extension NativePluginInstaller {
             try JSONSerialization.data(withJSONObject: packageJSON, options: [.prettyPrinted, .sortedKeys])
                 .write(to: packageRoot.appendingPathComponent("package.json"), options: .atomic)
 
-            let npmURL = try Self.resolveExecutable(named: "npm")
-            try await Self.runInstallerProcess(
-                executableURL: npmURL,
-                arguments: [
-                    "install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund",
-                    "--save-exact", "--package-lock=true",
-                ],
-                currentDirectoryURL: packageRoot
-            )
+            try await npmInstall(packageRoot)
             try removeSymbolicLinks(in: packageRoot)
 
             let dependencyRoot = packageRoot

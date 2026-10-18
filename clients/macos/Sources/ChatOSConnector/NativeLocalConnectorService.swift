@@ -106,6 +106,20 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         ticketProvider: any LocalConnectorPairingTicketProviding,
         approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil
     ) {
+        self.init(
+            configuration: configuration,
+            ticketProvider: ticketProvider,
+            approvalMemoryProviderFactory: approvalMemoryProviderFactory,
+            pluginInstallerFactory: { NativePluginInstaller(rootURL: $0) }
+        )
+    }
+
+    init(
+        configuration: NativeConnectorConfiguration,
+        ticketProvider: any LocalConnectorPairingTicketProviding,
+        approvalMemoryProviderFactory: NativeApprovalMemoryProviderFactory? = nil,
+        pluginInstallerFactory: @Sendable (URL) -> NativePluginInstaller
+    ) {
         self.configuration = configuration
         self.ticketProvider = ticketProvider
         self.gateway = NativeConnectorGateway(baseURL: configuration.gatewayBaseURL)
@@ -119,7 +133,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
             .appendingPathComponent("Plugins", isDirectory: true)
         let pluginRuntimeRootURL = connectorRootURL
             .appendingPathComponent("PluginRuntime", isDirectory: true)
-        self.pluginInstaller = NativePluginInstaller(rootURL: pluginInstallationRootURL)
+        self.pluginInstaller = pluginInstallerFactory(pluginInstallationRootURL)
         self.pluginRuntimeRootURL = pluginRuntimeRootURL
         self.localAgentModelCredentialStore = NativeLocalAgentModelCredentialStore(
             rootURL: connectorRootURL

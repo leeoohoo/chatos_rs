@@ -4,6 +4,17 @@ import Darwin
 import Foundation
 
 extension NativePluginInstaller {
+    static func installNPMDependencies(in packageRoot: URL) async throws {
+        try await runInstallerProcess(
+            executableURL: resolveExecutable(named: "npm"),
+            arguments: [
+                "install", "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund",
+                "--save-exact", "--package-lock=true",
+            ],
+            currentDirectoryURL: packageRoot
+        )
+    }
+
     static func runInstallerProcess(
         executableURL: URL,
         arguments: [String],

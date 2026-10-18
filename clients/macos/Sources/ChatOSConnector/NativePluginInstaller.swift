@@ -4,6 +4,8 @@ import Darwin
 import Foundation
 
 struct NativePluginInstaller: Sendable {
+    typealias NPMInstallOperation = @Sendable (URL) async throws -> Void
+
     private struct VerifiedPackage {
         let version: String
         let artifactSHA256: String
@@ -12,11 +14,20 @@ struct NativePluginInstaller: Sendable {
     }
 
     let rootURL: URL
+    let npmInstall: NPMInstallOperation
     let maximumFiles = 20_000
     let maximumUnpackedBytes: Int64 = 512 * 1_024 * 1_024
 
     init(rootURL: URL) {
+        self.init(rootURL: rootURL, npmInstall: Self.installNPMDependencies)
+    }
+
+    init(
+        rootURL: URL,
+        npmInstall: @escaping NPMInstallOperation
+    ) {
         self.rootURL = rootURL
+        self.npmInstall = npmInstall
     }
 
     func install(
