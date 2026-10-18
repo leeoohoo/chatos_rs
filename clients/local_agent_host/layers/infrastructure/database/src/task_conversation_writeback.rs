@@ -3,7 +3,7 @@
 
 use super::{
     conversation_store::next_message_ordinal,
-    task_store::fetch_graph,
+    task_graph_store::fetch_graph,
     task_writeback_source::{callback_source, CallbackSource},
     task_writeback_summary::{
         graph_delivery_text, graph_summary_text, graph_task_summaries, task_display_status,

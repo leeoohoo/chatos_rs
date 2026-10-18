@@ -51,6 +51,7 @@ mod task_commands;
 mod task_conversation_writeback;
 mod task_followup_gate;
 mod task_followup_resolution;
+mod task_graph_store;
 mod task_lifecycle;
 mod task_query_store;
 mod task_replacement_validation;
