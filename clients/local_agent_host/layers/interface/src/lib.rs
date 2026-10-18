@@ -24,6 +24,7 @@ mod response;
 mod run_query;
 mod skill;
 mod task;
+mod task_write_scope;
 mod task_acceptance;
 mod task_followup;
 mod tool;
@@ -104,13 +105,15 @@ pub use skill::{
 pub use task_followup::{ResolveTaskFollowupCommand, TaskFollowupAction, TaskFollowupDecision};
 
 pub use task::{
-    local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
     resolve_local_task_graph_notification_policy, CancelTaskCommand, CreateTaskGraphCommand,
     GetMessageTaskGraphCommand, GetTaskGraphCommand, GetTaskRunsCommand, ListTaskGraphsCommand,
     LocalMessageTaskGraph, LocalMessageTaskGraphEdge, LocalMessageTaskGraphNode,
     LocalTaskDependency, LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphNotificationPolicy,
     LocalTaskGraphPage, LocalTaskGraphStatus, LocalTaskGraphSummary, LocalTaskRecord,
     LocalTaskSpec, LocalTaskStatus, RestartTaskCommand, RetryTaskCommand,
+};
+pub use task_write_scope::{
+    local_task_runtime_write_scope, local_task_write_scope, local_task_write_scope_overlap,
 };
 pub use tool::{
     ClaimNextToolCommand, CommitToolCommand, DecideToolApprovalCommand,
