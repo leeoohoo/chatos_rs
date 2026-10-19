@@ -38,7 +38,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
-| Conversation 时间线与发送 | History、发送、send/attachment import lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
+| Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态与 refresh/per-prompt 异步生命周期已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
@@ -198,6 +198,7 @@ sendDraft
 - ready 恢复由 `ConversationRuntimeRecoveryState` 分配 latest-wins identity，具体 Task 由 ViewModel 持有；连续 ready 会淘汰旧恢复，异步加载期间若 runtime 再次 unavailable 也会统一取消并失效 identity，迟到恢复不得重新触发历史刷新或 realtime；
 - 时间线的 Task Graph 可用性轻量探测由 `ConversationTaskGraphAvailabilityState` 为每个 Turn 分配独立 token；新 revision、Conversation 停用或 runtime unavailable 会取消并失效未完成探测，迟到 Host 响应不得改变入口可见性，ready 后会重试被中断且尚未形成可信缓存的探测；
 - 模型、推理等级与远程连接的 optimistic 更新共享 latest-wins mutation identity；新操作会淘汰旧操作，旧成功/失败响应不得覆盖或回滚新选择，也不得结束新操作的 loading；runtime unavailable 会统一取消并失效 mutation；
+- runtime settings snapshot load 使用独立 latest-wins identity；新的 bootstrap/recovery load、任一 optimistic mutation 或 runtime unavailable 都会失效旧 load，迟到 settings/models snapshot 不得覆盖新选择或断线后的状态；
 - realtime 事件经 history store 合并，不允许组件自行拼接出另一套事实；
 - 历史分页游标是 ordinal，非法游标必须报错；limit 被限制在 1–100；
 - 本地 realtime 来自 Host event hub/reconcile，不是服务端 WebSocket。
@@ -243,6 +244,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationInteractionPolicyTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationLatestRefreshStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSessionActivationStateTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsLoadStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsMutationStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationAttachmentImportStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSendLifecycleStateTests.swift`

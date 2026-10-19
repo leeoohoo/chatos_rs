@@ -102,7 +102,7 @@ final class ConversationSessionViewModel: ObservableObject {
     var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
     var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
     var attachmentImportState = ConversationAttachmentImportState()
-    private var runtimeSettingsLoadGeneration: UInt64 = 0
+    var runtimeSettingsLoadState = ConversationRuntimeSettingsLoadState()
     private var runtimeSettingsMutationTask: Task<Void, Never>?
     var runtimeSettingsMutationState = ConversationRuntimeSettingsMutationState()
     private var runtimeRecoveryTask: Task<Void, Never>?
@@ -305,7 +305,7 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshState.cancelScheduledAndPending()
         olderHistoryLoadTask?.cancel()
         olderHistoryLoadTask = nil
-        runtimeSettingsLoadGeneration &+= 1
+        runtimeSettingsLoadState.reset()
         runtimeSettingsMutationState.reset()
         runtimeSettingsMutationTask?.cancel()
         runtimeSettingsMutationTask = nil
@@ -837,7 +837,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     private func beginRuntimeSettingsMutation() -> ConversationRuntimeSettingsMutationToken {
-        runtimeSettingsLoadGeneration &+= 1
+        runtimeSettingsLoadState.reset()
         runtimeSettingsMutationTask?.cancel()
         isUpdatingRuntimeSettings = true
         return runtimeSettingsMutationState.begin()
@@ -853,25 +853,25 @@ final class ConversationSessionViewModel: ObservableObject {
 
     private func loadRuntimeSettings(presentErrors: Bool = true) async {
         guard let runtimeSettingsService else { return }
-        runtimeSettingsLoadGeneration &+= 1
-        let generation = runtimeSettingsLoadGeneration
+        let token = runtimeSettingsLoadState.begin()
         do {
             async let settings = runtimeSettingsService.fetchSettings(sessionID: sessionID)
             async let models = runtimeSettingsService.fetchAvailableModels()
             let (resolvedSettings, resolvedModels) = try await (settings, models)
-            guard generation == runtimeSettingsLoadGeneration else { return }
+            guard runtimeSettingsLoadState.accepts(token) else { return }
             availableModels = resolvedModels
             applyRuntimeSettings(resolvedSettings)
             runtimeSettingsError = nil
         } catch NativeLocalAgentConversationRuntimeSettingsError.notConfigured {
-            guard generation == runtimeSettingsLoadGeneration else { return }
+            guard runtimeSettingsLoadState.accepts(token) else { return }
             runtimeSettingsError = nil
         } catch {
-            guard generation == runtimeSettingsLoadGeneration else { return }
+            guard runtimeSettingsLoadState.accepts(token) else { return }
             if presentErrors {
                 runtimeSettingsError = error.localizedDescription
             }
         }
+        _ = runtimeSettingsLoadState.finish(token)
     }
 
     private func applyRuntimeSettings(_ settings: ConversationRuntimeSettings) {

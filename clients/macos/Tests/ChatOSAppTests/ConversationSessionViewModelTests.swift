@@ -603,14 +603,17 @@ final class ConversationSessionViewModelTests: XCTestCase {
         try await waitUntil {
             await runtimeSettings.pendingRequestCount() >= 2
         }
+        XCTAssertNotNil(viewModel.runtimeSettingsLoadState.activeToken)
 
         viewModel.localAgentRuntimeDidBecomeUnavailable()
+        XCTAssertNil(viewModel.runtimeSettingsLoadState.activeToken)
         await runtimeSettings.resumeRequests()
         try await Task.sleep(for: .milliseconds(300))
 
         let requestCount = await remoteService.requestCount()
         XCTAssertFalse(viewModel.isLocalAgentRuntimeReady)
         XCTAssertEqual(requestCount, 0)
+        XCTAssertNil(viewModel.runtimeSettingsLoadState.activeToken)
     }
 
     func testNewReadyRecoveryRejectsOlderLateCompletion() async throws {
