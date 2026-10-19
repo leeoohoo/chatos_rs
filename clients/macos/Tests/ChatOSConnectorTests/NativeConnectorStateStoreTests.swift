@@ -115,7 +115,7 @@ struct NativeConnectorStateStoreTests {
         #expect(approval.reason == "本机审批 Agent 尚未从本地任务运行时载入。")
         #expect(approval.reason?.contains("网关配对") == false)
 
-        try await service.resolveApproval(id: approval.id, decision: "decline")
+        try await service.resolveApproval(id: approval.id, decision: .decline)
         let decision = await decisionTask.value
         #expect(decision == .deny(reason: "用户已在本机拒绝。"))
     }

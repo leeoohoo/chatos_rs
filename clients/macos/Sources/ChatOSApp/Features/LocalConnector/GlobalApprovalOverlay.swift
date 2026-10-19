@@ -198,19 +198,19 @@ struct GlobalApprovalOverlayHost: View {
 
                 Spacer()
 
-                if approval.availableDecisions.contains("decline") {
+                if approval.allows(.decline) {
                     Button(model.localized("拒绝", english: "Decline"), role: .destructive) {
-                        viewModel.resolveApproval(id: approval.id, decision: "decline")
+                        viewModel.resolveApproval(approval, decision: .decline)
                     }
                 }
-                if approval.availableDecisions.contains("accept") {
+                if approval.allows(.accept) {
                     Button(model.localized("仅本次允许", english: "Allow Once")) {
-                        viewModel.resolveApproval(id: approval.id, decision: "accept")
+                        viewModel.resolveApproval(approval, decision: .accept)
                     }
                 }
-                if approval.availableDecisions.contains("acceptForSession") {
+                if approval.allows(.acceptForSession) {
                     Button(model.localized("本会话允许", english: "Allow for Session")) {
-                        viewModel.resolveApproval(id: approval.id, decision: "acceptForSession")
+                        viewModel.resolveApproval(approval, decision: .acceptForSession)
                     }
                     .buttonStyle(.borderedProminent)
                 }

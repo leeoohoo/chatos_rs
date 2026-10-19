@@ -302,12 +302,12 @@ extension NativeLocalConnectorService {
             let payload = try request.body.decode(CompanionApprovalDecisionRequest.self)
             let id = payload.approvalID.trimmingCharacters(in: .whitespacesAndNewlines)
             let decision = payload.decision.trimmingCharacters(in: .whitespacesAndNewlines)
-            _ = try Self.validateCompanionApprovalResolution(
+            let approvalDecision = try Self.validateCompanionApprovalResolution(
                 id: id,
                 decision: decision,
                 pending: try await fetchPendingApprovals()
             )
-            try await resolveApproval(id: id, decision: decision)
+            try await resolveApproval(id: id, decision: approvalDecision)
             body = .object(["success": .bool(true), "approval_id": .string(id)])
         default:
             throw NativeCompanionRelayError.unsupportedRequest
@@ -344,25 +344,25 @@ extension NativeLocalConnectorService {
     }
 
     nonisolated static func isCompanionApprovalDecision(_ decision: String) -> Bool {
-        ["accept", "acceptForSession", "decline"].contains(decision)
+        LocalConnectorApprovalDecision(rawValue: decision) != nil
     }
 
     nonisolated static func validateCompanionApprovalResolution(
         id: String,
         decision: String,
         pending: [LocalConnectorPendingApproval]
-    ) throws -> LocalConnectorPendingApproval {
+    ) throws -> LocalConnectorApprovalDecision {
         guard !id.isEmpty else { throw NativeCompanionRelayError.missingApprovalID }
-        guard Self.isCompanionApprovalDecision(decision) else {
+        guard let approvalDecision = LocalConnectorApprovalDecision(rawValue: decision) else {
             throw NativeCompanionRelayError.invalidApprovalDecision
         }
         guard let approval = pending.first(where: { $0.id == id }) else {
             throw NativeCompanionRelayError.approvalNotFound
         }
-        guard approval.availableDecisions.contains(decision) else {
+        guard approval.allows(approvalDecision) else {
             throw NativeCompanionRelayError.invalidApprovalDecision
         }
-        return approval
+        return approvalDecision
     }
 
     nonisolated private static func companionResponseType(for requestType: String?) -> String {

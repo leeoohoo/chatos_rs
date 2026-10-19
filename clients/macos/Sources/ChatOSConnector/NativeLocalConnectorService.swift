@@ -523,8 +523,17 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
         }
     }
 
-    public func resolveApproval(id: String, decision: String) async throws {
+    public func resolveApproval(
+        id: String,
+        decision: LocalConnectorApprovalDecision
+    ) async throws {
         let pending = pendingApprovals.first(where: { $0.id == id })
+        if let pending, !pending.allows(decision) {
+            throw NativeConnectorError.server(
+                status: 409,
+                message: "当前审批不允许该操作。"
+            )
+        }
         pendingApprovals.removeAll(where: { $0.id == id })
         publishApprovalSnapshot()
         let continuation = pendingApprovalContinuations.removeValue(forKey: id)
@@ -538,7 +547,7 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                     cwd: pending.cwd,
                     source: pending.source,
                     mode: state.approvalMode,
-                    decision: decision,
+                    decision: decision.rawValue,
                     risk: pending.risk,
                     reason: pending.reason,
                     createdAt: ISO8601DateFormatter().string(from: Date())
@@ -554,26 +563,24 @@ public actor NativeLocalConnectorService: LocalConnectorControlServicing, LocalC
                 cwd: pending.cwd,
                 source: pending.source,
                 risk: pending.risk,
-                decision: ["accept", "acceptForSession", "approve"].contains(decision)
-                    ? "approved"
-                    : "denied",
-                reason: decision == "acceptForSession"
+                decision: decision == .decline ? "denied" : "approved",
+                reason: decision == .acceptForSession
                     ? "用户已允许当前会话继续执行此类操作。"
-                    : (decision == "decline" ? "用户已拒绝这次操作。" : "用户已允许这次操作。"),
+                    : (decision == .decline ? "用户已拒绝这次操作。" : "用户已允许这次操作。"),
                 mode: state.approvalMode,
                 reviewer: .user
             ))
         }
         switch decision {
-        case "accept", "acceptForSession", "approve":
-            if decision == "acceptForSession", let approvalScopeKey {
+        case .accept, .acceptForSession:
+            if decision == .acceptForSession, let approvalScopeKey {
                 sessionApprovalAllowlist.insert(approvalScopeKey)
             }
             continuation?.resume(returning: .approve(
                 reason: "用户已在本机批准。",
-                rememberAllow: decision == "acceptForSession"
+                rememberAllow: decision == .acceptForSession
             ))
-        default:
+        case .decline:
             continuation?.resume(returning: .deny(reason: "用户已在本机拒绝。"))
         }
     }

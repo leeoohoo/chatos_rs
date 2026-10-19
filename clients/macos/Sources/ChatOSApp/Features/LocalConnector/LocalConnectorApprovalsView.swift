@@ -66,6 +66,7 @@ struct LocalConnectorApprovalsView: View {
                 Text(model.localized("完全控制", english: "Full Control")).tag(LocalConnectorApprovalMode.fullControl)
             }
             .pickerStyle(.segmented)
+            .disabled(viewModel.isPerformingAction)
             Text(approvalModeDescription)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
@@ -141,18 +142,25 @@ struct LocalConnectorApprovalsView: View {
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Button(model.localized("拒绝", english: "Decline"), role: .destructive) {
-                    viewModel.resolveApproval(id: approval.id, decision: "decline")
+                if approval.allows(.decline) {
+                    Button(model.localized("拒绝", english: "Decline"), role: .destructive) {
+                        viewModel.resolveApproval(approval, decision: .decline)
+                    }
                 }
                 Spacer()
-                Button(model.localized("仅本次允许", english: "Allow Once")) {
-                    viewModel.resolveApproval(id: approval.id, decision: "accept")
+                if approval.allows(.accept) {
+                    Button(model.localized("仅本次允许", english: "Allow Once")) {
+                        viewModel.resolveApproval(approval, decision: .accept)
+                    }
                 }
-                Button(model.localized("本会话允许", english: "Allow for Session")) {
-                    viewModel.resolveApproval(id: approval.id, decision: "acceptForSession")
+                if approval.allows(.acceptForSession) {
+                    Button(model.localized("本会话允许", english: "Allow for Session")) {
+                        viewModel.resolveApproval(approval, decision: .acceptForSession)
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
             }
+            .disabled(viewModel.isPerformingAction)
         }
         .padding(.vertical, 10)
     }

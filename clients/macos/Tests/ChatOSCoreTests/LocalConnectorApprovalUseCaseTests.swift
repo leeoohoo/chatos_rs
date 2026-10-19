@@ -21,13 +21,26 @@ struct LocalConnectorApprovalUseCaseTests {
         let useCase = LocalConnectorApprovalUseCase(service: service)
 
         let snapshot = try await useCase.resolve(
-            id: "approval-1",
-            decision: "acceptForSession"
+            approval: LocalConnectorApprovalServiceStub.approval,
+            decision: .acceptForSession
         )
 
         #expect(await service.operations.first == "resolve:approval-1:acceptForSession")
         #expect(Set(await service.operations.dropFirst()) == ["settings", "pending"])
         #expect(snapshot.pendingApprovals.isEmpty)
+    }
+
+    @Test
+    func resolveRejectsDecisionNotOfferedByApproval() async throws {
+        let service = LocalConnectorApprovalServiceStub()
+        let useCase = LocalConnectorApprovalUseCase(service: service)
+        var approval = LocalConnectorApprovalServiceStub.approval
+        approval.availableDecisions = [LocalConnectorApprovalDecision.decline.rawValue]
+
+        await #expect(throws: LocalConnectorApprovalUseCaseError.decisionUnavailable) {
+            _ = try await useCase.resolve(approval: approval, decision: .accept)
+        }
+        #expect(await service.operations.isEmpty)
     }
 
     @Test
@@ -95,12 +108,15 @@ private actor LocalConnectorApprovalServiceStub: LocalConnectorApprovalServicing
         return resolved ? [] : [Self.approval]
     }
 
-    func resolveApproval(id: String, decision: String) async throws {
-        operations.append("resolve:\(id):\(decision)")
+    func resolveApproval(
+        id: String,
+        decision: LocalConnectorApprovalDecision
+    ) async throws {
+        operations.append("resolve:\(id):\(decision.rawValue)")
         resolved = true
     }
 
-    private static let approval = LocalConnectorPendingApproval(
+    static let approval = LocalConnectorPendingApproval(
         id: "approval-1",
         requestID: "request-1",
         command: "git status",

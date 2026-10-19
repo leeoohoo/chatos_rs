@@ -21,6 +21,17 @@ public enum LocalConnectorApprovalMonitoringPolicy {
     }
 }
 
+public enum LocalConnectorApprovalUseCaseError: LocalizedError, Equatable {
+    case decisionUnavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .decisionUnavailable:
+            "The requested decision is not available for this approval."
+        }
+    }
+}
+
 /// Application use case for approval settings, durable pending work, and decisions.
 public struct LocalConnectorApprovalUseCase: Sendable {
     private let service: any LocalConnectorApprovalServicing
@@ -53,10 +64,13 @@ public struct LocalConnectorApprovalUseCase: Sendable {
     }
 
     public func resolve(
-        id: String,
-        decision: String
+        approval: LocalConnectorPendingApproval,
+        decision: LocalConnectorApprovalDecision
     ) async throws -> LocalConnectorApprovalSnapshot {
-        try await service.resolveApproval(id: id, decision: decision)
+        guard approval.allows(decision) else {
+            throw LocalConnectorApprovalUseCaseError.decisionUnavailable
+        }
+        try await service.resolveApproval(id: approval.id, decision: decision)
         try Task.checkCancellation()
         return try await loadSnapshot()
     }

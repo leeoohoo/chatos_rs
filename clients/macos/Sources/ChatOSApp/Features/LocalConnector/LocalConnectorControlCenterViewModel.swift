@@ -362,10 +362,13 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
-    func resolveApproval(id: String, decision: String) {
+    func resolveApproval(
+        _ approval: LocalConnectorPendingApproval,
+        decision: LocalConnectorApprovalDecision
+    ) {
         performAction(successNotice: "审批已处理。") {
             let snapshot = try await self.approvalUseCase.resolve(
-                id: id,
+                approval: approval,
                 decision: decision
             )
             try Task.checkCancellation()

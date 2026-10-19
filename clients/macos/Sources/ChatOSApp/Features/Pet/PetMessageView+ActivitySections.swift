@@ -97,20 +97,20 @@ extension PetMessageView {
             Divider()
 
             HStack(spacing: 8) {
-                if approval.availableDecisions.contains("decline") {
+                if approval.allows(.decline) {
                     Button("拒绝", role: .destructive) {
-                        approvalViewModel.resolveApproval(id: approval.id, decision: "decline")
+                        approvalViewModel.resolveApproval(approval, decision: .decline)
                     }
                 }
                 Spacer()
-                if approval.availableDecisions.contains("accept") {
+                if approval.allows(.accept) {
                     Button("仅本次允许") {
-                        approvalViewModel.resolveApproval(id: approval.id, decision: "accept")
+                        approvalViewModel.resolveApproval(approval, decision: .accept)
                     }
                 }
-                if approval.availableDecisions.contains("acceptForSession") {
+                if approval.allows(.acceptForSession) {
                     Button("本会话允许") {
-                        approvalViewModel.resolveApproval(id: approval.id, decision: "acceptForSession")
+                        approvalViewModel.resolveApproval(approval, decision: .acceptForSession)
                     }
                     .buttonStyle(.borderedProminent)
                 }

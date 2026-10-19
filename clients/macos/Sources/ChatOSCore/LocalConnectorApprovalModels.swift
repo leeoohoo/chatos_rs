@@ -6,6 +6,12 @@ public enum LocalConnectorApprovalMode: String, Codable, CaseIterable, Sendable 
     case fullControl = "full_control"
 }
 
+public enum LocalConnectorApprovalDecision: String, Codable, CaseIterable, Sendable {
+    case decline
+    case accept
+    case acceptForSession
+}
+
 public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Equatable {
     public var id: String
     public var requestID: String
@@ -40,6 +46,10 @@ public struct LocalConnectorPendingApproval: Codable, Identifiable, Sendable, Eq
         self.reason = reason
         self.createdAt = createdAt
         self.availableDecisions = availableDecisions
+    }
+
+    public func allows(_ decision: LocalConnectorApprovalDecision) -> Bool {
+        availableDecisions.contains(decision.rawValue)
     }
 }
 

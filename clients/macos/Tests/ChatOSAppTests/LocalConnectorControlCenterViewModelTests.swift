@@ -419,7 +419,10 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
         }
         return [Self.pendingApproval()]
     }
-    func resolveApproval(id: String, decision: String) async throws { throw StubError.unimplemented }
+    func resolveApproval(
+        id: String,
+        decision: LocalConnectorApprovalDecision
+    ) async throws { throw StubError.unimplemented }
     func fetchModelCatalog(refresh: Bool) async throws -> LocalConnectorModelCatalog {
         await withCheckedContinuation { continuation in
             delayedModelCatalogContinuation = continuation

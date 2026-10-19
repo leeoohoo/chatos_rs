@@ -11,7 +11,10 @@ public protocol LocalConnectorApprovalServicing: Sendable {
         riskAcknowledged: Bool
     ) async throws -> LocalConnectorApprovalSettings
     func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval]
-    func resolveApproval(id: String, decision: String) async throws
+    func resolveApproval(
+        id: String,
+        decision: LocalConnectorApprovalDecision
+    ) async throws
 }
 
 public protocol LocalConnectorControlServicing: LocalConnectorApprovalServicing {
