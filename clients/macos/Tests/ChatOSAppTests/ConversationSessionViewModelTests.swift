@@ -355,6 +355,32 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isRefreshing)
     }
 
+    func testDeactivateRejectsLateOlderHistoryPage() async throws {
+        let remoteService = DelayedOlderConversationRemoteServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            remoteService: remoteService
+        )
+        viewModel.activate()
+        try await waitUntil {
+            viewModel.hasOlder && viewModel.turns.map(\.id) == ["turn-current"]
+        }
+        viewModel.loadOlder()
+        try await waitUntil {
+            await remoteService.hasDelayedOlderRequest()
+        }
+
+        viewModel.deactivate()
+        await remoteService.resumeOlderRequest()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.turns.map(\.id), ["turn-current"])
+        XCTAssertFalse(viewModel.isLoadingOlder)
+        XCTAssertNil(viewModel.historyError)
+    }
+
     func testRuntimeBecomingReadyReloadsModelsAfterInitialBootstrapFailure() async throws {
         let runtimeSettings = RecoveringRuntimeSettingsServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -731,6 +757,58 @@ private actor ConversationRemoteServiceStub: ConversationRemoteServicing {
             status: revision > 1 ? .completed : .streaming,
             startedAt: Date(timeIntervalSince1970: 1),
             completedAt: revision > 1 ? Date(timeIntervalSince1970: 2) : nil
+        )
+    }
+}
+
+private actor DelayedOlderConversationRemoteServiceStub: ConversationRemoteServicing {
+    private var olderContinuation: CheckedContinuation<Void, Never>?
+
+    func fetchHistory(_ query: ConversationHistoryQuery) async -> HistoryPage {
+        if query.before != nil {
+            await withCheckedContinuation { continuation in
+                olderContinuation = continuation
+            }
+            return HistoryPage(
+                turns: [Self.turn(id: "turn-older", sequence: 1)],
+                olderCursor: nil,
+                hasOlder: false,
+                snapshotRevision: 2,
+                requestGeneration: query.requestGeneration
+            )
+        }
+        return HistoryPage(
+            turns: [Self.turn(id: "turn-current", sequence: 2)],
+            olderCursor: "older-cursor",
+            hasOlder: true,
+            snapshotRevision: 1,
+            requestGeneration: query.requestGeneration
+        )
+    }
+
+    func issueWebSocketTicket() async -> String { "ticket" }
+
+    func hasDelayedOlderRequest() -> Bool { olderContinuation != nil }
+
+    func resumeOlderRequest() {
+        olderContinuation?.resume()
+        olderContinuation = nil
+    }
+
+    private static func turn(id: String, sequence: Int64) -> ConversationTurn {
+        ConversationTurn(
+            id: id,
+            sessionID: "session-1",
+            sequence: sequence,
+            revision: 1,
+            userMessage: ChatMessage(
+                id: "message-\(id)",
+                role: .user,
+                text: id,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(sequence))
+            ),
+            status: .completed,
+            startedAt: Date(timeIntervalSince1970: TimeInterval(sequence))
         )
     }
 }

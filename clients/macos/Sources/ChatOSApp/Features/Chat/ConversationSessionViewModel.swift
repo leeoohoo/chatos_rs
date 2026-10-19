@@ -86,6 +86,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var realtimeTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
+    private var olderHistoryLoadTask: Task<Void, Never>?
     private var latestRefreshState = ConversationLatestRefreshState()
     private var historyRetryAttempt = 0
     private var viewportUpdateGeneration: Int64 = 0
@@ -160,6 +161,7 @@ final class ConversationSessionViewModel: ObservableObject {
         realtimeTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
+        olderHistoryLoadTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
@@ -198,6 +200,10 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
         isRefreshing = false
+        olderHistoryLoadTask?.cancel()
+        olderHistoryLoadTask = nil
+        isLoadingOlder = false
+        inFlightOlderCursor = nil
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         taskGraphAvailabilityTasks.removeAll()
     }
@@ -233,6 +239,8 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
+        olderHistoryLoadTask?.cancel()
+        olderHistoryLoadTask = nil
         runtimeSettingsLoadGeneration &+= 1
         askUserPromptLifecycleState.reset()
         askUserPromptRefreshTask?.cancel()
@@ -360,7 +368,9 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func loadOlder() {
-        guard isLocalAgentRuntimeReady,
+        guard isActive,
+              isLocalAgentRuntimeReady,
+              let activation = activationState.activeSession,
               let historyUseCase,
               let cursor = olderCursor,
               hasOlder,
@@ -374,22 +384,32 @@ final class ConversationSessionViewModel: ObservableObject {
         historyError = nil
         timelineObservationState.invalidate()
 
-        Task {
+        olderHistoryLoadTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 let snapshot = try await historyUseCase.loadOlder(
-                    sessionID: sessionID,
+                    sessionID: self.sessionID,
                     before: cursor,
                     requestGeneration: generation
                 )
-                applyHistorySnapshot(snapshot)
+                guard !Task.isCancelled,
+                      self.activationState.accepts(activation),
+                      self.isLocalAgentRuntimeReady,
+                      self.inFlightOlderCursor == cursor else { return }
+                self.applyHistorySnapshot(snapshot)
             } catch {
-                historyError = error.localizedDescription
+                guard !Task.isCancelled,
+                      self.activationState.accepts(activation),
+                      self.isLocalAgentRuntimeReady,
+                      self.inFlightOlderCursor == cursor else { return }
+                self.historyError = error.localizedDescription
             }
-            if inFlightOlderCursor == cursor {
-                inFlightOlderCursor = nil
-            }
-            isLoadingOlder = false
-            timelineObservationState.invalidate()
+            guard self.activationState.accepts(activation),
+                  self.inFlightOlderCursor == cursor else { return }
+            self.inFlightOlderCursor = nil
+            self.isLoadingOlder = false
+            self.olderHistoryLoadTask = nil
+            self.timelineObservationState.invalidate()
         }
     }
 
