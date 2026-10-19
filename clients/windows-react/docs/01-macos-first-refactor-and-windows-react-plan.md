@@ -392,6 +392,8 @@ Conversation 附件文件读取和粘贴图片归一化现已绑定 composer dra
 
 内嵌 Task Inspector 在 detail 加载中切回 process 时会重新挂起当前活跃 Task 的 polling；取消模型输出请求不能同时让执行过程停止刷新。
 
+项目 Conversation 准备现已由 Core per-project token state 与 AppModel 持有的具体 Task 共同管理；项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；
@@ -514,7 +516,7 @@ Conversation 附件文件读取和粘贴图片归一化现已绑定 composer dra
 2. [进行中] 为当前 macOS 主窗口、创建项目弹窗、Conversation、任务动态和执行详情采集最新基线。
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
-5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备与 Run Inspector 分页规则已提取。
+5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备用例/per-project lifecycle 与 Run Inspector 分页规则已提取。
 6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
 7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。

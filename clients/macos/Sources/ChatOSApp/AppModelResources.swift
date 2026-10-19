@@ -114,8 +114,7 @@ extension AppModel {
         )
         workspaceProjects.removeAll { $0.id == id }
         projects.removeAll { $0.id == id }
-        prepareProjectConversationUseCase?.cancel(ownerUserID: owner, projectID: id)
-        preparingProjectConversationIDs.remove(id)
+        cancelProjectConversationPreparation(projectID: id, ownerUserID: owner)
         projectConversationPreparationErrors.removeValue(forKey: id)
         petPreferences.setFavorite(false, projectID: id)
         for conversationID in conversationIDs {
@@ -279,29 +278,48 @@ extension AppModel {
         guard workspaceProject(id: projectID) != nil,
               defaultProjectContact != nil else { return }
 
-        let requestID = UUID()
-        projectConversationPreparationRequestIDs[projectID] = requestID
+        let token = projectConversationPreparationState.begin(projectID: projectID)
         preparingProjectConversationIDs.insert(projectID)
         projectConversationPreparationErrors[projectID] = nil
-        Task { [weak self] in
+        projectConversationPreparationTasks[projectID] = Task { [weak self] in
             guard let self else { return }
             do {
-                _ = try await ensureProjectConversation(projectID: projectID)
+                _ = try await ensureProjectConversation(
+                    projectID: projectID,
+                    preparationToken: token
+                )
             } catch {
-                guard projectConversationPreparationRequestIDs[projectID] == requestID else {
-                    return
-                }
+                guard projectConversationPreparationState.accepts(token) else { return }
                 if !(error is CancellationError), workspaceProject(id: projectID) != nil {
                     projectConversationPreparationErrors[projectID] = error.localizedDescription
                 }
             }
-            guard projectConversationPreparationRequestIDs[projectID] == requestID else { return }
+            guard projectConversationPreparationState.finish(token) else { return }
             preparingProjectConversationIDs.remove(projectID)
-            projectConversationPreparationRequestIDs[projectID] = nil
+            projectConversationPreparationTasks[projectID] = nil
         }
     }
 
-    func ensureProjectConversation(projectID: String) async throws -> String {
+    func cancelProjectConversationPreparation(
+        projectID: String,
+        ownerUserID: String? = nil
+    ) {
+        if let ownerUserID {
+            prepareProjectConversationUseCase?.cancel(
+                ownerUserID: ownerUserID,
+                projectID: projectID
+            )
+        }
+        projectConversationPreparationState.cancel(projectID: projectID)
+        projectConversationPreparationTasks[projectID]?.cancel()
+        projectConversationPreparationTasks[projectID] = nil
+        preparingProjectConversationIDs.remove(projectID)
+    }
+
+    func ensureProjectConversation(
+        projectID: String,
+        preparationToken: ProjectConversationPreparationToken? = nil
+    ) async throws -> String {
         if let existing = projects.first(where: { $0.id == projectID })?.conversationID {
             return existing
         }
@@ -319,7 +337,8 @@ extension AppModel {
         )
         guard owner == authenticatedUserID,
               accountGeneration == workspaceAccountGeneration,
-              workspaceProject(id: projectID) != nil else {
+              workspaceProject(id: projectID) != nil,
+              preparationToken.map(projectConversationPreparationState.accepts) ?? true else {
             throw CancellationError()
         }
         applyPreparedConversation(

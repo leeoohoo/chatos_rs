@@ -334,7 +334,9 @@ extension AppModel {
         localConnectorSleepPreparationTask?.cancel()
         localConnectorSleepPreparationTask = nil
         prepareProjectConversationUseCase?.cancelAll()
-        projectConversationPreparationRequestIDs = [:]
+        projectConversationPreparationState.reset()
+        projectConversationPreparationTasks.values.forEach { $0.cancel() }
+        projectConversationPreparationTasks.removeAll()
         preparingProjectConversationIDs = []
         localAgentHostHealthCheckGeneration &+= 1
         localAgentHostHealthCheckTask?.cancel()

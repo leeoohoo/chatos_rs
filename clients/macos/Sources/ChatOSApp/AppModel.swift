@@ -134,7 +134,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let userLanguagePreferencesService: LocalUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
-    var projectConversationPreparationRequestIDs: [String: UUID] = [:]
+    var projectConversationPreparationState = ProjectConversationPreparationState()
+    var projectConversationPreparationTasks: [String: Task<Void, Never>] = [:]
     var workspaceLoadGeneration: Int64 = 0
     var workspaceLoadTask: Task<Void, Never>?
     var remoteConnectionsLoadGeneration: UInt64 = 0

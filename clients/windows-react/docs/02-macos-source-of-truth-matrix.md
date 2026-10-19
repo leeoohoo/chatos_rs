@@ -37,7 +37,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
+| 项目会话准备 | Application 用例与 per-project lifecycle 已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Preparation state/use case 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
 | Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态与 refresh/per-prompt 异步生命周期已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
@@ -80,7 +80,7 @@ ProjectMessagesView.task
 - 仅登录账号与 Local Agent workspace owner 一致时才准备会话；
 - 项目与默认联系人必须存在；
 - 同一项目已有准备任务时复用，不重复创建；
-- `requestID` 与 `workspaceAccountGeneration` 阻止过期异步结果覆盖当前账号/项目状态；
+- per-project preparation token 与 `workspaceAccountGeneration` 在应用 Conversation 前共同验收，阻止过期异步结果覆盖当前账号/项目状态；
 - 强制 reconcile 可校正重装、重新配对或 workspace 移动后的陈旧执行目标；
 - 失败保存在项目级错误状态，用户显式重试才清除并重新准备；
 - Conversation ViewModel 按 session ID 缓存，激活新会话时停用旧会话。
@@ -99,10 +99,10 @@ Adapter：`NativeLocalAgentProjectConversationService`，位于 `clients/macos/S
 
 ### 3.4 目标 Application/Port
 
-macOS 分层时从现有行为提取，不增加业务含义：
+macOS 分层从现有行为提取，不增加业务含义：
 
 - `PrepareProjectConversationUseCase`
-- `ProjectConversationPreparationState`
+- `ProjectConversationPreparationState`（已完成）
 - `ProjectConversationPort`
 - `ConversationSessionFactory`
 
@@ -112,10 +112,11 @@ React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输
 
 - 已新增 `ProjectContextLoading` Port，由现有 `NativeLocalProjectsService` adapter 实现；
 - 已新增 `PrepareProjectConversationUseCase`，按 owner + project 复用并发准备任务；
+- 已新增 `ProjectConversationPreparationState`，为每个项目分配 latest-wins token；AppModel 显式持有对应 Task，项目删除只取消目标项目，账号切换/登出/退出统一取消全部任务；
 - Use Case 仍严格执行“先加载当前 project context，再调用 `ProjectConversationPreparing`”的 macOS 顺序；
 - AppModel 继续负责登录账号、workspace generation、项目是否仍存在和四种 UI 状态，迟到结果仍不能写回；
 - 登出/账号切换与项目删除会取消对应 Application 任务；
-- 已覆盖同账号同项目复用、不同账号绝不复用，以及 context 注入后才创建 Conversation 的测试。
+- 已覆盖同账号同项目复用、不同账号绝不复用、不同项目独立 lifecycle、项目级取消/账号级 reset，以及 context 注入后才创建 Conversation 的测试。
 
 ## 4. Conversation：完整调用链
 
