@@ -3,16 +3,17 @@ import Foundation
 
 extension ConversationSessionViewModel {
     func prompts(for turnID: String) -> [AskUserPrompt] {
-        askUserPrompts
-            .filter { $0.turnID == turnID }
-            .sorted(by: Self.askUserPromptOrder)
+        ConversationAskUserPromptUseCase.prompts(
+            for: turnID,
+            in: askUserPrompts
+        )
     }
 
     var unattachedPendingPrompts: [AskUserPrompt] {
-        let loadedTurnIDs = Set(turns.map(\.id))
-        return askUserPrompts
-            .filter { $0.status.isPending && !loadedTurnIDs.contains($0.turnID) }
-            .sorted(by: Self.askUserPromptOrder)
+        ConversationAskUserPromptUseCase.unattachedPendingPrompts(
+            in: askUserPrompts,
+            loadedTurnIDs: Set(turns.map(\.id))
+        )
     }
 
     func isSubmitting(promptID: String) -> Bool {
@@ -20,14 +21,11 @@ extension ConversationSessionViewModel {
     }
 
     func refreshAskUserPrompts() async {
-        guard isLocalAgentRuntimeReady, let askUserPromptService else { return }
+        guard isLocalAgentRuntimeReady, let askUserPromptUseCase else { return }
         askUserPromptRefreshGeneration &+= 1
         let generation = askUserPromptRefreshGeneration
         do {
-            let prompts = try await askUserPromptService.fetchPrompts(
-                sessionID: sessionID,
-                limit: 100
-            )
+            let prompts = try await askUserPromptUseCase.fetchPrompts(sessionID: sessionID)
             guard generation == askUserPromptRefreshGeneration else { return }
             replaceAskUserPrompts(prompts)
         } catch {
@@ -37,15 +35,17 @@ extension ConversationSessionViewModel {
     }
 
     func submitAskUserPrompt(_ prompt: AskUserPrompt, submission: AskUserSubmission) {
-        guard let askUserPromptService,
-              prompt.status.isPending,
-              !submittingAskUserPromptIDs.contains(prompt.id) else { return }
+        guard let askUserPromptUseCase,
+              ConversationAskUserPromptUseCase.canSubmit(
+                prompt,
+                submittingPromptIDs: submittingAskUserPromptIDs
+              ) else { return }
         askUserPromptRefreshGeneration &+= 1
         submittingAskUserPromptIDs.insert(prompt.id)
         askUserPromptErrors[prompt.id] = nil
         Task {
             do {
-                let updated = try await askUserPromptService.submit(
+                let updated = try await askUserPromptUseCase.submit(
                     promptID: prompt.id,
                     sessionID: sessionID,
                     submission: submission
@@ -61,16 +61,17 @@ extension ConversationSessionViewModel {
     }
 
     func cancelAskUserPrompt(_ prompt: AskUserPrompt) {
-        guard let askUserPromptService,
-              prompt.status.isPending,
-              prompt.allowsCancel,
-              !submittingAskUserPromptIDs.contains(prompt.id) else { return }
+        guard let askUserPromptUseCase,
+              ConversationAskUserPromptUseCase.canCancel(
+                prompt,
+                submittingPromptIDs: submittingAskUserPromptIDs
+              ) else { return }
         askUserPromptRefreshGeneration &+= 1
         submittingAskUserPromptIDs.insert(prompt.id)
         askUserPromptErrors[prompt.id] = nil
         Task {
             do {
-                let updated = try await askUserPromptService.cancel(
+                let updated = try await askUserPromptUseCase.cancel(
                     promptID: prompt.id,
                     sessionID: sessionID
                 )
@@ -85,19 +86,11 @@ extension ConversationSessionViewModel {
     }
 
     private func upsertAskUserPrompt(_ prompt: AskUserPrompt) {
-        var prompts = askUserPrompts
-        if let index = prompts.firstIndex(where: { $0.id == prompt.id }) {
-            prompts[index] = prompt
-        } else {
-            prompts.append(prompt)
-        }
-        replaceAskUserPrompts(prompts)
-    }
-
-    private static func askUserPromptOrder(_ lhs: AskUserPrompt, _ rhs: AskUserPrompt) -> Bool {
-        let left = lhs.createdAt ?? lhs.updatedAt ?? .distantPast
-        let right = rhs.createdAt ?? rhs.updatedAt ?? .distantPast
-        if left != right { return left < right }
-        return lhs.id < rhs.id
+        replaceAskUserPrompts(
+            ConversationAskUserPromptUseCase.upserting(
+                prompt,
+                in: askUserPrompts
+            )
+        )
     }
 }

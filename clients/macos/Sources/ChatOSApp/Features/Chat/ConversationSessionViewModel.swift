@@ -79,7 +79,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private let historyUseCase: ConversationHistoryUseCase?
     let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
-    let askUserPromptService: (any AskUserPromptServicing)?
+    let askUserPromptUseCase: ConversationAskUserPromptUseCase?
     private var olderCursor: String?
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
@@ -146,7 +146,9 @@ final class ConversationSessionViewModel: ObservableObject {
         self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
         self.runtimeSettingsService = runtimeSettingsService
-        self.askUserPromptService = askUserPromptService
+        self.askUserPromptUseCase = askUserPromptService.map {
+            ConversationAskUserPromptUseCase(service: $0)
+        }
 
         Task { await bootstrap(initialTurns: initialTurns) }
     }
