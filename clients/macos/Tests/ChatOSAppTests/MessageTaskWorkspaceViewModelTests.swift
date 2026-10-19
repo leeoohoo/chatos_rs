@@ -92,6 +92,31 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingInspector)
     }
 
+    func testSelectingTaskWithRunLoadsDetailBeforeModelOutput() async throws {
+        let service = SequencedInspectorMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        let task = MessageTask(
+            id: "task-a",
+            title: "任务列表摘要",
+            status: "completed",
+            lastRunID: "run-a"
+        )
+
+        viewModel.select(task)
+        try await waitUntil {
+            viewModel.taskDetail?.title == "服务端任务详情"
+                && viewModel.taskDetail?.lastRun?.id == "run-a"
+        }
+
+        let requestCounts = await service.requestCounts()
+        XCTAssertEqual(requestCounts.task, 1)
+        XCTAssertEqual(requestCounts.modelOutput, 1)
+        XCTAssertEqual(viewModel.selectedTask?.id, task.id)
+        XCTAssertFalse(viewModel.isLoadingInspector)
+        XCTAssertFalse(viewModel.isLoadingModelOutput)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testSwitchingTaskRejectsLateRetryCompletionForOldTarget() async throws {
         let service = DelayedRetryMessageTaskGraphServiceStub()
         let viewModel = makeViewModel(service: service)
@@ -208,6 +233,74 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor SequencedInspectorMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var taskRequestCount = 0
+    private var modelOutputRequestCount = 0
+
+    func requestCounts() -> (task: Int, modelOutput: Int) {
+        (taskRequestCount, modelOutputRequestCount)
+    }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        taskRequestCount += 1
+        return MessageTask(
+            id: taskID,
+            title: "服务端任务详情",
+            status: "completed",
+            lastRunID: "run-a"
+        )
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        modelOutputRequestCount += 1
+        let task = MessageTask(
+            id: "task-a",
+            title: "服务端任务详情",
+            status: "completed",
+            lastRunID: runID
+        )
+        return .init(
+            task: task,
+            run: .init(id: runID, taskID: task.id, reportContent: "完成"),
+            events: []
+        )
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-a")
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String?
+    ) async throws {}
 }
 
 private actor DelayedRetryMessageTaskGraphServiceStub: MessageTaskGraphServicing {

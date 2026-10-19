@@ -145,7 +145,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         selectedTask = task
         if let section { inspectorSection = section }
         loadInspector(for: task)
-        ensureInspectorSectionLoaded()
     }
 
     func cancelInspectorRequests() {
