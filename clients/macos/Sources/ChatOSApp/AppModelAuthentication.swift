@@ -85,7 +85,7 @@ extension AppModel {
             workspaceProjects = []
             workspaceContacts = []
             workspaceConversations = []
-            remoteConnectionsLoadGeneration &+= 1
+            remoteConnectionsLoadState.reset()
             remoteConnections = []
             isRemoteConnectionsLoading = false
             remoteConnectionsError = nil
@@ -322,7 +322,7 @@ extension AppModel {
         workspaceLoadTask?.cancel()
         workspaceLoadTask = nil
         isWorkspaceLoading = false
-        remoteConnectionsLoadGeneration &+= 1
+        remoteConnectionsLoadState.reset()
         remoteConnectionsLoadTask?.cancel()
         remoteConnectionsLoadTask = nil
         isRemoteConnectionsLoading = false

@@ -412,6 +412,8 @@ Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、�
 
 全局活动定位 Ask User 前的 Prompt refresh 已改为 Conversation 显式持有的 latest-wins focus Task 与 typed token；后一次定位会淘汰前一次，Host 忽略取消时也不会因实例 async 方法而留住 Conversation。
 
+远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

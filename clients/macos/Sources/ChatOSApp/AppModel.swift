@@ -128,6 +128,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionMetadataService: NativeLocalAgentRemoteConnectionMetadataService
     let remoteConnectionService: NativeRemoteConnectionService
+    let remoteConnectionListUseCase: RemoteConnectionListUseCase
     let remoteFileService: NativeRemoteFileService
     let remoteConnectionWorkspaceStore: RemoteConnectionWorkspaceStore
     let projectFilesystemService: NativeProjectFilesystemService
@@ -148,7 +149,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var projectConversationPreparationTasks: [String: Task<Void, Never>] = [:]
     var workspaceLoadGeneration: Int64 = 0
     var workspaceLoadTask: Task<Void, Never>?
-    var remoteConnectionsLoadGeneration: UInt64 = 0
+    var remoteConnectionsLoadState = RemoteConnectionsLoadState()
     var remoteConnectionsLoadTask: Task<Void, Never>?
     var pluginApplicationsLoadGeneration: Int64 = 0
     var pluginApplicationsLoadTask: Task<Void, Never>?
@@ -354,6 +355,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             )
         }
         self.localProjectsService = localProjectsService
+        self.remoteConnectionListUseCase = RemoteConnectionListUseCase(
+            service: remoteConnectionService
+        )
         let agentSkillLibrary = LocalAgentSkillLibrary(
             fileURL: RuntimeConfiguration.nativeConnectorStateURL.deletingLastPathComponent()
                 .appendingPathComponent("AgentSkillOverrides.json")

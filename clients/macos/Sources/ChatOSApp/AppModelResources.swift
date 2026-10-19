@@ -151,34 +151,39 @@ extension AppModel {
     func refreshRemoteConnections() {
         guard let expectedOwnerUserID = authenticatedUserID else { return }
         remoteConnectionsLoadTask?.cancel()
-        remoteConnectionsLoadGeneration &+= 1
-        let generation = remoteConnectionsLoadGeneration
         let accountGeneration = workspaceAccountGeneration
+        let token = remoteConnectionsLoadState.begin(
+            ownerUserID: expectedOwnerUserID,
+            accountGeneration: accountGeneration
+        )
+        let useCase = remoteConnectionListUseCase
         isRemoteConnectionsLoading = true
         remoteConnectionsError = nil
         remoteConnectionsLoadTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<[RemoteConnection], Error>
             do {
-                let connections = try await remoteConnectionService.listConnections()
-                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-                try Task.checkCancellation()
-                guard generation == remoteConnectionsLoadGeneration,
-                      accountGeneration == workspaceAccountGeneration,
-                      expectedOwnerUserID == authenticatedUserID else { return }
-                remoteConnections = connections
+                result = .success(try await useCase.load())
             } catch is CancellationError {
                 return
             } catch {
-                guard generation == remoteConnectionsLoadGeneration,
-                      accountGeneration == workspaceAccountGeneration,
-                      expectedOwnerUserID == authenticatedUserID else { return }
-                remoteConnectionsError = error.localizedDescription
+                result = .failure(error)
             }
-            guard generation == remoteConnectionsLoadGeneration,
-                  accountGeneration == workspaceAccountGeneration,
-                  expectedOwnerUserID == authenticatedUserID else { return }
-            isRemoteConnectionsLoading = false
-            remoteConnectionsLoadTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.remoteConnectionsLoadState.accepts(
+                    token,
+                    ownerUserID: self.authenticatedUserID,
+                    accountGeneration: self.workspaceAccountGeneration
+                  ) else { return }
+            switch result {
+            case let .success(connections):
+                self.remoteConnections = connections
+            case let .failure(error):
+                self.remoteConnectionsError = error.localizedDescription
+            }
+            guard self.remoteConnectionsLoadState.finish(token) else { return }
+            self.isRemoteConnectionsLoading = false
+            self.remoteConnectionsLoadTask = nil
         }
     }
 
