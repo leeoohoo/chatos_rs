@@ -5,10 +5,99 @@ protocol NativeLocalAgentToolApprovalHandling: Sendable {
     func resolveNextPending(ownerUserID: String) async throws -> Bool
 }
 
+protocol NativeLocalAgentDurableApprovalServicing: Sendable {
+    func pendingApprovals(
+        ownerUserID: String
+    ) async throws -> [LocalAgentToolInvocationRecord]
+
+    func decideApproval(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        approve: Bool,
+        decidedBy: String,
+        reason: String
+    ) async throws
+}
+
+private struct NativeLocalAgentDurableApprovalPort: NativeLocalAgentDurableApprovalServicing {
+    let client: NativeLocalAgentToolClient
+
+    func pendingApprovals(
+        ownerUserID: String
+    ) async throws -> [LocalAgentToolInvocationRecord] {
+        try await client.pendingApprovals(ownerUserID: ownerUserID)
+    }
+
+    func decideApproval(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        approve: Bool,
+        decidedBy: String,
+        reason: String
+    ) async throws {
+        _ = try await client.decideApproval(
+            ownerUserID: ownerUserID,
+            invocation: invocation,
+            approve: approve,
+            decidedBy: decidedBy,
+            reason: reason
+        )
+    }
+}
+
+protocol NativeLocalAgentApprovalContextResolving: Sendable {
+    func resolve(
+        ownerUserID: String,
+        runID: String
+    ) async throws -> NativeLocalAgentTaskExecutionContext
+}
+
+extension NativeLocalAgentProjectContextResolver: NativeLocalAgentApprovalContextResolving {}
+
+struct NativeLocalHumanApprovalRequest: Sendable {
+    let requestID: String
+    let command: String
+    let arguments: [String]
+    let cwd: URL
+    let projectRoot: URL
+    let source: String
+    let risk: NativeApprovalRisk
+    let purpose: String?
+    let requestedPermissionsDescription: String
+    let approvalScopeKey: String
+    let workspaceID: String
+}
+
+protocol NativeLocalHumanApprovalServicing: Sendable {
+    func decideHumanApproval(
+        _ request: NativeLocalHumanApprovalRequest
+    ) async -> NativeApprovalDecision
+}
+
+extension NativeLocalConnectorService: NativeLocalHumanApprovalServicing {
+    func decideHumanApproval(
+        _ request: NativeLocalHumanApprovalRequest
+    ) async -> NativeApprovalDecision {
+        await approvalDecision(
+            requestID: request.requestID,
+            command: request.command,
+            arguments: request.arguments,
+            cwd: request.cwd,
+            projectRoot: request.projectRoot,
+            source: request.source,
+            risk: request.risk,
+            purpose: request.purpose,
+            requestedPermissionsDescription: request.requestedPermissionsDescription,
+            approvalScopeKey: request.approvalScopeKey,
+            workspaceID: request.workspaceID
+        )
+    }
+}
+
 struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling, Sendable {
-    private let client: NativeLocalAgentToolClient
-    private let contextResolver: NativeLocalAgentProjectContextResolver
-    private let connector: NativeLocalConnectorService
+    private let durableApprovals: any NativeLocalAgentDurableApprovalServicing
+    private let contextResolver: any NativeLocalAgentApprovalContextResolving
+    private let humanApprovals: any NativeLocalHumanApprovalServicing
     private let reviewerID: String
 
     init(
@@ -17,14 +106,32 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         connector: NativeLocalConnectorService,
         reviewerID: String = "macos-local-approval"
     ) {
-        client = .init(host: host)
-        contextResolver = .init(host: host, projects: projects, connector: connector)
-        self.connector = connector
+        durableApprovals = NativeLocalAgentDurableApprovalPort(
+            client: .init(host: host)
+        )
+        contextResolver = NativeLocalAgentProjectContextResolver(
+            host: host,
+            projects: projects,
+            connector: connector
+        )
+        humanApprovals = connector
+        self.reviewerID = reviewerID
+    }
+
+    init(
+        durableApprovals: any NativeLocalAgentDurableApprovalServicing,
+        contextResolver: any NativeLocalAgentApprovalContextResolving,
+        humanApprovals: any NativeLocalHumanApprovalServicing,
+        reviewerID: String = "macos-local-approval"
+    ) {
+        self.durableApprovals = durableApprovals
+        self.contextResolver = contextResolver
+        self.humanApprovals = humanApprovals
         self.reviewerID = reviewerID
     }
 
     func resolveNextPending(ownerUserID: String) async throws -> Bool {
-        let pending = try await client.pendingApprovals(ownerUserID: ownerUserID)
+        let pending = try await durableApprovals.pendingApprovals(ownerUserID: ownerUserID)
         guard let invocation = pending.first(where: {
             NativeMCPCodeWriteStore.toolNames.contains($0.toolName)
                 || NativeLocalAgentPlatformToolCatalog.taskExecutionTerminalToolNames.contains(
@@ -41,7 +148,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         )
         let approvalScope = Self.approvalScope(for: context)
         guard let presentation = Self.presentation(invocation) else {
-            _ = try await client.decideApproval(
+            try await durableApprovals.decideApproval(
                 ownerUserID: ownerUserID,
                 invocation: invocation,
                 approve: false,
@@ -57,7 +164,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 projectRoot: approvalScope.rootURL
             )
         } catch {
-            _ = try await client.decideApproval(
+            try await durableApprovals.decideApproval(
                 ownerUserID: ownerUserID,
                 invocation: invocation,
                 approve: false,
@@ -66,7 +173,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             )
             return true
         }
-        let decision = await connector.approvalDecision(
+        let decision = await humanApprovals.decideHumanApproval(.init(
             requestID: invocation.invocationID,
             command: presentation.command,
             arguments: presentation.arguments,
@@ -78,7 +185,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             requestedPermissionsDescription: presentation.permission,
             approvalScopeKey: presentation.scope + ":\(context.conversationID)",
             workspaceID: approvalScope.workspaceID
-        )
+        ))
         let approved: Bool
         let reason: String
         switch decision {
@@ -89,7 +196,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             approved = false
             reason = value
         }
-        _ = try await client.decideApproval(
+        try await durableApprovals.decideApproval(
             ownerUserID: ownerUserID,
             invocation: invocation,
             approve: approved,
