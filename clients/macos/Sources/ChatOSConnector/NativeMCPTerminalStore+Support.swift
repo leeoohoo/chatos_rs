@@ -347,6 +347,17 @@ enum NativeMCPTerminalError: LocalizedError {
         case let .writeFailed(message): "写入命令进程失败：\(message)"
         }
     }
+
+    /// These failures are known before a terminal mutation can be applied. The Local Agent may
+    /// re-observe the process and retry instead of escalating the whole Run to Human review.
+    var isKnownPreEffectFailure: Bool {
+        switch self {
+        case .unsupportedTool, .invalidArguments, .launchFailed, .processNotFound, .processExited:
+            true
+        case .writeFailed:
+            false
+        }
+    }
 }
 
 extension Dictionary where Key == String, Value == NativeJSONValue {

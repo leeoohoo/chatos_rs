@@ -36,12 +36,18 @@ actor NativeLocalAgentTerminalStore {
         projectRoot: URL,
         ownerRunID: String
     ) async throws -> NativeJSONValue {
-        return try await terminal.call(
-            name: name,
-            arguments: arguments,
-            projectRoot: projectRoot,
-            ownerRunID: ownerRunID
-        )
+        do {
+            return try await terminal.call(
+                name: name,
+                arguments: arguments,
+                projectRoot: projectRoot,
+                ownerRunID: ownerRunID
+            )
+        } catch let error as NativeMCPTerminalError where error.isKnownPreEffectFailure {
+            throw NativeLocalAgentPlatformToolError.projectToolRejected(
+                error.errorDescription ?? "The terminal process request was rejected before execution."
+            )
+        }
     }
 
     @discardableResult

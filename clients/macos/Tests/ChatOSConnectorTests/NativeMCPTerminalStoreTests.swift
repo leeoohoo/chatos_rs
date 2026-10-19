@@ -210,6 +210,33 @@ struct NativeMCPTerminalStoreTests {
     }
 
     @Test
+    func staleProcessHandleAfterTerminalStoreRestartIsRecoverable() async throws {
+        let fixture = try TerminalFixture()
+        defer { fixture.dispose() }
+        let restartedStore = NativeLocalAgentTerminalStore()
+
+        do {
+            _ = try await restartedStore.call(
+                name: "process_kill",
+                arguments: ["terminal_id": .string("terminal-from-previous-app-process")],
+                projectRoot: fixture.root,
+                ownerRunID: "run-a"
+            )
+            Issue.record("A stale process handle unexpectedly reached terminal mutation")
+        } catch let error as NativeLocalAgentPlatformToolError {
+            #expect(error == .projectToolRejected("当前项目中没有找到该命令进程"))
+            #expect(error.isKnownPreEffectFailure)
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+
+    @Test
+    func terminalWriteFailureStillRequiresSideEffectReview() {
+        #expect(!NativeMCPTerminalError.writeFailed("partial write unknown").isKnownPreEffectFailure)
+    }
+
+    @Test
     func processListingIsScopedToOwningLocalAgentRunWithoutAProcessHandle() async throws {
         let fixture = try TerminalFixture()
         defer { fixture.dispose() }
