@@ -79,7 +79,6 @@ extension AppModel {
             languagePreferencesError = nil
             localConnectorControl.resetForSignedOut()
             mediaStudio.resetForSignedOut()
-            workspaceLoadGeneration += 1
             contacts = []
             projects = []
             workspaceProjects = []
@@ -318,7 +317,7 @@ extension AppModel {
     }
 
     private func cancelAccountScopedBackgroundTasks() {
-        workspaceLoadGeneration += 1
+        workspaceLoadState.reset()
         workspaceLoadTask?.cancel()
         workspaceLoadTask = nil
         isWorkspaceLoading = false

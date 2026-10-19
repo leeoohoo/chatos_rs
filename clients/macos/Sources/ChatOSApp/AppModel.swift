@@ -148,7 +148,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
     var projectConversationPreparationState = ProjectConversationPreparationState()
     var projectConversationPreparationTasks: [String: Task<Void, Never>] = [:]
-    var workspaceLoadGeneration: Int64 = 0
+    var workspaceLoadState = WorkspaceLoadState()
     var workspaceLoadTask: Task<Void, Never>?
     var remoteConnectionsLoadState = RemoteConnectionsLoadState()
     var remoteConnectionsLoadTask: Task<Void, Never>?

@@ -104,7 +104,9 @@ extension AppModel {
 
         // A workspace refresh may already be in flight. Invalidate it so an
         // older response cannot resurrect the project after deletion.
-        workspaceLoadGeneration += 1
+        workspaceLoadState.reset()
+        workspaceLoadTask?.cancel()
+        workspaceLoadTask = nil
         isWorkspaceLoading = false
 
         let conversationIDs = Set(

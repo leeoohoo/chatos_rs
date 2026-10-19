@@ -12,13 +12,18 @@ extension AppModel {
     func refreshWorkspace() {
         guard let ownerUserID = authenticatedUserID else { return }
         workspaceLoadTask?.cancel()
-        workspaceLoadGeneration += 1
-        let generation = workspaceLoadGeneration
+        let accountGeneration = workspaceAccountGeneration
+        let token = workspaceLoadState.begin(
+            ownerUserID: ownerUserID,
+            accountGeneration: accountGeneration
+        )
         isWorkspaceLoading = true
         workspaceError = nil
 
+        let localProjectsService = localProjectsService
+        let workspaceService = workspaceService
+        let projectRunService = projectRunService
         workspaceLoadTask = Task { [weak self] in
-            guard let self else { return }
             do {
                 guard let workspaceService else {
                     throw LocalConnectorCompanionResourceError.unavailable
@@ -29,62 +34,94 @@ extension AppModel {
                 // Publish the SQLite registry before asking the Connector actor for pairing
                 // metadata. Its network connection or reconnect work must never block the
                 // client-owned project list.
-                var local = try await loader.loadLocal(deviceID: nil)
+                let local = try await loader.loadLocal(deviceID: nil)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
                 // This first registry-only snapshot intentionally has no device metadata yet.
                 // Keep any values already resolved by project creation or a previous refresh so
                 // the UI does not briefly lose its directory/conversation while pairing loads.
-                local.preserveUnavailableProjectMetadata(from: workspaceProjects)
-                local.contacts = workspaceContacts
-                local.conversations = workspaceConversations
-                await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
+                guard let localSnapshot = self?.prepareLocalWorkspaceSnapshot(
+                    local,
+                    token: token
+                ) else { return }
+                await projectRunService.updateProjects(localSnapshot.projects)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                guard localAgentWorkspaceOwnerUserID == ownerUserID else {
-                    isWorkspaceLoading = false
-                    workspaceLoadTask = nil
+                guard self?.applyWorkspaceSnapshot(localSnapshot, token: token) == true else { return }
+                guard self?.workspaceLoadCanRefreshRemote(token) == true else {
+                    self?.finishWorkspaceLoad(token)
                     return
                 }
                 let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                guard self?.workspaceLoadAccepts(token) == true else { return }
                 // Never hide durable local projects behind filesystem/grant repair. A stale or
                 // unavailable workspace can make path reauthorization slow, while the registry
                 // itself remains immediately useful for navigation and project management.
                 try? await localProjectsService.repairRootWorkspaceBindings(ownerUserID: ownerUserID)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                guard self?.workspaceLoadAccepts(token) == true else { return }
                 let result = try await loader.refresh(deviceID: deviceID)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                var snapshot = result.snapshot
-                if result.remoteError != nil {
-                    snapshot.contacts = workspaceContacts
-                    snapshot.conversations = workspaceConversations
-                }
-                await publishWorkspace(snapshot, generation: generation, ownerUserID: ownerUserID)
+                guard let snapshot = self?.prepareRemoteWorkspaceSnapshot(
+                    result.snapshot,
+                    preservingRelations: result.remoteError != nil,
+                    token: token
+                ) else { return }
+                await projectRunService.updateProjects(snapshot.projects)
                 try Task.checkCancellation()
-                guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-                workspaceError = result.remoteError
+                guard self?.applyWorkspaceSnapshot(snapshot, token: token) == true else { return }
+                self?.finishWorkspaceLoad(token, error: result.remoteError)
             } catch is CancellationError {
-                return
+                self?.finishWorkspaceLoad(token)
             } catch {
-                guard generation == workspaceLoadGeneration,
-                      ownerUserID == authenticatedUserID else { return }
-                workspaceError = error.localizedDescription
+                self?.finishWorkspaceLoad(token, error: error.localizedDescription)
             }
-            guard generation == workspaceLoadGeneration,
-                  ownerUserID == authenticatedUserID else { return }
-            isWorkspaceLoading = false
-            workspaceLoadTask = nil
         }
     }
 
-    func publishWorkspace(_ snapshot: WorkspaceSnapshot, generation: Int64, ownerUserID: String) async {
-        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
-        await projectRunService.updateProjects(snapshot.projects)
-        guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+    private func workspaceLoadAccepts(_ token: WorkspaceLoadToken) -> Bool {
+        workspaceLoadState.accepts(
+            token,
+            ownerUserID: authenticatedUserID,
+            accountGeneration: workspaceAccountGeneration
+        )
+    }
+
+    private func workspaceLoadCanRefreshRemote(_ token: WorkspaceLoadToken) -> Bool {
+        workspaceLoadAccepts(token)
+            && localAgentWorkspaceOwnerUserID == token.ownerUserID
+    }
+
+    private func prepareLocalWorkspaceSnapshot(
+        _ snapshot: WorkspaceSnapshot,
+        token: WorkspaceLoadToken
+    ) -> WorkspaceSnapshot? {
+        guard workspaceLoadAccepts(token) else { return nil }
+        var snapshot = snapshot
+        snapshot.preserveUnavailableProjectMetadata(from: workspaceProjects)
+        snapshot.contacts = workspaceContacts
+        snapshot.conversations = workspaceConversations
+        return snapshot
+    }
+
+    private func prepareRemoteWorkspaceSnapshot(
+        _ snapshot: WorkspaceSnapshot,
+        preservingRelations: Bool,
+        token: WorkspaceLoadToken
+    ) -> WorkspaceSnapshot? {
+        guard workspaceLoadAccepts(token) else { return nil }
+        guard preservingRelations else { return snapshot }
+        var snapshot = snapshot
+        snapshot.contacts = workspaceContacts
+        snapshot.conversations = workspaceConversations
+        return snapshot
+    }
+
+    @discardableResult
+    private func applyWorkspaceSnapshot(
+        _ snapshot: WorkspaceSnapshot,
+        token: WorkspaceLoadToken
+    ) -> Bool {
+        guard workspaceLoadAccepts(token) else { return false }
         workspaceProjects = snapshot.projects
         workspaceContacts = snapshot.contacts
         workspaceConversations = snapshot.conversations
@@ -93,6 +130,17 @@ extension AppModel {
         projects = resources.projects
         reconcileSelection()
         attachSelectedConversationIfNeeded()
+        return true
+    }
+
+    private func finishWorkspaceLoad(
+        _ token: WorkspaceLoadToken,
+        error: String? = nil
+    ) {
+        guard workspaceLoadAccepts(token), workspaceLoadState.finish(token) else { return }
+        workspaceError = error
+        isWorkspaceLoading = false
+        workspaceLoadTask = nil
     }
 
     private func attachSelectedConversationIfNeeded() {

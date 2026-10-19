@@ -396,6 +396,8 @@ Workspace Inspector 的详情、模型输出、Run 与事件分页 Task 已冻�
 
 项目 Conversation 准备现已由 Core `ProjectConversationPort`、per-project token state 与 AppModel 持有的具体 Task 共同管理；项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。准备 Task 会在进入 Application use case 前冻结 owner、project、contact、account generation 与 port；Context/Host await 期间不再强持有 AppModel，返回后仍须联合验收账号、项目存在性和 per-project token。
 
+项目 Workspace 刷新已用 Core `WorkspaceLoadState` 取代裸 generation，并把 registry、本地快照、设备配对、根目录修复、远端关系与 Run project 映射保持为既有的两阶段加载顺序。刷新 Task 在开始时冻结账号、account generation 与服务依赖，各段 IO 期间不再强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都必须通过同一个 typed token，项目删除、账号切换、登出或新刷新会同时淘汰旧请求。
+
 Conversation Session 的服务组合已收口到 App 层 `ConversationSessionFactory`；AppModel 不再逐项构造 ViewModel 依赖，只负责 session 缓存、LRU 淘汰与激活策略，并在每次创建时传入当前账号对应的 runtime ready 状态。
 
 Conversation 的模型、推理等级与远程连接 mutation Task 已冻结 session/请求参数，Host await 期间不再强持有 ViewModel；底层忽略取消时仍可释放会话状态，返回后继续以 mutation token 验收。
