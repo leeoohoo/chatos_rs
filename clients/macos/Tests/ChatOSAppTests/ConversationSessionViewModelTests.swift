@@ -389,6 +389,59 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
     }
 
+    func testAskUserSubmitIsExclusivePerPrompt() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+        let prompt = try XCTUnwrap(viewModel.askUserPrompts.first)
+        await promptService.delayNextSubmit()
+
+        viewModel.submitAskUserPrompt(prompt, submission: .init())
+        viewModel.submitAskUserPrompt(prompt, submission: .init())
+        try await waitUntil { await promptService.hasDelayedSubmit() }
+
+        XCTAssertTrue(viewModel.isSubmitting(promptID: prompt.id))
+        let submitCallCount = await promptService.submitCallCount()
+        XCTAssertEqual(submitCallCount, 1)
+        await promptService.resumeDelayedSubmit()
+        try await waitUntil { !viewModel.isSubmitting(promptID: prompt.id) }
+        XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
+    }
+
+    func testRuntimeUnavailableRejectsLateAskUserAction() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+        }
+        let prompt = try XCTUnwrap(viewModel.askUserPrompts.first)
+        await promptService.delayNextSubmit()
+        viewModel.submitAskUserPrompt(prompt, submission: .init())
+        try await waitUntil { await promptService.hasDelayedSubmit() }
+
+        viewModel.localAgentRuntimeDidBecomeUnavailable()
+        XCTAssertFalse(viewModel.isSubmitting(promptID: prompt.id))
+        XCTAssertTrue(viewModel.askUserPromptErrors.isEmpty)
+        await promptService.resumeDelayedSubmit()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.askUserPrompts.first?.status, .pending)
+        XCTAssertFalse(viewModel.isSubmitting(promptID: prompt.id))
+        XCTAssertTrue(viewModel.askUserPromptErrors.isEmpty)
+    }
+
     func testPromptFocusWaitsForPromptRefreshBeforeNavigating() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -511,6 +564,9 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
     )
     private var fetchCount = 0
     private var delayedFetchContinuation: CheckedContinuation<Void, Never>?
+    private var shouldDelayNextSubmit = false
+    private var delayedSubmitContinuation: CheckedContinuation<Void, Never>?
+    private var submitCount = 0
 
     func fetchPrompts(sessionID: String, limit: Int) async throws -> [AskUserPrompt] {
         fetchCount += 1
@@ -527,6 +583,13 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
         sessionID: String,
         submission: AskUserSubmission
     ) async throws -> AskUserPrompt {
+        submitCount += 1
+        if shouldDelayNextSubmit {
+            shouldDelayNextSubmit = false
+            await withCheckedContinuation { continuation in
+                delayedSubmitContinuation = continuation
+            }
+        }
         var submitted = pendingPrompt
         submitted.status = .ok
         return submitted
@@ -542,9 +605,22 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
 
     func fetchCallCount() -> Int { fetchCount }
 
+    func delayNextSubmit() {
+        shouldDelayNextSubmit = true
+    }
+
+    func hasDelayedSubmit() -> Bool { delayedSubmitContinuation != nil }
+
+    func submitCallCount() -> Int { submitCount }
+
     func resumeDelayedFetch() {
         delayedFetchContinuation?.resume()
         delayedFetchContinuation = nil
+    }
+
+    func resumeDelayedSubmit() {
+        delayedSubmitContinuation?.resume()
+        delayedSubmitContinuation = nil
     }
 }
 

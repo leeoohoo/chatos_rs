@@ -94,7 +94,9 @@ final class ConversationSessionViewModel: ObservableObject {
     var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
     var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
     private var runtimeSettingsLoadGeneration: UInt64 = 0
-    var askUserPromptRefreshGeneration: UInt64 = 0
+    var askUserPromptLifecycleState = ConversationAskUserPromptLifecycleState()
+    var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
+    var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
     private var isActive = false
     private(set) var isLocalAgentRuntimeReady: Bool
 
@@ -158,6 +160,8 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
+        askUserPromptRefreshTask?.cancel()
+        askUserPromptActionTasks.values.forEach { $0.cancel() }
         attachmentFileLoadTasks.values.forEach { $0.cancel() }
         pastedImageNormalizationTasks.values.forEach { $0.cancel() }
     }
@@ -223,7 +227,13 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
         runtimeSettingsLoadGeneration &+= 1
-        askUserPromptRefreshGeneration &+= 1
+        askUserPromptLifecycleState.reset()
+        askUserPromptRefreshTask?.cancel()
+        askUserPromptRefreshTask = nil
+        askUserPromptActionTasks.values.forEach { $0.cancel() }
+        askUserPromptActionTasks.removeAll()
+        submittingAskUserPromptIDs = []
+        askUserPromptErrors = [:]
         isRefreshing = false
         isLoadingOlder = false
         inFlightOlderCursor = nil
