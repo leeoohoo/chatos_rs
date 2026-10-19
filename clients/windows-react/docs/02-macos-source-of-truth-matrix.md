@@ -319,6 +319,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskGraphPollingState` 已集中空 Graph 三次恢复预算、是否继续 polling、600ms/2s/60s 间隔规则及 polling session identity；
 - Graph 刷新在请求前后同时校验 workspace refresh generation 与 polling session；停止/重启后的旧结果不会写回，realtime 中断后的降级 polling 仍由当前 session 控制；
 - `MessageTaskWorkspaceLifecycleState` 已集中 presentation session identity；初次加载、手动刷新、Run 重试、realtime 与 polling 都必须同时通过当前 session 验收；
+- Workspace Run retry 复用 `MessageTaskRetryState` 并绑定 session、Task 与 Run identity；切换 Task 或关闭 Workspace 会取消并失效旧 retry，清理旧目标说明，迟到 Host 结果不得重新加载旧 Inspector、覆盖错误或清理新 retry 的 loading；
 - Inspector snapshot/分页验收规则已移入 `MessageTaskInspectorRequestState`，具体 cancellable Task 仍由 macOS adapter 状态层持有；
 - polling Task 的具体实例与 realtime 降级触发仍由 macOS UI adapter 持有。
 

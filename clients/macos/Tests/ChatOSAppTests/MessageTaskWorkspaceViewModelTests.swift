@@ -92,6 +92,44 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingInspector)
     }
 
+    func testSwitchingTaskRejectsLateRetryCompletionForOldTarget() async throws {
+        let service = DelayedRetryMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        _ = viewModel.workspaceLifecycleState.start()
+        let first = MessageTask(
+            id: "task-a",
+            title: "任务 A",
+            status: "failed",
+            lastRunID: "run-a"
+        )
+        let second = MessageTask(
+            id: "task-b",
+            title: "任务 B",
+            status: "completed",
+            lastRunID: "run-b"
+        )
+        viewModel.select(first)
+        try await waitUntil { viewModel.taskDetail?.id == first.id }
+        viewModel.retryInstruction = "旧任务的重试说明"
+        viewModel.retrySelectedRun()
+        try await waitUntil { await service.hasDelayedRetry() }
+
+        viewModel.select(second)
+        try await waitUntil { viewModel.taskDetail?.id == second.id }
+
+        XCTAssertFalse(viewModel.isRetrying)
+        XCTAssertEqual(viewModel.retryInstruction, "")
+        XCTAssertNil(viewModel.retryState.activeToken)
+
+        await service.resumeRetry()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.selectedTask?.id, second.id)
+        XCTAssertEqual(viewModel.taskDetail?.id, second.id)
+        XCTAssertFalse(viewModel.isRetrying)
+        XCTAssertNil(viewModel.retryState.activeToken)
+    }
+
     func testStoppedPollingSessionRejectsLateGraphResult() async throws {
         let service = DelayedPollingMessageTaskGraphServiceStub()
         let viewModel = makeViewModel(service: service)
@@ -170,6 +208,73 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor DelayedRetryMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var retryContinuation: CheckedContinuation<Void, Never>?
+
+    func hasDelayedRetry() -> Bool { retryContinuation != nil }
+
+    func resumeRetry() {
+        retryContinuation?.resume()
+        retryContinuation = nil
+    }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        MessageTask(
+            id: taskID,
+            title: taskID == "task-a" ? "任务 A" : "任务 B",
+            status: taskID == "task-a" ? "failed" : "completed",
+            lastRunID: taskID == "task-a" ? "run-a" : "run-b"
+        )
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        let taskID = runID == "run-a" ? "task-a" : "task-b"
+        let task = try await fetchTask(messageID: "", taskID: taskID, lookup: nil)
+        return .init(
+            task: task,
+            run: .init(id: runID, taskID: taskID),
+            events: []
+        )
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        await withCheckedContinuation { continuation in
+            retryContinuation = continuation
+        }
+        return .init(id: runID, taskID: "task-a")
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String?
+    ) async throws {}
 }
 
 private actor DelayedPollingMessageTaskGraphServiceStub: MessageTaskGraphServicing {
