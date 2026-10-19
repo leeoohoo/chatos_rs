@@ -386,6 +386,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
+当前状态：执行中。首个 Application 状态模型 `LocalAgentRuntimeState` 已从 macOS 真实启动流程提取并接入 Conversation ready gate；其余 service orchestration 与 typed lifecycle port 继续迁移。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

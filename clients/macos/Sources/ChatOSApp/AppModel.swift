@@ -70,6 +70,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     @Published var preparingProjectConversationIDs: Set<String> = []
     @Published var projectConversationPreparationErrors: [String: String] = [:]
     @Published var localAgentHostError: String?
+    @Published var localAgentRuntimeState = LocalAgentRuntimeState()
 
     let historyStore: ConversationHistoryStore
     let apiClient: ChatOSAPIClient

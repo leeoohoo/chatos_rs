@@ -333,6 +333,15 @@ authenticated
 
 macOS 重构应把现有分散事实收敛为可测试的 `HostLifecycleState` 与 `HostLifecycleUseCase`，但迁移后的状态和转换必须逐项对应本节，不能另造一套启动流程。Windows Tauri sidecar 使用同一 Application 状态语义，只替换进程与平台 adapter。
 
+实施进度（2026-10-19）：
+
+- 已新增 `clients/macos/Sources/ChatOSCore/Application/LocalAgentRuntimeState.swift`；
+- 已显式建模 `stopped / launching / handshaking / synchronizing / ready / degraded / restarting`；
+- AppModel 已按现有启动节点驱动状态，Conversation 创建只在同账号 `.ready` 时放行业务刷新；
+- 控制面 service 配置完成前再次校验账号与 lifecycle generation，迟到结果不能把新账号标记为 ready，也不能停止新 generation 的 Host；
+- 已增加 generation、owner、恢复、停止和 degraded 状态单元测试；
+- 当前仍处于“已映射，可重构”，需要继续把 service orchestration 从 AppModel 提取到 Application use case 后才能升级 React 准入状态。
+
 ## 7. Ask User：完整调用链
 
 ### 7.1 UI、状态与排序

@@ -384,9 +384,7 @@ extension AppModel {
             sessionID: sessionID,
             initialTurns: [],
             historyStore: historyStore,
-            localAgentRuntimeReady: authenticatedUserID.map {
-                localAgentServicesOwnerUserID == $0
-            } ?? false,
+            localAgentRuntimeReady: localAgentRuntimeState.isReady(for: authenticatedUserID),
             remoteService: conversationService,
             realtimeService: conversationService,
             commandService: commandService,
