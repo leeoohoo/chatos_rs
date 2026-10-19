@@ -386,7 +386,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
-当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate，项目 Conversation 准备、Task Graph 稳定/realtime 刷新策略和 Run Inspector 分页用例已从 UI 协调层提取；Inspector 请求协调、其余 service orchestration 与 typed lifecycle port 继续迁移。
+当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate，项目 Conversation 准备、Task Graph 稳定/realtime 刷新策略和 Run Inspector 查询/分页用例已从 UI 协调层提取；Workspace ViewModel 已不再直接调用 Task Graph Port，Inspector 状态协调、其余 service orchestration 与 typed lifecycle port 继续迁移。
 
 工作：
 

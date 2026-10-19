@@ -253,8 +253,9 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 
 - `MessageTaskRunUseCase.loadLatestRun` 已集中首屏最新 40 条规则；
 - `MessageTaskRunUseCase.loadOlderEvents` 已集中 50 条分页、offset 与 event ID 去重规则；
+- `MessageTaskRunUseCase.loadModelOutput` 已固定不读取事件历史的轻量查询；
 - SwiftUI ViewModel 只保留选中 Task 的取消、loading 与异步写回校验；
-- Graph/realtime reconcile、重试与 Inspector 其余协调仍待提取，因此尚未放行 React。
+- Inspector section 状态编排与 polling task 生命周期仍在 ViewModel，因此尚未放行 React。
 
 ### 5.3 并发、空结果与降级
 
@@ -269,6 +270,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 
 - `MessageTaskGraphUseCase.loadGraph` 已保证瞬时空响应不能覆盖稳定 Graph；
 - `MessageTaskGraphUseCase.shouldRefreshWorkspace` 已固化 session reconcile 与当前 Turn 终态/持久化事件的刷新规则；
+- Task 详情加载与 Run 重试已通过 `MessageTaskGraphUseCase` 暴露，Workspace ViewModel 不再直接调用 `MessageTaskGraphServicing`；
 - Task 活跃状态规范化与 polling 判定所需语义已移入 Core；
 - polling task 生命周期、Task 选择和 Inspector 请求取消仍由 macOS UI 状态层协调。
 

@@ -65,6 +65,30 @@ struct MessageTaskRunUseCaseTests {
         ])
     }
 
+    @Test
+    func modelOutputDoesNotLoadEventHistory() async throws {
+        let service = MessageTaskRunServiceStub(
+            responses: [runDetail(eventIDs: [], hasMore: false)]
+        )
+        let useCase = MessageTaskRunUseCase(graphService: service)
+
+        _ = try await useCase.loadModelOutput(
+            messageID: "message-1",
+            runID: "run-1",
+            lookup: lookup
+        )
+
+        #expect(await service.requests == [
+            .init(
+                messageID: "message-1",
+                runID: "run-1",
+                includeEvents: false,
+                eventLimit: 1,
+                eventOffset: 0
+            ),
+        ])
+    }
+
     private var lookup: MessageTaskLookup {
         MessageTaskLookup(
             sessionID: "session-1",

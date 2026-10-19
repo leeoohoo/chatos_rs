@@ -51,7 +51,7 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
             do {
-                let detail = try await graphService.fetchTask(
+                let detail = try await graphUseCase.loadTask(
                     messageID: target.messageID,
                     taskID: task.id,
                     lookup: target.lookup
@@ -87,13 +87,10 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
             do {
-                let detail = try await graphService.fetchRun(
+                let detail = try await runUseCase.loadModelOutput(
                     messageID: target.messageID,
                     runID: runID,
-                    lookup: target.lookup,
-                    includeEvents: false,
-                    eventLimit: 1,
-                    eventOffset: 0
+                    lookup: target.lookup
                 )
                 guard selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID
@@ -187,7 +184,7 @@ extension MessageTaskWorkspaceViewModel {
         let requestedTaskID = selectedTask.id
         let target = target(for: selectedTask)
         do {
-            let detail = try await graphService.fetchTask(
+            let detail = try await graphUseCase.loadTask(
                 messageID: target.messageID,
                 taskID: selectedTask.id,
                 lookup: target.lookup
@@ -204,13 +201,10 @@ extension MessageTaskWorkspaceViewModel {
             case .process:
                 break
             case .detail:
-                let run = try await graphService.fetchRun(
+                let run = try await runUseCase.loadModelOutput(
                     messageID: target.messageID,
                     runID: runID,
-                    lookup: target.lookup,
-                    includeEvents: false,
-                    eventLimit: 1,
-                    eventOffset: 0
+                    lookup: target.lookup
                 )
                 guard self.selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID

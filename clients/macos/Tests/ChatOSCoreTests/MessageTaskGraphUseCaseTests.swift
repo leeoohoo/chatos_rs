@@ -76,6 +76,35 @@ struct MessageTaskGraphUseCaseTests {
         #expect(MessageTask(id: "task", title: "Task", status: nil).normalizedStatus == "unknown")
     }
 
+    @Test
+    func taskLoadingAndRetryStayBehindApplicationBoundary() async throws {
+        let task = MessageTask(
+            id: "task-1",
+            title: "Task",
+            status: "failed",
+            lastRunID: "run-1"
+        )
+        let service = MessageTaskGraphUseCaseStub(graphs: [], task: task)
+        let useCase = MessageTaskGraphUseCase(graphService: service)
+
+        let loaded = try await useCase.loadTask(
+            messageID: "message-1",
+            taskID: "task-1",
+            lookup: lookup
+        )
+        let retried = try await useCase.retryRun(
+            messageID: "message-1",
+            runID: "run-1",
+            lookup: lookup,
+            instruction: "Use the latest context"
+        )
+
+        #expect(loaded == task)
+        #expect(retried.id == "run-1")
+        #expect(await service.taskRequests == ["message-1:task-1"])
+        #expect(await service.retryRequests == ["message-1:run-1:Use the latest context"])
+    }
+
     private var lookup: MessageTaskLookup {
         MessageTaskLookup(
             sessionID: "session-1",
@@ -120,10 +149,14 @@ struct MessageTaskGraphUseCaseTests {
 
 private actor MessageTaskGraphUseCaseStub: MessageTaskGraphServicing {
     private var graphs: [MessageTaskGraphSnapshot]
+    private let task: MessageTask?
     private(set) var graphRequestCount = 0
+    private(set) var taskRequests: [String] = []
+    private(set) var retryRequests: [String] = []
 
-    init(graphs: [MessageTaskGraphSnapshot]) {
+    init(graphs: [MessageTaskGraphSnapshot], task: MessageTask? = nil) {
         self.graphs = graphs
+        self.task = task
     }
 
     func fetchGraph(
@@ -139,7 +172,8 @@ private actor MessageTaskGraphUseCaseStub: MessageTaskGraphServicing {
         taskID: String,
         lookup: MessageTaskLookup?
     ) async throws -> MessageTask {
-        fatalError("unused")
+        taskRequests.append("\(messageID):\(taskID)")
+        return task ?? MessageTask(id: taskID, title: "Task")
     }
 
     func fetchRun(
@@ -159,7 +193,8 @@ private actor MessageTaskGraphUseCaseStub: MessageTaskGraphServicing {
         lookup: MessageTaskLookup?,
         instruction: String?
     ) async throws -> MessageTaskRun {
-        fatalError("unused")
+        retryRequests.append("\(messageID):\(runID):\(instruction ?? "")")
+        return MessageTaskRun(id: runID, taskID: task?.id ?? "task-1", status: "queued")
     }
 
     func cancelTask(

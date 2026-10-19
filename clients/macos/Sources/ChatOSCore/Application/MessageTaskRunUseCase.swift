@@ -31,6 +31,21 @@ public struct MessageTaskRunUseCase: Sendable {
         )
     }
 
+    public func loadModelOutput(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTaskRunDetail {
+        try await graphService.fetchRun(
+            messageID: messageID,
+            runID: runID,
+            lookup: lookup,
+            includeEvents: false,
+            eventLimit: 1,
+            eventOffset: 0
+        )
+    }
+
     public func loadOlderEvents(
         messageID: String,
         lookup: MessageTaskLookup?,

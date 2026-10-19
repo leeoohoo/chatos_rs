@@ -9,6 +9,18 @@ public struct MessageTaskGraphUseCase: Sendable {
         self.graphService = graphService
     }
 
+    public func loadTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        try await graphService.fetchTask(
+            messageID: messageID,
+            taskID: taskID,
+            lookup: lookup
+        )
+    }
+
     /// Loads the latest graph without allowing a transient empty gateway response to erase
     /// a graph that has already been observed for this message.
     public func loadGraph(
@@ -42,5 +54,20 @@ public struct MessageTaskGraphUseCase: Sendable {
         case .reconcile, .started, .updated, .unknown:
             false
         }
+    }
+
+    @discardableResult
+    public func retryRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        instruction: String?
+    ) async throws -> MessageTaskRun {
+        try await graphService.retryRun(
+            messageID: messageID,
+            runID: runID,
+            lookup: lookup,
+            instruction: instruction
+        )
     }
 }

@@ -48,7 +48,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var retryInstruction = ""
     @Published var errorMessage: String?
 
-    let graphService: any MessageTaskGraphServicing
     let graphUseCase: MessageTaskGraphUseCase
     let runUseCase: MessageTaskRunUseCase
     let realtimeService: (any ConversationRealtimeStreaming)?
@@ -73,7 +72,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         initialRunID: String? = nil
     ) {
         self.turn = turn
-        self.graphService = graphService
         self.graphUseCase = MessageTaskGraphUseCase(graphService: graphService)
         self.runUseCase = MessageTaskRunUseCase(graphService: graphService)
         self.realtimeService = realtimeService
@@ -165,7 +163,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         let target = target(for: task)
         Task {
             do {
-                _ = try await graphService.retryRun(
+                try await graphUseCase.retryRun(
                     messageID: target.messageID,
                     runID: runID,
                     lookup: target.lookup,
