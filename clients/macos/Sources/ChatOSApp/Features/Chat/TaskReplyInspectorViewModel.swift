@@ -40,6 +40,18 @@ struct TaskReplySelection: Identifiable {
         .compactMap { $0 }
         .joined(separator: "|")
     }
+
+    var retryIdentity: String {
+        let callback = reply.taskCallback
+        return [
+            turn.sessionID,
+            reply.id,
+            callback?.taskID,
+            callback?.runID,
+        ]
+        .compactMap { $0 }
+        .joined(separator: "|")
+    }
 }
 
 @MainActor
@@ -59,12 +71,14 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     private let service: any MessageTaskGraphServicing
     private let realtimeService: (any ConversationRealtimeStreaming)?
     private var loadTask: Task<Void, Never>?
+    private var retryTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
     private var realtimeTask: Task<Void, Never>?
     private var realtimeSessionID: String?
     private var hasActiveRealtimeStream = false
     private var loadGeneration = 0
     private var loadedModelOutputRunID: String?
+    var retryState = MessageTaskRetryState()
 
     init(
         selection: TaskReplySelection,
@@ -79,20 +93,30 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     deinit {
         loadTask?.cancel()
+        retryTask?.cancel()
         pollingTask?.cancel()
         realtimeTask?.cancel()
     }
 
     func load() {
         startRealtimeIfNeeded()
-        guard task == nil else { return }
+        guard task == nil else {
+            scheduleActiveRefreshIfNeeded()
+            return
+        }
         refresh()
     }
 
     func update(selection: TaskReplySelection) {
         let needsRefresh = self.selection.refreshIdentity != selection.refreshIdentity
         let sessionChanged = self.selection.turn.sessionID != selection.turn.sessionID
+        let retryTargetChanged = self.selection.retryIdentity != selection.retryIdentity
         self.selection = selection
+        if retryTargetChanged {
+            cancelRetry()
+            retryInstruction = ""
+            retryErrorMessage = nil
+        }
         if sessionChanged {
             stopRealtime()
             startRealtimeIfNeeded()
@@ -186,29 +210,59 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         guard let callback = selection.reply.taskCallback,
               let runID = task?.lastRunID ?? callback.runID,
               !isRetrying else { return }
+        let selection = selection
+        let instruction = retryInstruction
+        let lookup = lookup(callback, selection: selection)
+        let token = retryState.begin(contextID: selection.retryIdentity)
         isRetrying = true
         errorMessage = nil
         retryErrorMessage = nil
-        Task {
+        retryTask = Task { [weak self, service] in
             do {
                 _ = try await service.retryRun(
                     messageID: selection.reply.message.id,
                     runID: runID,
-                    lookup: lookup(callback, selection: selection),
-                    instruction: retryInstruction
+                    lookup: lookup,
+                    instruction: instruction
                 )
-                retryInstruction = ""
-                task = nil
-                processTimelineItems = []
-                loadedModelOutputRunID = nil
-                modelOutputError = nil
-                isRetrying = false
-                refresh()
+                guard !Task.isCancelled,
+                      let self,
+                      self.retryState.accepts(token) else { return }
+                self.retryInstruction = ""
+                self.task = nil
+                self.processTimelineItems = []
+                self.loadedModelOutputRunID = nil
+                self.modelOutputError = nil
+                self.refresh()
             } catch {
-                retryErrorMessage = error.localizedDescription
-                isRetrying = false
+                guard !Task.isCancelled,
+                      let self,
+                      self.retryState.accepts(token) else { return }
+                self.retryErrorMessage = error.localizedDescription
             }
+            guard let self, self.retryState.finish(token) else { return }
+            self.retryTask = nil
+            self.isRetrying = false
         }
+    }
+
+    func stop() {
+        loadGeneration += 1
+        loadTask?.cancel()
+        loadTask = nil
+        pollingTask?.cancel()
+        pollingTask = nil
+        stopRealtime()
+        cancelRetry()
+        isLoading = false
+        isLoadingModelOutput = false
+    }
+
+    private func cancelRetry() {
+        retryState.reset()
+        retryTask?.cancel()
+        retryTask = nil
+        isRetrying = false
     }
 
     private func loadLatestRun(

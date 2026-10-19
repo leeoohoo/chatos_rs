@@ -56,6 +56,9 @@ struct TaskReplyInlineInspectorView: View {
         .onChange(of: requestedSection) {
             viewModel.selectSection(requestedSection)
         }
+        .onDisappear {
+            viewModel.stop()
+        }
     }
 
     private var sectionIcon: String {
