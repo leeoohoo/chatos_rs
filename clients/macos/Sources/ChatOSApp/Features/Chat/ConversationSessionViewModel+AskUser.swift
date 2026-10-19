@@ -142,20 +142,43 @@ extension ConversationSessionViewModel {
             } catch {
                 failure = error
             }
-            guard let self,
-                  isLocalAgentRuntimeReady,
-                  askUserPromptLifecycleState.accepts(token) else { return }
             if let updatedPrompt {
-                finishAskUserPromptAction(token)
-                upsertAskUserPrompt(updatedPrompt)
-                refreshLatestSilently()
-            } else if let failure {
-                askUserPromptErrors[promptID] = failure.localizedDescription
-                await refreshAskUserPrompts()
-                guard isLocalAgentRuntimeReady,
-                      askUserPromptLifecycleState.accepts(token) else { return }
-                finishAskUserPromptAction(token)
+                guard let self,
+                      self.isLocalAgentRuntimeReady,
+                      self.askUserPromptLifecycleState.accepts(token) else { return }
+                self.finishAskUserPromptAction(token)
+                self.upsertAskUserPrompt(updatedPrompt)
+                self.refreshLatestSilently()
+                return
             }
+            guard let failure else { return }
+
+            let refreshRequest: AskUserPromptRefreshRequest
+            if let self {
+                guard self.isLocalAgentRuntimeReady,
+                      self.askUserPromptLifecycleState.accepts(token) else { return }
+                self.askUserPromptErrors[promptID] = failure.localizedDescription
+                guard let request = self.beginAskUserPromptRefresh() else {
+                    self.finishAskUserPromptAction(token)
+                    return
+                }
+                refreshRequest = request
+            } else {
+                return
+            }
+
+            let refreshResult = await awaitAskUserPromptRefresh(refreshRequest.task)
+            guard let self,
+                  self.isLocalAgentRuntimeReady,
+                  self.askUserPromptLifecycleState.accepts(token) else { return }
+            if self.askUserPromptLifecycleState.accepts(refreshRequest.token) {
+                self.finishAskUserPromptRefresh(
+                    refreshResult,
+                    token: refreshRequest.token
+                )
+            }
+            guard self.askUserPromptLifecycleState.accepts(token) else { return }
+            self.finishAskUserPromptAction(token)
         }
     }
 

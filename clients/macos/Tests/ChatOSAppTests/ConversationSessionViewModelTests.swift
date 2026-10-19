@@ -885,6 +885,68 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.askUserPrompts.first?.status, .ok)
     }
 
+    func testFailedAskUserSubmitRecoveryDoesNotRetainConversation() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.askUserPrompts.first?.status == .pending
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+        let prompt = try XCTUnwrap(viewModel?.askUserPrompts.first)
+        await promptService.failNextSubmit()
+
+        viewModel?.submitAskUserPrompt(prompt, submission: .init())
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        XCTAssertNotNil(viewModel?.askUserPromptErrors[prompt.id])
+        XCTAssertEqual(viewModel?.isSubmitting(promptID: prompt.id), true)
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
+    func testFailedAskUserCancelRecoveryDoesNotRetainConversation() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.askUserPrompts.first?.status == .pending
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+        let prompt = try XCTUnwrap(viewModel?.askUserPrompts.first)
+        await promptService.failNextCancel()
+
+        viewModel?.cancelAskUserPrompt(prompt)
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        XCTAssertNotNil(viewModel?.askUserPromptErrors[prompt.id])
+        XCTAssertEqual(viewModel?.isSubmitting(promptID: prompt.id), true)
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     func testRuntimeUnavailableRejectsLateAskUserAction() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -1243,6 +1305,10 @@ private actor ConversationCommandServiceStub: ConversationCommandServicing {
 }
 
 private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
+    private enum StubError: Error {
+        case rejected
+    }
+
     private let pendingPrompt = AskUserPrompt(
         id: "prompt-1",
         sessionID: "session-1",
@@ -1258,6 +1324,8 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
     private var shouldDelayNextSubmit = false
     private var delayedSubmitContinuation: CheckedContinuation<Void, Never>?
     private var submitCount = 0
+    private var shouldFailNextSubmit = false
+    private var shouldFailNextCancel = false
 
     func fetchPrompts(sessionID: String, limit: Int) async throws -> [AskUserPrompt] {
         fetchCount += 1
@@ -1275,6 +1343,10 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
         submission: AskUserSubmission
     ) async throws -> AskUserPrompt {
         submitCount += 1
+        if shouldFailNextSubmit {
+            shouldFailNextSubmit = false
+            throw StubError.rejected
+        }
         if shouldDelayNextSubmit {
             shouldDelayNextSubmit = false
             await withCheckedContinuation { continuation in
@@ -1287,6 +1359,10 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
     }
 
     func cancel(promptID: String, sessionID: String) async throws -> AskUserPrompt {
+        if shouldFailNextCancel {
+            shouldFailNextCancel = false
+            throw StubError.rejected
+        }
         var canceled = pendingPrompt
         canceled.status = .canceled
         return canceled
@@ -1298,6 +1374,14 @@ private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {
 
     func delayNextSubmit() {
         shouldDelayNextSubmit = true
+    }
+
+    func failNextSubmit() {
+        shouldFailNextSubmit = true
+    }
+
+    func failNextCancel() {
+        shouldFailNextCancel = true
     }
 
     func hasDelayedSubmit() -> Bool { delayedSubmitContinuation != nil }

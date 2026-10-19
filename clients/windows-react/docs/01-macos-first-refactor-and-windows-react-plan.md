@@ -408,6 +408,8 @@ Conversation bootstrap 与 runtime-ready recovery 现复用 runtime settings/Pro
 
 Conversation realtime Task 不再在整个 stream 生命周期内强持有 ViewModel，只在单个事件同步写回时恢复引用；Prompt realtime 事件等待 Host 时也使用请求句柄，因此失去最后一个 UI owner 后长连接会正常随 deinit 终止。
 
+Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、无 ViewModel 等待与 action/refresh token 联合验收；底层 Prompt 请求忽略取消时不再留住 Conversation，也不能以迟到快照结束新操作。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；
