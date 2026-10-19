@@ -788,6 +788,32 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testDeactivateRejectsLateActivationPromptRefresh() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            await promptService.fetchCallCount() == 1
+                && viewModel.askUserPrompts.first?.status == .pending
+        }
+        viewModel.askUserPrompts = []
+
+        viewModel.activate()
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        viewModel.deactivate()
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertTrue(viewModel.askUserPrompts.isEmpty)
+        XCTAssertNil(viewModel.askUserPromptLifecycleState.activeRefreshToken)
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,

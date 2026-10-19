@@ -111,6 +111,7 @@ final class ConversationSessionViewModel: ObservableObject {
     var activeSendSubmission: ConversationDraftSubmission?
     var activeSendOptimisticTurnID: String?
     var askUserPromptLifecycleState = ConversationAskUserPromptLifecycleState()
+    private var askUserPromptActivationTask: Task<Void, Never>?
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
     var activationState = ConversationSessionActivationState()
@@ -187,6 +188,7 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask?.cancel()
         olderHistoryLoadTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
+        askUserPromptActivationTask?.cancel()
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
         runtimeSettingsMutationTask?.cancel()
@@ -212,8 +214,14 @@ final class ConversationSessionViewModel: ObservableObject {
         guard isLocalAgentRuntimeReady else { return }
         preloadTaskGraphAvailability(for: turns)
         refreshLatestSilently()
-        Task { [weak self] in
-            await self?.refreshAskUserPrompts()
+        askUserPromptActivationTask?.cancel()
+        askUserPromptActivationTask = Task { [weak self] in
+            guard let self,
+                  self.activationState.accepts(activation) else { return }
+            await self.refreshAskUserPrompts()
+            guard !Task.isCancelled,
+                  self.activationState.accepts(activation) else { return }
+            self.askUserPromptActivationTask = nil
         }
         startRealtime(activation: activation)
     }
@@ -234,6 +242,11 @@ final class ConversationSessionViewModel: ObservableObject {
         olderHistoryLoadTask = nil
         isLoadingOlder = false
         inFlightOlderCursor = nil
+        askUserPromptActivationTask?.cancel()
+        askUserPromptActivationTask = nil
+        askUserPromptLifecycleState.invalidateRefresh()
+        askUserPromptRefreshTask?.cancel()
+        askUserPromptRefreshTask = nil
         cancelViewportMutations()
         cancelTaskGraphAvailabilityRequests()
     }
@@ -293,6 +306,8 @@ final class ConversationSessionViewModel: ObservableObject {
         runtimeSettingsMutationState.reset()
         runtimeSettingsMutationTask?.cancel()
         runtimeSettingsMutationTask = nil
+        askUserPromptActivationTask?.cancel()
+        askUserPromptActivationTask = nil
         askUserPromptLifecycleState.reset()
         askUserPromptRefreshTask?.cancel()
         askUserPromptRefreshTask = nil
