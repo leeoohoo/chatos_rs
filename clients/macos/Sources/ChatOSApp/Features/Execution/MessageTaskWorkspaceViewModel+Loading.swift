@@ -31,43 +31,45 @@ extension MessageTaskWorkspaceViewModel {
     }
 
     func loadInspector(for task: MessageTask) {
-        inspectorLoadTask?.cancel()
-        modelOutputLoadTask?.cancel()
-        runLoadTask?.cancel()
-        moreRunEventsTask?.cancel()
+        let token = beginInspectorSnapshotRequest(
+            contextID: "\(task.id):task"
+        )
         isLoadingInspector = true
-        isLoadingRun = false
         taskDetail = nil
         runDetail = nil
         loadedModelOutputRunID = nil
-        isLoadingModelOutput = false
-        isLoadingMoreRunEvents = false
         let target = target(for: task)
         let requestedTaskID = task.id
         inspectorLoadTask = Task {
-            defer {
-                if selectedTask?.id == requestedTaskID {
-                    isLoadingInspector = false
-                }
-            }
+            var loadedDetail: MessageTask?
             do {
                 let detail = try await graphUseCase.loadTask(
                     messageID: target.messageID,
                     taskID: task.id,
                     lookup: target.lookup
                 )
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 taskDetail = detail
-                if inspectorSection == .detail {
-                    loadModelOutput(for: detail)
-                } else if inspectorSection == .run {
-                    loadRun(for: detail)
-                }
+                loadedDetail = detail
             } catch is CancellationError {
-                return
+                guard !Task.isCancelled,
+                      inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
+                errorMessage = CancellationError().localizedDescription
             } catch {
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
+            }
+            guard inspectorRequestState.finish(token) else { return }
+            inspectorLoadTask = nil
+            isLoadingInspector = false
+            guard let loadedDetail else { return }
+            if inspectorSection == .detail {
+                loadModelOutput(for: loadedDetail)
+            } else if inspectorSection == .run {
+                loadRun(for: loadedDetail)
             }
         }
     }
@@ -76,13 +78,16 @@ extension MessageTaskWorkspaceViewModel {
         guard let runID = task.lastRunID,
               loadedModelOutputRunID != runID,
               !isLoadingModelOutput else { return }
-        modelOutputLoadTask?.cancel()
+        let token = beginInspectorSnapshotRequest(
+            contextID: "\(task.id):model-output:\(runID)"
+        )
         isLoadingModelOutput = true
         let target = target(for: task)
         let requestedTaskID = task.id
         modelOutputLoadTask = Task {
             defer {
-                if selectedTask?.id == requestedTaskID {
+                if inspectorRequestState.finish(token) {
+                    modelOutputLoadTask = nil
                     isLoadingModelOutput = false
                 }
             }
@@ -92,13 +97,15 @@ extension MessageTaskWorkspaceViewModel {
                     runID: runID,
                     lookup: target.lookup
                 )
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID
                 taskDetail = (taskDetail ?? task).merging(run: detail.run)
             } catch is CancellationError {
                 return
             } catch {
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 errorMessage = "模型输出加载失败：\(error.localizedDescription)"
             }
         }
@@ -107,13 +114,16 @@ extension MessageTaskWorkspaceViewModel {
     func loadRun(for task: MessageTask) {
         let preferredRunID = task.id == initialTaskID ? initialRunID : nil
         guard let runID = preferredRunID ?? task.lastRunID, !isLoadingRun else { return }
-        runLoadTask?.cancel()
+        let token = beginInspectorSnapshotRequest(
+            contextID: "\(task.id):run:\(runID)"
+        )
         isLoadingRun = true
         let target = target(for: task)
         let requestedTaskID = task.id
         runLoadTask = Task {
             defer {
-                if selectedTask?.id == requestedTaskID {
+                if inspectorRequestState.finish(token) {
+                    runLoadTask = nil
                     isLoadingRun = false
                 }
             }
@@ -123,14 +133,16 @@ extension MessageTaskWorkspaceViewModel {
                     runID: runID,
                     lookup: target.lookup
                 )
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 runDetail = detail
                 loadedModelOutputRunID = runID
                 taskDetail = detail.task.merging(run: detail.run)
             } catch is CancellationError {
                 return
             } catch {
-                guard selectedTask?.id == requestedTaskID else { return }
+                guard inspectorRequestState.accepts(token),
+                      selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -143,21 +155,31 @@ extension MessageTaskWorkspaceViewModel {
               !isLoadingMoreRunEvents else { return }
         moreRunEventsTask?.cancel()
         let target = target(for: task)
+        let token = inspectorRequestState.beginOlderEvents(
+            contextID: "\(current.run.id):\(current.events.count)"
+        )
         isLoadingMoreRunEvents = true
         moreRunEventsTask = Task {
-            defer { isLoadingMoreRunEvents = false }
+            defer {
+                if inspectorRequestState.finish(token) {
+                    moreRunEventsTask = nil
+                    isLoadingMoreRunEvents = false
+                }
+            }
             do {
                 let merged = try await runUseCase.loadOlderEvents(
                     messageID: target.messageID,
                     lookup: target.lookup,
                     current: current
                 )
-                guard runDetail?.run.id == current.run.id else { return }
+                guard inspectorRequestState.accepts(token),
+                      runDetail?.run.id == current.run.id else { return }
                 runDetail = merged
             } catch is CancellationError {
                 return
             } catch {
-                guard runDetail?.run.id == current.run.id else { return }
+                guard inspectorRequestState.accepts(token),
+                      runDetail?.run.id == current.run.id else { return }
                 errorMessage = error.localizedDescription
             }
         }
@@ -181,7 +203,13 @@ extension MessageTaskWorkspaceViewModel {
 
     func refreshSelectedInspectorState() async {
         guard let selectedTask else { return }
+        cancelInspectorRequests()
         let requestedTaskID = selectedTask.id
+        let requestedSection = inspectorSection
+        let token = inspectorRequestState.beginSnapshot(
+            contextID: "\(requestedTaskID):refresh:\(requestedSection.rawValue)"
+        )
+        defer { _ = inspectorRequestState.finish(token) }
         let target = target(for: selectedTask)
         do {
             let detail = try await graphUseCase.loadTask(
@@ -189,15 +217,18 @@ extension MessageTaskWorkspaceViewModel {
                 taskID: selectedTask.id,
                 lookup: target.lookup
             )
-            guard self.selectedTask?.id == requestedTaskID else { return }
+            guard inspectorRequestState.accepts(token),
+                  self.selectedTask?.id == requestedTaskID else { return }
             taskDetail = detail
             let update = try await inspectorRefreshUseCase.refreshSection(
-                inspectorSection.applicationSection,
+                requestedSection.applicationSection,
                 messageID: target.messageID,
                 lookup: target.lookup,
                 task: detail
             )
-            guard self.selectedTask?.id == requestedTaskID else { return }
+            guard inspectorRequestState.accepts(token),
+                  self.selectedTask?.id == requestedTaskID,
+                  inspectorSection == requestedSection else { return }
             switch update {
             case .preserve:
                 break
@@ -213,9 +244,28 @@ extension MessageTaskWorkspaceViewModel {
                 taskDetail = task
             }
         } catch {
-            guard self.selectedTask?.id == requestedTaskID else { return }
+            guard inspectorRequestState.accepts(token),
+                  self.selectedTask?.id == requestedTaskID else { return }
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func beginInspectorSnapshotRequest(
+        contextID: String
+    ) -> MessageTaskInspectorRequestToken {
+        inspectorLoadTask?.cancel()
+        inspectorLoadTask = nil
+        modelOutputLoadTask?.cancel()
+        modelOutputLoadTask = nil
+        runLoadTask?.cancel()
+        runLoadTask = nil
+        moreRunEventsTask?.cancel()
+        moreRunEventsTask = nil
+        isLoadingInspector = false
+        isLoadingModelOutput = false
+        isLoadingRun = false
+        isLoadingMoreRunEvents = false
+        return inspectorRequestState.beginSnapshot(contextID: contextID)
     }
 
     func startRealtime() {

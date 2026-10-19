@@ -52,6 +52,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
     var graphPollingState = MessageTaskGraphPollingState()
+    var inspectorRequestState = MessageTaskInspectorRequestState()
 
     init(
         turn: ConversationTurn,
@@ -118,7 +119,8 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         ensureInspectorSectionLoaded()
     }
 
-    private func cancelInspectorRequests() {
+    func cancelInspectorRequests() {
+        inspectorRequestState.reset()
         inspectorLoadTask?.cancel()
         inspectorLoadTask = nil
         modelOutputLoadTask?.cancel()
@@ -139,7 +141,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         case .detail:
             loadModelOutput(for: task)
         case .process:
-            break
+            cancelInspectorRequests()
         case .run:
             guard runDetail == nil, !isLoadingRun else { return }
             loadRun(for: task)

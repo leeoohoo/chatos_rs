@@ -74,6 +74,34 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingInspector)
     }
 
+    func testReloadingSameTaskRejectsOlderInspectorResult() async throws {
+        let service = SameTaskReloadMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        let task = MessageTask(id: "task-a", title: "任务 A", status: "completed")
+
+        viewModel.select(task)
+        try await waitUntil { await service.hasDelayedFirstRequest() }
+        viewModel.select(task)
+        try await waitUntil { viewModel.taskDetail?.title == "最新详情" }
+        await service.resumeFirstRequest()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.selectedTask?.id, task.id)
+        XCTAssertEqual(viewModel.taskDetail?.title, "最新详情")
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isLoadingInspector)
+    }
+
+    private func waitUntil(
+        _ condition: @escaping @MainActor () async -> Bool
+    ) async throws {
+        for _ in 0..<100 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Timed out waiting for task workspace state")
+    }
+
     private func makeViewModel(
         service: any MessageTaskGraphServicing
     ) -> MessageTaskWorkspaceViewModel {
@@ -101,6 +129,74 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor SameTaskReloadMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var taskRequestCount = 0
+    private var delayedFirstRequestContinuation: CheckedContinuation<Void, Never>?
+
+    func fetchGraph(
+        messageID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        taskRequestCount += 1
+        let requestNumber = taskRequestCount
+        if requestNumber == 1 {
+            await withCheckedContinuation { continuation in
+                delayedFirstRequestContinuation = continuation
+            }
+        }
+        return MessageTask(
+            id: taskID,
+            title: requestNumber == 1 ? "过期详情" : "最新详情",
+            status: "completed"
+        )
+    }
+
+    func hasDelayedFirstRequest() -> Bool {
+        delayedFirstRequestContinuation != nil
+    }
+
+    func resumeFirstRequest() {
+        delayedFirstRequestContinuation?.resume()
+        delayedFirstRequestContinuation = nil
+    }
+
+    func fetchRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        includeEvents: Bool,
+        eventLimit: Int,
+        eventOffset: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-a", title: "最新详情", status: "completed")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        instruction: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-a")
+    }
+
+    func cancelTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String?
+    ) async throws {}
 }
 
 private actor SwitchingMessageTaskGraphServiceStub: MessageTaskGraphServicing {
