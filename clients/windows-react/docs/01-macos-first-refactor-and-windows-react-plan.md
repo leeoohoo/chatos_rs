@@ -402,6 +402,8 @@ Conversation 的模型、推理等级与远程连接 mutation Task 已冻结 ses
 
 Conversation older-history 分页与 viewport/unread mutation 也已采用相同持有边界；远程 History 或本地 Store await 不会延长 ViewModel 生命周期，返回后仍须通过 activation、cursor 或 mutation token 才能更新展示。
 
+Conversation 激活触发的 Ask User refresh 已拆分为请求句柄、无 ViewModel 等待与主线程 token 验收三段；Prompt Host 请求忽略取消时不再阻止 Conversation 释放。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

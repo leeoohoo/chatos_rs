@@ -1,6 +1,27 @@
 import ChatOSCore
 import Foundation
 
+typealias AskUserPromptRefreshRequest = (
+    token: ConversationAskUserPromptRefreshToken,
+    task: Task<[AskUserPrompt], Error>
+)
+
+func awaitAskUserPromptRefresh(
+    _ task: Task<[AskUserPrompt], Error>
+) async -> Result<[AskUserPrompt], Error> {
+    do {
+        let prompts = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        return .success(prompts)
+    } catch {
+        return .failure(error)
+    }
+}
+
 extension ConversationSessionViewModel {
     func prompts(for turnID: String) -> [AskUserPrompt] {
         ConversationAskUserPromptUseCase.prompts(
@@ -21,7 +42,13 @@ extension ConversationSessionViewModel {
     }
 
     func refreshAskUserPrompts() async {
-        guard isLocalAgentRuntimeReady, let askUserPromptUseCase else { return }
+        guard let request = beginAskUserPromptRefresh() else { return }
+        let result = await awaitAskUserPromptRefresh(request.task)
+        finishAskUserPromptRefresh(result, token: request.token)
+    }
+
+    func beginAskUserPromptRefresh() -> AskUserPromptRefreshRequest? {
+        guard isLocalAgentRuntimeReady, let askUserPromptUseCase else { return nil }
         askUserPromptRefreshTask?.cancel()
         let token = askUserPromptLifecycleState.beginRefresh()
         let sessionID = sessionID
@@ -29,22 +56,24 @@ extension ConversationSessionViewModel {
             try await askUserPromptUseCase.fetchPrompts(sessionID: sessionID)
         }
         askUserPromptRefreshTask = refreshTask
-        do {
-            let prompts = try await withTaskCancellationHandler {
-                try await refreshTask.value
-            } onCancel: {
-                refreshTask.cancel()
-            }
-            try Task.checkCancellation()
+        return (token, refreshTask)
+    }
+
+    func finishAskUserPromptRefresh(
+        _ result: Result<[AskUserPrompt], Error>,
+        token: ConversationAskUserPromptRefreshToken
+    ) {
+        switch result {
+        case let .success(prompts):
             guard isLocalAgentRuntimeReady,
                   askUserPromptLifecycleState.finishRefresh(token) else { return }
             askUserPromptRefreshTask = nil
             replaceAskUserPrompts(prompts)
-        } catch is CancellationError {
+        case .failure(is CancellationError):
             guard askUserPromptLifecycleState.accepts(token) else { return }
             _ = askUserPromptLifecycleState.finishRefresh(token)
             askUserPromptRefreshTask = nil
-        } catch {
+        case let .failure(error):
             guard isLocalAgentRuntimeReady,
                   askUserPromptLifecycleState.finishRefresh(token) else { return }
             askUserPromptRefreshTask = nil

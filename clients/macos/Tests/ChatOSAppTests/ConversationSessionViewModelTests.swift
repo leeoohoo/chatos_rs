@@ -928,6 +928,33 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.askUserPromptLifecycleState.activeRefreshToken)
     }
 
+    func testDelayedActivationPromptRefreshDoesNotRetainConversation() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            await promptService.fetchCallCount() == 1
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+
+        viewModel?.activate()
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     private static func reconcileSignal(id: String) -> ConversationRealtimeSignal {
         ConversationRealtimeSignal(
             eventID: id,

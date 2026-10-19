@@ -218,13 +218,16 @@ final class ConversationSessionViewModel: ObservableObject {
         preloadTaskGraphAvailability(for: turns)
         refreshLatestSilently()
         askUserPromptActivationTask?.cancel()
-        askUserPromptActivationTask = Task { [weak self] in
-            guard let self,
-                  self.activationState.accepts(activation) else { return }
-            await self.refreshAskUserPrompts()
-            guard !Task.isCancelled,
-                  self.activationState.accepts(activation) else { return }
-            self.askUserPromptActivationTask = nil
+        if let request = beginAskUserPromptRefresh() {
+            askUserPromptActivationTask = Task { [weak self] in
+                let result = await awaitAskUserPromptRefresh(request.task)
+                guard !Task.isCancelled,
+                      let self,
+                      self.activationState.accepts(activation) else { return }
+                self.finishAskUserPromptRefresh(result, token: request.token)
+                guard self.activationState.accepts(activation) else { return }
+                self.askUserPromptActivationTask = nil
+            }
         }
         startRealtime(activation: activation)
     }
