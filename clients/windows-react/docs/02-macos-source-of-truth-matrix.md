@@ -41,7 +41,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Conversation 时间线与发送 | 已映射，可重构 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift` | `ConversationModels.swift`、`ConversationCommandService.swift`、`ConversationRemoteService.swift`、`ConversationRealtimeService.swift` | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | `ConversationSessionViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
 | Task Graph / Run Inspector | 已映射，可重构 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift` | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | `MessageTaskWorkspaceViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
 | Ask User | 已映射，可重构 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | `NativeLocalAgentAskUserPromptServiceTests.swift` | 禁止；先完成 macOS Application/Port 分层 |
-| 工具审批 / 恢复 | 源码映射中 | `GlobalApprovalOverlayHost`、执行详情入口 | Local Connector approval state | approval protocols | platform tool worker 与 approval handler | platform tool worker/approval tests | 禁止 |
+| 工具审批 / 恢复 | 已映射，可重构 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift` | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | worker、approval agent、state store、ViewModel tests | 禁止；先完成 macOS Application/Port 分层 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
@@ -379,7 +379,102 @@ Adapter：
 
 Connector 测试已覆盖 main chat 查询/提交、task source Conversation 与取消、secret 在 IPC 前拒绝。macOS 分层时还需把表单校验与 per-prompt 并发状态补成独立 Application 测试，然后才能放行 React。
 
-## 8. 31 个页面的准入状态
+## 8. 工具审批与恢复：完整调用链
+
+### 8.1 两层事实与调用链
+
+UI：
+
+- `clients/macos/Sources/ChatOSApp/Features/LocalConnector/GlobalApprovalOverlay.swift`
+- `clients/macos/Sources/ChatOSApp/Features/LocalConnector/LocalConnectorApprovalsView.swift`
+- `clients/macos/Sources/ChatOSApp/Features/LocalConnector/LocalConnectorControlCenterViewModel.swift`
+
+Domain/Port：
+
+- `clients/macos/Sources/ChatOSCore/LocalConnectorApprovalModels.swift`
+- `clients/macos/Sources/ChatOSCore/LocalConnectorApprovalStreaming.swift`
+- `clients/macos/Sources/ChatOSCore/LocalConnectorControlServicing.swift`
+
+Adapter/worker：
+
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentPlatformToolWorker.swift`
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentToolApprovalHandler.swift`
+- `clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Approval.swift`
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentToolClient.swift`
+
+审批链路有两层，Windows 不能合并或跳过：
+
+```text
+Rust Host durable tool invocation (approval_status = pending)
+  → NativeLocalAgentPlatformToolWorker reconciliation
+  → NativeLocalAgentToolApprovalHandler
+  → project/conversation execution context + safe cwd
+  → NativeLocalConnectorService.approvalDecision
+  → policy / AI reviewer / session allowlist / Human UI
+  → Host decide_tool_approval(expected invocation version)
+  → approved claim 才能执行平台工具
+```
+
+Host 中的 durable invocation 是恢复事实源；Local Connector 的弹层队列和 continuation 是当前进程内的交互状态。应用重启后必须由 worker 重新扫描 Host pending approvals 并重建 UI，不能只恢复一份前端 loading。
+
+### 8.2 可进入审批的工具与安全上下文
+
+当前 handler 只处理以下平台写操作：
+
+- 项目代码写入工具；
+- `execute_command / process_write / process_kill`；
+- 远程命令与远程文件上传。
+
+必须先从 run 解析绑定的项目或直接联系人 execution context，再得到 `executionRootURL` 与稳定 workspace scope。`execute_command` 的审批 cwd 来自命令参数 `path`；相对路径以 execution root 解析，绝对路径也必须仍位于 root 内，并拒绝越界、指向 root 外的 symlink、不存在路径和普通文件。其他工具以 root 为 cwd。
+
+缺失有效运行目的、无法生成展示信息或 cwd 不安全时，不弹出一个可被用户误批的空白审批，而是直接以明确原因拒绝 Host invocation。
+
+### 8.3 策略状态机
+
+`LocalConnectorApprovalMode` 的行为必须保持：
+
+- `request_approval`：进入 Human pending queue；
+- `auto_approval`：使用本机审批 Agent；模型未配置、runtime 不可用、Agent 要求问用户或执行失败时降级到 Human queue；
+- `full_control`：由 policy 自动允许，不进入 Human queue。
+
+切换到非 `request_approval` 模式必须显式确认风险；切到 `auto_approval` 前必须已选择审批 Agent 模型。
+
+Human 决策仅接受当前 approval 的 `availableDecisions`：
+
+- `decline`：本次拒绝；
+- `accept`：仅本次允许；
+- `acceptForSession`：当前本机会话内允许相同 scope。
+
+session allowlist key 绑定账号、设备、workspace、project root、cwd、声明 scope、purpose 与权限描述。终端等 exact-request scope 还绑定 command/arguments；稳定的 host-declared capability 才能使用 declared-scope 复用。应用/网关 session 结束时清空 allowlist，不能持久化成永久授权。
+
+### 8.4 UI、stream 与并发语义
+
+- `RootView` 全局承载审批浮层，用户切换项目或页面时 pending approval 仍可见；
+- 新 approval 到达时自动展开；多个 approval 可前后切换，active index 在队列变化时归一化；
+- 命令、purpose、cwd、source、risk、reason 与时间必须完整展示；
+- ViewModel 优先消费 snapshot/event stream；有 stream 时每 60 秒做一致性校验，没有 stream 时每 2 秒轮询；
+- 一致性查询短暂失败时保留最后可信队列，不闪空；
+- 所有异步结果受 lifecycle/action generation 约束，登出后的迟到审批结果不能写回新账号；
+- resolve 后重新并发读取 pending queue 与 approval settings；处理中禁用重复操作；
+- Local Connector 决策先移除 pending、发布 snapshot、记录最多 1,000 条历史并发布 event，再恢复等待中的 continuation；
+- 最终仍由 Host `decide_tool_approval` 以 invocation identity/version 落 durable 状态，UI 本身不能宣称工具已经执行。
+
+### 8.5 worker 恢复与测试证据
+
+worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`wake()`、新的 tool batch event 和启动恢复都会再次触发 approval resolution。审批等待独立于已批准 claim 的执行，不得阻塞其他可运行任务。空闲退避从 250ms 增至最多 2s，同时受 activity window 与 generation 限制。
+
+测试：
+
+- `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentPlatformToolWorkerTests.swift`
+- `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentExecutionDirectoryResolverTests.swift`
+- `clients/macos/Tests/ChatOSConnectorTests/NativeApprovalAgentTests.swift`
+- `clients/macos/Tests/ChatOSConnectorTests/NativeConnectorStateStoreTests.swift`
+- `clients/macos/Tests/ChatOSAppTests/LocalConnectorControlCenterViewModelTests.swift`
+- `clients/macos/Tests/ChatOSAppTests/PerformancePolicyTests.swift`
+
+已覆盖等待审批不阻塞已批准 claim、启动/事件恢复、durable approval typed command、cwd/traversal/symlink 边界、AI reviewer 保守降级、session scope 隔离和登出迟到结果隔离。macOS 分层需将“Host durable approval”与“Human presentation queue”明确建模成两个 port，React 才能复用而不复制状态机。
+
+## 9. 31 个页面的准入状态
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
@@ -411,22 +506,21 @@ Connector 测试已覆盖 main chat 查询/提交、task source Conversation 与
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
-| 29 | 设置 / 命令审批 | 源码映射中 | 禁止 |
+| 29 | 设置 / 命令审批 | 已映射，可重构 | 禁止；等待 macOS 分层 |
 | 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成第一轮源码映射，但仍需先完成 macOS 分层。
 
-## 9. 第一条切片的下一步
+## 10. 第一条切片的下一步
 
 按以下顺序实施，不能跳过到 React 页面：
 
-1. 完成工具审批/恢复的源码映射；Host lifecycle 与 Ask User 已完成第一轮映射；
-2. 从现有 Swift 行为提取 Application use cases 与 ports，不改变产品语义；
-3. 让 macOS Conversation 与 Run Inspector 仅依赖这些 ports；
-4. 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
-5. 固定 Rust/Swift/TypeScript fixture；
-6. 将本矩阵状态改为 `macOS 分层完成，可进入 React`；
-7. 才创建 `clients/windows-react` 下对应的 React feature。
+1. 从现有 Swift 行为提取 Host lifecycle、Conversation、Run Inspector、Ask User 与 Approval Application use cases/ports，不改变产品语义；
+2. 让 macOS Conversation 与 Run Inspector 仅依赖这些 ports；
+3. 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
+4. 固定 Rust/Swift/TypeScript fixture；
+5. 将本矩阵状态改为 `macOS 分层完成，可进入 React`；
+6. 才创建 `clients/windows-react` 下对应的 React feature。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
