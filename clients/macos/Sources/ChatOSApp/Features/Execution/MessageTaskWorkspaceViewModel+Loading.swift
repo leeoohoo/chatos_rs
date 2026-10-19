@@ -7,9 +7,10 @@ extension MessageTaskWorkspaceViewModel {
         let refreshGeneration = workspaceRefreshGeneration
 
         do {
-            let refreshedGraph = try await graphService.fetchGraph(
+            let refreshedGraph = try await graphUseCase.loadGraph(
                 messageID: turn.userMessage.id,
-                lookup: baseLookup
+                lookup: baseLookup,
+                preservingStable: graph
             )
             guard refreshGeneration == workspaceRefreshGeneration else { return }
             applyGraph(refreshedGraph)
@@ -242,14 +243,14 @@ extension MessageTaskWorkspaceViewModel {
             do {
                 for try await signal in stream {
                     guard let self, !Task.isCancelled else { return }
-                    if signal.kind == .reconcile {
-                        await self.refreshWorkspaceState(refreshInspector: true)
-                        self.startPollingIfNeeded()
-                        continue
+                    let shouldRefreshWorkspace = self.graphUseCase.shouldRefreshWorkspace(
+                        for: signal,
+                        turnID: self.turn.id
+                    )
+                    if signal.kind != .reconcile {
+                        self.applyRealtimeSignal(signal)
                     }
-                    self.applyRealtimeSignal(signal)
-                    if signal.turnID == self.turn.id,
-                       [.completed, .failed, .cancelled, .persisted].contains(signal.kind) {
+                    if shouldRefreshWorkspace {
                         await self.refreshWorkspaceState(refreshInspector: true)
                         self.startPollingIfNeeded()
                     }
@@ -294,17 +295,5 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
         }
-    }
-}
-
-extension MessageTask {
-    var normalizedStatus: String {
-        status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
-    }
-
-    var isActive: Bool {
-        ["pending", "queued", "ready", "running", "processing", "in_progress", "doing",
-         "reviewing_followup", "waiting_confirmation"]
-            .contains(normalizedStatus)
     }
 }

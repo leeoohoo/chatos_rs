@@ -131,6 +131,19 @@ public struct MessageTask: Identifiable, Sendable, Equatable {
     }
 }
 
+public extension MessageTask {
+    var normalizedStatus: String {
+        status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "unknown"
+    }
+
+    var isActive: Bool {
+        [
+            "pending", "queued", "ready", "running", "processing", "in_progress", "doing",
+            "reviewing_followup", "waiting_confirmation",
+        ].contains(normalizedStatus)
+    }
+}
+
 public struct MessageTaskGraphNode: Identifiable, Sendable, Equatable {
     public var id: String { task.id }
     public var task: MessageTask

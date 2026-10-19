@@ -49,6 +49,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     let graphService: any MessageTaskGraphServicing
+    let graphUseCase: MessageTaskGraphUseCase
     let runUseCase: MessageTaskRunUseCase
     let realtimeService: (any ConversationRealtimeStreaming)?
     let initialTaskID: String?
@@ -73,6 +74,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     ) {
         self.turn = turn
         self.graphService = graphService
+        self.graphUseCase = MessageTaskGraphUseCase(graphService: graphService)
         self.runUseCase = MessageTaskRunUseCase(graphService: graphService)
         self.realtimeService = realtimeService
         self.initialTaskID = initialTaskID
@@ -227,9 +229,6 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
 
     func applyGraph(_ graph: MessageTaskGraphSnapshot) {
         if graph.nodes.isEmpty {
-            // A graph that has already been observed is stable for the lifetime of a
-            // message. Do not let a transient empty gateway response erase the canvas.
-            guard self.graph?.nodes.isEmpty != false else { return }
             if self.graph != graph {
                 self.graph = graph
             }
