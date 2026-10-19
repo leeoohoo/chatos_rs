@@ -295,6 +295,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskRunUseCase.loadModelOutput` 已固定不读取事件历史的轻量查询；
 - `MessageTaskInspectorRefreshUseCase` 已固定 process/detail/run 三个 section 的刷新查询与陈旧 Run 清理语义；
 - Conversation 内嵌 Inspector 的 Task 读取、detail 模型输出与 Run 重试已改由 `MessageTaskGraphUseCase` / `MessageTaskInspectorRefreshUseCase` 执行，ViewModel 不再直接调用 Host service；当前 Task 尚无 Run 时沿用 macOS callback Run 的回退规则，并已固化为用例契约；
+- Conversation 内嵌 Inspector 从 process 切换到 detail 时复用当前 Task，仅发起轻量模型输出查询；realtime、polling、显式刷新和目标变化仍先重新查询 Task，以跟随最新 `lastRunID`；
 - `MessageTaskInspectorRequestState` 已统一 Inspector 最新快照与 Run 事件分页的 request identity；同一 Task 重载、section 切换和刷新都会拒绝旧结果，新的快照也会淘汰旧分页；
 - `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射，因此尚未放行 React。
 

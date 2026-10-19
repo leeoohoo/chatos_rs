@@ -148,7 +148,17 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         case .detail:
             let runID = task?.lastRunID ?? selection.reply.taskCallback?.runID
             if runID != loadedModelOutputRunID {
-                refresh()
+                if let task,
+                   task.id == selection.reply.taskCallback?.taskID,
+                   let inspectorSession = lifecycleState.activeSession {
+                    refresh(
+                        showsLoadingState: true,
+                        inspectorSession: inspectorSession,
+                        prefetchedTask: task
+                    )
+                } else {
+                    refresh()
+                }
             }
         default:
             refresh()
@@ -162,7 +172,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     private func refresh(
         showsLoadingState: Bool,
-        inspectorSession: MessageTaskInspectorSession
+        inspectorSession: MessageTaskInspectorSession,
+        prefetchedTask: MessageTask? = nil
     ) {
         guard lifecycleState.accepts(inspectorSession),
               let callback = selection.reply.taskCallback else { return }
@@ -192,8 +203,18 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 case .detail:
                     // A reply callback identifies the run that originally emitted the reply.
                     // After a retry that ID is historical, so fetch the task first and follow its
-                    // current lastRunID instead of repeatedly rendering the original failure.
-                    let loadedTask = try await fetchTask(callback: callback, selection: selection)
+                    // current lastRunID instead of repeatedly rendering the original failure. A
+                    // section switch may reuse the task loaded by the process tab; background
+                    // refreshes still fetch the latest task before following its current run.
+                    let loadedTask: MessageTask
+                    if let prefetchedTask {
+                        loadedTask = prefetchedTask
+                    } else {
+                        loadedTask = try await fetchTask(
+                            callback: callback,
+                            selection: selection
+                        )
+                    }
                     guard !Task.isCancelled,
                           lifecycleState.accepts(inspectorSession),
                           generation == loadGeneration else { return }

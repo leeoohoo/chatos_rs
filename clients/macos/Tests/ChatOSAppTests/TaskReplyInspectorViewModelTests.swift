@@ -66,12 +66,12 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         try await waitUntilLoaded(viewModel)
 
         var calls = await service.callCounts()
-        XCTAssertEqual(calls.fetchTask, 2)
+        XCTAssertEqual(calls.fetchTask, 1)
         XCTAssertEqual(calls.fetchRun, 1)
 
         viewModel.selectSection(.process)
         calls = await service.callCounts()
-        XCTAssertEqual(calls.fetchTask, 2)
+        XCTAssertEqual(calls.fetchTask, 1)
         XCTAssertEqual(calls.fetchRun, 1)
     }
 
