@@ -34,6 +34,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var approvalMonitorTask: Task<Void, Never>?
     private var approvalStreamTask: Task<Void, Never>?
     private var approvalEventStreamTask: Task<Void, Never>?
+    private var approvalMonitoringState = LocalConnectorApprovalMonitoringState()
     var browserExtensionPairingTasks: [String: Task<Void, Never>] = [:]
     var browserExtensionPairingRequestIDs: [String: UUID] = [:]
     var selectedTabLoadTask: Task<Void, Never>?
@@ -292,14 +293,17 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func startApprovalMonitoring() {
-        let lifecycle = lifecycleGeneration
         let streamingService = service as? any LocalConnectorApprovalStreaming
-        let hasStreamingService = streamingService != nil
+        let session = approvalMonitoringState.start(
+            hasStreamingService: streamingService != nil
+        )
         if approvalStreamTask == nil, let streamingService {
             approvalStreamTask = Task { [weak self] in
                 let stream = await streamingService.approvalSnapshots()
                 for await approvals in stream {
-                    guard let self, !Task.isCancelled else { return }
+                    guard let self,
+                          !Task.isCancelled,
+                          approvalMonitoringState.accepts(session) else { return }
                     self.applyPendingApprovalsIfChanged(approvals)
                 }
             }
@@ -308,7 +312,9 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             approvalEventStreamTask = Task { [weak self] in
                 let stream = await streamingService.approvalEvents()
                 for await event in stream {
-                    guard let self, !Task.isCancelled else { return }
+                    guard let self,
+                          !Task.isCancelled,
+                          approvalMonitoringState.accepts(session) else { return }
                     if self.latestApprovalEvent != event {
                         self.latestApprovalEvent = event
                     }
@@ -316,26 +322,24 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
             }
         }
         guard approvalMonitorTask == nil else { return }
-        let interval = LocalConnectorApprovalMonitoringPolicy.consistencyCheckInterval(
-            hasStreamingService: hasStreamingService
-        )
         approvalMonitorTask = Task { [weak self] in
-            if !hasStreamingService {
-                await self?.refreshPendingApprovalsSilently(lifecycle: lifecycle)
+            if session.shouldRefreshImmediately {
+                await self?.refreshPendingApprovalsSilently(session: session)
             }
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: interval)
+                    try await Task.sleep(for: session.consistencyCheckInterval)
                 } catch {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                await self?.refreshPendingApprovalsSilently(lifecycle: lifecycle)
+                await self?.refreshPendingApprovalsSilently(session: session)
             }
         }
     }
 
     func stopApprovalMonitoring() {
+        approvalMonitoringState.stop()
         approvalStreamTask?.cancel()
         approvalStreamTask = nil
         approvalEventStreamTask?.cancel()
@@ -565,11 +569,13 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         }
     }
 
-    private func refreshPendingApprovalsSilently(lifecycle: UInt64) async {
+    private func refreshPendingApprovalsSilently(
+        session: LocalConnectorApprovalMonitoringSession
+    ) async {
         do {
             let nextPendingApprovals = try await approvalUseCase.refreshPendingApprovals()
             try Task.checkCancellation()
-            guard lifecycle == lifecycleGeneration else { return }
+            guard approvalMonitoringState.accepts(session) else { return }
             applyPendingApprovalsIfChanged(nextPendingApprovals)
         } catch {
             // The native connector may briefly restart while the app stays open.
