@@ -11,7 +11,7 @@ extension ConversationSessionViewModel {
             isSending: isSending
         )
         if case .ignore = plan { return }
-        guard let commandService else {
+        guard let sendUseCase else {
             sendError = "聊天发送服务尚未连接。"
             return
         }
@@ -25,15 +25,10 @@ extension ConversationSessionViewModel {
                 submission.content,
                 attachments: submission.attachments,
                 turnID: turnID,
-                using: commandService
+                using: sendUseCase
             )
         case let .newTurn(submission):
-            sendNewTurn(
-                submission.content,
-                attachments: submission.attachments,
-                explicitCapabilitySelection: submission.explicitCapabilitySelection,
-                using: commandService
-            )
+            sendNewTurn(submission, using: sendUseCase)
         }
     }
 
@@ -41,73 +36,64 @@ extension ConversationSessionViewModel {
         _ text: String,
         attachments: [ConversationAttachmentDraft],
         turnID: String,
-        using service: any ConversationCommandServicing
+        using useCase: ConversationSendUseCase
     ) {
+        let submission = ConversationDraftSubmission(
+            content: text,
+            attachments: attachments,
+            explicitCapabilitySelection: nil
+        )
         beginSending()
         Task {
             do {
-                _ = try await service.sendGuidance(
-                    ConversationSendCommand(
-                        sessionID: sessionID,
-                        turnID: turnID,
-                        content: text,
-                        attachments: attachments
-                    )
+                _ = try await useCase.sendGuidance(
+                    sessionID: sessionID,
+                    turnID: turnID,
+                    submission: submission
                 )
                 refreshLatestSilently()
             } catch ConversationCommandError.guidanceTargetInactive {
-                sendNewTurn(text, attachments: attachments, using: service)
+                sendNewTurn(submission, using: useCase)
                 return
             } catch {
-                restoreDraft(text, attachments: attachments, error: error)
+                restoreDraft(submission, error: error)
             }
             isSending = false
         }
     }
 
     private func sendNewTurn(
-        _ text: String,
-        attachments: [ConversationAttachmentDraft],
-        explicitCapabilitySelection: ConversationExplicitCapabilitySelection? = nil,
-        using service: any ConversationCommandServicing
+        _ submission: ConversationDraftSubmission,
+        using useCase: ConversationSendUseCase
     ) {
-        let turn = makeOptimisticTurn(text, attachments: attachments)
+        let turn = useCase.makeOptimisticTurn(
+            sessionID: sessionID,
+            submission: submission,
+            existingTurns: turns
+        )
         beginSending()
         selectedTurnID = turn.id
         timelineObservationState.invalidate()
 
         Task {
-            await historyStore.applyRealtime(
-                RealtimeTurnEvent(
-                    eventID: "optimistic-\(turn.id)",
-                    eventSequence: turn.sequence,
-                    turn: turn
-                ),
-                userIsReadingOlderContent: false
-            )
-            await refreshSnapshot()
+            applyHistorySnapshot(await useCase.stageOptimisticTurn(turn))
 
             do {
-                _ = try await service.sendNewTurn(
-                    ConversationSendCommand(
-                        sessionID: sessionID,
-                        turnID: turn.id,
-                        content: text,
-                        attachments: attachments,
-                        reasoningEnabled: reasoningEnabled,
-                        explicitCapabilitySelection: explicitCapabilitySelection
-                    )
+                _ = try await useCase.sendNewTurn(
+                    sessionID: sessionID,
+                    turnID: turn.id,
+                    submission: submission,
+                    reasoningEnabled: reasoningEnabled
                 )
                 refreshLatestSilently()
             } catch {
-                await historyStore.discardOptimisticTurn(sessionID: sessionID, turnID: turn.id)
-                await refreshSnapshot()
-                restoreDraft(
-                    text,
-                    attachments: attachments,
-                    explicitCapabilitySelection: explicitCapabilitySelection,
-                    error: error
+                applyHistorySnapshot(
+                    await useCase.rollbackOptimisticTurn(
+                        sessionID: sessionID,
+                        turnID: turn.id
+                    )
                 )
+                restoreDraft(submission, error: error)
             }
             isSending = false
         }
@@ -123,42 +109,18 @@ extension ConversationSessionViewModel {
     }
 
     private func restoreDraft(
-        _ text: String,
-        attachments: [ConversationAttachmentDraft],
-        explicitCapabilitySelection: ConversationExplicitCapabilitySelection? = nil,
+        _ submission: ConversationDraftSubmission,
         error: Error
     ) {
-        if draft.isEmpty { draft = text }
-        let currentIDs = Set(self.attachments.map(\.id))
-        self.attachments.insert(
-            contentsOf: attachments.filter { !currentIDs.contains($0.id) },
-            at: 0
+        let recovery = ConversationSendUseCase.recoverComposer(
+            currentDraft: draft,
+            currentAttachments: attachments,
+            currentExplicitCapabilitySelection: selectedCapability,
+            failedSubmission: submission
         )
-        if selectedCapability == nil {
-            selectedCapability = explicitCapabilitySelection
-        }
+        draft = recovery.draft
+        attachments = recovery.attachments
+        selectedCapability = recovery.explicitCapabilitySelection
         sendError = error.localizedDescription
-    }
-
-    private func makeOptimisticTurn(
-        _ text: String,
-        attachments: [ConversationAttachmentDraft]
-    ) -> ConversationTurn {
-        let now = Date()
-        return ConversationTurn(
-            id: "turn_\(UUID().uuidString.lowercased())",
-            sessionID: sessionID,
-            sequence: (turns.map(\.sequence).max() ?? 0) + 1,
-            revision: 0,
-            userMessage: ChatMessage(
-                id: "optimistic_\(UUID().uuidString.lowercased())",
-                role: .user,
-                text: text,
-                createdAt: now,
-                attachments: attachments.map(\.reference)
-            ),
-            status: .streaming,
-            startedAt: now
-        )
     }
 }

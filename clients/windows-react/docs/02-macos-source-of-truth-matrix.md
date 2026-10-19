@@ -38,7 +38,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
-| Conversation 时间线与发送 | History、发送路径与 realtime 动作规则已提取，optimistic/恢复协调待迁移 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
+| Conversation 时间线与发送 | History、发送路径、optimistic/恢复与 realtime 动作规则已提取，UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新与 polling 决策已提取，UI 异步任务生命周期待收口 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | 四组 Core state/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Ask User | 已映射，可重构 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | `NativeLocalAgentAskUserPromptServiceTests.swift` | 禁止；先完成 macOS Application/Port 分层 |
 | 工具审批 / 恢复 | 已映射，可重构 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift` | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | worker、approval agent、state store、ViewModel tests | 禁止；先完成 macOS Application/Port 分层 |
@@ -150,7 +150,7 @@ UI：
 - `clients/macos/Sources/ChatOSCore/Application/ConversationHistoryUseCase.swift` 已统一 latest/older 查询、HistoryStore 合并和 snapshot 读取；
 - 固定 10 条分页与 2/5/10/20 秒有界重试策略已移入 Application；
 - ViewModel 只应用合并后的 snapshot，并继续分别维护 visible refresh 与 older loading；
-- realtime debounce、发送状态机、viewport 与 optimistic Turn 协调仍待迁移，因此尚未放行 React。
+- realtime debounce、viewport 与发送 UI Task 生命周期仍待迁移，因此尚未放行 React。
 
 ### 4.2 发送状态机
 
@@ -175,7 +175,9 @@ sendDraft
 
 - `ConversationSendPlanner` 已集中空请求忽略、active Turn guidance、新 Turn 和显式 capability 冲突判定；
 - 文本 trim、附件与 capability 的提交快照由 Application plan 固定；
-- optimistic Turn 写入、`guidanceTargetInactive` 降级、失败草稿恢复和 UI loading 生命周期仍保留在 ViewModel，待下一步迁移。
+- `ConversationSendUseCase` 已集中 optimistic Turn 构造与 History Store 写入、typed guidance/new-turn command、revision 0 optimistic 回滚和 snapshot 返回；
+- 失败草稿恢复规则已移入 Application：仅在当前草稿为空时恢复原文、附件按 ID 去重且失败附件置前、当前 capability 为空时恢复显式选择；
+- `guidanceTargetInactive` 自动降级为新 Turn、`isSending`、刷新触发和 UI Task 取消继续由 ViewModel 管理，避免 Application 层持有展示生命周期。
 
 ### 4.3 Host ready、刷新与 realtime
 
@@ -227,6 +229,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationHistoryStoreTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationHistoryUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationInteractionPolicyTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/ConversationSendUseCaseTests.swift`
 
 Windows 对应契约测试必须复用相同 fixture，并覆盖上述分支；不能只做组件快照测试。
 

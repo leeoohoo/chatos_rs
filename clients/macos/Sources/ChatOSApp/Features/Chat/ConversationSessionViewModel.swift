@@ -83,7 +83,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     let historyStore: any ConversationHistoryStoring
-    let commandService: (any ConversationCommandServicing)?
+    let sendUseCase: ConversationSendUseCase?
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
     private let historyUseCase: ConversationHistoryUseCase?
@@ -148,7 +148,12 @@ final class ConversationSessionViewModel: ObservableObject {
             )
         }
         self.realtimeService = realtimeService
-        self.commandService = commandService
+        self.sendUseCase = commandService.map {
+            ConversationSendUseCase(
+                commandService: $0,
+                historyStore: historyStore
+            )
+        }
         self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
         self.runtimeSettingsService = runtimeSettingsService
@@ -703,7 +708,7 @@ final class ConversationSessionViewModel: ObservableObject {
         applyHistorySnapshot(snapshot)
     }
 
-    private func applyHistorySnapshot(_ snapshot: ConversationHistorySnapshot) {
+    func applyHistorySnapshot(_ snapshot: ConversationHistorySnapshot) {
         var timelineChanged = false
         if turns != snapshot.turns {
             turns = snapshot.turns
