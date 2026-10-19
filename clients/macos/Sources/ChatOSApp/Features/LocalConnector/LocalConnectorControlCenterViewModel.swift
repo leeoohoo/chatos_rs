@@ -28,6 +28,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published var notice: String?
 
     let service: any LocalConnectorControlServicing
+    private let approvalUseCase: LocalConnectorApprovalUseCase
     private var refreshGeneration: Int64 = 0
     var pluginRefreshGeneration: Int64 = 0
     private var approvalMonitorTask: Task<Void, Never>?
@@ -55,6 +56,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         service: any LocalConnectorControlServicing
     ) {
         self.service = service
+        self.approvalUseCase = LocalConnectorApprovalUseCase(service: service)
     }
 
     deinit {
@@ -280,15 +282,12 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     func loadApprovals() {
         load {
-            async let settings = self.service.fetchApprovalSettings()
-            async let pending = self.service.fetchPendingApprovals()
-            let nextSettings = try await settings
-            let nextPendingApprovals = try await pending
+            let snapshot = try await self.approvalUseCase.loadSnapshot()
             try Task.checkCancellation()
-            if self.approvalSettings != nextSettings {
-                self.approvalSettings = nextSettings
+            if self.approvalSettings != snapshot.settings {
+                self.approvalSettings = snapshot.settings
             }
-            self.applyPendingApprovalsIfChanged(nextPendingApprovals)
+            self.applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
         }
     }
 
@@ -350,7 +349,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         riskAcknowledged: Bool
     ) {
         performAction(successNotice: "默认审批策略已更新。") {
-            let nextSettings = try await self.service.updateDefaultApprovalMode(
+            let nextSettings = try await self.approvalUseCase.updateDefaultMode(
                 mode,
                 riskAcknowledged: riskAcknowledged
             )
@@ -361,16 +360,14 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     func resolveApproval(id: String, decision: String) {
         performAction(successNotice: "审批已处理。") {
-            try await self.service.resolveApproval(id: id, decision: decision)
+            let snapshot = try await self.approvalUseCase.resolve(
+                id: id,
+                decision: decision
+            )
             try Task.checkCancellation()
-            async let pending = self.service.fetchPendingApprovals()
-            async let settings = self.service.fetchApprovalSettings()
-            let nextPendingApprovals = try await pending
-            let nextSettings = try await settings
-            try Task.checkCancellation()
-            self.applyPendingApprovalsIfChanged(nextPendingApprovals)
-            if self.approvalSettings != nextSettings {
-                self.approvalSettings = nextSettings
+            self.applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
+            if self.approvalSettings != snapshot.settings {
+                self.approvalSettings = snapshot.settings
             }
         }
     }
@@ -570,7 +567,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
 
     private func refreshPendingApprovalsSilently(lifecycle: UInt64) async {
         do {
-            let nextPendingApprovals = try await service.fetchPendingApprovals()
+            let nextPendingApprovals = try await approvalUseCase.refreshPendingApprovals()
             try Task.checkCancellation()
             guard lifecycle == lifecycleGeneration else { return }
             applyPendingApprovalsIfChanged(nextPendingApprovals)

@@ -4,7 +4,17 @@ public protocol LocalConnectorPairingTicketProviding: Sendable {
     func issueLocalConnectorPairingTicket() async throws -> String
 }
 
-public protocol LocalConnectorControlServicing: Sendable {
+public protocol LocalConnectorApprovalServicing: Sendable {
+    func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings
+    func updateDefaultApprovalMode(
+        _ mode: LocalConnectorApprovalMode,
+        riskAcknowledged: Bool
+    ) async throws -> LocalConnectorApprovalSettings
+    func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval]
+    func resolveApproval(id: String, decision: String) async throws
+}
+
+public protocol LocalConnectorControlServicing: LocalConnectorApprovalServicing {
     func fetchStatus() async throws -> LocalConnectorStatus
     func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus
     /// Stops account-scoped runtime activity without deleting persisted local state.
@@ -19,13 +29,6 @@ public protocol LocalConnectorControlServicing: Sendable {
     func executeTerminal(workspaceID: String, commandLine: String, cwd: String?) async throws -> LocalConnectorTerminalResult
     func fetchCommandHistory(limit: Int) async throws -> [LocalConnectorCommandHistoryEntry]
     func clearCommandHistory() async throws
-    func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings
-    func updateDefaultApprovalMode(
-        _ mode: LocalConnectorApprovalMode,
-        riskAcknowledged: Bool
-    ) async throws -> LocalConnectorApprovalSettings
-    func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval]
-    func resolveApproval(id: String, decision: String) async throws
     func fetchModelCatalog(refresh: Bool) async throws -> LocalConnectorModelCatalog
     func fetchModelProviders() async throws -> [LocalConnectorModelProvider]
     func createModelProvider(_ draft: LocalConnectorModelProviderDraft) async throws

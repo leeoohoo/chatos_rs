@@ -1,12 +1,6 @@
 import ChatOSCore
 import Foundation
 
-enum LocalConnectorApprovalMonitoringPolicy {
-    static func consistencyCheckInterval(hasStreamingService: Bool) -> Duration {
-        hasStreamingService ? .seconds(60) : .seconds(2)
-    }
-}
-
 extension LocalConnectorControlCenterViewModel {
     nonisolated static func fetchStatusWithStartupRetry(
         service: any LocalConnectorControlServicing
