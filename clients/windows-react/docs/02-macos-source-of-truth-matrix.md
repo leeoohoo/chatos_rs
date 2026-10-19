@@ -193,6 +193,7 @@ sendDraft
 - latest refresh 的 debounce 和 in-flight UI 写回都绑定 activation；停用后迟到快照仍可完成 History Store 合并，但不得修改当前 UI、错误、retry 或 loading；新 activation 的合并刷新仍由现有 pending 规则接续；
 - older-page 请求由 ViewModel 显式持有并绑定 activation、runtime ready 与 cursor；停用或 unavailable 后即使请求迟到返回，也不得写回时间线、错误或清理新请求的 loading；
 - ready 恢复由 `ConversationRuntimeRecoveryState` 分配 latest-wins identity，具体 Task 由 ViewModel 持有；连续 ready 会淘汰旧恢复，异步加载期间若 runtime 再次 unavailable 也会统一取消并失效 identity，迟到恢复不得重新触发历史刷新或 realtime；
+- 时间线的 Task Graph 可用性轻量探测由 `ConversationTaskGraphAvailabilityState` 为每个 Turn 分配独立 token；新 revision、Conversation 停用或 runtime unavailable 会取消并失效未完成探测，迟到 Host 响应不得改变入口可见性，ready 后会重试被中断且尚未形成可信缓存的探测；
 - 模型、推理等级与远程连接的 optimistic 更新共享 latest-wins mutation identity；新操作会淘汰旧操作，旧成功/失败响应不得覆盖或回滚新选择，也不得结束新操作的 loading；runtime unavailable 会统一取消并失效 mutation；
 - realtime 事件经 history store 合并，不允许组件自行拼接出另一套事实；
 - 历史分页游标是 ordinal，非法游标必须报错；limit 被限制在 1–100；

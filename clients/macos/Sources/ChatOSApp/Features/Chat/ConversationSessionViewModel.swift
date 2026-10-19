@@ -92,6 +92,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
+    var taskGraphAvailabilityState = ConversationTaskGraphAvailabilityState()
     var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
     var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
     private var runtimeSettingsLoadGeneration: UInt64 = 0
@@ -194,6 +195,7 @@ final class ConversationSessionViewModel: ObservableObject {
         isActive = true
         let activation = activationState.activate()
         guard isLocalAgentRuntimeReady else { return }
+        preloadTaskGraphAvailability(for: turns)
         refreshLatestSilently()
         Task { [weak self] in
             await self?.refreshAskUserPrompts()
@@ -217,8 +219,7 @@ final class ConversationSessionViewModel: ObservableObject {
         olderHistoryLoadTask = nil
         isLoadingOlder = false
         inFlightOlderCursor = nil
-        taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
-        taskGraphAvailabilityTasks.removeAll()
+        cancelTaskGraphAvailabilityRequests()
     }
 
     func localAgentRuntimeDidBecomeReady() {
@@ -239,8 +240,12 @@ final class ConversationSessionViewModel: ObservableObject {
             guard !Task.isCancelled,
                   self.runtimeRecoveryState.accepts(token) else { return }
             guard self.runtimeSettingsError == nil,
-                  self.isActive,
-                  self.isLocalAgentRuntimeReady,
+                  self.isLocalAgentRuntimeReady else {
+                self.finishRuntimeRecovery(token)
+                return
+            }
+            self.preloadTaskGraphAvailability(for: self.turns)
+            guard self.isActive,
                   let activation = self.activationState.activeSession else {
                 self.finishRuntimeRecovery(token)
                 return
@@ -275,6 +280,7 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptRefreshTask = nil
         askUserPromptActionTasks.values.forEach { $0.cancel() }
         askUserPromptActionTasks.removeAll()
+        cancelTaskGraphAvailabilityRequests()
         submittingAskUserPromptIDs = []
         askUserPromptErrors = [:]
         isRefreshing = false
@@ -518,6 +524,7 @@ final class ConversationSessionViewModel: ObservableObject {
                     || taskGraphAvailabilityTasks[turn.id] != nil else { return }
             taskGraphAvailability.removeValue(forKey: turn.id)
             taskGraphAvailabilityRevisions[turn.id] = turn.revision
+            taskGraphAvailabilityState.invalidate(turnID: turn.id)
             taskGraphAvailabilityTasks[turn.id]?.cancel()
             taskGraphAvailabilityTasks[turn.id] = nil
             if hadVisibleGraph {
@@ -525,9 +532,20 @@ final class ConversationSessionViewModel: ObservableObject {
             }
             return
         }
+        guard isLocalAgentRuntimeReady else {
+            taskGraphAvailabilityState.invalidate(turnID: turn.id)
+            taskGraphAvailabilityTasks[turn.id]?.cancel()
+            taskGraphAvailabilityTasks[turn.id] = nil
+            taskGraphAvailabilityRevisions[turn.id] = nil
+            return
+        }
         guard taskGraphAvailabilityRevisions[turn.id] != turn.revision else { return }
 
         taskGraphAvailabilityRevisions[turn.id] = turn.revision
+        let token = taskGraphAvailabilityState.begin(
+            turnID: turn.id,
+            revision: turn.revision
+        )
         let hadVisibleGraph = taskGraphAvailability.removeValue(forKey: turn.id) != nil
         taskGraphAvailabilityTasks[turn.id]?.cancel()
         if hadVisibleGraph {
@@ -540,29 +558,45 @@ final class ConversationSessionViewModel: ObservableObject {
                     lookup: turn.resolvedMessageTaskLookup
                 )
                 guard !Task.isCancelled,
-                      self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {
+                      let self,
+                      self.isLocalAgentRuntimeReady,
+                      self.taskGraphAvailabilityState.accepts(token) else {
                     return
                 }
                 if graph.nodes.isEmpty {
-                    if self?.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
-                        self?.timelineObservationState.invalidate()
+                    if self.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
+                        self.timelineObservationState.invalidate()
                     }
                 } else {
-                    if self?.taskGraphAvailability[turn.id] != true {
-                        self?.taskGraphAvailability[turn.id] = true
-                        self?.timelineObservationState.invalidate()
+                    if self.taskGraphAvailability[turn.id] != true {
+                        self.taskGraphAvailability[turn.id] = true
+                        self.timelineObservationState.invalidate()
                     }
                 }
             } catch {
                 guard !Task.isCancelled,
-                      self?.taskGraphAvailabilityRevisions[turn.id] == turn.revision else {
+                      let self,
+                      self.isLocalAgentRuntimeReady,
+                      self.taskGraphAvailabilityState.accepts(token) else {
                     return
                 }
-                if self?.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
-                    self?.timelineObservationState.invalidate()
+                if self.taskGraphAvailability.removeValue(forKey: turn.id) != nil {
+                    self.timelineObservationState.invalidate()
                 }
             }
-            self?.taskGraphAvailabilityTasks[turn.id] = nil
+            guard let self,
+                  self.taskGraphAvailabilityState.finish(token) else { return }
+            self.taskGraphAvailabilityTasks[turn.id] = nil
+        }
+    }
+
+    private func cancelTaskGraphAvailabilityRequests() {
+        let activeTurnIDs = Set(taskGraphAvailabilityTasks.keys)
+        taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
+        taskGraphAvailabilityTasks.removeAll()
+        taskGraphAvailabilityState.reset()
+        for turnID in activeTurnIDs {
+            taskGraphAvailabilityRevisions[turnID] = nil
         }
     }
 
@@ -870,6 +904,7 @@ final class ConversationSessionViewModel: ObservableObject {
             let hadVisibleGraph = taskGraphAvailability[turnID] != nil
             taskGraphAvailabilityTasks[turnID]?.cancel()
             taskGraphAvailabilityTasks[turnID] = nil
+            taskGraphAvailabilityState.invalidate(turnID: turnID)
             taskGraphAvailabilityRevisions[turnID] = nil
             taskGraphAvailability[turnID] = nil
             if hadVisibleGraph {

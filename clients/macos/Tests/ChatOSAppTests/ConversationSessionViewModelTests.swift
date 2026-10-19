@@ -369,6 +369,43 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.taskGraphAvailabilityCacheEntryCount, 0)
     }
 
+    func testRuntimeUnavailableRejectsLateTaskGraphAvailabilityAndReadyRetries() async throws {
+        var turn = ConversationRemoteServiceStub.turn(revision: 1)
+        turn.messageTaskLookup = MessageTaskLookup(
+            sessionID: turn.sessionID,
+            turnID: turn.id,
+            sourceUserMessageID: turn.userMessage.id
+        )
+        let graphService = DelayedMessageTaskGraphServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [turn],
+            historyStore: ConversationHistoryStore(),
+            messageTaskGraphService: graphService
+        )
+        try await waitUntil {
+            await graphService.requestCount() == 1
+        }
+
+        viewModel.localAgentRuntimeDidBecomeUnavailable()
+        await graphService.resumeNextRequest()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(viewModel.hasTaskGraph(for: turn))
+        XCTAssertTrue(viewModel.taskGraphAvailabilityState.activeTokens.isEmpty)
+
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await graphService.requestCount() == 2
+        }
+        await graphService.resumeNextRequest()
+        try await waitUntil {
+            viewModel.hasTaskGraph(for: turn)
+        }
+
+        XCTAssertTrue(viewModel.taskGraphAvailabilityState.activeTokens.isEmpty)
+    }
+
     func testDeactivateStopsRealtimeSubscription() async throws {
         let realtimeService = ConversationRealtimeServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -716,6 +753,80 @@ final class ConversationSessionViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
+    }
+}
+
+private actor DelayedMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private enum StubError: Error {
+        case unexpectedCall
+    }
+
+    private var requestContinuations: [CheckedContinuation<Void, Never>] = []
+    private var graphRequestCount = 0
+
+    func requestCount() -> Int { graphRequestCount }
+
+    func resumeNextRequest() {
+        guard !requestContinuations.isEmpty else { return }
+        requestContinuations.removeFirst().resume()
+    }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async -> MessageTaskGraphSnapshot {
+        graphRequestCount += 1
+        await withCheckedContinuation { continuation in
+            requestContinuations.append(continuation)
+        }
+        let task = MessageTask(id: "task-1", title: "Task")
+        return MessageTaskGraphSnapshot(
+            rootTaskIDs: [task.id],
+            nodes: [MessageTaskGraphNode(
+                task: task,
+                depth: 0,
+                isRoot: true,
+                isCurrentMessage: true
+            )],
+            edges: []
+        )
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        throw StubError.unexpectedCall
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID _: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        throw StubError.unexpectedCall
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID _: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        throw StubError.unexpectedCall
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String?
+    ) async throws {
+        throw StubError.unexpectedCall
     }
 }
 
