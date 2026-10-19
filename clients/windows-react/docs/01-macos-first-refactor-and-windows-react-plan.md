@@ -1,9 +1,10 @@
 # ChatOS 3.0.9：macOS 深度重构与 Windows React 客户端实施方案
 
-> 状态：待执行
+> 状态：执行中（阶段 0）
 > 日期：2026-10-19
-> 适用分支：`3.0.9` 及后续开发分支
+> 适用分支：`3.0.9.1` 及后续开发分支
 > 唯一产品基准：当前实际运行的 macOS 客户端
+> 源码事实矩阵：[`02-macos-source-of-truth-matrix.md`](./02-macos-source-of-truth-matrix.md)
 
 ## 1. 决策与边界
 
@@ -19,6 +20,7 @@
 6. React UI 不得直接访问 SQLite、密钥、文件系统、进程、PTY 或通用 Shell。
 7. 不迁移旧 Windows 的 WFP、NetworkGuard、驱动、服务或安装器；如未来确认需要，单独立项并从零设计。
 8. **所有产品自有 UI 必须统一采用苹果主题与设计语言**；包括 macOS 与 Windows React 的主窗口、导航、页面、弹窗、菜单、表单、卡片、状态、动效和反馈，不允许混入 Fluent、Material、WinUI 默认视觉或普通后台模板风格。
+9. **所有具体实现逻辑必须逐项来源于 macOS 当前源码、测试及其调用的 Rust Host 契约**；截图只用于视觉核对，禁止根据页面外观自行发明业务流程、状态机、数据结构、默认值、错误恢复或交互语义。
 
 本方案只定义新的实施路线，不以旧 Windows 的“已有能力”决定范围或优先级。
 
@@ -40,9 +42,12 @@
 - 加载、空状态、成功、失败、离线、权限不足和恢复状态；
 - 输入、输出、任务执行、审批、取消和重试流程；
 - 页面依赖的用例、Host 命令、原生能力和云端接口；
+- macOS 对应 View、Feature Model、Domain/Port、Connector adapter、Host command 和测试文件的精确源码映射；
 - 可自动化的验收步骤与稳定测试数据。
 
 如果截图、文档与运行行为冲突，以运行行为和实际源码为准，并更新基线资料。
+
+没有完成源码映射的页面不得进入 React 实现。Windows 端需要平台差异时，必须先保留 macOS 的业务语义，再把差异限制在 Tauri 平台适配器内，并在差异登记中说明原因和验收方式。
 
 ## 3. 当前系统判断
 
@@ -198,13 +203,14 @@ ChatOSConnector
 不做一次性“大爆炸”重写。每个垂直切片按同一流程迁移：
 
 1. 从当前运行界面采集行为基线；
-2. 为该页面定义 Domain Model、Use Case、Port 和错误模型；
-3. 用现有 Connector 实现 Adapter；
-4. 将 ViewModel 从具体服务迁移到 Use Case；
-5. 让 View 去除 IO、持久化和进程控制；
-6. 补充单元、契约、快照和端到端测试；
-7. 对照真实客户端逐状态验收；
-8. 删除该切片的旧入口和兼容代码。
+2. 阅读并登记该页面现有 View、ViewModel、Domain、Connector、Host 和测试的完整调用链；
+3. 从该调用链提取 Domain Model、Use Case、Port、状态机和错误模型，不从截图反推逻辑；
+4. 用现有 Connector 实现 Adapter；
+5. 将 ViewModel 从具体服务迁移到 Use Case；
+6. 让 View 去除 IO、持久化和进程控制；
+7. 补充单元、契约、快照和端到端测试；
+8. 对照 macOS 真实客户端与源码逐状态验收；
+9. 删除该切片的旧入口和兼容代码。
 
 迁移顺序优先选择公共依赖最多、能建立模板的切片：
 
@@ -366,6 +372,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 0：废弃旧 Windows 与冻结基线
 
+当前状态：执行中。旧 `clients/windows` 与专属构建引用已经删除；macOS 源码事实矩阵正在逐页建立。
+
 工作：
 
 - 删除 `clients/windows`；
@@ -416,6 +424,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 ### 10.1 架构门禁
 
 - macOS View 文件不得新增 `ChatOSConnector` 直接依赖；
+- React 页面只有在源码事实矩阵达到“macOS 分层完成，可进入 React”后才允许创建；
+- 源码事实矩阵必须记录 macOS View/ViewModel、Domain/Port、Connector/Host、测试与平台差异，截图不能作为业务逻辑来源；
 - React feature 不得直接调用 Tauri `invoke`，只能使用 typed application port；
 - UI 不得依赖数据库结构或 Host 内部 DTO；
 - 跨平台 DTO 必须通过 schema/fixture 契约测试；
@@ -424,6 +434,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 ### 10.2 行为测试
 
 - 每个 Use Case 的成功、失败、取消、超时和重试；
+- 每个 Windows Use Case 都必须能追溯到 macOS 对应源码行为或明确批准的平台差异记录；不存在来源映射的逻辑视为验收失败；
 - 启动时 UI 快于 Host、Host 快于 UI、Host 崩溃和 IPC writer/reader 退出；
 - 任务运行中切换项目、切换页面和切换账号；
 - 冷启动恢复 Conversation、Run、Task Graph 和审批；
@@ -493,9 +504,9 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ## 12. 首批执行清单
 
-1. 删除旧 `clients/windows` 及所有构建引用，并以独立提交完成。
-2. 为当前 macOS 主窗口、创建项目弹窗、Conversation、任务动态和执行详情采集最新基线。
-3. 输出页面—用例—接口—平台能力矩阵。
+1. [已完成] 删除旧 `clients/windows` 及所有构建引用，并以独立提交完成。
+2. [进行中] 为当前 macOS 主窗口、创建项目弹窗、Conversation、任务动态和执行详情采集最新基线。
+3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
 5. 在 macOS 建立 Application Port 和 Composition Root，先迁移 Host lifecycle。
 6. 迁移 Conversation + Run Inspector 作为第一条完整垂直切片。
