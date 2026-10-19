@@ -1,8 +1,6 @@
-import AppKit
 import Darwin
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 enum ConversationFileLinkError: LocalizedError {
     case invalidPath, unavailable, tooLarge
@@ -90,10 +88,10 @@ private struct ConversationFileLinks: ViewModifier {
             if ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
                 return .systemAction
             }
-            Task { await export(url) }
+            Task { await preview(url) }
             return .handled
         })
-        .alert("无法下载文件", isPresented: Binding(
+        .alert("无法预览文件", isPresented: Binding(
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) {
             Button("好") { errorMessage = nil }
@@ -102,7 +100,7 @@ private struct ConversationFileLinks: ViewModifier {
         }
     }
 
-    private func export(_ url: URL) async {
+    private func preview(_ url: URL) async {
         guard let owner = model.authenticatedUserID else { return }
         let projectID = model.projects.first { $0.conversationID == conversationID }?.id
         let logicalRoot = projectRootPath ?? projectID.flatMap { model.workspaceProject(id: $0)?.rootPath }
@@ -118,23 +116,19 @@ private struct ConversationFileLinks: ViewModifier {
                 fileURL = root.appendingPathComponent(relative)
             }
             let scopedURL = fileURL
-            let file = try await AppCancellableDetachedWork.run {
-                try ConversationFileLinkReader.read(scopedURL, root: root)
+            let relative = try await AppCancellableDetachedWork.run {
+                let relative = try ConversationFileLinkReader.relativePath(scopedURL, root: root)
+                _ = try ConversationFileLinkReader.read(scopedURL, root: root)
+                return relative
             }
             guard model.authenticatedUserID == owner else { return }
-            if url.fragment != nil, logicalRoot != nil,
-               model.openPetFileLink(url, projectRootPath: logicalRoot) { return }
-            let panel = NSSavePanel()
-            panel.nameFieldStringValue = file.name
-            panel.canCreateDirectories = true
-            if let type = UTType(filenameExtension: URL(fileURLWithPath: file.name).pathExtension) {
-                panel.allowedContentTypes = [type]
+            if model.openPetFileLink(url, projectRootPath: logicalRoot) {
+                return
             }
-            guard panel.runModal() == .OK, let destination = panel.url,
-                  model.authenticatedUserID == owner else { return }
-            try await AppCancellableDetachedWork.run {
-                try file.data.write(to: destination, options: .atomic)
-            }
+            model.openPetFile(
+                path: root.appendingPathComponent(relative).standardizedFileURL.path,
+                access: .conversationLocal
+            )
         } catch {
             guard model.authenticatedUserID == owner else { return }
             errorMessage = error.localizedDescription

@@ -9,6 +9,7 @@ enum PetFileOpenMode: Sendable, Equatable {
 enum PetFileAccess: Sendable, Equatable {
     case workspace
     case userSelectedLocal
+    case conversationLocal
 }
 
 struct PetFileOpenRequest: Sendable, Equatable {
@@ -193,8 +194,8 @@ final class PetFileWorkbenchStore: ObservableObject {
 
         if let index = tabs.firstIndex(where: { $0.path == path }) {
             tabs[index].targetLine = request.targetLine
-            if request.access == .userSelectedLocal {
-                tabs[index].access = .userSelectedLocal
+            if request.access != .workspace {
+                tabs[index].access = request.access
             }
             if request.mode == .edit,
                tabs[index].file?.isWritable == true,
@@ -467,7 +468,7 @@ final class PetFileWorkbenchStore: ObservableObject {
         switch access {
         case .workspace:
             workspaceService
-        case .userSelectedLocal:
+        case .userSelectedLocal, .conversationLocal:
             localFileService
         }
     }

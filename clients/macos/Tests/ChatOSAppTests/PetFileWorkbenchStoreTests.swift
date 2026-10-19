@@ -24,6 +24,15 @@ struct PetFileWorkbenchStoreTests {
             targetLine: 17
         ))
 
+        let plainDeliveryFile = try #require(URL(string: "docker-compose.yml"))
+        #expect(PetFileLinkResolver.resolve(
+            plainDeliveryFile,
+            projectRootPath: "/Volumes/Work"
+        ) == .init(
+            path: "/Volumes/Work/docker-compose.yml",
+            targetLine: nil
+        ))
+
         let logical = try #require(URL(string: "docs/README.md#L9"))
         #expect(PetFileLinkResolver.resolve(
             logical,
@@ -57,8 +66,8 @@ struct PetFileWorkbenchStoreTests {
         #expect(store.isPresented)
     }
 
-    @Test("uses direct local access only for Finder-selected files")
-    func routesFinderSelectedFilesToLocalService() async throws {
+    @Test("routes trusted local file sources to the local service")
+    func routesTrustedLocalFilesToLocalService() async throws {
         let path = "/Users/example/Desktop/example.swift"
         let workspaceService = MockPetProjectFilesystem(files: [
             path: makeFile(path: path, content: "workspace copy\n"),
@@ -76,6 +85,12 @@ struct PetFileWorkbenchStoreTests {
 
         #expect(store.selectedTab?.draft == "finder copy\n")
         #expect(store.selectedTab?.access == .userSelectedLocal)
+
+        store.open(.init(path: path, access: .conversationLocal))
+        try await waitUntilReady(store, path: path)
+
+        #expect(store.selectedTab?.draft == "finder copy\n")
+        #expect(store.selectedTab?.access == .conversationLocal)
     }
 
     @Test("reads and edits arbitrary code and configuration extensions")
