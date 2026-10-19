@@ -678,19 +678,15 @@ final class ConversationSessionViewModel: ObservableObject {
             do {
                 for try await signal in stream {
                     guard let self else { return }
-                    if signal.askUserPromptUpdate != nil {
+                    switch ConversationRealtimePolicy.action(for: signal) {
+                    case .refreshAskUserPrompts:
                         await self.refreshAskUserPrompts()
-                        continue
-                    }
-                    switch signal.kind {
-                    case .failed:
-                        self.sendError = signal.processUpdate?.detail?.trimmingCharacters(
-                            in: .whitespacesAndNewlines
-                        ).nonEmptyValue ?? "AI 处理失败，请检查模型配置后重试。"
+                    case let .failure(message):
+                        self.sendError = message
                         self.refreshLatestSilently()
-                    case .reconcile, .persisted, .completed, .cancelled:
+                    case .refreshHistory:
                         self.refreshLatestSilently()
-                    case .started, .updated, .unknown:
+                    case .ignore:
                         break
                     }
                 }
@@ -767,11 +763,5 @@ final class ConversationSessionViewModel: ObservableObject {
         for turn in turns {
             resolveTaskGraphAvailability(for: turn)
         }
-    }
-}
-
-private extension String {
-    var nonEmptyValue: String? {
-        isEmpty ? nil : self
     }
 }

@@ -3,31 +3,35 @@ import Foundation
 
 extension ConversationSessionViewModel {
     func sendDraft() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let outgoingAttachments = attachments
-        let outgoingCapability = selectedCapability
-        guard (!text.isEmpty || !outgoingAttachments.isEmpty), !isSending else { return }
+        let plan = ConversationSendPlanner.plan(
+            draft: draft,
+            attachments: attachments,
+            explicitCapabilitySelection: selectedCapability,
+            turns: turns,
+            isSending: isSending
+        )
+        if case .ignore = plan { return }
         guard let commandService else {
             sendError = "聊天发送服务尚未连接。"
             return
         }
-
-        if let activeTurn = turns.last(where: { $0.status == .streaming }) {
-            guard outgoingCapability == nil else {
-                sendError = "当前轮次仍在执行。请等待结束或停止后，再用所选能力发起新任务。"
-                return
-            }
+        switch plan {
+        case .ignore:
+            return
+        case let .blocked(reason):
+            sendError = reason.message
+        case let .guidance(submission, turnID):
             sendGuidance(
-                text,
-                attachments: outgoingAttachments,
-                turnID: activeTurn.id,
+                submission.content,
+                attachments: submission.attachments,
+                turnID: turnID,
                 using: commandService
             )
-        } else {
+        case let .newTurn(submission):
             sendNewTurn(
-                text,
-                attachments: outgoingAttachments,
-                explicitCapabilitySelection: outgoingCapability,
+                submission.content,
+                attachments: submission.attachments,
+                explicitCapabilitySelection: submission.explicitCapabilitySelection,
                 using: commandService
             )
         }
