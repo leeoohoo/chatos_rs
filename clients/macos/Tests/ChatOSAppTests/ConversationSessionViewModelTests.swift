@@ -361,6 +361,32 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testRuntimeUnavailableRejectsLateReadyRecovery() async throws {
+        let remoteService = ConversationRemoteServiceStub()
+        let runtimeSettings = DelayedRuntimeSettingsServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            localAgentRuntimeReady: false,
+            remoteService: remoteService,
+            runtimeSettingsService: runtimeSettings
+        )
+        viewModel.activate()
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 2
+        }
+
+        viewModel.localAgentRuntimeDidBecomeUnavailable()
+        await runtimeSettings.resumeRequests()
+        try await Task.sleep(for: .milliseconds(300))
+
+        let requestCount = await remoteService.requestCount()
+        XCTAssertFalse(viewModel.isLocalAgentRuntimeReady)
+        XCTAssertEqual(requestCount, 0)
+    }
+
     func testStalePromptRefreshCannotOverwriteSubmittedPrompt() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -789,6 +815,70 @@ private actor RecoveringRuntimeSettingsServiceStub: ConversationRuntimeSettingsS
     private func requireConfigured() throws {
         guard isConfigured else {
             throw NativeLocalAgentConversationRuntimeSettingsError.notConfigured
+        }
+    }
+}
+
+private actor DelayedRuntimeSettingsServiceStub: ConversationRuntimeSettingsServicing {
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var isReleased = false
+
+    func pendingRequestCount() -> Int { continuations.count }
+
+    func resumeRequests() {
+        isReleased = true
+        let pending = continuations
+        continuations.removeAll()
+        pending.forEach { $0.resume() }
+    }
+
+    func fetchSettings(sessionID _: String) async -> ConversationRuntimeSettings {
+        await waitUntilResumed()
+        return ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    func fetchAvailableModels() async -> [ConversationModelOption] {
+        await waitUntilResumed()
+        return [ConversationModelOption(
+            id: "model-1",
+            displayName: "Local model",
+            modelName: "local-model"
+        )]
+    }
+
+    func updateModel(
+        sessionID _: String,
+        modelID _: String
+    ) async -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    func updateRemoteConnection(
+        sessionID _: String,
+        connectionID _: String?
+    ) async -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    func updateReasoning(
+        sessionID _: String,
+        enabled _: Bool
+    ) async -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    func updateReasoningLevel(
+        sessionID _: String,
+        level _: String,
+        enabled _: Bool
+    ) async -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    private func waitUntilResumed() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
         }
     }
 }

@@ -97,6 +97,7 @@ final class ConversationSessionViewModel: ObservableObject {
     var askUserPromptLifecycleState = ConversationAskUserPromptLifecycleState()
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
+    var activationState = ConversationSessionActivationState()
     private var isActive = false
     private(set) var isLocalAgentRuntimeReady: Bool
 
@@ -176,17 +177,19 @@ final class ConversationSessionViewModel: ObservableObject {
     func activate() {
         guard !isActive else { return }
         isActive = true
+        let activation = activationState.activate()
         guard isLocalAgentRuntimeReady else { return }
         refreshLatestSilently()
         Task { [weak self] in
             await self?.refreshAskUserPrompts()
         }
-        startRealtime()
+        startRealtime(activation: activation)
     }
 
     func deactivate() {
         guard isActive else { return }
         isActive = false
+        activationState.deactivate()
         realtimeTask?.cancel()
         realtimeTask = nil
         historyRetryTask?.cancel()
@@ -211,9 +214,12 @@ final class ConversationSessionViewModel: ObservableObject {
             async let settings: Void = loadRuntimeSettings()
             async let prompts: Void = refreshAskUserPrompts()
             _ = await (settings, prompts)
-            guard runtimeSettingsError == nil, isActive else { return }
-            refreshLatest()
-            startRealtime()
+            guard self.runtimeSettingsError == nil,
+                  self.isActive,
+                  self.isLocalAgentRuntimeReady,
+                  let activation = self.activationState.activeSession else { return }
+            self.refreshLatest()
+            self.startRealtime(activation: activation)
         }
     }
 
@@ -495,9 +501,11 @@ final class ConversationSessionViewModel: ObservableObject {
         }
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
-        if isActive, isLocalAgentRuntimeReady {
+        if isActive,
+           isLocalAgentRuntimeReady,
+           let activation = activationState.activeSession {
             refreshLatest()
-            startRealtime()
+            startRealtime(activation: activation)
         }
     }
 
@@ -661,15 +669,23 @@ final class ConversationSessionViewModel: ObservableObject {
         reasoningEnabled = settings.reasoningEnabled
     }
 
-    private func startRealtime() {
-        guard let realtimeService, realtimeTask == nil else { return }
+    private func startRealtime(activation: ConversationSessionActivation) {
+        guard activationState.accepts(activation),
+              let realtimeService,
+              realtimeTask == nil else { return }
         let sessionID = sessionID
 
         realtimeTask = Task { [weak self] in
             let stream = await realtimeService.events(sessionID: sessionID)
+            guard let self,
+                  !Task.isCancelled,
+                  self.activationState.accepts(activation),
+                  self.isLocalAgentRuntimeReady else { return }
             do {
                 for try await signal in stream {
-                    guard let self else { return }
+                    guard !Task.isCancelled,
+                          self.activationState.accepts(activation),
+                          self.isLocalAgentRuntimeReady else { return }
                     switch ConversationRealtimePolicy.action(for: signal) {
                     case .refreshAskUserPrompts:
                         await self.refreshAskUserPrompts()
@@ -683,10 +699,15 @@ final class ConversationSessionViewModel: ObservableObject {
                     }
                 }
             } catch {
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled,
+                      self.activationState.accepts(activation),
+                      self.isLocalAgentRuntimeReady else { return }
                 self.historyError = error.localizedDescription
             }
-            self?.realtimeTask = nil
+            guard !Task.isCancelled,
+                  self.activationState.accepts(activation),
+                  self.isLocalAgentRuntimeReady else { return }
+            self.realtimeTask = nil
         }
     }
 
