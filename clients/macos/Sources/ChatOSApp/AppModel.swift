@@ -87,6 +87,16 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         model: self,
         preferences: globalUtilityPreferences
     )
+    private(set) lazy var conversationSessionFactory = ConversationSessionFactory(
+        historyStore: historyStore,
+        remoteService: conversationService,
+        realtimeService: conversationService,
+        commandService: commandService,
+        turnProcessService: turnProcessService,
+        messageTaskGraphService: messageTaskGraphService,
+        runtimeSettingsService: runtimeSettingsService,
+        askUserPromptService: askUserPromptService
+    )
 
     var terminals: [ResourceItem] {
         [

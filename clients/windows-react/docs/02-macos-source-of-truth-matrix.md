@@ -37,8 +37,8 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 项目会话准备 | Application 用例与 per-project lifecycle 已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Preparation state/use case 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
-| Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
+| 项目会话准备 | Application 用例、per-project lifecycle 与 Conversation Session composition factory 已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Preparation state/use case、Session factory 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
+| Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load lifecycle、viewport/unread、刷新合并、realtime 动作、activation session 与 Session composition factory 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case、Session factory、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态与 refresh/per-prompt 异步生命周期已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
@@ -104,7 +104,7 @@ macOS 分层从现有行为提取，不增加业务含义：
 - `PrepareProjectConversationUseCase`
 - `ProjectConversationPreparationState`（已完成）
 - `ProjectConversationPort`
-- `ConversationSessionFactory`
+- `ConversationSessionFactory`（已完成）
 
 React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输与 Windows 平台能力。
 
@@ -113,6 +113,7 @@ React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输
 - 已新增 `ProjectContextLoading` Port，由现有 `NativeLocalProjectsService` adapter 实现；
 - 已新增 `PrepareProjectConversationUseCase`，按 owner + project 复用并发准备任务；
 - 已新增 `ProjectConversationPreparationState`，为每个项目分配 latest-wins token；AppModel 显式持有对应 Task，项目删除只取消目标项目，账号切换/登出/退出统一取消全部任务；
+- 已新增 App 层 `ConversationSessionFactory`，集中把 Core conversation ports 组合为 SwiftUI session；AppModel 只保留按 session ID 缓存、LRU 淘汰与 activate/deactivate 策略，runtime ready 在每次创建时读取当前账号状态而非冻结在 factory 中；
 - Use Case 仍严格执行“先加载当前 project context，再调用 `ProjectConversationPreparing`”的 macOS 顺序；
 - AppModel 继续负责登录账号、workspace generation、项目是否仍存在和四种 UI 状态，迟到结果仍不能写回；
 - 登出/账号切换与项目删除会取消对应 Application 任务；

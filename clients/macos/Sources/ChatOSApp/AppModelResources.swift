@@ -382,18 +382,10 @@ extension AppModel {
             touchConversationRecency(sessionID)
             return cached
         }
-        let created = ConversationSessionViewModel(
+        let created = conversationSessionFactory.makeSession(
             sessionID: sessionID,
             initialTurns: [],
-            historyStore: historyStore,
-            localAgentRuntimeReady: localAgentRuntimeState.isReady(for: authenticatedUserID),
-            remoteService: conversationService,
-            realtimeService: conversationService,
-            commandService: commandService,
-            turnProcessService: turnProcessService,
-            messageTaskGraphService: messageTaskGraphService,
-            runtimeSettingsService: runtimeSettingsService,
-            askUserPromptService: askUserPromptService
+            localAgentRuntimeReady: localAgentRuntimeState.isReady(for: authenticatedUserID)
         )
         conversationCache[sessionID] = created
         touchConversationRecency(sessionID)
