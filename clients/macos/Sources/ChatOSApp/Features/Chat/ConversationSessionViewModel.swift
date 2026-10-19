@@ -22,17 +22,6 @@ final class ConversationTimelineObservationState: ObservableObject {
 
 @MainActor
 final class ConversationSessionViewModel: ObservableObject {
-    private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
-
-    private enum LatestRefreshPresentation: Equatable {
-        case silent
-        case visible
-
-        func merged(with other: Self) -> Self {
-            self == .visible || other == .visible ? .visible : .silent
-        }
-    }
-
     let sessionID: String
 
     @Published private(set) var turns: [ConversationTurn]
@@ -97,10 +86,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private var realtimeTask: Task<Void, Never>?
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
-    private var latestRefreshDebouncePresentation: LatestRefreshPresentation?
+    private var latestRefreshState = ConversationLatestRefreshState()
     private var historyRetryAttempt = 0
-    private var latestRefreshInFlight = false
-    private var latestRefreshPending: LatestRefreshPresentation?
     private var viewportUpdateGeneration: Int64 = 0
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
@@ -200,8 +187,7 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask = nil
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
-        latestRefreshDebouncePresentation = nil
-        latestRefreshPending = nil
+        latestRefreshState.cancelScheduledAndPending()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         taskGraphAvailabilityTasks.removeAll()
     }
@@ -233,8 +219,7 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask = nil
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
-        latestRefreshDebouncePresentation = nil
-        latestRefreshPending = nil
+        latestRefreshState.cancelScheduledAndPending()
         runtimeSettingsLoadGeneration &+= 1
         askUserPromptRefreshGeneration &+= 1
         isRefreshing = false
@@ -249,25 +234,23 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     private func enqueueLatestRefresh(
-        presentation: LatestRefreshPresentation,
+        presentation: ConversationHistoryRefreshPresentation,
         debounce: Bool
     ) {
         guard isActive, isLocalAgentRuntimeReady, let historyUseCase else { return }
 
         if debounce {
-            let scheduledPresentation = latestRefreshDebouncePresentation?
-                .merged(with: presentation) ?? presentation
-            latestRefreshDebouncePresentation = scheduledPresentation
+            let scheduledPresentation = latestRefreshState.scheduleDebounced(presentation)
             latestRefreshDebounceTask?.cancel()
             latestRefreshDebounceTask = Task { [weak self] in
                 do {
-                    try await Task.sleep(for: Self.realtimeRefreshDebounce)
+                    try await Task.sleep(for: ConversationLatestRefreshState.debounceDelay)
                 } catch {
                     return
                 }
                 guard !Task.isCancelled, let self else { return }
                 self.latestRefreshDebounceTask = nil
-                self.latestRefreshDebouncePresentation = nil
+                self.latestRefreshState.consumeDebounced()
                 self.performLatestRefresh(
                     using: historyUseCase,
                     presentation: scheduledPresentation
@@ -278,22 +261,16 @@ final class ConversationSessionViewModel: ObservableObject {
 
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
-        latestRefreshDebouncePresentation = nil
+        latestRefreshState.consumeDebounced()
         performLatestRefresh(using: historyUseCase, presentation: presentation)
     }
 
     private func performLatestRefresh(
         using historyUseCase: ConversationHistoryUseCase,
-        presentation: LatestRefreshPresentation
+        presentation: ConversationHistoryRefreshPresentation
     ) {
-        guard !latestRefreshInFlight else {
-            latestRefreshPending = latestRefreshPending?
-                .merged(with: presentation) ?? presentation
-            return
-        }
+        guard latestRefreshState.beginOrQueue(presentation) else { return }
 
-        latestRefreshInFlight = true
-        latestRefreshPending = nil
         requestGeneration += 1
         let generation = requestGeneration
         if presentation == .visible {
@@ -323,9 +300,7 @@ final class ConversationSessionViewModel: ObservableObject {
             if presentation == .visible {
                 isRefreshing = false
             }
-            latestRefreshInFlight = false
-            if let pending = latestRefreshPending {
-                latestRefreshPending = nil
+            if let pending = latestRefreshState.complete() {
                 enqueueLatestRefresh(presentation: pending, debounce: true)
             }
         }
