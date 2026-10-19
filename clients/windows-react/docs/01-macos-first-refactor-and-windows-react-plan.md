@@ -390,6 +390,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 Conversation 附件文件读取和粘贴图片归一化现已绑定 composer draft generation；同一草稿可并发导入，发送清空 composer 时会失效并取消全部旧导入，底层任务即使迟到也不能把附件写入下一条消息。Runtime settings snapshot load 也已改用显式 latest-wins identity；新加载、设置 mutation 或 runtime unavailable 都会拒绝旧 Host snapshot。
 
+Workspace Inspector 的详情、模型输出、Run 与事件分页 Task 已冻结请求目标和 Application use case，Host await 期间不再强持有 ViewModel；底层请求即使忽略取消也不会阻止弹层状态释放，返回后仍须通过现有 request token 与目标 identity 才能写回。
+
 内嵌 Task Inspector 在 detail 加载中切回 process 时会重新挂起当前活跃 Task 的 polling；取消模型输出请求不能同时让执行过程停止刷新。
 
 项目 Conversation 准备现已由 Core per-project token state 与 AppModel 持有的具体 Task 共同管理；项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。

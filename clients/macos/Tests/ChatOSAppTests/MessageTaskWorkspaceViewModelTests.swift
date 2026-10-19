@@ -196,6 +196,23 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.realtimeTask)
     }
 
+    func testDelayedInspectorRequestDoesNotRetainWorkspaceViewModel() async throws {
+        let service = NonCancellableInspectorMessageTaskGraphServiceStub()
+        var viewModel: MessageTaskWorkspaceViewModel? = makeViewModel(service: service)
+        weak let weakViewModel = viewModel
+        let task = MessageTask(id: "task-a", title: "任务 A", status: "running")
+
+        viewModel?.select(task)
+        try await waitUntil { await service.hasDelayedTaskRequest() }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await service.resumeTaskRequest()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -233,6 +250,63 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor NonCancellableInspectorMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var taskContinuation: CheckedContinuation<Void, Never>?
+
+    func hasDelayedTaskRequest() -> Bool { taskContinuation != nil }
+
+    func resumeTaskRequest() {
+        taskContinuation?.resume()
+        taskContinuation = nil
+    }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .empty
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        await withCheckedContinuation { continuation in
+            taskContinuation = continuation
+        }
+        return MessageTask(id: taskID, title: "迟到详情", status: "completed")
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-a", title: "任务 A", status: "completed")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-a")
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String?
+    ) async throws {}
 }
 
 private actor SequencedInspectorMessageTaskGraphServiceStub: MessageTaskGraphServicing {

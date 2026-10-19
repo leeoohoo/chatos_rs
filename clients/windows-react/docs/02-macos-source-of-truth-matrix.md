@@ -329,6 +329,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskWorkspaceLifecycleState` 已集中 presentation session identity；初次加载、手动刷新、Run 重试、realtime 与 polling 都必须同时通过当前 session 验收；
 - Workspace Run retry 复用 `MessageTaskRetryState` 并绑定 session、Task 与 Run identity；切换 Task 或关闭 Workspace 会取消并失效旧 retry，清理旧目标说明，迟到 Host 结果不得重新加载旧 Inspector、覆盖错误或清理新 retry 的 loading；
 - Inspector snapshot/分页验收规则已移入 `MessageTaskInspectorRequestState`，具体 cancellable Task 仍由 macOS adapter 状态层持有；
+- Workspace Inspector 冻结请求目标与 Application use case 后再进入 Host await；详情、模型输出、Run 与事件分页请求只在返回后弱引用恢复成功且 token/目标仍有效时写回，因此忽略取消的底层请求不会反向延长 ViewModel 生命周期；
 - polling Task 的具体实例与 realtime 降级触发仍由 macOS UI adapter 持有。
 
 ### 5.4 测试证据

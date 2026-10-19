@@ -52,24 +52,35 @@ extension MessageTaskWorkspaceViewModel {
         loadedModelOutputRunID = nil
         let target = target(for: task)
         let requestedTaskID = task.id
-        inspectorLoadTask = Task {
-            var loadedDetail: MessageTask?
+        let graphUseCase = graphUseCase
+        inspectorLoadTask = Task { [weak self] in
+            let result: Result<MessageTask, Error>
             do {
-                let detail = try await graphUseCase.loadTask(
-                    messageID: target.messageID,
-                    taskID: task.id,
-                    lookup: target.lookup
+                result = .success(
+                    try await graphUseCase.loadTask(
+                        messageID: target.messageID,
+                        taskID: requestedTaskID,
+                        lookup: target.lookup
+                    )
                 )
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self else { return }
+            var loadedDetail: MessageTask?
+            switch result {
+            case let .success(detail):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 taskDetail = detail
                 loadedDetail = detail
-            } catch is CancellationError {
+            case .failure(is CancellationError):
                 guard !Task.isCancelled,
                       inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 errorMessage = CancellationError().localizedDescription
-            } catch {
+            case let .failure(error):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
@@ -96,26 +107,37 @@ extension MessageTaskWorkspaceViewModel {
         isLoadingModelOutput = true
         let target = target(for: task)
         let requestedTaskID = task.id
-        modelOutputLoadTask = Task {
+        let runUseCase = runUseCase
+        modelOutputLoadTask = Task { [weak self] in
+            let result: Result<MessageTaskRunDetail, Error>
+            do {
+                result = .success(
+                    try await runUseCase.loadModelOutput(
+                        messageID: target.messageID,
+                        runID: runID,
+                        lookup: target.lookup
+                    )
+                )
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self else { return }
             defer {
                 if inspectorRequestState.finish(token) {
                     modelOutputLoadTask = nil
                     isLoadingModelOutput = false
                 }
             }
-            do {
-                let detail = try await runUseCase.loadModelOutput(
-                    messageID: target.messageID,
-                    runID: runID,
-                    lookup: target.lookup
-                )
+            switch result {
+            case let .success(detail):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 loadedModelOutputRunID = runID
                 taskDetail = (taskDetail ?? task).merging(run: detail.run)
-            } catch is CancellationError {
+            case .failure(is CancellationError):
                 return
-            } catch {
+            case let .failure(error):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 errorMessage = "模型输出加载失败：\(error.localizedDescription)"
@@ -132,27 +154,38 @@ extension MessageTaskWorkspaceViewModel {
         isLoadingRun = true
         let target = target(for: task)
         let requestedTaskID = task.id
-        runLoadTask = Task {
+        let runUseCase = runUseCase
+        runLoadTask = Task { [weak self] in
+            let result: Result<MessageTaskRunDetail, Error>
+            do {
+                result = .success(
+                    try await runUseCase.loadLatestRun(
+                        messageID: target.messageID,
+                        runID: runID,
+                        lookup: target.lookup
+                    )
+                )
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self else { return }
             defer {
                 if inspectorRequestState.finish(token) {
                     runLoadTask = nil
                     isLoadingRun = false
                 }
             }
-            do {
-                let detail = try await runUseCase.loadLatestRun(
-                    messageID: target.messageID,
-                    runID: runID,
-                    lookup: target.lookup
-                )
+            switch result {
+            case let .success(detail):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 runDetail = detail
                 loadedModelOutputRunID = runID
                 taskDetail = detail.task.merging(run: detail.run)
-            } catch is CancellationError {
+            case .failure(is CancellationError):
                 return
-            } catch {
+            case let .failure(error):
                 guard inspectorRequestState.accepts(token),
                       selectedTask?.id == requestedTaskID else { return }
                 errorMessage = error.localizedDescription
@@ -171,25 +204,36 @@ extension MessageTaskWorkspaceViewModel {
             contextID: "\(current.run.id):\(current.events.count)"
         )
         isLoadingMoreRunEvents = true
-        moreRunEventsTask = Task {
+        let runUseCase = runUseCase
+        moreRunEventsTask = Task { [weak self] in
+            let result: Result<MessageTaskRunDetail, Error>
+            do {
+                result = .success(
+                    try await runUseCase.loadOlderEvents(
+                        messageID: target.messageID,
+                        lookup: target.lookup,
+                        current: current
+                    )
+                )
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self else { return }
             defer {
                 if inspectorRequestState.finish(token) {
                     moreRunEventsTask = nil
                     isLoadingMoreRunEvents = false
                 }
             }
-            do {
-                let merged = try await runUseCase.loadOlderEvents(
-                    messageID: target.messageID,
-                    lookup: target.lookup,
-                    current: current
-                )
+            switch result {
+            case let .success(merged):
                 guard inspectorRequestState.accepts(token),
                       runDetail?.run.id == current.run.id else { return }
                 runDetail = merged
-            } catch is CancellationError {
+            case .failure(is CancellationError):
                 return
-            } catch {
+            case let .failure(error):
                 guard inspectorRequestState.accepts(token),
                       runDetail?.run.id == current.run.id else { return }
                 errorMessage = error.localizedDescription
