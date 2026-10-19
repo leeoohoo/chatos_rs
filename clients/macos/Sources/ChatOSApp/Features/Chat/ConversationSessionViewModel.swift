@@ -95,6 +95,8 @@ final class ConversationSessionViewModel: ObservableObject {
     var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
     var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
     private var runtimeSettingsLoadGeneration: UInt64 = 0
+    private var runtimeSettingsMutationTask: Task<Void, Never>?
+    var runtimeSettingsMutationState = ConversationRuntimeSettingsMutationState()
     var askUserPromptLifecycleState = ConversationAskUserPromptLifecycleState()
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
@@ -165,6 +167,7 @@ final class ConversationSessionViewModel: ObservableObject {
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
+        runtimeSettingsMutationTask?.cancel()
         attachmentFileLoadTasks.values.forEach { $0.cancel() }
         pastedImageNormalizationTasks.values.forEach { $0.cancel() }
     }
@@ -242,6 +245,9 @@ final class ConversationSessionViewModel: ObservableObject {
         olderHistoryLoadTask?.cancel()
         olderHistoryLoadTask = nil
         runtimeSettingsLoadGeneration &+= 1
+        runtimeSettingsMutationState.reset()
+        runtimeSettingsMutationTask?.cancel()
+        runtimeSettingsMutationTask = nil
         askUserPromptLifecycleState.reset()
         askUserPromptRefreshTask?.cancel()
         askUserPromptRefreshTask = nil
@@ -251,6 +257,7 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptErrors = [:]
         isRefreshing = false
         isLoadingOlder = false
+        isUpdatingRuntimeSettings = false
         inFlightOlderCursor = nil
         historyError = nil
         runtimeSettingsError = nil
@@ -597,21 +604,26 @@ final class ConversationSessionViewModel: ObservableObject {
               availableModels.contains(where: { $0.id == modelID }),
               selectedModelID != modelID else { return }
         let previous = selectedModelID
+        let token = beginRuntimeSettingsMutation()
         selectedModelID = modelID
         runtimeSettingsError = nil
-        isUpdatingRuntimeSettings = true
-        Task {
+        runtimeSettingsMutationTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 let settings = try await runtimeSettingsService.updateModel(
-                    sessionID: sessionID,
+                    sessionID: self.sessionID,
                     modelID: modelID
                 )
-                applyRuntimeSettings(settings)
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.applyRuntimeSettings(settings)
             } catch {
-                selectedModelID = previous
-                runtimeSettingsError = error.localizedDescription
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.selectedModelID = previous
+                self.runtimeSettingsError = error.localizedDescription
             }
-            isUpdatingRuntimeSettings = false
+            self.finishRuntimeSettingsMutation(token)
         }
     }
 
@@ -630,24 +642,29 @@ final class ConversationSessionViewModel: ObservableObject {
         guard selectedThinkingLevel != level || reasoningEnabled != enabled else { return }
         let previousLevel = selectedThinkingLevel
         let previous = reasoningEnabled
+        let token = beginRuntimeSettingsMutation()
         selectedThinkingLevel = level
         reasoningEnabled = enabled
         runtimeSettingsError = nil
-        isUpdatingRuntimeSettings = true
-        Task {
+        runtimeSettingsMutationTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 let settings = try await runtimeSettingsService.updateReasoningLevel(
-                    sessionID: sessionID,
+                    sessionID: self.sessionID,
                     level: level,
                     enabled: enabled
                 )
-                applyRuntimeSettings(settings)
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.applyRuntimeSettings(settings)
             } catch {
-                selectedThinkingLevel = previousLevel
-                reasoningEnabled = previous
-                runtimeSettingsError = error.localizedDescription
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.selectedThinkingLevel = previousLevel
+                self.reasoningEnabled = previous
+                self.runtimeSettingsError = error.localizedDescription
             }
-            isUpdatingRuntimeSettings = false
+            self.finishRuntimeSettingsMutation(token)
         }
     }
 
@@ -655,22 +672,42 @@ final class ConversationSessionViewModel: ObservableObject {
         guard let runtimeSettingsService,
               selectedRemoteConnectionID != connectionID else { return }
         let previous = selectedRemoteConnectionID
+        let token = beginRuntimeSettingsMutation()
         selectedRemoteConnectionID = connectionID
         runtimeSettingsError = nil
-        isUpdatingRuntimeSettings = true
-        Task {
+        runtimeSettingsMutationTask = Task { [weak self] in
+            guard let self else { return }
             do {
                 let settings = try await runtimeSettingsService.updateRemoteConnection(
-                    sessionID: sessionID,
+                    sessionID: self.sessionID,
                     connectionID: connectionID
                 )
-                applyRuntimeSettings(settings)
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.applyRuntimeSettings(settings)
             } catch {
-                selectedRemoteConnectionID = previous
-                runtimeSettingsError = error.localizedDescription
+                guard !Task.isCancelled,
+                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                self.selectedRemoteConnectionID = previous
+                self.runtimeSettingsError = error.localizedDescription
             }
-            isUpdatingRuntimeSettings = false
+            self.finishRuntimeSettingsMutation(token)
         }
+    }
+
+    private func beginRuntimeSettingsMutation() -> ConversationRuntimeSettingsMutationToken {
+        runtimeSettingsLoadGeneration &+= 1
+        runtimeSettingsMutationTask?.cancel()
+        isUpdatingRuntimeSettings = true
+        return runtimeSettingsMutationState.begin()
+    }
+
+    private func finishRuntimeSettingsMutation(
+        _ token: ConversationRuntimeSettingsMutationToken
+    ) {
+        guard runtimeSettingsMutationState.finish(token) else { return }
+        runtimeSettingsMutationTask = nil
+        isUpdatingRuntimeSettings = false
     }
 
     private func loadRuntimeSettings(presentErrors: Bool = true) async {

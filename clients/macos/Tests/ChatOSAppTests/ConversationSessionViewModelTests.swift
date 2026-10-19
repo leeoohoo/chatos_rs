@@ -435,6 +435,36 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testNewRuntimeSettingsMutationRejectsOlderModelResponse() async throws {
+        let runtimeSettings = RacingRuntimeSettingsServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            runtimeSettingsService: runtimeSettings
+        )
+        try await waitUntil {
+            viewModel.availableModels.count == 3
+                && viewModel.selectedModelID == "model-1"
+        }
+
+        viewModel.setSelectedModelID("model-2")
+        try await waitUntil {
+            await runtimeSettings.hasDelayedModelUpdate()
+        }
+        viewModel.setSelectedModelID("model-3")
+        try await waitUntil {
+            viewModel.selectedModelID == "model-3"
+                && !viewModel.isUpdatingRuntimeSettings
+        }
+        await runtimeSettings.resumeDelayedModelUpdate()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.selectedModelID, "model-3")
+        XCTAssertNil(viewModel.runtimeSettingsError)
+        XCTAssertFalse(viewModel.isUpdatingRuntimeSettings)
+    }
+
     func testStalePromptRefreshCannotOverwriteSubmittedPrompt() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -980,5 +1010,74 @@ private actor DelayedRuntimeSettingsServiceStub: ConversationRuntimeSettingsServ
         await withCheckedContinuation { continuation in
             continuations.append(continuation)
         }
+    }
+}
+
+private actor RacingRuntimeSettingsServiceStub: ConversationRuntimeSettingsServicing {
+    private var delayedModelContinuation: CheckedContinuation<Void, Never>?
+
+    func hasDelayedModelUpdate() -> Bool { delayedModelContinuation != nil }
+
+    func resumeDelayedModelUpdate() {
+        delayedModelContinuation?.resume()
+        delayedModelContinuation = nil
+    }
+
+    func fetchSettings(sessionID _: String) -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(selectedModelID: "model-1")
+    }
+
+    func fetchAvailableModels() -> [ConversationModelOption] {
+        (1 ... 3).map { index in
+            ConversationModelOption(
+                id: "model-\(index)",
+                displayName: "Model \(index)",
+                modelName: "model-\(index)"
+            )
+        }
+    }
+
+    func updateModel(
+        sessionID _: String,
+        modelID: String
+    ) async -> ConversationRuntimeSettings {
+        if modelID == "model-2" {
+            await withCheckedContinuation { continuation in
+                delayedModelContinuation = continuation
+            }
+        }
+        return ConversationRuntimeSettings(selectedModelID: modelID)
+    }
+
+    func updateRemoteConnection(
+        sessionID _: String,
+        connectionID: String?
+    ) -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(
+            selectedModelID: "model-1",
+            remoteConnectionID: connectionID
+        )
+    }
+
+    func updateReasoning(
+        sessionID _: String,
+        enabled: Bool
+    ) -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(
+            selectedModelID: "model-1",
+            reasoningEnabled: enabled
+        )
+    }
+
+    func updateReasoningLevel(
+        sessionID _: String,
+        level: String,
+        enabled: Bool
+    ) -> ConversationRuntimeSettings {
+        ConversationRuntimeSettings(
+            selectedModelID: "model-1",
+            selectedThinkingLevel: level,
+            reasoningEnabled: enabled
+        )
     }
 }
