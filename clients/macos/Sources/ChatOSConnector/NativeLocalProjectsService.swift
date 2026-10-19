@@ -7,7 +7,7 @@ public struct PreparedLocalProjectImport: Sendable, Equatable {
 }
 
 /// Host entrypoint for local CRUD. Never creates or updates a remote project.
-public actor NativeLocalProjectsService {
+public actor NativeLocalProjectsService: ProjectContextLoading {
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
     private let managedProjectsRootURL: URL

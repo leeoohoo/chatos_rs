@@ -108,6 +108,15 @@ macOS 分层时从现有行为提取，不增加业务含义：
 
 React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输与 Windows 平台能力。
 
+实施进度（2026-10-19）：
+
+- 已新增 `ProjectContextLoading` Port，由现有 `NativeLocalProjectsService` adapter 实现；
+- 已新增 `PrepareProjectConversationUseCase`，按 owner + project 复用并发准备任务；
+- Use Case 仍严格执行“先加载当前 project context，再调用 `ProjectConversationPreparing`”的 macOS 顺序；
+- AppModel 继续负责登录账号、workspace generation、项目是否仍存在和四种 UI 状态，迟到结果仍不能写回；
+- 登出/账号切换与项目删除会取消对应 Application 任务；
+- 已覆盖同账号同项目复用、不同账号绝不复用，以及 context 注入后才创建 Conversation 的测试。
+
 ## 4. Conversation：完整调用链
 
 ### 4.1 UI 与 Feature State

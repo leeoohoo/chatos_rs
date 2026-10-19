@@ -114,6 +114,7 @@ extension AppModel {
         )
         workspaceProjects.removeAll { $0.id == id }
         projects.removeAll { $0.id == id }
+        prepareProjectConversationUseCase?.cancel(ownerUserID: owner, projectID: id)
         preparingProjectConversationIDs.remove(id)
         projectConversationPreparationErrors.removeValue(forKey: id)
         petPreferences.setFavorite(false, projectID: id)
@@ -304,36 +305,18 @@ extension AppModel {
         if let existing = projects.first(where: { $0.id == projectID })?.conversationID {
             return existing
         }
-        if let task = projectConversationPreparationTasks[projectID] {
-            return try await task.value
-        }
         guard let owner = authenticatedUserID,
-              var project = workspaceProject(id: projectID),
+              let project = workspaceProject(id: projectID),
               let contact = defaultProjectContact,
-              let projectConversationService else {
+              let prepareProjectConversationUseCase else {
             throw LocalConnectorCompanionResourceError.unavailable
         }
         let accountGeneration = workspaceAccountGeneration
-        let task = Task { @MainActor [localProjectsService, projectConversationService] in
-            project.projectContext = try await localProjectsService.projectContext(
-                ownerUserID: owner,
-                projectID: projectID
-            )
-            return try await projectConversationService.ensureConversation(
-                project: project,
-                contact: contact
-            )
-        }
-        let taskID = UUID()
-        projectConversationPreparationTasks[projectID] = task
-        projectConversationPreparationTaskIDs[projectID] = taskID
-        defer {
-            if projectConversationPreparationTaskIDs[projectID] == taskID {
-                projectConversationPreparationTasks.removeValue(forKey: projectID)
-                projectConversationPreparationTaskIDs[projectID] = nil
-            }
-        }
-        let conversationID = try await task.value
+        let conversationID = try await prepareProjectConversationUseCase.execute(
+            ownerUserID: owner,
+            project: project,
+            contact: contact
+        )
         guard owner == authenticatedUserID,
               accountGeneration == workspaceAccountGeneration,
               workspaceProject(id: projectID) != nil else {

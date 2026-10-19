@@ -114,6 +114,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let localAgentHost: (any LocalAgentHostClientServicing)?
     let localAgentEventHub: NativeLocalAgentEventHub?
     let projectConversationService: NativeLocalAgentProjectConversationService?
+    let prepareProjectConversationUseCase: PrepareProjectConversationUseCase?
     let localProjectsService: NativeLocalProjectsService
     let remoteConnectionMetadataService: NativeLocalAgentRemoteConnectionMetadataService
     let remoteConnectionService: NativeRemoteConnectionService
@@ -133,8 +134,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let userLanguagePreferencesService: LocalUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
-    var projectConversationPreparationTasks: [String: Task<String, Error>] = [:]
-    var projectConversationPreparationTaskIDs: [String: UUID] = [:]
     var projectConversationPreparationRequestIDs: [String: UUID] = [:]
     var workspaceLoadGeneration: Int64 = 0
     var workspaceLoadTask: Task<Void, Never>?
@@ -331,10 +330,17 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             NativeLocalAgentWorkspaceService(host: $0)
         }
         self.workspaceService = workspaceService
-        self.projectConversationService = localAgentHost.flatMap { host in
+        let projectConversationService = localAgentHost.flatMap { host in
             workspaceService.map {
                 NativeLocalAgentProjectConversationService(host: host, workspace: $0)
             }
+        }
+        self.projectConversationService = projectConversationService
+        self.prepareProjectConversationUseCase = projectConversationService.map {
+            PrepareProjectConversationUseCase(
+                contextLoader: localProjectsService,
+                conversationPreparer: $0
+            )
         }
         self.localProjectsService = localProjectsService
         let agentSkillLibrary = LocalAgentSkillLibrary(
