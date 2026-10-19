@@ -386,7 +386,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
-当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate；项目 Conversation 准备、Conversation History 查询/合并、发送路径规划、optimistic Turn/失败恢复、viewport/unread、latest refresh debounce/in-flight 合并、realtime 动作策略、Ask User 查询/提交/取消/投影/表单与 per-prompt 异步生命周期、Human Approval 加载/强类型决策、全局队列展示、监控 session、独立页面加载与决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal，以及 Task Graph/Run Inspector 核心规则、Inspector request identity 和 Graph polling session identity 已从 UI 协调层提取。审批页加载已与通用 tab loader、全局 stream/monitoring 分离，具备刷新淘汰、切页/登出迟到结果拒绝和失败保留最后可信快照；Ask User 已具备刷新 request identity、同 Prompt 操作互斥、跨 Prompt 独立并发和 runtime unavailable 迟到结果拒绝；Task Inspector 已覆盖同一 Task 重载、section 切换和 Run 事件分页的迟到结果隔离；Graph polling 在停止或重启后会拒绝旧 session 的迟到结果，realtime 中断后的降级 polling 也只能由当前 session 驱动。Conversation 与 Inspector 的其余 cancellable Task 生命周期、service orchestration 与 typed lifecycle port 继续迁移。
+当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate；项目 Conversation 准备、Conversation History 查询/合并、发送路径规划、optimistic Turn/失败恢复、viewport/unread、latest refresh debounce/in-flight 合并、realtime 动作策略、Ask User 查询/提交/取消/投影/表单与 per-prompt 异步生命周期、Human Approval 加载/强类型决策、全局队列展示、监控 session、独立页面加载与决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal，以及 Task Graph/Run Inspector 核心规则、Inspector request identity、Graph polling session identity 和 Workspace presentation session 已从 UI 协调层提取。审批页加载已与通用 tab loader、全局 stream/monitoring 分离，具备刷新淘汰、切页/登出迟到结果拒绝和失败保留最后可信快照；Ask User 已具备刷新 request identity、同 Prompt 操作互斥、跨 Prompt 独立并发和 runtime unavailable 迟到结果拒绝；Task Inspector 已覆盖同一 Task 重载、section 切换和 Run 事件分页的迟到结果隔离；Graph polling 在停止或重启后会拒绝旧 session 的迟到结果，realtime 中断后的降级 polling 也只能由当前 session 驱动；Workspace 关闭后，初次加载、手动刷新、Run 重试、realtime 与 polling 的迟到工作都不能写回或重启后台任务。Conversation 与 Inspector 的其余 cancellable Task 生命周期、service orchestration 与 typed lifecycle port 继续迁移。
 
 工作：
 
@@ -511,7 +511,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Graph、realtime、Run、section 刷新、Inspector request identity、polling 决策及 polling session 生命周期已提取，Inspector 初次加载和其余 cancellable Task 生命周期尚未完成。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Graph、realtime、Run、section 刷新、Inspector request identity、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
 7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 

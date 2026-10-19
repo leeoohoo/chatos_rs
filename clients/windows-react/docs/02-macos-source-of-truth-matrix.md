@@ -39,7 +39,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
 | Conversation 时间线与发送 | History、发送、viewport/unread、刷新合并与 realtime 动作规则已提取，UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
-| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、polling 决策与 polling session identity 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
+| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态与 refresh/per-prompt 异步生命周期已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
@@ -283,7 +283,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskRunUseCase.loadModelOutput` 已固定不读取事件历史的轻量查询；
 - `MessageTaskInspectorRefreshUseCase` 已固定 process/detail/run 三个 section 的刷新查询与陈旧 Run 清理语义；
 - `MessageTaskInspectorRequestState` 已统一 Inspector 最新快照与 Run 事件分页的 request identity；同一 Task 重载、section 切换和刷新都会拒绝旧结果，新的快照也会淘汰旧分页；
-- `MessageTaskGraphPollingState` 已持有 polling session identity；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射，因此尚未放行 React。
+- `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射，因此尚未放行 React。
 
 ### 5.3 并发、空结果与降级
 
@@ -294,6 +294,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - realtime 中断时展示“实时进度连接已中断”错误，并回退 polling；
 - polling 只在存在 active task 或正在等待初始空 Graph 时运行；没有活动任务后停止。
 - polling 停止或重启会使旧 session 立即失效；即使底层请求忽略取消并迟到返回，也不得写回 Graph、错误或继续 Inspector 刷新。
+- Workspace 弹层关闭会使 presentation session 立即失效，并统一取消 initial load、manual refresh、Run retry、Inspector、realtime 与 polling；旧 session 不得写回或重新启动后台任务。
 
 当前分层进度：
 
@@ -303,6 +304,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - Task 活跃状态规范化与 polling 判定所需语义已移入 Core；
 - `MessageTaskGraphPollingState` 已集中空 Graph 三次恢复预算、是否继续 polling、600ms/2s/60s 间隔规则及 polling session identity；
 - Graph 刷新在请求前后同时校验 workspace refresh generation 与 polling session；停止/重启后的旧结果不会写回，realtime 中断后的降级 polling 仍由当前 session 控制；
+- `MessageTaskWorkspaceLifecycleState` 已集中 presentation session identity；初次加载、手动刷新、Run 重试、realtime 与 polling 都必须同时通过当前 session 验收；
 - Inspector snapshot/分页验收规则已移入 `MessageTaskInspectorRequestState`，具体 cancellable Task 仍由 macOS adapter 状态层持有；
 - polling Task 的具体实例与 realtime 降级触发仍由 macOS UI adapter 持有。
 
@@ -313,6 +315,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskInspectorRefreshUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskInspectorRequestStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphPollingStateTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/MessageTaskWorkspaceLifecycleStateTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/TaskGraphDeliveryPresentationTests.swift`
 - `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift`

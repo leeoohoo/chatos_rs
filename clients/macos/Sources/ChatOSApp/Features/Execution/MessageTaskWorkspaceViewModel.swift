@@ -42,6 +42,9 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     let realtimeService: (any ConversationRealtimeStreaming)?
     let initialTaskID: String?
     let initialRunID: String?
+    var initialLoadTask: Task<Void, Never>?
+    var refreshTask: Task<Void, Never>?
+    var retryTask: Task<Void, Never>?
     var pollingTask: Task<Void, Never>?
     var realtimeTask: Task<Void, Never>?
     var inspectorLoadTask: Task<Void, Never>?
@@ -51,6 +54,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var hasActiveRealtimeStream = false
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
+    var workspaceLifecycleState = MessageTaskWorkspaceLifecycleState()
     var graphPollingState = MessageTaskGraphPollingState()
     var inspectorRequestState = MessageTaskInspectorRequestState()
 
@@ -76,6 +80,9 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     deinit {
+        initialLoadTask?.cancel()
+        refreshTask?.cancel()
+        retryTask?.cancel()
         pollingTask?.cancel()
         realtimeTask?.cancel()
         inspectorLoadTask?.cancel()
@@ -91,23 +98,40 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var selectedTaskID: String? { selectedTask?.id }
 
     func load() {
-        guard !isLoading else { return }
+        guard !isLoading, workspaceLifecycleState.activeSession == nil else { return }
+        let session = workspaceLifecycleState.start()
         isLoading = true
         errorMessage = nil
-        Task {
-            await refreshWorkspaceState(refreshInspector: false)
-            startRealtime()
-            startPollingIfNeeded()
-            isLoading = false
+        initialLoadTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshWorkspaceState(
+                refreshInspector: false,
+                workspaceSession: session
+            )
+            guard !Task.isCancelled,
+                  self.workspaceLifecycleState.accepts(session) else { return }
+            self.startRealtime(workspaceSession: session)
+            self.startPollingIfNeeded(workspaceSession: session)
+            self.initialLoadTask = nil
+            self.isLoading = false
         }
     }
 
     func refresh() {
+        guard let session = workspaceLifecycleState.activeSession else { return }
+        refreshTask?.cancel()
         errorMessage = nil
         resetEmptyGraphRetryBudgetIfNeeded()
-        Task {
-            await refreshWorkspaceState(refreshInspector: true)
-            startPollingIfNeeded()
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshWorkspaceState(
+                refreshInspector: true,
+                workspaceSession: session
+            )
+            guard !Task.isCancelled,
+                  self.workspaceLifecycleState.accepts(session) else { return }
+            self.startPollingIfNeeded(workspaceSession: session)
+            self.refreshTask = nil
         }
     }
 
@@ -151,27 +175,51 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     func retrySelectedRun() {
         guard let task = selectedTask,
               let runID = task.lastRunID ?? runDetail?.run.id,
-              !isRetrying else { return }
+              !isRetrying,
+              let session = workspaceLifecycleState.activeSession else { return }
         isRetrying = true
         errorMessage = nil
         let target = target(for: task)
-        Task {
+        retryTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                try await graphUseCase.retryRun(
+                try await self.graphUseCase.retryRun(
                     messageID: target.messageID,
                     runID: runID,
                     lookup: target.lookup,
-                    instruction: retryInstruction
+                    instruction: self.retryInstruction
                 )
-                retryInstruction = ""
-                inspectorSection = .run
-                refresh()
-                loadInspector(for: task)
+                guard !Task.isCancelled,
+                      self.workspaceLifecycleState.accepts(session) else { return }
+                self.retryInstruction = ""
+                self.inspectorSection = .run
+                self.refresh()
+                self.loadInspector(for: task)
             } catch {
-                errorMessage = error.localizedDescription
+                guard !Task.isCancelled,
+                      self.workspaceLifecycleState.accepts(session) else { return }
+                self.errorMessage = error.localizedDescription
             }
-            isRetrying = false
+            guard self.workspaceLifecycleState.accepts(session) else { return }
+            self.retryTask = nil
+            self.isRetrying = false
         }
+    }
+
+    func stop() {
+        workspaceLifecycleState.stop()
+        workspaceRefreshGeneration &+= 1
+        initialLoadTask?.cancel()
+        initialLoadTask = nil
+        refreshTask?.cancel()
+        refreshTask = nil
+        retryTask?.cancel()
+        retryTask = nil
+        isLoading = false
+        isRetrying = false
+        stopPolling()
+        stopRealtime()
+        cancelInspectorRequests()
     }
 
     func stopPolling() {

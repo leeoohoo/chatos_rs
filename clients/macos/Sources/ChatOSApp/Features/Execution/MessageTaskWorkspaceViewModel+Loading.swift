@@ -4,9 +4,11 @@ import Foundation
 extension MessageTaskWorkspaceViewModel {
     func refreshWorkspaceState(
         refreshInspector: Bool,
-        pollingSession: MessageTaskGraphPollingSession? = nil
+        pollingSession: MessageTaskGraphPollingSession? = nil,
+        workspaceSession: MessageTaskWorkspaceSession? = nil
     ) async {
-        guard pollingSession.map(graphPollingState.accepts) ?? true else { return }
+        guard acceptsWorkspaceSession(workspaceSession),
+              pollingSession.map(graphPollingState.accepts) ?? true else { return }
         workspaceRefreshGeneration += 1
         let refreshGeneration = workspaceRefreshGeneration
 
@@ -17,6 +19,7 @@ extension MessageTaskWorkspaceViewModel {
                 preservingStable: graph
             )
             guard refreshGeneration == workspaceRefreshGeneration,
+                  acceptsWorkspaceSession(workspaceSession),
                   pollingSession.map(graphPollingState.accepts) ?? true else { return }
             applyGraph(refreshedGraph)
             if errorMessage != nil {
@@ -24,6 +27,7 @@ extension MessageTaskWorkspaceViewModel {
             }
         } catch {
             guard refreshGeneration == workspaceRefreshGeneration,
+                  acceptsWorkspaceSession(workspaceSession),
                   pollingSession.map(graphPollingState.accepts) ?? true else { return }
             let nextErrorMessage = error.localizedDescription
             if errorMessage != nextErrorMessage {
@@ -32,6 +36,7 @@ extension MessageTaskWorkspaceViewModel {
         }
 
         if refreshInspector,
+           acceptsWorkspaceSession(workspaceSession),
            pollingSession.map(graphPollingState.accepts) ?? true {
             await refreshSelectedInspectorState()
         }
@@ -275,17 +280,20 @@ extension MessageTaskWorkspaceViewModel {
         return inspectorRequestState.beginSnapshot(contextID: contextID)
     }
 
-    func startRealtime() {
+    func startRealtime(workspaceSession: MessageTaskWorkspaceSession) {
         guard let realtimeService, realtimeTask == nil else { return }
         let sessionID = turn.sessionID
         realtimeTask = Task { [weak self] in
             let stream = await realtimeService.events(sessionID: sessionID)
-            guard !Task.isCancelled else { return }
-            self?.hasActiveRealtimeStream = true
-            self?.startPollingIfNeeded()
+            guard let self,
+                  !Task.isCancelled,
+                  self.workspaceLifecycleState.accepts(workspaceSession) else { return }
+            self.hasActiveRealtimeStream = true
+            self.startPollingIfNeeded(workspaceSession: workspaceSession)
             do {
                 for try await signal in stream {
-                    guard let self, !Task.isCancelled else { return }
+                    guard !Task.isCancelled,
+                          self.workspaceLifecycleState.accepts(workspaceSession) else { return }
                     let shouldRefreshWorkspace = self.graphUseCase.shouldRefreshWorkspace(
                         for: signal,
                         turnID: self.turn.id
@@ -294,24 +302,35 @@ extension MessageTaskWorkspaceViewModel {
                         self.applyRealtimeSignal(signal)
                     }
                     if shouldRefreshWorkspace {
-                        await self.refreshWorkspaceState(refreshInspector: true)
-                        self.startPollingIfNeeded()
+                        await self.refreshWorkspaceState(
+                            refreshInspector: true,
+                            workspaceSession: workspaceSession
+                        )
+                        guard !Task.isCancelled,
+                              self.workspaceLifecycleState.accepts(workspaceSession) else { return }
+                        self.startPollingIfNeeded(workspaceSession: workspaceSession)
                     }
                 }
             } catch {
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled,
+                      self.workspaceLifecycleState.accepts(workspaceSession) else { return }
                 if self.errorMessage == nil {
                     self.errorMessage = "实时进度连接已中断：\(error.localizedDescription)"
                 }
             }
-            guard let self, !Task.isCancelled else { return }
+            guard !Task.isCancelled,
+                  self.workspaceLifecycleState.accepts(workspaceSession) else { return }
             self.hasActiveRealtimeStream = false
             self.realtimeTask = nil
-            self.startPollingIfNeeded()
+            self.startPollingIfNeeded(workspaceSession: workspaceSession)
         }
     }
 
-    func startPollingIfNeeded(force: Bool = false) {
+    func startPollingIfNeeded(
+        force: Bool = false,
+        workspaceSession: MessageTaskWorkspaceSession? = nil
+    ) {
+        guard acceptsWorkspaceSession(workspaceSession) else { return }
         stopPolling()
         let shouldPoll = graphPollingState.shouldPoll(
             graph: graph,
@@ -323,6 +342,7 @@ extension MessageTaskWorkspaceViewModel {
             while !Task.isCancelled {
                 guard let self,
                       !Task.isCancelled,
+                      self.acceptsWorkspaceSession(workspaceSession),
                       self.graphPollingState.accepts(session) else { return }
                 let isEmptyGraphRetry = self.shouldRetryEmptyGraph
                 let interval = MessageTaskGraphPollingState.interval(
@@ -331,12 +351,15 @@ extension MessageTaskWorkspaceViewModel {
                 )
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled,
+                      self.acceptsWorkspaceSession(workspaceSession),
                       self.graphPollingState.accepts(session) else { return }
                 await self.refreshWorkspaceState(
                     refreshInspector: true,
-                    pollingSession: session
+                    pollingSession: session,
+                    workspaceSession: workspaceSession
                 )
                 guard !Task.isCancelled,
+                      self.acceptsWorkspaceSession(workspaceSession),
                       self.graphPollingState.accepts(session) else { return }
                 if isEmptyGraphRetry {
                     self.recordEmptyGraphRetryAttempt()
@@ -353,6 +376,12 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
         }
+    }
+
+    private func acceptsWorkspaceSession(
+        _ session: MessageTaskWorkspaceSession?
+    ) -> Bool {
+        session.map(workspaceLifecycleState.accepts) ?? true
     }
 }
 

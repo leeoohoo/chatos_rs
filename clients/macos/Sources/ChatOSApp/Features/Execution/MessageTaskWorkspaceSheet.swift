@@ -45,8 +45,7 @@ struct MessageTaskWorkspaceSheet: View {
         .animation(.easeInOut(duration: 0.2), value: isFullscreen)
         .task { viewModel.load() }
         .onDisappear {
-            viewModel.stopPolling()
-            viewModel.stopRealtime()
+            viewModel.stop()
         }
     }
 

@@ -113,6 +113,26 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.graphPollingState.accepts(session))
     }
 
+    func testStoppingWorkspaceRejectsLateInitialLoadAndBackgroundRestart() async throws {
+        let service = DelayedPollingMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+
+        viewModel.load()
+        try await waitUntil { await service.hasDelayedGraphRequest() }
+        let session = try XCTUnwrap(viewModel.workspaceLifecycleState.activeSession)
+        viewModel.stop()
+        await service.resumeGraphRequest()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertNil(viewModel.graph)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.workspaceLifecycleState.accepts(session))
+        XCTAssertNil(viewModel.initialLoadTask)
+        XCTAssertNil(viewModel.pollingTask)
+        XCTAssertNil(viewModel.realtimeTask)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
