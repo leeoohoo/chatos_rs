@@ -6,16 +6,12 @@ struct AskUserPromptCardView: View {
     @ObservedObject var conversation: ConversationSessionViewModel
     let prompt: AskUserPrompt
 
-    @State private var values: [String: String]
-    @State private var selection: Set<String>
+    @State private var formState: AskUserPromptFormState
 
     init(conversation: ConversationSessionViewModel, prompt: AskUserPrompt) {
         self.conversation = conversation
         self.prompt = prompt
-        _values = State(initialValue: Dictionary(
-            uniqueKeysWithValues: prompt.fields.map { ($0.key, $0.defaultValue) }
-        ))
-        _selection = State(initialValue: Set(prompt.choice?.defaultSelection ?? []))
+        _formState = State(initialValue: AskUserPromptFormState(prompt: prompt))
     }
 
     var body: some View {
@@ -28,9 +24,7 @@ struct AskUserPromptCardView: View {
         }
         .onChange(of: prompt.status) {
             guard !prompt.status.isPending else { return }
-            for field in prompt.fields where field.isSecret {
-                values[field.key] = ""
-            }
+            formState.clearSecretValues(fields: prompt.fields)
         }
     }
 
@@ -127,7 +121,7 @@ struct AskUserPromptCardView: View {
                 .askUserInputStyle()
         } else if field.isMultiline {
             ZStack(alignment: .topLeading) {
-                if values[field.key, default: ""].isEmpty,
+                if formState.values[field.key, default: ""].isEmpty,
                    let placeholder = field.placeholder,
                    !placeholder.isEmpty {
                     Text(placeholder)
@@ -175,7 +169,7 @@ struct AskUserPromptCardView: View {
     }
 
     private func choiceButton(_ option: AskUserChoiceOption, choice: AskUserChoice) -> some View {
-        let selected = selection.contains(option.value)
+        let selected = formState.selection.contains(option.value)
         return Button {
             toggle(option.value, in: choice)
         } label: {
@@ -264,31 +258,11 @@ struct AskUserPromptCardView: View {
     }
 
     private var submission: AskUserSubmission {
-        let choiceSelection: AskUserSelection?
-        if let choice = prompt.choice {
-            let ordered = choice.options.map(\.value).filter(selection.contains)
-            choiceSelection = choice.allowsMultiple
-                ? .multiple(ordered)
-                : .single(ordered.first ?? "")
-        } else {
-            choiceSelection = nil
-        }
-        return AskUserSubmission(values: values, selection: choiceSelection)
+        formState.submission(for: prompt)
     }
 
     private var isValid: Bool {
-        for field in prompt.fields where field.isRequired {
-            if values[field.key, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return false
-            }
-        }
-        if let choice = prompt.choice {
-            let count = selection.count
-            if count < choice.minimumSelectionCount || count > choice.maximumSelectionCount {
-                return false
-            }
-        }
-        return true
+        formState.isValid(for: prompt)
     }
 
     private var isSubmitting: Bool {
@@ -297,19 +271,13 @@ struct AskUserPromptCardView: View {
 
     private func binding(for key: String) -> Binding<String> {
         Binding(
-            get: { values[key, default: ""] },
-            set: { values[key] = $0 }
+            get: { formState.values[key, default: ""] },
+            set: { formState.values[key] = $0 }
         )
     }
 
     private func toggle(_ value: String, in choice: AskUserChoice) {
-        if !choice.allowsMultiple {
-            selection = [value]
-        } else if selection.contains(value) {
-            selection.remove(value)
-        } else if selection.count < choice.maximumSelectionCount {
-            selection.insert(value)
-        }
+        formState.toggleSelection(value, in: choice)
     }
 
     private func selectionHint(_ choice: AskUserChoice) -> String {

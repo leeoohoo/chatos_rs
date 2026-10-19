@@ -40,7 +40,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
 | Conversation 时间线与发送 | History、发送、viewport/unread、刷新合并与 realtime 动作规则已提取，UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新与 polling 决策已提取，UI 异步任务生命周期待收口 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | 四组 Core state/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
-| Ask User | 查询/提交/取消、排序投影与操作门禁已提取，表单状态和 UI Task 生命周期待迁移 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、`ConversationAskUserPromptUseCase.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
+| Ask User | 查询/提交/取消、排序投影、操作门禁与表单状态已提取，UI Task 生命周期待迁移 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | 已映射，可重构 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift` | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | worker、approval agent、state store、ViewModel tests | 禁止；先完成 macOS Application/Port 分层 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
 
@@ -443,6 +443,7 @@ Adapter：
 
 ### 7.3 测试证据
 
+- `clients/macos/Tests/ChatOSCoreTests/AskUserPromptFormStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationAskUserPromptUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentAskUserPromptServiceTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift`
@@ -451,9 +452,10 @@ Adapter：
 
 - `ConversationAskUserPromptUseCase` 已固定 Conversation 查询上限 100，并提供 typed fetch/submit/cancel；
 - Prompt 按 Turn 投影、未挂载 pending 投影、createdAt/updatedAt/ID 稳定排序、submit/cancel 门禁和原位 upsert 已移入 Application；
+- `AskUserPromptFormState` 已统一默认值、required trim 校验、choice 数量边界、单选/多选切换、按 option 顺序提交和 resolved 后 secret 清理；
 - ViewModel 继续持有 refresh generation、per-prompt submitting/error、失败后重新拉取与 UI Task 生命周期；
 - Connector 测试已覆盖 main chat 查询/提交、task source Conversation 与取消、secret 在 IPC 前拒绝；
-- 表单校验与 secret 内存清理仍在 UI 层，完成对应 Application 状态提取前不放行 React。
+- UI 目前只绑定 Application form state 并负责视觉展示；完成 per-prompt 异步生命周期提取前仍不放行 React。
 
 ## 8. 工具审批与恢复：完整调用链
 
