@@ -19,11 +19,17 @@ extension ConversationSessionViewModel {
         guard !urls.isEmpty else { return }
         attachmentError = nil
         let taskID = UUID()
+        let token = attachmentImportState.begin()
         let task = Task { [weak self] in
-            defer { self?.attachmentFileLoadTasks.removeValue(forKey: taskID) }
             let result = await Self.loadAttachmentFilesOffMain(urls)
-            guard !Task.isCancelled else { return }
-            self?.appendAttachments(result.attachments, errors: result.errors)
+            guard let self else { return }
+            defer {
+                self.attachmentFileLoadTasks.removeValue(forKey: taskID)
+                _ = self.attachmentImportState.finish(token)
+            }
+            guard !Task.isCancelled,
+                  self.attachmentImportState.accepts(token) else { return }
+            self.appendAttachments(result.attachments, errors: result.errors)
         }
         attachmentFileLoadTasks[taskID] = task
     }
@@ -35,21 +41,36 @@ extension ConversationSessionViewModel {
         }
 
         let taskID = UUID()
+        let token = attachmentImportState.begin()
         let task = Task { [weak self] in
+            let result: Result<Data, Error>
             do {
-                let normalized = try await AppPastedImageNormalizer.normalizeToPNGOffMain(data)
-                try Task.checkCancellation()
-                self?.appendPastedImage(
+                result = .success(
+                    try await AppPastedImageNormalizer.normalizeToPNGOffMain(data)
+                )
+            } catch {
+                result = .failure(error)
+            }
+            guard let self else { return }
+            defer {
+                self.pastedImageNormalizationTasks.removeValue(forKey: taskID)
+                _ = self.attachmentImportState.finish(token)
+            }
+            guard !Task.isCancelled,
+                  self.attachmentImportState.accepts(token) else { return }
+            switch result {
+            case let .success(normalized):
+                self.appendPastedImage(
                     data: normalized,
                     mimeType: "image/png",
                     suggestedName: suggestedName.map(Self.pngSuggestedName)
                 )
-            } catch is CancellationError {
+            case .failure(is CancellationError):
                 // A discarded conversation should not publish stale attachment state.
-            } catch {
-                self?.attachmentError = error.localizedDescription
+                break
+            case let .failure(error):
+                self.attachmentError = error.localizedDescription
             }
-            self?.pastedImageNormalizationTasks.removeValue(forKey: taskID)
         }
         pastedImageNormalizationTasks[taskID] = task
     }
@@ -111,6 +132,14 @@ extension ConversationSessionViewModel {
 
     func clearAttachmentError() {
         attachmentError = nil
+    }
+
+    func cancelPendingAttachmentImports() {
+        attachmentImportState.reset()
+        attachmentFileLoadTasks.values.forEach { $0.cancel() }
+        attachmentFileLoadTasks.removeAll()
+        pastedImageNormalizationTasks.values.forEach { $0.cancel() }
+        pastedImageNormalizationTasks.removeAll()
     }
 
     private func appendAttachments(

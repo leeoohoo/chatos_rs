@@ -153,6 +153,7 @@ extension ConversationSessionViewModel {
         let token = sendLifecycleState.begin()
         activeSendSubmission = submission
         activeSendOptimisticTurnID = nil
+        cancelPendingAttachmentImports()
         draft = ""
         attachments = []
         attachmentError = nil

@@ -101,6 +101,7 @@ final class ConversationSessionViewModel: ObservableObject {
     var taskGraphAvailabilityState = ConversationTaskGraphAvailabilityState()
     var attachmentFileLoadTasks: [UUID: Task<Void, Never>] = [:]
     var pastedImageNormalizationTasks: [UUID: Task<Void, Never>] = [:]
+    var attachmentImportState = ConversationAttachmentImportState()
     private var runtimeSettingsLoadGeneration: UInt64 = 0
     private var runtimeSettingsMutationTask: Task<Void, Never>?
     var runtimeSettingsMutationState = ConversationRuntimeSettingsMutationState()

@@ -38,7 +38,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
-| Conversation 时间线与发送 | History、发送、send lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
+| Conversation 时间线与发送 | History、发送、send/attachment import lifecycle、viewport/unread、刷新合并、realtime 动作与 activation session 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态与 refresh/per-prompt 异步生命周期已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
@@ -180,6 +180,7 @@ sendDraft
 - `ConversationSendUseCase` 已集中 optimistic Turn 构造与 History Store 写入、typed guidance/new-turn command、revision 0 optimistic 回滚和 snapshot 返回；
 - 失败草稿恢复规则已移入 Application：仅在当前草稿为空时恢复原文、附件按 ID 去重且失败附件置前、当前 capability 为空时恢复显式选择；
 - `ConversationSendLifecycleState` 已集中发送 request identity；具体 send/recovery Task 由 ViewModel 持有，`guidanceTargetInactive` 在同一 token 内自动降级为新 Turn；
+- `ConversationAttachmentImportState` 允许同一 composer generation 内多个文件/图片并发导入；发送开始会失效并取消全部旧导入，迟到的文件读取、图片归一化结果或错误不能写入发送后形成的新草稿；
 - runtime unavailable 会立即失效并取消旧发送、恢复 composer，再通过本地 History Store 回滚 optimistic Turn；旧 Host 成功/失败响应不得覆盖恢复后的草稿、时间线或 `isSending`。
 
 ### 4.3 Host ready、刷新与 realtime
@@ -243,6 +244,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationLatestRefreshStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSessionActivationStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsMutationStateTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/ConversationAttachmentImportStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSendLifecycleStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSendUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationViewportUseCaseTests.swift`

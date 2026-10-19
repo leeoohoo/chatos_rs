@@ -174,6 +174,35 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.selectedCapability)
     }
 
+    func testSendingInvalidatesPendingAttachmentImports() async throws {
+        let commandService = ConversationCommandServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            commandService: commandService
+        )
+        viewModel.draft = "先发送当前内容"
+        let staleToken = viewModel.attachmentImportState.begin()
+        let fileTaskID = UUID()
+        let imageTaskID = UUID()
+        viewModel.attachmentFileLoadTasks[fileTaskID] = Task {
+            try? await Task.sleep(for: .seconds(10))
+        }
+        viewModel.pastedImageNormalizationTasks[imageTaskID] = Task {
+            try? await Task.sleep(for: .seconds(10))
+        }
+
+        viewModel.sendDraft()
+
+        XCTAssertFalse(viewModel.attachmentImportState.accepts(staleToken))
+        XCTAssertTrue(viewModel.attachmentFileLoadTasks.isEmpty)
+        XCTAssertTrue(viewModel.pastedImageNormalizationTasks.isEmpty)
+        try await waitUntil {
+            await commandService.commands().count == 1 && !viewModel.isSending
+        }
+    }
+
     func testRuntimeUnavailableRecoversSendAndRejectsLateHostResponse() async throws {
         let commandService = ConversationCommandServiceStub(delayNewTurn: true)
         let viewModel = ConversationSessionViewModel(
