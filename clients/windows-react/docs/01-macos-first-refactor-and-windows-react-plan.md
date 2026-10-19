@@ -406,6 +406,8 @@ Conversation 激活触发的 Ask User refresh 已拆分为请求句柄、无 Vie
 
 Conversation bootstrap 与 runtime-ready recovery 现复用 runtime settings/Prompt 请求句柄并并发等待；模型或 Prompt Host 阻塞时不再整段持有 ViewModel，结果仅在对应 load/recovery token 仍有效时应用。
 
+Conversation realtime Task 不再在整个 stream 生命周期内强持有 ViewModel，只在单个事件同步写回时恢复引用；Prompt realtime 事件等待 Host 时也使用请求句柄，因此失去最后一个 UI owner 后长连接会正常随 deinit 终止。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

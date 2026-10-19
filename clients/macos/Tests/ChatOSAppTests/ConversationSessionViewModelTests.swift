@@ -512,6 +512,27 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testRealtimeSubscriptionDoesNotRetainConversation() async throws {
+        let realtimeService = ConversationRealtimeServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            realtimeService: realtimeService
+        )
+        weak let weakViewModel = viewModel
+        viewModel?.activate()
+        try await waitUntil {
+            await realtimeService.hasSubscriber(sessionID: "session-1")
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+        try await waitUntil {
+            await realtimeService.wasTerminated(sessionID: "session-1")
+        }
+    }
+
     func testDeactivateRejectsLateHistoryRefreshPresentation() async throws {
         let remoteService = ConversationRemoteServiceStub()
         await remoteService.setFetchDelay(milliseconds: 300)

@@ -997,22 +997,46 @@ final class ConversationSessionViewModel: ObservableObject {
 
         realtimeTask = Task { [weak self] in
             let stream = await realtimeService.events(sessionID: sessionID)
-            guard let self,
-                  !Task.isCancelled,
-                  self.activationState.accepts(activation),
-                  self.isLocalAgentRuntimeReady else { return }
             do {
                 for try await signal in stream {
-                    guard !Task.isCancelled,
-                          self.activationState.accepts(activation),
-                          self.isLocalAgentRuntimeReady else { return }
+                    guard !Task.isCancelled else { return }
+                    if let self {
+                        guard self.activationState.accepts(activation),
+                              self.isLocalAgentRuntimeReady else { return }
+                    } else {
+                        return
+                    }
                     switch ConversationRealtimePolicy.action(for: signal) {
                     case .refreshAskUserPrompts:
-                        await self.refreshAskUserPrompts()
+                        let request: AskUserPromptRefreshRequest?
+                        if let self {
+                            guard !Task.isCancelled,
+                                  self.activationState.accepts(activation),
+                                  self.isLocalAgentRuntimeReady else { return }
+                            request = self.beginAskUserPromptRefresh()
+                        } else {
+                            return
+                        }
+                        let result = await awaitAskUserPromptRefreshRequest(request)
+                        guard !Task.isCancelled,
+                              let self,
+                              self.activationState.accepts(activation),
+                              self.isLocalAgentRuntimeReady else { return }
+                        if let request, let result {
+                            self.finishAskUserPromptRefresh(result, token: request.token)
+                        }
                     case let .failure(message):
+                        guard !Task.isCancelled,
+                              let self,
+                              self.activationState.accepts(activation),
+                              self.isLocalAgentRuntimeReady else { return }
                         self.sendError = message
                         self.refreshLatestSilently()
                     case .refreshHistory:
+                        guard !Task.isCancelled,
+                              let self,
+                              self.activationState.accepts(activation),
+                              self.isLocalAgentRuntimeReady else { return }
                         self.refreshLatestSilently()
                     case .ignore:
                         break
@@ -1020,11 +1044,13 @@ final class ConversationSessionViewModel: ObservableObject {
                 }
             } catch {
                 guard !Task.isCancelled,
+                      let self,
                       self.activationState.accepts(activation),
                       self.isLocalAgentRuntimeReady else { return }
                 self.historyError = error.localizedDescription
             }
             guard !Task.isCancelled,
+                  let self,
                   self.activationState.accepts(activation),
                   self.isLocalAgentRuntimeReady else { return }
             self.realtimeTask = nil
