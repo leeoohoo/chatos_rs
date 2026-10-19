@@ -189,10 +189,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var localAgentCrashRecoveryTask: Task<Void, Never>?
     var localAgentCrashRecoveryAttempts = 0
     var localAgentBootstrapTask: Task<Void, Never>?
+    var localAgentControlPlaneBootstrapState = LocalAgentControlPlaneBootstrapState()
     var localAgentWorkspaceOwnerUserID: String?
     var localAgentServicesOwnerUserID: String?
     var localAgentControlPlaneOwnerUserID: String?
-    var localAgentControlPlaneBootstrapOwnerUserID: String?
     var localConnectorRecoveryGeneration: UInt64 = 0
     var lastLocalConnectorRecoveryDate: Date?
     var mainWindowPresentationHandler: (() -> Void)?

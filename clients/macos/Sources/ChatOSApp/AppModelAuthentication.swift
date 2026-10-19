@@ -142,7 +142,9 @@ extension AppModel {
         localAgentWorkspaceOwnerUserID = nil
         localAgentServicesOwnerUserID = nil
         localAgentControlPlaneOwnerUserID = nil
-        localAgentControlPlaneBootstrapOwnerUserID = nil
+        localAgentControlPlaneBootstrapState.reset()
+        localAgentBootstrapTask?.cancel()
+        localAgentBootstrapTask = nil
         localAgentHostError = nil
         workspaceError = nil
         conversationCache.values.forEach {
@@ -159,6 +161,19 @@ extension AppModel {
         }
         let localAgentEventHub = localAgentEventHub
         let pendingShutdown = localAgentHostShutdownTask
+        let apiClient = apiClient
+        let localConnectorService = localConnectorService
+        let runtimeSettingsService = runtimeSettingsService
+        let petActivityService = petActivityService
+        let commandService = commandService
+        let messageTaskGraphService = messageTaskGraphService
+        let askUserPromptService = askUserPromptService
+        let turnProcessService = turnProcessService
+        let platformToolWorker = platformToolWorker
+        let workspaceService = workspaceService
+        let projectConversationService = projectConversationService
+        let notepadService = notepadService
+        let remoteConnectionMetadataService = remoteConnectionMetadataService
         localAgentHostLifecycleTask = Task { [weak self] in
             defer {
                 if self?.localAgentHostLifecycleGeneration == generation {
@@ -194,13 +209,12 @@ extension AppModel {
                 )
                 if let host = localAgentHost as? NativeLocalAgentHostLifecycle {
                     do {
-                        let memoryAccessToken = await self?.apiClient.currentAccessToken()
-                        if let restored = try await self?.localConnectorService
-                            .restoreLocalAgentHost(
-                                host,
-                                ownerUserID: ownerUserID,
-                                memoryAccessToken: memoryAccessToken
-                            ) {
+                        let memoryAccessToken = await apiClient.currentAccessToken()
+                        if let restored = try await localConnectorService.restoreLocalAgentHost(
+                            host,
+                            ownerUserID: ownerUserID,
+                            memoryAccessToken: memoryAccessToken
+                        ) {
                             guard !Task.isCancelled,
                                   self?.authenticatedUserID == ownerUserID,
                                   self?.localAgentHostLifecycleGeneration == generation else {
@@ -209,11 +223,28 @@ extension AppModel {
                                 }
                                 return
                             }
-                            try await self?.configureLocalAgentServices(
+                            try await Self.configureLocalAgentServices(
                                 ownerUserID: ownerUserID,
                                 bootstrap: restored,
-                                lifecycleGeneration: generation
+                                localConnectorService: localConnectorService,
+                                runtimeSettingsService: runtimeSettingsService,
+                                petActivityService: petActivityService,
+                                commandService: commandService,
+                                messageTaskGraphService: messageTaskGraphService,
+                                askUserPromptService: askUserPromptService,
+                                turnProcessService: turnProcessService,
+                                platformToolWorker: platformToolWorker,
+                                isCurrent: { [weak self] in
+                                    !Task.isCancelled && self?.localAgentLifecycleAccepts(
+                                        ownerUserID: ownerUserID,
+                                        generation: generation
+                                    ) == true
+                                }
                             )
+                            guard self?.applyConfiguredLocalAgentServices(
+                                ownerUserID: ownerUserID,
+                                lifecycleGeneration: generation
+                            ) == true else { return }
                         }
                     } catch is CancellationError {
                         return
@@ -222,7 +253,7 @@ extension AppModel {
                         // gateway refresh below from repairing the control plane.
                     }
                 }
-                await self?.workspaceService?.configure(ownerUserID: ownerUserID)
+                await workspaceService?.configure(ownerUserID: ownerUserID)
                 guard !Task.isCancelled,
                       self?.authenticatedUserID == ownerUserID,
                       self?.localAgentHostLifecycleGeneration == generation else {
@@ -231,7 +262,7 @@ extension AppModel {
                     }
                     return
                 }
-                await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
+                await projectConversationService?.configure(ownerUserID: ownerUserID)
                 guard !Task.isCancelled,
                       self?.authenticatedUserID == ownerUserID,
                       self?.localAgentHostLifecycleGeneration == generation else {
@@ -241,8 +272,8 @@ extension AppModel {
                     return
                 }
                 self?.localAgentWorkspaceOwnerUserID = ownerUserID
-                await self?.notepadService.configure(ownerUserID: ownerUserID)
-                await self?.remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
+                await notepadService.configure(ownerUserID: ownerUserID)
+                await remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
                 self?.refreshRemoteConnections()
                 if refreshControlPlaneAfterStart {
@@ -329,6 +360,9 @@ extension AppModel {
         pluginApplicationsLoadTask?.cancel()
         pluginApplicationsLoadTask = nil
         isPluginApplicationsLoading = false
+        localAgentControlPlaneBootstrapState.reset()
+        localAgentBootstrapTask?.cancel()
+        localAgentBootstrapTask = nil
         localConnectorSleepPreparationGeneration &+= 1
         localConnectorSleepPreparationTask?.cancel()
         localConnectorSleepPreparationTask = nil
@@ -405,7 +439,9 @@ extension AppModel {
         localAgentWorkspaceOwnerUserID = nil
         localAgentServicesOwnerUserID = nil
         localAgentControlPlaneOwnerUserID = nil
-        localAgentControlPlaneBootstrapOwnerUserID = nil
+        localAgentControlPlaneBootstrapState.reset()
+        localAgentBootstrapTask?.cancel()
+        localAgentBootstrapTask = nil
         workspaceError = nil
         conversationCache.values.forEach {
             $0.localAgentRuntimeDidBecomeUnavailable()
@@ -448,16 +484,31 @@ extension AppModel {
     func refreshLocalAgentControlPlane(ownerUserID: String, force: Bool = false) {
         if force {
             localAgentControlPlaneOwnerUserID = nil
-            localAgentControlPlaneBootstrapOwnerUserID = nil
+            localAgentControlPlaneBootstrapState.reset()
+            localAgentBootstrapTask?.cancel()
+            localAgentBootstrapTask = nil
         }
         guard localAgentControlPlaneOwnerUserID != ownerUserID,
-              localAgentControlPlaneBootstrapOwnerUserID != ownerUserID else { return }
+              localAgentControlPlaneBootstrapState.activeToken?.ownerUserID != ownerUserID else { return }
         localAgentBootstrapTask?.cancel()
+        localAgentControlPlaneBootstrapState.reset()
         guard let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
         let expectedLifecycleGeneration = localAgentHostLifecycleGeneration
-        localAgentControlPlaneBootstrapOwnerUserID = ownerUserID
+        let token = localAgentControlPlaneBootstrapState.begin(
+            ownerUserID: ownerUserID,
+            accountGeneration: workspaceAccountGeneration,
+            lifecycleGeneration: expectedLifecycleGeneration
+        )
+        let apiClient = apiClient
+        let localConnectorService = localConnectorService
+        let runtimeSettingsService = runtimeSettingsService
+        let petActivityService = petActivityService
+        let commandService = commandService
+        let messageTaskGraphService = messageTaskGraphService
+        let askUserPromptService = askUserPromptService
+        let turnProcessService = turnProcessService
+        let platformToolWorker = platformToolWorker
         localAgentBootstrapTask = Task { [weak self] in
-            guard let self else { return }
             let retryDelays: [Duration?] = [
                 nil,
                 .seconds(1),
@@ -470,107 +521,181 @@ extension AppModel {
                     if let retryDelay {
                         try await Task.sleep(for: retryDelay)
                     }
+                    guard !Task.isCancelled,
+                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
                     let memoryAccessToken = await apiClient.currentAccessToken()
+                    guard !Task.isCancelled,
+                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
                     let bootstrap = try await localConnectorService.bootstrapLocalAgentHost(
                         host,
                         ownerUserID: ownerUserID,
                         memoryAccessToken: memoryAccessToken
                     )
                     guard !Task.isCancelled,
-                          authenticatedUserID == ownerUserID,
-                          localAgentHostLifecycleGeneration == expectedLifecycleGeneration else {
-                        if localAgentHostLifecycleGeneration == expectedLifecycleGeneration {
+                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else {
+                        if self?.localAgentHostLifecycleGeneration == expectedLifecycleGeneration {
                             await host.stop()
                         }
                         return
                     }
-                    try await configureLocalAgentServices(
+                    try await Self.configureLocalAgentServices(
                         ownerUserID: ownerUserID,
                         bootstrap: bootstrap,
-                        lifecycleGeneration: expectedLifecycleGeneration
+                        localConnectorService: localConnectorService,
+                        runtimeSettingsService: runtimeSettingsService,
+                        petActivityService: petActivityService,
+                        commandService: commandService,
+                        messageTaskGraphService: messageTaskGraphService,
+                        askUserPromptService: askUserPromptService,
+                        turnProcessService: turnProcessService,
+                        platformToolWorker: platformToolWorker,
+                        isCurrent: { [weak self] in
+                            !Task.isCancelled
+                                && self?.localAgentControlPlaneBootstrapAccepts(token) == true
+                        }
                     )
-                    localAgentControlPlaneOwnerUserID = ownerUserID
-                    localAgentControlPlaneBootstrapOwnerUserID = nil
-                    localAgentCrashRecoveryAttempts = 0
-                    localAgentHostError = nil
+                    guard self?.completeLocalAgentControlPlaneBootstrap(token) == true else { return }
                     return
                 } catch is CancellationError {
-                    guard localAgentControlPlaneBootstrapOwnerUserID == ownerUserID,
-                          localAgentHostLifecycleGeneration == expectedLifecycleGeneration else {
-                        return
-                    }
-                    localAgentControlPlaneBootstrapOwnerUserID = nil
+                    self?.finishCancelledLocalAgentControlPlaneBootstrap(token)
                     return
                 } catch {
-                    guard authenticatedUserID == ownerUserID,
-                          localAgentHostLifecycleGeneration == expectedLifecycleGeneration else {
-                        return
-                    }
+                    guard !Task.isCancelled,
+                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
                     if error is NativeLocalAgentCredentialRefreshDeferred {
-                        localAgentControlPlaneBootstrapOwnerUserID = nil
-                        localAgentHostError = error.localizedDescription
-                        if !localAgentRuntimeState.isReady(for: ownerUserID) {
-                            localAgentRuntimeState.becomeDegraded(
-                                ownerUserID: ownerUserID,
-                                generation: expectedLifecycleGeneration,
-                                errorMessage: error.localizedDescription
-                            )
-                        }
+                        self?.failLocalAgentControlPlaneBootstrap(token, error: error)
                         return
                     }
                     guard attempt == retryDelays.indices.last else { continue }
-                    localAgentControlPlaneBootstrapOwnerUserID = nil
-                    localAgentHostError = error.localizedDescription
-                    if !localAgentRuntimeState.isReady(for: ownerUserID) {
-                        localAgentRuntimeState.becomeDegraded(
-                            ownerUserID: ownerUserID,
-                            generation: expectedLifecycleGeneration,
-                            errorMessage: error.localizedDescription
-                        )
-                    }
+                    self?.failLocalAgentControlPlaneBootstrap(token, error: error)
                 }
             }
         }
     }
 
-    private func configureLocalAgentServices(
+    private func localAgentLifecycleAccepts(
         ownerUserID: String,
-        bootstrap: NativeLocalAgentBootstrapResult,
-        lifecycleGeneration expectedLifecycleGeneration: UInt64
-    ) async throws {
-        await localConnectorService.configureLocalApprovalAgent(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
+        generation: UInt64
+    ) -> Bool {
+        authenticatedUserID == ownerUserID
+            && localAgentHostLifecycleGeneration == generation
+    }
+
+    private func localAgentControlPlaneBootstrapAccepts(
+        _ token: LocalAgentControlPlaneBootstrapToken
+    ) -> Bool {
+        localAgentControlPlaneBootstrapState.accepts(
+            token,
+            ownerUserID: authenticatedUserID,
+            accountGeneration: workspaceAccountGeneration,
+            lifecycleGeneration: localAgentHostLifecycleGeneration
         )
-        try await runtimeSettingsService?.configure(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
-        )
-        await petActivityService?.configure(ownerUserID: ownerUserID)
-        try await commandService?.configure(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
-        )
-        await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
-        await askUserPromptService?.configure(ownerUserID: ownerUserID)
-        await turnProcessService?.configure(ownerUserID: ownerUserID)
-        try await platformToolWorker?.configure(
-            ownerUserID: ownerUserID,
-            externalMCPConfigs: bootstrap.externalMCPConfigs
-        )
+    }
+
+    @discardableResult
+    private func applyConfiguredLocalAgentServices(
+        ownerUserID: String,
+        lifecycleGeneration: UInt64
+    ) -> Bool {
         guard !Task.isCancelled,
-              authenticatedUserID == ownerUserID,
-              localAgentHostLifecycleGeneration == expectedLifecycleGeneration else {
-            throw CancellationError()
-        }
+              localAgentLifecycleAccepts(
+                  ownerUserID: ownerUserID,
+                  generation: lifecycleGeneration
+              ) else { return false }
         localAgentServicesOwnerUserID = ownerUserID
         localAgentRuntimeState.becomeReady(
             ownerUserID: ownerUserID,
-            generation: expectedLifecycleGeneration
+            generation: lifecycleGeneration
         )
         conversationCache.values.forEach {
             $0.localAgentRuntimeDidBecomeReady()
         }
+        return true
+    }
+
+    private func completeLocalAgentControlPlaneBootstrap(
+        _ token: LocalAgentControlPlaneBootstrapToken
+    ) -> Bool {
+        guard localAgentControlPlaneBootstrapAccepts(token),
+              applyConfiguredLocalAgentServices(
+                  ownerUserID: token.ownerUserID,
+                  lifecycleGeneration: token.lifecycleGeneration
+              ),
+              localAgentControlPlaneBootstrapState.finish(token) else { return false }
+        localAgentControlPlaneOwnerUserID = token.ownerUserID
+        localAgentCrashRecoveryAttempts = 0
+        localAgentHostError = nil
+        localAgentBootstrapTask = nil
+        return true
+    }
+
+    private func finishCancelledLocalAgentControlPlaneBootstrap(
+        _ token: LocalAgentControlPlaneBootstrapToken
+    ) {
+        guard localAgentControlPlaneBootstrapAccepts(token),
+              localAgentControlPlaneBootstrapState.finish(token) else { return }
+        localAgentBootstrapTask = nil
+    }
+
+    private func failLocalAgentControlPlaneBootstrap(
+        _ token: LocalAgentControlPlaneBootstrapToken,
+        error: Error
+    ) {
+        guard localAgentControlPlaneBootstrapAccepts(token),
+              localAgentControlPlaneBootstrapState.finish(token) else { return }
+        localAgentBootstrapTask = nil
+        localAgentHostError = error.localizedDescription
+        if !localAgentRuntimeState.isReady(for: token.ownerUserID) {
+            localAgentRuntimeState.becomeDegraded(
+                ownerUserID: token.ownerUserID,
+                generation: token.lifecycleGeneration,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private static func configureLocalAgentServices(
+        ownerUserID: String,
+        bootstrap: NativeLocalAgentBootstrapResult,
+        localConnectorService: NativeLocalConnectorService,
+        runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?,
+        petActivityService: NativeLocalAgentPetActivityService?,
+        commandService: NativeLocalAgentConversationService?,
+        messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?,
+        askUserPromptService: NativeLocalAgentAskUserPromptService?,
+        turnProcessService: NativeLocalAgentTurnProcessService?,
+        platformToolWorker: NativeLocalAgentPlatformToolWorker?,
+        isCurrent: () -> Bool
+    ) async throws {
+        guard isCurrent() else { throw CancellationError() }
+        await localConnectorService.configureLocalApprovalAgent(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
+        guard isCurrent() else { throw CancellationError() }
+        try await runtimeSettingsService?.configure(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
+        guard isCurrent() else { throw CancellationError() }
+        await petActivityService?.configure(ownerUserID: ownerUserID)
+        guard isCurrent() else { throw CancellationError() }
+        try await commandService?.configure(
+            ownerUserID: ownerUserID,
+            bootstrap: bootstrap
+        )
+        guard isCurrent() else { throw CancellationError() }
+        await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
+        guard isCurrent() else { throw CancellationError() }
+        await askUserPromptService?.configure(ownerUserID: ownerUserID)
+        guard isCurrent() else { throw CancellationError() }
+        await turnProcessService?.configure(ownerUserID: ownerUserID)
+        guard isCurrent() else { throw CancellationError() }
+        try await platformToolWorker?.configure(
+            ownerUserID: ownerUserID,
+            externalMCPConfigs: bootstrap.externalMCPConfigs
+        )
+        guard isCurrent() else { throw CancellationError() }
     }
 
     private func deactivateAllConversations() {
