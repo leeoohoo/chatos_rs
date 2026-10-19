@@ -17,7 +17,14 @@ public protocol LocalConnectorApprovalServicing: Sendable {
     ) async throws
 }
 
-public protocol LocalConnectorControlServicing: LocalConnectorApprovalServicing {
+public protocol LocalConnectorPluginApplicationListing: Sendable {
+    func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
+}
+
+public protocol LocalConnectorControlServicing:
+    LocalConnectorApprovalServicing,
+    LocalConnectorPluginApplicationListing
+{
     func fetchStatus() async throws -> LocalConnectorStatus
     func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus
     /// Stops account-scoped runtime activity without deleting persisted local state.
@@ -51,7 +58,6 @@ public protocol LocalConnectorControlServicing: LocalConnectorApprovalServicing 
     ) async throws -> LocalConnectorSandboxSettings
     func fetchPlugins() async throws -> [LocalConnectorPlugin]
     func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin]
-    func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
     func launchPluginApplication(
         pluginID: String,
         componentKey: String,

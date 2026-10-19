@@ -121,6 +121,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let platformToolWorker: NativeLocalAgentPlatformToolWorker?
     let workspaceService: NativeLocalAgentWorkspaceService?
     let localConnectorService: NativeLocalConnectorService
+    let pluginApplicationListUseCase: PluginApplicationListUseCase
     let localAgentHost: (any LocalAgentHostClientServicing)?
     let localAgentEventHub: NativeLocalAgentEventHub?
     let projectConversationService: NativeLocalAgentProjectConversationService?
@@ -151,7 +152,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var workspaceLoadTask: Task<Void, Never>?
     var remoteConnectionsLoadState = RemoteConnectionsLoadState()
     var remoteConnectionsLoadTask: Task<Void, Never>?
-    var pluginApplicationsLoadGeneration: Int64 = 0
+    var pluginApplicationsLoadState = PluginApplicationsLoadState()
     var pluginApplicationsLoadTask: Task<Void, Never>?
     var visualSessionExpansion: [String: Bool] = [:]
     var visualSessionSelection: [String: String] = [:]
@@ -271,6 +272,9 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             storyPlanner: remoteAgentServices
         )
         self.localConnectorService = localConnectorService
+        self.pluginApplicationListUseCase = PluginApplicationListUseCase(
+            service: localConnectorService
+        )
         let localAgentRuntimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?
         let localAgentConversationService: NativeLocalAgentConversationService?
         let localAgentPlatformToolWorker: NativeLocalAgentPlatformToolWorker?

@@ -416,6 +416,8 @@ Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、�
 
 Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `ConversationHistoryRetryState`；每次 sleep 绑定具体 activation token，停用、重新激活、手动刷新或成功响应都会拒绝旧重试唤醒，不再只依赖 Task cancellation。
 
+插件应用列表已拆出 `LocalConnectorPluginApplicationListing` 窄 Port 与 `PluginApplicationListUseCase`，并使用绑定账号 generation 的 typed latest-wins token；AppModel 不再自行组织 Connector IO，旧账号或旧刷新不得覆盖应用列表、错误和 loading。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

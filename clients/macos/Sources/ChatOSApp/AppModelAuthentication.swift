@@ -91,7 +91,7 @@ extension AppModel {
             remoteConnectionsError = nil
             terminalWorkspace.closeAllTerminals()
             remoteConnectionWorkspaceStore.removeAllWorkspaces()
-            pluginApplicationsLoadGeneration += 1
+            pluginApplicationsLoadState.reset()
             pluginApplications = []
             isPluginApplicationsLoading = false
             pluginApplicationsError = nil
@@ -326,7 +326,7 @@ extension AppModel {
         remoteConnectionsLoadTask?.cancel()
         remoteConnectionsLoadTask = nil
         isRemoteConnectionsLoading = false
-        pluginApplicationsLoadGeneration += 1
+        pluginApplicationsLoadState.reset()
         pluginApplicationsLoadTask?.cancel()
         pluginApplicationsLoadTask = nil
         isPluginApplicationsLoading = false

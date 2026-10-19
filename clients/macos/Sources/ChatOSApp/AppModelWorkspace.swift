@@ -144,43 +144,47 @@ extension AppModel {
 
     func refreshPluginApplications() {
         guard let expectedOwnerUserID = authenticatedUserID else {
+            pluginApplicationsLoadState.reset()
             pluginApplicationsLoadTask?.cancel()
             pluginApplicationsLoadTask = nil
             isPluginApplicationsLoading = false
             return
         }
         pluginApplicationsLoadTask?.cancel()
-        pluginApplicationsLoadGeneration += 1
-        let generation = pluginApplicationsLoadGeneration
         let accountGeneration = workspaceAccountGeneration
+        let token = pluginApplicationsLoadState.begin(
+            ownerUserID: expectedOwnerUserID,
+            accountGeneration: accountGeneration
+        )
         isPluginApplicationsLoading = true
         pluginApplicationsError = nil
-        let service = localConnectorService
+        let useCase = pluginApplicationListUseCase
         pluginApplicationsLoadTask = Task { [weak self] in
+            let result: Result<[LocalConnectorPluginApplication], Error>
             do {
-                let applications = try await service.fetchPluginApplications()
-                try Task.checkCancellation()
-                guard let self,
-                      generation == pluginApplicationsLoadGeneration,
-                      accountGeneration == workspaceAccountGeneration,
-                      expectedOwnerUserID == authenticatedUserID else { return }
-                pluginApplications = applications
-                reconcilePluginApplicationSelection()
+                result = .success(try await useCase.load())
             } catch is CancellationError {
                 return
             } catch {
-                guard let self,
-                      generation == pluginApplicationsLoadGeneration,
-                      accountGeneration == workspaceAccountGeneration,
-                      expectedOwnerUserID == authenticatedUserID else { return }
-                pluginApplicationsError = error.localizedDescription
+                result = .failure(error)
             }
-            guard let self,
-                  generation == pluginApplicationsLoadGeneration,
-                  accountGeneration == workspaceAccountGeneration,
-                  expectedOwnerUserID == authenticatedUserID else { return }
-            isPluginApplicationsLoading = false
-            pluginApplicationsLoadTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.pluginApplicationsLoadState.accepts(
+                    token,
+                    ownerUserID: self.authenticatedUserID,
+                    accountGeneration: self.workspaceAccountGeneration
+                  ) else { return }
+            switch result {
+            case let .success(applications):
+                self.pluginApplications = applications
+                self.reconcilePluginApplicationSelection()
+            case let .failure(error):
+                self.pluginApplicationsError = error.localizedDescription
+            }
+            guard self.pluginApplicationsLoadState.finish(token) else { return }
+            self.isPluginApplicationsLoading = false
+            self.pluginApplicationsLoadTask = nil
         }
     }
 
