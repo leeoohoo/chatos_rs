@@ -5,40 +5,32 @@ struct GlobalApprovalOverlayHost: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openSettings) private var openSettings
     @ObservedObject var viewModel: LocalConnectorControlCenterViewModel
-    @State private var isExpanded = true
-    @State private var activeIndex = 0
-    @State private var knownApprovalIDs: Set<String> = []
+    @State private var queueState = LocalConnectorApprovalQueuePresentationState()
 
     var body: some View {
         if !viewModel.pendingApprovals.isEmpty {
             Group {
-                if isExpanded {
+                if queueState.isExpanded {
                     expandedCard
                 } else {
                     compactButton
                 }
             }
             .onAppear {
-                knownApprovalIDs = Set(approvalIDs)
-                isExpanded = true
+                queueState.appear(approvalIDs: approvalIDs)
             }
             .onChange(of: approvalIDs) { _, nextIDs in
-                let nextIDSet = Set(nextIDs)
-                if !nextIDSet.subtracting(knownApprovalIDs).isEmpty {
-                    isExpanded = true
-                }
-                knownApprovalIDs = nextIDSet
-                activeIndex = min(activeIndex, max(0, nextIDs.count - 1))
+                queueState.update(approvalIDs: nextIDs)
             }
             .transition(.move(edge: .trailing).combined(with: .opacity))
-            .animation(.easeInOut(duration: 0.2), value: isExpanded)
+            .animation(.easeInOut(duration: 0.2), value: queueState.isExpanded)
             .animation(.easeInOut(duration: 0.2), value: approvalIDs)
         }
     }
 
     private var compactButton: some View {
         Button {
-            isExpanded = true
+            queueState.expand()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "bell.badge.fill")
@@ -106,7 +98,7 @@ struct GlobalApprovalOverlayHost: View {
             }
             Spacer()
             Button(model.localized("收起", english: "Collapse"), systemImage: "chevron.right") {
-                isExpanded = false
+                queueState.collapse()
             }
             .labelStyle(.iconOnly)
             .buttonStyle(.plain)
@@ -186,18 +178,22 @@ struct GlobalApprovalOverlayHost: View {
             HStack(spacing: 10) {
                 if viewModel.pendingApprovals.count > 1 {
                     Button(model.localized("上一条", english: "Previous"), systemImage: "chevron.left") {
-                        activeIndex = max(0, activeIndex - 1)
+                        queueState.moveToPrevious()
                     }
                     .labelStyle(.iconOnly)
-                    .disabled(activeIndex == 0)
-                    Text("\(activeIndex + 1) / \(viewModel.pendingApprovals.count)")
+                    .disabled(queueState.activeIndex == 0)
+                    Text("\(queueState.activeIndex + 1) / \(viewModel.pendingApprovals.count)")
                         .appFont(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                     Button(model.localized("下一条", english: "Next"), systemImage: "chevron.right") {
-                        activeIndex = min(viewModel.pendingApprovals.count - 1, activeIndex + 1)
+                        queueState.moveToNext(
+                            approvalCount: viewModel.pendingApprovals.count
+                        )
                     }
                     .labelStyle(.iconOnly)
-                    .disabled(activeIndex >= viewModel.pendingApprovals.count - 1)
+                    .disabled(
+                        queueState.activeIndex >= viewModel.pendingApprovals.count - 1
+                    )
                 }
 
                 Spacer()
@@ -230,10 +226,7 @@ struct GlobalApprovalOverlayHost: View {
     }
 
     private var activeApproval: LocalConnectorPendingApproval? {
-        guard viewModel.pendingApprovals.indices.contains(activeIndex) else {
-            return viewModel.pendingApprovals.first
-        }
-        return viewModel.pendingApprovals[activeIndex]
+        queueState.activeApproval(in: viewModel.pendingApprovals)
     }
 
     private func riskLabel(_ risk: String) -> String {
