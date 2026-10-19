@@ -120,13 +120,10 @@ extension MessageTaskWorkspaceViewModel {
                 }
             }
             do {
-                let detail = try await graphService.fetchRun(
+                let detail = try await runUseCase.loadLatestRun(
                     messageID: target.messageID,
                     runID: runID,
-                    lookup: target.lookup,
-                    includeEvents: true,
-                    eventLimit: 40,
-                    eventOffset: 0
+                    lookup: target.lookup
                 )
                 guard selectedTask?.id == requestedTaskID else { return }
                 runDetail = detail
@@ -152,22 +149,12 @@ extension MessageTaskWorkspaceViewModel {
         moreRunEventsTask = Task {
             defer { isLoadingMoreRunEvents = false }
             do {
-                let page = try await graphService.fetchRun(
+                let merged = try await runUseCase.loadOlderEvents(
                     messageID: target.messageID,
-                    runID: current.run.id,
                     lookup: target.lookup,
-                    includeEvents: true,
-                    eventLimit: 50,
-                    eventOffset: current.events.count
+                    current: current
                 )
                 guard runDetail?.run.id == current.run.id else { return }
-                var merged = current
-                let existingIDs = Set(current.events.map(\.id))
-                merged.events.append(contentsOf: page.events.filter { !existingIDs.contains($0.id) })
-                merged.eventsTotal = page.eventsTotal
-                merged.eventsHasMore = page.eventsHasMore
-                merged.task = page.task
-                merged.run = page.run
                 runDetail = merged
             } catch is CancellationError {
                 return
@@ -228,13 +215,10 @@ extension MessageTaskWorkspaceViewModel {
                 loadedModelOutputRunID = runID
                 taskDetail = detail.merging(run: run.run)
             case .run:
-                let run = try await graphService.fetchRun(
+                let run = try await runUseCase.loadLatestRun(
                     messageID: target.messageID,
                     runID: runID,
-                    lookup: target.lookup,
-                    includeEvents: true,
-                    eventLimit: 40,
-                    eventOffset: 0
+                    lookup: target.lookup
                 )
                 guard self.selectedTask?.id == requestedTaskID else { return }
                 runDetail = run

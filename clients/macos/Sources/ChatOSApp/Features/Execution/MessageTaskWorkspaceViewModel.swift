@@ -49,6 +49,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     let graphService: any MessageTaskGraphServicing
+    let runUseCase: MessageTaskRunUseCase
     let realtimeService: (any ConversationRealtimeStreaming)?
     let initialTaskID: String?
     let initialRunID: String?
@@ -72,6 +73,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     ) {
         self.turn = turn
         self.graphService = graphService
+        self.runUseCase = MessageTaskRunUseCase(graphService: graphService)
         self.realtimeService = realtimeService
         self.initialTaskID = initialTaskID
         self.initialRunID = initialRunID

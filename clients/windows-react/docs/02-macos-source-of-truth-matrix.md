@@ -37,9 +37,9 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 项目会话准备 | 已映射，可重构 | `ProjectMessagesView.swift` | `AppModelResources.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Connector 与 ViewModel 相关测试 | 禁止；先完成 macOS Application/Port 分层 |
+| 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
 | Conversation 时间线与发送 | 已映射，可重构 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift` | `ConversationModels.swift`、`ConversationCommandService.swift`、`ConversationRemoteService.swift`、`ConversationRealtimeService.swift` | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | `ConversationSessionViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
-| Task Graph / Run Inspector | 已映射，可重构 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift` | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | `MessageTaskWorkspaceViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
+| Task Graph / Run Inspector | Run 分页用例已提取，Graph/realtime 协调待迁移 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、`MessageTaskRunUseCase.swift` | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | `MessageTaskRunUseCaseTests.swift`、`MessageTaskWorkspaceViewModelTests.swift` 等 | 禁止；等待完整切片验收 |
 | Ask User | 已映射，可重构 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | `NativeLocalAgentAskUserPromptServiceTests.swift` | 禁止；先完成 macOS Application/Port 分层 |
 | 工具审批 / 恢复 | 已映射，可重构 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift` | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | worker、approval agent、state store、ViewModel tests | 禁止；先完成 macOS Application/Port 分层 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
@@ -227,6 +227,7 @@ UI：
 
 - `clients/macos/Sources/ChatOSApp/Features/Execution/MessageTaskWorkspaceViewModel.swift`
 - `clients/macos/Sources/ChatOSApp/Features/Execution/MessageTaskWorkspaceViewModel+Loading.swift`
+- `clients/macos/Sources/ChatOSCore/Application/MessageTaskRunUseCase.swift`
 
 Port 与模型：
 
@@ -247,6 +248,13 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - realtime reconcile 与 `completed/failed/cancelled/persisted` 都刷新 Graph、当前 Task 和当前 Inspector；
 - 因此 Windows 运行详情首屏必须展示最新执行记录，不能停留在任务刚开始的记录。
 
+当前分层进度：
+
+- `MessageTaskRunUseCase.loadLatestRun` 已集中首屏最新 40 条规则；
+- `MessageTaskRunUseCase.loadOlderEvents` 已集中 50 条分页、offset 与 event ID 去重规则；
+- SwiftUI ViewModel 只保留选中 Task 的取消、loading 与异步写回校验；
+- Graph/realtime reconcile、重试与 Inspector 其余协调仍待提取，因此尚未放行 React。
+
 ### 5.3 并发、空结果与降级
 
 - 切换 Task 时取消旧 inspector、model output、run 和 load-more 请求；
@@ -258,6 +266,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 
 ### 5.4 测试证据
 
+- `clients/macos/Tests/ChatOSCoreTests/MessageTaskRunUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/TaskGraphDeliveryPresentationTests.swift`
 - `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift`

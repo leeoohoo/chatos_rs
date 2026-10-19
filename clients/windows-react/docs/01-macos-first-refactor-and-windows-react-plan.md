@@ -386,7 +386,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
-当前状态：执行中。首个 Application 状态模型 `LocalAgentRuntimeState` 已从 macOS 真实启动流程提取并接入 Conversation ready gate；其余 service orchestration 与 typed lifecycle port 继续迁移。
+当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate，项目 Conversation 准备用例和 Run Inspector 分页用例已从 UI 协调层提取；Graph/realtime、其余 service orchestration 与 typed lifecycle port 继续迁移。
 
 工作：
 
@@ -510,8 +510,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 2. [进行中] 为当前 macOS 主窗口、创建项目弹窗、Conversation、任务动态和执行详情采集最新基线。
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
-5. 在 macOS 建立 Application Port 和 Composition Root，先迁移 Host lifecycle。
-6. 迁移 Conversation + Run Inspector 作为第一条完整垂直切片。
+5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备与 Run Inspector 分页规则已提取。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Graph/realtime 协调尚未完成。
 7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
