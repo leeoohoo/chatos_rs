@@ -332,15 +332,15 @@ struct PerformancePolicyTests {
 
     @Test("task graph polling uses realtime as the primary update path")
     func taskGraphPollingBacksOffWithRealtime() {
-        #expect(MessageTaskPollingPolicy.interval(
+        #expect(MessageTaskGraphPollingState.interval(
             isEmptyGraphRetry: true,
             hasActiveRealtimeStream: true
         ) == .milliseconds(600))
-        #expect(MessageTaskPollingPolicy.interval(
+        #expect(MessageTaskGraphPollingState.interval(
             isEmptyGraphRetry: false,
             hasActiveRealtimeStream: false
         ) == .seconds(2))
-        #expect(MessageTaskPollingPolicy.interval(
+        #expect(MessageTaskGraphPollingState.interval(
             isEmptyGraphRetry: false,
             hasActiveRealtimeStream: true
         ) == .seconds(60))

@@ -1,20 +1,8 @@
 import ChatOSCore
 import Foundation
 
-enum MessageTaskPollingPolicy {
-    static func interval(
-        isEmptyGraphRetry: Bool,
-        hasActiveRealtimeStream: Bool
-    ) -> Duration {
-        if isEmptyGraphRetry { return .milliseconds(600) }
-        return hasActiveRealtimeStream ? .seconds(60) : .seconds(2)
-    }
-}
-
 @MainActor
 final class MessageTaskWorkspaceViewModel: ObservableObject {
-    static let emptyGraphRetryLimit = 3
-
     enum InspectorSection: String, CaseIterable {
         case detail = "任务详情"
         case process = "执行过程"
@@ -63,7 +51,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     var hasActiveRealtimeStream = false
     var loadedModelOutputRunID: String?
     var workspaceRefreshGeneration = 0
-    var emptyGraphRetryAttemptsRemaining = MessageTaskWorkspaceViewModel.emptyGraphRetryLimit
+    var graphPollingState = MessageTaskGraphPollingState()
 
     init(
         turn: ConversationTurn,
@@ -206,47 +194,52 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     var shouldRetryEmptyGraph: Bool {
-        expectsTaskGraph
-            && graph?.nodes.isEmpty == true
-            && emptyGraphRetryAttemptsRemaining > 0
+        graphPollingState.shouldRetryEmptyGraph(
+            expectsTaskGraph: expectsTaskGraph,
+            graph: graph
+        )
     }
 
     func resetEmptyGraphRetryBudgetIfNeeded() {
-        guard graph?.nodes.isEmpty != false, expectsTaskGraph else { return }
-        emptyGraphRetryAttemptsRemaining = Self.emptyGraphRetryLimit
-        let nextIsAwaitingInitialGraph = graph != nil
+        guard let nextIsAwaitingInitialGraph = graphPollingState.resetRetryBudgetIfNeeded(
+            expectsTaskGraph: expectsTaskGraph,
+            graph: graph
+        ) else { return }
         if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
             isAwaitingInitialGraph = nextIsAwaitingInitialGraph
         }
     }
 
     func recordEmptyGraphRetryAttempt() {
-        guard graph?.nodes.isEmpty == true else { return }
-        emptyGraphRetryAttemptsRemaining = max(0, emptyGraphRetryAttemptsRemaining - 1)
-        let nextIsAwaitingInitialGraph = shouldRetryEmptyGraph
+        guard let nextIsAwaitingInitialGraph = graphPollingState.recordEmptyGraphRetry(
+            expectsTaskGraph: expectsTaskGraph,
+            graph: graph
+        ) else { return }
         if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
             isAwaitingInitialGraph = nextIsAwaitingInitialGraph
         }
     }
 
     func applyGraph(_ graph: MessageTaskGraphSnapshot) {
+        let nextIsAwaitingInitialGraph = graphPollingState.observe(
+            graph: graph,
+            expectsTaskGraph: expectsTaskGraph
+        )
         if graph.nodes.isEmpty {
             if self.graph != graph {
                 self.graph = graph
             }
-            let nextIsAwaitingInitialGraph = shouldRetryEmptyGraph
             if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
                 isAwaitingInitialGraph = nextIsAwaitingInitialGraph
             }
             return
         }
 
+        if isAwaitingInitialGraph != nextIsAwaitingInitialGraph {
+            isAwaitingInitialGraph = nextIsAwaitingInitialGraph
+        }
         guard self.graph != graph else { return }
         self.graph = graph
-        emptyGraphRetryAttemptsRemaining = 0
-        if isAwaitingInitialGraph {
-            isAwaitingInitialGraph = false
-        }
         var normalized = MessageTaskGraphNormalizer.normalize(graph, mode: displayMode)
         if let initialTaskID,
            !normalized.nodes.contains(where: { $0.id == initialTaskID }),

@@ -39,7 +39,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | `PrepareProjectConversationUseCaseTests.swift` 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
 | Conversation 时间线与发送 | 已映射，可重构 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift` | `ConversationModels.swift`、`ConversationCommandService.swift`、`ConversationRemoteService.swift`、`ConversationRealtimeService.swift` | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | `ConversationSessionViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
-| Task Graph / Run Inspector | Graph、realtime、Run 分页与 section 刷新规则已提取，UI 请求生命周期待迁移 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、`MessageTaskGraphUseCase.swift`、`MessageTaskRunUseCase.swift`、`MessageTaskInspectorRefreshUseCase.swift` | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | 三组 Core use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
+| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新与 polling 决策已提取，UI 异步任务生命周期待收口 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | 四组 Core state/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Ask User | 已映射，可重构 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | `NativeLocalAgentAskUserPromptServiceTests.swift` | 禁止；先完成 macOS Application/Port 分层 |
 | 工具审批 / 恢复 | 已映射，可重构 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift` | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | worker、approval agent、state store、ViewModel tests | 禁止；先完成 macOS Application/Port 分层 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
@@ -228,6 +228,7 @@ UI：
 - `clients/macos/Sources/ChatOSApp/Features/Execution/MessageTaskWorkspaceViewModel.swift`
 - `clients/macos/Sources/ChatOSApp/Features/Execution/MessageTaskWorkspaceViewModel+Loading.swift`
 - `clients/macos/Sources/ChatOSCore/Application/MessageTaskGraphUseCase.swift`
+- `clients/macos/Sources/ChatOSCore/Application/MessageTaskGraphPollingState.swift`
 - `clients/macos/Sources/ChatOSCore/Application/MessageTaskInspectorRefreshUseCase.swift`
 - `clients/macos/Sources/ChatOSCore/Application/MessageTaskRunUseCase.swift`
 
@@ -274,13 +275,15 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskGraphUseCase.shouldRefreshWorkspace` 已固化 session reconcile 与当前 Turn 终态/持久化事件的刷新规则；
 - Task 详情加载与 Run 重试已通过 `MessageTaskGraphUseCase` 暴露，Workspace ViewModel 不再直接调用 `MessageTaskGraphServicing`；
 - Task 活跃状态规范化与 polling 判定所需语义已移入 Core；
-- polling task 生命周期、Task 选择和 Inspector 请求取消仍由 macOS UI 状态层协调。
+- `MessageTaskGraphPollingState` 已集中空 Graph 三次恢复预算、是否继续 polling 及 600ms/2s/60s 间隔规则；
+- cancellable polling Task、Task 选择和 Inspector 请求取消仍由 macOS UI 状态层协调。
 
 ### 5.4 测试证据
 
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskRunUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskInspectorRefreshUseCaseTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphPollingStateTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/TaskGraphDeliveryPresentationTests.swift`
 - `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift`

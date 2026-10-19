@@ -256,14 +256,16 @@ extension MessageTaskWorkspaceViewModel {
 
     func startPollingIfNeeded(force: Bool = false) {
         stopPolling()
-        let shouldPollActiveTask = graph?.nodes.contains(where: { $0.task.isActive }) == true
-        let shouldPoll = shouldPollActiveTask || shouldRetryEmptyGraph
+        let shouldPoll = graphPollingState.shouldPoll(
+            graph: graph,
+            expectsTaskGraph: expectsTaskGraph
+        )
         guard force || shouldPoll else { return }
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, !Task.isCancelled else { return }
                 let isEmptyGraphRetry = self.shouldRetryEmptyGraph
-                let interval = MessageTaskPollingPolicy.interval(
+                let interval = MessageTaskGraphPollingState.interval(
                     isEmptyGraphRetry: isEmptyGraphRetry,
                     hasActiveRealtimeStream: self.hasActiveRealtimeStream
                 )
@@ -273,9 +275,10 @@ extension MessageTaskWorkspaceViewModel {
                 if isEmptyGraphRetry {
                     self.recordEmptyGraphRetryAttempt()
                 }
-                let hasActiveTask = self.graph?.nodes.contains(where: { $0.task.isActive }) == true
-                let shouldContinue = hasActiveTask
-                    || self.shouldRetryEmptyGraph
+                let shouldContinue = self.graphPollingState.shouldPoll(
+                    graph: self.graph,
+                    expectsTaskGraph: self.expectsTaskGraph
+                )
                 if !shouldContinue {
                     return
                 }

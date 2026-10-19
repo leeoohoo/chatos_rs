@@ -386,7 +386,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
-当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate，项目 Conversation 准备、Task Graph 稳定/realtime 刷新策略和 Run Inspector 查询/分页/section 刷新用例已从 UI 协调层提取；Workspace ViewModel 已不再直接调用 Task Graph Port，Inspector 初次加载与 polling 生命周期、其余 service orchestration 和 typed lifecycle port 继续迁移。
+当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate，项目 Conversation 准备、Task Graph 稳定/realtime、Run Inspector 查询/分页/section 刷新及 polling 决策已从 UI 协调层提取；Workspace ViewModel 已不再直接调用 Task Graph Port，Inspector 初次加载和 cancellable Task 生命周期、其余 service orchestration 与 typed lifecycle port 继续迁移。
 
 工作：
 
@@ -511,7 +511,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Graph、realtime、Run 分页与 section 刷新规则已提取，Inspector 初次加载和 polling 生命周期尚未完成。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Graph、realtime、Run、section 刷新与 polling 决策已提取，Inspector 初次加载和 cancellable Task 生命周期尚未完成。
 7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
