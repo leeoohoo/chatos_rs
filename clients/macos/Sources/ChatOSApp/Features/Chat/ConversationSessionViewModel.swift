@@ -470,20 +470,30 @@ final class ConversationSessionViewModel: ObservableObject {
         historyError = nil
         timelineObservationState.invalidate()
 
+        let sessionID = sessionID
         olderHistoryLoadTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<ConversationHistorySnapshot, Error>
             do {
-                let snapshot = try await historyUseCase.loadOlder(
-                    sessionID: self.sessionID,
-                    before: cursor,
-                    requestGeneration: generation
+                result = .success(
+                    try await historyUseCase.loadOlder(
+                        sessionID: sessionID,
+                        before: cursor,
+                        requestGeneration: generation
+                    )
                 )
+            } catch {
+                result = .failure(error)
+            }
+
+            guard let self else { return }
+            switch result {
+            case let .success(snapshot):
                 guard !Task.isCancelled,
                       self.activationState.accepts(activation),
                       self.isLocalAgentRuntimeReady,
                       self.inFlightOlderCursor == cursor else { return }
                 self.applyHistorySnapshot(snapshot)
-            } catch {
+            case let .failure(error):
                 guard !Task.isCancelled,
                       self.activationState.accepts(activation),
                       self.isLocalAgentRuntimeReady,
@@ -504,12 +514,14 @@ final class ConversationSessionViewModel: ObservableObject {
         let kind = ConversationViewportMutationKind.markNewerContentRead
         viewportMutationTasks[kind]?.cancel()
         let token = viewportMutationState.begin(kind)
+        let viewportUseCase = viewportUseCase
+        let sessionID = sessionID
         viewportMutationTasks[kind] = Task { [weak self] in
-            guard let self else { return }
-            let snapshot = await self.viewportUseCase.markNewerContentRead(
-                sessionID: self.sessionID
+            let snapshot = await viewportUseCase.markNewerContentRead(
+                sessionID: sessionID
             )
             guard !Task.isCancelled,
+                  let self,
                   self.activationState.accepts(activation),
                   self.viewportMutationState.accepts(token) else { return }
             self.applyHistorySnapshot(snapshot)
@@ -558,14 +570,16 @@ final class ConversationSessionViewModel: ObservableObject {
         let latestTurnID = turns.last?.id
         viewportMutationTasks[kind]?.cancel()
         let token = viewportMutationState.begin(kind)
+        let viewportUseCase = viewportUseCase
+        let sessionID = sessionID
         viewportMutationTasks[kind] = Task { [weak self] in
-            guard let self else { return }
-            let snapshot = await self.viewportUseCase.updateTimelineAnchor(
-                sessionID: self.sessionID,
+            let snapshot = await viewportUseCase.updateTimelineAnchor(
+                sessionID: sessionID,
                 latestTurnID: latestTurnID,
                 isPinnedToBottom: isPinned
             )
             guard !Task.isCancelled,
+                  let self,
                   self.activationState.accepts(activation),
                   self.viewportMutationState.accepts(token) else { return }
             self.applyHistorySnapshot(snapshot)

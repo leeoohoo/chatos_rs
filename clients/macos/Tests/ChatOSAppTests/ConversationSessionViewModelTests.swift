@@ -464,6 +464,34 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.unreadNewerCount, 0)
     }
 
+    func testDelayedViewportMutationDoesNotRetainConversation() async throws {
+        let historyStore = DelayedViewportHistoryStore()
+        await historyStore.seedUnreadTurn()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: historyStore,
+            localAgentRuntimeReady: false
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.unreadNewerCount == 1
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+        viewModel?.activate()
+        viewModel?.markNewerContentRead()
+        try await waitUntil {
+            await historyStore.hasDelayedMarkRead()
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await historyStore.resumeMarkRead()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     func testDeactivateStopsRealtimeSubscription() async throws {
         let realtimeService = ConversationRealtimeServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -530,6 +558,33 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.turns.map(\.id), ["turn-current"])
         XCTAssertFalse(viewModel.isLoadingOlder)
         XCTAssertNil(viewModel.historyError)
+    }
+
+    func testDelayedOlderHistoryPageDoesNotRetainConversation() async throws {
+        let remoteService = DelayedOlderConversationRemoteServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            remoteService: remoteService
+        )
+        weak let weakViewModel = viewModel
+        viewModel?.activate()
+        try await waitUntil {
+            viewModel?.hasOlder == true
+                && viewModel?.turns.map(\.id) == ["turn-current"]
+        }
+        viewModel?.loadOlder()
+        try await waitUntil {
+            await remoteService.hasDelayedOlderRequest()
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await remoteService.resumeOlderRequest()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
     }
 
     func testRuntimeBecomingReadyReloadsModelsAfterInitialBootstrapFailure() async throws {
