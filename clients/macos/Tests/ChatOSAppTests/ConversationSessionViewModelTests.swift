@@ -531,6 +531,33 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testReadyRecoveryDoesNotDuplicateRuntimeLoadsWithDeferredBootstrap() async throws {
+        let runtimeSettings = DelayedRuntimeSettingsServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            localAgentRuntimeReady: false,
+            runtimeSettingsService: runtimeSettings
+        )
+
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 2
+        }
+        try await Task.sleep(for: .milliseconds(30))
+
+        let pendingRequestCount = await runtimeSettings.pendingRequestCount()
+        XCTAssertEqual(pendingRequestCount, 2)
+
+        await runtimeSettings.resumeRequests()
+        try await waitUntil {
+            viewModel.availableModels.map(\.id) == ["model-1"]
+                && viewModel.selectedModelID == "model-1"
+        }
+        XCTAssertNil(viewModel.bootstrapState.activeToken)
+    }
+
     func testRuntimeUnavailableRejectsLateReadyRecovery() async throws {
         let remoteService = ConversationRemoteServiceStub()
         let runtimeSettings = DelayedRuntimeSettingsServiceStub()

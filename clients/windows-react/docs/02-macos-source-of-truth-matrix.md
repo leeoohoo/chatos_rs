@@ -187,6 +187,7 @@ sendDraft
 源码事实：`ConversationSessionViewModel.swift`
 
 - Host 未 ready 时不启动业务刷新；
+- Conversation bootstrap Task 由 ViewModel 显式持有，并冻结创建时的 runtime-ready 决策；初始化为 unavailable 后即使 Task 延迟执行，也不得与后续 ready recovery 重复加载 settings/prompts。runtime 转换会失效 bootstrap 的最终 Host 恢复动作，但本地 History Store hydration 仍可独立完成；
 - ready 后重新加载 runtime settings、Ask User、历史并启动 realtime；
 - unavailable 时取消 realtime、retry、debounce 与发送等任务，回滚 optimistic 发送并复位 loading 状态；
 - 每次 Conversation 可见激活都具有独立 activation session；停用后旧 realtime 事件、错误与结束回调不能写回或影响下一次激活；

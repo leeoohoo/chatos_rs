@@ -84,6 +84,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private var requestGeneration: Int64 = 0
     private var inFlightOlderCursor: String?
     private var realtimeTask: Task<Void, Never>?
+    private var bootstrapTask: Task<Void, Never>?
+    var bootstrapState = ConversationBootstrapState()
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
     private var olderHistoryLoadTask: Task<Void, Never>?
@@ -167,11 +169,20 @@ final class ConversationSessionViewModel: ObservableObject {
             ConversationAskUserPromptUseCase(service: $0)
         }
 
-        Task { await bootstrap(initialTurns: initialTurns) }
+        let bootstrapToken = bootstrapState.begin()
+        let shouldLoadRuntimeServices = localAgentRuntimeReady
+        bootstrapTask = Task { [weak self] in
+            await self?.bootstrap(
+                initialTurns: initialTurns,
+                shouldLoadRuntimeServices: shouldLoadRuntimeServices,
+                token: bootstrapToken
+            )
+        }
     }
 
     deinit {
         realtimeTask?.cancel()
+        bootstrapTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
         olderHistoryLoadTask?.cancel()
@@ -229,6 +240,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func localAgentRuntimeDidBecomeReady() {
         isLocalAgentRuntimeReady = true
+        bootstrapState.reset()
         realtimeTask?.cancel()
         realtimeTask = nil
         historyRetryTask?.cancel()
@@ -263,6 +275,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func localAgentRuntimeDidBecomeUnavailable() {
         isLocalAgentRuntimeReady = false
+        bootstrapState.reset()
         runtimeRecoveryState.reset()
         runtimeRecoveryTask?.cancel()
         runtimeRecoveryTask = nil
@@ -632,15 +645,22 @@ final class ConversationSessionViewModel: ObservableObject {
         }
     }
 
-    private func bootstrap(initialTurns: [ConversationTurn]) async {
-        if isLocalAgentRuntimeReady {
+    private func bootstrap(
+        initialTurns: [ConversationTurn],
+        shouldLoadRuntimeServices: Bool,
+        token: ConversationBootstrapToken
+    ) async {
+        if shouldLoadRuntimeServices, isLocalAgentRuntimeReady {
             async let runtimeSettings: Void = loadRuntimeSettings(presentErrors: false)
             async let prompts: Void = refreshAskUserPrompts()
             _ = await (runtimeSettings, prompts)
         }
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
-        if isActive,
+        let canFinish = bootstrapState.finish(token)
+        bootstrapTask = nil
+        if canFinish,
+           isActive,
            isLocalAgentRuntimeReady,
            let activation = activationState.activeSession {
             refreshLatest()
