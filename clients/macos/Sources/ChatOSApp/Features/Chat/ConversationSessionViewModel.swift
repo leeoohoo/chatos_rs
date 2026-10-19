@@ -22,7 +22,6 @@ final class ConversationTimelineObservationState: ObservableObject {
 
 @MainActor
 final class ConversationSessionViewModel: ObservableObject {
-    private static let historyPageSize = 10
     private static let realtimeRefreshDebounce: Duration = .milliseconds(250)
 
     private enum LatestRefreshPresentation: Equatable {
@@ -87,7 +86,7 @@ final class ConversationSessionViewModel: ObservableObject {
     let commandService: (any ConversationCommandServicing)?
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
-    private let remoteService: (any ConversationRemoteServicing)?
+    private let historyUseCase: ConversationHistoryUseCase?
     let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
     let askUserPromptService: (any AskUserPromptServicing)?
@@ -142,7 +141,12 @@ final class ConversationSessionViewModel: ObservableObject {
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
         self.isLocalAgentRuntimeReady = localAgentRuntimeReady
-        self.remoteService = remoteService
+        self.historyUseCase = remoteService.map {
+            ConversationHistoryUseCase(
+                remoteService: $0,
+                historyStore: historyStore
+            )
+        }
         self.realtimeService = realtimeService
         self.commandService = commandService
         self.turnProcessService = turnProcessService
@@ -241,7 +245,7 @@ final class ConversationSessionViewModel: ObservableObject {
         presentation: LatestRefreshPresentation,
         debounce: Bool
     ) {
-        guard isActive, isLocalAgentRuntimeReady, let remoteService else { return }
+        guard isActive, isLocalAgentRuntimeReady, let historyUseCase else { return }
 
         if debounce {
             let scheduledPresentation = latestRefreshDebouncePresentation?
@@ -258,7 +262,7 @@ final class ConversationSessionViewModel: ObservableObject {
                 self.latestRefreshDebounceTask = nil
                 self.latestRefreshDebouncePresentation = nil
                 self.performLatestRefresh(
-                    using: remoteService,
+                    using: historyUseCase,
                     presentation: scheduledPresentation
                 )
             }
@@ -268,11 +272,11 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshDebouncePresentation = nil
-        performLatestRefresh(using: remoteService, presentation: presentation)
+        performLatestRefresh(using: historyUseCase, presentation: presentation)
     }
 
     private func performLatestRefresh(
-        using remoteService: any ConversationRemoteServicing,
+        using historyUseCase: ConversationHistoryUseCase,
         presentation: LatestRefreshPresentation
     ) {
         guard !latestRefreshInFlight else {
@@ -292,15 +296,11 @@ final class ConversationSessionViewModel: ObservableObject {
 
         Task {
             do {
-                let page = try await remoteService.fetchHistory(
-                    ConversationHistoryQuery(
-                        sessionID: sessionID,
-                        limit: Self.historyPageSize,
-                        requestGeneration: generation
-                    )
+                let snapshot = try await historyUseCase.loadLatest(
+                    sessionID: sessionID,
+                    requestGeneration: generation
                 )
-                await historyStore.mergePage(page, sessionID: sessionID, origin: .latest)
-                await refreshSnapshot()
+                applyHistorySnapshot(snapshot)
                 if historyError != nil {
                     historyError = nil
                 }
@@ -325,17 +325,12 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     private func scheduleHistoryRetry() {
-        let delays: [Duration] = [
-            .seconds(2),
-            .seconds(5),
-            .seconds(10),
-            .seconds(20),
-        ]
         guard isActive,
               isLocalAgentRuntimeReady,
               historyRetryTask == nil,
-              historyRetryAttempt < delays.count else { return }
-        let delay = delays[historyRetryAttempt]
+              let delay = ConversationHistoryUseCase.retryDelay(
+                at: historyRetryAttempt
+              ) else { return }
         historyRetryAttempt += 1
         historyRetryTask = Task { [weak self] in
             try? await Task.sleep(for: delay)
@@ -347,7 +342,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func loadOlder() {
         guard isLocalAgentRuntimeReady,
-              let remoteService,
+              let historyUseCase,
               let cursor = olderCursor,
               hasOlder,
               !isLoadingOlder,
@@ -362,16 +357,12 @@ final class ConversationSessionViewModel: ObservableObject {
 
         Task {
             do {
-                let page = try await remoteService.fetchHistory(
-                    ConversationHistoryQuery(
-                        sessionID: sessionID,
-                        limit: Self.historyPageSize,
-                        before: cursor,
-                        requestGeneration: generation
-                    )
+                let snapshot = try await historyUseCase.loadOlder(
+                    sessionID: sessionID,
+                    before: cursor,
+                    requestGeneration: generation
                 )
-                await historyStore.mergePage(page, sessionID: sessionID, origin: .older)
-                await refreshSnapshot()
+                applyHistorySnapshot(snapshot)
             } catch {
                 historyError = error.localizedDescription
             }
@@ -713,6 +704,10 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func refreshSnapshot() async {
         let snapshot = await historyStore.snapshot(sessionID: sessionID)
+        applyHistorySnapshot(snapshot)
+    }
+
+    private func applyHistorySnapshot(_ snapshot: ConversationHistorySnapshot) {
         var timelineChanged = false
         if turns != snapshot.turns {
             turns = snapshot.turns
