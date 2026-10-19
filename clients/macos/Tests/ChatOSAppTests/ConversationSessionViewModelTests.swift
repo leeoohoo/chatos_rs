@@ -174,6 +174,62 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.selectedCapability)
     }
 
+    func testRuntimeUnavailableRecoversSendAndRejectsLateHostResponse() async throws {
+        let commandService = ConversationCommandServiceStub(delayNewTurn: true)
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            commandService: commandService
+        )
+        viewModel.draft = "需要重新发送的内容"
+
+        viewModel.sendDraft()
+        try await waitUntil {
+            let hasDelayedNewTurn = await commandService.hasDelayedNewTurn()
+            return hasDelayedNewTurn && viewModel.turns.count == 1
+        }
+        viewModel.localAgentRuntimeDidBecomeUnavailable()
+        try await waitUntil {
+            !viewModel.isSending && viewModel.turns.isEmpty
+        }
+
+        XCTAssertEqual(viewModel.draft, "需要重新发送的内容")
+        XCTAssertEqual(viewModel.sendError, "本地任务组件连接已中断，请重新发送。")
+        viewModel.draft = "用户后来输入的内容"
+
+        await commandService.resumeDelayedNewTurn()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.draft, "用户后来输入的内容")
+        XCTAssertTrue(viewModel.turns.isEmpty)
+        XCTAssertFalse(viewModel.isSending)
+    }
+
+    func testInactiveGuidanceFallsBackToNewTurnWithinSameSendLifecycle() async throws {
+        let commandService = ConversationCommandServiceStub(
+            rejectGuidanceAsInactive: true
+        )
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [ConversationRemoteServiceStub.turn(revision: 1)],
+            historyStore: ConversationHistoryStore(),
+            commandService: commandService
+        )
+        viewModel.draft = "改用新消息继续"
+
+        viewModel.sendDraft()
+        try await waitUntil {
+            await commandService.commands().count == 2 && !viewModel.isSending
+        }
+
+        let commands = await commandService.commands()
+        XCTAssertEqual(commands.first?.turnID, "turn-1")
+        XCTAssertNotEqual(commands.last?.turnID, "turn-1")
+        XCTAssertEqual(commands.last?.content, "改用新消息继续")
+        XCTAssertNil(viewModel.sendLifecycleState.activeToken)
+    }
+
     func testReconnectReconcileRefreshesConversationHistory() async throws {
         let remoteService = ConversationRemoteServiceStub()
         let realtimeService = ConversationRealtimeServiceStub()
@@ -630,10 +686,26 @@ final class ConversationSessionViewModelTests: XCTestCase {
 }
 
 private actor ConversationCommandServiceStub: ConversationCommandServicing {
+    private let delayNewTurn: Bool
+    private let rejectGuidanceAsInactive: Bool
     private var recordedCommands: [ConversationSendCommand] = []
+    private var delayedNewTurnContinuation: CheckedContinuation<Void, Never>?
+
+    init(
+        delayNewTurn: Bool = false,
+        rejectGuidanceAsInactive: Bool = false
+    ) {
+        self.delayNewTurn = delayNewTurn
+        self.rejectGuidanceAsInactive = rejectGuidanceAsInactive
+    }
 
     func sendNewTurn(_ command: ConversationSendCommand) async throws -> ConversationCommandAck {
         recordedCommands.append(command)
+        if delayNewTurn {
+            await withCheckedContinuation { continuation in
+                delayedNewTurnContinuation = continuation
+            }
+        }
         return ConversationCommandAck(
             accepted: true,
             turnID: command.turnID,
@@ -643,6 +715,9 @@ private actor ConversationCommandServiceStub: ConversationCommandServicing {
 
     func sendGuidance(_ command: ConversationSendCommand) async throws -> ConversationCommandAck {
         recordedCommands.append(command)
+        if rejectGuidanceAsInactive {
+            throw ConversationCommandError.guidanceTargetInactive
+        }
         return ConversationCommandAck(
             accepted: true,
             turnID: command.turnID,
@@ -653,6 +728,15 @@ private actor ConversationCommandServiceStub: ConversationCommandServicing {
     func stopTurn(conversationID: String, turnID: String?) async throws {}
 
     func commands() -> [ConversationSendCommand] { recordedCommands }
+
+    func hasDelayedNewTurn() -> Bool {
+        delayedNewTurnContinuation != nil
+    }
+
+    func resumeDelayedNewTurn() {
+        delayedNewTurnContinuation?.resume()
+        delayedNewTurnContinuation = nil
+    }
 }
 
 private actor DelayedAskUserPromptServiceStub: AskUserPromptServicing {

@@ -97,6 +97,11 @@ final class ConversationSessionViewModel: ObservableObject {
     private var runtimeSettingsLoadGeneration: UInt64 = 0
     private var runtimeSettingsMutationTask: Task<Void, Never>?
     var runtimeSettingsMutationState = ConversationRuntimeSettingsMutationState()
+    var sendTask: Task<Void, Never>?
+    var sendRecoveryTask: Task<Void, Never>?
+    var sendLifecycleState = ConversationSendLifecycleState()
+    var activeSendSubmission: ConversationDraftSubmission?
+    var activeSendOptimisticTurnID: String?
     var askUserPromptLifecycleState = ConversationAskUserPromptLifecycleState()
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
@@ -168,6 +173,8 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
         runtimeSettingsMutationTask?.cancel()
+        sendTask?.cancel()
+        sendRecoveryTask?.cancel()
         attachmentFileLoadTasks.values.forEach { $0.cancel() }
         pastedImageNormalizationTasks.values.forEach { $0.cancel() }
     }
@@ -235,6 +242,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func localAgentRuntimeDidBecomeUnavailable() {
         isLocalAgentRuntimeReady = false
+        cancelActiveSendForRuntimeUnavailable()
         realtimeTask?.cancel()
         realtimeTask = nil
         historyRetryTask?.cancel()
