@@ -45,6 +45,7 @@ public actor NativeLocalAgentPlatformToolWorker {
   private var approvalTask: Task<Void, Never>?
   private var eventWakeTask: Task<Void, Never>?
   private var pendingWake = false
+  private var pendingApprovalWake = false
 
   public init(
     host: any LocalAgentHostClientServicing,
@@ -167,7 +168,11 @@ public actor NativeLocalAgentPlatformToolWorker {
   }
 
   private func scheduleApprovalResolution(ownerUserID: String) {
-    guard approvalHandler != nil, approvalTask == nil else { return }
+    guard approvalHandler != nil else { return }
+    guard approvalTask == nil else {
+      pendingApprovalWake = true
+      return
+    }
     let token = generation
     let maximumIdleDuration = activityWindow
     approvalTask = Task { [weak self] in
@@ -190,6 +195,10 @@ public actor NativeLocalAgentPlatformToolWorker {
     defer {
       if generation == expectedGeneration {
         approvalTask = nil
+        if pendingApprovalWake, let ownerUserID = self.ownerUserID {
+          pendingApprovalWake = false
+          scheduleApprovalResolution(ownerUserID: ownerUserID)
+        }
       }
     }
     while !Task.isCancelled,
@@ -514,6 +523,7 @@ public actor NativeLocalAgentPlatformToolWorker {
     eventWakeTask?.cancel()
     eventWakeTask = nil
     pendingWake = false
+    pendingApprovalWake = false
     return tasks
   }
 

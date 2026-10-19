@@ -79,6 +79,34 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testApprovalWakeDuringActiveResolutionRunsAgainAfterExit() async throws {
+        let host = PlatformToolHostStub(mode: .idle)
+        let approvalHandler = GatedPlatformToolApprovalHandler()
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: CountingPlatformToolExecutor(),
+            approvalHandler: approvalHandler,
+            workerID: "worker-1",
+            activityWindow: .zero
+        )
+
+        await worker.configure(ownerUserID: "user-1")
+        for _ in 0..<100 {
+            if await approvalHandler.callCount() == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await worker.wake()
+        await approvalHandler.resumeFirstCall()
+        for _ in 0..<100 {
+            if await approvalHandler.callCount() == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let calls = await approvalHandler.callCount()
+        XCTAssertEqual(calls, 2)
+        await worker.reset()
+    }
+
     func testTaskWriteSessionEnforcesOwnedPathsAndCannotDowngradeScope() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("task-write-ownership-\(UUID().uuidString)", isDirectory: true)
@@ -1048,6 +1076,28 @@ private actor BlockingPlatformToolApprovalHandler: NativeLocalAgentToolApprovalH
     }
 
     func didStart() -> Bool { started }
+}
+
+private actor GatedPlatformToolApprovalHandler: NativeLocalAgentToolApprovalHandling {
+    private var calls = 0
+    private var firstCallContinuation: CheckedContinuation<Void, Never>?
+
+    func resolveNextPending(ownerUserID: String) async throws -> Bool {
+        calls += 1
+        if calls == 1 {
+            await withCheckedContinuation { continuation in
+                firstCallContinuation = continuation
+            }
+        }
+        return false
+    }
+
+    func callCount() -> Int { calls }
+
+    func resumeFirstCall() {
+        firstCallContinuation?.resume()
+        firstCallContinuation = nil
+    }
 }
 
 private actor RecordingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {

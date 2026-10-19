@@ -539,7 +539,7 @@ session allowlist key 绑定账号、设备、workspace、project root、cwd、�
 
 ### 8.5 worker 恢复与测试证据
 
-worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`wake()`、新的 tool batch event 和启动恢复都会再次触发 approval resolution。审批等待独立于已批准 claim 的执行，不得阻塞其他可运行任务。空闲退避从 250ms 增至最多 2s，同时受 activity window 与 generation 限制。
+worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`wake()`、新的 tool batch event 和启动恢复都会再次触发 approval resolution。运行中的 approval reconciliation 会合并新的 wake，并在退出后补跑一次，不能丢失临界事件。审批等待独立于已批准 claim 的执行，不得阻塞其他可运行任务。空闲退避从 250ms 增至最多 2s，同时受 activity window 与 generation 限制。
 
 当前分层进度：
 
@@ -551,7 +551,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 - 全局浮层、完整审批页与桌面宠物只展示当前 approval 提供的决定，处理中统一禁用；Native service 对 typed decision 再做一次 allowlist 校验；
 - `NativeLocalAgentToolApprovalHandler` 已通过独立 Port 区分 Rust Host durable invocation、任务执行上下文与 Human presentation queue，并验证 Human 结果使用原 invocation identity/version 回写 Host；
 - ViewModel 继续持有实际 snapshot/event stream Task、action generation、错误与 loading 展示；
-- Rust Host durable approval 与 Human presentation queue 的启动/失败恢复协调仍需继续提取，完成前不放行 React。
+- Rust Host durable approval 与 Human presentation queue 的失败恢复协调仍需继续提取，完成前不放行 React。
 
 测试：
 
