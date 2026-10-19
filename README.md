@@ -243,7 +243,7 @@ ChatOS is under active development. Keep these constraints in mind:
 
 - [Installation and deployment guide](./INSTALL_GUIDE.zh-CN.md)
 - [Native client architecture and plans](./clients/macos/docs/README.md)
-- [Windows client implementation and acceptance docs](./clients/windows/docs/01-windows-client-implementation-plan.md)
+- [macOS refactor and Windows React implementation plan](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)
 - [Plugin overview](./plugins/README.md)
 - [SDK usage](./SDK_USAGE.md)
 - [Third-party notices](./THIRD_PARTY_NOTICES.md)

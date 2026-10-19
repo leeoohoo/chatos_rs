@@ -161,4 +161,5 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 如需连接其他环境，可使用 `-ApiBaseUrl` 和 `-LocalConnectorCloudBaseUrl` 覆盖。
 
-详细方案见 [docs/01-windows-client-implementation-plan.md](docs/01-windows-client-implementation-plan.md)。macOS 端后续修复和更新的 Windows 同步队列见 [docs/10-macos-change-sync-register.md](docs/10-macos-change-sync-register.md)。
+> 此 C# 客户端已进入待删除状态，不再作为产品、架构或交互参考。新的实施路线见
+> [macOS 深度重构与 Windows React 客户端实施方案](../windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)。

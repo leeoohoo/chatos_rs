@@ -34,7 +34,7 @@
 15. [设置页 UI 架构](./15-settings-ui-architecture.md)
 16. [界面本地化架构](./16-interface-localization-architecture.md)
 17. [全局效率工具实施方案](./17-global-productivity-tools-implementation-plan.md)
-18. [macOS / Windows 跨平台变更登记](./18-cross-platform-change-register.md)
+18. [macOS 深度重构与 Windows React 客户端实施方案](../../windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)
 19. [微信小程序伴随控制端实施方案](./19-wechat-mini-program-companion-implementation-plan.md)
 20. [macOS 客户端性能问题与修复计划](./20-performance-remediation-plan.md)
 21. [macOS 客户端最终性能优化方案](./21-performance-optimization-final-plan.md)

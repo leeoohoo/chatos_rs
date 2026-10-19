@@ -243,7 +243,7 @@ ChatOS 仍在快速开发中，需要留意：
 
 - [安装与部署指南](./INSTALL_GUIDE.zh-CN.md)
 - [macOS 客户端架构与实施文档](./clients/macos/docs/README.md)
-- [Windows 客户端实施与验收文档](./clients/windows/docs/01-windows-client-implementation-plan.md)
+- [macOS 深度重构与 Windows React 客户端实施方案](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)
 - [插件总览](./plugins/README.md)
 - [SDK 使用说明](./SDK_USAGE.md)
 - [第三方组件说明](./THIRD_PARTY_NOTICES.md)
