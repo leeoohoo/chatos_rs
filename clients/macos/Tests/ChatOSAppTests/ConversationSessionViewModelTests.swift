@@ -406,6 +406,35 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.taskGraphAvailabilityState.activeTokens.isEmpty)
     }
 
+    func testDeactivateRejectsLateViewportMutationPresentation() async throws {
+        let historyStore = DelayedViewportHistoryStore()
+        await historyStore.seedUnreadTurn()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: historyStore,
+            localAgentRuntimeReady: false
+        )
+        try await waitUntil {
+            viewModel.unreadNewerCount == 1
+        }
+        viewModel.activate()
+        viewModel.markNewerContentRead()
+        try await waitUntil {
+            await historyStore.hasDelayedMarkRead()
+        }
+
+        viewModel.deactivate()
+        await historyStore.resumeMarkRead()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.unreadNewerCount, 1)
+        XCTAssertTrue(viewModel.viewportMutationState.activeTokens.isEmpty)
+
+        await viewModel.refreshSnapshot()
+        XCTAssertEqual(viewModel.unreadNewerCount, 0)
+    }
+
     func testDeactivateStopsRealtimeSubscription() async throws {
         let realtimeService = ConversationRealtimeServiceStub()
         let viewModel = ConversationSessionViewModel(
@@ -753,6 +782,72 @@ final class ConversationSessionViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTFail("Timed out waiting for asynchronous conversation state")
+    }
+}
+
+private actor DelayedViewportHistoryStore: ConversationHistoryStoring {
+    private let base = ConversationHistoryStore()
+    private var markReadContinuation: CheckedContinuation<Void, Never>?
+
+    func seedUnreadTurn() async {
+        await base.applyRealtime(
+            RealtimeTurnEvent(
+                eventID: "viewport-event-1",
+                eventSequence: 1,
+                turn: ConversationRemoteServiceStub.turn(revision: 1)
+            ),
+            userIsReadingOlderContent: true
+        )
+    }
+
+    func hasDelayedMarkRead() -> Bool {
+        markReadContinuation != nil
+    }
+
+    func resumeMarkRead() {
+        markReadContinuation?.resume()
+        markReadContinuation = nil
+    }
+
+    func mergeCachedTurns(_ turns: [ConversationTurn], sessionID: String) async {
+        await base.mergeCachedTurns(turns, sessionID: sessionID)
+    }
+
+    func mergePage(
+        _ page: HistoryPage,
+        sessionID: String,
+        origin: ConversationHistoryPageOrigin
+    ) async {
+        await base.mergePage(page, sessionID: sessionID, origin: origin)
+    }
+
+    func applyRealtime(
+        _ event: RealtimeTurnEvent,
+        userIsReadingOlderContent: Bool
+    ) async {
+        await base.applyRealtime(
+            event,
+            userIsReadingOlderContent: userIsReadingOlderContent
+        )
+    }
+
+    func setViewportAnchor(_ anchor: ViewportAnchor?, sessionID: String) async {
+        await base.setViewportAnchor(anchor, sessionID: sessionID)
+    }
+
+    func markNewerContentRead(sessionID: String) async {
+        await withCheckedContinuation { continuation in
+            markReadContinuation = continuation
+        }
+        await base.markNewerContentRead(sessionID: sessionID)
+    }
+
+    func discardOptimisticTurn(sessionID: String, turnID: String) async {
+        await base.discardOptimisticTurn(sessionID: sessionID, turnID: turnID)
+    }
+
+    func snapshot(sessionID: String) async -> ConversationHistorySnapshot {
+        await base.snapshot(sessionID: sessionID)
     }
 }
 

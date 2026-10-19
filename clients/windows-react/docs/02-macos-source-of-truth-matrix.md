@@ -152,7 +152,7 @@ UI：
 - ViewModel 只应用合并后的 snapshot，并继续分别维护 visible refresh 与 older loading；
 - `ConversationViewportUseCase` 已统一底部锚点、未读清零和变更后的 snapshot 返回；底部状态是否发布的判定也已从 SwiftUI 移入 Core；
 - `ConversationLatestRefreshState` 已固定 250ms debounce、silent/visible 优先级、in-flight 合并和单次 pending follow-up；
-- ViewModel 继续用 generation 阻止迟到的 viewport Task 覆盖新 UI 状态，并持有实际 Task 的创建、取消和 loading 展示；因此尚未放行 React。
+- `ConversationViewportMutationState` 已把 timeline anchor 与 mark-read 建模为两条独立 latest-wins lane；ViewModel 持有对应 Task，Conversation 停用会统一取消并失效 token，迟到的本地 snapshot 不得写回不可见页面，而 History Store 真值仍可在下次 snapshot 中恢复；因此尚未放行 React。
 
 ### 4.2 发送状态机
 

@@ -89,7 +89,10 @@ final class ConversationSessionViewModel: ObservableObject {
     private var olderHistoryLoadTask: Task<Void, Never>?
     private var latestRefreshState = ConversationLatestRefreshState()
     private var historyRetryAttempt = 0
-    private var viewportUpdateGeneration: Int64 = 0
+    private var viewportMutationTasks: [
+        ConversationViewportMutationKind: Task<Void, Never>
+    ] = [:]
+    var viewportMutationState = ConversationViewportMutationState()
     private var taskGraphAvailabilityTasks: [String: Task<Void, Never>] = [:]
     private var taskGraphAvailabilityRevisions: [String: Int64] = [:]
     var taskGraphAvailabilityState = ConversationTaskGraphAvailabilityState()
@@ -177,6 +180,7 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptActionTasks.values.forEach { $0.cancel() }
         runtimeSettingsMutationTask?.cancel()
         runtimeRecoveryTask?.cancel()
+        viewportMutationTasks.values.forEach { $0.cancel() }
         sendTask?.cancel()
         sendRecoveryTask?.cancel()
         attachmentFileLoadTasks.values.forEach { $0.cancel() }
@@ -219,6 +223,7 @@ final class ConversationSessionViewModel: ObservableObject {
         olderHistoryLoadTask = nil
         isLoadingOlder = false
         inFlightOlderCursor = nil
+        cancelViewportMutations()
         cancelTaskGraphAvailabilityRequests()
     }
 
@@ -454,10 +459,20 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func markNewerContentRead() {
-        Task {
-            applyHistorySnapshot(
-                await viewportUseCase.markNewerContentRead(sessionID: sessionID)
+        guard let activation = activationState.activeSession else { return }
+        let kind = ConversationViewportMutationKind.markNewerContentRead
+        viewportMutationTasks[kind]?.cancel()
+        let token = viewportMutationState.begin(kind)
+        viewportMutationTasks[kind] = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await self.viewportUseCase.markNewerContentRead(
+                sessionID: self.sessionID
             )
+            guard !Task.isCancelled,
+                  self.activationState.accepts(activation),
+                  self.viewportMutationState.accepts(token) else { return }
+            self.applyHistorySnapshot(snapshot)
+            self.finishViewportMutation(token)
         }
     }
 
@@ -497,18 +512,35 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func setTimelinePinnedToBottom(_ isPinned: Bool) {
-        viewportUpdateGeneration += 1
-        let generation = viewportUpdateGeneration
+        guard let activation = activationState.activeSession else { return }
+        let kind = ConversationViewportMutationKind.timelineAnchor
         let latestTurnID = turns.last?.id
-        Task {
-            let snapshot = await viewportUseCase.updateTimelineAnchor(
-                sessionID: sessionID,
+        viewportMutationTasks[kind]?.cancel()
+        let token = viewportMutationState.begin(kind)
+        viewportMutationTasks[kind] = Task { [weak self] in
+            guard let self else { return }
+            let snapshot = await self.viewportUseCase.updateTimelineAnchor(
+                sessionID: self.sessionID,
                 latestTurnID: latestTurnID,
                 isPinnedToBottom: isPinned
             )
-            guard generation == viewportUpdateGeneration else { return }
-            applyHistorySnapshot(snapshot)
+            guard !Task.isCancelled,
+                  self.activationState.accepts(activation),
+                  self.viewportMutationState.accepts(token) else { return }
+            self.applyHistorySnapshot(snapshot)
+            self.finishViewportMutation(token)
         }
+    }
+
+    private func finishViewportMutation(_ token: ConversationViewportMutationToken) {
+        guard viewportMutationState.finish(token) else { return }
+        viewportMutationTasks[token.kind] = nil
+    }
+
+    private func cancelViewportMutations() {
+        viewportMutationState.reset()
+        viewportMutationTasks.values.forEach { $0.cancel() }
+        viewportMutationTasks.removeAll()
     }
 
     func hasTaskGraph(for turn: ConversationTurn) -> Bool {
