@@ -2,6 +2,34 @@ import ChatOSCore
 import ChatOSConnector
 import Foundation
 
+private typealias ConversationRuntimeSettingsLoadRequest = (
+    token: ConversationRuntimeSettingsLoadToken,
+    task: Task<(ConversationRuntimeSettings, [ConversationModelOption]), Error>
+)
+
+private func awaitRuntimeSettingsLoad(
+    _ task: Task<(ConversationRuntimeSettings, [ConversationModelOption]), Error>
+) async -> Result<(ConversationRuntimeSettings, [ConversationModelOption]), Error> {
+    do {
+        let value = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        try Task.checkCancellation()
+        return .success(value)
+    } catch {
+        return .failure(error)
+    }
+}
+
+private func awaitRuntimeSettingsLoadRequest(
+    _ request: ConversationRuntimeSettingsLoadRequest?
+) async -> Result<(ConversationRuntimeSettings, [ConversationModelOption]), Error>? {
+    guard let request else { return nil }
+    return await awaitRuntimeSettingsLoad(request.task)
+}
+
 @MainActor
 final class ConversationComposerState: ObservableObject {
     @Published var draft = ""
@@ -174,12 +202,44 @@ final class ConversationSessionViewModel: ObservableObject {
 
         let bootstrapToken = bootstrapState.begin()
         let shouldLoadRuntimeServices = localAgentRuntimeReady
+        let settingsRequest = shouldLoadRuntimeServices ? beginRuntimeSettingsLoad() : nil
+        let promptRequest = shouldLoadRuntimeServices ? beginAskUserPromptRefresh() : nil
+        let historyStore = historyStore
+        let sessionID = sessionID
         bootstrapTask = Task { [weak self] in
-            await self?.bootstrap(
-                initialTurns: initialTurns,
-                shouldLoadRuntimeServices: shouldLoadRuntimeServices,
-                token: bootstrapToken
-            )
+            async let settingsResult = awaitRuntimeSettingsLoadRequest(settingsRequest)
+            async let promptResult = awaitAskUserPromptRefreshRequest(promptRequest)
+            let (resolvedSettings, resolvedPrompts) = await (settingsResult, promptResult)
+
+            if let self {
+                if let settingsRequest, let resolvedSettings {
+                    self.finishRuntimeSettingsLoad(
+                        resolvedSettings,
+                        token: settingsRequest.token,
+                        presentErrors: false
+                    )
+                }
+                if let promptRequest, let resolvedPrompts {
+                    self.finishAskUserPromptRefresh(
+                        resolvedPrompts,
+                        token: promptRequest.token
+                    )
+                }
+            }
+
+            await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
+            let snapshot = await historyStore.snapshot(sessionID: sessionID)
+            guard let self else { return }
+            self.applyHistorySnapshot(snapshot)
+            let canFinish = self.bootstrapState.finish(bootstrapToken)
+            self.bootstrapTask = nil
+            if canFinish,
+               self.isActive,
+               self.isLocalAgentRuntimeReady,
+               let activation = self.activationState.activeSession {
+                self.refreshLatest()
+                self.startRealtime(activation: activation)
+            }
         }
     }
 
@@ -268,11 +328,27 @@ final class ConversationSessionViewModel: ObservableObject {
         runtimeSettingsError = nil
         runtimeRecoveryTask?.cancel()
         let token = runtimeRecoveryState.begin()
+        let settingsRequest = beginRuntimeSettingsLoad()
+        let promptRequest = beginAskUserPromptRefresh()
         runtimeRecoveryTask = Task { [weak self] in
+            async let settingsResult = awaitRuntimeSettingsLoadRequest(settingsRequest)
+            async let promptResult = awaitAskUserPromptRefreshRequest(promptRequest)
+            let (resolvedSettings, resolvedPrompts) = await (settingsResult, promptResult)
+
             guard let self else { return }
-            async let settings: Void = loadRuntimeSettings()
-            async let prompts: Void = refreshAskUserPrompts()
-            _ = await (settings, prompts)
+            if let settingsRequest, let resolvedSettings {
+                self.finishRuntimeSettingsLoad(
+                    resolvedSettings,
+                    token: settingsRequest.token,
+                    presentErrors: true
+                )
+            }
+            if let promptRequest, let resolvedPrompts {
+                self.finishAskUserPromptRefresh(
+                    resolvedPrompts,
+                    token: promptRequest.token
+                )
+            }
             guard !Task.isCancelled,
                   self.runtimeRecoveryState.accepts(token) else { return }
             guard self.runtimeSettingsError == nil,
@@ -690,29 +766,6 @@ final class ConversationSessionViewModel: ObservableObject {
         }
     }
 
-    private func bootstrap(
-        initialTurns: [ConversationTurn],
-        shouldLoadRuntimeServices: Bool,
-        token: ConversationBootstrapToken
-    ) async {
-        if shouldLoadRuntimeServices, isLocalAgentRuntimeReady {
-            async let runtimeSettings: Void = loadRuntimeSettings(presentErrors: false)
-            async let prompts: Void = refreshAskUserPrompts()
-            _ = await (runtimeSettings, prompts)
-        }
-        await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
-        await refreshSnapshot()
-        let canFinish = bootstrapState.finish(token)
-        bootstrapTask = nil
-        if canFinish,
-           isActive,
-           isLocalAgentRuntimeReady,
-           let activation = activationState.activeSession {
-            refreshLatest()
-            startRealtime(activation: activation)
-        }
-    }
-
     var selectedModelDisplayName: String {
         if let selectedModelID,
            let selected = availableModels.first(where: { $0.id == selectedModelID }) {
@@ -889,23 +942,35 @@ final class ConversationSessionViewModel: ObservableObject {
         isUpdatingRuntimeSettings = false
     }
 
-    private func loadRuntimeSettings(presentErrors: Bool = true) async {
-        guard let runtimeSettingsService else { return }
+    private func beginRuntimeSettingsLoad() -> ConversationRuntimeSettingsLoadRequest? {
+        guard let runtimeSettingsService else { return nil }
         let token = runtimeSettingsLoadState.begin()
-        do {
+        let sessionID = sessionID
+        let task = Task {
             async let settings = runtimeSettingsService.fetchSettings(sessionID: sessionID)
             async let models = runtimeSettingsService.fetchAvailableModels()
-            let (resolvedSettings, resolvedModels) = try await (settings, models)
+            return try await (settings, models)
+        }
+        return (token, task)
+    }
+
+    private func finishRuntimeSettingsLoad(
+        _ result: Result<(ConversationRuntimeSettings, [ConversationModelOption]), Error>,
+        token: ConversationRuntimeSettingsLoadToken,
+        presentErrors: Bool
+    ) {
+        switch result {
+        case let .success((resolvedSettings, resolvedModels)):
             guard runtimeSettingsLoadState.accepts(token) else { return }
             availableModels = resolvedModels
             applyRuntimeSettings(resolvedSettings)
             runtimeSettingsError = nil
-        } catch NativeLocalAgentConversationRuntimeSettingsError.notConfigured {
+        case let .failure(error):
             guard runtimeSettingsLoadState.accepts(token) else { return }
-            runtimeSettingsError = nil
-        } catch {
-            guard runtimeSettingsLoadState.accepts(token) else { return }
-            if presentErrors {
+            if let runtimeError = error as? NativeLocalAgentConversationRuntimeSettingsError,
+               case .notConfigured = runtimeError {
+                runtimeSettingsError = nil
+            } else if presentErrors {
                 runtimeSettingsError = error.localizedDescription
             }
         }

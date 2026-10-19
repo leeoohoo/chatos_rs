@@ -404,6 +404,8 @@ Conversation older-history 分页与 viewport/unread mutation 也已采用相同
 
 Conversation 激活触发的 Ask User refresh 已拆分为请求句柄、无 ViewModel 等待与主线程 token 验收三段；Prompt Host 请求忽略取消时不再阻止 Conversation 释放。
 
+Conversation bootstrap 与 runtime-ready recovery 现复用 runtime settings/Prompt 请求句柄并并发等待；模型或 Prompt Host 阻塞时不再整段持有 ViewModel，结果仅在对应 load/recovery token 仍有效时应用。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

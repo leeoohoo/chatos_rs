@@ -642,6 +642,54 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.bootstrapState.activeToken)
     }
 
+    func testDelayedBootstrapRuntimeLoadDoesNotRetainConversation() async throws {
+        let runtimeSettings = DelayedRuntimeSettingsServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            runtimeSettingsService: runtimeSettings
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 2
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await runtimeSettings.resumeRequests()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
+    func testDelayedReadyRecoveryDoesNotRetainConversation() async throws {
+        let runtimeSettings = DelayedRuntimeSettingsServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            localAgentRuntimeReady: false,
+            runtimeSettingsService: runtimeSettings
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.bootstrapState.activeToken == nil
+        }
+
+        viewModel?.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 2
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await runtimeSettings.resumeRequests()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     func testRuntimeUnavailableRejectsLateReadyRecovery() async throws {
         let remoteService = ConversationRemoteServiceStub()
         let runtimeSettings = DelayedRuntimeSettingsServiceStub()

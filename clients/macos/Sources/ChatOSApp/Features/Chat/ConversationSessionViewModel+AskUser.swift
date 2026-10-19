@@ -22,6 +22,13 @@ func awaitAskUserPromptRefresh(
     }
 }
 
+func awaitAskUserPromptRefreshRequest(
+    _ request: AskUserPromptRefreshRequest?
+) async -> Result<[AskUserPrompt], Error>? {
+    guard let request else { return nil }
+    return await awaitAskUserPromptRefresh(request.task)
+}
+
 extension ConversationSessionViewModel {
     func prompts(for turnID: String) -> [AskUserPrompt] {
         ConversationAskUserPromptUseCase.prompts(
