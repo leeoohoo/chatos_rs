@@ -333,6 +333,28 @@ final class ConversationSessionViewModelTests: XCTestCase {
         }
     }
 
+    func testDeactivateRejectsLateHistoryRefreshPresentation() async throws {
+        let remoteService = ConversationRemoteServiceStub()
+        await remoteService.setFetchDelay(milliseconds: 300)
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            remoteService: remoteService
+        )
+        viewModel.activate()
+        try await waitUntil {
+            await remoteService.requestCount() == 1
+        }
+
+        viewModel.deactivate()
+        try await Task.sleep(for: .milliseconds(350))
+
+        XCTAssertTrue(viewModel.turns.isEmpty)
+        XCTAssertNil(viewModel.historyError)
+        XCTAssertFalse(viewModel.isRefreshing)
+    }
+
     func testRuntimeBecomingReadyReloadsModelsAfterInitialBootstrapFailure() async throws {
         let runtimeSettings = RecoveringRuntimeSettingsServiceStub()
         let viewModel = ConversationSessionViewModel(

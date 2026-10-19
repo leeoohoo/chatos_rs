@@ -197,6 +197,7 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
+        isRefreshing = false
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         taskGraphAvailabilityTasks.removeAll()
     }
@@ -255,7 +256,10 @@ final class ConversationSessionViewModel: ObservableObject {
         presentation: ConversationHistoryRefreshPresentation,
         debounce: Bool
     ) {
-        guard isActive, isLocalAgentRuntimeReady, let historyUseCase else { return }
+        guard isActive,
+              isLocalAgentRuntimeReady,
+              let activation = activationState.activeSession,
+              let historyUseCase else { return }
 
         if debounce {
             let scheduledPresentation = latestRefreshState.scheduleDebounced(presentation)
@@ -266,12 +270,16 @@ final class ConversationSessionViewModel: ObservableObject {
                 } catch {
                     return
                 }
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      self.activationState.accepts(activation),
+                      self.isLocalAgentRuntimeReady else { return }
                 self.latestRefreshDebounceTask = nil
                 self.latestRefreshState.consumeDebounced()
                 self.performLatestRefresh(
                     using: historyUseCase,
-                    presentation: scheduledPresentation
+                    presentation: scheduledPresentation,
+                    activation: activation
                 )
             }
             return
@@ -280,14 +288,20 @@ final class ConversationSessionViewModel: ObservableObject {
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshState.consumeDebounced()
-        performLatestRefresh(using: historyUseCase, presentation: presentation)
+        performLatestRefresh(
+            using: historyUseCase,
+            presentation: presentation,
+            activation: activation
+        )
     }
 
     private func performLatestRefresh(
         using historyUseCase: ConversationHistoryUseCase,
-        presentation: ConversationHistoryRefreshPresentation
+        presentation: ConversationHistoryRefreshPresentation,
+        activation: ConversationSessionActivation
     ) {
-        guard latestRefreshState.beginOrQueue(presentation) else { return }
+        guard activationState.accepts(activation),
+              latestRefreshState.beginOrQueue(presentation) else { return }
 
         requestGeneration += 1
         let generation = requestGeneration
@@ -302,20 +316,25 @@ final class ConversationSessionViewModel: ObservableObject {
                     sessionID: sessionID,
                     requestGeneration: generation
                 )
-                applyHistorySnapshot(snapshot)
-                if historyError != nil {
-                    historyError = nil
+                if activationState.accepts(activation), isLocalAgentRuntimeReady {
+                    applyHistorySnapshot(snapshot)
+                    if historyError != nil {
+                        historyError = nil
+                    }
+                    historyRetryAttempt = 0
+                    historyRetryTask?.cancel()
+                    historyRetryTask = nil
                 }
-                historyRetryAttempt = 0
-                historyRetryTask?.cancel()
-                historyRetryTask = nil
             } catch {
-                if historyError != error.localizedDescription {
-                    historyError = error.localizedDescription
+                if activationState.accepts(activation), isLocalAgentRuntimeReady {
+                    if historyError != error.localizedDescription {
+                        historyError = error.localizedDescription
+                    }
+                    scheduleHistoryRetry()
                 }
-                scheduleHistoryRetry()
             }
-            if presentation == .visible {
+            if presentation == .visible,
+               activationState.accepts(activation) {
                 isRefreshing = false
             }
             if let pending = latestRefreshState.complete() {

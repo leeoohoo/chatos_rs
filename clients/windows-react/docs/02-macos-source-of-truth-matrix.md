@@ -189,6 +189,7 @@ sendDraft
 - ready 后重新加载 runtime settings、Ask User、历史并启动 realtime；
 - unavailable 时取消 realtime、retry、debounce 等任务，并复位 loading 状态；
 - 每次 Conversation 可见激活都具有独立 activation session；停用后旧 realtime 事件、错误与结束回调不能写回或影响下一次激活；
+- latest refresh 的 debounce 和 in-flight UI 写回都绑定 activation；停用后迟到快照仍可完成 History Store 合并，但不得修改当前 UI、错误、retry 或 loading；新 activation 的合并刷新仍由现有 pending 规则接续；
 - ready 恢复异步加载期间若 runtime 再次 unavailable，迟到恢复不得重新触发历史刷新或 realtime；
 - realtime 事件经 history store 合并，不允许组件自行拼接出另一套事实；
 - 历史分页游标是 ordinal，非法游标必须报错；limit 被限制在 1–100；
