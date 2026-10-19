@@ -191,34 +191,26 @@ extension MessageTaskWorkspaceViewModel {
             )
             guard self.selectedTask?.id == requestedTaskID else { return }
             taskDetail = detail
-
-            guard let runID = detail.lastRunID else {
+            let update = try await inspectorRefreshUseCase.refreshSection(
+                inspectorSection.applicationSection,
+                messageID: target.messageID,
+                lookup: target.lookup,
+                task: detail
+            )
+            guard self.selectedTask?.id == requestedTaskID else { return }
+            switch update {
+            case .preserve:
+                break
+            case .clearRun:
                 runDetail = nil
                 loadedModelOutputRunID = nil
-                return
-            }
-            switch inspectorSection {
-            case .process:
-                break
-            case .detail:
-                let run = try await runUseCase.loadModelOutput(
-                    messageID: target.messageID,
-                    runID: runID,
-                    lookup: target.lookup
-                )
-                guard self.selectedTask?.id == requestedTaskID else { return }
+            case let .modelOutput(task, runID):
                 loadedModelOutputRunID = runID
-                taskDetail = detail.merging(run: run.run)
-            case .run:
-                let run = try await runUseCase.loadLatestRun(
-                    messageID: target.messageID,
-                    runID: runID,
-                    lookup: target.lookup
-                )
-                guard self.selectedTask?.id == requestedTaskID else { return }
-                runDetail = run
-                loadedModelOutputRunID = runID
-                taskDetail = run.task.merging(run: run.run)
+                taskDetail = task
+            case let .run(task, detail):
+                runDetail = detail
+                loadedModelOutputRunID = detail.run.id
+                taskDetail = task
             }
         } catch {
             guard self.selectedTask?.id == requestedTaskID else { return }
@@ -288,6 +280,16 @@ extension MessageTaskWorkspaceViewModel {
                     return
                 }
             }
+        }
+    }
+}
+
+private extension MessageTaskWorkspaceViewModel.InspectorSection {
+    var applicationSection: MessageTaskInspectorSection {
+        switch self {
+        case .detail: .detail
+        case .process: .process
+        case .run: .run
         }
     }
 }
