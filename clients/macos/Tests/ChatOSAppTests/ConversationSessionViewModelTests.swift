@@ -491,6 +491,40 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testNewReadyRecoveryRejectsOlderLateCompletion() async throws {
+        let remoteService = ConversationRemoteServiceStub()
+        let runtimeSettings = DelayedRuntimeSettingsServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            localAgentRuntimeReady: false,
+            remoteService: remoteService,
+            runtimeSettingsService: runtimeSettings
+        )
+        try await Task.sleep(for: .milliseconds(50))
+        viewModel.activate()
+
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 2
+        }
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await waitUntil {
+            await runtimeSettings.pendingRequestCount() >= 4
+        }
+
+        await runtimeSettings.resumeRequests()
+        try await waitUntil {
+            await remoteService.requestCount() == 1
+        }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let requestCount = await remoteService.requestCount()
+        XCTAssertEqual(requestCount, 1)
+        XCTAssertNil(viewModel.runtimeRecoveryState.activeToken)
+    }
+
     func testNewRuntimeSettingsMutationRejectsOlderModelResponse() async throws {
         let runtimeSettings = RacingRuntimeSettingsServiceStub()
         let viewModel = ConversationSessionViewModel(

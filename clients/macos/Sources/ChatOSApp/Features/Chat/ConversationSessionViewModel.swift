@@ -97,6 +97,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private var runtimeSettingsLoadGeneration: UInt64 = 0
     private var runtimeSettingsMutationTask: Task<Void, Never>?
     var runtimeSettingsMutationState = ConversationRuntimeSettingsMutationState()
+    private var runtimeRecoveryTask: Task<Void, Never>?
+    var runtimeRecoveryState = ConversationRuntimeRecoveryState()
     var sendTask: Task<Void, Never>?
     var sendRecoveryTask: Task<Void, Never>?
     var sendLifecycleState = ConversationSendLifecycleState()
@@ -173,6 +175,7 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
         runtimeSettingsMutationTask?.cancel()
+        runtimeRecoveryTask?.cancel()
         sendTask?.cancel()
         sendRecoveryTask?.cancel()
         attachmentFileLoadTasks.values.forEach { $0.cancel() }
@@ -226,22 +229,33 @@ final class ConversationSessionViewModel: ObservableObject {
         historyRetryTask = nil
         historyRetryAttempt = 0
         runtimeSettingsError = nil
-        Task { [weak self] in
+        runtimeRecoveryTask?.cancel()
+        let token = runtimeRecoveryState.begin()
+        runtimeRecoveryTask = Task { [weak self] in
             guard let self else { return }
             async let settings: Void = loadRuntimeSettings()
             async let prompts: Void = refreshAskUserPrompts()
             _ = await (settings, prompts)
+            guard !Task.isCancelled,
+                  self.runtimeRecoveryState.accepts(token) else { return }
             guard self.runtimeSettingsError == nil,
                   self.isActive,
                   self.isLocalAgentRuntimeReady,
-                  let activation = self.activationState.activeSession else { return }
+                  let activation = self.activationState.activeSession else {
+                self.finishRuntimeRecovery(token)
+                return
+            }
             self.refreshLatest()
             self.startRealtime(activation: activation)
+            self.finishRuntimeRecovery(token)
         }
     }
 
     func localAgentRuntimeDidBecomeUnavailable() {
         isLocalAgentRuntimeReady = false
+        runtimeRecoveryState.reset()
+        runtimeRecoveryTask?.cancel()
+        runtimeRecoveryTask = nil
         cancelActiveSendForRuntimeUnavailable()
         realtimeTask?.cancel()
         realtimeTask = nil
@@ -269,6 +283,11 @@ final class ConversationSessionViewModel: ObservableObject {
         inFlightOlderCursor = nil
         historyError = nil
         runtimeSettingsError = nil
+    }
+
+    private func finishRuntimeRecovery(_ token: ConversationRuntimeRecoveryToken) {
+        guard runtimeRecoveryState.finish(token) else { return }
+        runtimeRecoveryTask = nil
     }
 
     func refreshLatestSilently() {
