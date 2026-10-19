@@ -133,14 +133,12 @@ extension AppModel {
         showMainWindow()
 
         if let route = activity?.route, let targetConversation {
-            Task { [weak targetConversation] in
-                await targetConversation?.focusAfterRefreshingAskUserPrompts(
-                    turnID: route.turnID,
-                    promptID: route.promptID,
-                    taskID: route.taskID,
-                    runID: route.runID
-                )
-            }
+            targetConversation.focusAfterRefreshingAskUserPrompts(
+                turnID: route.turnID,
+                promptID: route.promptID,
+                taskID: route.taskID,
+                runID: route.runID
+            )
         }
     }
 

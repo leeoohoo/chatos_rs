@@ -410,6 +410,8 @@ Conversation realtime Task 不再在整个 stream 生命周期内强持有 ViewM
 
 Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、无 ViewModel 等待与 action/refresh token 联合验收；底层 Prompt 请求忽略取消时不再留住 Conversation，也不能以迟到快照结束新操作。
 
+全局活动定位 Ask User 前的 Prompt refresh 已改为 Conversation 显式持有的 latest-wins focus Task 与 typed token；后一次定位会淘汰前一次，Host 忽略取消时也不会因实例 async 方法而留住 Conversation。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；

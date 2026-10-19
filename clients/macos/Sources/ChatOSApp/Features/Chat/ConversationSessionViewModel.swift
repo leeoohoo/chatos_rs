@@ -144,6 +144,8 @@ final class ConversationSessionViewModel: ObservableObject {
     private var askUserPromptActivationTask: Task<Void, Never>?
     var askUserPromptRefreshTask: Task<[AskUserPrompt], Error>?
     var askUserPromptActionTasks: [String: Task<Void, Never>] = [:]
+    private var focusAfterPromptRefreshTask: Task<Void, Never>?
+    var focusRefreshState = ConversationFocusRefreshState()
     var activationState = ConversationSessionActivationState()
     private var isActive = false
     private(set) var isLocalAgentRuntimeReady: Bool
@@ -254,6 +256,7 @@ final class ConversationSessionViewModel: ObservableObject {
         askUserPromptActivationTask?.cancel()
         askUserPromptRefreshTask?.cancel()
         askUserPromptActionTasks.values.forEach { $0.cancel() }
+        focusAfterPromptRefreshTask?.cancel()
         runtimeSettingsMutationTask?.cancel()
         runtimeRecoveryTask?.cancel()
         viewportMutationTasks.values.forEach { $0.cancel() }
@@ -629,12 +632,36 @@ final class ConversationSessionViewModel: ObservableObject {
         promptID: String?,
         taskID: String?,
         runID: String?
-    ) async {
-        if promptID != nil {
-            await refreshAskUserPrompts()
+    ) {
+        focusAfterPromptRefreshTask?.cancel()
+        let token = focusRefreshState.begin()
+        guard promptID != nil,
+              let promptRequest = beginAskUserPromptRefresh() else {
+            focus(turnID: turnID, promptID: promptID, taskID: taskID, runID: runID)
+            finishFocusRefresh(token)
+            return
         }
-        guard !Task.isCancelled else { return }
-        focus(turnID: turnID, promptID: promptID, taskID: taskID, runID: runID)
+
+        focusAfterPromptRefreshTask = Task { [weak self] in
+            let result = await awaitAskUserPromptRefresh(promptRequest.task)
+            guard !Task.isCancelled,
+                  let self,
+                  self.focusRefreshState.accepts(token) else { return }
+            self.finishAskUserPromptRefresh(result, token: promptRequest.token)
+            guard self.focusRefreshState.accepts(token) else { return }
+            self.focus(
+                turnID: turnID,
+                promptID: promptID,
+                taskID: taskID,
+                runID: runID
+            )
+            self.finishFocusRefresh(token)
+        }
+    }
+
+    private func finishFocusRefresh(_ token: ConversationFocusRefreshToken) {
+        guard focusRefreshState.finish(token) else { return }
+        focusAfterPromptRefreshTask = nil
     }
 
     func consumeFocusRequest(id: UUID) {

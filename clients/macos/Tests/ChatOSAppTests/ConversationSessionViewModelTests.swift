@@ -986,26 +986,97 @@ final class ConversationSessionViewModelTests: XCTestCase {
             viewModel.askUserPrompts.first?.status == .pending
         }
 
-        let focusTask = Task {
-            await viewModel.focusAfterRefreshingAskUserPrompts(
-                turnID: "turn-1",
-                promptID: "prompt-1",
-                taskID: "task-1",
-                runID: "run-1"
-            )
-        }
+        viewModel.focusAfterRefreshingAskUserPrompts(
+            turnID: "turn-1",
+            promptID: "prompt-1",
+            taskID: "task-1",
+            runID: "run-1"
+        )
         try await waitUntil {
             await promptService.hasDelayedFetch()
         }
         XCTAssertNil(viewModel.focusRequest)
 
         await promptService.resumeDelayedFetch()
-        await focusTask.value
+        try await waitUntil {
+            viewModel.focusRequest?.promptID == "prompt-1"
+        }
 
         XCTAssertEqual(viewModel.focusRequest?.turnID, "turn-1")
         XCTAssertEqual(viewModel.focusRequest?.promptID, "prompt-1")
         XCTAssertEqual(viewModel.focusRequest?.taskID, "task-1")
         XCTAssertEqual(viewModel.focusRequest?.runID, "run-1")
+    }
+
+    func testDelayedPromptFocusRefreshDoesNotRetainConversation() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.askUserPrompts.first?.status == .pending
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+
+        viewModel?.focusAfterRefreshingAskUserPrompts(
+            turnID: "turn-1",
+            promptID: "prompt-1",
+            taskID: "task-1",
+            runID: "run-1"
+        )
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
+    func testNewFocusRequestRejectsDelayedPromptFocus() async throws {
+        let promptService = DelayedAskUserPromptServiceStub()
+        let viewModel = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            askUserPromptService: promptService
+        )
+        try await waitUntil {
+            viewModel.askUserPrompts.first?.status == .pending
+                && viewModel.bootstrapState.activeToken == nil
+        }
+
+        viewModel.focusAfterRefreshingAskUserPrompts(
+            turnID: "turn-old",
+            promptID: "prompt-1",
+            taskID: nil,
+            runID: nil
+        )
+        try await waitUntil {
+            await promptService.hasDelayedFetch()
+        }
+        viewModel.focusAfterRefreshingAskUserPrompts(
+            turnID: "turn-new",
+            promptID: nil,
+            taskID: "task-new",
+            runID: nil
+        )
+
+        XCTAssertEqual(viewModel.focusRequest?.turnID, "turn-new")
+        XCTAssertEqual(viewModel.focusRequest?.taskID, "task-new")
+
+        await promptService.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.focusRequest?.turnID, "turn-new")
+        XCTAssertEqual(viewModel.focusRequest?.taskID, "task-new")
     }
 
     func testActivateRefreshesAskUserPromptsMissedWhileConversationWasInactive() async throws {
