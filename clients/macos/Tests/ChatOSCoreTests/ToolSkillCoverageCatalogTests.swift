@@ -94,6 +94,15 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
         XCTAssertTrue(taskOrchestration.instructions.contains(
             "Never call `cancel_task` for a `failed`, `succeeded`, or `cancelled` Task"
         ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "Choose Task boundaries by ownership and handoff value"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "`CodeMaintainerWrite` never belongs on an independent verifier"
+        ))
+        XCTAssertTrue(taskOrchestration.instructions.contains(
+            "Do not split to reach a preferred Task count"
+        ))
         let capabilities = try BundledAgentSkillLoader.readResource(
             skillName: taskOrchestration.descriptor.name,
             relativePath: "references/capabilities-and-plugins.md"
@@ -120,6 +129,13 @@ final class ToolSkillCoverageCatalogTests: XCTestCase {
             relativePath: "references/complexity-and-decomposition.md"
         )
         XCTAssertTrue(decomposition.content.contains("independently verifiable"))
+        XCTAssertTrue(decomposition.content.contains("unknown defect"))
+        let examples = try BundledAgentSkillLoader.readResource(
+            skillName: taskOrchestration.descriptor.name,
+            relativePath: "references/acceptance-examples-and-antipatterns.md"
+        )
+        XCTAssertTrue(examples.content.contains("unknown UI failures"))
+        XCTAssertTrue(examples.content.contains("procedural decomposition"))
     }
 
     func testTerminalBindingsCoverEveryDeclaredToolExactlyOnce() {

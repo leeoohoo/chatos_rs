@@ -2,6 +2,12 @@
 
 Select capabilities per Task, not once for the whole graph.
 
+For the common uncertain-defect graph, keep authority phase-specific:
+
+- `diagnose`: read access plus only the observation capabilities required to reproduce and locate the problem; no `CodeMaintainerWrite`.
+- `fix`: `CodeMaintainerWrite` and, when focused commands are required, `TerminalController`; do not carry an observation Plugin merely because another phase needs it.
+- `verify`: the observation and command capabilities required to independently exercise the repaired behavior; no `CodeMaintainerWrite`.
+
 - `CodeMaintainerRead`: inspect and search project files.
 - `CodeMaintainerWrite`: create, modify, or delete project files; read access is added by policy.
 - `TerminalController`: commands, dependency tools, Git, tests, type checks, builds, or runtime verification; read access is added by policy.

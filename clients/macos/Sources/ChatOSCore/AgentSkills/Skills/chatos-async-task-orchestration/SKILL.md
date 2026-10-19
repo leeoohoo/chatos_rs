@@ -19,9 +19,27 @@ An attachment alone does not require a Task. Main Chat can read an image with `l
 
 Before dispatch, confirm the real goal, audience, material constraints, priorities, and acceptance expectations. If consequential information is missing and the user did not explicitly select a Plugin, activate `chatos-requirement-discovery`, create the Requirement Survey directly in Main Chat, and wait for submitted answers before dependent work. Do not create a survey-only placeholder Task or invent preferences. An explicit Plugin selection dispatches that Plugin Task directly; task-local blockers use Ask User. Clear requests proceed without a questionnaire.
 
-- Use `create_task` for one coherent deliverable whose inputs are known and whose implementation and verification are tightly coupled.
-- Use `create_tasks_with_prerequisites` for multiple independently verifiable deliverables, distinct specialties or capabilities, useful parallel work, real staged dependencies, or independent risk verification.
-- Every graph needs one `graph_goal`, one `decomposition_rationale`, and at least two Tasks. Every Task needs a distinct owned outcome.
+Choose Task boundaries by ownership and handoff value, not by counting procedural steps. Searching, reading, editing, building, and running a focused test are usually internal actions of one Task. A separate Task is justified when its result is a useful contract for later work, can be accepted on its own, needs materially different context or capabilities, isolates write authority, enables safe parallelism, or provides genuinely independent risk verification. Splitting has coordination cost, so every Task must own a result that would still be meaningful if the rest of the graph paused.
+
+Use `create_task` when one worker with one coherent context and capability set can safely own the result, and its verification is part of producing that result. Use `create_tasks_with_prerequisites` when responsibility must change hands or one result truly gates another. Ask: if the proposed upstream Task stopped after completion, would it leave evidence or an artifact that changes how the next Task should work? Would combining the stages force a worker to receive capabilities it does not otherwise need? Would self-verification weaken an important acceptance claim? If the answers are no, keep the work together.
+
+For an uncertain software failure, diagnosis often has independent value because the correct write scope and even the required specialist are not known yet. When the user also needs a fix and risk-sensitive acceptance, a sequential `diagnose -> fix -> verify` graph is usually appropriate: diagnosis reproduces and locates without code-write authority; fix consumes that evidence and owns the narrow mutation plus focused tests; verification consumes the implemented version, remains read-only, and independently reruns the user-visible and regression checks. If verification fails, report evidence and create a successor fix rather than letting the verifier repair its own findings. This shape is not mandatory: omit diagnosis when the cause is already established, and keep a small known fix plus its focused check in one Task when a separate verifier would add no material confidence.
+
+Examples:
+
+- Split: “many user-management page actions do not work; find the causes, fix them, and verify every action in a real browser.” The unknown defect set, code mutation, and independent browser acceptance produce three meaningful handoffs and need different capabilities. A good graph is read-only browser/terminal diagnosis -> code/terminal fix -> read-only browser/terminal verification.
+- Keep together: “the null guard in `src/config.ts::loadConfig` is wrong; correct it and add the focused unit test.” The location, write scope, capability set, and acceptance are already known, so implementation and the focused test are one coherent Task.
+- Keep together: edit one document and render it once to check layout. Rendering is evidence for the same artifact, not an independent deliverable.
+- Split: define a shared API contract, implement disjoint backend and frontend consumers, then run integration acceptance. The contract gates both implementations, the writers can own different paths, and integration can fail even when each side passes alone.
+
+Antipatterns:
+
+- Do not create separate “search”, “read”, “edit”, and “test” Tasks when they share one owner, context, and outcome.
+- Do not keep an unknown investigation, broad mutation, and supposedly independent acceptance in one catch-all Task merely because they serve one user request.
+- Do not give every Task every capability; capability differences are evidence about where a real boundary may exist.
+- Do not split to reach a preferred Task count. Graph size follows meaningful ownership, never a fixed template.
+
+Every graph needs one `graph_goal`, one `decomposition_rationale`, and at least two Tasks. Every Task needs a distinct owned outcome.
 
 For compound work, read [complexity and decomposition](references/complexity-and-decomposition.md). Before creating a graph, read [graph patterns and dependencies](references/graph-patterns-and-dependencies.md). Use [acceptance examples and antipatterns](references/acceptance-examples-and-antipatterns.md) when the boundary between one Task and a graph is unclear.
 
@@ -32,6 +50,8 @@ Every Task must state a concrete objective, `expected_outputs`, checkable `accep
 When program-bound `requirement_plan_context` exists, use only its current confirmed revision and the authority the user actually granted. A saved draft or submitted survey is not confirmation. Express Task-specific outputs and criteria rather than creating another plan snapshot. On a stale-plan rejection, return to the current plan instead of repeating the same call.
 
 Read [capabilities and plugins](references/capabilities-and-plugins.md) before choosing built-ins, model configuration, or Plugin hints. Never invent a capability, model, reasoning level, Plugin key, or release absent from the current schema/catalog.
+
+Choose capabilities separately for every Task. A capability needed by one phase does not belong on every phase: a browser used to reproduce and verify a UI defect normally does not belong on the code-only fix Task, and `CodeMaintainerWrite` never belongs on an independent verifier. Select `TerminalController` only on nodes that actually run commands. Keep read-only diagnosis and verification unable to mutate project files.
 
 Do not select `Notepad` merely because notes might be useful, the worker needs scratch space, a plan should survive the Run, or information may be reusable. Select it only when the user explicitly asks to save something in Notepad or identifies an existing note as input. For an optional Notepad selection, set `notepad_user_request_quote` to the exact authorizing phrase from the current user message; never paraphrase or cite generic task text. If a Plugin artifact and a Notepad record are both requested, create a separate downstream Notepad Task; never give writable Notepad to the Plugin Task.
 
