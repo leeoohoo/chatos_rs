@@ -11,7 +11,7 @@ struct PrepareProjectConversationUseCaseTests {
         let preparer = ProjectConversationPreparerStub(conversationID: "conversation-1")
         let useCase = PrepareProjectConversationUseCase(
             contextLoader: contextLoader,
-            conversationPreparer: preparer
+            projectConversationPort: preparer
         )
         let project = WorkspaceProject(
             id: "project-1",
@@ -51,7 +51,7 @@ struct PrepareProjectConversationUseCaseTests {
         let preparer = ProjectConversationPreparerStub(conversationID: "conversation-1")
         let useCase = PrepareProjectConversationUseCase(
             contextLoader: contextLoader,
-            conversationPreparer: preparer
+            projectConversationPort: preparer
         )
         let project = WorkspaceProject(
             id: "project-1",
@@ -117,7 +117,7 @@ private actor ProjectContextLoaderStub: ProjectContextLoading {
     }
 }
 
-private actor ProjectConversationPreparerStub: ProjectConversationPreparing {
+private actor ProjectConversationPreparerStub: ProjectConversationPort {
     let conversationID: String
     private(set) var requestCount = 0
     private(set) var lastProject: WorkspaceProject?

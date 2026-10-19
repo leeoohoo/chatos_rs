@@ -18,15 +18,15 @@ public final class PrepareProjectConversationUseCase {
     }
 
     private let contextLoader: any ProjectContextLoading
-    private let conversationPreparer: any ProjectConversationPreparing
+    private let projectConversationPort: any ProjectConversationPort
     private var inFlight: [Key: InFlight] = [:]
 
     public init(
         contextLoader: any ProjectContextLoading,
-        conversationPreparer: any ProjectConversationPreparing
+        projectConversationPort: any ProjectConversationPort
     ) {
         self.contextLoader = contextLoader
-        self.conversationPreparer = conversationPreparer
+        self.projectConversationPort = projectConversationPort
     }
 
     public func execute(
@@ -40,7 +40,7 @@ public final class PrepareProjectConversationUseCase {
         }
 
         let contextLoader = contextLoader
-        let conversationPreparer = conversationPreparer
+        let projectConversationPort = projectConversationPort
         let task = Task {
             var preparedProject = project
             preparedProject.projectContext = try await contextLoader.projectContext(
@@ -48,7 +48,7 @@ public final class PrepareProjectConversationUseCase {
                 projectID: project.id
             )
             try Task.checkCancellation()
-            return try await conversationPreparer.ensureConversation(
+            return try await projectConversationPort.ensureConversation(
                 project: preparedProject,
                 contact: contact
             )

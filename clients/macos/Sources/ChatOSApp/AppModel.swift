@@ -350,7 +350,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
         self.prepareProjectConversationUseCase = projectConversationService.map {
             PrepareProjectConversationUseCase(
                 contextLoader: localProjectsService,
-                conversationPreparer: $0
+                projectConversationPort: $0
             )
         }
         self.localProjectsService = localProjectsService

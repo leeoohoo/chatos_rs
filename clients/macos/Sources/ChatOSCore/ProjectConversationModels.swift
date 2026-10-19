@@ -7,6 +7,6 @@ public protocol ProjectContextLoading: Sendable {
     ) async throws -> ProjectContextSnapshot
 }
 
-public protocol ProjectConversationPreparing: Sendable {
+public protocol ProjectConversationPort: Sendable {
     func ensureConversation(project: WorkspaceProject, contact: WorkspaceContact) async throws -> String
 }

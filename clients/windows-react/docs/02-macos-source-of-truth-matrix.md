@@ -103,7 +103,7 @@ macOS 分层从现有行为提取，不增加业务含义：
 
 - `PrepareProjectConversationUseCase`
 - `ProjectConversationPreparationState`（已完成）
-- `ProjectConversationPort`
+- `ProjectConversationPort`（已完成）
 - `ConversationSessionFactory`（已完成）
 
 React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输与 Windows 平台能力。
@@ -111,6 +111,7 @@ React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输
 实施进度（2026-10-19）：
 
 - 已新增 `ProjectContextLoading` Port，由现有 `NativeLocalProjectsService` adapter 实现；
+- 已将项目 Conversation 创建/复用边界固定为 `ProjectConversationPort`，现有 `NativeLocalAgentProjectConversationService` 是 Host adapter，Application use case 不依赖 Connector 类型；
 - 已新增 `PrepareProjectConversationUseCase`，按 owner + project 复用并发准备任务；
 - 已新增 `ProjectConversationPreparationState`，为每个项目分配 latest-wins token；AppModel 显式持有对应 Task，项目删除只取消目标项目，账号切换/登出/退出统一取消全部任务；
 - 已新增 App 层 `ConversationSessionFactory`，集中把 Core conversation ports 组合为 SwiftUI session；AppModel 只保留按 session ID 缓存、LRU 淘汰与 activate/deactivate 策略，runtime ready 在每次创建时读取当前账号状态而非冻结在 factory 中；

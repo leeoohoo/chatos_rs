@@ -98,7 +98,7 @@ public actor NativeLocalAgentWorkspaceService: WorkspaceRelationsRemoteServicing
     }
 }
 
-public actor NativeLocalAgentProjectConversationService: ProjectConversationPreparing {
+public actor NativeLocalAgentProjectConversationService: ProjectConversationPort {
     private let client: NativeLocalAgentConversationClient
     private let workspace: NativeLocalAgentWorkspaceService
     private var ownerUserID: String?
