@@ -40,8 +40,9 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目会话准备 | 已映射，可重构 | `ProjectMessagesView.swift` | `AppModelResources.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Connector 与 ViewModel 相关测试 | 禁止；先完成 macOS Application/Port 分层 |
 | Conversation 时间线与发送 | 已映射，可重构 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift` | `ConversationModels.swift`、`ConversationCommandService.swift`、`ConversationRemoteService.swift`、`ConversationRealtimeService.swift` | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | `ConversationSessionViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
 | Task Graph / Run Inspector | 已映射，可重构 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift` | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | `MessageTaskWorkspaceViewModelTests.swift` 等 | 禁止；先完成 macOS Application/Port 分层 |
-| Ask User / 审批 / 恢复 | 源码映射中 | Conversation 与执行详情内嵌入口 | `ConversationSessionViewModel+AskUser.swift` 及审批状态 | Ask User / approval protocols | Native Local Agent Ask User 与 approval adapters | `NativeLocalAgentAskUserPromptServiceTests.swift` 等 | 禁止 |
-| Host lifecycle | 源码映射中 | App Shell 与各页面 ready gate | AppModel/Host lifecycle state | Host client/service protocols | Host process、transport、handshake | lifecycle 与 transport 测试待汇总 | 禁止 |
+| Ask User | 已映射，可重构 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift` | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | `NativeLocalAgentAskUserPromptServiceTests.swift` | 禁止；先完成 macOS Application/Port 分层 |
+| 工具审批 / 恢复 | 源码映射中 | `GlobalApprovalOverlayHost`、执行详情入口 | Local Connector approval state | approval protocols | platform tool worker 与 approval handler | platform tool worker/approval tests | 禁止 |
+| Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
 
@@ -255,7 +256,130 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphFocusTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskAcceptanceTests.swift`
 
-## 6. 31 个页面的准入状态
+## 6. Host lifecycle：完整调用链
+
+### 6.1 当前状态所有权
+
+UI 与应用协调：
+
+- `clients/macos/Sources/ChatOSApp/AppModelAuthentication.swift`
+- `clients/macos/Sources/ChatOSApp/AppModel.swift`
+- `clients/macos/Sources/ChatOSApp/RootView.swift`
+
+Port：`clients/macos/Sources/ChatOSCore/LocalAgentHostLifecycle.swift`
+
+Adapter 与进程传输：
+
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift`
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostProcess.swift`
+
+当前 macOS 没有单一 lifecycle enum，而是通过 lifecycle task、generation、owner 标记和 error 共同表达状态。Windows 不得据此简化成“进程存在即 ready”。现有关键事实为：
+
+- `localAgentWorkspaceOwnerUserID == authenticatedUserID` 只表示 workspace/project Conversation 服务已配置；
+- `localAgentServicesOwnerUserID == authenticatedUserID` 才是 Conversation 等业务服务的 runtime-ready gate；
+- `localAgentControlPlaneOwnerUserID` 表示控制面 bootstrap 完成；
+- `localAgentHostError` 在 `RootView` 顶部显示，不应以无限 loading 隐藏错误。
+
+### 6.2 启动与账号隔离
+
+```text
+authenticated
+  → 清空上一个账号的异步任务与缓存
+  → startLocalAgentHost
+  → 等待上一轮 shutdown
+  → reset event hub
+  → startForBootstrap(workers disabled)
+  → 尝试恢复本地 control-plane snapshot
+  → 配置 workspace / project conversation 服务
+  → 刷新 workspace
+  → authenticated gateway control-plane bootstrap
+  → 以 Keychain 凭据启动/复用 worker Host
+  → configureLocalAgentServices
+  → Conversation runtime ready
+```
+
+必须保留：
+
+- 每次启动递增 lifecycle generation，所有异步写回同时校验账号与 generation；
+- bootstrap Host 禁用 workers，避免凭据恢复完成前领取 durable work；
+- 凭据只进入子进程环境，不出现在命令行、持久化或日志；
+- 相同凭据复用运行中的 worker；凭据变化时不擅自杀死正在领取 durable work 的 worker，而是返回 deferred；
+- 登出/终止时先让所有 account-scoped service reset，再停止 Host；
+- stop 使所有 Conversation 立即进入 runtime unavailable，并取消 realtime/retry/loading。
+
+### 6.3 握手、请求与假健康防护
+
+- 协议版本当前为 `42`；request/response 必须同时匹配 protocol version 与 command ID；
+- 启动必须通过 `health`，且 `storage_ready == true` 后才返回 managed process；
+- stdio frame 使用 4 字节大端长度前缀，最大 4 MiB；
+- 多路复用请求按 command ID 保存 continuation，各自有取消与超时；
+- reader 退出或 writer 失败会关闭 transport 并失败所有 pending response；lifecycle 收到传输失败后移除并终止对应 Host，不能留下“进程还在但无法回包”的假健康状态；
+- 单次长轮询超时先以 1 秒 health probe 检查同一进程：健康则只返回该请求超时，不连坐其他并发请求；health 失败才使 Host 失效；
+- Host 不在运行时发送 recovery notification，并在 startup timeout 内等待恢复；owner 不匹配直接拒绝。
+
+### 6.4 崩溃、睡眠与恢复
+
+- 意外退出发布 `nativeLocalAgentHostDidExit`，清空 active owner 与凭据 fingerprint；
+- AppModel 按 250ms、1s、2s、5s、10s 最多重试 5 次；超过上限展示明确错误；
+- 系统唤醒会取消睡眠前遗留重试并执行完整 bootstrap，重新从安全存储取凭据；
+- health recovery 同时校验账号 generation，旧账号检查不能重启新账号 Host；
+- shutdown 串行等待前一轮 shutdown，防止新 Host 与旧清理交叉。
+
+### 6.5 测试证据与目标分层
+
+测试：`clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentHostLifecycleTests.swift`
+
+已覆盖 recovery signal、凭据复用/延迟替换、真实 Rust Host 切换、进程异常退出、健康/失效超时、并发长轮询、停止卡死进程、frame 编码与取消等行为。
+
+macOS 重构应把现有分散事实收敛为可测试的 `HostLifecycleState` 与 `HostLifecycleUseCase`，但迁移后的状态和转换必须逐项对应本节，不能另造一套启动流程。Windows Tauri sidecar 使用同一 Application 状态语义，只替换进程与平台 adapter。
+
+## 7. Ask User：完整调用链
+
+### 7.1 UI、状态与排序
+
+UI 与状态：
+
+- `clients/macos/Sources/ChatOSApp/Features/Chat/AskUserPromptCardView.swift`
+- `clients/macos/Sources/ChatOSApp/Features/Chat/ConversationSessionViewModel+AskUser.swift`
+
+Domain/Port：`clients/macos/Sources/ChatOSCore/AskUserPromptModels.swift`
+
+Adapter：
+
+- `clients/macos/Sources/ChatOSConnector/NativeLocalAgentAskUserPromptService.swift`
+- `clients/macos/Sources/ChatOSConnector/LocalAgentAskUserPromptMapper.swift`
+
+必须保留的 UI/Feature 语义：
+
+- Prompt 状态为 `pending / ok / canceled / timeout / failed`；只有 pending 可提交；
+- Prompt 按 createdAt、updatedAt、ID 稳定升序；未加载到对应 Turn 的 pending Prompt 仍单独展示，不能丢失；
+- 每个 Prompt 单独维护 submitting 与 error，提交一个 Prompt 不得锁死全部 Conversation；
+- required field 去除首尾空白后不能为空；choice 数量必须位于 minimum/maximum 之间；
+- 单选保持一个值，多选达到 maximum 后不能再添加；
+- cancel 只有在 `allowsCancel`、pending 且未提交中时可用；
+- 状态离开 pending 后立即清空内存中的 secret field；
+- 提交/取消失败后保存该 Prompt 错误并重新拉取 Host 真值。
+
+### 7.2 Host 查询、提交与取消
+
+- 仅查询 scope `active` 且 status `waiting_user` 的 Run；服务 limit 归一化到 1–500，单次 Host page 最大 100；
+- 只保留 source Conversation 与当前 session ID 相同的 Run；
+- Prompt ID 必须为 `local-ask:<run-id>`；resolve 时重新确认 Run 仍为 `waiting_user`，防止过期 UI 提交；
+- Prompt 内容来自最新一条 `user_input_requested` event，Host 查询固定 `newestFirst: true`；
+- main chat 提交通过 `resumeTurn`，同时携带 expected Conversation version、expected Run version 与状态 `waiting_user`；
+- task profile 提交通过 `resumeWaitingRun`；
+- main chat 取消通过 `cancelTurn`；非 main chat 只有 owner entity 为 task 时才能 cancel task；
+- 提交 metadata 固定包含 `source=ask_user`、prompt ID、values、selection，存在 tool call ID 时一并携带；
+- secret 字段或名称含 api key/access token/password/secret/credential 的非空值禁止进入 IPC 或数据库。这一安全限制高于界面控件形态，Windows 必须相同。
+
+### 7.3 测试证据
+
+- `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentAskUserPromptServiceTests.swift`
+- `clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift`
+
+Connector 测试已覆盖 main chat 查询/提交、task source Conversation 与取消、secret 在 IPC 前拒绝。macOS 分层时还需把表单校验与 per-prompt 并发状态补成独立 Application 测试，然后才能放行 React。
+
+## 8. 31 个页面的准入状态
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
@@ -293,11 +417,11 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成第一轮源码映射，但仍需先完成 macOS 分层。
 
-## 7. 第一条切片的下一步
+## 9. 第一条切片的下一步
 
 按以下顺序实施，不能跳过到 React 页面：
 
-1. 完成 Host lifecycle、Ask User/审批/恢复的源码映射；
+1. 完成工具审批/恢复的源码映射；Host lifecycle 与 Ask User 已完成第一轮映射；
 2. 从现有 Swift 行为提取 Application use cases 与 ports，不改变产品语义；
 3. 让 macOS Conversation 与 Run Inspector 仅依赖这些 ports；
 4. 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
