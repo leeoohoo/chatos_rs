@@ -50,11 +50,27 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             )
             return true
         }
+        let cwd: URL
+        do {
+            cwd = try Self.approvalWorkingDirectory(
+                for: invocation,
+                projectRoot: approvalScope.rootURL
+            )
+        } catch {
+            _ = try await client.decideApproval(
+                ownerUserID: ownerUserID,
+                invocation: invocation,
+                approve: false,
+                decidedBy: reviewerID,
+                reason: "终端命令工作目录无效或超出当前项目范围。"
+            )
+            return true
+        }
         let decision = await connector.approvalDecision(
             requestID: invocation.invocationID,
             command: presentation.command,
             arguments: presentation.arguments,
-            cwd: approvalScope.rootURL,
+            cwd: cwd,
             projectRoot: approvalScope.rootURL,
             source: "Local Agent Task",
             risk: presentation.risk,
@@ -91,6 +107,20 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         (context.executionRootURL, context.workspaceScopeID)
     }
 
+    static func approvalWorkingDirectory(
+        for invocation: LocalAgentToolInvocationRecord,
+        projectRoot: URL
+    ) throws -> URL {
+        guard invocation.toolName == "execute_command" else { return projectRoot }
+        guard case let .object(arguments) = invocation.arguments else {
+            throw NativeLocalAgentPlatformToolError.invalidField("path")
+        }
+        return try NativeLocalAgentExecutionDirectoryResolver.resolve(
+            string(arguments["path"]) ?? ".",
+            projectRoot: projectRoot
+        )
+    }
+
     private static func presentation(
         _ invocation: LocalAgentToolInvocationRecord
     ) -> (
@@ -101,8 +131,8 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         permission: String,
         scope: String
     )? {
-        if invocation.toolName == "execute_command",
-           case let .object(arguments) = invocation.arguments {
+        if invocation.toolName == "execute_command" {
+            guard case let .object(arguments) = invocation.arguments else { return nil }
             let command = NativeLocalAgentTerminalCommandResolver.resolve(arguments) ?? ""
             guard let purpose = NativeLocalAgentTerminalCommandResolver.purpose(arguments) else {
                 return nil

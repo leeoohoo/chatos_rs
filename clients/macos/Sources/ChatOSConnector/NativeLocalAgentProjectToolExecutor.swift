@@ -536,7 +536,7 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
         guard NativeLocalAgentTerminalCommandResolver.purpose(arguments) != nil else {
             throw NativeLocalAgentPlatformToolError.invalidField("purpose")
         }
-        let cwd = try Self.resolveDirectory(
+        let cwd = try NativeLocalAgentExecutionDirectoryResolver.resolve(
             Self.string(arguments["path"]) ?? ".",
             projectRoot: root
         )
@@ -550,22 +550,6 @@ struct NativeLocalAgentProjectToolExecutor: NativeLocalAgentProjectToolExecuting
             timeoutMilliseconds: timeout,
             ownerRunID: invocation.runID
         )
-    }
-
-    private static func resolveDirectory(_ path: String, projectRoot: URL) throws -> URL {
-        let root = projectRoot.standardizedFileURL.resolvingSymlinksInPath()
-        let candidate = path.hasPrefix("/")
-            ? URL(fileURLWithPath: path)
-            : root.appendingPathComponent(path)
-        let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
-        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-        var isDirectory: ObjCBool = false
-        guard (resolved.path == root.path || resolved.path.hasPrefix(prefix)),
-              FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw NativeLocalAgentPlatformToolError.invalidField("path")
-        }
-        return resolved
     }
 
     private static func string(_ value: NativeJSONValue?) -> String? {
