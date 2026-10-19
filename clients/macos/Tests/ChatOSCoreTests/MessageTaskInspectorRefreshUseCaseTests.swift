@@ -62,7 +62,47 @@ struct MessageTaskInspectorRefreshUseCaseTests {
         #expect(runID == "run-1")
         #expect(updatedTask.lastRunStatus == "completed")
         #expect(await service.requests == [
-            .init(includeEvents: false, eventLimit: 1, eventOffset: 0),
+            .init(
+                runID: "run-1",
+                includeEvents: false,
+                eventLimit: 1,
+                eventOffset: 0
+            ),
+        ])
+    }
+
+    @Test
+    func detailSectionCanUseMacOSCallbackRunFallback() async throws {
+        let service = MessageTaskInspectorServiceStub(
+            responses: [runDetail(status: "completed")]
+        )
+        let useCase = MessageTaskInspectorRefreshUseCase(graphService: service)
+        let taskWithoutCurrentRun = MessageTask(
+            id: "task-1",
+            title: "Task",
+            status: "running"
+        )
+
+        let update = try await useCase.refreshSection(
+            .detail,
+            messageID: "message-1",
+            lookup: lookup,
+            task: taskWithoutCurrentRun,
+            fallbackRunID: "callback-run"
+        )
+
+        guard case let .modelOutput(_, runID) = update else {
+            Issue.record("Expected callback model output update")
+            return
+        }
+        #expect(runID == "callback-run")
+        #expect(await service.requests == [
+            .init(
+                runID: "callback-run",
+                includeEvents: false,
+                eventLimit: 1,
+                eventOffset: 0
+            ),
         ])
     }
 
@@ -86,7 +126,12 @@ struct MessageTaskInspectorRefreshUseCaseTests {
         #expect(loadedDetail == detail)
         #expect(updatedTask.lastRunID == "run-1")
         #expect(await service.requests == [
-            .init(includeEvents: true, eventLimit: 40, eventOffset: 0),
+            .init(
+                runID: "run-1",
+                includeEvents: true,
+                eventLimit: 40,
+                eventOffset: 0
+            ),
         ])
     }
 
@@ -120,6 +165,7 @@ struct MessageTaskInspectorRefreshUseCaseTests {
 
 private actor MessageTaskInspectorServiceStub: MessageTaskGraphServicing {
     struct Request: Sendable, Equatable {
+        let runID: String
         let includeEvents: Bool
         let eventLimit: Int
         let eventOffset: Int
@@ -157,6 +203,7 @@ private actor MessageTaskInspectorServiceStub: MessageTaskGraphServicing {
     ) async throws -> MessageTaskRunDetail {
         requests.append(
             .init(
+                runID: runID,
                 includeEvents: includeEvents,
                 eventLimit: eventLimit,
                 eventOffset: eventOffset

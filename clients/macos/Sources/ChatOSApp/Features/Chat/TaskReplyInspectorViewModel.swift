@@ -68,7 +68,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     @Published private(set) var modelOutputError: String?
     @Published private(set) var retryErrorMessage: String?
 
-    private let service: any MessageTaskGraphServicing
+    private let graphUseCase: MessageTaskGraphUseCase
+    private let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
     private let realtimeService: (any ConversationRealtimeStreaming)?
     private var loadTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
@@ -87,7 +88,10 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     ) {
         self.selection = selection
         self.section = selection.initialSection
-        self.service = service
+        self.graphUseCase = MessageTaskGraphUseCase(graphService: service)
+        self.inspectorRefreshUseCase = MessageTaskInspectorRefreshUseCase(
+            graphService: service
+        )
         self.realtimeService = realtimeService
     }
 
@@ -214,12 +218,13 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         let instruction = retryInstruction
         let lookup = lookup(callback, selection: selection)
         let token = retryState.begin(contextID: selection.retryIdentity)
+        let graphUseCase = graphUseCase
         isRetrying = true
         errorMessage = nil
         retryErrorMessage = nil
-        retryTask = Task { [weak self, service] in
+        retryTask = Task { [weak self] in
             do {
-                _ = try await service.retryRun(
+                try await graphUseCase.retryRun(
                     messageID: selection.reply.message.id,
                     runID: runID,
                     lookup: lookup,
@@ -273,19 +278,19 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     ) async {
         guard let runID = loadedTask.lastRunID ?? callback.runID else { return }
         do {
-            let detail = try await service.fetchRun(
+            let update = try await inspectorRefreshUseCase.refreshSection(
+                .detail,
                 messageID: selection.reply.message.id,
-                runID: runID,
                 lookup: lookup(callback, selection: selection),
-                includeEvents: false,
-                eventLimit: 1,
-                eventOffset: 0
+                task: loadedTask,
+                fallbackRunID: runID
             )
             guard !Task.isCancelled,
                   generation == loadGeneration,
                   task?.id == loadedTask.id else { return }
-            apply(detail.task.merging(run: detail.run))
-            loadedModelOutputRunID = detail.run.id
+            guard case let .modelOutput(updatedTask, loadedRunID) = update else { return }
+            apply(updatedTask)
+            loadedModelOutputRunID = loadedRunID
         } catch {
             guard !Task.isCancelled, generation == loadGeneration else { return }
             modelOutputError = error.localizedDescription
@@ -296,7 +301,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         callback: TaskExecutionCallbackReference,
         selection: TaskReplySelection
     ) async throws -> MessageTask {
-        try await service.fetchTask(
+        try await graphUseCase.loadTask(
             messageID: selection.reply.message.id,
             taskID: callback.taskID,
             lookup: lookup(callback, selection: selection)

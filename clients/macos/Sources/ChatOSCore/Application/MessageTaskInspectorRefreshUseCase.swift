@@ -29,9 +29,10 @@ public struct MessageTaskInspectorRefreshUseCase: Sendable {
         _ section: MessageTaskInspectorSection,
         messageID: String,
         lookup: MessageTaskLookup?,
-        task: MessageTask
+        task: MessageTask,
+        fallbackRunID: String? = nil
     ) async throws -> MessageTaskInspectorSectionUpdate {
-        guard let runID = task.lastRunID else { return .clearRun }
+        guard let runID = task.lastRunID ?? fallbackRunID else { return .clearRun }
 
         switch section {
         case .process:
