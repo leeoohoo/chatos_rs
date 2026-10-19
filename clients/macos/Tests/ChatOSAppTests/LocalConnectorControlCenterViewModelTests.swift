@@ -238,6 +238,76 @@ final class LocalConnectorControlCenterViewModelTests: XCTestCase {
         XCTAssertEqual(mutationCount, 3)
     }
 
+    func testApprovalDecisionIsExclusivePerApprovalAndUsesDedicatedBusyState() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalResolution(delay: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        let approval = Self.approval(id: "approval-1")
+
+        viewModel.resolveApproval(approval, decision: .accept)
+        viewModel.resolveApproval(approval, decision: .decline)
+
+        try await waitUntil { await service.approvalResolutionCount() == 1 }
+        XCTAssertTrue(viewModel.isResolvingApproval(approval.id))
+        XCTAssertFalse(viewModel.isPerformingAction)
+        await service.resumeDelayedApprovalResolution()
+        try await waitUntil { !viewModel.isResolvingApproval(approval.id) }
+
+        let resolutionCount = await service.approvalResolutionCount()
+        XCTAssertEqual(resolutionCount, 1)
+        XCTAssertNil(viewModel.approvalError(for: approval.id))
+        XCTAssertEqual(viewModel.notice, "审批已处理。")
+    }
+
+    func testApprovalFailureIsScopedToItsApproval() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalResolution(delay: false, shouldFail: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        let approval = Self.approval(id: "approval-1")
+
+        viewModel.resolveApproval(approval, decision: .accept)
+        try await waitUntil { !viewModel.isResolvingApproval(approval.id) }
+
+        XCTAssertNotNil(viewModel.approvalError(for: approval.id))
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    func testSignedOutSuspensionWaitsForCancelledApprovalDecision() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalResolution(delay: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        let approval = Self.approval(id: "approval-1")
+
+        viewModel.resolveApproval(approval, decision: .accept)
+        try await waitUntil { await service.hasDelayedApprovalResolution() }
+        viewModel.resetForSignedOut()
+        try await Task.sleep(for: .milliseconds(20))
+
+        let suspensionCount = await service.suspensionCallCount()
+        XCTAssertEqual(suspensionCount, 0)
+        XCTAssertFalse(viewModel.isResolvingApproval(approval.id))
+        XCTAssertNil(viewModel.approvalError(for: approval.id))
+
+        await service.resumeDelayedApprovalResolution()
+        try await waitUntil { await service.suspensionCallCount() == 1 }
+        XCTAssertNil(viewModel.notice)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
+    private static func approval(id: String) -> LocalConnectorPendingApproval {
+        .init(
+            id: id,
+            requestID: "request-\(id)",
+            command: "pwd",
+            cwd: "/tmp",
+            source: "test",
+            risk: "low",
+            reason: nil,
+            createdAt: "2026-10-03T00:00:00Z",
+            availableDecisions: ["accept", "decline"]
+        )
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -276,6 +346,12 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     private var delayedHistoryContinuation: CheckedContinuation<Void, Never>?
     private var delayedDisconnectContinuation: CheckedContinuation<Void, Never>?
     private var delayedApprovalContinuation: CheckedContinuation<Void, Never>?
+    private var delayedApprovalResolutionContinuation: CheckedContinuation<Void, Never>?
+    private var approvalResolutionEnabled = false
+    private var shouldDelayApprovalResolution = false
+    private var shouldFailApprovalResolution = false
+    private var approvalResolutionRequests: [(String, LocalConnectorApprovalDecision)] = []
+    private var approvalResolutionPending: [LocalConnectorPendingApproval] = []
     private var delayedModelCatalogContinuation: CheckedContinuation<Void, Never>?
     private var modelCatalogItems: [LocalConnectorModelConfig] = []
     private var delayedPairingContinuation: CheckedContinuation<Void, Never>?
@@ -338,6 +414,24 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     func resumeDelayedApprovalRequest() {
         delayedApprovalContinuation?.resume()
         delayedApprovalContinuation = nil
+    }
+
+    func configureApprovalResolution(delay: Bool, shouldFail: Bool = false) {
+        approvalResolutionEnabled = true
+        shouldDelayApprovalResolution = delay
+        shouldFailApprovalResolution = shouldFail
+        approvalResolutionPending = [Self.pendingApproval()]
+    }
+
+    func hasDelayedApprovalResolution() -> Bool {
+        delayedApprovalResolutionContinuation != nil
+    }
+
+    func approvalResolutionCount() -> Int { approvalResolutionRequests.count }
+
+    func resumeDelayedApprovalResolution() {
+        delayedApprovalResolutionContinuation?.resume()
+        delayedApprovalResolutionContinuation = nil
     }
 
     func hasDelayedModelCatalogRequest() -> Bool { delayedModelCatalogContinuation != nil }
@@ -411,9 +505,15 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
         return [Self.historyEntry(id: "new")]
     }
     func clearCommandHistory() async throws { throw StubError.unimplemented }
-    func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings { throw StubError.unimplemented }
+    func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
+        guard approvalResolutionEnabled else { throw StubError.unimplemented }
+        return .init(defaultMode: .requestApproval, history: [])
+    }
     func updateDefaultApprovalMode(_ mode: LocalConnectorApprovalMode, riskAcknowledged: Bool) async throws -> LocalConnectorApprovalSettings { throw StubError.unimplemented }
     func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval] {
+        if approvalResolutionEnabled {
+            return approvalResolutionPending
+        }
         await withCheckedContinuation { continuation in
             delayedApprovalContinuation = continuation
         }
@@ -422,7 +522,21 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     func resolveApproval(
         id: String,
         decision: LocalConnectorApprovalDecision
-    ) async throws { throw StubError.unimplemented }
+    ) async throws {
+        guard approvalResolutionEnabled else { throw StubError.unimplemented }
+        approvalResolutionRequests.append((id, decision))
+        if shouldDelayApprovalResolution {
+            shouldDelayApprovalResolution = false
+            await withCheckedContinuation { continuation in
+                delayedApprovalResolutionContinuation = continuation
+            }
+        }
+        if shouldFailApprovalResolution {
+            shouldFailApprovalResolution = false
+            throw StubError.unimplemented
+        }
+        approvalResolutionPending.removeAll { $0.id == id }
+    }
     func fetchModelCatalog(refresh: Bool) async throws -> LocalConnectorModelCatalog {
         await withCheckedContinuation { continuation in
             delayedModelCatalogContinuation = continuation

@@ -20,6 +20,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var isStarting = false
     @Published var isLoading = false
     @Published private(set) var isPerformingAction = false
+    @Published private(set) var approvalOperationIDs: Set<String> = []
+    @Published private(set) var approvalErrorMessages: [String: String] = [:]
     @Published var pluginOperationIDs: Set<String> = []
     @Published var pluginErrorMessages: [String: String] = [:]
     @Published var isInspectingCustomPlugin = false
@@ -43,6 +45,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     var pluginRefreshTask: Task<Void, Never>?
     private var actionTask: Task<Void, Never>?
     private var actionGeneration: Int64 = 0
+    private var approvalActionState = LocalConnectorApprovalActionState()
+    private var approvalActionTasks: [String: Task<Void, Never>] = [:]
     var pluginActionTasks: [String: Task<Void, Never>] = [:]
     var pluginActionRequestIDs: [String: UUID] = [:]
     var customPluginTask: Task<Void, Never>?
@@ -69,6 +73,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         statusRefreshTask?.cancel()
         pluginRefreshTask?.cancel()
         actionTask?.cancel()
+        approvalActionTasks.values.forEach { $0.cancel() }
         pluginActionTasks.values.forEach { $0.cancel() }
         customPluginTask?.cancel()
     }
@@ -188,6 +193,12 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         let pendingAction = actionTask
         actionTask?.cancel()
         actionTask = nil
+        let pendingApprovalActions = Array(approvalActionTasks.values)
+        approvalActionTasks.values.forEach { $0.cancel() }
+        approvalActionTasks = [:]
+        approvalActionState.reset()
+        approvalOperationIDs = []
+        approvalErrorMessages = [:]
         pluginActionTasks.values.forEach { $0.cancel() }
         pluginActionTasks = [:]
         pluginActionRequestIDs = [:]
@@ -212,7 +223,10 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         latestApprovalEvent = nil
         plugins = []
         browserExtensionPairedPluginIDs = []
-        startSignedOutSuspension(after: [pendingStatusRefresh, pendingAction].compactMap { $0 })
+        startSignedOutSuspension(
+            after: [pendingStatusRefresh, pendingAction].compactMap { $0 }
+                + pendingApprovalActions
+        )
     }
 
     private func startSignedOutSuspension(after pendingTasks: [Task<Void, Never>]) {
@@ -366,17 +380,55 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         _ approval: LocalConnectorPendingApproval,
         decision: LocalConnectorApprovalDecision
     ) {
-        performAction(successNotice: "审批已处理。") {
-            let snapshot = try await self.approvalUseCase.resolve(
-                approval: approval,
-                decision: decision
-            )
-            try Task.checkCancellation()
-            self.applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
-            if self.approvalSettings != snapshot.settings {
-                self.approvalSettings = snapshot.settings
+        guard let token = approvalActionState.begin(approvalID: approval.id) else { return }
+        approvalOperationIDs = approvalActionState.activeApprovalIDs
+        approvalErrorMessages.removeValue(forKey: approval.id)
+        notice = nil
+        let lifecycle = lifecycleGeneration
+        let pendingServicePreparation = servicePreparationTask
+        let pendingSignedOutSuspension = signedOutSuspensionTask
+        let approvalUseCase = approvalUseCase
+        approvalActionTasks[approval.id] = Task { [weak self] in
+            var snapshot: LocalConnectorApprovalSnapshot?
+            var failure: Error?
+            do {
+                await pendingServicePreparation?.value
+                try Task.checkCancellation()
+                await pendingSignedOutSuspension?.value
+                try Task.checkCancellation()
+                snapshot = try await approvalUseCase.resolve(
+                    approval: approval,
+                    decision: decision
+                )
+                try Task.checkCancellation()
+            } catch is CancellationError {
+                return
+            } catch {
+                failure = error
             }
+            guard let self,
+                  lifecycle == lifecycleGeneration,
+                  approvalActionState.accepts(token) else { return }
+            if let snapshot {
+                applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
+                if approvalSettings != snapshot.settings {
+                    approvalSettings = snapshot.settings
+                }
+                approvalErrorMessages.removeValue(forKey: approval.id)
+                notice = "审批已处理。"
+            } else if let failure {
+                approvalErrorMessages[approval.id] = failure.localizedDescription
+            }
+            finishApprovalAction(token)
         }
+    }
+
+    func isResolvingApproval(_ approvalID: String) -> Bool {
+        approvalOperationIDs.contains(approvalID)
+    }
+
+    func approvalError(for approvalID: String) -> String? {
+        approvalErrorMessages[approvalID]
     }
 
     func loadSystemPermissions() {
@@ -589,8 +641,19 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private func applyPendingApprovalsIfChanged(
         _ nextPendingApprovals: [LocalConnectorPendingApproval]
     ) {
+        let nextIDs = Set(nextPendingApprovals.map(\.id))
+        let nextErrors = approvalErrorMessages.filter { nextIDs.contains($0.key) }
+        if approvalErrorMessages != nextErrors {
+            approvalErrorMessages = nextErrors
+        }
         guard pendingApprovals != nextPendingApprovals else { return }
         pendingApprovals = nextPendingApprovals
+    }
+
+    private func finishApprovalAction(_ token: LocalConnectorApprovalActionToken) {
+        guard approvalActionState.finish(token) else { return }
+        approvalActionTasks.removeValue(forKey: token.approvalID)
+        approvalOperationIDs = approvalActionState.activeApprovalIDs
     }
 
     func performAction(

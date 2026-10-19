@@ -90,6 +90,12 @@ extension PetMessageView {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
+                    if let error = approvalViewModel.approvalError(for: approval.id) {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -97,6 +103,9 @@ extension PetMessageView {
             Divider()
 
             HStack(spacing: 8) {
+                if approvalViewModel.isResolvingApproval(approval.id) {
+                    ProgressView().controlSize(.small)
+                }
                 if approval.allows(.decline) {
                     Button("拒绝", role: .destructive) {
                         approvalViewModel.resolveApproval(approval, decision: .decline)
@@ -116,7 +125,7 @@ extension PetMessageView {
                 }
             }
             .controlSize(.small)
-            .disabled(approvalViewModel.isPerformingAction)
+            .disabled(approvalViewModel.isResolvingApproval(approval.id))
         }
         .padding(13)
     }

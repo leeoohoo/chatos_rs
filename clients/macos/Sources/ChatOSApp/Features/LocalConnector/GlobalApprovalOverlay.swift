@@ -168,6 +168,12 @@ struct GlobalApprovalOverlayHost: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    if let error = viewModel.approvalError(for: approval.id) {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .appFont(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(14)
             }
@@ -198,25 +204,31 @@ struct GlobalApprovalOverlayHost: View {
 
                 Spacer()
 
+                if viewModel.isResolvingApproval(approval.id) {
+                    ProgressView().controlSize(.small)
+                }
+
                 if approval.allows(.decline) {
                     Button(model.localized("拒绝", english: "Decline"), role: .destructive) {
                         viewModel.resolveApproval(approval, decision: .decline)
                     }
+                    .disabled(viewModel.isResolvingApproval(approval.id))
                 }
                 if approval.allows(.accept) {
                     Button(model.localized("仅本次允许", english: "Allow Once")) {
                         viewModel.resolveApproval(approval, decision: .accept)
                     }
+                    .disabled(viewModel.isResolvingApproval(approval.id))
                 }
                 if approval.allows(.acceptForSession) {
                     Button(model.localized("本会话允许", english: "Allow for Session")) {
                         viewModel.resolveApproval(approval, decision: .acceptForSession)
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(viewModel.isResolvingApproval(approval.id))
                 }
             }
             .controlSize(.small)
-            .disabled(viewModel.isPerformingAction)
             .padding(12)
         }
     }

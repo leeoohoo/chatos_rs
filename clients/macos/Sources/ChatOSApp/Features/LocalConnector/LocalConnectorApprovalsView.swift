@@ -141,7 +141,15 @@ struct LocalConnectorApprovalsView: View {
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let error = viewModel.approvalError(for: approval.id) {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .appFont(.caption)
+                    .foregroundStyle(.orange)
+            }
             HStack {
+                if viewModel.isResolvingApproval(approval.id) {
+                    ProgressView().controlSize(.small)
+                }
                 if approval.allows(.decline) {
                     Button(model.localized("拒绝", english: "Decline"), role: .destructive) {
                         viewModel.resolveApproval(approval, decision: .decline)
@@ -160,7 +168,7 @@ struct LocalConnectorApprovalsView: View {
                     .buttonStyle(.borderedProminent)
                 }
             }
-            .disabled(viewModel.isPerformingAction)
+            .disabled(viewModel.isResolvingApproval(approval.id))
         }
         .padding(.vertical, 10)
     }
