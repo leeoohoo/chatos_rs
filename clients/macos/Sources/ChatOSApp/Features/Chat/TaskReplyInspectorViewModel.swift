@@ -80,6 +80,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     private var loadGeneration = 0
     private var loadedModelOutputRunID: String?
     var retryState = MessageTaskRetryState()
+    var lifecycleState = MessageTaskInspectorLifecycleState()
 
     init(
         selection: TaskReplySelection,
@@ -103,12 +104,12 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     }
 
     func load() {
-        startRealtimeIfNeeded()
-        guard task == nil else {
-            scheduleActiveRefreshIfNeeded()
-            return
-        }
-        refresh()
+        let inspectorSession = lifecycleState.start()
+        startRealtimeIfNeeded(inspectorSession: inspectorSession)
+        refresh(
+            showsLoadingState: task == nil,
+            inspectorSession: inspectorSession
+        )
     }
 
     func update(selection: TaskReplySelection) {
@@ -123,7 +124,9 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         }
         if sessionChanged {
             stopRealtime()
-            startRealtimeIfNeeded()
+            if let inspectorSession = lifecycleState.activeSession {
+                startRealtimeIfNeeded(inspectorSession: inspectorSession)
+            }
         }
         guard needsRefresh else { return }
         loadedModelOutputRunID = nil
@@ -153,11 +156,16 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     }
 
     func refresh() {
-        refresh(showsLoadingState: true)
+        guard let inspectorSession = lifecycleState.activeSession else { return }
+        refresh(showsLoadingState: true, inspectorSession: inspectorSession)
     }
 
-    private func refresh(showsLoadingState: Bool) {
-        guard let callback = selection.reply.taskCallback else { return }
+    private func refresh(
+        showsLoadingState: Bool,
+        inspectorSession: MessageTaskInspectorSession
+    ) {
+        guard lifecycleState.accepts(inspectorSession),
+              let callback = selection.reply.taskCallback else { return }
         pollingTask?.cancel()
         pollingTask = nil
         loadGeneration += 1
@@ -177,43 +185,53 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 switch requestedSection {
                 case .process:
                     let loadedTask = try await fetchTask(callback: callback, selection: selection)
-                    guard !Task.isCancelled, generation == loadGeneration else { return }
+                    guard !Task.isCancelled,
+                          lifecycleState.accepts(inspectorSession),
+                          generation == loadGeneration else { return }
                     apply(loadedTask)
                 case .detail:
                     // A reply callback identifies the run that originally emitted the reply.
                     // After a retry that ID is historical, so fetch the task first and follow its
                     // current lastRunID instead of repeatedly rendering the original failure.
                     let loadedTask = try await fetchTask(callback: callback, selection: selection)
-                    guard !Task.isCancelled, generation == loadGeneration else { return }
+                    guard !Task.isCancelled,
+                          lifecycleState.accepts(inspectorSession),
+                          generation == loadGeneration else { return }
                     apply(loadedTask)
                     await loadLatestRun(
                         for: loadedTask,
                         callback: callback,
                         selection: selection,
-                        generation: generation
+                        generation: generation,
+                        inspectorSession: inspectorSession
                     )
                 }
             } catch {
-                guard !Task.isCancelled, generation == loadGeneration else { return }
+                guard !Task.isCancelled,
+                      lifecycleState.accepts(inspectorSession),
+                      generation == loadGeneration else { return }
                 let nextErrorMessage = error.localizedDescription
                 if errorMessage != nextErrorMessage {
                     errorMessage = nextErrorMessage
                 }
             }
-            guard !Task.isCancelled, generation == loadGeneration else { return }
+            guard !Task.isCancelled,
+                  lifecycleState.accepts(inspectorSession),
+                  generation == loadGeneration else { return }
             // A realtime or polling refresh can supersede the visible refresh that set these
             // flags. The latest generation owns cleanup even when that refresh is silent;
             // cancelled, older generations are excluded by the guard above.
             isLoading = false
             isLoadingModelOutput = false
-            scheduleActiveRefreshIfNeeded()
+            scheduleActiveRefreshIfNeeded(inspectorSession: inspectorSession)
         }
     }
 
     func retry() {
         guard let callback = selection.reply.taskCallback,
               let runID = task?.lastRunID ?? callback.runID,
-              !isRetrying else { return }
+              !isRetrying,
+              let inspectorSession = lifecycleState.activeSession else { return }
         let selection = selection
         let instruction = retryInstruction
         let lookup = lookup(callback, selection: selection)
@@ -232,6 +250,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 )
                 guard !Task.isCancelled,
                       let self,
+                      self.lifecycleState.accepts(inspectorSession),
                       self.retryState.accepts(token) else { return }
                 self.retryInstruction = ""
                 self.task = nil
@@ -242,16 +261,20 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled,
                       let self,
+                      self.lifecycleState.accepts(inspectorSession),
                       self.retryState.accepts(token) else { return }
                 self.retryErrorMessage = error.localizedDescription
             }
-            guard let self, self.retryState.finish(token) else { return }
+            guard let self,
+                  self.lifecycleState.accepts(inspectorSession),
+                  self.retryState.finish(token) else { return }
             self.retryTask = nil
             self.isRetrying = false
         }
     }
 
     func stop() {
+        lifecycleState.stop()
         loadGeneration += 1
         loadTask?.cancel()
         loadTask = nil
@@ -274,7 +297,8 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         for loadedTask: MessageTask,
         callback: TaskExecutionCallbackReference,
         selection: TaskReplySelection,
-        generation: Int
+        generation: Int,
+        inspectorSession: MessageTaskInspectorSession
     ) async {
         guard let runID = loadedTask.lastRunID ?? callback.runID else { return }
         do {
@@ -286,13 +310,16 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 fallbackRunID: runID
             )
             guard !Task.isCancelled,
+                  lifecycleState.accepts(inspectorSession),
                   generation == loadGeneration,
                   task?.id == loadedTask.id else { return }
             guard case let .modelOutput(updatedTask, loadedRunID) = update else { return }
             apply(updatedTask)
             loadedModelOutputRunID = loadedRunID
         } catch {
-            guard !Task.isCancelled, generation == loadGeneration else { return }
+            guard !Task.isCancelled,
+                  lifecycleState.accepts(inspectorSession),
+                  generation == loadGeneration else { return }
             modelOutputError = error.localizedDescription
         }
     }
@@ -320,10 +347,13 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         }
     }
 
-    private func scheduleActiveRefreshIfNeeded() {
+    private func scheduleActiveRefreshIfNeeded(
+        inspectorSession: MessageTaskInspectorSession
+    ) {
         pollingTask?.cancel()
         pollingTask = nil
-        guard task?.isActive == true else { return }
+        guard lifecycleState.accepts(inspectorSession),
+              task?.isActive == true else { return }
         let interval = TaskReplyInspectorPollingPolicy.interval(
             hasActiveRealtimeStream: hasActiveRealtimeStream
         )
@@ -333,48 +363,76 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             } catch {
                 return
             }
-            guard let self, !Task.isCancelled else { return }
-            self.refresh(showsLoadingState: false)
+            guard let self,
+                  !Task.isCancelled,
+                  self.lifecycleState.accepts(inspectorSession) else { return }
+            self.refresh(
+                showsLoadingState: false,
+                inspectorSession: inspectorSession
+            )
         }
     }
 
-    private func startRealtimeIfNeeded() {
-        guard let realtimeService else { return }
+    private func startRealtimeIfNeeded(
+        inspectorSession: MessageTaskInspectorSession
+    ) {
+        guard lifecycleState.accepts(inspectorSession),
+              let realtimeService else { return }
         let sessionID = selection.turn.sessionID
         guard realtimeTask == nil, realtimeSessionID != sessionID else { return }
         realtimeSessionID = sessionID
         realtimeTask = Task { [weak self, realtimeService, sessionID] in
             let stream = await realtimeService.events(sessionID: sessionID)
-            guard !Task.isCancelled else { return }
-            self?.realtimeDidStart(sessionID: sessionID)
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleState.accepts(inspectorSession) else { return }
+            self.realtimeDidStart(
+                sessionID: sessionID,
+                inspectorSession: inspectorSession
+            )
             do {
                 for try await signal in stream {
-                    guard let self else { return }
                     guard !Task.isCancelled,
+                          self.lifecycleState.accepts(inspectorSession),
                           signal.sessionID == sessionID,
                           self.realtimeSessionID == sessionID else { return }
-                    self.refresh(showsLoadingState: false)
+                    self.refresh(
+                        showsLoadingState: false,
+                        inspectorSession: inspectorSession
+                    )
                 }
             } catch {
                 guard !Task.isCancelled else { return }
             }
-            guard !Task.isCancelled else { return }
-            self?.realtimeDidEnd(sessionID: sessionID)
+            guard !Task.isCancelled,
+                  self.lifecycleState.accepts(inspectorSession) else { return }
+            self.realtimeDidEnd(
+                sessionID: sessionID,
+                inspectorSession: inspectorSession
+            )
         }
     }
 
-    private func realtimeDidStart(sessionID: String) {
-        guard realtimeSessionID == sessionID else { return }
+    private func realtimeDidStart(
+        sessionID: String,
+        inspectorSession: MessageTaskInspectorSession
+    ) {
+        guard lifecycleState.accepts(inspectorSession),
+              realtimeSessionID == sessionID else { return }
         hasActiveRealtimeStream = true
-        scheduleActiveRefreshIfNeeded()
+        scheduleActiveRefreshIfNeeded(inspectorSession: inspectorSession)
     }
 
-    private func realtimeDidEnd(sessionID: String) {
-        guard realtimeSessionID == sessionID else { return }
+    private func realtimeDidEnd(
+        sessionID: String,
+        inspectorSession: MessageTaskInspectorSession
+    ) {
+        guard lifecycleState.accepts(inspectorSession),
+              realtimeSessionID == sessionID else { return }
         hasActiveRealtimeStream = false
         realtimeTask = nil
         realtimeSessionID = nil
-        scheduleActiveRefreshIfNeeded()
+        scheduleActiveRefreshIfNeeded(inspectorSession: inspectorSession)
     }
 
     private func stopRealtime() {

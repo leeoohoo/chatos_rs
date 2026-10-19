@@ -165,6 +165,34 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(calls.fetchTask, 1)
     }
 
+    func testStopDisablesRefreshUntilReloadStartsNewPresentation() async throws {
+        let service = TaskReplyInspectorServiceStub()
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .detail),
+            service: service
+        )
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+        let oldSession = try XCTUnwrap(viewModel.lifecycleState.activeSession)
+
+        viewModel.stop()
+        viewModel.refresh()
+        try await Task.sleep(for: .milliseconds(30))
+
+        var calls = await service.callCounts()
+        XCTAssertEqual(calls.fetchTask, 1)
+        XCTAssertNil(viewModel.lifecycleState.activeSession)
+
+        viewModel.load()
+        try await waitUntilFetchTaskCount(2, service: service)
+        let currentSession = try XCTUnwrap(viewModel.lifecycleState.activeSession)
+        calls = await service.callCounts()
+
+        XCTAssertEqual(calls.fetchTask, 2)
+        XCTAssertEqual(currentSession.generation, oldSession.generation + 1)
+        XCTAssertFalse(viewModel.lifecycleState.accepts(oldSession))
+    }
+
     func testChangingRetryTargetRejectsLateRetryResponse() async throws {
         let service = TaskReplyInspectorServiceStub(delayRetryRequest: true)
         let viewModel = TaskReplyInspectorViewModel(
@@ -260,6 +288,19 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("任务重试未进入待完成状态")
+    }
+
+    private func waitUntilFetchTaskCount(
+        _ expectedCount: Int,
+        service: TaskReplyInspectorServiceStub,
+        timeoutIterations: Int = 100
+    ) async throws {
+        for _ in 0..<timeoutIterations {
+            let counts = await service.callCounts()
+            if counts.fetchTask == expectedCount { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("任务详情未达到预期请求次数")
     }
 
     private func makeSelection(
