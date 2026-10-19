@@ -45,7 +45,7 @@ Main Chat 当前链路为：
 
 ```text
 用户消息
-  -> Native/Windows Conversation Service
+  -> Native Conversation Service
   -> start_conversation_turn
   -> shared Rust 创建 profile_key=main_chat 的 Run
   -> Planner 合并 Managed Prompt、capability snapshot 和本地 Task tools
@@ -61,7 +61,6 @@ Main Chat 当前链路为：
 - `clients/local_agent_host/layers/profiles/src/planner.rs`
 - `clients/local_agent_host/src/application/task_tools.rs`
 - `clients/macos/Sources/ChatOSConnector/NativeLocalAgentBootstrap.swift`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentBootstrapService.cs`
 
 ### 2.2 Main Chat 当前八个 Task 工具
 
@@ -778,63 +777,37 @@ External MCP 使用同一 Product Skill 控制面与静态 on-demand binding。b
 
 ---
 
-## 9. Windows 实施清单
+## 9. Windows React 实施约束
 
-Windows 必须实现同一架构，不得重新写一份简化 Prompt 版本。
+新的 Windows 客户端位于 `clients/windows-react`，从 macOS 当前产品行为与 shared Rust Host 契约出发实现。已删除的 C# 客户端不作为迁移、兼容或测试基线。
 
-### 9.1 当前需要替换的主要位置
+### 9.1 架构边界
 
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentBootstrapService.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentCapabilityCatalog.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPlatformToolWorker.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPluginToolExecutor.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPluginToolExecutor.Skills.cs`
+- React Feature 只依赖 application use case 和 domain model，不直接调用 Tauri `invoke`。
+- Tauri typed commands 实现平台端口，并负责 Rust Host sidecar、Windows 凭据、ConPTY、文件选择器和系统集成。
+- Main Chat、Task Execution、Skill bundle、capability revision、Run 恢复和审批状态以 shared Rust Host 为事实源。
+- Windows React 消费与 macOS 相同的 Skill manifest、bundle revision、tool schema 和冻结 Run 契约，不复制 Prompt 或 SKILL 正文。
+- UI 不保存另一份 Task/Run/Skill 状态，不直接访问 Host SQLite，也不暴露任意 Shell、文件或进程桥。
+- 所有产品自有页面使用统一苹果主题，不引入 Fluent、WinUI 或 Material 默认视觉。
 
-当前 Windows Main Chat 和 Task Execution instructions 是平台端硬编码简化文本，必须改成与 macOS 相同的 Skill bundle + run-bound policy Skill 机制。正文权威来源是 chatos-main-chat-invariants/SKILL.md 和 chatos-task-execution-invariants/SKILL.md，不得在 C# 中再硬编码一份。
+### 9.2 契约与安全要求
 
-### 9.2 Windows 开发交付要求
+- Host lifecycle 必须经过 launch、handshake、synchronize、ready；reader/writer 任一退出即终止传输并回收 sidecar。
+- 平台 Tool Worker 只 claim `execution_route=platform` 的 invocation，尊重 durable route 与 `preflight_outcome`，不得执行 shared invocation。
+- Product/Plugin Skill 激活和资源读取使用 Run 固定快照；重启后从 Host 恢复，不以进程内集合代替持久事实。
+- Plugin Release、binding、artifact hash 与权限在执行前 fail closed 校验；版本漂移要求创建新 Task。
+- 项目写入、终端、Plugin 与 External MCP 遵循 shared scheduler 的范围锁，并在平台端再次校验 owned paths、工作目录与权限。
+- 跨平台 DTO 由 Rust interface schema/fixture 验证，TypeScript 不手写一套含义不同的协议。
 
-- 消费与 macOS 完全相同的 shared Skill manifest 和 bundle revision。
-- 两个 policy Skill 注册为 role=policy，分别放入 Main/Task bundle，并用其冻结的完整 instructions 作为对应 capability snapshot 的 instructions。自动加载，不添加 on-demand tool binding，也不把 policy 列在需要用户/模型激活的业务 catalog 中。
-- Main Chat/Task bootstrap 不再依赖远程 Agent Prompt bundle 或 vendor resolver；Gateway 的 Agent 启停、required/selectable bindings、Plugin Release 和 capability policy 仍然必须校验，不能借迁移绕过。其他 Agent 继续保留原有 Prompt 管理。
-- 离线恢复与 Gateway capability catalog 缺失时，对历史 capability 创建新 revision：保留 tools、required policy、其他 prefixed facts 和 External 的原 binding/fingerprint；缺少可信远端 binding 或 bundle 损坏时要求刷新，不能静默丢弃。不得更改旧 Run 的 model/capability 引用。所有支持 profile 发布成功后才发布 main_chat 并保存当前模型指针；中断重试必须可重放，不变的迁移不发布新快照。
-- 不复制或翻译一份独立 SKILL.md。
-- Main Chat 八个 Task tool schemas 最终来自 shared Rust 权威定义和平台选择字段合并。
-- capability snapshot 携带相同的 Skill refs 和 binding IDs。
-- Skill 激活状态由 shared Rust 持久化，C# 不单独保存一份行为状态。
-- `WindowsLocalAgentPlatformToolWorker` 必须在 claim 时使用 `execution_route=platform`，解析返回 invocation 的 durable route，并解析可选 `preflight_outcome`；存在拒绝时直接提交该 outcome，绝不能调用平台 executor。Host 会拒绝外部 worker 对 `shared` invocation 的提交。
-- Plugin executor 对模型只发布 `agent_skill_activate`、`agent_skill_list_resources`、`agent_skill_read_resource`，支持统一 `skill_ref` adapter，并仅在 executor 层兼容旧 `capability_skill_*`。
-- provider 重建时通过 `get_run_skill_activations` 查询成功 activation invocation，并按冻结的 Plugin snapshot 恢复 session；不得用进程内集合代替 durable 恢复。
-- 分别发布 `skill_bundle_internal` 和 `task_skill_bundle_internal`，按上述 combined checksum 算法参与 revision；Task run-bound 能力发现说明必须在初始上下文中注入，on-demand 项目/终端 Skill 保持渐进披露。
-- 通过账户隔离的 `get_run_skill_bundle` 读取当前 Run 的 Product 固定正文及资源，并恢复允许范围内的 Product activation；bundle 存在时不得静默回退到新版内建 Skill。Unicode scalar 分页必须与 Rust/macOS 一致。
-- Task built-ins 的 `capability_describe` 返回 `invocation_mode=direct_task_tool`，真实调用必须经过 Task 的原生审批、工作目录、edit-session 和进程归属校验。broker 的 `capability_invoke` 只执行 Plugin，不允许进入旧群聊 built-in 执行器。
-- Windows 文件编辑器必须按冻结 Run 的 `owned_paths` 限制实际暂存与提交范围，不能只依赖 shared scheduler 的范围锁；会话 root/ownership 不可被工具参数扩大，并需拒绝符号链接/reparse-point 父目录的范围绕过。shared 路径锁已使用保守 case/Unicode key。
-- Task capability policy 必须发布 `plugin_release_snapshots`，每项字段固定为 `plugin_key`、`plugin_id`、`release_id`、`version`、`artifact_sha256`；这些字段参与 capability revision。C# Plugin executor 必须在启动进程前与当前安装记录逐项核对，任一变化都拒绝执行并要求重新创建 Task，不得自动切换到新 Release。
-- shared Rust 会把选择了 Terminal、Plugin 或 External MCP 的 Task 保守视为整个 project/conversation 范围的运行时 writer；Windows 不得在原生 worker 中绕过这一 Task 级锁，也不得仅凭模型声称“只读”放宽。
-- capability revision 输入字段、排序和 checksum 算法必须与 macOS 一致。
-- Windows parity tests 必须比较工具名、schema 关键字段、binding、Skill revision 和 activation policy，而不只比较工具数量。
-- 新 Task bundle 使用 `schema_version=2`（Main Chat 仍为 1）。新语义要求 Plugin `capability_invoke` 在 shared preflight 检查持久化 describe binding；旧 version 1/无 bundle Run 保持兼容，不得因客户端升级静默更换旧 Run 的 bundle。
-- Plugin `capability_describe` 必须返回 `binding_schema_version=1`、`provider_id=plugin:<installed-plugin-id>`，每个 tool 返回 `invocation_mode`、`required_skill_refs` 和 `skill_gate`。条件 gate 字段固定为 `all_of` 和可选 `select_by_argument:{pointer,map}`；所有 Skill 值转换为当前 Run 的精确 `plugin-skill:<plugin_option>:<name>`。无 gate 也返回显式 `{"all_of":[]}`。
-- 原生 executor 返回 `is_error=true` 或 MCP `isError=true` 时 worker 提交 `failed`，保留结构化输出；抛出的未知副作用错误仍为 `needs_review`。shared durable 查询同时排除旧客户端错误 envelope 被误记为 succeeded 的记录。
-- External MCP 的 provider 为 `chatos.external-mcp:<resource-id>`；binding ID 为 `external-mcp:<resource-id>:<catalog-sha256>`。哈希输入为 sorted-key/unescaped-slash JSON，包含 `resource_id`、`server_name`、`endpoint` 和按 `public_name` 排序的工具（`public_name/upstream_name/description/input_schema/remote_skill_gate`，缺失 gate 写 null）。headers 不参与也不持久化；仅把 digest 发布进 bundle。执行前核对 Run 冻结 binding 并检查 Product activation；credential rotation 允许，但 endpoint/schema/工具身份变化拒绝。
-- 纯 External MCP Task 同样可用六个 broker/Skill 控制工具，但不会获得未选择的 built-ins。External 业务工具始终按暴露的名称直接调用，不通过 Plugin broker。平台未提供可信远端业务 Skill 文档时，声明 `_meta["chatos/skillGate"]` 的工具返回 `external_mcp_skill_instructions_unavailable`，不得丢弃 gate 后执行。
+### 9.3 必须补齐的测试
 
-### 9.3 Windows 必须补的测试
-
-- Main Chat 八工具与 Rust `TASK_TOOL_NAMES` 一致。
-- Task schema 包含 expected outputs、acceptance criteria 和 decomposition rationale。
-- Skill bundle checksum 改变会产生新的 capability revision。
-- Run 重启后已激活 Skill 仍然有效。
-- Task Product Skill 升级后旧 Run 继续返回原正文与资源；无 bundle 的旧 Run 保持兼容，跨账户查询失败，未选定能力的恢复 ref 不扩权。
-- Task built-in broker 调用即使已激活 Skill 也会拒绝；写提交、命令和进程控制均经过原生 Task 路径，Plugin broker 调用继续正常执行。
-- 文件编辑 batch 中混入范围外路径会整批拒绝且不留下暂存修改；目录祖先删除、符号链接/reparse-point 父目录和 ownership 降级均拒绝，允许路径及空范围兼容正常提交。
-- `shared` 与 `platform` route 的同名 `agent_skill_*` 不会被错误 worker claim 或 commit。
-- 未激活 on-demand Skill 时 Task tool 被拒绝。
-- native worker 收到 `preflight_outcome=skill_activation_required` 时 executor 调用次数为 0，且原样提交失败结果。
-- Plugin Skill 统一 ref 和旧协议兼容。
-- Plugin Release/version/artifact hash 变化时旧 Task fail closed；未变化时 Task 只携带自己选择的 Plugin 快照。
-- Plugin 与 External MCP Task 会和同范围其他 writer 串行化，但 reader 可绕过等待队首；完成、取消和过期恢复会释放锁。
-- 多 Task graph、依赖、写路径冲突、graph callback aggregation 与 macOS 行为一致。
+- TypeScript、Tauri Rust 与 Host fixture 的协议一致性。
+- Host 启动次序、版本不兼容、writer/reader 退出、崩溃重启与账号切换。
+- Main Chat Task tools、Skill bundle checksum、activation 恢复与旧 Run 固定快照。
+- shared/platform route 隔离，preflight 拒绝时平台 executor 调用次数为零。
+- Plugin/External MCP binding 与 Release 漂移 fail closed。
+- 写路径越界、reparse point、工作目录扩大、终端 ownership 和审批绕过全部拒绝。
+- 多 Task graph、依赖、范围冲突、回写聚合与 macOS 行为一致。
 
 ---
 
@@ -1187,11 +1160,10 @@ macOS 已将以下两个 minimal policy 作为统一 Skill 资源直接发布；
 
 ### Windows
 
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentBootstrapService.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentCapabilityCatalog.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPlatformToolWorker.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPluginToolExecutor.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPluginToolExecutor.Skills.cs`
+- `clients/windows-react/src/application`
+- `clients/windows-react/src/infrastructure`
+- `clients/windows-react/src-tauri/src/host`
+- `clients/windows-react/src-tauri/src/commands`
 
 ### Plugin Management / Admin Console
 

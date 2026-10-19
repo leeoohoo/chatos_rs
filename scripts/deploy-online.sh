@@ -398,12 +398,8 @@ package_client() {
       "$ROOT_DIR/clients/macos/scripts/package-release-app.sh"
       ;;
     windows)
-      if command -v dotnet >/dev/null 2>&1; then
-        dotnet publish "$ROOT_DIR/clients/windows/ChatOS.Win.sln" --configuration Release
-      else
-        echo "[ERROR] Windows client packaging requires the .NET SDK" >&2
-        exit 2
-      fi
+      echo "[ERROR] Windows React packaging is unavailable until the Tauri bootstrap milestone is complete" >&2
+      exit 2
       ;;
     *)
       echo "[ERROR] expected client: mac or windows" >&2

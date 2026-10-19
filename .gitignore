@@ -54,10 +54,6 @@ clients/wechat-miniprogram/project.private.config.json
 # Product and implementation documents are local-only in this repository.
 /docs/
 
-# The Windows client keeps its solution and packaging automation in source.
-!/clients/windows/ChatOS.Win.sln
-!/clients/windows/build/
-!/clients/windows/build/**
 /memory_engine_ext/*
 /harness/
 /mcps/

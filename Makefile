@@ -6,10 +6,10 @@ DOCKER_BOOTSTRAP_FILE := $(if $(wildcard docker/bootstrap.conf),docker/bootstrap
 
 .PHONY: help dev docker-up docker-fast docker-dev docker-rebuild docker-restart docker-restart-fast docker-restart-dev docker-build docker-clean-images docker-down docker-reset docker-logs docker-ps docker-config
 .PHONY: local-dev local-dev-stop local-dev-status local-dev-logs postgres-up postgres-migrate postgres-verify postgres-down
-.PHONY: build build-rust build-frontends build-macos-client build-windows-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
+.PHONY: build build-rust build-frontends build-macos-client build-browser-plugin build-computer-use-plugin build-document-plugin build-plugins
 .PHONY: test smoke smoke-repo smoke-local-project-entry verify verify-fast test-rust-workspaces check-frontends code-size-report
 .PHONY: test-user-service test-local-connector-service test-memory-engine
-.PHONY: test-macos-client test-windows-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
+.PHONY: test-macos-client test-browser-plugin test-computer-use-plugin test-document-plugin test-plugins
 .PHONY: type-check-admin-console
 
 help:
@@ -37,7 +37,6 @@ help:
 	@echo "  make docker-ps              # show Docker service status"
 	@echo "  make build                  # build Rust services and frontends"
 	@echo "  make build-macos-client     # build the native macOS client"
-	@echo "  make build-windows-client   # build the native Windows client"
 	@echo "  make build-plugins          # build the maintained first-party plugin targets"
 	@echo "  make test                   # run repo checks and core backend/frontend tests"
 	@echo "  make smoke                  # run lightweight repo checks"
@@ -129,9 +128,6 @@ build-frontends:
 build-macos-client:
 	@swift build --package-path clients/macos
 
-build-windows-client:
-	@dotnet build clients/windows/ChatOS.Win.sln --configuration Release
-
 build-browser-plugin:
 	@cargo build --manifest-path plugins/browser/Cargo.toml --workspace
 
@@ -185,9 +181,6 @@ test-memory-engine:
 
 test-macos-client:
 	@swift test --package-path clients/macos
-
-test-windows-client:
-	@dotnet test clients/windows/ChatOS.Win.sln --configuration Release
 
 test-browser-plugin:
 	@cargo test --manifest-path plugins/browser/Cargo.toml --workspace

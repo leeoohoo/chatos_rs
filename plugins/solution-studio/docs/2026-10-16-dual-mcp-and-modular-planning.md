@@ -328,32 +328,22 @@ Windows 不在本轮实现，由后续开发者按以下不可拆分的协议一
 - `plugin_release_snapshots` 每项必须包含 `plugin_key`、`component_key`、`plugin_id`、`release_id`、`version`、`artifact_sha256`。
 - 选择唯一性和授权键统一使用 `(plugin_key, component_key)`；不得继续按包级 `plugin_key` 去重。
 
-执行规则：
+Windows React 执行规则：
 
-- `WindowsLocalAgentCapabilityCatalog` 将同一安装包的两个 MCP 展开成两个独立候选，而不是一个包级候选。
-- `WindowsLocalAgentBootstrapService` 在 `task_policy_internal` 发布 `plugin_components` 和 component 级 Release 快照，不再发布包级 `plugin_keys`。
-- `WindowsLocalAgentTaskToolAuthorization.Resolve` 要求完整的新 `tool_options`；缺 `tool_options`、`plugin_hints`、`plugin_release_snapshots` 或任一 `component_key` 时直接失败。
-- `WindowsLocalAgentPluginToolExecutor` 必须验证冻结 Release 与当前安装记录完全相同，并且只对所选 `componentKey` 调用 `PluginManifestLoader.PrepareAsync`；禁止遍历该包全部 `mcpServers`。
-- Todo / Agent Teams 若继续支持 Plugin 选择，`AgentTodoPluginSelection`、引用库、可选项列表和运行时准备也必须携带 `componentKey`，只启动所选 component。
+- Tauri 平台适配器将同一安装包的多个 MCP 展开成独立候选，而不是包级候选。
+- Rust Host capability snapshot 发布 `plugin_components` 和 component 级 Release 快照，不再发布包级 `plugin_keys`。
+- typed application port 要求完整的 `tool_options`；缺 `tool_options`、`plugin_hints`、`plugin_release_snapshots` 或任一 `component_key` 时直接失败。
+- Plugin adapter 必须验证冻结 Release 与当前安装记录完全相同，并且只准备所选 `componentKey`；禁止遍历该包全部 `mcpServers`。
+- Todo / Agent Teams 若支持 Plugin 选择，领域模型、引用库、可选项列表和运行时准备也必须携带 `componentKey`，只启动所选 component。
 - 不添加 `IsLegacyUnrestricted`、包级全启动、缺字段默认值、旧 Task 推断或旧持久化记录补全等兼容路径；旧数据不可执行时直接删除或要求重新创建。
 
-建议改动文件：
-
-- `clients/windows/src/ChatOS.Connector/Plugins/PluginModels.cs`
-- `clients/windows/src/ChatOS.Connector/Plugins/PluginManifestLoader.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentCapabilityCatalog.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentBootstrapService.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentProjectToolExecutor.cs`
-- `clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentPluginToolExecutor.cs`
-- `clients/windows/src/ChatOS.Core/Domain/AgentTodoExecution.cs`
-- `clients/windows/src/ChatOS.Connector/AgentTeams/AgentPluginToolRuntime.cs`
-- `clients/windows/src/ChatOS.Connector/AgentTeams/AgentTeamToolExecutor.Todos.cs`
+计划落点：`clients/windows-react/src/application`、`clients/windows-react/src/infrastructure` 与 `clients/windows-react/src-tauri/src/commands`。具体边界以新的 Windows React 实施方案为准，不迁移旧 C# 类型。
 
 Windows 验收测试必须覆盖：一个包展开两个候选、只启动所选 component、跨 component 扩权失败、缺 component 失败、Release 漂移失败、旧包级 Task 失败，以及 authoring/executor 工具面互不越权。
 
 ### 9.2 Windows 终端审批目的说明
 
-Windows 本轮同样不修改代码。后续开发者实施 W1 时还必须同步以下终端审批契约，使 macOS 与 Windows 的审批体验一致：
+Windows React 实施时必须同步以下终端审批契约，使 macOS 与 Windows 的审批体验一致：
 
 - `terminal_exec` 增加必填字符串参数 `purpose`，去除首尾空白后必须为 1–500 字；描述必须面向用户说明运行原因和预期结果，禁止只写“执行命令”或复制原始命令。
 - JSON Schema、审批处理器和最终执行器都独立校验 `purpose`；缺失、全空白或超长时失败关闭，不执行命令。

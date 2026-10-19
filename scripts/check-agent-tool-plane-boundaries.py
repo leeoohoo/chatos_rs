@@ -33,7 +33,12 @@ def forbid(relative_path: str, needles: list[str], reason: str) -> None:
             ERRORS.append(f"{relative_path}: {reason} ({needle!r})")
 
 
-for retired_root in ("chatos", "task_runner_service", "mcp_management_service"):
+for retired_root in (
+    "chatos",
+    "task_runner_service",
+    "mcp_management_service",
+    "clients/windows",
+):
     if (ROOT / retired_root).exists():
         ERRORS.append(f"retired server execution root still exists: {retired_root}")
 
@@ -76,11 +81,6 @@ else:
     require(
         "clients/macos/Sources/ChatOSConnector/NativeLocalAgentHostLifecycle.swift",
         f"static let version = {protocol_version}",
-        "the Rust Local Agent Host protocol version",
-    )
-    require(
-        "clients/windows/src/ChatOS.Connector/LocalAgent/WindowsLocalAgentHostLifecycle.cs",
-        f"private const int ProtocolVersion = {protocol_version};",
         "the Rust Local Agent Host protocol version",
     )
 
@@ -164,20 +164,12 @@ forbid(
 for retired_survey_path in (
     "clients/macos/Sources/ChatOSConnector/AgentGroupChatStore/AgentRequirementSurveyRepository.swift",
     "clients/macos/Sources/ChatOSConnector/AgentGroupChatStore/SQLiteAgentGroupChatStore+RequirementSurvey.swift",
-    "clients/windows/src/ChatOS.Connector/AgentTeams/AgentRequirementSurveySkillCatalog.cs",
-    "clients/windows/src/ChatOS.Connector/AgentTeams/AgentTeamToolExecutor.Surveys.cs",
-    "clients/windows/src/ChatOS.Connector/AgentTeams/SqliteAgentTeamStore.Surveys.cs",
 ):
     if (ROOT / retired_survey_path).exists():
         ERRORS.append(
             f"{retired_survey_path}: retired client requirement-survey implementation returned"
         )
 
-forbid(
-    "clients/windows/src/ChatOS.Connector/Persistence/LocalStateDatabase.cs",
-    ["CREATE TABLE IF NOT EXISTS agent_requirement_surveys"],
-    "Windows client storage must not recreate the retired Agent Team survey table",
-)
 forbid(
     "plugin_management_service/backend/src/store.rs",
     ["RETIRED_TASK_MANAGER", "is_retired_task_manager_mcp"],
@@ -218,12 +210,6 @@ forbid(
     ["McpManagementClient", "resolveRuntimeSession", "MCP_MANAGEMENT"],
     "macOS command approval must remain local-only",
 )
-require(
-    "clients/windows/src/ChatOS.Connector/Approval/CommandApprovalCoordinator.cs",
-    "The automatic approval reviewer is unavailable; user approval is required.",
-    "the fail-closed Windows approval fallback",
-)
-
 memory_roots = [
     ROOT / "memory_engine/backend/src",
     ROOT / "agent/src/implementations/memory_engine.rs",

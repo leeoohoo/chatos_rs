@@ -365,7 +365,7 @@ crates/chatos_plugin_management_sdk
 mcp_management_service
 task_runner_service
 clients/macos
-clients/windows
+clients/windows-react
 plugins/browser
 ```
 

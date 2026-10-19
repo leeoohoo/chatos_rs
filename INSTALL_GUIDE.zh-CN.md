@@ -198,14 +198,14 @@ Harness 使用 Apache License 2.0。开源说明见 `THIRD_PARTY_NOTICES.md`，�
 
 ## 9. 原生客户端
 
-`local_connector_service` 在 Docker 栈中运行；访问工作区、本机凭据和设备能力的 Local Connector 已内置于 macOS 与 Windows 原生客户端。
+`local_connector_service` 在 Docker 栈中运行；访问工作区、本机凭据和设备能力的 Local Connector 已内置于 macOS 客户端。新的 Windows React 客户端将在 Tauri 原生层接入同一个 Rust Local Agent Host。
 
 ```bash
 make build-macos-client
 make test-macos-client
 ```
 
-Windows 端使用 `clients/windows/scripts/start-client.ps1` 启动，构建与安装说明见 `clients/windows/README.md`。
+旧 Windows C# 客户端已经删除。新的 Windows 构建与安装流程将在 `clients/windows-react` 工程骨架完成后提供，当前实施依据见 [Windows React 实施方案](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)。
 
 ## 10. 检查
 

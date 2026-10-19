@@ -704,7 +704,7 @@ selected signed Plugin MCP component
 
 - macOS：`clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift`
 - macOS Relay：`clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+PluginRelay.swift`
-- Windows：`clients/windows/src/ChatOS.Connector/Plugins/`
+- Windows React：`clients/windows-react/src-tauri/src/commands/`（新建 typed Plugin adapter）
 
 ### 13.3 标准 MCP initialize
 

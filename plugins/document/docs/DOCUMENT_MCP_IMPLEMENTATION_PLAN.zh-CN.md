@@ -792,7 +792,7 @@ ChatOS 本地资料：
 
 - `clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+Plugins.swift`
 - `clients/macos/Sources/ChatOSConnector/NativeLocalConnectorService+PluginRelay.swift`
-- `clients/windows/src/ChatOS.Connector/Plugins/`
+- `clients/windows-react/src-tauri/src/commands/`（新建 typed Plugin adapter，不迁移旧 C#）
 - `plugins/browser/npm/`
 - `plugins/computer-use/scripts/`
 

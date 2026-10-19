@@ -412,7 +412,7 @@ async fn cross_graph_write_locks_skip_conflicts_and_release_after_cancellation()
                 "graph-writer-c",
                 "turn-locks",
                 "writer-c",
-                &["clients/windows"],
+                &["clients/windows-react"],
             ),
             1_200,
         )
@@ -508,7 +508,7 @@ async fn terminal_runtime_lock_blocks_writers_but_not_readers_and_releases() {
                 "graph-writer-after-terminal",
                 "turn-terminal-locks",
                 "writer-after-terminal",
-                &["clients/windows"],
+                &["clients/windows-react"],
             ),
             1_100,
         )

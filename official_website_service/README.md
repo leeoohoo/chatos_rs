@@ -82,21 +82,11 @@ https://www.example.com/admin/releases
 
 安装包未全部上传成功时不会替换 `latest.json`，因此失败的发布不会影响当前线上版本。
 
-## 打包并发布 Windows 客户端
+## Windows 客户端发布状态
 
-先在 Windows 11 上生成原生客户端 MSIX：
+旧 C# 客户端与 MSIX 打包流程已经删除，官网在 Windows React/Tauri 新客户端达到发布门禁前不再提供旧安装包。新的打包和发布步骤将在 `clients/windows-react` 工程骨架、签名与真实 Windows 设备验收完成后补充。
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\clients\windows\build\package.ps1 -Platform x64
-```
-
-然后打开官网发布管理页，选择 Windows MSIX 与 macOS 安装包并发布：
-
-```powershell
-https://www.example.com/admin/releases
-```
-
-发布脚本会：
+发布服务的通用上传流程仍然是：
 
 1. 计算客户端安装包的 SHA-256。
 2. 请求 `POST /api/site/admin/releases/presign`。
@@ -109,7 +99,7 @@ https://www.example.com/admin/releases
 chatos-releases/
 └── releases/chatos-client/stable/
     ├── latest.json
-    └── 3.0.0/ChatOS-windows-x64.msix
+    └── 3.0.9/ChatOS-macos-arm64.dmg
 ```
 
 ## 公开接口

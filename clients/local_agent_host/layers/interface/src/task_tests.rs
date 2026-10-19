@@ -113,14 +113,16 @@ fn rejects_unordered_overlapping_writers_and_accepts_safe_ownership() {
             .collect(),
     };
 
-    assert!(graph(&["clients/macos"], &["clients/windows"], false)
+    assert!(graph(&["clients/macos"], &["clients/windows-react"], false)
         .validate()
         .is_ok());
     let overlap = graph(&["clients"], &["clients/macos/App.swift"], false)
         .validate()
         .expect_err("ancestor paths must conflict");
     assert!(overlap.contains("overlapping owned_paths"));
-    assert!(graph(&[], &["clients/windows"], false).validate().is_err());
+    assert!(graph(&[], &["clients/windows-react"], false)
+        .validate()
+        .is_err());
     assert!(graph(&["clients"], &["clients/macos"], true)
         .validate()
         .is_ok());

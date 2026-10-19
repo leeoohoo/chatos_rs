@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
-import { type CSSProperties, type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight, BrainCircuit, Check, ChevronRight, Download, Laptop,
   Mail, MonitorDown, ShieldCheck, Sparkles, TerminalSquare, Workflow,
@@ -9,9 +9,6 @@ import {
 import { BrandMark } from './BrandMark';
 
 type SiteManifest = { product_name: string; tagline: string; app_url: string; registration_enabled: boolean; downloads_enabled: boolean };
-type ClientArtifact = { platform: string; label: string; file_name: string; content_type: string; size_bytes: number; sha256: string; download_url: string };
-type ClientRelease = { product: string; channel: string; version: string; published_at: string; artifacts: ClientArtifact[] };
-type DownloadCatalog = { storage_configured: boolean; available: boolean; message: string; release?: ClientRelease | null };
 type RegistrationForm = { email: string; displayName: string; inviteCode: string; verificationCode: string; password: string; confirmPassword: string };
 
 const productName = '叽咕狸';
@@ -44,7 +41,7 @@ const faqs = [
   { question: '叽咕狸和普通 AI 聊天工具有什么不同？', answer: '叽咕狸不把“更聪明”当作终点，而是从真实工作需要的每一个工具开始：项目、文件、终端、Git、创作与协作都放在清楚可控的工作台里，帮助你一步步把事情做好。' },
   { question: '必须把整个项目上传到云端吗？', answer: '不需要。项目目录由桌面客户端直接连接和管理；文件浏览、编辑、Git 与终端操作都围绕你在客户端中创建的本机项目进行。' },
   { question: '为什么注册需要邀请码？', answer: '目前仍处于邀请测试阶段，我们希望控制服务容量并认真处理每一条反馈。获得邀请码后，可在官网完成邮箱验证与注册。' },
-  { question: '桌面客户端支持哪些系统？', answer: '当前官网优先提供 Windows 10/11 64 位安装包，macOS 原生客户端正在持续测试和完善。' },
+  { question: '桌面客户端支持哪些系统？', answer: 'macOS 原生客户端是当前产品基准；Windows 版本正在以 Tauri、React 和 TypeScript 从零重建，达到发布标准后开放下载。' },
 ];
 
 function PetSprite({ className = '', label }: { className?: string; label?: string }) {
@@ -96,7 +93,6 @@ function App() {
   const sceneRef = useRef<HTMLElement>(null);
   const heroClipPathRef = useRef<SVGPathElement>(null);
   const [manifest, setManifest] = useState<SiteManifest>(fallbackManifest);
-  const [downloads, setDownloads] = useState<DownloadCatalog | null>(null);
   const [registration, setRegistration] = useState<RegistrationForm>(initialRegistration);
   const [registrationState, setRegistrationState] = useState<'idle' | 'submitting' | 'success'>('idle');
   const [codeSending, setCodeSending] = useState(false);
@@ -107,12 +103,12 @@ function App() {
   useEffect(() => {
     document.title = '叽咕狸 | 把每一个工具做好，陪你把每一件事做好';
     let cancelled = false;
-    Promise.all([
-      fetch('/api/site/manifest').then((response) => response.ok ? response.json() as Promise<SiteManifest> : fallbackManifest),
-      fetch('/api/site/downloads').then((response) => response.ok ? response.json() as Promise<DownloadCatalog> : null),
-    ]).then(([manifestPayload, downloadPayload]) => {
-      if (!cancelled) { setManifest({ ...manifestPayload, product_name: productName }); setDownloads(downloadPayload); }
-    }).catch(() => { if (!cancelled) setManifest(fallbackManifest); });
+    fetch('/api/site/manifest')
+      .then((response) => response.ok ? response.json() as Promise<SiteManifest> : fallbackManifest)
+      .then((manifestPayload) => {
+        if (!cancelled) setManifest({ ...manifestPayload, product_name: productName });
+      })
+      .catch(() => { if (!cancelled) setManifest(fallbackManifest); });
     return () => { cancelled = true; };
   }, []);
 
@@ -338,7 +334,6 @@ function App() {
     };
   }, []);
 
-  const windowsArtifact = useMemo(() => downloads?.release?.artifacts.find((artifact) => artifact.platform === 'windows-x64') ?? null, [downloads]);
   const updateRegistration = (field: keyof RegistrationForm, value: string) => { setRegistration((current) => ({ ...current, [field]: value })); setFormMessage(null); };
 
   const sendCode = async () => {
@@ -439,8 +434,8 @@ function App() {
       <section className="access-section" id="download">
         <div className="access-copy"><span className="access-label">CHATTERFOX DESKTOP APP</span><h2>把顺手的工具，<br />装进你的电脑。</h2><p>项目、对话、文件、Git、终端、Agent 协作与 AI 创作，不是功能清单，而是一组为真实工作认真打磨的桌面工具。</p><div className="access-points"><span><Laptop size={18} /> 原生桌面体验，打开就能使用</span><span><Workflow size={18} /> 项目、消息与任务各归其位</span><span><Sparkles size={18} /> 创作与协作过程随时看得见</span></div></div>
         <div className="download-panel"><div className="download-title"><span className="platform-icon"><MonitorDown size={26} /></span><div><small>DESKTOP APP</small><strong>Windows 客户端</strong><em>Windows 10 / 11 · 64 位</em></div></div>
-          {windowsArtifact ? <><a className="j-button primary wide" href={windowsArtifact.download_url}><Download size={18} /> 下载 {downloads?.release?.version}</a><div className="release-meta"><span>{formatBytes(windowsArtifact.size_bytes)}</span><span>SHA-256 {windowsArtifact.sha256.slice(0, 12)}…</span></div></> : <><button className="j-button disabled wide" type="button" disabled><Download size={18} /> {downloads?.message ?? '正在读取最新版本'}</button><div className="release-meta"><span>Windows 版本即将开放下载</span></div></>}
-          <ol className="install-list"><li><span>1</span>下载并安装桌面客户端</li><li><span>2</span>登录叽咕狸账号</li><li><span>3</span>创建或打开本机项目</li></ol><p className="coming-soon">macOS 原生客户端正在持续测试中</p>
+          <button className="j-button disabled wide" type="button" disabled><Download size={18} /> Windows React 版本重建中</button><div className="release-meta"><span>完成核心功能与真实设备验收后开放下载</span></div>
+          <ol className="install-list"><li><span>1</span>以 macOS 当前产品行为为基准</li><li><span>2</span>使用 Tauri 与 React 从零实现</li><li><span>3</span>通过安装、升级与稳定性验收</li></ol><p className="coming-soon">旧 C# 客户端已停止提供</p>
         </div>
       </section>
 
@@ -464,8 +459,6 @@ function App() {
     </main>
   );
 }
-
-function formatBytes(value: number) { if (!Number.isFinite(value) || value <= 0) return '大小未知'; const units = ['B', 'KB', 'MB', 'GB']; let size = value; let unit = 0; while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1; } return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`; }
 
 function toFriendlyRegistrationError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);

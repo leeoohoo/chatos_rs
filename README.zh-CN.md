@@ -21,7 +21,7 @@ ChatOS 是一个让 AI 在真实项目环境中持续工作的原生桌面工作
 
 ## 现在的项目是什么
 
-- **原生桌面客户端：** macOS 使用 SwiftUI，Windows 使用 WinUI，两端独立实现。已经退役的 Electron 客户端不再是产品运行时。
+- **原生桌面客户端：** 生产版 macOS 客户端使用 SwiftUI；替代 Windows 客户端正以 macOS 产品基线为依据，使用 Tauri、React 和 TypeScript 从零重建。已经退役的 Electron 与旧 C# 客户端都不再是产品运行时。
 - **云端控制面：** 认证、模型配置、持久记忆、Plugin Marketplace 元数据与版本、Companion Relay 由服务端提供。
 - **设备侧能力执行：** 每个项目绑定一个明确授权的本机工作区。文件、Git、命令、本地 MCP、插件应用和设备权限通过原生客户端内置的 Local Connector 执行。
 - **可观察的后台任务：** 复杂需求可以进入可恢复的任务生命周期，持续保留进度、日志、工具调用、审批、重试和最终结果。
@@ -72,9 +72,9 @@ ChatOS 支持直接对话和后台任务。用户可以检查中间输出、发�
 
 macOS 客户端已经包含项目工作区、任务视图、插件应用、Local Connector 管理、可选桌面宠物，以及完全在本机运行的全局快速搜索、剪贴板历史、区域/长截图和录屏等效率工具。
 
-Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立的 WinUI 实现、原生 Local Connector、安装打包流程和 Network Guard。由于两端不共享 UI 源码，平台差异与能力同步会单独登记和验收。
+替代 Windows 客户端以当前 macOS 的真实行为和苹果主题视觉语言为基准，使用 React 实现 UI、Tauri 承载桌面边界，并复用 Rust Local Agent Host 中的平台无关业务能力。已删除的 C# 客户端、WinUI 实现和 Network Guard 均不是迁移输入。
 
-详细说明见 [clients/README.md](./clients/README.md)、[clients/macos/README.md](./clients/macos/README.md) 和 [clients/windows/README.md](./clients/windows/README.md)。
+详细说明见 [clients/README.md](./clients/README.md)、[clients/macos/README.md](./clients/macos/README.md) 和 [Windows React 实施方案](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)。
 
 ## 第一方插件
 
@@ -92,7 +92,7 @@ Windows 客户端使用相同的产品协议与视觉语言，同时拥有独立
 | 路径 | 职责 |
 | --- | --- |
 | `clients/macos` | Swift 6.2 / SwiftUI 原生客户端与 macOS Local Connector。 |
-| `clients/windows` | .NET 8 / WinUI 3 原生客户端、Windows Local Connector、Network Guard 与安装器。 |
+| `clients/windows-react` | Tauri 2 / React / TypeScript 替代 Windows 客户端及其实施方案。 |
 | `clients/local_agent_host` | 由原生客户端内嵌的 Rust 本地任务、工具、调度与执行宿主。 |
 | `memory_engine/backend` | 会话摘要与分层项目/主题记忆。 |
 | `plugin_management_service/backend` | 插件目录、版本、安装包与运行能力元数据。 |
@@ -182,21 +182,7 @@ clients/macos/scripts/package-debug-app.sh
 
 ### Windows
 
-开发环境需要 Windows、.NET 8，以及 Windows App SDK / WinUI 工作负载：
-
-```powershell
-./clients/windows/build/bootstrap.ps1
-./clients/windows/build/test.ps1
-./clients/windows/build/build.ps1
-```
-
-在 Windows 上生成自包含安装器：
-
-```powershell
-./clients/windows/scripts/package-client.ps1
-```
-
-打包脚本可以自动补齐缺少的本机工具，并在 `clients/windows/BundleArtifacts/` 下生成自包含安装包。
+旧 C# 客户端及其安装器已经删除。Tauri 2 / React 替代客户端正在 `clients/windows-react` 下实施；完成工程骨架里程碑后再公布构建命令。详见 [实施方案](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md)。
 
 ## 构建与验证
 
@@ -219,7 +205,7 @@ make test-document-plugin
 npm --prefix plugins/diagram-studio test
 ```
 
-`make test-plugins` 会一起运行 Browser、Computer Use 和 Document 三套插件测试；Diagram Studio 使用独立的 npm 测试目标。请只运行当前宿主机支持的目标，Windows 客户端与 Windows Computer Use 的验证必须在 Windows 上完成。
+`make test-plugins` 会一起运行 Browser、Computer Use 和 Document 三套插件测试；Diagram Studio 使用独立的 npm 测试目标。请只运行当前宿主机支持的目标；Windows Computer Use 的验证必须在 Windows 上完成，Windows React 客户端验证将在 Tauri 工程骨架完成后加入。
 
 ## 配置与安全边界
 

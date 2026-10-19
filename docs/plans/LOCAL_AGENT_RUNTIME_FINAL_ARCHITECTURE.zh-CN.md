@@ -20,7 +20,7 @@ ChatOS 客户端拥有完整的 Agent 执行权：
 - 所有用户消息、有效助手消息、工具调用和工具结果都形成稳定记录，并同步到 Memory Engine。
 - 支持厂商原生上下文压缩的模型使用厂商原生协议；其他模型使用 Memory Engine 的总结与上下文重组。
 - 插件和 MCP 在用户设备本地执行，服务端只管理插件目录、不可变发布物、授权和策略。
-- macOS 与 Windows 使用同一份 Agent 执行内核和协议，不在 Swift 与 C# 中各写一套业务循环。
+- macOS 与 Windows 使用同一份 Agent 执行内核和协议，不在 Swift 与 Windows React/Tauri 中各写一套业务循环。
 - 所有客户端结构化业务数据统一通过 Client Storage Provider 读写，默认使用 SQLite；用户可在高级设置中选择自己的 PostgreSQL 数据库。
 - SQLite 与 PostgreSQL 必须提供相同的数据模型、事务语义和功能，不允许任何业务模块只支持其中一种数据库。
 
@@ -114,7 +114,7 @@ clients/local_agent_host/src/{application,infrastructure,interface}
 
 所有 Local Agent 专用 package 归属 `clients/local_agent_host`。应用运行时只依赖 interface DTO 和 ports，不依赖 SQLite 实现；Host 装配根负责选择 infrastructure adapter。Host 的传递依赖禁止进入 `chatos/`、`mcp_management_service/` 或 `task_runner_service/`，这三个目录是完成本地化后的物理删除目标。
 
-macOS Swift 与 Windows C# 只通过本地 IPC 使用该内核。现有 Swift `ChatOSAgentRuntime` 不继续作为第二套 Loop；审批、剧情、主聊天和 Task Runner 都应注册为公共 Runtime 的 Profile 或通过类型化工具回调接入。
+macOS Swift 与 Windows React/Tauri 只通过本地 IPC 使用该内核。现有 Swift `ChatOSAgentRuntime` 不继续作为第二套 Loop；审批、剧情、主聊天和 Task Runner 都应注册为公共 Runtime 的 Profile 或通过类型化工具回调接入。
 
 ### 6.2 Profile 接口
 
@@ -735,11 +735,11 @@ clients/local_agent_host/
 clients/macos/
 └─ Native UI + typed Local Agent Host client
 
-clients/windows/
-└─ Native UI + typed Local Agent Host client
+clients/windows-react/
+└─ React UI + typed Tauri Local Agent Host adapter
 ```
 
-最终代码不包含主聊天和 Task Runner 的第二套 Swift/C# Agent Loop。
+最终代码不包含主聊天和 Task Runner 的第二套 Swift/TypeScript Agent Loop。
 
 ## 16. 实施工作包
 
@@ -797,7 +797,7 @@ clients/windows/
 
 - 审批和剧情改用相同 Runtime/Profile 契约。
 - 删除 Swift `while true` Agent Loop 和重复的模型、Memory、重试实现。
-- Windows 使用同一 Rust Runtime，不另写 C# Loop。
+- Windows 使用同一 Rust Runtime，不另写 TypeScript/Tauri Loop。
 
 ### I. Native UI 与后台 Host
 

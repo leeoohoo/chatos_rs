@@ -25,7 +25,7 @@
 - [x] 删除旧 Connector 工作区自动迁移和插件未声明上下文时的隐式 workspace 注入。
 - [x] 将 Windows 插件 capability 白名单收缩为 `host.context.read`。
 - [x] 更新项目绑定文档，明确客户端项目注册表是唯一权威。
-- [x] 完成 Rust、macOS 与 Windows 非 WinUI 目标编译测试及发布脚本验证。
+- [x] 完成 Rust 与 macOS 目标编译测试及发布脚本验证；旧 Windows C# 客户端已删除，Windows React/Tauri 验证由新实施方案接管。
 - [x] 补齐“项目会话 → ChatOS → MCP Management → Task Runner”的客户端项目快照透传；Task Runner 必须重新校验快照，禁止仅凭 `project_id` 执行项目任务。
 - [ ] 完成 macOS 重装验收和 Windows 真机验收。
 - [x] 提交删除变更。

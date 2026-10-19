@@ -129,7 +129,7 @@ Local Connector Service 是双向 Relay，不执行插件，也不访问用户�
 cargo test -p chatos_plugin_management_sdk --test third_party_plugin_examples
 cargo test -p plugin_management_service_backend --lib
 swift test --package-path clients/macos
-dotnet test clients/windows/ChatOS.Win.sln --configuration Release
+npm --prefix clients/windows-react test
 ```
 
 真实 Release 还必须覆盖：

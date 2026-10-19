@@ -21,7 +21,7 @@ The website and other public-facing material show the native client that users a
 
 ## What the project is today
 
-- **Native desktop clients:** independent SwiftUI and WinUI applications for macOS and Windows. The retired Electron client is no longer the product runtime.
+- **Native desktop clients:** the production macOS client uses SwiftUI; the replacement Windows client is being rebuilt from the macOS product baseline with Tauri, React, and TypeScript. The retired Electron and legacy C# clients are no longer product runtimes.
 - **Cloud control plane:** authentication, model configuration, retained memory, Plugin Marketplace metadata, releases, and Companion relay are provided by server-side services.
 - **Device-side execution:** every project binds an explicitly authorized local workspace. Files, Git, commands, local MCP servers, plugin applications, and device permissions execute through the Local Connector built into the native client.
 - **Observable background work:** complex requests can become resumable tasks with progress, logs, tool calls, approvals, retries, and final results.
@@ -72,9 +72,9 @@ Each client-owned project keeps its conversations, tasks, run history, and reusa
 
 The macOS client includes project workspaces, task views, plugin applications, a local connector control surface, an optional desktop pet, and local-only global utilities such as quick search, clipboard history, screenshots, long screenshots, and screen recording.
 
-The Windows client follows the same product protocols and visual language with its own WinUI implementation, native Local Connector, packaging flow, and Network Guard. Platform-specific parity is tracked explicitly because the clients do not share UI source code.
+The replacement Windows client is being built from the current macOS behavior and Apple-style visual language. It uses React for UI, Tauri for the desktop boundary, and the shared Rust Local Agent Host for portable local business logic. The removed C# client, WinUI implementation, and Network Guard are not migration inputs.
 
-See [clients/README.md](./clients/README.md), [clients/macos/README.md](./clients/macos/README.md), and [clients/windows/README.md](./clients/windows/README.md).
+See [clients/README.md](./clients/README.md), [clients/macos/README.md](./clients/macos/README.md), and the [Windows React implementation plan](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md).
 
 ## First-party plugins
 
@@ -92,7 +92,7 @@ Plugins can combine MCP servers, skills, permission declarations, managed artifa
 | Path | Responsibility |
 | --- | --- |
 | `clients/macos` | Swift 6.2 / SwiftUI native client and macOS Local Connector. |
-| `clients/windows` | .NET 8 / WinUI 3 native client, Windows Local Connector, Network Guard, and installer. |
+| `clients/windows-react` | Tauri 2 / React / TypeScript replacement Windows client and implementation plan. |
 | `clients/local_agent_host` | Rust local task, tool, scheduling, and execution host embedded by native clients. |
 | `memory_engine/backend` | Conversation summaries and layered project/subject memory. |
 | `plugin_management_service/backend` | Plugin catalog, releases, packages, and runtime capability metadata. |
@@ -182,21 +182,7 @@ Source runs default to the local gateway at `http://127.0.0.1:9080`. Use `CHATOS
 
 ### Windows
 
-Requires Windows, .NET 8, and the Windows App SDK / WinUI workload for development:
-
-```powershell
-./clients/windows/build/bootstrap.ps1
-./clients/windows/build/test.ps1
-./clients/windows/build/build.ps1
-```
-
-To build the self-contained installer on Windows:
-
-```powershell
-./clients/windows/scripts/package-client.ps1
-```
-
-The packaging script can bootstrap missing local tooling and produces a self-contained installer under `clients/windows/BundleArtifacts/`.
+The legacy C# client and its installer have been removed. The Tauri 2 / React replacement is being implemented under `clients/windows-react`; build commands will be published after the bootstrap milestone is complete. See the [implementation plan](./clients/windows-react/docs/01-macos-first-refactor-and-windows-react-plan.md).
 
 ## Build and verify
 
@@ -219,7 +205,7 @@ make test-document-plugin
 npm --prefix plugins/diagram-studio test
 ```
 
-`make test-plugins` runs the Browser, Computer Use, and Document plugin suites together. Diagram Studio has its own npm test target. Run only the targets supported by the current host; Windows client and Windows Computer Use validation must run on Windows.
+`make test-plugins` runs the Browser, Computer Use, and Document plugin suites together. Diagram Studio has its own npm test target. Run only the targets supported by the current host; Windows Computer Use validation must run on Windows. Windows React client validation will be added with its Tauri bootstrap.
 
 ## Configuration and security notes
 

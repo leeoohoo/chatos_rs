@@ -67,6 +67,9 @@ remove_path "$ROOT_DIR/plugins/browser/target"
 remove_path "$ROOT_DIR/plugins/computer-use/.build"
 remove_path "$ROOT_DIR/plugins/document/dist"
 remove_path "$ROOT_DIR/plugins/document/node_modules"
+remove_path "$ROOT_DIR/clients/windows-react/dist"
+remove_path "$ROOT_DIR/clients/windows-react/node_modules"
+remove_path "$ROOT_DIR/clients/windows-react/src-tauri/target"
 remove_path "$ROOT_DIR/target-shared"
 
 while IFS= read -r path; do
@@ -80,7 +83,7 @@ done < <(
 while IFS= read -r path; do
   remove_path "$path"
 done < <(
-  find "$ROOT_DIR/clients/windows" "$ROOT_DIR/plugins/computer-use/windows" \
+  find "$ROOT_DIR/plugins/computer-use/windows" \
     -type d \( -name bin -o -name obj \) -prune -print 2>/dev/null
 )
 

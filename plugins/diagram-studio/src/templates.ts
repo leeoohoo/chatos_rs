@@ -94,7 +94,7 @@ function base(kind: DiagramKind, title: string, nodes: DiagramNode[], edges: Dia
 export function architectureTemplate(): DiagramDocument {
   return base('architecture', '服务架构图', [
     node('users', '用户', 40, 220, 'client', 'rounded', undefined, palette.purple, {}, { icon: 'user' }),
-    node('web-app', '客户端应用', 260, 220, 'client', 'rounded', 'SwiftUI · WinUI', palette.blue, {}, { icon: 'terminal' }),
+    node('web-app', '客户端应用', 260, 220, 'client', 'rounded', 'SwiftUI · React', palette.blue, {}, { icon: 'terminal' }),
     node('api-gateway', 'API Gateway', 510, 220, 'network', 'rounded', 'HTTPS · WebSocket', palette.cyan, {}, { icon: 'api' }),
     node('identity', '身份服务', 770, 70, 'service', 'rounded', 'OAuth · Session', palette.purple, {}, { icon: 'shield' }),
     node('order-service', '订单服务', 770, 220, 'service', 'rounded', 'REST · Events', palette.blue, {}, { icon: 'server' }),
