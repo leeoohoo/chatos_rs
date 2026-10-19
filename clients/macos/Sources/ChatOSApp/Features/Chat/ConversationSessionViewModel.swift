@@ -119,7 +119,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var latestRefreshTask: Task<Void, Never>?
     private var olderHistoryLoadTask: Task<Void, Never>?
     private var latestRefreshState = ConversationLatestRefreshState()
-    private var historyRetryAttempt = 0
+    var historyRetryState = ConversationHistoryRetryState()
     private var viewportMutationTasks: [
         ConversationViewportMutationKind: Task<Void, Never>
     ] = [:]
@@ -269,7 +269,7 @@ final class ConversationSessionViewModel: ObservableObject {
     func refreshLatest() {
         historyRetryTask?.cancel()
         historyRetryTask = nil
-        historyRetryAttempt = 0
+        historyRetryState.reset()
         enqueueLatestRefresh(presentation: .visible, debounce: false)
     }
 
@@ -303,6 +303,7 @@ final class ConversationSessionViewModel: ObservableObject {
         realtimeTask = nil
         historyRetryTask?.cancel()
         historyRetryTask = nil
+        historyRetryState.cancelScheduled()
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
@@ -327,7 +328,7 @@ final class ConversationSessionViewModel: ObservableObject {
         realtimeTask = nil
         historyRetryTask?.cancel()
         historyRetryTask = nil
-        historyRetryAttempt = 0
+        historyRetryState.reset()
         runtimeSettingsError = nil
         runtimeRecoveryTask?.cancel()
         let token = runtimeRecoveryState.begin()
@@ -382,6 +383,7 @@ final class ConversationSessionViewModel: ObservableObject {
         realtimeTask = nil
         historyRetryTask?.cancel()
         historyRetryTask = nil
+        historyRetryState.cancelScheduled()
         latestRefreshDebounceTask?.cancel()
         latestRefreshDebounceTask = nil
         latestRefreshState.cancelScheduledAndPending()
@@ -495,7 +497,7 @@ final class ConversationSessionViewModel: ObservableObject {
                     if self.historyError != nil {
                         self.historyError = nil
                     }
-                    self.historyRetryAttempt = 0
+                    self.historyRetryState.reset()
                     self.historyRetryTask?.cancel()
                     self.historyRetryTask = nil
                 }
@@ -523,13 +525,24 @@ final class ConversationSessionViewModel: ObservableObject {
         guard isActive,
               isLocalAgentRuntimeReady,
               historyRetryTask == nil,
-              let delay = ConversationHistoryUseCase.retryDelay(
-                at: historyRetryAttempt
+              let activation = activationState.activeSession,
+              let schedule = historyRetryState.schedule(
+                activation: activation
               ) else { return }
-        historyRetryAttempt += 1
         historyRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
-            guard !Task.isCancelled, let self else { return }
+            do {
+                try await Task.sleep(for: schedule.delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.isLocalAgentRuntimeReady,
+                  self.historyRetryState.accepts(
+                    schedule.token,
+                    activation: self.activationState.activeSession
+                  ),
+                  self.historyRetryState.finish(schedule.token) else { return }
             self.historyRetryTask = nil
             self.enqueueLatestRefresh(presentation: .silent, debounce: false)
         }

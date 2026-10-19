@@ -414,6 +414,8 @@ Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、�
 
 远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。
 
+Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `ConversationHistoryRetryState`；每次 sleep 绑定具体 activation token，停用、重新激活、手动刷新或成功响应都会拒绝旧重试唤醒，不再只依赖 Task cancellation。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；
