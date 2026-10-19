@@ -49,6 +49,8 @@ impl HostCommand {
             Self::RemovePluginInstallation(command) => Some(&command.owner_user_id),
             Self::CreateConversation(command) => Some(&command.owner_user_id),
             Self::GetConversation(command) => Some(&command.owner_user_id),
+            Self::GetConversationContext(command) => Some(&command.owner_user_id),
+            Self::GetConversationAttachment(command) => Some(&command.owner_user_id),
             Self::GetConversationHistory(command) => Some(&command.owner_user_id),
             Self::ListConversations(command) => Some(&command.owner_user_id),
             Self::GetConversationRuntimeSettings(command) => Some(&command.owner_user_id),

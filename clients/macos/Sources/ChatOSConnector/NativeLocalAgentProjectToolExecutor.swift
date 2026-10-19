@@ -293,7 +293,7 @@ struct NativeLocalAgentProjectContextResolver: Sendable {
               let conversationID = Self.conversationID(input) else {
             throw NativeLocalAgentPlatformToolError.invalidRunContext
         }
-        let detail = try await conversations.get(
+        let detail = try await conversations.context(
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )

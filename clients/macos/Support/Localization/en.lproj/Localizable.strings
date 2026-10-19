@@ -579,6 +579,7 @@
 "结束运行" = "End Run";
 "还没有运行记录" = "No Runs Yet";
 "加载更早消息" = "Load Earlier Messages";
+"加载更早的运行事件" = "Load Earlier Run Events";
 "运行中断" = "Run Interrupted";
 "重试中断步骤" = "Retry Interrupted Step";
 "仅在确认工具调用可以安全重试后执行" = "Proceed only after confirming that the tool call is safe to retry.";

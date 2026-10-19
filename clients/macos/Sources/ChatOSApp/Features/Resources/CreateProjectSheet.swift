@@ -48,7 +48,14 @@ struct CreateProjectSheet: View {
             Divider()
             footer
         }
-        .frame(minWidth: 700, idealWidth: 740, minHeight: 650, idealHeight: 700)
+        .frame(
+            minWidth: 620,
+            idealWidth: 740,
+            maxWidth: 760,
+            minHeight: 520,
+            idealHeight: 700,
+            maxHeight: 700
+        )
         .task { await viewModel.loadInitialDirectory() }
         .onDisappear {
             guard let project = projectPendingDelivery else { return }
@@ -93,90 +100,94 @@ struct CreateProjectSheet: View {
     }
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if viewModel.selectedWorkspace == nil {
-                Label("请先授权本机工作区", systemImage: "externaldrive.badge.exclamationmark")
-                    .foregroundStyle(.orange)
-            }
-
-            CreateProjectDirectoryBrowser(
-                viewModel: viewModel,
-                showingNewFolderPrompt: $showingNewFolderPrompt
-            )
-            .frame(maxWidth: .infinity, minHeight: 250)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Label("项目根目录：\(viewModel.displayedLocation)", systemImage: "folder.fill")
-                    .appFont(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                Text("当前目录本身会成为项目根目录；“创建项目”不会自动新建同名文件夹。需要独立目录时，请先点击上方“新建文件夹”并进入该文件夹。")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("项目名称")
-                    .appFont(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField(
-                    "项目名称",
-                    text: Binding(
-                        get: { viewModel.projectName },
-                        set: { value in viewModel.updateProjectName(value) }
-                    )
-                )
-                .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("项目说明（可选）")
-                    .appFont(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                TextField("项目说明", text: $viewModel.projectDescription, axis: .vertical)
-                    .lineLimit(2...4)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 7) {
-                Text("项目类型")
-                    .appFont(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Picker("项目类型", selection: $viewModel.selectedProjectTypeKey) {
-                    ForEach(viewModel.projectTypes) { type in
-                        Text("\(type.categoryLabel) · \(type.label)").tag(type.key)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if viewModel.selectedWorkspace == nil {
+                    Label("请先授权本机工作区", systemImage: "externaldrive.badge.exclamationmark")
+                        .foregroundStyle(.orange)
                 }
-                .labelsHidden()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                if let selected = viewModel.projectTypes.first(where: {
-                    $0.key == viewModel.selectedProjectTypeKey
-                }) {
-                    Text(selected.description)
+
+                CreateProjectDirectoryBrowser(
+                    viewModel: viewModel,
+                    showingNewFolderPrompt: $showingNewFolderPrompt
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: 250)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Label("项目根目录：\(viewModel.displayedLocation)", systemImage: "folder.fill")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("当前目录本身会成为项目根目录；“创建项目”不会自动新建同名文件夹。需要独立目录时，请先点击上方“新建文件夹”并进入该文件夹。")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
-                }
-            }
-
-            Label("不会上传代码或创建托管仓库，也不要求 Git remote 或默认联系人。", systemImage: "internaldrive")
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-
-            if let errorMessage = viewModel.errorMessage {
-                Label {
-                    Text(errorMessage)
-                        .appFont(.caption)
                         .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
                 }
-                .foregroundStyle(.orange)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("项目名称")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        "项目名称",
+                        text: Binding(
+                            get: { viewModel.projectName },
+                            set: { value in viewModel.updateProjectName(value) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("项目说明（可选）")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("项目说明", text: $viewModel.projectDescription, axis: .vertical)
+                        .lineLimit(2...4)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("项目类型")
+                        .appFont(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("项目类型", selection: $viewModel.selectedProjectTypeKey) {
+                        ForEach(viewModel.projectTypes) { type in
+                            Text("\(type.categoryLabel) · \(type.label)").tag(type.key)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if let selected = viewModel.projectTypes.first(where: {
+                        $0.key == viewModel.selectedProjectTypeKey
+                    }) {
+                        Text(selected.description)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Label("不会上传代码或创建托管仓库，也不要求 Git remote 或默认联系人。", systemImage: "internaldrive")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let errorMessage = viewModel.errorMessage {
+                    Label {
+                        Text(errorMessage)
+                            .appFont(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    .foregroundStyle(.orange)
+                }
             }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 

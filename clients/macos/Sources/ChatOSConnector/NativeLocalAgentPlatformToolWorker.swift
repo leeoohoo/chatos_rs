@@ -42,6 +42,7 @@ public actor NativeLocalAgentPlatformToolWorker {
   private var ownerUserID: String?
   private var generation = UUID()
   private var pollingTask: Task<Void, Never>?
+  private var approvalTask: Task<Void, Never>?
   private var eventWakeTask: Task<Void, Never>?
   private var pendingWake = false
 
@@ -121,9 +122,9 @@ public actor NativeLocalAgentPlatformToolWorker {
     ownerUserID: String,
     externalMCPConfigs: [NativeLocalAgentExternalMCPConfig]
   ) async throws {
-    let cancelledPollingTask = resetLocked()
+    let cancelledTasks = resetLocked()
     await executor.reset()
-    await cancelledPollingTask?.value
+    for task in cancelledTasks { await task.value }
     try await executor.configureExternalMCPs(externalMCPConfigs)
     self.ownerUserID = ownerUserID
     // A model can spend longer than the short bootstrap claim window before
@@ -133,13 +134,14 @@ public actor NativeLocalAgentPlatformToolWorker {
     // The Rust scheduler and this native worker start independently. Keep a
     // short reconciliation window so Tasks materialized just after bootstrap
     // cannot leave their first platform tool invocation pending forever.
+    scheduleApprovalResolution(ownerUserID: ownerUserID)
     schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: activityWindow)
   }
 
   public func reset() async {
-    let cancelledPollingTask = resetLocked()
+    let cancelledTasks = resetLocked()
     await executor.reset()
-    await cancelledPollingTask?.value
+    for task in cancelledTasks { await task.value }
     ownerUserID = nil
   }
 
@@ -156,11 +158,60 @@ public actor NativeLocalAgentPlatformToolWorker {
   public func wake() {
     guard let ownerUserID else { return }
     startEventMonitoring(ownerUserID: ownerUserID)
+    scheduleApprovalResolution(ownerUserID: ownerUserID)
     guard pollingTask == nil else {
       pendingWake = true
       return
     }
     schedulePolling(ownerUserID: ownerUserID, maximumIdleDuration: activityWindow)
+  }
+
+  private func scheduleApprovalResolution(ownerUserID: String) {
+    guard approvalHandler != nil, approvalTask == nil else { return }
+    let token = generation
+    let maximumIdleDuration = activityWindow
+    approvalTask = Task { [weak self] in
+      await self?.resolveApprovals(
+        ownerUserID: ownerUserID,
+        generation: token,
+        maximumIdleDuration: maximumIdleDuration
+      )
+    }
+  }
+
+  private func resolveApprovals(
+    ownerUserID: String,
+    generation expectedGeneration: UUID,
+    maximumIdleDuration: Duration
+  ) async {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: maximumIdleDuration)
+    var idleDelay = Duration.milliseconds(250)
+    defer {
+      if generation == expectedGeneration {
+        approvalTask = nil
+      }
+    }
+    while !Task.isCancelled,
+      generation == expectedGeneration,
+      self.ownerUserID == ownerUserID
+    {
+      do {
+        if try await approvalHandler?.resolveNextPending(ownerUserID: ownerUserID) == true {
+          idleDelay = .milliseconds(250)
+          continue
+        }
+      } catch is CancellationError {
+        return
+      } catch {}
+      guard maximumIdleDuration != .zero, clock.now < deadline else { return }
+      do {
+        try await Task.sleep(for: idleDelay)
+      } catch {
+        return
+      }
+      idleDelay = min(idleDelay * 2, .seconds(2))
+    }
   }
 
   private func startEventMonitoring(ownerUserID: String) {
@@ -248,17 +299,6 @@ public actor NativeLocalAgentPlatformToolWorker {
         self.ownerUserID == ownerUserID
       {
         do {
-          if try await approvalHandler?.resolveNextPending(
-            ownerUserID: ownerUserID
-          ) == true {
-            // A restored approval may be the first visible sign that a run is
-            // still active after app launch. Keep listening before the host
-            // resumes the model so later tool batches do not require another
-            // manual wake or app restart.
-            startEventMonitoring(ownerUserID: ownerUserID)
-            idleDelay = .milliseconds(250)
-            continue
-          }
           while activeClaimCount < maximumConcurrentClaims,
             !Task.isCancelled,
             generation == expectedGeneration,
@@ -464,15 +504,17 @@ public actor NativeLocalAgentPlatformToolWorker {
     }
   }
 
-  private func resetLocked() -> Task<Void, Never>? {
-    let task = pollingTask
+  private func resetLocked() -> [Task<Void, Never>] {
+    let tasks = [pollingTask, approvalTask].compactMap { $0 }
     generation = UUID()
     pollingTask?.cancel()
     pollingTask = nil
+    approvalTask?.cancel()
+    approvalTask = nil
     eventWakeTask?.cancel()
     eventWakeTask = nil
     pendingWake = false
-    return task
+    return tasks
   }
 
   private static func safeErrorSummary(_ error: Error) -> String {

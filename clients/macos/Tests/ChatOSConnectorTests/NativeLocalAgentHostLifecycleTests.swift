@@ -5,6 +5,35 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentHostLifecycleTests: XCTestCase {
+    func testNotRunningRequestSignalsRecoveryBeforeReturningTheError() async throws {
+        let recoveryRequested = expectation(description: "Host recovery requested")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .nativeLocalAgentHostRecoveryRequested,
+            object: nil,
+            queue: nil
+        ) { _ in
+            recoveryRequested.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-recovery-signal-\(UUID().uuidString)")
+        let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: root.appendingPathComponent("missing-host"),
+            databaseURL: root.appendingPathComponent("agent.sqlite3"),
+            startupTimeout: .milliseconds(100)
+        ))
+        let command = try JSONSerialization.data(withJSONObject: ["type": "health"])
+
+        do {
+            _ = try await lifecycle.request(command: command)
+            XCTFail("A request without a running Host must fail after requesting recovery")
+        } catch {
+            XCTAssertEqual(error as? NativeLocalAgentHostError, .notRunning)
+        }
+        await fulfillment(of: [recoveryRequested], timeout: 1)
+    }
+
     func testCredentialRefreshReusesWorkerAndDefersChangedCredentialsWithoutStoppingIt() async throws {
         let repository = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -356,6 +385,24 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         try await lifecycle.start(ownerUserID: "user-2")
         owner = await lifecycle.activeOwnerUserID
         XCTAssertEqual(owner, "user-2")
+
+        let healthyProcessIdentifierValue = await lifecycle.processIdentifier
+        let healthyProcessIdentifier = try XCTUnwrap(healthyProcessIdentifierValue)
+        let idleCursor = try await runtime.latestEventCursor(ownerUserID: "user-2")
+        do {
+            _ = try await runtime.waitEvents(
+                ownerUserID: "user-2",
+                afterCursor: idleCursor,
+                timeoutMilliseconds: 1_000,
+                payloadMode: .routing
+            )
+            XCTFail("The client deadline must expire before an empty one-second event wait")
+        } catch let error as NativeLocalAgentHostError {
+            XCTAssertEqual(error, .requestTimedOut)
+        }
+        let processIdentifierAfterRequestTimeout = await lifecycle.processIdentifier
+        XCTAssertEqual(processIdentifierAfterRequestTimeout, healthyProcessIdentifier)
+        _ = try await conversations.list(ownerUserID: "user-2")
 
         let timeoutProcessIdentifier = await lifecycle.processIdentifier
         let stalledProcessIdentifier = try XCTUnwrap(timeoutProcessIdentifier)

@@ -41,6 +41,11 @@ extension AppModel {
                 await publishWorkspace(local, generation: generation, ownerUserID: ownerUserID)
                 try Task.checkCancellation()
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }
+                guard localAgentWorkspaceOwnerUserID == ownerUserID else {
+                    isWorkspaceLoading = false
+                    workspaceLoadTask = nil
+                    return
+                }
                 let deviceID = try? await localProjectsService.deviceID(ownerUserID: ownerUserID)
                 try Task.checkCancellation()
                 guard generation == workspaceLoadGeneration, ownerUserID == authenticatedUserID else { return }

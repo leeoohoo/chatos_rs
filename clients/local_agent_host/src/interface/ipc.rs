@@ -30,6 +30,8 @@ pub enum HostTransportError {
     InvalidJson(#[from] serde_json::Error),
     #[error("IPC response writer stopped unexpectedly: {0}")]
     WriterTask(#[from] tokio::task::JoinError),
+    #[error("IPC response writer stopped before the request stream ended")]
+    WriterStopped,
 }
 
 pub async fn serve_stream<S, H>(stream: S, handler: Arc<H>) -> Result<(), HostTransportError>
@@ -53,7 +55,7 @@ where
 {
     let (response_tx, mut response_rx) =
         mpsc::channel::<Result<Vec<u8>, HostTransportError>>(MAX_IN_FLIGHT_REQUESTS);
-    let writer_task = tokio::spawn(async move {
+    let mut writer_task = tokio::spawn(async move {
         while let Some(response) = response_rx.recv().await {
             let response = response?;
             write_frame(&mut writer, &response).await?;
@@ -61,24 +63,40 @@ where
         Ok::<(), HostTransportError>(())
     });
     let permits = Arc::new(Semaphore::new(MAX_IN_FLIGHT_REQUESTS));
-    while let Some(frame) = read_frame(&mut reader).await? {
-        let request: HostRequestEnvelope = serde_json::from_slice(&frame)?;
-        let permit = Arc::clone(&permits)
-            .acquire_owned()
-            .await
-            .map_err(|_| io::Error::other("IPC request limiter closed"))?;
-        let handler = Arc::clone(&handler);
-        let response_tx = response_tx.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            let response = handler.handle_request(request).await;
-            let encoded = serde_json::to_vec(&response).map_err(HostTransportError::from);
-            let _ = response_tx.send(encoded).await;
-        });
+    let reader_response_tx = response_tx.clone();
+    let reader_loop = async move {
+        while let Some(frame) = read_frame(&mut reader).await? {
+            let request: HostRequestEnvelope = serde_json::from_slice(&frame)?;
+            let permit = Arc::clone(&permits)
+                .acquire_owned()
+                .await
+                .map_err(|_| io::Error::other("IPC request limiter closed"))?;
+            let handler = Arc::clone(&handler);
+            let response_tx = reader_response_tx.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let response = handler.handle_request(request).await;
+                let encoded = serde_json::to_vec(&response).map_err(HostTransportError::from);
+                let _ = response_tx.send(encoded).await;
+            });
+        }
+        Ok::<(), HostTransportError>(())
+    };
+    tokio::pin!(reader_loop);
+    tokio::select! {
+        result = &mut reader_loop => {
+            result?;
+            drop(response_tx);
+            writer_task.await??;
+            Ok(())
+        }
+        result = &mut writer_task => {
+            match result? {
+                Ok(()) => Err(HostTransportError::WriterStopped),
+                Err(error) => Err(error),
+            }
+        }
     }
-    drop(response_tx);
-    writer_task.await??;
-    Ok(())
 }
 
 pub async fn read_frame<R>(reader: &mut R) -> Result<Option<Vec<u8>>, HostTransportError>
@@ -429,5 +447,41 @@ mod tests {
             read_frame(&mut server).await,
             Err(HostTransportError::FrameTooLarge)
         ));
+    }
+
+    #[tokio::test]
+    async fn oversized_response_stops_transport_while_request_stream_is_open() {
+        struct OversizedResponseHandler;
+
+        #[async_trait::async_trait]
+        impl HostRequestHandler for OversizedResponseHandler {
+            async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+                HostResponseEnvelope::success(
+                    request.command_id,
+                    HostResult::Health {
+                        service: "x".repeat(LOCAL_AGENT_MAX_FRAME_BYTES),
+                        storage_ready: true,
+                        recovered_claims: 0,
+                    },
+                )
+            }
+        }
+
+        let (mut client, server) = tokio::io::duplex(16 * 1024);
+        let server_task = tokio::spawn(serve_stream(server, Arc::new(OversizedResponseHandler)));
+        let request = HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "oversized-response".to_string(),
+            command: HostCommand::Health,
+        };
+        write_frame(&mut client, &serde_json::to_vec(&request).expect("request"))
+            .await
+            .expect("write");
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), server_task)
+            .await
+            .expect("writer failure must stop the transport")
+            .expect("join");
+        assert!(matches!(result, Err(HostTransportError::FrameTooLarge)));
     }
 }

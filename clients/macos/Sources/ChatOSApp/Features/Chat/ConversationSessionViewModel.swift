@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSConnector
 import Foundation
 
 @MainActor
@@ -108,6 +109,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private var runtimeSettingsLoadGeneration: UInt64 = 0
     var askUserPromptRefreshGeneration: UInt64 = 0
     private var isActive = false
+    private(set) var isLocalAgentRuntimeReady: Bool
 
     var taskGraphAvailabilityCacheEntryCount: Int {
         Set(taskGraphAvailability.keys)
@@ -120,6 +122,7 @@ final class ConversationSessionViewModel: ObservableObject {
         sessionID: String,
         initialTurns: [ConversationTurn],
         historyStore: any ConversationHistoryStoring,
+        localAgentRuntimeReady: Bool = true,
         remoteService: (any ConversationRemoteServicing)? = nil,
         realtimeService: (any ConversationRealtimeStreaming)? = nil,
         commandService: (any ConversationCommandServicing)? = nil,
@@ -138,6 +141,7 @@ final class ConversationSessionViewModel: ObservableObject {
         self.timelineItemsBuildCount = 1
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
+        self.isLocalAgentRuntimeReady = localAgentRuntimeReady
         self.remoteService = remoteService
         self.realtimeService = realtimeService
         self.commandService = commandService
@@ -168,6 +172,7 @@ final class ConversationSessionViewModel: ObservableObject {
     func activate() {
         guard !isActive else { return }
         isActive = true
+        guard isLocalAgentRuntimeReady else { return }
         refreshLatestSilently()
         Task { [weak self] in
             await self?.refreshAskUserPrompts()
@@ -191,6 +196,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func localAgentRuntimeDidBecomeReady() {
+        isLocalAgentRuntimeReady = true
         realtimeTask?.cancel()
         realtimeTask = nil
         historyRetryTask?.cancel()
@@ -199,11 +205,32 @@ final class ConversationSessionViewModel: ObservableObject {
         runtimeSettingsError = nil
         Task { [weak self] in
             guard let self else { return }
-            await loadRuntimeSettings()
+            async let settings: Void = loadRuntimeSettings()
+            async let prompts: Void = refreshAskUserPrompts()
+            _ = await (settings, prompts)
             guard runtimeSettingsError == nil, isActive else { return }
             refreshLatest()
             startRealtime()
         }
+    }
+
+    func localAgentRuntimeDidBecomeUnavailable() {
+        isLocalAgentRuntimeReady = false
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        historyRetryTask?.cancel()
+        historyRetryTask = nil
+        latestRefreshDebounceTask?.cancel()
+        latestRefreshDebounceTask = nil
+        latestRefreshDebouncePresentation = nil
+        latestRefreshPending = nil
+        runtimeSettingsLoadGeneration &+= 1
+        askUserPromptRefreshGeneration &+= 1
+        isRefreshing = false
+        isLoadingOlder = false
+        inFlightOlderCursor = nil
+        historyError = nil
+        runtimeSettingsError = nil
     }
 
     func refreshLatestSilently() {
@@ -214,7 +241,7 @@ final class ConversationSessionViewModel: ObservableObject {
         presentation: LatestRefreshPresentation,
         debounce: Bool
     ) {
-        guard isActive, let remoteService else { return }
+        guard isActive, isLocalAgentRuntimeReady, let remoteService else { return }
 
         if debounce {
             let scheduledPresentation = latestRefreshDebouncePresentation?
@@ -305,6 +332,7 @@ final class ConversationSessionViewModel: ObservableObject {
             .seconds(20),
         ]
         guard isActive,
+              isLocalAgentRuntimeReady,
               historyRetryTask == nil,
               historyRetryAttempt < delays.count else { return }
         let delay = delays[historyRetryAttempt]
@@ -318,7 +346,8 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func loadOlder() {
-        guard let remoteService,
+        guard isLocalAgentRuntimeReady,
+              let remoteService,
               let cursor = olderCursor,
               hasOlder,
               !isLoadingOlder,
@@ -476,12 +505,14 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     private func bootstrap(initialTurns: [ConversationTurn]) async {
-        async let runtimeSettings: Void = loadRuntimeSettings()
-        async let prompts: Void = refreshAskUserPrompts()
-        _ = await (runtimeSettings, prompts)
+        if isLocalAgentRuntimeReady {
+            async let runtimeSettings: Void = loadRuntimeSettings(presentErrors: false)
+            async let prompts: Void = refreshAskUserPrompts()
+            _ = await (runtimeSettings, prompts)
+        }
         await historyStore.mergeCachedTurns(initialTurns, sessionID: sessionID)
         await refreshSnapshot()
-        if isActive {
+        if isActive, isLocalAgentRuntimeReady {
             refreshLatest()
             startRealtime()
         }
@@ -612,7 +643,7 @@ final class ConversationSessionViewModel: ObservableObject {
         }
     }
 
-    private func loadRuntimeSettings() async {
+    private func loadRuntimeSettings(presentErrors: Bool = true) async {
         guard let runtimeSettingsService else { return }
         runtimeSettingsLoadGeneration &+= 1
         let generation = runtimeSettingsLoadGeneration
@@ -624,9 +655,14 @@ final class ConversationSessionViewModel: ObservableObject {
             availableModels = resolvedModels
             applyRuntimeSettings(resolvedSettings)
             runtimeSettingsError = nil
+        } catch NativeLocalAgentConversationRuntimeSettingsError.notConfigured {
+            guard generation == runtimeSettingsLoadGeneration else { return }
+            runtimeSettingsError = nil
         } catch {
             guard generation == runtimeSettingsLoadGeneration else { return }
-            runtimeSettingsError = error.localizedDescription
+            if presentErrors {
+                runtimeSettingsError = error.localizedDescription
+            }
         }
     }
 

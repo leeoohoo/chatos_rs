@@ -126,7 +126,7 @@ impl LocalRequirementSurveyToolExecutor {
             .request(
                 invocation,
                 "get-conversation",
-                HostCommand::GetConversation(GetConversationCommand {
+                HostCommand::GetConversationContext(GetConversationCommand {
                     owner_user_id: self.owner_user_id.clone(),
                     conversation_id: conversation_id.to_string(),
                 }),
@@ -513,13 +513,17 @@ mod tests {
         assert_eq!(result.run.status, LocalAgentRunStatus::WaitingUser);
         assert_eq!(result.run.checkpoint, json!({"phase": "requirements"}));
         if main_chat {
-            let HostResult::Conversation { conversation } = runtime
+            let HostResult::ConversationHistory { page: conversation } = runtime
                 .try_handle(envelope(
                     "get-waiting-chat",
-                    HostCommand::GetConversation(GetConversationCommand {
-                        owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
-                    }),
+                    HostCommand::GetConversationHistory(
+                        chatos_local_agent_protocol::GetConversationHistoryCommand {
+                            owner_user_id: "user-1".into(),
+                            conversation_id: "conversation-survey-flow".into(),
+                            before_ordinal: None,
+                            limit: 100,
+                        },
+                    ),
                 ))
                 .await
                 .unwrap()
@@ -556,13 +560,17 @@ mod tests {
                     && survey.source_task_id.as_deref() == if main_chat { None } else { Some("task-1") }
         ));
         if cancel {
-            let HostResult::Conversation { conversation } = runtime
+            let HostResult::ConversationHistory { page: conversation } = runtime
                 .try_handle(envelope(
                     "get-chat-before-cancel",
-                    HostCommand::GetConversation(GetConversationCommand {
-                        owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
-                    }),
+                    HostCommand::GetConversationHistory(
+                        chatos_local_agent_protocol::GetConversationHistoryCommand {
+                            owner_user_id: "user-1".into(),
+                            conversation_id: "conversation-survey-flow".into(),
+                            before_ordinal: None,
+                            limit: 100,
+                        },
+                    ),
                 ))
                 .await
                 .unwrap()
@@ -588,13 +596,17 @@ mod tests {
                 matches!(cancelled, HostResult::ConversationTurnUpdated { result }
                 if result.run.status == LocalAgentRunStatus::Cancelled)
             );
-            let HostResult::Conversation { conversation } = runtime
+            let HostResult::ConversationHistory { page: conversation } = runtime
                 .try_handle(envelope(
                     "get-chat-after-cancel",
-                    HostCommand::GetConversation(GetConversationCommand {
-                        owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
-                    }),
+                    HostCommand::GetConversationHistory(
+                        chatos_local_agent_protocol::GetConversationHistoryCommand {
+                            owner_user_id: "user-1".into(),
+                            conversation_id: "conversation-survey-flow".into(),
+                            before_ordinal: None,
+                            limit: 100,
+                        },
+                    ),
                 ))
                 .await
                 .unwrap()
@@ -773,13 +785,17 @@ mod tests {
         if main_chat {
             assert_eq!(resolution.resumed_run.run_id, "run-survey-flow");
             assert_eq!(resolution.resumed_run.profile_key, "main_chat");
-            let HostResult::Conversation { conversation } = runtime
+            let HostResult::ConversationHistory { page: conversation } = runtime
                 .try_handle(envelope(
                     "get-resolved-chat",
-                    HostCommand::GetConversation(GetConversationCommand {
-                        owner_user_id: "user-1".into(),
-                        conversation_id: "conversation-survey-flow".into(),
-                    }),
+                    HostCommand::GetConversationHistory(
+                        chatos_local_agent_protocol::GetConversationHistoryCommand {
+                            owner_user_id: "user-1".into(),
+                            conversation_id: "conversation-survey-flow".into(),
+                            before_ordinal: None,
+                            limit: 100,
+                        },
+                    ),
                 ))
                 .await
                 .unwrap()

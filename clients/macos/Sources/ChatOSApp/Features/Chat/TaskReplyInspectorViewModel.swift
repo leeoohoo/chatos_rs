@@ -173,10 +173,11 @@ final class TaskReplyInspectorViewModel: ObservableObject {
                 }
             }
             guard !Task.isCancelled, generation == loadGeneration else { return }
-            if showsLoadingState {
-                isLoading = false
-                isLoadingModelOutput = false
-            }
+            // A realtime or polling refresh can supersede the visible refresh that set these
+            // flags. The latest generation owns cleanup even when that refresh is silent;
+            // cancelled, older generations are excluded by the guard above.
+            isLoading = false
+            isLoadingModelOutput = false
             scheduleActiveRefreshIfNeeded()
         }
     }

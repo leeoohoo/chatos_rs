@@ -24,9 +24,9 @@ mod response;
 mod run_query;
 mod skill;
 mod task;
-mod task_write_scope;
 mod task_acceptance;
 mod task_followup;
+mod task_write_scope;
 mod tool;
 
 pub use task_acceptance::{
@@ -47,8 +47,8 @@ pub use control_plane::{
     MAX_CAPABILITY_INSTRUCTIONS_BYTES, MAX_CAPABILITY_ITEMS, MAX_CONTROL_PLANE_SNAPSHOT_BYTES,
 };
 pub use conversation::{
-    CancelConversationTurnCommand, CreateConversationCommand, GetConversationCommand,
-    GetConversationHistoryCommand, GetConversationRuntimeSettingsCommand,
+    CancelConversationTurnCommand, CreateConversationCommand, GetConversationAttachmentCommand,
+    GetConversationCommand, GetConversationHistoryCommand, GetConversationRuntimeSettingsCommand,
     GuideConversationTurnCommand, ListConversationsCommand, LocalConversationAttachmentRecord,
     LocalConversationAttachmentSpec, LocalConversationDetail, LocalConversationHistoryPage,
     LocalConversationMessageRecord, LocalConversationMessageRole, LocalConversationPage,
@@ -191,6 +191,8 @@ pub enum HostCommand {
     RemovePluginInstallation(RemovePluginInstallationCommand),
     CreateConversation(CreateConversationCommand),
     GetConversation(GetConversationCommand),
+    GetConversationContext(GetConversationCommand),
+    GetConversationAttachment(GetConversationAttachmentCommand),
     GetConversationHistory(GetConversationHistoryCommand),
     ListConversations(ListConversationsCommand),
     GetConversationRuntimeSettings(GetConversationRuntimeSettingsCommand),
@@ -271,6 +273,8 @@ impl HostCommand {
             Self::RemovePluginInstallation(command) => command.validate(),
             Self::CreateConversation(command) => command.validate(),
             Self::GetConversation(command) => command.validate(),
+            Self::GetConversationContext(command) => command.validate(),
+            Self::GetConversationAttachment(command) => command.validate(),
             Self::GetConversationHistory(command) => command.validate(),
             Self::ListConversations(command) => command.validate(),
             Self::GetConversationRuntimeSettings(command) => command.validate(),
@@ -550,9 +554,8 @@ impl ListEventsCommand {
                 return Err("event_type requires run_id".to_string());
             }
         }
-        if self.newest_first && (self.run_id.is_none() || self.after_cursor != 0 || self.limit != 1)
-        {
-            return Err("newest_first requires run_id, after_cursor 0, and limit 1".to_string());
+        if self.newest_first && (self.run_id.is_none() || self.after_cursor != 0) {
+            return Err("newest_first requires run_id and after_cursor 0".to_string());
         }
         Ok(())
     }

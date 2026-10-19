@@ -146,7 +146,7 @@ public actor NativeLocalAgentConversationService:
         _ command: ConversationSendCommand
     ) async throws -> ConversationCommandAck {
         let context = try requireContext()
-        let detail = try await client.get(
+        let detail = try await client.context(
             ownerUserID: context.ownerUserID,
             conversationID: command.sessionID
         )
@@ -182,7 +182,7 @@ public actor NativeLocalAgentConversationService:
 
     public func stopTurn(conversationID: String, turnID: String?) async throws {
         let context = try requireContext()
-        let detail = try await client.get(
+        let detail = try await client.context(
             ownerUserID: context.ownerUserID,
             conversationID: conversationID
         )
@@ -264,7 +264,7 @@ public actor NativeLocalAgentConversationService:
                 var observedVersion: UInt64?
                 var observedRunIDs = Set<String>()
                 do {
-                    let detail = try await client.get(
+                    let detail = try await client.context(
                         ownerUserID: context.ownerUserID,
                         conversationID: sessionID
                     )
@@ -305,7 +305,7 @@ public actor NativeLocalAgentConversationService:
                             }
                         }
 
-                        let detail = try await client.get(
+                        let detail = try await client.context(
                             ownerUserID: context.ownerUserID,
                             conversationID: sessionID
                         )
@@ -357,7 +357,7 @@ public actor NativeLocalAgentConversationService:
         conversationID: String
     ) async throws -> LocalAgentConversationDetail {
         do {
-            return try await client.get(
+            return try await client.context(
                 ownerUserID: ownerUserID,
                 conversationID: conversationID
             )

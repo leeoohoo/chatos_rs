@@ -136,9 +136,15 @@ extension AppModel {
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleGeneration &+= 1
         let generation = localAgentHostLifecycleGeneration
+        localAgentWorkspaceOwnerUserID = nil
+        localAgentServicesOwnerUserID = nil
         localAgentControlPlaneOwnerUserID = nil
         localAgentControlPlaneBootstrapOwnerUserID = nil
         localAgentHostError = nil
+        workspaceError = nil
+        conversationCache.values.forEach {
+            $0.localAgentRuntimeDidBecomeUnavailable()
+        }
         guard let localAgentHost else {
             localAgentHostError = localized("本地任务组件缺失，请重新安装应用。", english: "The local Task component is missing. Please reinstall the app.")
             return
@@ -196,7 +202,20 @@ extension AppModel {
                     }
                 }
                 await self?.workspaceService?.configure(ownerUserID: ownerUserID)
+                guard !Task.isCancelled,
+                      self?.authenticatedUserID == ownerUserID,
+                      self?.localAgentHostLifecycleGeneration == generation else {
+                    await localAgentHost.stop()
+                    return
+                }
                 await self?.projectConversationService?.configure(ownerUserID: ownerUserID)
+                guard !Task.isCancelled,
+                      self?.authenticatedUserID == ownerUserID,
+                      self?.localAgentHostLifecycleGeneration == generation else {
+                    await localAgentHost.stop()
+                    return
+                }
+                self?.localAgentWorkspaceOwnerUserID = ownerUserID
                 await self?.notepadService.configure(ownerUserID: ownerUserID)
                 await self?.remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
                 self?.refreshWorkspace()
@@ -256,6 +275,9 @@ extension AppModel {
                   localAgentHostHealthCheckGeneration == generation,
                   localAgentHostLifecycleTask == nil else { return }
             if !isRunning {
+                localAgentCrashRecoveryTask?.cancel()
+                localAgentCrashRecoveryTask = nil
+                localAgentCrashRecoveryAttempts = 0
                 startLocalAgentHost(
                     ownerUserID: ownerUserID,
                     refreshControlPlaneAfterStart: true
@@ -338,8 +360,14 @@ extension AppModel {
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleTask = nil
         localAgentHostError = nil
+        localAgentWorkspaceOwnerUserID = nil
+        localAgentServicesOwnerUserID = nil
         localAgentControlPlaneOwnerUserID = nil
         localAgentControlPlaneBootstrapOwnerUserID = nil
+        workspaceError = nil
+        conversationCache.values.forEach {
+            $0.localAgentRuntimeDidBecomeUnavailable()
+        }
         guard let localAgentHost else { return }
         let commandService = commandService
         let petActivityService = petActivityService
@@ -461,6 +489,7 @@ extension AppModel {
             ownerUserID: ownerUserID,
             externalMCPConfigs: bootstrap.externalMCPConfigs
         )
+        localAgentServicesOwnerUserID = ownerUserID
         conversationCache.values.forEach {
             $0.localAgentRuntimeDidBecomeReady()
         }

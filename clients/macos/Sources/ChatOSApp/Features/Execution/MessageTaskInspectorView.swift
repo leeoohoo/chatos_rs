@@ -130,7 +130,7 @@ struct MessageTaskInspectorView: View {
                             ProgressView().controlSize(.small)
                             Text("正在加载…")
                         } else {
-                            Text("加载更多运行事件（剩余 \(max(detail.eventsTotal - detail.events.count, 0))）")
+                            Text("加载更早的运行事件")
                         }
                     }
                     .disabled(viewModel.isLoadingMoreRunEvents)

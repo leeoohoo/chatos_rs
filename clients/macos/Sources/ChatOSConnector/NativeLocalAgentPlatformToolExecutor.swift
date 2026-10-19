@@ -114,20 +114,12 @@ struct NativeLocalAgentPlatformToolExecutor: NativeLocalAgentPlatformToolExecuti
       !(run.profileKey == "main_chat" && delivery == "workspace") else {
       throw NativeLocalAgentPlatformToolError.invalidArguments
     }
-    let conversation = try await conversations.get(
+    let attachment = try await conversations.attachment(
       ownerUserID: ownerUserID,
-      conversationID: conversationID
+      conversationID: conversationID,
+      authorizedLocalRef: authorizedLocalRef
     )
-    guard conversation.conversation.ownerUserID == ownerUserID,
-      conversation.conversation.conversationID == conversationID
-    else {
-      throw NativeLocalAgentPlatformToolError.invalidRunContext
-    }
-    guard
-      let attachment = conversation.attachments.first(where: {
-        $0.authorizedLocalRef == authorizedLocalRef && $0.conversationID == conversationID
-      })
-    else {
+    guard let attachment else {
       throw NativeLocalAgentPlatformToolError.attachmentNotAuthorized
     }
     let workspaceRoot: URL?

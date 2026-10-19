@@ -271,6 +271,8 @@ extension AppModel {
     }
 
     func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
+        guard let authenticatedUserID,
+              localAgentWorkspaceOwnerUserID == authenticatedUserID else { return }
         guard !preparingProjectConversationIDs.contains(projectID) else { return }
         guard force || projectConversationPreparationErrors[projectID] == nil else { return }
         guard workspaceProject(id: projectID) != nil,
@@ -382,6 +384,9 @@ extension AppModel {
             sessionID: sessionID,
             initialTurns: [],
             historyStore: historyStore,
+            localAgentRuntimeReady: authenticatedUserID.map {
+                localAgentServicesOwnerUserID == $0
+            } ?? false,
             remoteService: conversationService,
             realtimeService: conversationService,
             commandService: commandService,

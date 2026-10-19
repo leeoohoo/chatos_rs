@@ -148,6 +148,34 @@ final class NativeLocalAgentMessageTaskGraphServiceTests: XCTestCase {
         XCTAssertEqual(command["reason"], .string("restart from the beginning"))
     }
 
+    func testRunDetailsRequestNewestEventsWithLookAhead() async throws {
+        let host = LocalTaskHostStub()
+        let service = NativeLocalAgentMessageTaskGraphService(host: host)
+        await service.configure(ownerUserID: "user-1")
+
+        let detail = try await service.fetchRun(
+            messageID: "message-1",
+            runID: "run-task-2",
+            lookup: .init(
+                sessionID: "conversation-1",
+                turnID: "turn-1",
+                sourceUserMessageID: "message-1"
+            ),
+            includeEvents: true,
+            eventLimit: 40,
+            eventOffset: 0
+        )
+
+        XCTAssertEqual(detail.events.map(\.id), ["event-1"])
+        let commands = try await host.recordedCommands()
+        let eventCommand = try XCTUnwrap(commands.last(where: {
+            $0["type"] == .string("list_events")
+                && $0["newest_first"] == .bool(true)
+        }))
+        XCTAssertEqual(eventCommand["after_cursor"], .number(0))
+        XCTAssertEqual(eventCommand["limit"], .number(41))
+    }
+
     func testProcessLogHonorsReplaceClearAndSuccessfulInvocationsOnly() throws {
         let events = try JSONDecoder().decode(
             [LocalAgentEventRecord].self,

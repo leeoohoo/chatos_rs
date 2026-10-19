@@ -238,7 +238,7 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                     "updated_at_unix_ms": 1,
                 ],
             ])
-        case "get_conversation":
+        case "get_conversation_context":
             return try response([
                 "type": "conversation",
                 "conversation": [
@@ -253,8 +253,22 @@ private actor ContactTaskContextHostStub: LocalAgentHostClientServicing {
                     ],
                     "turns": [],
                     "messages": [],
-                    "attachments": attachments(),
+                    "attachments": [],
                 ],
+            ])
+        case "get_conversation_attachment":
+            let authorizedLocalRef = object?["authorized_local_ref"] as? String
+            let attachment: Any
+            if let matchingAttachment = attachments().first(where: {
+                $0["authorized_local_ref"] as? String == authorizedLocalRef
+            }) {
+                attachment = matchingAttachment
+            } else {
+                attachment = NSNull()
+            }
+            return try response([
+                "type": "conversation_attachment",
+                "attachment": attachment,
             ])
         default:
             throw CocoaError(.featureUnsupported)

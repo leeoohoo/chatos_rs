@@ -1,4 +1,5 @@
 import ChatOSCore
+import ChatOSConnector
 import Combine
 import Foundation
 import XCTest
@@ -338,13 +339,17 @@ final class ConversationSessionViewModelTests: XCTestCase {
             sessionID: "session-1",
             initialTurns: [],
             historyStore: ConversationHistoryStore(),
+            localAgentRuntimeReady: false,
             runtimeSettingsService: runtimeSettings
         )
 
-        try await waitUntil {
-            viewModel.runtimeSettingsError != nil
-        }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(viewModel.runtimeSettingsError)
         XCTAssertTrue(viewModel.availableModels.isEmpty)
+
+        viewModel.localAgentRuntimeDidBecomeReady()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(viewModel.runtimeSettingsError)
 
         await runtimeSettings.configure()
         viewModel.localAgentRuntimeDidBecomeReady()
@@ -706,14 +711,8 @@ private actor RecoveringRuntimeSettingsServiceStub: ConversationRuntimeSettingsS
     }
 
     private func requireConfigured() throws {
-        guard isConfigured else { throw RecoveringRuntimeSettingsError.notConfigured }
-    }
-}
-
-private enum RecoveringRuntimeSettingsError: LocalizedError {
-    case notConfigured
-
-    var errorDescription: String? {
-        "Local Agent conversation settings are not configured."
+        guard isConfigured else {
+            throw NativeLocalAgentConversationRuntimeSettingsError.notConfigured
+        }
     }
 }

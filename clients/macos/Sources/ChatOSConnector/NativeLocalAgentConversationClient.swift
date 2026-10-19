@@ -428,6 +428,36 @@ public struct NativeLocalAgentConversationClient: Sendable {
         return response.conversation
     }
 
+    public func context(
+        ownerUserID: String,
+        conversationID: String
+    ) async throws -> LocalAgentConversationDetail {
+        let response: ConversationResult = try await host.request(GetCommand(
+            type: "get_conversation_context",
+            ownerUserID: ownerUserID,
+            conversationID: conversationID
+        ))
+        try Self.require(response.type, expected: "conversation")
+        return response.conversation
+    }
+
+    public func attachment(
+        ownerUserID: String,
+        conversationID: String,
+        authorizedLocalRef: String
+    ) async throws -> LocalAgentConversationAttachmentRecord? {
+        let response: ConversationAttachmentResult = try await host.request(
+            AttachmentCommand(
+                type: "get_conversation_attachment",
+                ownerUserID: ownerUserID,
+                conversationID: conversationID,
+                authorizedLocalRef: authorizedLocalRef
+            )
+        )
+        try Self.require(response.type, expected: "conversation_attachment")
+        return response.attachment
+    }
+
     public func list(
         ownerUserID: String,
         beforeUpdatedAtUnixMs: Int64? = nil,
@@ -493,6 +523,20 @@ private struct GetCommand: Encodable, Sendable {
     }
 }
 
+private struct AttachmentCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let conversationID: String
+    let authorizedLocalRef: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case conversationID = "conversation_id"
+        case authorizedLocalRef = "authorized_local_ref"
+    }
+}
+
 private struct ListCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
@@ -526,6 +570,11 @@ private struct HistoryCommand: Encodable, Sendable {
 private struct ConversationResult: Decodable, Sendable {
     let type: String
     let conversation: LocalAgentConversationDetail
+}
+
+private struct ConversationAttachmentResult: Decodable, Sendable {
+    let type: String
+    let attachment: LocalAgentConversationAttachmentRecord?
 }
 
 private struct ConversationsResult: Decodable, Sendable {

@@ -67,11 +67,11 @@ fn request_rejects_zero_version_and_unbounded_event_page() {
     };
     assert!(latest.validate().is_ok());
     assert!(ListEventsCommand {
-        limit: 2,
+        limit: LOCAL_AGENT_MAX_EVENT_PAGE_SIZE,
         ..latest.clone()
     }
     .validate()
-    .is_err());
+    .is_ok());
     assert!(ListEventsCommand {
         run_id: None,
         newest_first: false,

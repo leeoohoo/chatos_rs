@@ -24,7 +24,7 @@ public actor NativeLocalAgentTurnProcessService: TurnProcessServicing {
         turnID: String
     ) async throws -> [TurnProcessNode] {
         let ownerUserID = try configuredOwner()
-        let conversation = try await conversationClient.get(
+        let conversation = try await conversationClient.context(
             ownerUserID: ownerUserID,
             conversationID: sessionID
         )

@@ -132,7 +132,7 @@ private actor AskUserHostStub: LocalAgentHostClientServicing {
             var value = run()
             value["status"] = "continuation_ready"
             return try json(["type": "run", "run": value])
-        case "get_conversation":
+        case "get_conversation_context":
             return try json(["type": "conversation", "conversation": conversation()])
         case "resume_conversation_turn":
             return try json(turnMutation(status: "running"))

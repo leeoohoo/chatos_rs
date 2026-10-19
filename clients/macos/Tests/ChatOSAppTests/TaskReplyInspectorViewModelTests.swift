@@ -93,6 +93,36 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertNotNil(viewModel.modelOutputError)
     }
 
+    func testRealtimeRefreshSupersedingVisibleLoadClearsLoadingState() async throws {
+        let service = TaskReplyInspectorServiceStub(fetchTaskDelayMilliseconds: 100)
+        let realtimeService = TaskReplyInspectorRealtimeServiceStub()
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .detail),
+            service: service,
+            realtimeService: realtimeService
+        )
+
+        viewModel.load()
+        XCTAssertTrue(viewModel.isLoading)
+        try await waitUntilRealtimeSubscribed(realtimeService)
+
+        await realtimeService.yield(ConversationRealtimeSignal(
+            eventID: "event-1",
+            eventSequence: 1,
+            sessionID: "session-1",
+            turnID: "turn-1",
+            kind: .updated,
+            eventName: "task.updated",
+            timestamp: "2026-10-19T00:00:00Z"
+        ))
+
+        try await waitUntilLoaded(viewModel)
+        let calls = await service.callCounts()
+        XCTAssertEqual(calls.fetchTask, 2)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isLoadingModelOutput)
+    }
+
     func testRetryFailureRemainsVisibleWithLoadedTask() async throws {
         let service = TaskReplyInspectorServiceStub(failRetryRequest: true)
         let viewModel = TaskReplyInspectorViewModel(
@@ -156,6 +186,17 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTFail("任务重试未在预期时间内结束")
     }
 
+    private func waitUntilRealtimeSubscribed(
+        _ service: TaskReplyInspectorRealtimeServiceStub,
+        timeoutIterations: Int = 100
+    ) async throws {
+        for _ in 0..<timeoutIterations {
+            if await service.hasSubscriber(sessionID: "session-1") { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("实时任务流未在预期时间内建立")
+    }
+
     private func makeSelection(section: TaskReplyInspectorSection) -> TaskReplySelection {
         let now = Date(timeIntervalSince1970: 1)
         let userMessage = ChatMessage(id: "user-1", role: .user, text: "执行", createdAt: now)
@@ -188,6 +229,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let failRunRequest: Bool
     private let failRetryRequest: Bool
     private let latestRunID: String
+    private let fetchTaskDelayMilliseconds: Int
     private var taskCalls = 0
     private var runCalls = 0
     private var runIDs: [String] = []
@@ -195,11 +237,13 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     init(
         failRunRequest: Bool = false,
         failRetryRequest: Bool = false,
-        latestRunID: String = "run-1"
+        latestRunID: String = "run-1",
+        fetchTaskDelayMilliseconds: Int = 0
     ) {
         self.failRunRequest = failRunRequest
         self.failRetryRequest = failRetryRequest
         self.latestRunID = latestRunID
+        self.fetchTaskDelayMilliseconds = fetchTaskDelayMilliseconds
     }
 
     func callCounts() -> (fetchTask: Int, fetchRun: Int) {
@@ -228,6 +272,9 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         lookup: MessageTaskLookup?
     ) async throws -> MessageTask {
         taskCalls += 1
+        if fetchTaskDelayMilliseconds > 0 {
+            try await Task.sleep(for: .milliseconds(fetchTaskDelayMilliseconds))
+        }
         return task()
     }
 
@@ -284,6 +331,31 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
             processLog: "[2026-09-08 10:00] 开始\n执行完成",
             lastRunID: latestRunID
         )
+    }
+}
+
+private actor TaskReplyInspectorRealtimeServiceStub: ConversationRealtimeStreaming {
+    private var continuations: [
+        String: AsyncThrowingStream<ConversationRealtimeSignal, Error>.Continuation
+    ] = [:]
+
+    func events(
+        sessionID: String
+    ) -> AsyncThrowingStream<ConversationRealtimeSignal, Error> {
+        let (stream, continuation) = AsyncThrowingStream.makeStream(
+            of: ConversationRealtimeSignal.self,
+            throwing: Error.self
+        )
+        continuations[sessionID] = continuation
+        return stream
+    }
+
+    func hasSubscriber(sessionID: String) -> Bool {
+        continuations[sessionID] != nil
+    }
+
+    func yield(_ signal: ConversationRealtimeSignal) {
+        continuations[signal.sessionID]?.yield(signal)
     }
 }
 

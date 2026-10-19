@@ -19,7 +19,7 @@ use tokio::sync::{watch, Notify};
 
 const MIN_CONCURRENT_WORK_ITEMS: usize = 1;
 const MAX_CONCURRENT_WORK_ITEMS: usize = 16;
-const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const IDLE_RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum LocalAgentCoordinatorError {
@@ -522,6 +522,8 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::RemovePluginInstallation(_)
         | HostCommand::CreateConversation(_)
         | HostCommand::GetConversation(_)
+        | HostCommand::GetConversationContext(_)
+        | HostCommand::GetConversationAttachment(_)
         | HostCommand::GetConversationHistory(_)
         | HostCommand::ListConversations(_)
         | HostCommand::GetConversationRuntimeSettings(_)

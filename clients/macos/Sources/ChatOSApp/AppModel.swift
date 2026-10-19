@@ -176,6 +176,8 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var localAgentCrashRecoveryTask: Task<Void, Never>?
     var localAgentCrashRecoveryAttempts = 0
     var localAgentBootstrapTask: Task<Void, Never>?
+    var localAgentWorkspaceOwnerUserID: String?
+    var localAgentServicesOwnerUserID: String?
     var localAgentControlPlaneOwnerUserID: String?
     var localAgentControlPlaneBootstrapOwnerUserID: String?
     var localConnectorRecoveryGeneration: UInt64 = 0
@@ -481,6 +483,12 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.recoverLocalAgentHostAfterUnexpectedExit()
+            }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .nativeLocalAgentHostRecoveryRequested)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.recoverLocalAgentHostIfNeeded()
             }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .agentHeartbeatConfigurationDidChange)

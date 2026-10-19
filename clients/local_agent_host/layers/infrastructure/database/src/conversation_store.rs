@@ -96,6 +96,42 @@ impl LocalConversationStore for SqliteClientStorage {
         fetch_conversation_for_owner(&mut connection, owner_user_id, conversation_id).await
     }
 
+    async fn get_conversation_context(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<LocalConversationDetail>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        fetch_conversation_context_for_owner(&mut connection, owner_user_id, conversation_id).await
+    }
+
+    async fn get_conversation_attachment(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        authorized_local_ref: &str,
+    ) -> Result<Option<LocalConversationAttachmentRecord>, ClientStorageError> {
+        let mut connection = self.pool.acquire().await.db()?;
+        sqlx::query(
+            "SELECT a.attachment_id, a.conversation_id, a.turn_id, a.message_id, a.ordinal, \
+             a.display_name, a.media_type, a.byte_size, a.sha256, a.authorized_local_ref, \
+             a.metadata_json, a.created_at_unix_ms \
+             FROM local_conversation_message_attachments a \
+             JOIN local_conversations c ON c.conversation_id = a.conversation_id \
+             WHERE c.owner_user_id = ? AND a.conversation_id = ? \
+               AND a.authorized_local_ref = ? \
+             ORDER BY a.created_at_unix_ms DESC, a.attachment_id DESC LIMIT 1",
+        )
+        .bind(owner_user_id)
+        .bind(conversation_id)
+        .bind(authorized_local_ref)
+        .fetch_optional(&mut *connection)
+        .await
+        .db()?
+        .map(decode_attachment)
+        .transpose()
+    }
+
     async fn get_conversation_history(
         &self,
         owner_user_id: &str,
@@ -531,6 +567,36 @@ pub(super) async fn fetch_conversation_record_for_owner(
     .db()?
     .map(decode_conversation)
     .transpose()
+}
+
+async fn fetch_conversation_context_for_owner(
+    connection: &mut SqliteConnection,
+    owner_user_id: &str,
+    conversation_id: &str,
+) -> Result<Option<LocalConversationDetail>, ClientStorageError> {
+    let Some(conversation) =
+        fetch_conversation_record_for_owner(connection, owner_user_id, conversation_id).await?
+    else {
+        return Ok(None);
+    };
+    let turns = sqlx::query(
+        "SELECT turn_id, conversation_id, user_message_id, run_id, status, \
+         created_at_unix_ms, updated_at_unix_ms FROM local_conversation_turns \
+         WHERE conversation_id = ? ORDER BY created_at_unix_ms, turn_id",
+    )
+    .bind(conversation_id)
+    .fetch_all(&mut *connection)
+    .await
+    .db()?
+    .into_iter()
+    .map(decode_turn)
+    .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(LocalConversationDetail {
+        conversation,
+        turns,
+        messages: Vec::new(),
+        attachments: Vec::new(),
+    }))
 }
 
 async fn fetch_conversation_for_owner(

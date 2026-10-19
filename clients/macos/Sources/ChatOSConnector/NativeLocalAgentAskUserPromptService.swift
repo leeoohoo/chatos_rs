@@ -55,7 +55,7 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
         )
         let message = Self.submissionMessage(submission)
         if resolved.run.profileKey == "main_chat" {
-            let conversation = try await conversationClient.get(
+            let conversation = try await conversationClient.context(
                 ownerUserID: resolved.run.ownerUserID,
                 conversationID: resolved.context.conversationID
             )
@@ -84,7 +84,7 @@ public actor NativeLocalAgentAskUserPromptService: AskUserPromptServicing {
     public func cancel(promptID: String, sessionID: String) async throws -> AskUserPrompt {
         let resolved = try await resolve(promptID: promptID, sessionID: sessionID)
         if resolved.run.profileKey == "main_chat" {
-            let conversation = try await conversationClient.get(
+            let conversation = try await conversationClient.context(
                 ownerUserID: resolved.run.ownerUserID,
                 conversationID: resolved.context.conversationID
             )

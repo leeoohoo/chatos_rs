@@ -116,7 +116,7 @@ struct NativeLocalAgentPluginInstallerToolExecutor: Sendable {
         ) else {
             throw NativeLocalAgentPluginInstallerToolError.unauthorizedConversation
         }
-        let detail = try await conversations.get(
+        let detail = try await conversations.context(
             ownerUserID: ownerUserID,
             conversationID: conversationID
         )

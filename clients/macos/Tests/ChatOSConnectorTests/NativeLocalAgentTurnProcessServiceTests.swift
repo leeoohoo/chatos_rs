@@ -57,7 +57,7 @@ private actor TurnProcessHostStub: LocalAgentHostClientServicing {
         commands.append(command)
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
-        case "get_conversation":
+        case "get_conversation_context":
             return try json([
                 "type": "conversation",
                 "conversation": [

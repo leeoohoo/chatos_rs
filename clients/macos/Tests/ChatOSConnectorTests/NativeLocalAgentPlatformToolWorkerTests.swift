@@ -52,6 +52,33 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWaitingForApprovalDoesNotBlockApprovedClaimExecution() async throws {
+        let host = PlatformToolHostStub(mode: .oneSideEffectingClaim)
+        let executor = CountingPlatformToolExecutor()
+        let approvalHandler = BlockingPlatformToolApprovalHandler()
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            approvalHandler: approvalHandler,
+            workerID: "worker-1",
+            activityWindow: .seconds(1)
+        )
+
+        await worker.configure(ownerUserID: "user-1")
+        for _ in 0..<200 {
+            if await approvalHandler.didStart(), await host.commitCount() == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let approvalStarted = await approvalHandler.didStart()
+        let executionCount = await executor.executionCount()
+        let commitCount = await host.commitCount()
+        XCTAssertTrue(approvalStarted)
+        XCTAssertEqual(executionCount, 1)
+        XCTAssertEqual(commitCount, 1)
+        await worker.reset()
+    }
+
     func testTaskWriteSessionEnforcesOwnedPathsAndCannotDowngradeScope() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("task-write-ownership-\(UUID().uuidString)", isDirectory: true)
@@ -1009,6 +1036,18 @@ private actor CountingPlatformToolExecutor: NativeLocalAgentPlatformToolExecutin
     }
 
     func executionCount() -> Int { count }
+}
+
+private actor BlockingPlatformToolApprovalHandler: NativeLocalAgentToolApprovalHandling {
+    private var started = false
+
+    func resolveNextPending(ownerUserID: String) async throws -> Bool {
+        started = true
+        try await Task.sleep(for: .seconds(60))
+        return false
+    }
+
+    func didStart() -> Bool { started }
 }
 
 private actor RecordingPlatformToolExecutor: NativeLocalAgentPlatformToolExecuting {

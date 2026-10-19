@@ -104,15 +104,19 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             taskID: run.ownerEntityID,
             lookup: lookup
         )
+        let offset = max(0, eventOffset)
+        let limit = max(1, min(100, eventLimit))
+        // Run details are an operational view, so the first page must contain the newest
+        // records. Fetch one look-ahead item to tell the UI whether an older page exists.
+        let requestedEventCount = max(1, min(100, offset + limit + 1))
         let page = includeEvents
             ? try await client.events(
                 ownerUserID: owner,
                 runID: runID,
-                limit: UInt32(max(1, min(100, eventOffset + eventLimit)))
+                limit: UInt32(requestedEventCount),
+                newestFirst: true
             )
             : LocalAgentEventPage(events: [], nextCursor: 0)
-        let offset = max(0, eventOffset)
-        let limit = max(1, min(100, eventLimit))
         let selected = page.events.dropFirst(offset).prefix(limit)
         var mappedRun = mapRun(run)
         if mappedRun.errorMessage == nil, run.status == "needs_review" {
@@ -121,12 +125,13 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
                 runID: run.runID
             )
         }
+        let hasMoreEvents = page.events.count > offset + selected.count
         return MessageTaskRunDetail(
             task: task,
             run: mappedRun,
             events: selected.map(mapEvent),
-            eventsTotal: page.events.count,
-            eventsHasMore: page.events.count > offset + selected.count
+            eventsTotal: offset + selected.count + (hasMoreEvents ? 1 : 0),
+            eventsHasMore: hasMoreEvents
         )
     }
 

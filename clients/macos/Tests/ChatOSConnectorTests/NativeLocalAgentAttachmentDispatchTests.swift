@@ -42,11 +42,11 @@ final class NativeLocalAgentAttachmentDispatchTests: XCTestCase {
     }
 
     func testForeignConversationOwnerIsRejected() async throws {
-        try await assertRejected(conversationOwner: "other-user", expected: .invalidRunContext)
+        try await assertRejected(conversationOwner: "other-user", expected: .attachmentNotAuthorized)
     }
 
     func testForeignConversationResponseIsRejected() async throws {
-        try await assertRejected(conversationID: "other-conversation", expected: .invalidRunContext)
+        try await assertRejected(conversationID: "other-conversation", expected: .attachmentNotAuthorized)
     }
 
     func testForeignAttachmentRecordIsRejected() async throws {
@@ -161,29 +161,20 @@ struct AttachmentDispatchFixture {
                 ],
             ],
         ]
-        let conversation: [String: Any] = [
-            "type": "conversation",
-            "conversation": [
-                "conversation": [
-                    "conversation_id": conversationID, "owner_user_id": conversationOwner,
-                    "title": "Contact", "resource": ["kind": "contact", "resource_id": "contact-1"],
-                    "version": 1, "created_at_unix_ms": 1, "updated_at_unix_ms": 1,
-                ],
-                "turns": [], "messages": [],
-                "attachments": [[
-                    "attachment_id": spec.attachmentID, "conversation_id": attachmentConversationID,
-                    "turn_id": "turn-1", "message_id": "message-1", "ordinal": 1,
-                    "display_name": spec.displayName, "media_type": spec.mediaType,
-                    "byte_size": spec.byteSize, "sha256": spec.sha256,
-                    "authorized_local_ref": spec.authorizedLocalRef,
-                    "metadata": [:], "created_at_unix_ms": 1,
-                ]],
-            ],
+        let attachment: [String: Any] = [
+            "attachment_id": spec.attachmentID, "conversation_id": attachmentConversationID,
+            "turn_id": "turn-1", "message_id": "message-1", "ordinal": 1,
+            "display_name": spec.displayName, "media_type": spec.mediaType,
+            "byte_size": spec.byteSize, "sha256": spec.sha256,
+            "authorized_local_ref": spec.authorizedLocalRef,
+            "metadata": [:], "created_at_unix_ms": 1,
         ]
         return .init(
             host: AttachmentDispatchHost(
                 run: try JSONSerialization.data(withJSONObject: run),
-                conversation: try JSONSerialization.data(withJSONObject: conversation)
+                attachment: attachment,
+                conversationOwner: conversationOwner,
+                conversationID: conversationID
             ), attachmentRootURL: root, projectTools: projectTools,
             attachmentWorkspaceResolver: workspaceResolver
         )
@@ -209,16 +200,42 @@ struct AttachmentDispatchFixture {
 
 private actor AttachmentDispatchHost: LocalAgentHostClientServicing {
     let run: Data
-    let conversation: Data
+    let attachment: [String: Any]
+    let conversationOwner: String
+    let conversationID: String
 
-    init(run: Data, conversation: Data) { self.run = run; self.conversation = conversation }
+    init(
+        run: Data,
+        attachment: [String: Any],
+        conversationOwner: String,
+        conversationID: String
+    ) {
+        self.run = run
+        self.attachment = attachment
+        self.conversationOwner = conversationOwner
+        self.conversationID = conversationID
+    }
     func start(ownerUserID: String) async throws {}
     func stop() async {}
     func request(command: Data) async throws -> Data {
         let object = try JSONSerialization.jsonObject(with: command) as? [String: Any]
         switch object?["type"] as? String {
         case "get_run": return run
-        case "get_conversation": return conversation
+        case "get_conversation_attachment":
+            let requestedOwner = object?["owner_user_id"] as? String
+            let requestedConversation = object?["conversation_id"] as? String
+            let requestedReference = object?["authorized_local_ref"] as? String
+            let attachmentConversation = attachment["conversation_id"] as? String
+            let attachmentReference = attachment["authorized_local_ref"] as? String
+            let authorized = conversationOwner == requestedOwner
+                && conversationID == requestedConversation
+                && attachmentConversation == requestedConversation
+                && attachmentReference == requestedReference
+            let responseAttachment: Any = authorized ? attachment as Any : NSNull()
+            return try JSONSerialization.data(withJSONObject: [
+                "type": "conversation_attachment",
+                "attachment": responseAttachment,
+            ])
         default: throw CocoaError(.featureUnsupported)
         }
     }

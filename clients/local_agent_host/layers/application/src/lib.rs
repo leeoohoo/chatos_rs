@@ -604,6 +604,8 @@ impl LocalAgentRuntime {
             }
             command @ (HostCommand::CreateConversation(_)
             | HostCommand::GetConversation(_)
+            | HostCommand::GetConversationContext(_)
+            | HostCommand::GetConversationAttachment(_)
             | HostCommand::GetConversationHistory(_)
             | HostCommand::ListConversations(_)
             | HostCommand::StartConversationTurn(_)

@@ -8,13 +8,13 @@ use chatos_local_agent_protocol::{
     LocalAgentEventPayloadMode, LocalAgentEventRecord, LocalAgentRunClaim, LocalAgentRunListScope,
     LocalAgentRunPage, LocalAgentRunRecord, LocalAgentRunStatus, LocalAgentToolApprovalDecision,
     LocalAgentToolApprovalResult, LocalAgentToolClaim, LocalAgentToolCommitResult,
-    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalConversationDetail,
-    LocalConversationHistoryPage, LocalConversationPage, LocalConversationRuntimeSettings,
-    LocalConversationTurnStart, LocalConversationTurnUpdate, LocalNotepadImage, LocalNotepadNote,
-    LocalNotepadNoteDetail, LocalPluginInstallationPage, LocalPluginInstallationRecord,
-    LocalPluginInstallationSpec, LocalRemoteConnection, LocalRequirementSurvey,
-    LocalRequirementSurveyResolution, LocalRequirementSurveyStatus, LocalTaskGraph,
-    LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
+    LocalAgentToolInvocationRecord, LocalAgentToolOutcome, LocalConversationAttachmentRecord,
+    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
+    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
+    LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
+    LocalPluginInstallationRecord, LocalPluginInstallationSpec, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalRequirementSurveyStatus,
+    LocalTaskGraph, LocalTaskGraphListScope, LocalTaskGraphPage, LocalTaskRecord, LocalTaskStatus,
     PutConversationRuntimeSettingsCommand, ResumeConversationTurnCommand,
     StartConversationTurnCommand, UpdateNotepadNoteCommand,
 };
@@ -440,6 +440,19 @@ pub trait LocalConversationStore: Send + Sync {
         owner_user_id: &str,
         conversation_id: &str,
     ) -> Result<Option<LocalConversationDetail>, ClientStorageError>;
+
+    async fn get_conversation_context(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+    ) -> Result<Option<LocalConversationDetail>, ClientStorageError>;
+
+    async fn get_conversation_attachment(
+        &self,
+        owner_user_id: &str,
+        conversation_id: &str,
+        authorized_local_ref: &str,
+    ) -> Result<Option<LocalConversationAttachmentRecord>, ClientStorageError>;
 
     async fn get_conversation_history(
         &self,

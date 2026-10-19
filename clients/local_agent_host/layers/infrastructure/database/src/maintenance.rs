@@ -119,6 +119,10 @@ pub(super) async fn compact_database(pool: &SqlitePool) -> Result<(), ClientStor
         .await
         .db()?;
     sqlx::query("VACUUM").execute(&mut *connection).await.db()?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut *connection)
+        .await
+        .db()?;
     Ok(())
 }
 

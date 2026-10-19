@@ -20,7 +20,7 @@ extension ConversationSessionViewModel {
     }
 
     func refreshAskUserPrompts() async {
-        guard let askUserPromptService else { return }
+        guard isLocalAgentRuntimeReady, let askUserPromptService else { return }
         askUserPromptRefreshGeneration &+= 1
         let generation = askUserPromptRefreshGeneration
         do {

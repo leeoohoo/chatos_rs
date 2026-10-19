@@ -5,13 +5,13 @@ use crate::{
     LocalAgentArtifact, LocalAgentArtifactPage, LocalAgentEventRecord, LocalAgentRunClaim,
     LocalAgentRunPage, LocalAgentRunRecord, LocalAgentToolApprovalResult, LocalAgentToolClaim,
     LocalAgentToolCommitResult, LocalAgentToolInvocationRecord, LocalCapabilityPolicySnapshot,
-    LocalConversationDetail, LocalConversationHistoryPage, LocalConversationPage,
-    LocalConversationRuntimeSettings, LocalConversationTurnStart, LocalConversationTurnUpdate,
-    LocalMemorySyncStatus, LocalMessageTaskGraph, LocalModelConfigSnapshot, LocalNotepadImage,
-    LocalNotepadNote, LocalNotepadNoteDetail, LocalPluginInstallationPage,
-    LocalPluginInstallationRecord, LocalRemoteConnection, LocalRequirementSurvey,
-    LocalRequirementSurveyResolution, LocalSkillBundleSnapshot, LocalTaskGraph, LocalTaskGraphPage,
-    LOCAL_AGENT_PROTOCOL_VERSION,
+    LocalConversationAttachmentRecord, LocalConversationDetail, LocalConversationHistoryPage,
+    LocalConversationPage, LocalConversationRuntimeSettings, LocalConversationTurnStart,
+    LocalConversationTurnUpdate, LocalMemorySyncStatus, LocalMessageTaskGraph,
+    LocalModelConfigSnapshot, LocalNotepadImage, LocalNotepadNote, LocalNotepadNoteDetail,
+    LocalPluginInstallationPage, LocalPluginInstallationRecord, LocalRemoteConnection,
+    LocalRequirementSurvey, LocalRequirementSurveyResolution, LocalSkillBundleSnapshot,
+    LocalTaskGraph, LocalTaskGraphPage, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -131,6 +131,9 @@ pub enum HostResult {
     },
     Conversation {
         conversation: LocalConversationDetail,
+    },
+    ConversationAttachment {
+        attachment: Option<LocalConversationAttachmentRecord>,
     },
     Conversations {
         page: LocalConversationPage,

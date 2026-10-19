@@ -386,6 +386,38 @@ impl GetConversationCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetConversationAttachmentCommand {
+    pub owner_user_id: String,
+    pub conversation_id: String,
+    pub authorized_local_ref: String,
+}
+
+impl GetConversationAttachmentCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("conversation_id", &self.conversation_id)?;
+        let reference_token = self
+            .authorized_local_ref
+            .strip_prefix("local-attachment:")
+            .ok_or_else(|| {
+                "authorized_local_ref must use the local-attachment:<token> format".to_string()
+            })?;
+        if reference_token.is_empty()
+            || reference_token.len() > 200
+            || !reference_token
+                .bytes()
+                .all(|value| value.is_ascii_alphanumeric() || b"-_.".contains(&value))
+        {
+            return Err(
+                "authorized_local_ref token must contain 1..=200 ASCII letters, digits, '-', '_' or '.'"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GetConversationHistoryCommand {
     pub owner_user_id: String,
     pub conversation_id: String,

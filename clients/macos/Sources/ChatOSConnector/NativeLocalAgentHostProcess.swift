@@ -1,8 +1,13 @@
 import ChatOSCore
 import Darwin
 import Foundation
+import OSLog
 
 final class ManagedLocalAgentHostProcess: @unchecked Sendable {
+    private static let logger = Logger(
+        subsystem: "com.chatos.swift-client",
+        category: "LocalAgentHost"
+    )
     let identity = UUID()
     let process: Process
     private let input: FileHandle
@@ -103,7 +108,19 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
-        NativeProcessPipeReader.install(on: errorPipe.fileHandleForReading)
+        NativeProcessPipeReader.install(
+            on: errorPipe.fileHandleForReading,
+            onData: { data in
+                let message = String(decoding: data.prefix(4_096), as: UTF8.self)
+                    .replacingOccurrences(
+                        of: "[\\r\\n\\t]+",
+                        with: " ",
+                        options: .regularExpression
+                    )
+                guard !message.isEmpty else { return }
+                Self.logger.error("Local Agent Host stderr: \(message, privacy: .public)")
+            }
+        )
         do {
             try process.run()
         } catch {
@@ -230,6 +247,32 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         guard response.result?.type == "health",
               response.result?.storageReady == true else {
             throw NativeLocalAgentHostError.invalidResponse
+        }
+    }
+
+    func respondsToHealthCheck(timeoutMilliseconds: Int) async -> Bool {
+        let commandID = "native-health-\(UUID().uuidString.lowercased())"
+        let request = HealthRequest(
+            protocolVersion: NativeLocalAgentHostProtocol.version,
+            commandId: commandID,
+            command: .init(type: "health")
+        )
+        do {
+            let payload = try await roundTripAsync(
+                try JSONEncoder.localAgent.encode(request),
+                timeoutMilliseconds: timeoutMilliseconds
+            )
+            let response = try JSONDecoder.localAgent.decode(
+                HealthResponse.self,
+                from: payload
+            )
+            return response.protocolVersion == NativeLocalAgentHostProtocol.version
+                && response.commandId == commandID
+                && response.ok
+                && response.result?.type == "health"
+                && response.result?.storageReady == true
+        } catch {
+            return false
         }
     }
 

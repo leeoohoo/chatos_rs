@@ -27,6 +27,25 @@ impl LocalAgentRuntime {
                     .await?
                     .ok_or(ClientStorageError::NotFound(command.conversation_id))?,
             }),
+            HostCommand::GetConversationContext(command) => Ok(HostResult::Conversation {
+                conversation: self
+                    .store
+                    .get_conversation_context(&command.owner_user_id, &command.conversation_id)
+                    .await?
+                    .ok_or(ClientStorageError::NotFound(command.conversation_id))?,
+            }),
+            HostCommand::GetConversationAttachment(command) => {
+                Ok(HostResult::ConversationAttachment {
+                    attachment: self
+                        .store
+                        .get_conversation_attachment(
+                            &command.owner_user_id,
+                            &command.conversation_id,
+                            &command.authorized_local_ref,
+                        )
+                        .await?,
+                })
+            }
             HostCommand::GetConversationHistory(command) => Ok(HostResult::ConversationHistory {
                 page: Box::new(
                     self.store

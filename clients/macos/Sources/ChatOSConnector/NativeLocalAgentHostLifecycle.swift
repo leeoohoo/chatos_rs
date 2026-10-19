@@ -7,6 +7,9 @@ public extension Notification.Name {
     static let nativeLocalAgentHostDidExit = Notification.Name(
         "com.chatos.swift.local-agent-host-did-exit"
     )
+    static let nativeLocalAgentHostRecoveryRequested = Notification.Name(
+        "com.chatos.swift.local-agent-host-recovery-requested"
+    )
 }
 
 enum NativeLocalAgentHostProtocol {
@@ -209,18 +212,12 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     }
 
     public func request(command: Data) async throws -> Data {
-        guard let managedProcess, managedProcess.process.isRunning else {
-            throw NativeLocalAgentHostError.notRunning
-        }
         let commandValue = try JSONSerialization.jsonObject(with: command)
         guard let commandObject = commandValue as? [String: Any],
               commandObject["type"] is String else {
             throw NativeLocalAgentHostError.invalidCommand
         }
-        if let commandOwner = commandObject["owner_user_id"] as? String,
-           commandOwner != activeOwnerUserID {
-            throw NativeLocalAgentHostError.ownerMismatch
-        }
+        let commandOwner = commandObject["owner_user_id"] as? String
         let commandID = "native-command-\(UUID().uuidString.lowercased())"
         let envelope: [String: Any] = [
             "protocol_version": NativeLocalAgentHostProtocol.version,
@@ -228,13 +225,33 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             "command": commandObject,
         ]
         let request = try JSONSerialization.data(withJSONObject: envelope)
+        let process = try await waitForRunningProcess(commandOwner: commandOwner)
         let responseData: Data
         do {
-            responseData = try await managedProcess.roundTripAsync(request)
+            responseData = try await process.roundTripAsync(request)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as NativeLocalAgentHostError where error == .requestTimedOut {
+            // One long-running command timing out does not mean the multiplexed Host transport
+            // is broken. In particular, an event long poll can outlive its client deadline while
+            // the Host remains able to serve task-detail requests. Probe the same process before
+            // invalidating it so an isolated timeout cannot take every concurrent request down.
+            if await process.respondsToHealthCheck(timeoutMilliseconds: 1_000) {
+                throw error
+            }
+            invalidateAfterTransportFailure(process)
+            throw error
+        } catch let error as NativeLocalAgentHostError where error == .notRunning {
+            invalidateAfterTransportFailure(process)
+            let recovered = try await waitForRunningProcess(commandOwner: commandOwner)
+            do {
+                responseData = try await recovered.roundTripAsync(request)
+            } catch {
+                invalidateAfterTransportFailure(recovered)
+                throw error
+            }
         } catch {
-            invalidateAfterTransportFailure(managedProcess)
+            invalidateAfterTransportFailure(process)
             throw error
         }
         guard let response = try JSONSerialization.jsonObject(with: responseData)
@@ -257,6 +274,38 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
             throw NativeLocalAgentHostError.invalidResponse
         }
         return try JSONSerialization.data(withJSONObject: result)
+    }
+
+    private func waitForRunningProcess(
+        commandOwner: String?
+    ) async throws -> ManagedLocalAgentHostProcess {
+        if let process = try runningProcess(commandOwner: commandOwner) {
+            return process
+        }
+        NotificationCenter.default.post(
+            name: .nativeLocalAgentHostRecoveryRequested,
+            object: nil
+        )
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: configuration.startupTimeout)
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(50))
+            if let process = try runningProcess(commandOwner: commandOwner) {
+                return process
+            }
+        }
+        throw NativeLocalAgentHostError.notRunning
+    }
+
+    private func runningProcess(
+        commandOwner: String?
+    ) throws -> ManagedLocalAgentHostProcess? {
+        guard let managedProcess, managedProcess.process.isRunning else { return nil }
+        guard commandOwner == nil || commandOwner == activeOwnerUserID else {
+            throw NativeLocalAgentHostError.ownerMismatch
+        }
+        return managedProcess
     }
 
     private func stopLocked() {
