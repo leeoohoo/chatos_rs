@@ -204,7 +204,7 @@ private struct ConversationTimelineContentView: View {
                 }
                 .onPreferenceChange(ConversationTimelineBottomPreferenceKey.self) { bottomY in
                     let nextPinned = bottomY <= viewport.size.height + 28
-                    guard ConversationTimelineBottomSyncPolicy.shouldPublish(
+                    guard ConversationViewportPolicy.shouldPublishPinnedState(
                         currentIsPinned: isPinnedToBottom,
                         detectedIsPinned: nextPinned,
                         unreadNewerCount: conversation.unreadNewerCount
@@ -409,17 +409,6 @@ private struct ConversationTimelineContentView: View {
 
     private func localized(_ chinese: String, english: String) -> String {
         locale.identifier.lowercased().hasPrefix("en") ? english : chinese
-    }
-}
-
-enum ConversationTimelineBottomSyncPolicy {
-    static func shouldPublish(
-        currentIsPinned: Bool,
-        detectedIsPinned: Bool,
-        unreadNewerCount: Int
-    ) -> Bool {
-        currentIsPinned != detectedIsPinned
-            || (detectedIsPinned && unreadNewerCount > 0)
     }
 }
 

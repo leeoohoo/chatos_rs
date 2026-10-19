@@ -84,6 +84,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     let historyStore: any ConversationHistoryStoring
     let sendUseCase: ConversationSendUseCase?
+    let viewportUseCase: ConversationViewportUseCase
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
     private let historyUseCase: ConversationHistoryUseCase?
@@ -140,6 +141,7 @@ final class ConversationSessionViewModel: ObservableObject {
         self.timelineItemsBuildCount = 1
         self.selectedTurnID = initialTurns.last?.id
         self.historyStore = historyStore
+        self.viewportUseCase = ConversationViewportUseCase(historyStore: historyStore)
         self.isLocalAgentRuntimeReady = localAgentRuntimeReady
         self.historyUseCase = remoteService.map {
             ConversationHistoryUseCase(
@@ -381,8 +383,9 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func markNewerContentRead() {
         Task {
-            await historyStore.markNewerContentRead(sessionID: sessionID)
-            await refreshSnapshot()
+            applyHistorySnapshot(
+                await viewportUseCase.markNewerContentRead(sessionID: sessionID)
+            )
         }
     }
 
@@ -424,18 +427,15 @@ final class ConversationSessionViewModel: ObservableObject {
     func setTimelinePinnedToBottom(_ isPinned: Bool) {
         viewportUpdateGeneration += 1
         let generation = viewportUpdateGeneration
-        let turnID = turns.last?.id ?? sessionID
+        let latestTurnID = turns.last?.id
         Task {
-            await historyStore.setViewportAnchor(
-                ViewportAnchor(
-                    turnID: turnID,
-                    relativeOffset: 0,
-                    isPinnedToBottom: isPinned
-                ),
-                sessionID: sessionID
+            let snapshot = await viewportUseCase.updateTimelineAnchor(
+                sessionID: sessionID,
+                latestTurnID: latestTurnID,
+                isPinnedToBottom: isPinned
             )
             guard generation == viewportUpdateGeneration else { return }
-            await refreshSnapshot()
+            applyHistorySnapshot(snapshot)
         }
     }
 

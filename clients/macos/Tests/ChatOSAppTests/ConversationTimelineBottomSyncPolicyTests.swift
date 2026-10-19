@@ -1,17 +1,18 @@
+import ChatOSCore
 @testable import ChatOSApp
 import XCTest
 
 final class ConversationTimelineBottomSyncPolicyTests: XCTestCase {
     func testPublishesWhenDetectedPositionChanges() {
         XCTAssertTrue(
-            ConversationTimelineBottomSyncPolicy.shouldPublish(
+            ConversationViewportPolicy.shouldPublishPinnedState(
                 currentIsPinned: true,
                 detectedIsPinned: false,
                 unreadNewerCount: 0
             )
         )
         XCTAssertTrue(
-            ConversationTimelineBottomSyncPolicy.shouldPublish(
+            ConversationViewportPolicy.shouldPublishPinnedState(
                 currentIsPinned: false,
                 detectedIsPinned: true,
                 unreadNewerCount: 0
@@ -21,7 +22,7 @@ final class ConversationTimelineBottomSyncPolicyTests: XCTestCase {
 
     func testRepublishesPinnedStateToClearUnreadContent() {
         XCTAssertTrue(
-            ConversationTimelineBottomSyncPolicy.shouldPublish(
+            ConversationViewportPolicy.shouldPublishPinnedState(
                 currentIsPinned: true,
                 detectedIsPinned: true,
                 unreadNewerCount: 1
@@ -31,14 +32,14 @@ final class ConversationTimelineBottomSyncPolicyTests: XCTestCase {
 
     func testDoesNotRepublishStableStateWithoutUnreadContent() {
         XCTAssertFalse(
-            ConversationTimelineBottomSyncPolicy.shouldPublish(
+            ConversationViewportPolicy.shouldPublishPinnedState(
                 currentIsPinned: true,
                 detectedIsPinned: true,
                 unreadNewerCount: 0
             )
         )
         XCTAssertFalse(
-            ConversationTimelineBottomSyncPolicy.shouldPublish(
+            ConversationViewportPolicy.shouldPublishPinnedState(
                 currentIsPinned: false,
                 detectedIsPinned: false,
                 unreadNewerCount: 1
