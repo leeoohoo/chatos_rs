@@ -3,7 +3,13 @@ import Foundation
 
 @MainActor
 final class LocalConnectorControlCenterViewModel: ObservableObject {
-    @Published var selectedTab: LocalConnectorControlTab = .connection
+    @Published var selectedTab: LocalConnectorControlTab = .connection {
+        didSet {
+            if oldValue == .approvals, selectedTab != .approvals {
+                cancelApprovalLoad()
+            }
+        }
+    }
     @Published private(set) var status: LocalConnectorStatus?
     @Published private(set) var systemPermissions: LocalConnectorSystemPermissions?
     @Published private(set) var commandHistory: [LocalConnectorCommandHistoryEntry] = []
@@ -20,6 +26,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     @Published private(set) var isStarting = false
     @Published var isLoading = false
     @Published private(set) var isPerformingAction = false
+    @Published private(set) var isLoadingApprovals = false
+    @Published private(set) var approvalLoadError: String?
     @Published private(set) var approvalOperationIDs: Set<String> = []
     @Published private(set) var approvalErrorMessages: [String: String] = [:]
     @Published var pluginOperationIDs: Set<String> = []
@@ -47,6 +55,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     private var actionGeneration: Int64 = 0
     private var approvalActionState = LocalConnectorApprovalActionState()
     private var approvalActionTasks: [String: Task<Void, Never>] = [:]
+    private var approvalLoadState = LocalConnectorApprovalLoadState()
+    private var approvalLoadTask: Task<Void, Never>?
     var pluginActionTasks: [String: Task<Void, Never>] = [:]
     var pluginActionRequestIDs: [String: UUID] = [:]
     var customPluginTask: Task<Void, Never>?
@@ -74,6 +84,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         pluginRefreshTask?.cancel()
         actionTask?.cancel()
         approvalActionTasks.values.forEach { $0.cancel() }
+        approvalLoadTask?.cancel()
         pluginActionTasks.values.forEach { $0.cancel() }
         customPluginTask?.cancel()
     }
@@ -199,6 +210,8 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         approvalActionState.reset()
         approvalOperationIDs = []
         approvalErrorMessages = [:]
+        let pendingApprovalLoad = approvalLoadTask
+        cancelApprovalLoad()
         pluginActionTasks.values.forEach { $0.cancel() }
         pluginActionTasks = [:]
         pluginActionRequestIDs = [:]
@@ -226,6 +239,7 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
         startSignedOutSuspension(
             after: [pendingStatusRefresh, pendingAction].compactMap { $0 }
                 + pendingApprovalActions
+                + [pendingApprovalLoad].compactMap { $0 }
         )
     }
 
@@ -296,13 +310,55 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     }
 
     func loadApprovals() {
-        load {
-            let snapshot = try await self.approvalUseCase.loadSnapshot()
-            try Task.checkCancellation()
-            if self.approvalSettings != snapshot.settings {
-                self.approvalSettings = snapshot.settings
+        guard selectedTab == .approvals else { return }
+        selectedTabLoadGeneration += 1
+        selectedTabLoadTask?.cancel()
+        selectedTabLoadTask = nil
+        pluginRefreshGeneration += 1
+        pluginRefreshTask?.cancel()
+        pluginRefreshTask = nil
+        isLoading = false
+
+        approvalLoadTask?.cancel()
+        let token = approvalLoadState.begin()
+        let lifecycle = lifecycleGeneration
+        let approvalUseCase = approvalUseCase
+        let pendingServicePreparation = servicePreparationTask
+        let pendingSignedOutSuspension = signedOutSuspensionTask
+        isLoadingApprovals = true
+        approvalLoadError = nil
+        approvalLoadTask = Task { [weak self] in
+            var snapshot: LocalConnectorApprovalSnapshot?
+            var failure: Error?
+            do {
+                await pendingServicePreparation?.value
+                try Task.checkCancellation()
+                await pendingSignedOutSuspension?.value
+                try Task.checkCancellation()
+                snapshot = try await approvalUseCase.loadSnapshot()
+                try Task.checkCancellation()
+            } catch is CancellationError {
+                if Task.isCancelled { return }
+                failure = CancellationError()
+            } catch {
+                failure = error
             }
-            self.applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
+            guard let self,
+                  lifecycle == lifecycleGeneration,
+                  selectedTab == .approvals,
+                  approvalLoadState.accepts(token) else { return }
+            if let snapshot {
+                if approvalSettings != snapshot.settings {
+                    approvalSettings = snapshot.settings
+                }
+                applyPendingApprovalsIfChanged(snapshot.pendingApprovals)
+                approvalLoadError = nil
+            } else if let failure {
+                // Keep the last trusted settings and queue visible while the
+                // native connector restarts or a transient IPC request fails.
+                approvalLoadError = failure.localizedDescription
+            }
+            finishApprovalLoad(token)
         }
     }
 
@@ -591,6 +647,20 @@ final class LocalConnectorControlCenterViewModel: ObservableObject {
     func clearMessages() {
         errorMessage = nil
         notice = nil
+    }
+
+    private func cancelApprovalLoad() {
+        approvalLoadState.cancel()
+        approvalLoadTask?.cancel()
+        approvalLoadTask = nil
+        isLoadingApprovals = false
+        approvalLoadError = nil
+    }
+
+    private func finishApprovalLoad(_ token: LocalConnectorApprovalLoadToken) {
+        guard approvalLoadState.finish(token) else { return }
+        approvalLoadTask = nil
+        isLoadingApprovals = false
     }
 
     private func load(_ operation: @escaping @MainActor () async throws -> Void) {

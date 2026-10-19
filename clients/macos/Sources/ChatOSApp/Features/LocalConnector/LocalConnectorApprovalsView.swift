@@ -10,6 +10,9 @@ struct LocalConnectorApprovalsView: View {
 
     var body: some View {
         SettingsGroupedPage {
+            if let error = viewModel.approvalLoadError {
+                approvalLoadErrorBanner(error)
+            }
             policyCard
             pendingCard
             historyCard
@@ -36,6 +39,27 @@ struct LocalConnectorApprovalsView: View {
         }
         .onChange(of: approvalHistory.count) { _, _ in
             clampHistoryPage()
+        }
+    }
+
+    private func approvalLoadErrorBanner(_ message: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(message)
+                .appFont(.callout)
+                .textSelection(.enabled)
+            Spacer(minLength: 12)
+            Button(model.localized("重试", english: "Retry")) {
+                viewModel.loadApprovals()
+            }
+            .disabled(viewModel.isLoadingApprovals)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(.orange.opacity(0.25), lineWidth: 1)
         }
     }
 

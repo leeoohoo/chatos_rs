@@ -82,6 +82,80 @@ final class LocalConnectorControlCenterViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
     }
 
+    func testNewApprovalLoadRejectsOlderSnapshot() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalLoading(delayFirstRequest: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        viewModel.selectedTab = .approvals
+
+        viewModel.loadApprovals()
+        try await waitUntil { await service.hasDelayedApprovalLoad() }
+        viewModel.loadApprovals()
+        try await waitUntil { viewModel.pendingApprovals.first?.id == "approval-new" }
+
+        await service.resumeDelayedApprovalLoad()
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(viewModel.pendingApprovals.map(\.id), ["approval-new"])
+        XCTAssertFalse(viewModel.isLoadingApprovals)
+        XCTAssertNil(viewModel.approvalLoadError)
+    }
+
+    func testLeavingApprovalsRejectsLateExplicitLoadWithoutStoppingQueueState() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalLoading(delayFirstRequest: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        viewModel.selectedTab = .approvals
+
+        viewModel.loadApprovals()
+        try await waitUntil { await service.hasDelayedApprovalLoad() }
+        viewModel.selectedTab = .connection
+        await service.resumeDelayedApprovalLoad()
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
+        XCTAssertFalse(viewModel.isLoadingApprovals)
+        XCTAssertNil(viewModel.approvalLoadError)
+    }
+
+    func testSignedOutSuspensionWaitsForCancelledApprovalLoad() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalLoading(delayFirstRequest: true)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        viewModel.selectedTab = .approvals
+
+        viewModel.loadApprovals()
+        try await waitUntil { await service.hasDelayedApprovalLoad() }
+        viewModel.resetForSignedOut()
+        try await Task.sleep(for: .milliseconds(20))
+
+        let suspensionCountBeforeLoadSettled = await service.suspensionCallCount()
+        XCTAssertEqual(suspensionCountBeforeLoadSettled, 0)
+        XCTAssertFalse(viewModel.isLoadingApprovals)
+        await service.resumeDelayedApprovalLoad()
+        try await waitUntil { await service.suspensionCallCount() == 1 }
+        XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
+        XCTAssertNil(viewModel.approvalLoadError)
+    }
+
+    func testApprovalLoadFailurePreservesLastTrustedSnapshot() async throws {
+        let service = BrowserExtensionPairingServiceStub()
+        await service.configureApprovalLoading(delayFirstRequest: false)
+        let viewModel = LocalConnectorControlCenterViewModel(service: service)
+        viewModel.selectedTab = .approvals
+
+        viewModel.loadApprovals()
+        try await waitUntil { viewModel.pendingApprovals.first?.id == "approval-old" }
+        await service.failNextApprovalLoad()
+        viewModel.loadApprovals()
+        try await waitUntil { viewModel.approvalLoadError != nil }
+
+        XCTAssertEqual(viewModel.pendingApprovals.map(\.id), ["approval-old"])
+        XCTAssertNotNil(viewModel.approvalSettings)
+        XCTAssertFalse(viewModel.isLoadingApprovals)
+        XCTAssertNil(viewModel.errorMessage)
+    }
+
     func testSignedOutResetRejectsLateTaskModelCatalog() async throws {
         let service = BrowserExtensionPairingServiceStub()
         let viewModel = LocalConnectorControlCenterViewModel(service: service)
@@ -346,6 +420,11 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     private var delayedHistoryContinuation: CheckedContinuation<Void, Never>?
     private var delayedDisconnectContinuation: CheckedContinuation<Void, Never>?
     private var delayedApprovalContinuation: CheckedContinuation<Void, Never>?
+    private var delayedApprovalLoadContinuation: CheckedContinuation<Void, Never>?
+    private var approvalLoadFixturesEnabled = false
+    private var shouldDelayFirstApprovalLoad = false
+    private var shouldFailNextApprovalLoad = false
+    private var approvalLoadRequestCount = 0
     private var delayedApprovalResolutionContinuation: CheckedContinuation<Void, Never>?
     private var approvalResolutionEnabled = false
     private var shouldDelayApprovalResolution = false
@@ -414,6 +493,26 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     func resumeDelayedApprovalRequest() {
         delayedApprovalContinuation?.resume()
         delayedApprovalContinuation = nil
+    }
+
+    func configureApprovalLoading(delayFirstRequest: Bool) {
+        approvalLoadFixturesEnabled = true
+        shouldDelayFirstApprovalLoad = delayFirstRequest
+        shouldFailNextApprovalLoad = false
+        approvalLoadRequestCount = 0
+    }
+
+    func failNextApprovalLoad() {
+        shouldFailNextApprovalLoad = true
+    }
+
+    func hasDelayedApprovalLoad() -> Bool {
+        delayedApprovalLoadContinuation != nil
+    }
+
+    func resumeDelayedApprovalLoad() {
+        delayedApprovalLoadContinuation?.resume()
+        delayedApprovalLoadContinuation = nil
     }
 
     func configureApprovalResolution(delay: Bool, shouldFail: Bool = false) {
@@ -506,11 +605,29 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
     }
     func clearCommandHistory() async throws { throw StubError.unimplemented }
     func fetchApprovalSettings() async throws -> LocalConnectorApprovalSettings {
-        guard approvalResolutionEnabled else { throw StubError.unimplemented }
+        guard approvalResolutionEnabled || approvalLoadFixturesEnabled else {
+            throw StubError.unimplemented
+        }
         return .init(defaultMode: .requestApproval, history: [])
     }
     func updateDefaultApprovalMode(_ mode: LocalConnectorApprovalMode, riskAcknowledged: Bool) async throws -> LocalConnectorApprovalSettings { throw StubError.unimplemented }
     func fetchPendingApprovals() async throws -> [LocalConnectorPendingApproval] {
+        if approvalLoadFixturesEnabled {
+            approvalLoadRequestCount += 1
+            let requestNumber = approvalLoadRequestCount
+            if shouldFailNextApprovalLoad {
+                shouldFailNextApprovalLoad = false
+                throw StubError.unimplemented
+            }
+            if requestNumber == 1, shouldDelayFirstApprovalLoad {
+                await withCheckedContinuation { continuation in
+                    delayedApprovalLoadContinuation = continuation
+                }
+            }
+            return [Self.pendingApproval(
+                id: requestNumber == 1 ? "approval-old" : "approval-new"
+            )]
+        }
         if approvalResolutionEnabled {
             return approvalResolutionPending
         }
@@ -599,9 +716,9 @@ private actor BrowserExtensionPairingServiceStub: LocalConnectorControlServicing
         )
     }
 
-    private static func pendingApproval() -> LocalConnectorPendingApproval {
+    private static func pendingApproval(id: String = "approval") -> LocalConnectorPendingApproval {
         .init(
-            id: "approval",
+            id: id,
             requestID: "request",
             command: "pwd",
             cwd: "/tmp",

@@ -106,7 +106,10 @@ struct LocalConnectorControlCenterView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if viewModel.isLoading || viewModel.isPerformingAction || viewModel.isStarting {
+            if viewModel.isLoading
+                || viewModel.isPerformingAction
+                || viewModel.isStarting
+                || (viewModel.selectedTab == .approvals && viewModel.isLoadingApprovals) {
                 ProgressView()
                     .controlSize(.small)
             }
