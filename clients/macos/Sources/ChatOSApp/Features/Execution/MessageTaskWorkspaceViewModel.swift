@@ -175,6 +175,7 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
     }
 
     func stopPolling() {
+        graphPollingState.stop()
         pollingTask?.cancel()
         pollingTask = nil
     }

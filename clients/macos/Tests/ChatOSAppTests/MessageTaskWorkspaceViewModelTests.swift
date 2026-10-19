@@ -92,6 +92,27 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingInspector)
     }
 
+    func testStoppedPollingSessionRejectsLateGraphResult() async throws {
+        let service = DelayedPollingMessageTaskGraphServiceStub()
+        let viewModel = makeViewModel(service: service)
+        let session = viewModel.graphPollingState.startSession()
+
+        let refresh = Task {
+            await viewModel.refreshWorkspaceState(
+                refreshInspector: false,
+                pollingSession: session
+            )
+        }
+        try await waitUntil { await service.hasDelayedGraphRequest() }
+        viewModel.stopPolling()
+        await service.resumeGraphRequest()
+        await refresh.value
+
+        XCTAssertNil(viewModel.graph)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.graphPollingState.accepts(session))
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -129,6 +150,63 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor DelayedPollingMessageTaskGraphServiceStub: MessageTaskGraphServicing {
+    private var graphContinuation: CheckedContinuation<Void, Never>?
+
+    func fetchGraph(
+        messageID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        await withCheckedContinuation { continuation in
+            graphContinuation = continuation
+        }
+        return .populated
+    }
+
+    func hasDelayedGraphRequest() -> Bool { graphContinuation != nil }
+
+    func resumeGraphRequest() {
+        graphContinuation?.resume()
+        graphContinuation = nil
+    }
+
+    func fetchTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        MessageTask(id: taskID, title: "Task", status: "completed")
+    }
+
+    func fetchRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        includeEvents: Bool,
+        eventLimit: Int,
+        eventOffset: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-1", title: "Task", status: "completed")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID: String,
+        runID: String,
+        lookup: MessageTaskLookup?,
+        instruction: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-1")
+    }
+
+    func cancelTask(
+        messageID: String,
+        taskID: String,
+        lookup: MessageTaskLookup?,
+        reason: String?
+    ) async throws {}
 }
 
 private actor SameTaskReloadMessageTaskGraphServiceStub: MessageTaskGraphServicing {

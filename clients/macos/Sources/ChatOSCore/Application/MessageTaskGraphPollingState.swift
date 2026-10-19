@@ -1,5 +1,15 @@
 import Foundation
 
+public struct MessageTaskGraphPollingSession: Sendable, Equatable {
+    public let generation: UInt64
+    public let requestID: UUID
+
+    public init(generation: UInt64, requestID: UUID) {
+        self.generation = generation
+        self.requestID = requestID
+    }
+}
+
 /// Application state for Task Graph recovery and polling decisions.
 ///
 /// The UI owns the cancellable polling Task; this type owns the product rules that decide
@@ -8,11 +18,38 @@ public struct MessageTaskGraphPollingState: Sendable, Equatable {
     public static let emptyGraphRetryLimit = 3
 
     public private(set) var emptyGraphRetryAttemptsRemaining: Int
+    public private(set) var activeSession: MessageTaskGraphPollingSession?
+    private var lastSessionGeneration: UInt64 = 0
 
     public init(
         emptyGraphRetryAttemptsRemaining: Int = Self.emptyGraphRetryLimit
     ) {
         self.emptyGraphRetryAttemptsRemaining = max(0, emptyGraphRetryAttemptsRemaining)
+    }
+
+    public mutating func startSession() -> MessageTaskGraphPollingSession {
+        lastSessionGeneration &+= 1
+        let session = MessageTaskGraphPollingSession(
+            generation: lastSessionGeneration,
+            requestID: UUID()
+        )
+        activeSession = session
+        return session
+    }
+
+    public func accepts(_ session: MessageTaskGraphPollingSession) -> Bool {
+        activeSession == session
+    }
+
+    public mutating func stop() {
+        activeSession = nil
+    }
+
+    @discardableResult
+    public mutating func finish(_ session: MessageTaskGraphPollingSession) -> Bool {
+        guard accepts(session) else { return false }
+        activeSession = nil
+        return true
     }
 
     public func shouldRetryEmptyGraph(

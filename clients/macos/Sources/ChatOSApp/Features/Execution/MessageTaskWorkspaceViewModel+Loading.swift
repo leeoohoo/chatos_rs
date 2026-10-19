@@ -2,7 +2,11 @@ import ChatOSCore
 import Foundation
 
 extension MessageTaskWorkspaceViewModel {
-    func refreshWorkspaceState(refreshInspector: Bool) async {
+    func refreshWorkspaceState(
+        refreshInspector: Bool,
+        pollingSession: MessageTaskGraphPollingSession? = nil
+    ) async {
+        guard pollingSession.map(graphPollingState.accepts) ?? true else { return }
         workspaceRefreshGeneration += 1
         let refreshGeneration = workspaceRefreshGeneration
 
@@ -12,20 +16,23 @@ extension MessageTaskWorkspaceViewModel {
                 lookup: baseLookup,
                 preservingStable: graph
             )
-            guard refreshGeneration == workspaceRefreshGeneration else { return }
+            guard refreshGeneration == workspaceRefreshGeneration,
+                  pollingSession.map(graphPollingState.accepts) ?? true else { return }
             applyGraph(refreshedGraph)
             if errorMessage != nil {
                 errorMessage = nil
             }
         } catch {
-            guard refreshGeneration == workspaceRefreshGeneration else { return }
+            guard refreshGeneration == workspaceRefreshGeneration,
+                  pollingSession.map(graphPollingState.accepts) ?? true else { return }
             let nextErrorMessage = error.localizedDescription
             if errorMessage != nextErrorMessage {
                 errorMessage = nextErrorMessage
             }
         }
 
-        if refreshInspector {
+        if refreshInspector,
+           pollingSession.map(graphPollingState.accepts) ?? true {
             await refreshSelectedInspectorState()
         }
     }
@@ -311,17 +318,26 @@ extension MessageTaskWorkspaceViewModel {
             expectsTaskGraph: expectsTaskGraph
         )
         guard force || shouldPoll else { return }
+        let session = graphPollingState.startSession()
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, !Task.isCancelled else { return }
+                guard let self,
+                      !Task.isCancelled,
+                      self.graphPollingState.accepts(session) else { return }
                 let isEmptyGraphRetry = self.shouldRetryEmptyGraph
                 let interval = MessageTaskGraphPollingState.interval(
                     isEmptyGraphRetry: isEmptyGraphRetry,
                     hasActiveRealtimeStream: self.hasActiveRealtimeStream
                 )
                 try? await Task.sleep(for: interval)
-                guard !Task.isCancelled else { return }
-                await self.refreshWorkspaceState(refreshInspector: true)
+                guard !Task.isCancelled,
+                      self.graphPollingState.accepts(session) else { return }
+                await self.refreshWorkspaceState(
+                    refreshInspector: true,
+                    pollingSession: session
+                )
+                guard !Task.isCancelled,
+                      self.graphPollingState.accepts(session) else { return }
                 if isEmptyGraphRetry {
                     self.recordEmptyGraphRetryAttempt()
                 }
@@ -330,6 +346,9 @@ extension MessageTaskWorkspaceViewModel {
                     expectsTaskGraph: self.expectsTaskGraph
                 )
                 if !shouldContinue {
+                    if self.graphPollingState.finish(session) {
+                        self.pollingTask = nil
+                    }
                     return
                 }
             }

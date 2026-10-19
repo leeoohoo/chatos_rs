@@ -72,6 +72,32 @@ struct MessageTaskGraphPollingStateTests {
         ) == .seconds(60))
     }
 
+    @Test
+    func restartingPollingRejectsPreviousSession() {
+        var state = MessageTaskGraphPollingState()
+
+        let old = state.startSession()
+        let current = state.startSession()
+
+        #expect(current.generation == old.generation + 1)
+        #expect(!state.accepts(old))
+        #expect(state.accepts(current))
+    }
+
+    @Test
+    func stoppingPollingRejectsLateRefreshAndOldFinishCannotStopNewSession() {
+        var state = MessageTaskGraphPollingState()
+        let old = state.startSession()
+        state.stop()
+        let current = state.startSession()
+
+        let oldFinished = state.finish(old)
+
+        #expect(!oldFinished)
+        #expect(!state.accepts(old))
+        #expect(state.accepts(current))
+    }
+
     private var emptyGraph: MessageTaskGraphSnapshot {
         MessageTaskGraphSnapshot(rootTaskIDs: [], nodes: [], edges: [])
     }
