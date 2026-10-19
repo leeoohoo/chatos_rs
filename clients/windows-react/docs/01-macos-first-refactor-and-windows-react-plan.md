@@ -386,7 +386,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 ### 阶段 1：契约与 macOS 架构地基
 
-当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate；项目 Conversation 准备、Conversation History 查询/合并、发送路径规划、optimistic Turn/失败恢复、viewport/unread、latest refresh debounce/in-flight 合并、realtime 动作策略、Ask User 查询/提交/取消/投影与表单状态、Human Approval 加载/强类型决策、全局队列展示、监控 session 与 Host durable/Human 两阶段端口，以及 Task Graph/Run Inspector 核心规则已从 UI 协调层提取。Conversation、Ask User、Approval 与 Inspector 的其余 cancellable Task 生命周期、service orchestration 与 typed lifecycle port 继续迁移。
+当前状态：执行中。`LocalAgentRuntimeState` 已接入 Conversation ready gate；项目 Conversation 准备、Conversation History 查询/合并、发送路径规划、optimistic Turn/失败恢复、viewport/unread、latest refresh debounce/in-flight 合并、realtime 动作策略、Ask User 查询/提交/取消/投影与表单状态、Human Approval 加载/强类型决策、全局队列展示、监控 session、Host durable/Human 两阶段端口与决定写回恢复 journal，以及 Task Graph/Run Inspector 核心规则已从 UI 协调层提取。Conversation、Ask User、Approval 与 Inspector 的其余 cancellable Task 生命周期、service orchestration 与 typed lifecycle port 继续迁移。
 
 工作：
 

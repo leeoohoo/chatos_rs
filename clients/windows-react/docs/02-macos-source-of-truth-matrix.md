@@ -41,7 +41,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Conversation 时间线与发送 | History、发送、viewport/unread、刷新合并与 realtime 动作规则已提取，UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新与 polling 决策已提取，UI 异步任务生命周期待收口 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | 四组 Core state/use case tests、ViewModel 测试等 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁与表单状态已提取，UI Task 生命周期待迁移 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
-| 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session 与 Host durable/Human 两阶段端口已提取，恢复协调和其余 UI Task 生命周期待收口 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
+| 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取，其余 UI Task 生命周期待收口 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle | 已映射，可重构 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift` | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift` | `NativeLocalAgentHostLifecycleTests.swift` | 禁止；先完成显式 Application 状态 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
@@ -550,8 +550,9 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 - `LocalConnectorApprovalMonitoringState` 已统一 snapshot/event/polling 的监控 session token、迟到更新验收、立即刷新和校验间隔；
 - 全局浮层、完整审批页与桌面宠物只展示当前 approval 提供的决定，处理中统一禁用；Native service 对 typed decision 再做一次 allowlist 校验；
 - `NativeLocalAgentToolApprovalHandler` 已通过独立 Port 区分 Rust Host durable invocation、任务执行上下文与 Human presentation queue，并验证 Human 结果使用原 invocation identity/version 回写 Host；
+- Human/policy 决定在 Host 写回前进入本地有界 journal，键绑定账号、invocation identity 与 version；IPC 写回失败时 reconciliation 只重放原决定，不重复询问用户，应用重启后也可继续写回；Host 成功后立即清理，残留记录不能匹配其他 version；
 - ViewModel 继续持有实际 snapshot/event stream Task、action generation、错误与 loading 展示；
-- Rust Host durable approval 与 Human presentation queue 的失败恢复协调仍需继续提取，完成前不放行 React。
+- 审批 ViewModel 的 cancellable Task 生命周期与错误展示仍需继续收口，完成前不放行 React。
 
 测试：
 
@@ -566,7 +567,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 - `clients/macos/Tests/ChatOSAppTests/LocalConnectorControlCenterViewModelTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/PerformancePolicyTests.swift`
 
-已覆盖等待审批不阻塞已批准 claim、启动/事件恢复、durable approval typed command、cwd/traversal/symlink 边界、AI reviewer 保守降级、session scope 隔离和登出迟到结果隔离。macOS 分层需将“Host durable approval”与“Human presentation queue”明确建模成两个 port，React 才能复用而不复制状态机。
+已覆盖等待审批不阻塞已批准 claim、启动/事件恢复、durable approval typed command、Human 决定写回瞬时失败与重启恢复、journal 存储失败的进程内恢复、cwd/traversal/symlink 边界、AI reviewer 保守降级、session scope 隔离和登出迟到结果隔离。Windows 后续必须复用相同的两阶段状态语义，不能把 presentation queue 当成 durable approval 事实源。
 
 ## 9. 31 个页面的准入状态
 

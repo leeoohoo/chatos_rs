@@ -98,12 +98,14 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
     private let durableApprovals: any NativeLocalAgentDurableApprovalServicing
     private let contextResolver: any NativeLocalAgentApprovalContextResolving
     private let humanApprovals: any NativeLocalHumanApprovalServicing
+    private let decisionJournal: NativeLocalAgentApprovalDecisionJournal
     private let reviewerID: String
 
     init(
         host: any LocalAgentHostClientServicing,
         projects: NativeLocalProjectsService,
         connector: NativeLocalConnectorService,
+        decisionJournalURL: URL? = nil,
         reviewerID: String = "macos-local-approval"
     ) {
         durableApprovals = NativeLocalAgentDurableApprovalPort(
@@ -115,6 +117,7 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             connector: connector
         )
         humanApprovals = connector
+        decisionJournal = .init(fileURL: decisionJournalURL)
         self.reviewerID = reviewerID
     }
 
@@ -122,11 +125,13 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
         durableApprovals: any NativeLocalAgentDurableApprovalServicing,
         contextResolver: any NativeLocalAgentApprovalContextResolving,
         humanApprovals: any NativeLocalHumanApprovalServicing,
+        decisionJournal: NativeLocalAgentApprovalDecisionJournal = .init(),
         reviewerID: String = "macos-local-approval"
     ) {
         self.durableApprovals = durableApprovals
         self.contextResolver = contextResolver
         self.humanApprovals = humanApprovals
+        self.decisionJournal = decisionJournal
         self.reviewerID = reviewerID
     }
 
@@ -142,18 +147,33 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                     "remote_connection_controller_upload_file",
                 ].contains($0.toolName)
         }) else { return false }
+        if let recorded = await decisionJournal.decision(
+            ownerUserID: ownerUserID,
+            invocation: invocation
+        ) {
+            try await commit(
+                recorded,
+                ownerUserID: ownerUserID,
+                invocation: invocation,
+                recordBeforeWriteback: false
+            )
+            return true
+        }
         let context = try await contextResolver.resolve(
             ownerUserID: ownerUserID,
             runID: invocation.runID
         )
         let approvalScope = Self.approvalScope(for: context)
         guard let presentation = Self.presentation(invocation) else {
-            try await durableApprovals.decideApproval(
+            try await commit(
+                writebackDecision(
+                    ownerUserID: ownerUserID,
+                    invocation: invocation,
+                    approve: false,
+                    reason: "终端命令缺少有效的运行目的，请重新创建任务。"
+                ),
                 ownerUserID: ownerUserID,
-                invocation: invocation,
-                approve: false,
-                decidedBy: reviewerID,
-                reason: "终端命令缺少有效的运行目的，请重新创建任务。"
+                invocation: invocation
             )
             return true
         }
@@ -164,12 +184,15 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
                 projectRoot: approvalScope.rootURL
             )
         } catch {
-            try await durableApprovals.decideApproval(
+            try await commit(
+                writebackDecision(
+                    ownerUserID: ownerUserID,
+                    invocation: invocation,
+                    approve: false,
+                    reason: "终端命令工作目录无效或超出当前项目范围。"
+                ),
                 ownerUserID: ownerUserID,
-                invocation: invocation,
-                approve: false,
-                decidedBy: reviewerID,
-                reason: "终端命令工作目录无效或超出当前项目范围。"
+                invocation: invocation
             )
             return true
         }
@@ -196,14 +219,57 @@ struct NativeLocalAgentToolApprovalHandler: NativeLocalAgentToolApprovalHandling
             approved = false
             reason = value
         }
+        try await commit(
+            writebackDecision(
+                ownerUserID: ownerUserID,
+                invocation: invocation,
+                approve: approved,
+                reason: String(reason.prefix(4_000))
+            ),
+            ownerUserID: ownerUserID,
+            invocation: invocation
+        )
+        return true
+    }
+
+    private func writebackDecision(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        approve: Bool,
+        reason: String
+    ) -> NativeLocalAgentApprovalWritebackDecision {
+        .init(
+            ownerUserID: ownerUserID,
+            invocationID: invocation.invocationID,
+            invocationVersion: invocation.version,
+            approve: approve,
+            decidedBy: reviewerID,
+            reason: reason,
+            recordedAtUnixMs: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+    }
+
+    private func commit(
+        _ decision: NativeLocalAgentApprovalWritebackDecision,
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        recordBeforeWriteback: Bool = true
+    ) async throws {
+        // Record the Human/policy result before touching Host durable state. If the IPC write
+        // fails, reconciliation replays this exact identity/version instead of asking again.
+        if recordBeforeWriteback {
+            try await decisionJournal.record(decision)
+        }
         try await durableApprovals.decideApproval(
             ownerUserID: ownerUserID,
             invocation: invocation,
-            approve: approved,
-            decidedBy: reviewerID,
-            reason: String(reason.prefix(4_000))
+            approve: decision.approve,
+            decidedBy: decision.decidedBy,
+            reason: decision.reason
         )
-        return true
+        // Host is now authoritative. A cleanup failure only leaves a bounded stale record;
+        // it cannot be applied to a different invocation version.
+        try? await decisionJournal.remove(decision)
     }
 
     static func approvalScope(

@@ -79,7 +79,9 @@ public actor NativeLocalAgentPlatformToolWorker {
     approvalHandler = NativeLocalAgentToolApprovalHandler(
       host: host,
       projects: projects,
-      connector: connector
+      connector: connector,
+      decisionJournalURL: attachmentRootURL.deletingLastPathComponent()
+        .appendingPathComponent("approval-writebacks.json", isDirectory: false)
     )
     self.eventHub = eventHub
     self.workerID = workerID

@@ -62,6 +62,139 @@ struct NativeLocalAgentToolApprovalHandlerTests {
         #expect(commit.reason == "用户拒绝")
     }
 
+    @Test
+    func failedDurableWritebackRetriesRecordedDecisionWithoutReprompting() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let invocation = Self.invocation(root: root)
+        let durable = RetryingDurableApprovalStub(
+            pending: [invocation],
+            failuresBeforeSuccess: 1
+        )
+        let human = HumanApprovalStub(
+            decision: .approve(reason: "用户已批准", rememberAllow: false)
+        )
+        let journal = NativeLocalAgentApprovalDecisionJournal()
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: durable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human,
+            decisionJournal: journal
+        )
+
+        await #expect(throws: ApprovalWritebackStubError.self) {
+            try await handler.resolveNextPending(ownerUserID: "owner-1")
+        }
+        #expect(await human.requests.count == 1)
+        #expect(await journal.snapshot().count == 1)
+
+        let resolved = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        #expect(resolved)
+        #expect(await human.requests.count == 1)
+        #expect(await durable.attempts.count == 2)
+        #expect(await durable.successfulCommits.count == 1)
+        #expect(await journal.snapshot().isEmpty)
+    }
+
+    @Test
+    func persistedDecisionSurvivesHandlerRecreation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let journalURL = root.appendingPathComponent("approval-writebacks.json")
+        let invocation = Self.invocation(root: root)
+        let firstHuman = HumanApprovalStub(
+            decision: .deny(reason: "用户拒绝")
+        )
+        let failingDurable = RetryingDurableApprovalStub(
+            pending: [invocation],
+            failuresBeforeSuccess: 1
+        )
+        let firstHandler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: failingDurable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: firstHuman,
+            decisionJournal: .init(fileURL: journalURL)
+        )
+        await #expect(throws: ApprovalWritebackStubError.self) {
+            try await firstHandler.resolveNextPending(ownerUserID: "owner-1")
+        }
+        #expect(await firstHuman.requests.count == 1)
+
+        let restoredJournal = NativeLocalAgentApprovalDecisionJournal(fileURL: journalURL)
+        let succeedingDurable = RetryingDurableApprovalStub(
+            pending: [invocation],
+            failuresBeforeSuccess: 0
+        )
+        let secondHuman = HumanApprovalStub(
+            decision: .approve(reason: "不应被调用", rememberAllow: false)
+        )
+        let secondHandler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: succeedingDurable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: secondHuman,
+            decisionJournal: restoredJournal
+        )
+
+        let resolved = try await secondHandler.resolveNextPending(ownerUserID: "owner-1")
+
+        #expect(resolved)
+        #expect(await secondHuman.requests.isEmpty)
+        let commit = try #require(await succeedingDurable.successfulCommits.first)
+        #expect(!commit.approve)
+        #expect(commit.reason == "用户拒绝")
+        #expect(await restoredJournal.snapshot().isEmpty)
+        #expect(
+            await NativeLocalAgentApprovalDecisionJournal(fileURL: journalURL)
+                .snapshot().isEmpty
+        )
+    }
+
+    @Test
+    func journalStorageFailureStillKeepsDecisionForInProcessRetry() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let blockedParent = root.appendingPathComponent("not-a-directory")
+        try Data("blocked".utf8).write(to: blockedParent)
+        let invocation = Self.invocation(root: root)
+        let durable = RetryingDurableApprovalStub(
+            pending: [invocation],
+            failuresBeforeSuccess: 0
+        )
+        let human = HumanApprovalStub(
+            decision: .approve(reason: "用户已批准", rememberAllow: false)
+        )
+        let journal = NativeLocalAgentApprovalDecisionJournal(
+            fileURL: blockedParent.appendingPathComponent("approval-writebacks.json")
+        )
+        let handler = NativeLocalAgentToolApprovalHandler(
+            durableApprovals: durable,
+            contextResolver: ContextResolverStub(root: root),
+            humanApprovals: human,
+            decisionJournal: journal
+        )
+
+        await #expect(throws: Error.self) {
+            try await handler.resolveNextPending(ownerUserID: "owner-1")
+        }
+        #expect(await human.requests.count == 1)
+        #expect(await durable.attempts.isEmpty)
+        #expect(await journal.snapshot().count == 1)
+
+        let resolved = try await handler.resolveNextPending(ownerUserID: "owner-1")
+
+        #expect(resolved)
+        #expect(await human.requests.count == 1)
+        #expect(await durable.successfulCommits.count == 1)
+        #expect(await journal.snapshot().isEmpty)
+    }
+
     private static func invocation(root: URL) -> LocalAgentToolInvocationRecord {
         LocalAgentToolInvocationRecord(
             invocationID: "invocation-1",
@@ -91,6 +224,10 @@ struct NativeLocalAgentToolApprovalHandlerTests {
             updatedAtUnixMs: 1
         )
     }
+}
+
+private enum ApprovalWritebackStubError: Error {
+    case unavailable
 }
 
 private struct DurableApprovalCommit: Sendable, Equatable {
@@ -131,6 +268,50 @@ private actor DurableApprovalStub: NativeLocalAgentDurableApprovalServicing {
             decidedBy: decidedBy,
             reason: reason
         ))
+    }
+}
+
+private actor RetryingDurableApprovalStub: NativeLocalAgentDurableApprovalServicing {
+    let pending: [LocalAgentToolInvocationRecord]
+    private var failuresBeforeSuccess: Int
+    private(set) var attempts: [DurableApprovalCommit] = []
+    private(set) var successfulCommits: [DurableApprovalCommit] = []
+
+    init(
+        pending: [LocalAgentToolInvocationRecord],
+        failuresBeforeSuccess: Int
+    ) {
+        self.pending = pending
+        self.failuresBeforeSuccess = failuresBeforeSuccess
+    }
+
+    func pendingApprovals(
+        ownerUserID: String
+    ) async throws -> [LocalAgentToolInvocationRecord] {
+        pending
+    }
+
+    func decideApproval(
+        ownerUserID: String,
+        invocation: LocalAgentToolInvocationRecord,
+        approve: Bool,
+        decidedBy: String,
+        reason: String
+    ) async throws {
+        let commit = DurableApprovalCommit(
+            ownerUserID: ownerUserID,
+            invocationID: invocation.invocationID,
+            invocationVersion: invocation.version,
+            approve: approve,
+            decidedBy: decidedBy,
+            reason: reason
+        )
+        attempts.append(commit)
+        if failuresBeforeSuccess > 0 {
+            failuresBeforeSuccess -= 1
+            throw ApprovalWritebackStubError.unavailable
+        }
+        successfulCommits.append(commit)
     }
 }
 
