@@ -276,32 +276,58 @@ extension AppModel {
     }
 
     func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
-        guard let authenticatedUserID,
-              localAgentWorkspaceOwnerUserID == authenticatedUserID else { return }
+        guard let ownerUserID = authenticatedUserID,
+              localAgentWorkspaceOwnerUserID == ownerUserID else { return }
         guard !preparingProjectConversationIDs.contains(projectID) else { return }
         guard force || projectConversationPreparationErrors[projectID] == nil else { return }
-        guard workspaceProject(id: projectID) != nil,
-              defaultProjectContact != nil else { return }
+        guard let project = workspaceProject(id: projectID),
+              let contact = defaultProjectContact,
+              let prepareProjectConversationUseCase else { return }
 
         let token = projectConversationPreparationState.begin(projectID: projectID)
+        let accountGeneration = workspaceAccountGeneration
+        let existingConversationID = projects.first(where: { $0.id == projectID })?.conversationID
         preparingProjectConversationIDs.insert(projectID)
         projectConversationPreparationErrors[projectID] = nil
         projectConversationPreparationTasks[projectID] = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<(conversationID: String, shouldApply: Bool), Error>
             do {
-                _ = try await ensureProjectConversation(
-                    projectID: projectID,
-                    preparationToken: token
-                )
+                if let existingConversationID {
+                    result = .success((existingConversationID, false))
+                } else {
+                    let conversationID = try await prepareProjectConversationUseCase.execute(
+                        ownerUserID: ownerUserID,
+                        project: project,
+                        contact: contact
+                    )
+                    result = .success((conversationID, true))
+                }
             } catch {
-                guard projectConversationPreparationState.accepts(token) else { return }
-                if !(error is CancellationError), workspaceProject(id: projectID) != nil {
-                    projectConversationPreparationErrors[projectID] = error.localizedDescription
+                result = .failure(error)
+            }
+
+            guard let self,
+                  self.authenticatedUserID == ownerUserID,
+                  self.workspaceAccountGeneration == accountGeneration,
+                  self.workspaceProject(id: projectID) != nil,
+                  self.projectConversationPreparationState.accepts(token) else { return }
+            switch result {
+            case let .success(prepared):
+                if prepared.shouldApply {
+                    self.applyPreparedConversation(
+                        prepared.conversationID,
+                        projectID: projectID,
+                        contactName: contact.name
+                    )
+                }
+            case let .failure(error):
+                if !(error is CancellationError) {
+                    self.projectConversationPreparationErrors[projectID] = error.localizedDescription
                 }
             }
-            guard projectConversationPreparationState.finish(token) else { return }
-            preparingProjectConversationIDs.remove(projectID)
-            projectConversationPreparationTasks[projectID] = nil
+            guard self.projectConversationPreparationState.finish(token) else { return }
+            self.preparingProjectConversationIDs.remove(projectID)
+            self.projectConversationPreparationTasks[projectID] = nil
         }
     }
 

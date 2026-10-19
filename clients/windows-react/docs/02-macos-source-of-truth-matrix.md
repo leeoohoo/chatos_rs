@@ -116,6 +116,7 @@ React 以后只能消费上述稳定用例输出；Tauri adapter 只负责传输
 - 已将项目 Conversation 创建/复用边界固定为 `ProjectConversationPort`，现有 `NativeLocalAgentProjectConversationService` 是 Host adapter，Application use case 不依赖 Connector 类型；
 - 已新增 `PrepareProjectConversationUseCase`，按 owner + project 复用并发准备任务；
 - 已新增 `ProjectConversationPreparationState`，为每个项目分配 latest-wins token；AppModel 显式持有对应 Task，项目删除只取消目标项目，账号切换/登出/退出统一取消全部任务；
+- 项目 Conversation 准备 Task 会在进入 Application use case 前冻结 owner、project、contact、account generation 与 port；Context/Host await 期间不再强持有 AppModel，返回后仍联合验收账号、项目存在性和 per-project token；
 - 已新增 App 层 `ConversationSessionFactory`，集中把 Core conversation ports 组合为 SwiftUI session；AppModel 只保留按 session ID 缓存、LRU 淘汰与 activate/deactivate 策略，runtime ready 在每次创建时读取当前账号状态而非冻结在 factory 中；
 - Use Case 仍严格执行“先加载当前 project context，再调用 `ProjectConversationPreparing`”的 macOS 顺序；
 - AppModel 继续负责登录账号、workspace generation、项目是否仍存在和四种 UI 状态，迟到结果仍不能写回；
