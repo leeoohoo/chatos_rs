@@ -71,6 +71,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     private let graphUseCase: MessageTaskGraphUseCase
     private let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
     private let realtimeService: (any ConversationRealtimeStreaming)?
+    private let pollingInterval: @Sendable (Bool) -> Duration
     private var loadTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
     private var pollingTask: Task<Void, Never>?
@@ -85,7 +86,10 @@ final class TaskReplyInspectorViewModel: ObservableObject {
     init(
         selection: TaskReplySelection,
         service: any MessageTaskGraphServicing,
-        realtimeService: (any ConversationRealtimeStreaming)? = nil
+        realtimeService: (any ConversationRealtimeStreaming)? = nil,
+        pollingInterval: @escaping @Sendable (Bool) -> Duration = {
+            TaskReplyInspectorPollingPolicy.interval(hasActiveRealtimeStream: $0)
+        }
     ) {
         self.selection = selection
         self.section = selection.initialSection
@@ -94,6 +98,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             graphService: service
         )
         self.realtimeService = realtimeService
+        self.pollingInterval = pollingInterval
     }
 
     deinit {
@@ -145,6 +150,9 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             loadTask?.cancel()
             isLoading = false
             isLoadingModelOutput = false
+            if let inspectorSession = lifecycleState.activeSession {
+                scheduleActiveRefreshIfNeeded(inspectorSession: inspectorSession)
+            }
         case .detail:
             let runID = task?.lastRunID ?? selection.reply.taskCallback?.runID
             if runID != loadedModelOutputRunID {
@@ -375,9 +383,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         pollingTask = nil
         guard lifecycleState.accepts(inspectorSession),
               task?.isActive == true else { return }
-        let interval = TaskReplyInspectorPollingPolicy.interval(
-            hasActiveRealtimeStream: hasActiveRealtimeStream
-        )
+        let interval = pollingInterval(hasActiveRealtimeStream)
         pollingTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: interval)

@@ -75,6 +75,35 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertEqual(calls.fetchRun, 1)
     }
 
+    func testSwitchingToProcessWhileDetailLoadsRearmsActiveTaskPolling() async throws {
+        let service = TaskReplyInspectorServiceStub(
+            taskStatus: "running",
+            delayRunRequest: true
+        )
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process),
+            service: service,
+            pollingInterval: { _ in .milliseconds(20) }
+        )
+
+        viewModel.load()
+        try await waitUntilLoaded(viewModel)
+        viewModel.selectSection(.detail)
+        try await waitUntilPendingRun(service)
+        let fetchTaskCountBeforeSwitch = await service.callCounts().fetchTask
+
+        viewModel.selectSection(.process)
+        await service.resumeRunRequest()
+        try await waitUntilFetchTaskCount(
+            fetchTaskCountBeforeSwitch + 1,
+            service: service
+        )
+
+        XCTAssertEqual(viewModel.section, .process)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertFalse(viewModel.isLoadingModelOutput)
+    }
+
     func testDetailFallsBackToTaskWhenRunRequestFails() async throws {
         let service = TaskReplyInspectorServiceStub(failRunRequest: true)
         let viewModel = TaskReplyInspectorViewModel(
@@ -290,6 +319,17 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTFail("任务重试未进入待完成状态")
     }
 
+    private func waitUntilPendingRun(
+        _ service: TaskReplyInspectorServiceStub,
+        timeoutIterations: Int = 100
+    ) async throws {
+        for _ in 0..<timeoutIterations {
+            if await service.hasPendingRunRequest() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("模型输出请求未进入待完成状态")
+    }
+
     private func waitUntilFetchTaskCount(
         _ expectedCount: Int,
         service: TaskReplyInspectorServiceStub,
@@ -349,23 +389,30 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let latestRunID: String
     private let fetchTaskDelayMilliseconds: Int
     private let delayRetryRequest: Bool
+    private let taskStatus: String
+    private let delayRunRequest: Bool
     private var taskCalls = 0
     private var runCalls = 0
     private var runIDs: [String] = []
     private var retryContinuation: CheckedContinuation<Void, Never>?
+    private var runContinuation: CheckedContinuation<Void, Never>?
 
     init(
         failRunRequest: Bool = false,
         failRetryRequest: Bool = false,
         latestRunID: String = "run-1",
         fetchTaskDelayMilliseconds: Int = 0,
-        delayRetryRequest: Bool = false
+        delayRetryRequest: Bool = false,
+        taskStatus: String = "succeeded",
+        delayRunRequest: Bool = false
     ) {
         self.failRunRequest = failRunRequest
         self.failRetryRequest = failRetryRequest
         self.latestRunID = latestRunID
         self.fetchTaskDelayMilliseconds = fetchTaskDelayMilliseconds
         self.delayRetryRequest = delayRetryRequest
+        self.taskStatus = taskStatus
+        self.delayRunRequest = delayRunRequest
     }
 
     func callCounts() -> (fetchTask: Int, fetchRun: Int) {
@@ -380,9 +427,18 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         retryContinuation != nil
     }
 
+    func hasPendingRunRequest() -> Bool {
+        runContinuation != nil
+    }
+
     func resumeRetryRequest() {
         retryContinuation?.resume()
         retryContinuation = nil
+    }
+
+    func resumeRunRequest() {
+        runContinuation?.resume()
+        runContinuation = nil
     }
 
     func fetchGraph(
@@ -419,6 +475,11 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     ) async throws -> MessageTaskRunDetail {
         runCalls += 1
         runIDs.append(runID)
+        if delayRunRequest {
+            await withCheckedContinuation { continuation in
+                runContinuation = continuation
+            }
+        }
         if failRunRequest {
             throw TaskReplyInspectorStubError.runUnavailable
         }
@@ -463,7 +524,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         MessageTask(
             id: "task-1",
             title: "任务一",
-            status: "succeeded",
+            status: taskStatus,
             processLog: "[2026-09-08 10:00] 开始\n执行完成",
             lastRunID: latestRunID
         )

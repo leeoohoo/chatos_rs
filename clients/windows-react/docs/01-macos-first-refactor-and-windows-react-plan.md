@@ -390,6 +390,8 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 
 Conversation 附件文件读取和粘贴图片归一化现已绑定 composer draft generation；同一草稿可并发导入，发送清空 composer 时会失效并取消全部旧导入，底层任务即使迟到也不能把附件写入下一条消息。Runtime settings snapshot load 也已改用显式 latest-wins identity；新加载、设置 mutation 或 runtime unavailable 都会拒绝旧 Host snapshot。
 
+内嵌 Task Inspector 在 detail 加载中切回 process 时会重新挂起当前活跃 Task 的 polling；取消模型输出请求不能同时让执行过程停止刷新。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；
@@ -513,7 +515,7 @@ Conversation 附件文件读取和粘贴图片归一化现已绑定 composer dra
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用与 presentation/retry identity、Application use case 路由、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
 7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
