@@ -680,6 +680,33 @@ final class ConversationSessionViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isUpdatingRuntimeSettings)
     }
 
+    func testDelayedRuntimeSettingsMutationDoesNotRetainConversation() async throws {
+        let runtimeSettings = RacingRuntimeSettingsServiceStub()
+        var viewModel: ConversationSessionViewModel? = ConversationSessionViewModel(
+            sessionID: "session-1",
+            initialTurns: [],
+            historyStore: ConversationHistoryStore(),
+            runtimeSettingsService: runtimeSettings
+        )
+        weak let weakViewModel = viewModel
+        try await waitUntil {
+            viewModel?.availableModels.count == 3
+                && viewModel?.bootstrapState.activeToken == nil
+        }
+
+        viewModel?.setSelectedModelID("model-2")
+        try await waitUntil {
+            await runtimeSettings.hasDelayedModelUpdate()
+        }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await runtimeSettings.resumeDelayedModelUpdate()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     func testStalePromptRefreshCannotOverwriteSubmittedPrompt() async throws {
         let promptService = DelayedAskUserPromptServiceStub()
         let viewModel = ConversationSessionViewModel(

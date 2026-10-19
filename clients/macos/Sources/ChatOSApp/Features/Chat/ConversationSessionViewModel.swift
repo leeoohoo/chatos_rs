@@ -748,19 +748,26 @@ final class ConversationSessionViewModel: ObservableObject {
         let token = beginRuntimeSettingsMutation()
         selectedModelID = modelID
         runtimeSettingsError = nil
+        let sessionID = sessionID
         runtimeSettingsMutationTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<ConversationRuntimeSettings, Error>
             do {
-                let settings = try await runtimeSettingsService.updateModel(
-                    sessionID: self.sessionID,
-                    modelID: modelID
+                result = .success(
+                    try await runtimeSettingsService.updateModel(
+                        sessionID: sessionID,
+                        modelID: modelID
+                    )
                 )
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
-                self.applyRuntimeSettings(settings)
             } catch {
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.runtimeSettingsMutationState.accepts(token) else { return }
+            switch result {
+            case let .success(settings):
+                self.applyRuntimeSettings(settings)
+            case let .failure(error):
                 self.selectedModelID = previous
                 self.runtimeSettingsError = error.localizedDescription
             }
@@ -787,20 +794,27 @@ final class ConversationSessionViewModel: ObservableObject {
         selectedThinkingLevel = level
         reasoningEnabled = enabled
         runtimeSettingsError = nil
+        let sessionID = sessionID
         runtimeSettingsMutationTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<ConversationRuntimeSettings, Error>
             do {
-                let settings = try await runtimeSettingsService.updateReasoningLevel(
-                    sessionID: self.sessionID,
-                    level: level,
-                    enabled: enabled
+                result = .success(
+                    try await runtimeSettingsService.updateReasoningLevel(
+                        sessionID: sessionID,
+                        level: level,
+                        enabled: enabled
+                    )
                 )
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
-                self.applyRuntimeSettings(settings)
             } catch {
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.runtimeSettingsMutationState.accepts(token) else { return }
+            switch result {
+            case let .success(settings):
+                self.applyRuntimeSettings(settings)
+            case let .failure(error):
                 self.selectedThinkingLevel = previousLevel
                 self.reasoningEnabled = previous
                 self.runtimeSettingsError = error.localizedDescription
@@ -816,19 +830,26 @@ final class ConversationSessionViewModel: ObservableObject {
         let token = beginRuntimeSettingsMutation()
         selectedRemoteConnectionID = connectionID
         runtimeSettingsError = nil
+        let sessionID = sessionID
         runtimeSettingsMutationTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<ConversationRuntimeSettings, Error>
             do {
-                let settings = try await runtimeSettingsService.updateRemoteConnection(
-                    sessionID: self.sessionID,
-                    connectionID: connectionID
+                result = .success(
+                    try await runtimeSettingsService.updateRemoteConnection(
+                        sessionID: sessionID,
+                        connectionID: connectionID
+                    )
                 )
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
-                self.applyRuntimeSettings(settings)
             } catch {
-                guard !Task.isCancelled,
-                      self.runtimeSettingsMutationState.accepts(token) else { return }
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.runtimeSettingsMutationState.accepts(token) else { return }
+            switch result {
+            case let .success(settings):
+                self.applyRuntimeSettings(settings)
+            case let .failure(error):
                 self.selectedRemoteConnectionID = previous
                 self.runtimeSettingsError = error.localizedDescription
             }

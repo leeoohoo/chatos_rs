@@ -398,6 +398,8 @@ Workspace Inspector 的详情、模型输出、Run 与事件分页 Task 已冻�
 
 Conversation Session 的服务组合已收口到 App 层 `ConversationSessionFactory`；AppModel 不再逐项构造 ViewModel 依赖，只负责 session 缓存、LRU 淘汰与激活策略，并在每次创建时传入当前账号对应的 runtime ready 状态。
 
+Conversation 的模型、推理等级与远程连接 mutation Task 已冻结 session/请求参数，Host await 期间不再强持有 ViewModel；底层忽略取消时仍可释放会话状态，返回后继续以 mutation token 验收。
+
 工作：
 
 - 固定 Host 协议版本、schema、fixture 和兼容策略；
