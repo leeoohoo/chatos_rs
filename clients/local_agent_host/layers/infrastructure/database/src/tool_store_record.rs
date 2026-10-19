@@ -93,8 +93,10 @@ pub(super) fn tool_execution_route(
         "requirement_survey_create",
         "requirement_plan_save",
         "task_run_process_record_process",
+        "task_run_process_allocate_service",
         "task_run_process_report_outcome",
         "tool_result_read",
+        "tool_result_query",
     ];
     const SKILL_TOOLS: &[&str] = &["agent_skill_activate", "agent_skill_read_resource"];
     if SHARED_TOOLS.contains(&tool_name)

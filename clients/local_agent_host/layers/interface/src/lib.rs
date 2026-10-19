@@ -95,7 +95,8 @@ pub use run_query::{
     ListRunsCommand, LocalAgentRunListScope, LocalAgentRunPage, LocalAgentRunSummary,
 };
 pub use skill::{
-    GetRunSkillActivationsCommand, LocalDiscoveredToolSkillGate, LocalSkillArgumentSelector,
+    GetRunCapabilityDisclosuresCommand, GetRunSkillActivationsCommand,
+    LocalDiscoveredToolSkillGate, LocalRunCapabilityDisclosure, LocalSkillArgumentSelector,
     LocalSkillBundleSnapshot, LocalSkillDocumentSnapshot, LocalSkillResourceSnapshot,
     LocalToolSkillActivationPolicy, LocalToolSkillBindingSnapshot,
     LOCAL_AGENT_SKILL_ACTIVATE_TOOL_NAME, LOCAL_AGENT_SKILL_READ_RESOURCE_TOOL_NAME,
@@ -160,6 +161,7 @@ pub enum HostCommand {
     GetCapabilityPolicySnapshot(GetCapabilityPolicySnapshotCommand),
     GetLatestCapabilityPolicySnapshot(GetLatestCapabilityPolicySnapshotCommand),
     GetRunSkillActivations(GetRunSkillActivationsCommand),
+    GetRunCapabilityDisclosures(GetRunCapabilityDisclosuresCommand),
     GetRunSkillBundle(GetRunCommand),
     CreateRun(CreateRunCommand),
     GetRun(GetRunCommand),
@@ -242,6 +244,7 @@ impl HostCommand {
             Self::GetCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetLatestCapabilityPolicySnapshot(command) => command.validate(),
             Self::GetRunSkillActivations(command) => command.validate(),
+            Self::GetRunCapabilityDisclosures(command) => command.validate(),
             Self::GetRunSkillBundle(command) => command.validate(),
             Self::CreateRun(command) => command.validate(),
             Self::GetRun(command) => command.validate(),

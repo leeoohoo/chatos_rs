@@ -65,6 +65,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
     private let invokeBuiltinsThroughBroker: Bool
     private let productSkillBundle: LocalAgentSkillBundleSnapshot?
     private let selectedExternalMCPIDs: Set<String>
+    private let restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure>
     private let options: [CapabilityOption]
     private var registries: [String: AgentToolProviderRegistry] = [:]
     private var toolNamesByOption: [String: [String: String]] = [:]
@@ -89,7 +90,8 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         invokeBuiltinsThroughBroker: Bool = true,
         productSkillBundle: LocalAgentSkillBundleSnapshot? = nil,
         selectedExternalMCPIDs: Set<String> = [],
-        preactivatedSkillRefs: Set<String> = []
+        preactivatedSkillRefs: Set<String> = [],
+        restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure> = []
     ) {
         self.service = service
         self.ownerUserID = ownerUserID
@@ -104,6 +106,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         self.invokeBuiltinsThroughBroker = invokeBuiltinsThroughBroker
         self.productSkillBundle = productSkillBundle
         self.selectedExternalMCPIDs = selectedExternalMCPIDs
+        self.restoredCapabilityDisclosures = restoredCapabilityDisclosures
         let builtinOptions: [CapabilityOption] = builtinCapabilities.isEmpty && productSkillBundle == nil ? [] : [
             .init(
                 token: "builtin_1",
@@ -217,12 +220,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             if case .builtIn = option.kind {
                 requiredSkillNames.formUnion(availableRuntimeProductSkillNames)
             }
-            let visibleDefinitions = registry.definitions.filter {
-                skillBinding(for: $0)?.activationPolicy != .controlPlane && (
-                    invocationMode(for: option) != "direct_task_tool"
-                        || NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0.name)
-                )
-            }
+            let visibleDefinitions = visibleDefinitions(in: registry, for: option)
             let tools = try visibleDefinitions.enumerated().map { offset, definition in
                 let token = "tool_\(offset + 1)"
                 names[token] = definition.name
@@ -251,10 +249,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let descriptor = DescribeResponse(
                 bindingSchemaVersion: 1,
                 providerID: {
-                    switch option.kind {
-                    case .builtIn: ProductToolProviderID.capabilityBroker
-                    case .plugin(let plugin): "plugin:\(plugin.id)"
-                    }
+                    providerID(for: option)
                 }(),
                 pluginOption: option.token,
                 name: option.name,
@@ -267,7 +262,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
                 schemaOffset: arguments.schemaOffset
             )
             recordDisclosedSkills(from: result, for: option)
-            if result.jsonObject?["view"]?.jsonString == "tool", let token = arguments.toolOption {
+            if capabilitySchemaIsComplete(in: result), let token = arguments.toolOption {
                 describedToolsByOption[option.token, default: []].insert(token)
             }
             let rendered = try outcome(result)
@@ -278,6 +273,7 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             let selection = try resolveSkillSelection(skillRef: arguments.skillRef)
             let option = selection.option
             let registry = try await registry(for: option)
+            try restoreCapabilityDisclosures(for: option, registry: registry)
             var available: Set<String> = []
             if case .builtIn = option.kind {
                 available.formUnion(availableRuntimeProductSkillNames)
@@ -326,8 +322,12 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         case Self.invokeToolName:
             try Task.checkCancellation()
             let arguments = try decode(InvokeArguments.self, from: call.arguments)
-            guard let option = options.first(where: { $0.token == arguments.pluginOption }),
-                  let toolName = toolNamesByOption[option.token]?[arguments.toolOption] else {
+            guard let option = options.first(where: { $0.token == arguments.pluginOption }) else {
+                return .failure("请先搜索并查看该能力，再使用本轮返回的工具选项调用。")
+            }
+            let registry = try await registry(for: option)
+            try restoreCapabilityDisclosures(for: option, registry: registry)
+            guard let toolName = toolNamesByOption[option.token]?[arguments.toolOption] else {
                 return .failure("请先搜索并查看该能力，再使用本轮返回的工具选项调用。")
             }
             guard arguments.arguments.jsonObject != nil else {
@@ -341,7 +341,6 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
             guard describedToolsByOption[option.token, default: []].contains(arguments.toolOption) else {
                 return .failure("请先用 capability_describe 的 plugin_option + tool_option 读取所选工具的完整定义；目录索引不能代替工具 schema。")
             }
-            let registry = try await registry(for: option)
             guard let definition = registry.definitions.first(where: {
                 $0.name == toolName
             }) else {
@@ -376,6 +375,67 @@ actor NativeAgentCapabilityToolProvider: AgentToolProvider {
         default:
             return .failure("能力发现工具不可用：\(call.name)")
         }
+    }
+
+    private func visibleDefinitions(
+        in registry: AgentToolProviderRegistry,
+        for option: CapabilityOption
+    ) -> [AgentToolDefinition] {
+        registry.definitions.filter {
+            skillBinding(for: $0)?.activationPolicy != .controlPlane && (
+                invocationMode(for: option) != "direct_task_tool"
+                    || NativeLocalAgentPlatformToolCatalog.taskExecutionToolNames.contains($0.name)
+            )
+        }
+    }
+
+    private func providerID(for option: CapabilityOption) -> String {
+        switch option.kind {
+        case .builtIn: ProductToolProviderID.capabilityBroker
+        case .plugin(let plugin): "plugin:\(plugin.id)"
+        }
+    }
+
+    private func capabilitySchemaIsComplete(in result: NativeJSONValue) -> Bool {
+        guard result.jsonObject?["view"]?.jsonString == "tool",
+              let tools = result.jsonObject?["tools"]?.jsonArray,
+              tools.count == 1,
+              let tool = tools.first?.jsonObject else {
+            return false
+        }
+        if tool["input_schema"] != nil { return true }
+        return tool["schema_delivery"]?.jsonString == "paged"
+            && tool["schema_chunk"]?.jsonString != nil
+            && tool["next_schema_offset"] == .null
+    }
+
+    private func restoreCapabilityDisclosures(
+        for option: CapabilityOption,
+        registry: AgentToolProviderRegistry
+    ) throws {
+        guard case .plugin = option.kind else { return }
+        let providerID = providerID(for: option)
+        let definitions = visibleDefinitions(in: registry, for: option)
+        var names: [String: String] = [:]
+        for (offset, definition) in definitions.enumerated() {
+            let token = "tool_\(offset + 1)"
+            names[token] = definition.name
+            let schemaText = redact(String(decoding: definition.schema, as: UTF8.self))
+            let schema = try JSONDecoder().decode(NativeJSONValue.self, from: Data(schemaText.utf8))
+            let digest = NativePluginManifestLoader.sha256(schema.canonicalJSONString)
+            guard restoredCapabilityDisclosures.contains(where: {
+                $0.pluginOption == option.token
+                    && $0.toolOption == token
+                    && $0.providerID == providerID
+                    && $0.schemaSHA256 == digest
+            }) else {
+                continue
+            }
+            describedToolsByOption[option.token, default: []].insert(token)
+            disclosedSkillNamesByOption[option.token, default: []]
+                .formUnion(try catalogSkillNames(for: definition))
+        }
+        toolNamesByOption[option.token] = names
     }
 
     private func registry(for option: CapabilityOption) async throws -> AgentToolProviderRegistry {

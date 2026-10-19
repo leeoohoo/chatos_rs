@@ -10,17 +10,42 @@ use chatos_local_agent_protocol::{
 use chatos_local_agent_runtime::LocalAgentRuntime;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::{Ipv4Addr, SocketAddrV4, TcpListener},
+    sync::{Arc, Mutex},
+};
 
 pub const TASK_PROCESS_RECORD_TOOL: &str = "task_run_process_record_process";
+pub const TASK_PROCESS_ALLOCATE_SERVICE_TOOL: &str = "task_run_process_allocate_service";
 pub const TASK_OUTCOME_REPORT_TOOL: &str = "task_run_process_report_outcome";
-pub const TASK_PROCESS_TOOL_NAMES: [&str; 2] = [TASK_PROCESS_RECORD_TOOL, TASK_OUTCOME_REPORT_TOOL];
+pub const TASK_PROCESS_TOOL_NAMES: [&str; 3] = [
+    TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
+    TASK_PROCESS_RECORD_TOOL,
+    TASK_OUTCOME_REPORT_TOOL,
+];
 
 const PROCESS_ENTRY_MAX_CHARS: usize = 16_000;
 const OUTCOME_REASON_MAX_CHARS: usize = 2_000;
 
 pub fn task_process_model_tools() -> Vec<Value> {
     vec![
+        json!({
+            "type": "function",
+            "name": TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
+            "description": "Allocate or release a Run-scoped loopback service address before starting a local server. Allocate returns the actual port and service_url; pass that port to the backend and the returned URL to dependent frontend processes. A busy preferred_port is never killed or taken over and automatically falls back to another port.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["allocate", "release"], "default": "allocate"},
+                    "service_name": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "preferred_port": {"type": "integer", "minimum": 1024, "maximum": 65535},
+                    "scheme": {"type": "string", "enum": ["http", "https"], "default": "http"}
+                },
+                "required": ["service_name"],
+                "additionalProperties": false
+            }
+        }),
         json!({
             "type": "function",
             "name": TASK_PROCESS_RECORD_TOOL,
@@ -84,9 +109,11 @@ pub fn task_process_prompt_item() -> Value {
         "content": [{
             "type": "input_text",
             "text": format!(
-                "[Task Execution Process]\nThe local run-scoped tools `{}` and `{}` are available for this Task. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. After all implementation and verification work is finished, call `{}` exactly once with succeeded, failed, or blocked and a concrete reason. That outcome report must be the final tool call immediately before the user-facing final response.",
+                "[Task Execution Process]\nThe local run-scoped tools `{}`, `{}`, and `{}` are available for this Task. Before starting a local HTTP service, allocate its address with `{}`; pass the returned port to the server and service_url to every dependent process, and release the registration after the service stops. Keep the user-visible execution process updated at meaningful milestones: task start, approach or root cause, completion of a major phase or artifact, important verification results, changed path after failure, blockers, and next step. Do not record every tool call, file read, search, or edit. Keep entries concise and never record hidden reasoning, credentials, secrets, raw dumps, or unrelated drafts. After all implementation and verification work is finished, call `{}` exactly once with succeeded, failed, or blocked and a concrete reason. That outcome report must be the final tool call immediately before the user-facing final response.",
                 TASK_PROCESS_RECORD_TOOL,
+                TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
                 TASK_OUTCOME_REPORT_TOOL,
+                TASK_PROCESS_ALLOCATE_SERVICE_TOOL,
                 TASK_OUTCOME_REPORT_TOOL
             )
         }]
@@ -97,6 +124,7 @@ pub fn task_process_prompt_item() -> Value {
 pub struct LocalTaskProcessToolExecutor {
     runtime: Arc<LocalAgentRuntime>,
     owner_user_id: String,
+    services: Arc<Mutex<RunServicePortRegistry>>,
 }
 
 impl LocalTaskProcessToolExecutor {
@@ -111,6 +139,7 @@ impl LocalTaskProcessToolExecutor {
         Ok(Self {
             runtime,
             owner_user_id,
+            services: Arc::new(Mutex::new(RunServicePortRegistry::default())),
         })
     }
 
@@ -155,6 +184,98 @@ struct RecordProcessArgs {
     heading: Option<String>,
     #[serde(default)]
     content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ServiceOperation {
+    Allocate,
+    Release,
+}
+
+fn default_service_operation() -> ServiceOperation {
+    ServiceOperation::Allocate
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllocateServiceArgs {
+    #[serde(default = "default_service_operation")]
+    operation: ServiceOperation,
+    service_name: String,
+    #[serde(default)]
+    preferred_port: Option<u16>,
+    #[serde(default = "default_service_scheme")]
+    scheme: String,
+}
+
+fn default_service_scheme() -> String {
+    "http".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceAllocation {
+    port: u16,
+    scheme: String,
+}
+
+#[derive(Default)]
+struct RunServicePortRegistry {
+    allocations: BTreeMap<(String, String), ServiceAllocation>,
+}
+
+impl RunServicePortRegistry {
+    fn allocate(
+        &mut self,
+        run_id: &str,
+        service_name: &str,
+        preferred_port: Option<u16>,
+        scheme: &str,
+    ) -> Result<ServiceAllocation, String> {
+        let key = (run_id.to_string(), service_name.to_string());
+        if let Some(existing) = self.allocations.get(&key) {
+            return Ok(existing.clone());
+        }
+        let reserved = self
+            .allocations
+            .values()
+            .map(|allocation| allocation.port)
+            .collect::<BTreeSet<_>>();
+        let port = match preferred_port.filter(|port| !reserved.contains(port)) {
+            Some(port) if loopback_port_is_available(port) => port,
+            _ => allocate_unreserved_loopback_port(&reserved)?,
+        };
+        let allocation = ServiceAllocation {
+            port,
+            scheme: scheme.to_string(),
+        };
+        self.allocations.insert(key, allocation.clone());
+        Ok(allocation)
+    }
+
+    fn release(&mut self, run_id: &str, service_name: &str) -> Option<ServiceAllocation> {
+        self.allocations
+            .remove(&(run_id.to_string(), service_name.to_string()))
+    }
+}
+
+fn loopback_port_is_available(port: u16) -> bool {
+    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)).is_ok()
+}
+
+fn allocate_unreserved_loopback_port(reserved: &BTreeSet<u16>) -> Result<u16, String> {
+    for _ in 0..32 {
+        let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .map_err(|error| format!("failed to allocate loopback service port: {error}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| format!("failed to inspect loopback service port: {error}"))?
+            .port();
+        if !reserved.contains(&port) {
+            return Ok(port);
+        }
+    }
+    Err("failed to allocate an unreserved loopback service port".to_string())
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -213,6 +334,65 @@ impl LocalToolExecutor for LocalTaskProcessToolExecutor {
                     "heading": heading,
                     "content_chars": content.as_deref().map(str::chars).map(Iterator::count).unwrap_or(0)
                 })
+            }
+            TASK_PROCESS_ALLOCATE_SERVICE_TOOL => {
+                let args: AllocateServiceArgs =
+                    serde_json::from_value(invocation.arguments.clone()).map_err(|error| {
+                        format!("invalid Task service allocation input: {error}")
+                    })?;
+                let service_name = args.service_name.trim();
+                if service_name.is_empty()
+                    || service_name.len() > 64
+                    || !service_name.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                    })
+                {
+                    return Err(
+                        "service_name must be 1..=64 ASCII letters, digits, '.', '_' or '-'"
+                            .to_string(),
+                    );
+                }
+                if !matches!(args.scheme.as_str(), "http" | "https") {
+                    return Err("scheme must be http or https".to_string());
+                }
+                let mut services = self
+                    .services
+                    .lock()
+                    .map_err(|_| "Task service allocation registry is unavailable".to_string())?;
+                match args.operation {
+                    ServiceOperation::Allocate => {
+                        let allocation = services.allocate(
+                            &invocation.run_id,
+                            service_name,
+                            args.preferred_port,
+                            &args.scheme,
+                        )?;
+                        json!({
+                            "allocated": true,
+                            "run_id": invocation.run_id,
+                            "service_name": service_name,
+                            "host": "127.0.0.1",
+                            "port": allocation.port,
+                            "service_url": format!("{}://127.0.0.1:{}", allocation.scheme, allocation.port),
+                            "preferred_port": args.preferred_port,
+                            "preferred_port_honored": args.preferred_port == Some(allocation.port),
+                            "environment": {
+                                "CHATOS_SERVICE_HOST": "127.0.0.1",
+                                "CHATOS_SERVICE_PORT": allocation.port.to_string(),
+                                "CHATOS_SERVICE_URL": format!("{}://127.0.0.1:{}", allocation.scheme, allocation.port)
+                            }
+                        })
+                    }
+                    ServiceOperation::Release => {
+                        let released = services.release(&invocation.run_id, service_name);
+                        json!({
+                            "released": released.is_some(),
+                            "run_id": invocation.run_id,
+                            "service_name": service_name,
+                            "port": released.map(|allocation| allocation.port)
+                        })
+                    }
+                }
             }
             TASK_OUTCOME_REPORT_TOOL => {
                 if self
@@ -314,19 +494,43 @@ mod tests {
     #[test]
     fn definitions_preserve_tool_names_and_expose_structured_acceptance() {
         let tools = task_process_model_tools();
-        assert_eq!(tools[0]["name"], TASK_PROCESS_RECORD_TOOL);
-        assert_eq!(tools[1]["name"], TASK_OUTCOME_REPORT_TOOL);
+        assert_eq!(tools[0]["name"], TASK_PROCESS_ALLOCATE_SERVICE_TOOL);
+        assert_eq!(tools[1]["name"], TASK_PROCESS_RECORD_TOOL);
+        assert_eq!(tools[2]["name"], TASK_OUTCOME_REPORT_TOOL);
         assert_eq!(
-            tools[1]["parameters"]["properties"]["acceptance_checks"]["maxItems"],
+            tools[2]["parameters"]["properties"]["acceptance_checks"]["maxItems"],
             50
         );
         assert_eq!(
-            tools[1]["parameters"]["properties"]["final_response"]["maxLength"],
+            tools[2]["parameters"]["properties"]["final_response"]["maxLength"],
             32000
         );
         let prompt = task_process_prompt_item().to_string();
         assert!(prompt.contains("meaningful milestones"));
+        assert!(prompt.contains(TASK_PROCESS_ALLOCATE_SERVICE_TOOL));
         assert!(prompt.contains("final tool call"));
+    }
+
+    #[test]
+    fn service_registry_avoids_busy_and_run_reserved_ports() {
+        let occupied = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
+            .expect("occupied listener");
+        let occupied_port = occupied.local_addr().unwrap().port();
+        let mut registry = RunServicePortRegistry::default();
+        let first = registry
+            .allocate("run-1", "backend", Some(occupied_port), "http")
+            .expect("first allocation");
+        assert_ne!(first.port, occupied_port);
+        let same = registry
+            .allocate("run-1", "backend", Some(18080), "http")
+            .expect("idempotent allocation");
+        assert_eq!(same, first);
+        let second = registry
+            .allocate("run-1", "frontend", Some(first.port), "http")
+            .expect("second allocation");
+        assert_ne!(second.port, first.port);
+        assert_eq!(registry.release("run-1", "backend"), Some(first));
+        assert!(registry.release("run-1", "backend").is_none());
     }
 
     async fn runtime_with_run(

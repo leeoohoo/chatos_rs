@@ -501,6 +501,7 @@ fn command_wakes_scheduler(command: &HostCommand) -> bool {
         | HostCommand::GetCapabilityPolicySnapshot(_)
         | HostCommand::GetLatestCapabilityPolicySnapshot(_)
         | HostCommand::GetRunSkillActivations(_)
+        | HostCommand::GetRunCapabilityDisclosures(_)
         | HostCommand::GetRunSkillBundle(_)
         | HostCommand::GetRun(_)
         | HostCommand::ListRuns(_)

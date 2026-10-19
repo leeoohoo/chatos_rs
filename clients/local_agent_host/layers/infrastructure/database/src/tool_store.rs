@@ -213,6 +213,35 @@ impl LocalAgentToolStore for SqliteClientStorage {
         Ok(values.into_iter().collect())
     }
 
+    async fn successful_tool_invocations_for_run(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<Vec<LocalAgentToolInvocationRecord>, ClientStorageError> {
+        let rows = sqlx::query(
+            "SELECT i.invocation_id, i.run_id, i.batch_id, i.call_id, i.tool_name, \
+             i.execution_route, i.arguments_json, i.side_effecting, i.requires_approval, \
+             i.approval_status, i.approval_decided_by, i.approval_reason, \
+             i.approval_decided_at_unix_ms, i.status, i.result_json, i.error_text, \
+             i.version, i.claim_token, i.claim_until_unix_ms, i.created_at_unix_ms, \
+             i.updated_at_unix_ms FROM local_agent_tool_invocations i \
+             INNER JOIN local_agent_runs r ON r.run_id = i.run_id \
+             WHERE r.owner_user_id = ? AND i.run_id = ? AND i.tool_name = ? \
+               AND i.status = 'succeeded' AND i.result_json IS NOT NULL \
+               AND COALESCE(json_extract(i.result_json, '$.is_error'), 0) = 0 \
+               AND COALESCE(json_extract(i.result_json, '$.isError'), 0) = 0 \
+             ORDER BY i.updated_at_unix_ms, i.created_at_unix_ms, i.invocation_id",
+        )
+        .bind(owner_user_id)
+        .bind(run_id)
+        .bind(tool_name)
+        .fetch_all(&self.pool)
+        .await
+        .db()?;
+        rows.into_iter().map(decode_invocation).collect()
+    }
+
     async fn latest_successful_tool_invocation_result(
         &self,
         owner_user_id: &str,

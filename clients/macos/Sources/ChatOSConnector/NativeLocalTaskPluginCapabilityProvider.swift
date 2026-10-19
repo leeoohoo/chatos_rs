@@ -36,7 +36,8 @@ extension NativeLocalConnectorService {
         pluginReleaseSnapshots: [String: NativeLocalAgentTaskPluginReleaseSnapshot] = [:],
         productSkillBundle: LocalAgentSkillBundleSnapshot? = nil,
         selectedExternalMCPIDs: Set<String> = [],
-        preactivatedSkillRefs: Set<String> = []
+        preactivatedSkillRefs: Set<String> = [],
+        restoredCapabilityDisclosures: Set<LocalRunCapabilityDisclosure> = []
     ) async throws -> any AgentToolProvider {
         guard state.user?.id == ownerUserID else {
             throw NativePluginRuntimeError.invalidRequest(
@@ -119,7 +120,8 @@ extension NativeLocalConnectorService {
             invokeBuiltinsThroughBroker: false,
             productSkillBundle: productSkillBundle,
             selectedExternalMCPIDs: selectedExternalMCPIDs,
-            preactivatedSkillRefs: preactivatedSkillRefs
+            preactivatedSkillRefs: preactivatedSkillRefs,
+            restoredCapabilityDisclosures: restoredCapabilityDisclosures
         )
     }
 

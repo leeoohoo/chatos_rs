@@ -274,6 +274,15 @@ impl LocalAgentRuntime {
                     skill_refs,
                 })
             }
+            HostCommand::GetRunCapabilityDisclosures(command) => {
+                let disclosures = self
+                    .capability_disclosures_for_run(&command.owner_user_id, &command.run_id)
+                    .await?;
+                Ok(HostResult::RunCapabilityDisclosures {
+                    run_id: command.run_id,
+                    disclosures,
+                })
+            }
             HostCommand::GetRunSkillBundle(command) => {
                 // Check account ownership before accessing the internal Run snapshot.
                 self.store

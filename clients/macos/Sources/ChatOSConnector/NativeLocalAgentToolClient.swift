@@ -46,6 +46,20 @@ public struct LocalAgentToolInvocationRecord: Decodable, Sendable, Equatable {
     }
 }
 
+struct LocalRunCapabilityDisclosure: Decodable, Sendable, Hashable {
+    let pluginOption: String
+    let toolOption: String
+    let providerID: String
+    let schemaSHA256: String
+
+    private enum CodingKeys: String, CodingKey {
+        case pluginOption = "plugin_option"
+        case toolOption = "tool_option"
+        case providerID = "provider_id"
+        case schemaSHA256 = "schema_sha256"
+    }
+}
+
 public struct LocalAgentToolClaim: Decodable, Sendable, Equatable {
     public let workerID: String
     public let claimToken: String
@@ -233,6 +247,23 @@ public struct NativeLocalAgentToolClient: Sendable {
         return Set(result.skillRefs)
     }
 
+    func capabilityDisclosures(
+        ownerUserID: String,
+        runID: String
+    ) async throws -> Set<LocalRunCapabilityDisclosure> {
+        let result: RunCapabilityDisclosuresResult = try await host.request(
+            GetRunCapabilityDisclosuresCommand(
+                type: "get_run_capability_disclosures",
+                ownerUserID: ownerUserID,
+                runID: runID
+            )
+        )
+        guard result.type == "run_capability_disclosures", result.runID == runID else {
+            throw NativeLocalAgentHostError.invalidResponse
+        }
+        return Set(result.disclosures)
+    }
+
     public func skillBundle(
         ownerUserID: String,
         runID: String
@@ -349,6 +380,18 @@ private struct GetRunSkillActivationsCommand: Encodable, Sendable {
     }
 }
 
+private struct GetRunCapabilityDisclosuresCommand: Encodable, Sendable {
+    let type: String
+    let ownerUserID: String
+    let runID: String
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case ownerUserID = "owner_user_id"
+        case runID = "run_id"
+    }
+}
+
 private struct DecideApprovalCommand: Encodable, Sendable {
     let type: String
     let ownerUserID: String
@@ -396,6 +439,17 @@ private struct RunSkillActivationsResult: Decodable, Sendable {
         case type
         case runID = "run_id"
         case skillRefs = "skill_refs"
+    }
+}
+
+private struct RunCapabilityDisclosuresResult: Decodable, Sendable {
+    let type: String
+    let runID: String
+    let disclosures: [LocalRunCapabilityDisclosure]
+
+    private enum CodingKeys: String, CodingKey {
+        case type, disclosures
+        case runID = "run_id"
     }
 }
 

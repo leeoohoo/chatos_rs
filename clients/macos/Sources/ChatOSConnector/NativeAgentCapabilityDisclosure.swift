@@ -29,16 +29,16 @@ enum NativeAgentCapabilityDisclosure {
             root["skills"] = .array((root["skills"]?.jsonArray ?? []).filter {
                 required.contains($0.jsonObject?["skill_ref"]?.jsonString ?? "")
             })
-            root["tools"] = .array([tool])
+            let text = schema.canonicalJSONString
+            object["schema_sha256"] = .string(NativePluginManifestLoader.sha256(text))
+            object["schema_total_chars"] = .number(Double(text.unicodeScalars.count))
+            root["tools"] = .array([.object(object)])
             if schemaOffset == nil, fits(root) { return .object(root) }
             object.removeValue(forKey: "input_schema")
-            let text = schema.canonicalJSONString
             let scalars = Array(text.unicodeScalars)
             let start = schemaOffset ?? 0
             guard start <= scalars.count else { throw Failure.invalidArguments }
             object["schema_delivery"] = .string("paged")
-            object["schema_sha256"] = .string(NativePluginManifestLoader.sha256(text))
-            object["schema_total_chars"] = .number(Double(scalars.count))
             object["next_schema_offset"] = .number(Double(start))
             root["tools"] = .array([.object(object)])
             root["guidance"] = .string("Read this tool's schema with capability_describe using the same plugin_option and tool_option plus schema_offset=next_schema_offset. Concatenate schema_chunk pages in offset order, with the same schema_sha256, until next_schema_offset is null. These are explicit pages, not a truncated schema; do not guess omitted parameters.")

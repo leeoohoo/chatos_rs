@@ -202,6 +202,7 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         let queries = await host.queryTypes()
         XCTAssertEqual(queries.filter { $0 == "get_run_skill_bundle" }.count, 2)
         XCTAssertEqual(queries.filter { $0 == "get_run_skill_activations" }.count, 2)
+        XCTAssertEqual(queries.filter { $0 == "get_run_capability_disclosures" }.count, 2)
         await executor.reset()
     }
 
@@ -985,6 +986,67 @@ final class NativeAgentPluginToolProviderTests: XCTestCase {
         XCTAssertFalse(taskInvocation.isError)
         XCTAssertTrue(taskInvocation.content.contains("local-plugin-ok"))
 
+        let restoredDisclosure = LocalRunCapabilityDisclosure(
+            pluginOption: "plugin_1",
+            toolOption: taskToolOption,
+            providerID: try XCTUnwrap(taskDescriptionObject?["provider_id"]?.jsonString),
+            schemaSHA256: try XCTUnwrap(taskTool["schema_sha256"]?.jsonString)
+        )
+        let rebuiltTaskBroker = try await service.makeTaskExecutionCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "task-run-1",
+            conversationID: "conversation-1",
+            projectContext: .init(
+                projectID: "project-1", projectName: "Test", projectRoot: project.path
+            ),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            builtinCapabilities: [.projectRead],
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [selectionID: releaseSnapshot],
+            preactivatedSkillRefs: ["plugin-skill:plugin_1:test-agent-plugin"],
+            restoredCapabilityDisclosures: [restoredDisclosure]
+        )
+        let rebuiltTaskInvocation = try await rebuiltTaskBroker.execute(.init(
+            id: "task-invoke-restored",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(taskToolOption)","arguments":{"value":"restored"}}
+            """
+        ))
+        XCTAssertFalse(rebuiltTaskInvocation.isError)
+        XCTAssertTrue(rebuiltTaskInvocation.content.contains("local-plugin-ok"))
+
+        let staleTaskBroker = try await service.makeTaskExecutionCapabilityToolProvider(
+            ownerUserID: "alice",
+            runID: "task-run-1",
+            conversationID: "conversation-1",
+            projectContext: .init(
+                projectID: "project-1", projectName: "Test", projectRoot: project.path
+            ),
+            executionRootURL: project,
+            workspaceScopeID: "workspace-1",
+            builtinCapabilities: [.projectRead],
+            pluginSelectionIDs: [selectionID],
+            pluginReleaseSnapshots: [selectionID: releaseSnapshot],
+            preactivatedSkillRefs: ["plugin-skill:plugin_1:test-agent-plugin"],
+            restoredCapabilityDisclosures: [.init(
+                pluginOption: restoredDisclosure.pluginOption,
+                toolOption: restoredDisclosure.toolOption,
+                providerID: restoredDisclosure.providerID,
+                schemaSHA256: String(repeating: "0", count: 64)
+            )]
+        )
+        let staleInvocation = try await staleTaskBroker.execute(.init(
+            id: "task-invoke-stale",
+            name: "capability_invoke",
+            arguments: """
+            {"plugin_option":"plugin_1","tool_option":"\(taskToolOption)","arguments":{"value":"stale"}}
+            """
+        ))
+        XCTAssertTrue(staleInvocation.isError)
+        XCTAssertTrue(staleInvocation.content.contains("capability_describe"))
+
         let contactRoot = root.appendingPathComponent("contact-workspace", isDirectory: true)
         try FileManager.default.createDirectory(
             at: contactRoot,
@@ -1182,6 +1244,12 @@ private actor FrozenTaskSkillHostStub: LocalAgentHostClientServicing {
             result = .object([
                 "type": .string("run_skill_activations"), "run_id": .string("frozen-run"),
                 "skill_refs": .array(refs.sorted().map(NativeJSONValue.string)),
+            ])
+        case "get_run_capability_disclosures":
+            result = .object([
+                "type": .string("run_capability_disclosures"),
+                "run_id": .string("frozen-run"),
+                "disclosures": .array([]),
             ])
         default: throw NativeLocalAgentHostError.invalidResponse
         }

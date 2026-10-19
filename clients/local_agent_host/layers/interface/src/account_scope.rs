@@ -18,6 +18,7 @@ impl HostCommand {
             Self::GetCapabilityPolicySnapshot(command) => Some(&command.owner_user_id),
             Self::GetLatestCapabilityPolicySnapshot(command) => Some(&command.owner_user_id),
             Self::GetRunSkillActivations(command) => Some(&command.owner_user_id),
+            Self::GetRunCapabilityDisclosures(command) => Some(&command.owner_user_id),
             Self::GetRunSkillBundle(command) => Some(&command.owner_user_id),
             Self::CreateRun(command) => Some(&command.owner_user_id),
             Self::GetRun(command) => Some(&command.owner_user_id),

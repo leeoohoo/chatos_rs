@@ -112,6 +112,10 @@ actor NativeLocalAgentPluginToolExecutor {
             preactivatedSkillRefs: try await skillActivationClient?.activatedSkillRefs(
                 ownerUserID: ownerUserID,
                 runID: runID
+            ) ?? [],
+            restoredCapabilityDisclosures: try await skillActivationClient?.capabilityDisclosures(
+                ownerUserID: ownerUserID,
+                runID: runID
             ) ?? []
         )
         sessions[runID] = .init(

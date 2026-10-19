@@ -27,6 +27,11 @@ struct MessageTaskGraphNodeCard: View {
                         .foregroundStyle(AppPalette.ai)
                 }
                 Spacer()
+                if let startedAt = currentActivity?.startedAt {
+                    Text(startedAt, style: .timer)
+                        .appFont(.system(size: scaledFont(9), design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
                 if node.groupedTasks.count > 1 {
                     Text("\(node.groupedTasks.count) 阶段")
                         .appFont(.system(size: scaledFont(10)))
@@ -36,7 +41,8 @@ struct MessageTaskGraphNodeCard: View {
             Text(node.task.title)
                 .appFont(.system(size: scaledFont(13), weight: .semibold))
                 .lineLimit(2)
-            Text(node.task.description
+            Text(currentActivity?.detail
+                 ?? node.task.description
                  ?? node.task.objective
                  ?? model.localized("暂无任务描述", english: "No task description"))
                 .appFont(.system(size: scaledFont(11)))
@@ -110,6 +116,11 @@ struct MessageTaskGraphNodeCard: View {
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
             }
         }
+        if let activity = currentActivity {
+            return MessageTaskRunActivityPresentation.title(for: activity.kind) {
+                model.localized($0, english: $1)
+            }
+        }
         return switch node.task.normalizedStatus {
         case "completed", "succeeded", "success", "done": model.localized("已完成", english: "Completed")
         case "running", "processing", "in_progress", "doing": model.localized("运行中", english: "Running")
@@ -122,12 +133,40 @@ struct MessageTaskGraphNodeCard: View {
         }
     }
 
+    private var currentActivity: MessageTaskRunActivity? {
+        if let activity = node.task.lastRun?.activity { return activity }
+        let waiting = node.task.prerequisiteTasks.filter { prerequisite in
+            !["completed", "succeeded", "success", "done"].contains(
+                prerequisite.status?.lowercased() ?? ""
+            )
+        }
+        guard !waiting.isEmpty,
+              ["pending", "ready", "queued"].contains(node.task.normalizedStatus) else {
+            return nil
+        }
+        let names = waiting.prefix(2).map { $0.title ?? $0.id }.joined(separator: "、")
+        return .init(
+            kind: .waitingDependency,
+            detail: names,
+            startedAt: node.task.updatedAt
+        )
+    }
+
     private var statusColor: Color {
         if let disposition = node.task.resultDisposition {
             return switch disposition {
             case .blocked, .evidenceIncomplete: .orange
             case .executionFailed, .acceptanceFailed: .red
             case .acceptancePassed: .green
+            }
+        }
+        if let activity = currentActivity {
+            return switch activity.kind {
+            case .waitingDependency, .waitingApproval, .waitingUser, .retryScheduled, .paused:
+                .orange
+            case .waitingModel, .runningModel, .waitingTool, .startingProcess,
+                 .readingLargeResult, .restoringCapability:
+                AppPalette.ai
             }
         }
         return switch node.task.normalizedStatus {

@@ -181,6 +181,7 @@ mod tests {
         let word = "plugin-skill:plugin_1:word";
         let description = json!({"binding_schema_version":1, "disclosure_version":2, "view":"tool", "provider_id":"plugin:document", "plugin_option":"plugin_1",
             "tools":[{"tool_option":"tool_1", "invocation_mode":"capability_invoke", "required_skill_refs":[router,pdf,word],
+                "input_schema":{"type":"object"}, "schema_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "skill_gate":{"all_of":[router],"select_by_argument":{"pointer":"/format","map":{"pdf":pdf,"word":word}}}}]});
         let index = json!({"binding_schema_version":1,"disclosure_version":2,"view":"catalog",
             "provider_id":"plugin:document","plugin_option":"plugin_1","tools":[{"tool_option":"tool_1"}]});
@@ -191,6 +192,11 @@ mod tests {
             json!({"content":index,"is_error":false}),
         )
         .await;
+        assert!(runtime
+            .capability_disclosures_for_run("user-1", "run-1")
+            .await
+            .unwrap()
+            .is_empty());
         assert_eq!(
             check(&runtime, invoke.clone()).await.unwrap_err().error,
             "skill_binding_required",
@@ -228,10 +234,23 @@ mod tests {
         fact(
             &runtime,
             "capability_describe",
-            json!({"plugin_option":"plugin_1"}),
+            json!({"plugin_option":"plugin_1","tool_option":"tool_1"}),
             json!({"content":description,"is_error":false}),
         )
         .await;
+        assert_eq!(
+            runtime
+                .capability_disclosures_for_run("user-1", "run-1")
+                .await
+                .unwrap(),
+            vec![LocalRunCapabilityDisclosure {
+                plugin_option: "plugin_1".into(),
+                tool_option: "tool_1".into(),
+                provider_id: "plugin:document".into(),
+                schema_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .into(),
+            }]
+        );
         assert_eq!(
             check(&runtime, invoke.clone())
                 .await
@@ -432,6 +451,112 @@ impl LocalAgentRuntime {
         skill_refs.sort();
         skill_refs.dedup();
         Ok(skill_refs)
+    }
+
+    #[doc(hidden)]
+    pub async fn capability_disclosures_for_run(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<
+        Vec<chatos_local_agent_protocol::LocalRunCapabilityDisclosure>,
+        LocalAgentRuntimeError,
+    > {
+        let invocations = self
+            .store
+            .successful_tool_invocations_for_run(owner_user_id, run_id, "capability_describe")
+            .await?;
+        let mut disclosures = std::collections::BTreeSet::new();
+        for invocation in invocations {
+            let Some(plugin_option) = invocation
+                .arguments
+                .get("plugin_option")
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let Some(tool_option) = invocation
+                .arguments
+                .get("tool_option")
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let Some(result) = invocation.result.as_ref() else {
+                continue;
+            };
+            let descriptor = result.get("content").unwrap_or(result);
+            if descriptor
+                .get("disclosure_version")
+                .and_then(serde_json::Value::as_u64)
+                != Some(2)
+                || descriptor.get("view").and_then(serde_json::Value::as_str) != Some("tool")
+                || descriptor
+                    .get("plugin_option")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(plugin_option)
+            {
+                continue;
+            }
+            let Some(provider_id) = descriptor
+                .get("provider_id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| value.starts_with("plugin:") && value.len() > "plugin:".len())
+            else {
+                continue;
+            };
+            let Some(tool) = descriptor
+                .get("tools")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|tools| {
+                    let matches = tools
+                        .iter()
+                        .filter(|tool| {
+                            tool.get("tool_option").and_then(serde_json::Value::as_str)
+                                == Some(tool_option)
+                        })
+                        .collect::<Vec<_>>();
+                    (matches.len() == 1).then_some(matches[0])
+                })
+            else {
+                continue;
+            };
+            let Some(schema_sha256) = tool
+                .get("schema_sha256")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| {
+                    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+            else {
+                continue;
+            };
+            if tool
+                .get("invocation_mode")
+                .and_then(serde_json::Value::as_str)
+                != Some("capability_invoke")
+                || !(tool.get("input_schema").is_some()
+                    || (tool
+                        .get("schema_delivery")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("paged")
+                        && tool
+                            .get("schema_chunk")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some()
+                        && tool
+                            .get("next_schema_offset")
+                            .is_some_and(serde_json::Value::is_null)))
+            {
+                continue;
+            }
+            disclosures.insert(chatos_local_agent_protocol::LocalRunCapabilityDisclosure {
+                plugin_option: plugin_option.to_string(),
+                tool_option: tool_option.to_string(),
+                provider_id: provider_id.to_string(),
+                schema_sha256: schema_sha256.to_ascii_lowercase(),
+            });
+        }
+        Ok(disclosures.into_iter().collect())
     }
 
     #[doc(hidden)]

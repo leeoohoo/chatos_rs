@@ -244,9 +244,10 @@ fn progressive_tool_result(
         "total_chars": total_chars,
         "sha256": sha256,
         "read_tool": "tool_result_read",
+        "query_tool": "tool_result_query",
         "max_page_chars": TOOL_RESULT_READ_MAX_CHARS,
         "complete": false,
-        "guidance": "This result is complete in the durable tool ledger. Read it with tool_result_read from offset 0 until complete=true; concatenate content in offset order and verify sha256. No part of the source result was silently truncated."
+        "guidance": "This result is complete in the durable tool ledger. Prefer 1-3 targeted tool_result_query calls (json_pointer, search, head, tail, or range). Use tool_result_read only when exact full reconstruction is required; concatenate pages in offset order and verify sha256."
     });
     result.content = descriptor.to_string();
     result.result = Some(descriptor);

@@ -11,6 +11,7 @@ public struct MessageTaskRun: Identifiable, Sendable, Equatable {
     public var reportContent: String?
     public var errorMessage: String?
     public var acceptanceReport: MessageTaskAcceptanceReport?
+    public var activity: MessageTaskRunActivity?
 
     public init(
         id: String,
@@ -22,7 +23,8 @@ public struct MessageTaskRun: Identifiable, Sendable, Equatable {
         resultSummary: String? = nil,
         reportContent: String? = nil,
         errorMessage: String? = nil,
-        acceptanceReport: MessageTaskAcceptanceReport? = nil
+        acceptanceReport: MessageTaskAcceptanceReport? = nil,
+        activity: MessageTaskRunActivity? = nil
     ) {
         self.id = id
         self.taskID = taskID
@@ -34,6 +36,7 @@ public struct MessageTaskRun: Identifiable, Sendable, Equatable {
         self.reportContent = reportContent
         self.errorMessage = errorMessage
         self.acceptanceReport = acceptanceReport
+        self.activity = activity
     }
 }
 

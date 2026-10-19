@@ -98,7 +98,7 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
             if name.starts_with("task_run_process_") {
                 return Some(tool);
             }
-            if name == "tool_result_read" {
+            if matches!(name.as_str(), "tool_result_read" | "tool_result_query") {
                 return Some(tool);
             }
             if name.starts_with("ask_user_") {

@@ -490,9 +490,10 @@ fn bounded_visible_text(value: &str, source_run_id: Option<&str>) -> Option<Stri
             "total_chars": total_chars,
             "sha256": format!("{:x}", Sha256::digest(value.as_bytes())),
             "read_tool": "tool_result_read",
+            "query_tool": "tool_result_query",
             "max_page_chars": 8_000,
             "complete": false,
-            "guidance": "This prerequisite result is complete in its durable Run. Read it with tool_result_read from offset 0 until complete=true; concatenate content in offset order and verify sha256."
+            "guidance": "This prerequisite result is complete in its durable Run. Prefer 1-3 targeted tool_result_query calls (json_pointer, search, head, tail, or range). Use tool_result_read only for exact full reconstruction and verify sha256."
         })
         .to_string(),
     )

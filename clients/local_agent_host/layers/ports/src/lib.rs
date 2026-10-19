@@ -254,6 +254,15 @@ pub trait LocalAgentToolStore: Send + Sync {
         argument_name: &str,
     ) -> Result<Vec<String>, ClientStorageError>;
 
+    /// Returns successful, non-error calls for one tool inside an owner-scoped Run.
+    /// Used to restore durable control-plane facts after a native provider restart.
+    async fn successful_tool_invocations_for_run(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+        tool_name: &str,
+    ) -> Result<Vec<LocalAgentToolInvocationRecord>, ClientStorageError>;
+
     /// Trusted, owner/Run-scoped facts only; never model-provided descriptions.
     #[allow(clippy::too_many_arguments)]
     async fn latest_successful_tool_invocation_result(

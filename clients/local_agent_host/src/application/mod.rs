@@ -59,7 +59,8 @@ pub use skill_tools::{
 };
 pub use task_process_tools::{
     task_process_model_tools, task_process_prompt_item, LocalTaskProcessToolExecutor,
-    TASK_OUTCOME_REPORT_TOOL, TASK_PROCESS_RECORD_TOOL, TASK_PROCESS_TOOL_NAMES,
+    TASK_OUTCOME_REPORT_TOOL, TASK_PROCESS_ALLOCATE_SERVICE_TOOL, TASK_PROCESS_RECORD_TOOL,
+    TASK_PROCESS_TOOL_NAMES,
 };
 pub use task_tool_definitions::{
     task_model_tools, CANCEL_TASK_TOOL, CREATE_TASKS_TOOL, CREATE_TASK_TOOL,
@@ -68,8 +69,8 @@ pub use task_tool_definitions::{
 };
 pub use task_tools::LocalTaskToolExecutor;
 pub use tool_result_tools::{
-    tool_result_model_tools, LocalToolResultReader, TOOL_RESULT_READ_ONLY_TOOLS,
-    TOOL_RESULT_READ_TOOL, TOOL_RESULT_TOOL_NAMES,
+    tool_result_model_tools, LocalToolResultReader, TOOL_RESULT_QUERY_TOOL,
+    TOOL_RESULT_READ_ONLY_TOOLS, TOOL_RESULT_READ_TOOL, TOOL_RESULT_TOOL_NAMES,
 };
 pub use tool_scheduler::{
     LocalToolExecutor, LocalToolRegistry, LocalToolScheduler, LocalToolSchedulerError,

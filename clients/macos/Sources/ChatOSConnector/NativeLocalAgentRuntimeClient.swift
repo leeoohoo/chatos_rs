@@ -12,6 +12,10 @@ public struct LocalAgentRunRecord: Decodable, Sendable, Equatable {
     public let status: String
     public let version: UInt64
     public let terminalOutcome: LocalAgentJSONValue?
+    public let pendingToolBatch: LocalAgentJSONValue?
+    public let checkpoint: LocalAgentJSONValue?
+    public let continuationInput: LocalAgentJSONValue?
+    public let nextAttemptAtUnixMs: Int64?
     public let createdAtUnixMs: Int64
     public let updatedAtUnixMs: Int64
 
@@ -24,6 +28,10 @@ public struct LocalAgentRunRecord: Decodable, Sendable, Equatable {
         case capabilityPolicyRevision = "capability_policy_revision"
         case input, status, version
         case terminalOutcome = "terminal_outcome"
+        case pendingToolBatch = "pending_tool_batch"
+        case checkpoint
+        case continuationInput = "continuation_input"
+        case nextAttemptAtUnixMs = "next_attempt_at_unix_ms"
         case createdAtUnixMs = "created_at_unix_ms"
         case updatedAtUnixMs = "updated_at_unix_ms"
     }

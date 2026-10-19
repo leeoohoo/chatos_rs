@@ -72,6 +72,10 @@ pub enum HostResult {
         run_id: String,
         skill_refs: Vec<String>,
     },
+    RunCapabilityDisclosures {
+        run_id: String,
+        disclosures: Vec<crate::LocalRunCapabilityDisclosure>,
+    },
     RunSkillBundle {
         run_id: String,
         bundle: Option<LocalSkillBundleSnapshot>,

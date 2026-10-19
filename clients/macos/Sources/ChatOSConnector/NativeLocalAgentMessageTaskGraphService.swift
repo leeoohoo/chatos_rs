@@ -7,6 +7,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
     private static let maximumProcessEventPages = 10
 
     private let client: NativeLocalAgentTaskClient
+    private let toolClient: NativeLocalAgentToolClient
     private let controlPlane: NativeLocalAgentControlPlaneClient
     private let beforeRetry: @Sendable (String) async -> Void
     private let afterRetry: @Sendable () async -> Void
@@ -19,6 +20,7 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         afterRetry: @escaping @Sendable () async -> Void = {}
     ) {
         self.client = NativeLocalAgentTaskClient(host: host)
+        self.toolClient = NativeLocalAgentToolClient(host: host)
         self.controlPlane = NativeLocalAgentControlPlaneClient(host: host)
         self.beforeRetry = beforeRetry
         self.afterRetry = afterRetry
@@ -49,15 +51,22 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         guard let owner = ownerUserID else { return snapshot }
         var result = snapshot
         if terminalRunCache.count > 500 { terminalRunCache.removeAll() }
+        let pendingApprovals = (try? await toolClient.pendingApprovals(
+            ownerUserID: owner,
+            limit: 100
+        )) ?? []
         for index in result.nodes.indices {
             let task = result.nodes[index].task
-            guard ["succeeded", "completed", "failed", "blocked"].contains(task.status ?? "") else { continue }
-            if let cached = terminalRunCache[task.id], cached.0 == task.updatedAt {
+            let isTerminal = ["succeeded", "completed", "failed", "blocked"].contains(
+                task.status ?? ""
+            )
+            guard isTerminal || task.isActive else { continue }
+            if isTerminal, let cached = terminalRunCache[task.id], cached.0 == task.updatedAt {
                 result.nodes[index].task = task.merging(run: cached.1)
             } else if let run = try? await client.runs(ownerUserID: owner, taskID: task.id).first {
-                let mapped = mapRun(run)
+                let mapped = mapRun(run, pendingApprovals: pendingApprovals)
                 result.nodes[index].task = task.merging(run: mapped)
-                terminalRunCache[task.id] = (task.updatedAt, mapped)
+                if isTerminal { terminalRunCache[task.id] = (task.updatedAt, mapped) }
             }
         }
         return result
@@ -118,7 +127,11 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             )
             : LocalAgentEventPage(events: [], nextCursor: 0)
         let selected = page.events.dropFirst(offset).prefix(limit)
-        var mappedRun = mapRun(run)
+        let pendingApprovals = (try? await toolClient.pendingApprovals(
+            ownerUserID: owner,
+            limit: 100
+        )) ?? []
+        var mappedRun = mapRun(run, pendingApprovals: pendingApprovals)
         if mappedRun.errorMessage == nil, run.status == "needs_review" {
             mappedRun.errorMessage = try? await needsReviewError(
                 ownerUserID: owner,
@@ -227,17 +240,30 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let prerequisiteIDsByTask = Dictionary(grouping: graph.edges.filter {
             $0.kind == "prerequisite"
         }, by: \.targetTaskID)
+        let tasksByID = Dictionary(uniqueKeysWithValues: graph.nodes.map {
+            ($0.task.taskID, $0.task)
+        })
         let nodes = graph.nodes.map { node in
-            MessageTaskGraphNode(
-                task: mapTaskWithoutRun(
-                    node.task,
-                    dependencies: (prerequisiteIDsByTask[node.task.taskID] ?? []).map {
-                        LocalAgentTaskDependency(
-                            taskID: $0.targetTaskID,
-                            prerequisiteTaskID: $0.sourceTaskID
-                        )
-                    }
-                ),
+            var task = mapTaskWithoutRun(
+                node.task,
+                dependencies: (prerequisiteIDsByTask[node.task.taskID] ?? []).map {
+                    LocalAgentTaskDependency(
+                        taskID: $0.targetTaskID,
+                        prerequisiteTaskID: $0.sourceTaskID
+                    )
+                }
+            )
+            task.prerequisiteTasks = task.prerequisiteTaskIDs.compactMap { taskID in
+                tasksByID[taskID].map {
+                    MessageTaskReference(
+                        id: taskID,
+                        title: $0.title,
+                        status: Self.taskDisplayStatus($0)
+                    )
+                }
+            }
+            return MessageTaskGraphNode(
+                task: task,
                 depth: Int(node.depth),
                 isRoot: node.isRoot,
                 isCurrentMessage: node.isCurrentMessage
@@ -313,7 +339,20 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         let prerequisiteIDs = Set(dependencies.map(\.taskID))
         let roots = tasks.map(\.taskID).filter { !prerequisiteIDs.contains($0) }
         let depths = Self.depths(tasks: tasks, dependencies: dependencies)
-        let mappedTasks = tasks.map { mapTaskWithoutRun($0) }
+        let tasksByID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.taskID, $0) })
+        let mappedTasks = tasks.map { record in
+            var task = mapTaskWithoutRun(record, dependencies: dependencies)
+            task.prerequisiteTasks = task.prerequisiteTaskIDs.compactMap { taskID in
+                tasksByID[taskID].map {
+                    MessageTaskReference(
+                        id: taskID,
+                        title: $0.title,
+                        status: Self.taskDisplayStatus($0)
+                    )
+                }
+            }
+            return task
+        }
         let nodes = mappedTasks.map { task in
             MessageTaskGraphNode(
                 task: task,
@@ -449,7 +488,10 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
         return task.status == "ready" && task.activeRunID != nil ? "queued" : task.status
     }
 
-    private func mapRun(_ run: LocalAgentRunRecord) -> MessageTaskRun {
+    private func mapRun(
+        _ run: LocalAgentRunRecord,
+        pendingApprovals: [LocalAgentToolInvocationRecord] = []
+    ) -> MessageTaskRun {
         let modelOutput = run.terminalOutcome.flatMap(Self.modelOutput)
         return MessageTaskRun(
             id: run.runID,
@@ -465,7 +507,11 @@ public actor NativeLocalAgentMessageTaskGraphService: MessageTaskGraphServicing 
             errorMessage: run.terminalOutcome.flatMap(Self.executionError),
             acceptanceReport: run.terminalOutcome.flatMap {
                 Self.value("task_acceptance", in: $0).flatMap { MessageTaskAcceptanceReport.decode(json: Self.json($0)) }
-            }
+            },
+            activity: NativeLocalAgentRunActivityProjector.project(
+                run: run,
+                pendingApprovals: pendingApprovals
+            )
         )
     }
 

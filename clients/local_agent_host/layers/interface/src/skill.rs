@@ -21,6 +21,27 @@ pub struct GetRunSkillActivationsCommand {
     pub run_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GetRunCapabilityDisclosuresCommand {
+    pub owner_user_id: String,
+    pub run_id: String,
+}
+
+impl GetRunCapabilityDisclosuresCommand {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_identifier("owner_user_id", &self.owner_user_id)?;
+        validate_identifier("run_id", &self.run_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LocalRunCapabilityDisclosure {
+    pub plugin_option: String,
+    pub tool_option: String,
+    pub provider_id: String,
+    pub schema_sha256: String,
+}
+
 impl GetRunSkillActivationsCommand {
     pub fn validate(&self) -> Result<(), String> {
         validate_identifier("owner_user_id", &self.owner_user_id)?;

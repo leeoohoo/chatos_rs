@@ -108,6 +108,24 @@ struct MessageTaskInspectorView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("运行信息").appFont(.subheadline.weight(.semibold))
                 LabeledContent("状态", value: displayedRunStatus(task: task, run: detail.run))
+                if let activity = detail.run.activity {
+                    LabeledContent("当前阶段") {
+                        Text(MessageTaskRunActivityPresentation.title(for: activity.kind) {
+                            model.localized($0, english: $1)
+                        })
+                    }
+                    if let operation = activity.operation {
+                        LabeledContent("当前操作", value: operation)
+                    }
+                    if let detail = activity.detail {
+                        LabeledContent("详情", value: detail)
+                    }
+                    if let startedAt = activity.startedAt {
+                        LabeledContent("已耗时") {
+                            Text(startedAt, style: .timer).monospacedDigit()
+                        }
+                    }
+                }
                 LabeledContent("运行 ID", value: detail.run.id)
                 if let startedAt = detail.run.startedAt {
                     LabeledContent("开始时间") { Text(startedAt, style: .date) + Text(" ") + Text(startedAt, style: .time) }
@@ -227,6 +245,11 @@ struct MessageTaskInspectorView: View {
             case .evidenceIncomplete: model.localized("核验不完整", english: "Verification Incomplete")
             case .acceptanceFailed: model.localized("未通过验收", english: "Acceptance Not Met")
             case .acceptancePassed: model.localized("验收通过", english: "Acceptance Passed")
+            }
+        }
+        if let activity = run.activity {
+            return MessageTaskRunActivityPresentation.title(for: activity.kind) {
+                model.localized($0, english: $1)
             }
         }
         let taskStatus = task.normalizedStatus
