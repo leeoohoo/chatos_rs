@@ -88,6 +88,7 @@ final class ConversationSessionViewModel: ObservableObject {
     var bootstrapState = ConversationBootstrapState()
     private var historyRetryTask: Task<Void, Never>?
     private var latestRefreshDebounceTask: Task<Void, Never>?
+    private var latestRefreshTask: Task<Void, Never>?
     private var olderHistoryLoadTask: Task<Void, Never>?
     private var latestRefreshState = ConversationLatestRefreshState()
     private var historyRetryAttempt = 0
@@ -186,6 +187,7 @@ final class ConversationSessionViewModel: ObservableObject {
         bootstrapTask?.cancel()
         historyRetryTask?.cancel()
         latestRefreshDebounceTask?.cancel()
+        latestRefreshTask?.cancel()
         olderHistoryLoadTask?.cancel()
         taskGraphAvailabilityTasks.values.forEach { $0.cancel() }
         askUserPromptActivationTask?.cancel()
@@ -391,35 +393,45 @@ final class ConversationSessionViewModel: ObservableObject {
             historyError = nil
         }
 
-        Task {
+        let sessionID = sessionID
+        latestRefreshTask = Task { [weak self] in
+            var resolvedSnapshot: ConversationHistorySnapshot?
+            var resolvedError: Error?
             do {
-                let snapshot = try await historyUseCase.loadLatest(
+                resolvedSnapshot = try await historyUseCase.loadLatest(
                     sessionID: sessionID,
                     requestGeneration: generation
                 )
-                if activationState.accepts(activation), isLocalAgentRuntimeReady {
-                    applyHistorySnapshot(snapshot)
-                    if historyError != nil {
-                        historyError = nil
-                    }
-                    historyRetryAttempt = 0
-                    historyRetryTask?.cancel()
-                    historyRetryTask = nil
-                }
             } catch {
-                if activationState.accepts(activation), isLocalAgentRuntimeReady {
-                    if historyError != error.localizedDescription {
-                        historyError = error.localizedDescription
+                resolvedError = error
+            }
+            guard let self else { return }
+            if let snapshot = resolvedSnapshot {
+                if self.activationState.accepts(activation), self.isLocalAgentRuntimeReady {
+                    self.applyHistorySnapshot(snapshot)
+                    if self.historyError != nil {
+                        self.historyError = nil
                     }
-                    scheduleHistoryRetry()
+                    self.historyRetryAttempt = 0
+                    self.historyRetryTask?.cancel()
+                    self.historyRetryTask = nil
+                }
+            } else if let resolvedError {
+                if self.activationState.accepts(activation), self.isLocalAgentRuntimeReady {
+                    if self.historyError != resolvedError.localizedDescription {
+                        self.historyError = resolvedError.localizedDescription
+                    }
+                    self.scheduleHistoryRetry()
                 }
             }
             if presentation == .visible,
-               activationState.accepts(activation) {
-                isRefreshing = false
+               self.activationState.accepts(activation) {
+                self.isRefreshing = false
             }
-            if let pending = latestRefreshState.complete() {
-                enqueueLatestRefresh(presentation: pending, debounce: true)
+            let pending = self.latestRefreshState.complete()
+            self.latestRefreshTask = nil
+            if let pending {
+                self.enqueueLatestRefresh(presentation: pending, debounce: true)
             }
         }
     }

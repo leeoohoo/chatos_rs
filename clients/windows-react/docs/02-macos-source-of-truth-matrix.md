@@ -192,7 +192,7 @@ sendDraft
 - unavailable 时取消 realtime、retry、debounce 与发送等任务，回滚 optimistic 发送并复位 loading 状态；
 - 每次 Conversation 可见激活都具有独立 activation session；停用后旧 realtime 事件、错误与结束回调不能写回或影响下一次激活；
 - activation 触发的 Ask User refresh 外层 Task 由 ViewModel 持有并绑定当前 activation；停用会取消 refresh Task 并只失效 refresh token，不会误取消已经提交的 per-prompt action，迟到 prompt snapshot 不得写回不可见 Conversation；
-- latest refresh 的 debounce 和 in-flight UI 写回都绑定 activation；停用后迟到快照仍可完成 History Store 合并，但不得修改当前 UI、错误、retry 或 loading；新 activation 的合并刷新仍由现有 pending 规则接续；
+- latest refresh 的 debounce 与具体 in-flight Task 均由 ViewModel 持有，UI 写回绑定 activation；in-flight closure 不跨远程等待强持有 ViewModel，停用后迟到快照仍可完成 History Store 合并，但不得修改当前 UI、错误、retry 或 loading；新 activation 的合并刷新仍由现有 pending 规则接续；
 - older-page 请求由 ViewModel 显式持有并绑定 activation、runtime ready 与 cursor；停用或 unavailable 后即使请求迟到返回，也不得写回时间线、错误或清理新请求的 loading；
 - ready 恢复由 `ConversationRuntimeRecoveryState` 分配 latest-wins identity，具体 Task 由 ViewModel 持有；连续 ready 会淘汰旧恢复，异步加载期间若 runtime 再次 unavailable 也会统一取消并失效 identity，迟到恢复不得重新触发历史刷新或 realtime；
 - 时间线的 Task Graph 可用性轻量探测由 `ConversationTaskGraphAvailabilityState` 为每个 Turn 分配独立 token；新 revision、Conversation 停用或 runtime unavailable 会取消并失效未完成探测，迟到 Host 响应不得改变入口可见性，ready 后会重试被中断且尚未形成可信缓存的探测；
