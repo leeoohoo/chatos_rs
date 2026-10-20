@@ -1,5 +1,4 @@
 import AppKit
-import ChatOSConnector
 import ChatOSCore
 import Foundation
 import SwiftTerm
@@ -28,10 +27,11 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
     let connectionID: String
     let connectionName: String
 
-    private let sessionProvider: (any NativeRemoteTerminalSessionProviding)?
-    private var session: NativeRemoteTerminalSession?
-    private var sessionObserver: NativeRemoteTerminalObserver?
+    private let useCase: RemoteTerminalUseCase?
+    private var lifecycle = RemoteTerminalLifecycleState()
+    private var session: (any RemoteTerminalSessionPort)?
     private var connectTask: Task<Void, Never>?
+    private var sessionEventTask: Task<Void, Never>?
 
     private(set) lazy var terminalView: NativeRemoteTerminalView = {
         var options = TerminalOptions.default
@@ -62,13 +62,13 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
         connectionID: String,
         connectionName: String,
         initialWorkingDirectory: String,
-        sessionProvider: (any NativeRemoteTerminalSessionProviding)?
+        sessionProvider: (any RemoteTerminalSessionProviding)?
     ) {
         self.connectionID = connectionID
         self.connectionName = connectionName
         self.title = connectionName
         self.workingDirectory = initialWorkingDirectory
-        self.sessionProvider = sessionProvider
+        self.useCase = sessionProvider.map(RemoteTerminalUseCase.init(provider:))
     }
 
     var isConnected: Bool { state == .running }
@@ -113,6 +113,9 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
     }
 
     func cancelVerification() {
+        connectTask?.cancel()
+        connectTask = nil
+        lifecycle.reset()
         verificationPrompt = nil
         verificationCode = ""
         state = .failed("SSH 二次验证已取消。")
@@ -120,43 +123,87 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
 
     private func connect(verificationCode: String?) {
         guard state == .idle || verificationCode != nil else { return }
-        guard let sessionProvider else {
+        guard let useCase else {
             state = .failed("当前远程连接服务不支持交互式终端。")
             return
         }
 
+        connectTask?.cancel()
+        let token = lifecycle.beginConnect(connectionID: connectionID)
         state = .connecting
+        let connectionID = connectionID
         connectTask = Task { [weak self] in
-            guard let self else { return }
+            let result: Result<any RemoteTerminalSessionPort, Error>
             do {
-                let session = try await sessionProvider.makeRemoteTerminalSession(
+                result = .success(try await useCase.connect(
                     connectionID: connectionID,
                     verificationCode: verificationCode
-                )
-                guard !Task.isCancelled, self.state == .connecting else {
+                ))
+            } catch {
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycle.acceptsConnect(token),
+                  self.state == .connecting else {
+                if case let .success(session) = result {
+                    session.close()
+                }
+                return
+            }
+            switch result {
+            case let .success(session):
+                guard let sessionToken = self.lifecycle.activate(token) else {
                     session.close()
                     return
                 }
-                let observer = NativeRemoteTerminalObserver(owner: self)
-                self.sessionObserver = observer
                 self.session = session
-                session.delegate = observer
+                self.observe(session: session, token: sessionToken)
                 session.start(
                     columns: max(self.terminalView.terminal.cols, 1),
                     rows: max(self.terminalView.terminal.rows, 1)
                 )
-                self.state = session.running
-                    ? .running
-                    : .failed("无法启动本机 OpenSSH。")
-                self.focus()
-            } catch let challenge as RemoteVerificationChallenge {
-                guard !Task.isCancelled else { return }
+                if session.isRunning {
+                    self.state = .running
+                    self.focus()
+                } else if self.lifecycle.finishSession(sessionToken) {
+                    self.sessionEventTask?.cancel()
+                    self.sessionEventTask = nil
+                    self.session = nil
+                    session.close()
+                    self.state = .failed("无法启动本机 OpenSSH。")
+                }
+            case let .failure(challenge as RemoteVerificationChallenge):
+                guard self.lifecycle.finishConnect(token) else { return }
                 self.state = .idle
                 self.verificationCode = ""
                 self.verificationPrompt = challenge.prompt
-            } catch {
-                guard !Task.isCancelled else { return }
+            case let .failure(error):
+                guard self.lifecycle.finishConnect(token) else { return }
                 self.state = .failed(error.localizedDescription)
+            }
+            self.connectTask = nil
+        }
+    }
+
+    private func observe(
+        session: any RemoteTerminalSessionPort,
+        token: RemoteTerminalSessionToken
+    ) {
+        sessionEventTask?.cancel()
+        let events = session.events()
+        sessionEventTask = Task { [weak self] in
+            for await event in events {
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycle.acceptsSession(token) else { return }
+                switch event {
+                case let .output(data):
+                    self.receive(data)
+                case let .terminated(exitCode):
+                    self.processTerminated(exitCode: exitCode, token: token)
+                    return
+                }
             }
         }
     }
@@ -168,9 +215,11 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
     func reconnect() {
         connectTask?.cancel()
         connectTask = nil
+        sessionEventTask?.cancel()
+        sessionEventTask = nil
+        lifecycle.reset()
         session?.close()
         session = nil
-        sessionObserver = nil
         terminalView.terminal.resetToInitialState()
         title = connectionName
         state = .idle
@@ -181,9 +230,11 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
         guard state != .closed else { return }
         connectTask?.cancel()
         connectTask = nil
+        sessionEventTask?.cancel()
+        sessionEventTask = nil
+        lifecycle.reset()
         session?.close()
         session = nil
-        sessionObserver = nil
         state = .closed
     }
 
@@ -213,10 +264,13 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
         terminalView.feed(byteArray: [UInt8](data)[...])
     }
 
-    fileprivate func processTerminated(exitCode: Int32?) {
-        guard state != .closed else { return }
+    private func processTerminated(
+        exitCode: Int32?,
+        token: RemoteTerminalSessionToken
+    ) {
+        guard state != .closed, lifecycle.finishSession(token) else { return }
+        sessionEventTask = nil
         session = nil
-        sessionObserver = nil
         state = .exited(exitCode)
     }
 
@@ -260,31 +314,6 @@ struct NativeRemoteTerminalSurface: NSViewRepresentable {
     func updateNSView(_ view: NativeRemoteTerminalView, context: Context) {
         view.nativeForegroundColor = .textColor
         view.nativeBackgroundColor = .textBackgroundColor
-    }
-}
-
-private final class NativeRemoteTerminalObserver: NSObject,
-    NativeRemoteTerminalSessionDelegate {
-    private weak var owner: NativeRemoteTerminalViewModel?
-
-    init(owner: NativeRemoteTerminalViewModel) {
-        self.owner = owner
-    }
-
-    func remoteTerminalSession(
-        _ session: NativeRemoteTerminalSession,
-        didReceive data: Data
-    ) {
-        MainActor.assumeIsolated { [weak owner] in owner?.receive(data) }
-    }
-
-    func remoteTerminalSession(
-        _ session: NativeRemoteTerminalSession,
-        didTerminateWith exitCode: Int32?
-    ) {
-        MainActor.assumeIsolated { [weak owner] in
-            owner?.processTerminated(exitCode: exitCode)
-        }
     }
 }
 

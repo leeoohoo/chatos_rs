@@ -1,9 +1,8 @@
 import ChatOSCore
-import ChatOSConnector
 
 @MainActor
 final class RemoteConnectionWorkspaceStore {
-    private let terminalSessionProvider: (any NativeRemoteTerminalSessionProviding)?
+    private let terminalSessionProvider: (any RemoteTerminalSessionProviding)?
     private let fileService: any RemoteFileServicing
     private var terminalWorkspaces: [String: NativeRemoteTerminalViewModel] = [:]
     private var fileWorkspaces: [String: RemoteSFTPViewModel] = [:]
@@ -12,7 +11,7 @@ final class RemoteConnectionWorkspaceStore {
         terminalService: any RemoteTerminalCommandServicing,
         fileService: any RemoteFileServicing
     ) {
-        self.terminalSessionProvider = terminalService as? any NativeRemoteTerminalSessionProviding
+        self.terminalSessionProvider = terminalService as? any RemoteTerminalSessionProviding
         self.fileService = fileService
     }
 

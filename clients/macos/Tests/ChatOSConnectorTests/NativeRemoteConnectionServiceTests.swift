@@ -384,6 +384,33 @@ final class NativeRemoteConnectionServiceTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    func testCoreTerminalPortWrapsNativeSession() async throws {
+        let upstream = RemoteConnectionUpstreamStub()
+        let tester = RemoteConnectionTesterSpy()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-remote-port-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = NativeRemoteConnectionService(
+            upstream: upstream,
+            tester: tester,
+            credentialStore: NativeRemoteConnectionCredentialStore(
+                secretStore: NativeConnectorSecretStore(rootURL: root)
+            )
+        )
+        let connection = try await service.createConnection(Self.passwordDraft)
+        let provider: any RemoteTerminalSessionProviding = service
+
+        let session = try await provider.openRemoteTerminalSession(
+            connectionID: connection.id,
+            verificationCode: "123456"
+        )
+
+        XCTAssertFalse(session.isRunning)
+        session.close()
+        let requestCount = await tester.requestCount()
+        XCTAssertEqual(requestCount, 0)
+    }
+
     private static let passwordDraft = RemoteConnectionDraft(
         name: "Server",
         host: "server.example.com",
