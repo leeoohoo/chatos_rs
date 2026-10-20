@@ -33,6 +33,9 @@ struct ProjectRunSettingsView: View {
                 petQuickAccessSection
                 if let error = viewModel.catalog?.errorMessage { notice(error, color: .red, icon: "exclamationmark.triangle.fill") }
                 if let error = viewModel.errorMessage { notice(error, color: .red, icon: "exclamationmark.triangle.fill") }
+                if let warning = viewModel.refreshWarning {
+                    notice(refreshWarningText(warning), color: .orange, icon: "arrow.triangle.2.circlepath")
+                }
                 if let statusNotice = viewModel.notice {
                     notice(noticeText(statusNotice), color: .green, icon: "checkmark.circle.fill")
                 }
@@ -51,6 +54,7 @@ struct ProjectRunSettingsView: View {
         .task {
             await viewModel.monitorRuns()
         }
+        .onDisappear { viewModel.deactivate() }
         .overlay { if viewModel.isLoading { ProgressView().controlSize(.large) } }
         .alert(item: $projectDeletionAlert) { alert in
             switch alert {
@@ -183,6 +187,7 @@ struct ProjectRunSettingsView: View {
                 Picker("默认目标", selection: targetBinding) {
                     ForEach(viewModel.targets) { target in Text(target.label).tag(Optional(target.id)) }
                 }
+                .disabled(viewModel.isMutating)
                 if let target = viewModel.selectedTarget {
                     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 9) {
                         settingRow(model.localized("命令", english: "Command"), target.command)
@@ -323,6 +328,16 @@ struct ProjectRunSettingsView: View {
             model.localized("已向实例发送停止信号。", english: "A stop signal was sent to the instance.")
         case .instanceDeleted:
             model.localized("运行实例已删除。", english: "The run instance was deleted.")
+        }
+    }
+
+    private func refreshWarningText(_ warning: ProjectRunSettingsViewModel.RefreshWarning) -> String {
+        switch warning {
+        case .committedWithoutRefresh:
+            model.localized(
+                "操作已完成，但最新运行状态暂时无法刷新。",
+                english: "The operation completed, but the latest runtime state could not be refreshed."
+            )
         }
     }
 }

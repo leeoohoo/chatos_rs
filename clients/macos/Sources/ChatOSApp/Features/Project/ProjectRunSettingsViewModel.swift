@@ -12,12 +12,19 @@ final class ProjectRunSettingsViewModel: ObservableObject {
         case instanceDeleted
     }
 
+    enum RefreshWarning: Equatable {
+        case committedWithoutRefresh
+    }
+
     struct EnvironmentVariableDraft: Identifiable, Equatable {
         let id: UUID
         var key: String
         var value: String
+
         init(id: UUID = UUID(), key: String = "", value: String = "") {
-            self.id = id; self.key = key; self.value = value
+            self.id = id
+            self.key = key
+            self.value = value
         }
     }
 
@@ -32,13 +39,16 @@ final class ProjectRunSettingsViewModel: ObservableObject {
     @Published private(set) var isMutating = false
     @Published private(set) var notice: Notice?
     @Published private(set) var errorMessage: String?
+    @Published private(set) var refreshWarning: RefreshWarning?
 
     let projectID: String
-    private let service: any ProjectRunServicing
+    private let useCase: ProjectRunUseCase
+    private var lifecycle = ProjectRunLifecycleState()
+    private var monitorSequence: UInt64 = 0
 
     init(projectID: String, service: any ProjectRunServicing) {
         self.projectID = projectID
-        self.service = service
+        self.useCase = ProjectRunUseCase(service: service)
     }
 
     var targets: [ProjectRunTarget] { catalog?.targets ?? [] }
@@ -47,73 +57,73 @@ final class ProjectRunSettingsViewModel: ObservableObject {
     var selectedInstance: ProjectRunInstance? { instances.first(where: { $0.id == selectedInstanceID }) }
 
     func load() async {
-        isLoading = true
+        guard let request = lifecycle.beginLoad(projectID: projectID) else { return }
+        publishLifecycle()
         errorMessage = nil
+        refreshWarning = nil
+        let useCase = useCase
         do {
-            async let catalog = service.fetchCatalog(projectID: projectID)
-            async let state = service.fetchState(projectID: projectID)
-            async let environment = service.fetchEnvironment(projectID: projectID)
-            let values = try await (catalog, state, environment)
-            apply(catalog: values.0, state: values.1, environment: values.2)
+            let snapshot = try await useCase.snapshot(projectID: projectID)
+            guard !Task.isCancelled, lifecycle.acceptsLoad(request) else { return }
+            applyCatalog(snapshot.catalog)
+            environment = snapshot.environment
+            applyEnvironmentDrafts()
+            if lifecycle.acceptsState(request) {
+                applyState(snapshot.state)
+            }
         } catch {
+            guard !Task.isCancelled, lifecycle.acceptsLoad(request) else { return }
             errorMessage = error.localizedDescription
         }
-        isLoading = false
+        lifecycle.finishLoad(request)
+        publishLifecycle()
     }
 
     func monitorRuns() async {
-        // Subscribe before the initial snapshot so a fast process exit cannot land in the
-        // gap between loading and observation and leave the UI permanently stale.
-        let changes = await service.changes(projectID: projectID)
+        monitorSequence &+= 1
+        let monitorID = monitorSequence
+        let useCase = useCase
+
+        // Subscribe before loading so a fast process exit cannot land in the
+        // gap between the initial snapshot and realtime observation.
+        let changes = await useCase.changes(projectID: projectID)
+        guard !Task.isCancelled, monitorID == monitorSequence else { return }
         await load()
+        guard !Task.isCancelled, monitorID == monitorSequence else { return }
+
         for await _ in changes {
-            guard !Task.isCancelled else { return }
-            if let refreshed = try? await service.fetchState(projectID: projectID) {
-                if state != refreshed {
-                    state = refreshed
-                }
-                if selectedInstanceID == nil { selectedInstanceID = refreshed.instances.first?.id }
-            }
+            guard !Task.isCancelled, monitorID == monitorSequence else { return }
+            await refreshState(using: useCase)
         }
     }
 
+    func deactivate() {
+        monitorSequence &+= 1
+        lifecycle.reset()
+        publishLifecycle()
+    }
+
     func analyze() async {
-        await mutate(successNotice: .analyzed) {
-            let catalog = try await service.analyze(projectID: projectID)
-            self.catalog = catalog
-            selectedTargetID = catalog.defaultTargetID ?? catalog.targets.first?.id
-            environment = try await service.fetchEnvironment(projectID: projectID)
-            applyEnvironmentDrafts()
-        }
+        await mutate(.analyze, successNotice: .analyzed)
     }
 
     func selectTarget(_ id: String?) async {
         selectedTargetID = id
         guard let id else { return }
-        await mutate(successNotice: .defaultTargetSaved) {
-            catalog = try await service.setDefaultTarget(projectID: projectID, targetID: id)
-            environment = try await service.fetchEnvironment(projectID: projectID)
-            applyEnvironmentDrafts()
-        }
+        await mutate(.selectDefaultTarget(id), successNotice: .defaultTargetSaved)
     }
 
     func saveEnvironment() async {
-        let variables = Dictionary(
-            environmentVariables.compactMap { draft -> (String, String)? in
-                let key = draft.key.trimmingCharacters(in: .whitespacesAndNewlines)
-                return key.isEmpty ? nil : (key, draft.value)
-            },
-            uniquingKeysWith: { _, latest in latest }
-        )
-        await mutate(successNotice: .environmentSaved) {
-            environment = try await service.updateEnvironment(
-                projectID: projectID,
-                selectedToolchains: selectedToolchains,
+        let draft = environmentDraftSnapshot()
+        await mutate(
+            .updateEnvironment(
+                selectedToolchains: draft.selectedToolchains,
                 customToolchains: environment?.customToolchains ?? [:],
-                environmentVariables: variables
-            )
-            applyEnvironmentDrafts()
-        }
+                environmentVariables: draft.environmentVariables
+            ),
+            successNotice: .environmentSaved,
+            submittedEnvironmentDraft: draft
+        )
     }
 
     func addEnvironmentVariable() { environmentVariables.append(.init()) }
@@ -121,40 +131,133 @@ final class ProjectRunSettingsViewModel: ObservableObject {
 
     func start() async {
         guard let selectedTargetID else { return }
-        await mutate(successNotice: .instanceStarted) {
-            try await service.start(projectID: projectID, targetID: selectedTargetID)
-            state = try await service.fetchState(projectID: projectID)
-            selectedInstanceID = state?.instances.first?.id
-        }
+        await mutate(.start(targetID: selectedTargetID), successNotice: .instanceStarted)
     }
 
     func stop(instanceID: String? = nil) async {
         guard let instanceID = instanceID ?? selectedInstanceID else { return }
-        await mutate(successNotice: .stopRequested) {
-            try await service.stop(instanceID: instanceID)
-            state = try await service.fetchState(projectID: projectID)
-        }
+        await mutate(.stop(instanceID: instanceID), successNotice: .stopRequested)
     }
 
     func deleteInstance(instanceID: String? = nil) async {
         guard let instanceID = instanceID ?? selectedInstanceID else { return }
-        await mutate(successNotice: .instanceDeleted) {
-            try await service.delete(instanceID: instanceID)
-            state = try await service.fetchState(projectID: projectID)
-            self.selectedInstanceID = state?.instances.first?.id
-        }
+        await mutate(.delete(instanceID: instanceID), successNotice: .instanceDeleted)
     }
 
     func dismissError() { errorMessage = nil }
-    func dismissMessage() { notice = nil }
+    func dismissMessage() {
+        notice = nil
+        refreshWarning = nil
+    }
 
-    private func apply(catalog: ProjectRunCatalog, state: ProjectRunState, environment: ProjectRunEnvironment) {
+    private func refreshState(using useCase: ProjectRunUseCase) async {
+        guard let request = lifecycle.beginStateRefresh(projectID: projectID) else { return }
+        do {
+            let state = try await useCase.state(projectID: projectID)
+            guard !Task.isCancelled, lifecycle.acceptsState(request) else { return }
+            applyState(state)
+        } catch {
+            // Realtime refresh is a reconciliation hint. Preserve the last
+            // trusted state; explicit loads and mutations surface errors.
+        }
+        lifecycle.finishStateRefresh(request)
+    }
+
+    private func mutate(
+        _ mutation: ProjectRunMutation,
+        successNotice: Notice,
+        submittedEnvironmentDraft: EnvironmentDraftSnapshot? = nil
+    ) async {
+        guard let request = lifecycle.beginMutation(projectID: projectID) else { return }
+        publishLifecycle()
+        errorMessage = nil
+        refreshWarning = nil
+        notice = nil
+        let useCase = useCase
+        let environmentDraftAtStart = submittedEnvironmentDraft ?? environmentDraftSnapshot()
+
+        do {
+            let result = try await useCase.mutate(projectID: projectID, mutation: mutation)
+            guard lifecycle.acceptsMutation(request) else { return }
+            applyMutationResult(
+                result,
+                mutation: mutation,
+                environmentDraftAtStart: environmentDraftAtStart
+            )
+            notice = successNotice
+            if !result.refreshIsComplete {
+                refreshWarning = .committedWithoutRefresh
+            }
+        } catch {
+            guard lifecycle.acceptsMutation(request) else { return }
+            let operationError = error.localizedDescription
+            if let recovered = try? await useCase.snapshot(projectID: projectID),
+               lifecycle.acceptsMutation(request) {
+                apply(
+                    recovered,
+                    replaceEnvironmentDrafts: environmentDraftSnapshot() == environmentDraftAtStart
+                )
+            }
+            guard lifecycle.acceptsMutation(request) else { return }
+            errorMessage = operationError
+        }
+
+        lifecycle.finishMutation(request)
+        publishLifecycle()
+    }
+
+    private func apply(
+        _ snapshot: ProjectRunSnapshot,
+        replaceEnvironmentDrafts: Bool = true
+    ) {
+        applyCatalog(snapshot.catalog)
+        applyState(snapshot.state)
+        environment = snapshot.environment
+        if replaceEnvironmentDrafts { applyEnvironmentDrafts() }
+    }
+
+    private func applyMutationResult(
+        _ result: ProjectRunMutationResult,
+        mutation: ProjectRunMutation,
+        environmentDraftAtStart: EnvironmentDraftSnapshot
+    ) {
+        if let catalog = result.catalog {
+            self.catalog = catalog
+            if case let .selectDefaultTarget(targetID) = mutation {
+                if selectedTargetID == targetID {
+                    selectedTargetID = catalog.defaultTargetID ?? targetID
+                }
+            } else if targets.contains(where: { $0.id == selectedTargetID }) == false {
+                selectedTargetID = preferredTargetID(in: catalog)
+            }
+        }
+        if let state = result.state { applyState(state) }
+        if let environment = result.environment {
+            self.environment = environment
+            if environmentDraftSnapshot() == environmentDraftAtStart {
+                applyEnvironmentDrafts()
+            }
+        }
+    }
+
+    private func applyCatalog(_ catalog: ProjectRunCatalog) {
         self.catalog = catalog
+        selectedTargetID = preferredTargetID(in: catalog)
+    }
+
+    private func preferredTargetID(in catalog: ProjectRunCatalog) -> String? {
+        catalog.defaultTargetID
+            ?? catalog.targets.first(where: \.isDefault)?.id
+            ?? catalog.targets.first?.id
+    }
+
+    private func applyState(_ state: ProjectRunState) {
         self.state = state
-        self.environment = environment
-        selectedTargetID = catalog.defaultTargetID ?? catalog.targets.first(where: \.isDefault)?.id ?? catalog.targets.first?.id
+        if let selectedInstanceID,
+           state.instances.contains(where: { $0.id == selectedInstanceID }) {
+            return
+        }
         selectedInstanceID = state.instances.first?.id
-        applyEnvironmentDrafts()
     }
 
     private func applyEnvironmentDrafts() {
@@ -164,16 +267,26 @@ final class ProjectRunSettingsViewModel: ObservableObject {
             .map { .init(key: $0.key, value: $0.value) }
     }
 
-    private func mutate(successNotice: Notice, operation: () async throws -> Void) async {
-        isMutating = true
-        errorMessage = nil
-        notice = nil
-        do {
-            try await operation()
-            notice = successNotice
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isMutating = false
+    private func environmentDraftSnapshot() -> EnvironmentDraftSnapshot {
+        .init(
+            selectedToolchains: selectedToolchains,
+            environmentVariables: Dictionary(
+                environmentVariables.compactMap { draft -> (String, String)? in
+                    let key = draft.key.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return key.isEmpty ? nil : (key, draft.value)
+                },
+                uniquingKeysWith: { _, latest in latest }
+            )
+        )
+    }
+
+    private func publishLifecycle() {
+        isLoading = lifecycle.isLoading
+        isMutating = lifecycle.isMutating
+    }
+
+    private struct EnvironmentDraftSnapshot: Equatable {
+        let selectedToolchains: [String: String]
+        let environmentVariables: [String: String]
     }
 }
