@@ -390,7 +390,7 @@ extension NativePluginRuntimeTests {
         let permitted = NativePluginProcessLaunch(stdio: prepared)
         #expect(permitted.networkAccess == .loopbackServer)
         let installedBrowserPaths = [
-            "/Applications/Google Chrome.app",
+            "/Applications/Google Chrome.app", "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
             "/Applications/Microsoft Edge.app",
         ].filter(FileManager.default.fileExists(atPath:))
@@ -599,7 +599,7 @@ extension NativePluginRuntimeTests {
         let escapedTemporaryRoot = NSRegularExpression.escapedPattern(for: temporaryRoot)
             .replacingOccurrences(of: "\"", with: "\\\"")
         #expect(sandboxProfile.contains(
-            "^\(escapedTemporaryRoot)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)"
+            "^\(escapedTemporaryRoot)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)"
         ))
         #expect(!sandboxProfile.contains("(subpath \"\(temporaryRoot)\")"))
     }
@@ -687,7 +687,7 @@ extension NativePluginRuntimeTests {
         #expect(launch.networkAccess == .disabled)
         #expect(launch.homeDirectory == nil)
         let installedBrowserPaths = [
-            "/Applications/Google Chrome.app",
+            "/Applications/Google Chrome.app", "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
             "/Applications/Microsoft Edge.app",
         ].filter(FileManager.default.fileExists(atPath:))

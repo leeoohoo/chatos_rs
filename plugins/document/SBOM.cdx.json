@@ -11,11 +11,11 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/%40chatos/document-mcp@0.1.12",
+      "bom-ref": "pkg:npm/%40chatos/document-mcp@0.1.13",
       "name": "@chatos/document-mcp",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "description": "Local, workspace-bounded MCP tools for Word, Excel, PowerPoint, and PDF files.",
-      "purl": "pkg:npm/%40chatos/document-mcp@0.1.12",
+      "purl": "pkg:npm/%40chatos/document-mcp@0.1.13",
       "licenses": [
         {
           "license": {
@@ -27,11 +27,11 @@
     "properties": [
       {
         "name": "chatos:source:packageLockSha256",
-        "value": "a9bffad91a89f9fed5f34fd717ff6a5baa46ffda05af953eb0766e951a5c8ef4"
+        "value": "6589bd99a4f5de7ec1ac4911f09327fa570e0e70da175a82afd05d4b5f78e5c6"
       },
       {
         "name": "chatos:source:esbuildMetafileSha256",
-        "value": "f2956687437405290bc48b2945ace551dbe284a77c6e6fe720a9326a4d8c88c5"
+        "value": "920258648ef2fac951517a911ce74e637eb5bc2a48f03f3738f8ce93f428d3d9"
       },
       {
         "name": "chatos:scope",
@@ -1523,7 +1523,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40chatos/document-mcp@0.1.12",
+      "ref": "pkg:npm/%40chatos/document-mcp@0.1.13",
       "dependsOn": [
         "file:dist/pdfium.wasm",
         "file:vendor/officecli/darwin/arm64/officecli",

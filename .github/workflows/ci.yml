@@ -189,9 +189,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' ]; then
+          if brew list --cask google-chrome >/dev/null 2>&1; then
+            brew upgrade --cask --greedy google-chrome
+          else
             brew install --cask google-chrome
           fi
+          '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --version
           npm --prefix plugins/document ci
           npm --prefix plugins/document run vendor:fetch:current
           npm --prefix plugins/document run sbom:generate

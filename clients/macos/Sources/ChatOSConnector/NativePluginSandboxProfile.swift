@@ -146,6 +146,7 @@ struct NativePluginProcessLaunch: Sendable {
     private static func installedBrowserApplications() -> [URL] {
         [
             "/Applications/Google Chrome.app",
+            "/Applications/Google Chrome for Testing.app",
             "/Applications/Chromium.app",
             "/Applications/Microsoft Edge.app",
         ].compactMap { path in
@@ -288,15 +289,15 @@ enum NativePluginSandboxProfile {
                 FileManager.default.temporaryDirectory.path
             )
             let browserTemporaryPath = Self.regexLiteral(temporaryRoot)
-            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
+            rules.append("(allow file-read* file-write* (regex #\"^\(browserTemporaryPath)/(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]Edge)[.][^/]+(/.*)?$\"))")
             rules.append("(allow network* (local unix-socket))")
             // The host Seatbelt profile remains the security boundary. Chromium's
             // nested sandbox cannot initialize inside it, so its helper rendezvous
             // ports are explicitly scoped to known browser service names.
             rules.append("(allow iokit-open)")
             rules.append("(allow mach-lookup (global-name \"com.apple.windowserver.active\") (global-name \"com.apple.WindowServer\") (global-name \"com.apple.CARenderServer\") (global-name \"com.apple.coreservices.launchservicesd\"))")
-            rules.append("(allow mach-register (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.](MachPortRendezvousServer[.][0-9]+|apps[.][A-Fa-f0-9]+)$\"))")
-            rules.append("(allow mach-lookup (global-name-regex #\"^(com[.]google[.]Chrome|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.]MachPortRendezvousServer[.][0-9]+$\"))")
+            rules.append("(allow mach-register (global-name-regex #\"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.](MachPortRendezvousServer[.][0-9]+|apps[.][A-Fa-f0-9]+)$\"))")
+            rules.append("(allow mach-lookup (global-name-regex #\"^(com[.]google[.]Chrome([.]forTesting)?|org[.]chromium[.]Chromium|com[.]microsoft[.]edgemac)[.]MachPortRendezvousServer[.][0-9]+$\"))")
         }
         if let workspace = launch.workspaceRoot?.standardizedFileURL.resolvingSymlinksInPath().path {
             if launch.permissionSnapshot.contains("workspace.write") {

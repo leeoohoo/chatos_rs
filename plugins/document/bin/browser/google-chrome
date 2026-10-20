@@ -3,19 +3,44 @@
 # Pin every render to its own profile within the host-granted Plugin cache.
 set -eu
 : "${CHATOS_PLUGIN_CACHE_DIR:?Missing isolated Plugin cache}"
-browser_bin=''
-for candidate in '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' '/Applications/Chromium.app/Contents/MacOS/Chromium' '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'; do
-  if [ -x "$candidate" ]; then browser_bin="$candidate"; break; fi
-done
-if [ -z "$browser_bin" ]; then
-  echo 'No supported installed Chromium browser is available.' >&2
-  exit 69
-fi
 mkdir -p "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles"
-render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/render.XXXXXXXX")
+diagnostic=$(mktemp "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/launcher.XXXXXXXX.log")
+render_profile=''
 cleanup() {
-  # mktemp resolved this exact per-render directory; never remove the cache root.
-  /bin/rm -rf -- "$render_profile"
+  # mktemp resolved these exact paths; never remove the cache root.
+  if [ -n "$render_profile" ]; then /bin/rm -rf -- "$render_profile"; fi
+  /bin/rm -f -- "$diagnostic"
 }
 trap cleanup EXIT
-"$browser_bin" "--user-data-dir=$render_profile" --no-first-run --no-default-browser-check "$@"
+
+# A runner or user machine can have more than one trusted Chromium-family app.
+# A stale browser patch must not prevent rendering when another installed app
+# can run inside the same Native sandbox.
+found_browser=0
+last_status=69
+for browser_bin in \
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' \
+  '/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing' \
+  '/Applications/Chromium.app/Contents/MacOS/Chromium' \
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+do
+  if [ ! -x "$browser_bin" ]; then continue; fi
+  found_browser=1
+  render_profile=$(mktemp -d "$CHATOS_PLUGIN_CACHE_DIR/officecli-browser-profiles/render.XXXXXXXX")
+  : > "$diagnostic"
+  if "$browser_bin" "--user-data-dir=$render_profile" --no-first-run --no-default-browser-check "$@" 2>"$diagnostic"; then
+    exit 0
+  else
+    last_status=$?
+  fi
+  /bin/rm -rf -- "$render_profile"
+  render_profile=''
+done
+
+if [ "$found_browser" -eq 0 ]; then
+  echo 'No supported installed Chromium browser is available.' >&2
+else
+  echo 'Installed Chromium browsers could not start inside the isolated renderer.' >&2
+  if [ -s "$diagnostic" ]; then /usr/bin/tail -n 20 "$diagnostic" >&2; fi
+fi
+exit "$last_status"

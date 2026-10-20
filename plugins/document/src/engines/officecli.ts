@@ -69,7 +69,7 @@ async function runRaw(binaryPath: string, args: string[], cwd: string, timeout: 
         // OfficeCLI discovers Chrome via PATH but does not set user-data-dir.
         // Our immutable launcher pins the headless profile to the isolated cache.
         ...(process.platform === 'darwin' && process.env.CHATOS_PLUGIN_SANDBOX === 'macos-seatbelt'
-          ? { PATH: `${path.join(packageRoot, 'bin', 'browser')}${path.delimiter}${process.env.PATH ?? ''}` }
+          ? { PATH: `${path.join(packageRoot, 'bin', 'browser')}${path.delimiter}/usr/bin${path.delimiter}/bin` }
           : {}),
         OFFICECLI_SKIP_UPDATE: '1',
         OFFICECLI_NO_AUTO_INSTALL: '1',
