@@ -2,6 +2,11 @@ import ChatOSCore
 import Foundation
 
 public actor NativeLocalAgentTurnProcessService: TurnProcessServicing {
+    // Process payloads are projected to bounded summaries by the Host. Keep pages small enough
+    // that even a page full of maximum-size tool batches remains below the IPC frame limit.
+    private static let eventPageSize: UInt32 = 25
+    private static let maximumEventPages = 400
+
     private let conversationClient: NativeLocalAgentConversationClient
     private let taskClient: NativeLocalAgentTaskClient
     private var ownerUserID: String?
@@ -35,15 +40,17 @@ public actor NativeLocalAgentTurnProcessService: TurnProcessServicing {
         }
         var cursor: Int64 = 0
         var events: [LocalAgentEventRecord] = []
-        for _ in 0..<20 {
+        for _ in 0..<Self.maximumEventPages {
             let page = try await taskClient.events(
                 ownerUserID: ownerUserID,
                 runID: turn.runID,
                 afterCursor: cursor,
-                limit: 500
+                limit: Self.eventPageSize,
+                payloadMode: .process
             )
             events.append(contentsOf: page.events)
-            guard page.events.count == 500, page.nextCursor > cursor else { break }
+            guard page.events.count == Int(Self.eventPageSize),
+                  page.nextCursor > cursor else { break }
             cursor = page.nextCursor
         }
         return LocalAgentTurnProcessMapper.map(events)

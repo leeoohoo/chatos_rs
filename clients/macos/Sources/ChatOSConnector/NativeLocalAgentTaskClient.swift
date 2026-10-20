@@ -223,7 +223,8 @@ public struct NativeLocalAgentTaskClient: Sendable {
         afterCursor: Int64 = 0,
         limit: UInt32 = 100,
         eventType: String? = nil,
-        newestFirst: Bool = false
+        newestFirst: Bool = false,
+        payloadMode: LocalAgentEventPayloadMode = .full
     ) async throws -> LocalAgentEventPage {
         let result: EventsResult = try await host.request(ListEventsCommand(
             type: "list_events",
@@ -232,7 +233,8 @@ public struct NativeLocalAgentTaskClient: Sendable {
             limit: limit,
             runID: runID,
             eventType: eventType,
-            newestFirst: newestFirst
+            newestFirst: newestFirst,
+            payloadMode: payloadMode
         ))
         guard result.type == "events" else { throw NativeLocalAgentHostError.invalidResponse }
         return .init(events: result.events, nextCursor: result.nextCursor)
@@ -375,6 +377,7 @@ private struct ListEventsCommand: Encodable, Sendable {
     let runID: String
     let eventType: String?
     let newestFirst: Bool
+    let payloadMode: LocalAgentEventPayloadMode
     private enum CodingKeys: String, CodingKey {
         case type, limit
         case ownerUserID = "owner_user_id"
@@ -382,6 +385,7 @@ private struct ListEventsCommand: Encodable, Sendable {
         case runID = "run_id"
         case eventType = "event_type"
         case newestFirst = "newest_first"
+        case payloadMode = "payload_mode"
     }
 }
 

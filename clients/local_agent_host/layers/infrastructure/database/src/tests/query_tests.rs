@@ -412,6 +412,60 @@ async fn owner_event_pages_project_payloads_inside_sqlite() {
         .expect("full payload");
     assert_eq!(full[0].payload["large"], "do-not-copy");
 
+    let oversized_tool_batch = serde_json::json!({
+        "tool_calls": [{
+            "call_id": "call-image",
+            "tool_name": "local_attachment_read",
+            "arguments": {"image_url": "x".repeat(64 * 1024)},
+        }],
+    });
+    sqlx::query(
+        "UPDATE local_agent_events SET event_type = ?, payload_json = ? WHERE event_id = ?",
+    )
+    .bind("tool_batch_requested")
+    .bind(oversized_tool_batch.to_string())
+    .bind("event-payload-projection")
+    .execute(&storage.pool)
+    .await
+    .expect("replace event with tool batch");
+    let process = storage
+        .list_events_for_owner(
+            "user-1",
+            0,
+            10,
+            Some("run-1"),
+            None,
+            false,
+            chatos_local_agent_protocol::LocalAgentEventPayloadMode::Process,
+        )
+        .await
+        .expect("process payload");
+    assert_eq!(
+        process[0].payload,
+        serde_json::json!({
+            "tool_calls": [{
+                "call_id": "call-image",
+                "tool_name": "local_attachment_read",
+            }],
+        })
+    );
+    assert!(
+        serde_json::to_vec(&process)
+            .expect("serialize process page")
+            .len()
+            < 1_000
+    );
+
+    sqlx::query(
+        "UPDATE local_agent_events SET event_type = ?, payload_json = ? WHERE event_id = ?",
+    )
+    .bind("run_created")
+    .bind(r#"{"conversation_id":"conversation-1","large":"do-not-copy"}"#)
+    .bind("event-payload-projection")
+    .execute(&storage.pool)
+    .await
+    .expect("restore routing payload");
+
     let routing = storage
         .list_events_for_owner(
             "user-1",

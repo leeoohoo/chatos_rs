@@ -74,6 +74,7 @@ public struct LocalAgentEventPage: Sendable, Equatable {
 
 public enum LocalAgentEventPayloadMode: String, Encodable, Sendable {
     case full
+    case process
     case routing
     case none
 }

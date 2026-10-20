@@ -193,7 +193,8 @@ pub(super) async fn list_events(
 ) -> Result<Vec<LocalAgentEventRecord>, ClientStorageError> {
     let mut connection = storage.pool.acquire().await.db()?;
     let payload_mode = match payload_mode {
-        LocalAgentEventPayloadMode::Full => 2_i64,
+        LocalAgentEventPayloadMode::Full => 3_i64,
+        LocalAgentEventPayloadMode::Process => 2_i64,
         LocalAgentEventPayloadMode::Routing => 1_i64,
         LocalAgentEventPayloadMode::None => 0_i64,
     };
@@ -206,7 +207,21 @@ pub(super) async fn list_events(
         let order = if newest_first { "DESC" } else { "ASC" };
         let sql = format!(
             "SELECT e.cursor, e.event_id, e.run_id, e.event_type, \
-             CASE ? WHEN 2 THEN e.payload_json WHEN 1 THEN \
+             CASE ? WHEN 3 THEN e.payload_json WHEN 2 THEN \
+               CASE WHEN e.event_type = 'tool_batch_requested' THEN \
+                 json_object('tool_calls', json(COALESCE((SELECT json_group_array(\
+                   json_object('call_id', substr(json_extract(tool_call.value, '$.call_id'), 1, 128), \
+                     'tool_name', substr(json_extract(tool_call.value, '$.tool_name'), 1, 128))) \
+                   FROM (SELECT value FROM json_each(e.payload_json, '$.tool_calls') LIMIT 32) \
+                     AS tool_call), '[]'))) \
+               ELSE json_object(\
+                 'call_id', substr(json_extract(e.payload_json, '$.call_id'), 1, 128), \
+                 'status', substr(json_extract(e.payload_json, '$.status'), 1, 64), \
+                 'reason', CASE WHEN json_type(e.payload_json, '$.reason') = 'text' \
+                   THEN substr(json_extract(e.payload_json, '$.reason'), 1, 4000) ELSE NULL END, \
+                 'error', CASE WHEN json_type(e.payload_json, '$.error') = 'text' \
+                   THEN substr(json_extract(e.payload_json, '$.error'), 1, 4000) ELSE NULL END) END \
+             WHEN 1 THEN \
                CASE \
                  WHEN json_type(e.payload_json, '$.conversation_id') = 'text' THEN \
                    json_object('conversation_id', \
@@ -243,7 +258,21 @@ pub(super) async fn list_events(
     } else {
         sqlx::query(
             "SELECT e.cursor, e.event_id, e.run_id, e.event_type, \
-             CASE ? WHEN 2 THEN e.payload_json WHEN 1 THEN \
+             CASE ? WHEN 3 THEN e.payload_json WHEN 2 THEN \
+               CASE WHEN e.event_type = 'tool_batch_requested' THEN \
+                 json_object('tool_calls', json(COALESCE((SELECT json_group_array(\
+                   json_object('call_id', substr(json_extract(tool_call.value, '$.call_id'), 1, 128), \
+                     'tool_name', substr(json_extract(tool_call.value, '$.tool_name'), 1, 128))) \
+                   FROM (SELECT value FROM json_each(e.payload_json, '$.tool_calls') LIMIT 32) \
+                     AS tool_call), '[]'))) \
+               ELSE json_object(\
+                 'call_id', substr(json_extract(e.payload_json, '$.call_id'), 1, 128), \
+                 'status', substr(json_extract(e.payload_json, '$.status'), 1, 64), \
+                 'reason', CASE WHEN json_type(e.payload_json, '$.reason') = 'text' \
+                   THEN substr(json_extract(e.payload_json, '$.reason'), 1, 4000) ELSE NULL END, \
+                 'error', CASE WHEN json_type(e.payload_json, '$.error') = 'text' \
+                   THEN substr(json_extract(e.payload_json, '$.error'), 1, 4000) ELSE NULL END) END \
+             WHEN 1 THEN \
                CASE \
                  WHEN json_type(e.payload_json, '$.conversation_id') = 'text' THEN \
                    json_object('conversation_id', \

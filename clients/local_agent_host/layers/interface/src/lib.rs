@@ -124,7 +124,7 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 42;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 43;
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
@@ -514,6 +514,7 @@ pub struct WaitEventsCommand {
 pub enum LocalAgentEventPayloadMode {
     #[default]
     Full,
+    Process,
     Routing,
     None,
 }

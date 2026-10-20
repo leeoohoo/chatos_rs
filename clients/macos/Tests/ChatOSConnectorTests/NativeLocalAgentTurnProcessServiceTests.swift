@@ -27,6 +27,8 @@ final class NativeLocalAgentTurnProcessServiceTests: XCTestCase {
         XCTAssertEqual(command["type"], .string("list_events"))
         XCTAssertEqual(command["run_id"], .string("run-1"))
         XCTAssertEqual(command["owner_user_id"], .string("user-1"))
+        XCTAssertEqual(command["limit"], .number(25))
+        XCTAssertEqual(command["payload_mode"], .string("process"))
     }
 
     func testRequiresConfiguredOwnerBeforeReadingConversation() async {

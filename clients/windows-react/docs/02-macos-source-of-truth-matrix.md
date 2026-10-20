@@ -316,6 +316,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `MessageTaskInspectorRefreshUseCase` 已固定 process/detail/run 三个 section 的刷新查询与陈旧 Run 清理语义；
 - Conversation 内嵌 Inspector 的 Task 读取、detail 模型输出与 Run 重试已改由 `MessageTaskGraphUseCase` / `MessageTaskInspectorRefreshUseCase` 执行，ViewModel 不再直接调用 Host service；当前 Task 尚无 Run 时沿用 macOS callback Run 的回退规则，并已固化为用例契约；
 - Conversation 内嵌 Inspector 从 process 切换到 detail 时复用当前 Task，仅发起轻量模型输出查询；realtime、polling、显式刷新和目标变化仍先重新查询 Task，以跟随最新 `lastRunID`；
+- Conversation 执行过程通过 Host `process` payload mode 读取 durable events；SQLite 只投影 mapper 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数。macOS 固定每页 25 条、最多 400 页，保持原有 10,000 事件上限且让每页稳定低于 IPC frame 限制；
 - `MessageTaskInspectorRequestState` 已统一 Inspector 最新快照与 Run 事件分页的 request identity；同一 Task 重载、section 切换和刷新都会拒绝旧结果，新的快照也会淘汰旧分页；
 - `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射，因此尚未放行 React。
 
@@ -420,7 +421,7 @@ authenticated
 
 ### 6.3 握手、请求与假健康防护
 
-- 协议版本当前为 `42`；request/response 必须同时匹配 protocol version 与 command ID；
+- 协议版本当前为 `43`；request/response 必须同时匹配 protocol version 与 command ID；
 - 启动必须通过 `health`，且 `storage_ready == true` 后才返回 managed process；
 - stdio frame 使用 4 字节大端长度前缀，最大 4 MiB；
 - 多路复用请求按 command ID 保存 continuation，各自有取消与超时；

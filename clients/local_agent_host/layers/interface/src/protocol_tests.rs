@@ -99,6 +99,10 @@ fn event_payload_mode_defaults_to_full_and_uses_stable_wire_values() {
         })
     ));
     assert_eq!(
+        serde_json::to_value(LocalAgentEventPayloadMode::Process).expect("process mode"),
+        serde_json::json!("process")
+    );
+    assert_eq!(
         serde_json::to_value(LocalAgentEventPayloadMode::Routing).expect("routing mode"),
         serde_json::json!("routing")
     );
