@@ -118,7 +118,7 @@ extension AppModel {
         localAgentBootstrapTask = nil
         localAgentCrashRecoveryTask?.cancel()
         localAgentCrashRecoveryTask = nil
-        localAgentCrashRecoveryAttempts = 0
+        localAgentHostRecoveryState.reset()
         stopLocalAgentHost()
         deactivateAllConversations()
         stopVisualSessionMonitoring()
@@ -132,6 +132,11 @@ extension AppModel {
         ownerUserID: String,
         refreshControlPlaneAfterStart: Bool = false
     ) {
+        if localAgentHostRecoveryState.activeRestart != nil {
+            localAgentCrashRecoveryTask?.cancel()
+            localAgentCrashRecoveryTask = nil
+            localAgentHostRecoveryState.cancelRestart()
+        }
         localAgentHostLifecycleTask?.cancel()
         localAgentHostLifecycleGeneration &+= 1
         let generation = localAgentHostLifecycleGeneration
@@ -304,7 +309,7 @@ extension AppModel {
         // process a second time after wake.
         localAgentCrashRecoveryTask?.cancel()
         localAgentCrashRecoveryTask = nil
-        localAgentCrashRecoveryAttempts = 0
+        localAgentHostRecoveryState.resetRestarts()
         // A child process or its stdio pipes may not survive system sleep even
         // though the SwiftUI application does. Re-run the complete bootstrap so
         // credentials are sourced again instead of being retained in memory.
@@ -319,26 +324,31 @@ extension AppModel {
               localAgentHostLifecycleTask == nil,
               let ownerUserID = authenticatedUserID,
               let host = localAgentHost as? NativeLocalAgentHostLifecycle else { return }
-        localAgentHostHealthCheckGeneration &+= 1
-        let generation = localAgentHostHealthCheckGeneration
-        let accountGeneration = workspaceAccountGeneration
+        let token = localAgentHostRecoveryState.beginHealthCheck(
+            ownerUserID: ownerUserID,
+            accountGeneration: workspaceAccountGeneration,
+            lifecycleGeneration: localAgentHostLifecycleGeneration
+        )
         localAgentHostHealthCheckTask = Task { [weak self] in
             defer {
-                if self?.localAgentHostHealthCheckGeneration == generation {
+                if self?.localAgentHostRecoveryState.finishHealthCheck(token) == true {
                     self?.localAgentHostHealthCheckTask = nil
                 }
             }
             let isRunning = await host.isRunning
             guard !Task.isCancelled,
                   let self,
-                  authenticatedUserID == ownerUserID,
-                  workspaceAccountGeneration == accountGeneration,
-                  localAgentHostHealthCheckGeneration == generation,
+                  localAgentHostRecoveryState.acceptsHealthCheck(
+                      token,
+                      ownerUserID: authenticatedUserID,
+                      accountGeneration: workspaceAccountGeneration,
+                      lifecycleGeneration: localAgentHostLifecycleGeneration
+                  ),
                   localAgentHostLifecycleTask == nil else { return }
             if !isRunning {
                 localAgentCrashRecoveryTask?.cancel()
                 localAgentCrashRecoveryTask = nil
-                localAgentCrashRecoveryAttempts = 0
+                localAgentHostRecoveryState.resetRestarts()
                 startLocalAgentHost(
                     ownerUserID: ownerUserID,
                     refreshControlPlaneAfterStart: true
@@ -371,7 +381,7 @@ extension AppModel {
         projectConversationPreparationTasks.values.forEach { $0.cancel() }
         projectConversationPreparationTasks.removeAll()
         preparingProjectConversationIDs = []
-        localAgentHostHealthCheckGeneration &+= 1
+        localAgentHostRecoveryState.cancelHealthCheck()
         localAgentHostHealthCheckTask?.cancel()
         localAgentHostHealthCheckTask = nil
         agentRuntimeCoordinatorGeneration &+= 1
@@ -385,9 +395,8 @@ extension AppModel {
 
     func recoverLocalAgentHostAfterUnexpectedExit() {
         guard localAgentCrashRecoveryTask == nil,
-              localAgentCrashRecoveryAttempts < 5,
               let ownerUserID = authenticatedUserID else {
-            if localAgentCrashRecoveryAttempts >= 5 {
+            if localAgentHostRecoveryState.hasExhaustedRestarts {
                 localAgentHostError = NSLocalizedString("本地任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
                 localAgentRuntimeState.becomeDegraded(
                     ownerUserID: authenticatedUserID,
@@ -397,28 +406,41 @@ extension AppModel {
             }
             return
         }
-        let delays: [Duration] = [
-            .milliseconds(250),
-            .seconds(1),
-            .seconds(2),
-            .seconds(5),
-            .seconds(10),
-        ]
-        let delay = delays[localAgentCrashRecoveryAttempts]
-        localAgentCrashRecoveryAttempts += 1
+        guard let plan = localAgentHostRecoveryState.scheduleRestart(
+            ownerUserID: ownerUserID,
+            accountGeneration: workspaceAccountGeneration,
+            lifecycleGeneration: localAgentHostLifecycleGeneration
+        ) else {
+            if localAgentHostRecoveryState.hasExhaustedRestarts {
+                localAgentHostError = NSLocalizedString("本地任务服务多次启动失败，联系人和项目暂时无法加载。请重新打开应用；若仍失败，请查看诊断日志。", comment: "Local task service failed to recover")
+                localAgentRuntimeState.becomeDegraded(
+                    ownerUserID: authenticatedUserID,
+                    generation: localAgentHostLifecycleGeneration,
+                    errorMessage: localAgentHostError ?? "Local Agent Host recovery failed."
+                )
+            }
+            return
+        }
         localAgentRuntimeState.scheduleRestart(
             ownerUserID: ownerUserID,
             generation: localAgentHostLifecycleGeneration,
-            attempt: localAgentCrashRecoveryAttempts,
+            attempt: plan.token.attempt,
             errorMessage: localAgentHostError
         )
         localAgentCrashRecoveryTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: delay)
+                try await Task.sleep(for: plan.delay)
             } catch {
                 return
             }
-            guard let self, authenticatedUserID == ownerUserID else { return }
+            guard let self,
+                  localAgentHostRecoveryState.acceptsRestart(
+                      plan.token,
+                      ownerUserID: authenticatedUserID,
+                      accountGeneration: workspaceAccountGeneration,
+                      lifecycleGeneration: localAgentHostLifecycleGeneration
+                  ),
+                  localAgentHostRecoveryState.finishRestart(plan.token) else { return }
             localAgentCrashRecoveryTask = nil
             startLocalAgentHost(
                 ownerUserID: ownerUserID,
@@ -430,7 +452,7 @@ extension AppModel {
     private func stopLocalAgentHost() {
         localAgentCrashRecoveryTask?.cancel()
         localAgentCrashRecoveryTask = nil
-        localAgentCrashRecoveryAttempts = 0
+        localAgentHostRecoveryState.reset()
         localAgentHostLifecycleGeneration &+= 1
         localAgentRuntimeState.stop(generation: localAgentHostLifecycleGeneration)
         localAgentHostLifecycleTask?.cancel()
@@ -623,7 +645,9 @@ extension AppModel {
               ),
               localAgentControlPlaneBootstrapState.finish(token) else { return false }
         localAgentControlPlaneOwnerUserID = token.ownerUserID
-        localAgentCrashRecoveryAttempts = 0
+        localAgentCrashRecoveryTask?.cancel()
+        localAgentCrashRecoveryTask = nil
+        localAgentHostRecoveryState.resetRestarts()
         localAgentHostError = nil
         localAgentBootstrapTask = nil
         return true

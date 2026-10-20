@@ -183,11 +183,10 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     var localAgentHostLifecycleTask: Task<Void, Never>?
     var localAgentHostLifecycleGeneration: UInt64 = 0
     var localAgentHostHealthCheckTask: Task<Void, Never>?
-    var localAgentHostHealthCheckGeneration: UInt64 = 0
+    var localAgentHostRecoveryState = LocalAgentHostRecoveryState()
     var localAgentHostShutdownTask: Task<Void, Never>?
     var localAgentHostShutdownGeneration: UInt64 = 0
     var localAgentCrashRecoveryTask: Task<Void, Never>?
-    var localAgentCrashRecoveryAttempts = 0
     var localAgentBootstrapTask: Task<Void, Never>?
     var localAgentControlPlaneBootstrapState = LocalAgentControlPlaneBootstrapState()
     var localAgentWorkspaceOwnerUserID: String?
