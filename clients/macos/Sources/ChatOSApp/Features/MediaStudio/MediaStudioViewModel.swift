@@ -85,6 +85,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
+    private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
     let stories: StoryStudioViewModel
     private var hasLoaded = false
     private var videoGenerationTask: Task<Void, Never>?
@@ -93,7 +94,7 @@ final class MediaStudioViewModel: ObservableObject {
     private var historyCursor: MediaStudioHistoryStore.Cursor?
     private var unreadableHistoryCount = 0
     private var modelsLoadTask: Task<Void, Never>?
-    private var modelsLoadGeneration: UInt64 = 0
+    private var modelCatalogState = MediaStudioModelCatalogState()
     private let historyStore: MediaStudioHistoryStore
     private var ownerID: String?
     private var sessionID = UUID()
@@ -113,6 +114,7 @@ final class MediaStudioViewModel: ObservableObject {
             generator: service,
             history: historyStore
         )
+        self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
         self.historyStore = historyStore
         self.imageTransport = imageTransport
@@ -656,7 +658,7 @@ final class MediaStudioViewModel: ObservableObject {
         historyCursor = nil
         unreadableHistoryCount = 0
         historyErrorMessage = nil
-        modelsLoadGeneration &+= 1
+        modelCatalogState.reset()
         modelsLoadTask?.cancel()
         modelsLoadTask = nil
         videoGenerationTask?.cancel()
@@ -681,45 +683,53 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     private func loadModels() {
-        modelsLoadGeneration &+= 1
-        let generation = modelsLoadGeneration
+        guard let ownerID else { return }
+        let token = modelCatalogState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        )
         modelsLoadTask?.cancel()
-        let session = sessionID
-        let service = service
+        let useCase = modelCatalogUseCase
         isLoadingModels = true
         errorMessage = nil
         modelsLoadTask = Task { [weak self] in
+            let result: Result<MediaStudioModelCatalog, Error>
             do {
-                let next = try await service.fetchModels()
-                guard !Task.isCancelled,
-                      let self,
-                      sessionID == session,
-                      modelsLoadGeneration == generation else { return }
-                models = next
-                videoModels = next.filter {
-                    $0.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .caseInsensitiveCompare("MiniMax-H3") == .orderedSame
-                }
-                if !next.contains(where: { $0.id == selectedModelID }) {
-                    selectedModelID = next.first?.id
-                }
-                if !videoModels.contains(where: { $0.id == selectedVideoModelID }) {
-                    selectedVideoModelID = videoModels.first?.id
-                }
-                normalizeVideoOptions()
+                result = .success(try await useCase.load())
             } catch {
-                guard !Task.isCancelled,
-                      let self,
-                      sessionID == session,
-                      modelsLoadGeneration == generation else { return }
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            guard let self,
-                  sessionID == session,
-                  modelsLoadGeneration == generation else { return }
-            isLoadingModels = false
-            modelsLoadTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishModelCatalogLoad(result, token: token)
         }
+    }
+
+    private func finishModelCatalogLoad(
+        _ result: Result<MediaStudioModelCatalog, Error>,
+        token: MediaStudioModelCatalogToken
+    ) {
+        guard modelCatalogState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        switch result {
+        case let .success(catalog):
+            models = catalog.imageModels
+            videoModels = catalog.videoModels
+            if !models.contains(where: { $0.id == selectedModelID }) {
+                selectedModelID = models.first?.id
+            }
+            if !videoModels.contains(where: { $0.id == selectedVideoModelID }) {
+                selectedVideoModelID = videoModels.first?.id
+            }
+            normalizeVideoOptions()
+        case let .failure(error):
+            errorMessage = error.localizedDescription
+        }
+        guard modelCatalogState.finish(token) else { return }
+        isLoadingModels = false
+        modelsLoadTask = nil
     }
 
     nonisolated private static func loadInputImage(from url: URL) throws -> ImageGenerationInputImage {

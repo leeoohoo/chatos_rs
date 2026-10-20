@@ -53,6 +53,24 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingModels)
     }
 
+    func testPreviousAccountModelCatalogCannotOverwriteCurrentAccount() async throws {
+        let service = DelayedMediaStudioModelService()
+        let viewModel = MediaStudioViewModel(service: service)
+        viewModel.activate(userID: "alice")
+
+        viewModel.loadIfNeeded()
+        try await waitUntil { await service.hasDelayedFetch() }
+        viewModel.activate(userID: "bob")
+        viewModel.loadIfNeeded()
+        try await waitUntil { viewModel.models.map(\.id) == ["new-model"] }
+        await service.resumeDelayedFetch()
+        try await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(viewModel.models.map(\.id), ["new-model"])
+        XCTAssertEqual(viewModel.selectedModelID, "new-model")
+        XCTAssertFalse(viewModel.isLoadingModels)
+    }
+
     func testDelayedImageGenerationDoesNotRetainViewModel() async throws {
         let service = DelayedMediaStudioImageService()
         let root = FileManager.default.temporaryDirectory

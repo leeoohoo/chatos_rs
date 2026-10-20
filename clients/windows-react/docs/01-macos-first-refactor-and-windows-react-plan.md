@@ -486,6 +486,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 图片 Application 第一段）：第 06 页开始从当前 `MediaStudioViewModel` 真实调用链渐进分层。Core 新增图片生成、历史持久化两个窄 Port，以及统一“provider 生成 → 本地历史保存”的 `MediaStudioImageGenerationUseCase`；保存失败不回滚已生成结果，而以强类型 `generatedWithoutPersistence` 保留画布并显示历史错误。图片操作改用绑定 owner/account session/request 的 typed token，账号切换、登出、取消或页面释放后的迟到结果不能写回，新旧账号之间也不能继续落盘。ViewModel 只构造冻结请求、持有 Task 和消费结果，不再直接编排 service/history store。Core 3 项和既有 Media Studio ViewModel/History/Image Interaction 22 项通过；模型目录、历史分页、参考图导入与 Windows provider/Secret/本地文件边界尚未完整准入，因此第 06 页继续禁止 React 实现。
 
+状态补充（2026-10-21，macOS AI 图片模型目录）：模型目录读取和既有 `MiniMax-H3` 视频模型准入规则已移入 `MediaStudioModelCatalogUseCase`，ViewModel 不再直接调用 provider 或解释后端目录，只消费 image/video 两个强类型集合并保留有效选中项。目录请求以 owner/account session/request token 联合验收，连续刷新、账号切换、登出和页面释放均拒绝迟到结果；Core 2 项及 ViewModel 5 项定向回归通过。历史分页、参考图导入和 Windows 平台边界仍未完整准入，第 06 页继续禁止 React 实现。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
