@@ -377,7 +377,11 @@ public actor NativeLocalAgentHostLifecycle: LocalAgentHostClientServicing {
     }
 }
 
-public struct NativeLocalAgentCredentialRefreshDeferred: LocalizedError, Sendable {
+public struct NativeLocalAgentCredentialRefreshDeferred:
+    LocalizedError,
+    LocalAgentControlPlaneBootstrapNonRetryableError,
+    Sendable
+{
     public var errorDescription: String? {
         NSLocalizedString("连接凭据已更新。为避免中断当前执行，请在任务完成后重新打开应用以应用新配置。", comment: "Deferred model credential refresh")
     }

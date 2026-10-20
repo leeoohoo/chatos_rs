@@ -472,8 +472,6 @@ extension AppModel {
             accountGeneration: workspaceAccountGeneration,
             lifecycleGeneration: expectedLifecycleGeneration
         )
-        let apiClient = apiClient
-        let localConnectorService = localConnectorService
         let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
             localConnectorService: localConnectorService,
             runtimeSettingsService: runtimeSettingsService,
@@ -484,62 +482,37 @@ extension AppModel {
             turnProcessService: turnProcessService,
             platformToolWorker: platformToolWorker
         )
-        let serviceConfigurationUseCase = LocalAgentServiceConfigurationUseCase()
+        let bootstrapPort = AppLocalAgentControlPlaneBootstrapAdapter(
+            host: host,
+            apiClient: apiClient,
+            localConnectorService: localConnectorService,
+            serviceConfigurationFactory: serviceConfigurationFactory,
+            isCurrent: { [weak self] in
+                !Task.isCancelled
+                    && self?.localAgentControlPlaneBootstrapAccepts(token) == true
+            },
+            shouldStopInvalidatedHost: { [weak self] in
+                self?.localAgentHostLifecycleGeneration == expectedLifecycleGeneration
+            }
+        )
+        let bootstrapUseCase = LocalAgentControlPlaneBootstrapUseCase()
         localAgentBootstrapTask = Task { [weak self] in
-            let retryDelays: [Duration?] = [
-                nil,
-                .seconds(1),
-                .seconds(2),
-                .seconds(5),
-                .seconds(10),
-            ]
-            for (attempt, retryDelay) in retryDelays.enumerated() {
-                do {
-                    if let retryDelay {
-                        try await Task.sleep(for: retryDelay)
+            do {
+                try await bootstrapUseCase.execute(
+                    ownerUserID: ownerUserID,
+                    port: bootstrapPort,
+                    isCurrent: { [weak self] in
+                        !Task.isCancelled
+                            && self?.localAgentControlPlaneBootstrapAccepts(token) == true
                     }
-                    guard !Task.isCancelled,
-                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
-                    let memoryAccessToken = await apiClient.currentAccessToken()
-                    guard !Task.isCancelled,
-                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
-                    let bootstrap = try await localConnectorService.bootstrapLocalAgentHost(
-                        host,
-                        ownerUserID: ownerUserID,
-                        memoryAccessToken: memoryAccessToken
-                    )
-                    guard !Task.isCancelled,
-                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else {
-                        if self?.localAgentHostLifecycleGeneration == expectedLifecycleGeneration {
-                            await host.stop()
-                        }
-                        return
-                    }
-                    try await serviceConfigurationUseCase.execute(
-                        port: serviceConfigurationFactory.makePort(
-                            ownerUserID: ownerUserID,
-                            bootstrap: bootstrap
-                        ),
-                        isCurrent: { [weak self] in
-                            !Task.isCancelled
-                                && self?.localAgentControlPlaneBootstrapAccepts(token) == true
-                        }
-                    )
-                    guard self?.completeLocalAgentControlPlaneBootstrap(token) == true else { return }
-                    return
-                } catch is CancellationError {
-                    self?.finishCancelledLocalAgentControlPlaneBootstrap(token)
-                    return
-                } catch {
-                    guard !Task.isCancelled,
-                          self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
-                    if error is NativeLocalAgentCredentialRefreshDeferred {
-                        self?.failLocalAgentControlPlaneBootstrap(token, error: error)
-                        return
-                    }
-                    guard attempt == retryDelays.indices.last else { continue }
-                    self?.failLocalAgentControlPlaneBootstrap(token, error: error)
-                }
+                )
+                guard self?.completeLocalAgentControlPlaneBootstrap(token) == true else { return }
+            } catch is CancellationError {
+                self?.finishCancelledLocalAgentControlPlaneBootstrap(token)
+            } catch {
+                guard !Task.isCancelled,
+                      self?.localAgentControlPlaneBootstrapAccepts(token) == true else { return }
+                self?.failLocalAgentControlPlaneBootstrap(token, error: error)
             }
         }
     }
