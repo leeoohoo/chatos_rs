@@ -10,16 +10,39 @@ use tokio::{
 };
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const TERMINATION_TIMEOUT: Duration = Duration::from_secs(2);
 const FRAME_CONTINUATION_BIT: u32 = 1 << 31;
 const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
+
+#[derive(Debug)]
+pub(super) struct HostRequestFailure {
+    pub(super) message: String,
+    pub(super) fatal: bool,
+}
+
+impl HostRequestFailure {
+    fn fatal(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            fatal: true,
+        }
+    }
+
+    fn rejected(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            fatal: false,
+        }
+    }
+}
 
 pub(super) struct ManagedHost {
     pub(super) child: Child,
     pub(super) input: ChildStdin,
     output: ChildStdout,
     pub(super) owner_user_id: String,
-    health_sequence: u64,
+    request_sequence: u64,
 }
 
 impl ManagedHost {
@@ -34,51 +57,82 @@ impl ManagedHost {
             input,
             output,
             owner_user_id,
-            health_sequence: 0,
+            request_sequence: 0,
         }
     }
 }
 
 pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
-    host.health_sequence = host.health_sequence.saturating_add(1);
-    let command_id = format!(
-        "windows-health-{}-{}",
-        std::process::id(),
-        host.health_sequence,
-    );
-    timeout(HEALTH_TIMEOUT, async {
-        let request = HostRequestEnvelope {
-            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
-            command_id,
-            command: HostCommand::Health,
-        };
-        let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        write_message(&mut host.input, &body).await?;
-        let response: HostResponseEnvelope =
-            serde_json::from_slice(&read_message(&mut host.output).await?)
-                .map_err(|error| error.to_string())?;
+    match request_with_timeout(host, HostCommand::Health, HEALTH_TIMEOUT)
+        .await
+        .map_err(|error| error.message)?
+    {
+        HostResult::Health {
+            service,
+            storage_ready: true,
+            max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
+            max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+            ..
+        } if service == "chatos-local-agent-host" => Ok(()),
+        _ => Err("Host health response does not match protocol v44.".to_string()),
+    }
+}
+
+pub(super) async fn request(
+    host: &mut ManagedHost,
+    command: HostCommand,
+) -> Result<HostResult, HostRequestFailure> {
+    request_with_timeout(host, command, REQUEST_TIMEOUT).await
+}
+
+async fn request_with_timeout(
+    host: &mut ManagedHost,
+    command: HostCommand,
+    duration: Duration,
+) -> Result<HostResult, HostRequestFailure> {
+    host.request_sequence = host.request_sequence.saturating_add(1);
+    let request = HostRequestEnvelope {
+        protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+        command_id: format!(
+            "windows-ipc-{}-{}",
+            std::process::id(),
+            host.request_sequence
+        ),
+        command,
+    };
+    request.validate().map_err(HostRequestFailure::rejected)?;
+    timeout(duration, async {
+        let body = serde_json::to_vec(&request)
+            .map_err(|error| HostRequestFailure::rejected(error.to_string()))?;
+        write_message(&mut host.input, &body)
+            .await
+            .map_err(HostRequestFailure::fatal)?;
+        let response_body = read_message(&mut host.output)
+            .await
+            .map_err(HostRequestFailure::fatal)?;
+        let response: HostResponseEnvelope = serde_json::from_slice(&response_body)
+            .map_err(|error| HostRequestFailure::fatal(error.to_string()))?;
         if response.protocol_version != LOCAL_AGENT_PROTOCOL_VERSION
             || response.command_id != request.command_id
-            || !response.ok
         {
-            return Err(response
-                .error
-                .map(|error| error.message)
-                .unwrap_or_else(|| "Host health response is invalid.".to_string()));
+            return Err(HostRequestFailure::fatal(
+                "Host response envelope is invalid.",
+            ));
         }
-        match response.result {
-            Some(HostResult::Health {
-                service,
-                storage_ready: true,
-                max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
-                max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
-                ..
-            }) if service == "chatos-local-agent-host" => Ok(()),
-            _ => Err("Host health response does not match protocol v44.".to_string()),
+        if !response.ok {
+            return Err(HostRequestFailure::rejected(
+                response
+                    .error
+                    .map(|error| error.message)
+                    .unwrap_or_else(|| "Host request failed.".to_string()),
+            ));
         }
+        response
+            .result
+            .ok_or_else(|| HostRequestFailure::fatal("Host response result is missing."))
     })
     .await
-    .map_err(|_| "Host health check timed out.".to_string())?
+    .map_err(|_| HostRequestFailure::fatal("Host request timed out."))?
 }
 
 pub(super) async fn terminate(host: &mut ManagedHost) {

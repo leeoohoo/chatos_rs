@@ -2,14 +2,14 @@ mod diagnostics;
 mod process;
 mod transport;
 
-use chatos_local_agent_protocol::LOCAL_AGENT_PROTOCOL_VERSION;
+use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;
 use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
-use transport::{health_check, terminate, ManagedHost};
+use transport::{health_check, request, terminate, ManagedHost};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +62,32 @@ impl HostManager {
         self.diagnostics.record("host_shutdown", "requested").await;
         self.terminate_process().await;
         self.diagnostics.record("host_shutdown", "stopped").await;
+    }
+
+    pub(crate) async fn execute(&self, command: HostCommand) -> Result<HostResult, String> {
+        let mut process = self.process.lock().await;
+        let Some(host) = process.as_mut() else {
+            return Err("Local Agent Host 尚未就绪。".into());
+        };
+        if command
+            .owner_user_id()
+            .is_some_and(|owner| owner != host.owner_user_id)
+        {
+            return Err("Local Agent Host 当前账号与请求账号不一致。".into());
+        }
+        match request(host, command).await {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                if error.fatal {
+                    terminate(host).await;
+                    *process = None;
+                }
+                self.diagnostics
+                    .record("host_request", classify_error(&error.message))
+                    .await;
+                Err(error.message)
+            }
+        }
     }
 }
 
@@ -208,7 +234,7 @@ pub async fn stop_local_agent_host(
     ))
 }
 
-fn validate_owner(owner: &str) -> Result<(), String> {
+pub(crate) fn validate_owner(owner: &str) -> Result<(), String> {
     let trimmed = owner.trim();
     if trimmed.is_empty() || trimmed.len() > 512 || trimmed.chars().any(char::is_control) {
         return Err("ownerUserId is invalid".to_string());

@@ -6,11 +6,13 @@ import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/T
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
+import { TauriWorkspaceIndexAdapter } from "../features/workspace-index/adapters/TauriWorkspaceIndexAdapter";
 import { AppShell } from "./AppShell";
 
 const authentication = new TauriAuthenticationAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
+const workspaceIndex = new TauriWorkspaceIndexAdapter();
 
 export function App() {
   return (
@@ -39,6 +41,7 @@ function ApplicationRoot() {
         {(session) => (
           <AppShell
             hostLifecycle={hostLifecycle}
+            workspaceIndex={workspaceIndex}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
           />

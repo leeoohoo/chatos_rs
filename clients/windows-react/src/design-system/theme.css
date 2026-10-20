@@ -82,6 +82,24 @@ body {
 .nav-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 9px; padding: 8px 10px; color: #28282c; background: transparent; text-align: left; }
 .nav-item--active { background: rgba(10, 132, 255, 0.13); color: #0068d6; font-weight: 580; }
 .nav-symbol { width: 18px; text-align: center; font-size: 17px; }
+.workspace-navigation { display: grid; min-height: 0; gap: 14px; overflow-y: auto; }
+.sidebar-section { display: grid; gap: 5px; }
+.sidebar-section h2 { margin: 0 10px 3px; color: var(--secondary); font-size: 10px; font-weight: 650; letter-spacing: .04em; }
+.sidebar-section__items { display: grid; gap: 2px; }
+.resource-item { display: grid; grid-template-columns: 18px minmax(0,1fr); align-items: center; gap: 9px; width: 100%; border: 0; border-radius: 9px; padding: 7px 10px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.resource-item:hover { background: rgba(120,120,128,.09); }
+.resource-item--active { color: #0068d6; background: rgba(10,132,255,.13); }
+.resource-item__icon { color: var(--accent); text-align: center; font-size: 13px; }
+.resource-item__copy { display: grid; min-width: 0; gap: 1px; }
+.resource-item__copy strong, .resource-item__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-item__copy strong { font-size: 12px; font-weight: 560; }
+.resource-item__copy small { color: var(--secondary); font-size: 10px; }
+.sidebar-loading { display: flex; align-items: center; gap: 8px; padding: 7px 10px; color: var(--secondary); font-size: 11px; }
+.mini-spinner { width: 12px; height: 12px; border: 1.5px solid rgba(10,132,255,.18); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.sidebar-empty { margin: 1px 10px 4px; color: var(--secondary); font-size: 10px; line-height: 1.45; }
+.sidebar-error { display: grid; gap: 4px; margin: 0 4px; border-radius: 9px; padding: 9px; color: var(--secondary); background: rgba(255,159,10,.09); font-size: 10px; line-height: 1.4; }
+.sidebar-error strong { color: #b85f00; font-size: 11px; }
+.sidebar-error button { width: fit-content; border: 0; padding: 2px 0; color: var(--accent); background: transparent; font-weight: 600; cursor: pointer; }
 .sidebar-status { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 9px 10px; color: var(--secondary); font-size: 12px; }
 .status-light { width: 8px; height: 8px; border-radius: 50%; background: #8e8e93; }
 .status-light--ready { background: #30d158; box-shadow: 0 0 0 4px rgba(48,209,88,.12); }

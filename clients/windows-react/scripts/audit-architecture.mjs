@@ -26,6 +26,9 @@ for (const file of sourceFiles(sourceRoot)) {
   if (!isTest && !isCompositionRoot && /(?:from|import\s*)\s*["'][^"']*\/adapters\//.test(source) && !isAdapter) {
     violations.push(`${path}: adapters may only be wired by a composition root`);
   }
+  if (!isTest && path.includes("/features/authentication/") && /access_?token|accessToken|localStorage|sessionStorage|indexedDB/i.test(source)) {
+    violations.push(`${path}: authentication tokens and browser credential storage are forbidden in React`);
+  }
 }
 
 if (violations.length > 0) {

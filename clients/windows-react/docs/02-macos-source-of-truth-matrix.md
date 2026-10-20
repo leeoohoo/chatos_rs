@@ -38,7 +38,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例、per-project lifecycle 与 Conversation Session composition factory 已提取，继续收口 UI 协调 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Preparation state/use case、Session factory 及 Connector/ViewModel 测试 | 禁止；等待完整切片验收 |
-| 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift` | Load state 与两阶段 loader 测试 | 禁止；等待项目工作区完整切片 |
+| 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
 | Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load/mutation lifecycle、bootstrap/recovery/older-page/viewport/unread/realtime await ownership、刷新合并、realtime 动作、activation session 与 Session composition factory 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case、Session factory、ViewModel 测试等 | 禁止；等待完整切片验收 |
@@ -60,6 +60,15 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 - `WorkspaceLoadState` 将 owner、account generation 与 request identity 固定为一个 typed token，新刷新、项目删除、账号切换、登出与应用退出都会使旧 token 失效；
 - 刷新 Task 在开始时冻结 Local Projects、Workspace Relations 与 Project Run 服务，各段 registry/Connector/Host await 不强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都重新验收 token；
 - `NativeProjectRunService` 的 project root 映射跟随每次已验收快照更新；UI 继续只消费 `WorkspaceResourceResolver` 输出，不直接读取 Connector/Host 状态。
+
+Windows 只读索引实现（2026-10-20）：
+
+- Tauri/Rust 中建立与 macOS 同 schema 的账号隔离 `Projects.sqlite3`，第一阶段只读取 `status = active` 的本地项目并立即返回；数据库损坏或字段无效时失败关闭，不伪装成空列表；
+- 第二阶段通过账号绑定的 Host v44 `ListConversations` 分页读取关系，并按 macOS 规则保证“叽咕狸”和“插件安装助手”两个系统联系人会话存在；
+- Host 中出现 project conversation 但本地 Registry 没有对应项目时，只保留关系记录，绝不凭远端关系创建或复活项目；
+- React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留本地项目及显式错误/重试；
+- Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
+- 当前只放行侧栏只读索引。项目创建、导入、重命名、删除、目录授权与 project context 在各自完整切片通过前仍禁止进入 React。
 
 ### 2.2 Authentication：完整调用链
 

@@ -254,7 +254,7 @@ jobs:
         run: |
           cargo fmt --manifest-path clients/windows-react/src-tauri/Cargo.toml -- --check
           cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
-          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml prepared_sidecar_completes_real_health_handshake -- --ignored
+          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml prepared_sidecar_ -- --ignored
 
       - name: Build Windows Tauri application
         run: npm --prefix clients/windows-react run tauri -- build --debug --no-bundle

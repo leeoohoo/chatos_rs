@@ -3,14 +3,22 @@ import type { AuthSession } from "../features/authentication/domain/authenticati
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
+import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
+import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 
 interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
+  workspaceIndex: WorkspaceIndexPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
 
-export function AppShell({ hostLifecycle, session, onLogout }: AppShellProps) {
+export function AppShell({
+  hostLifecycle,
+  workspaceIndex,
+  session,
+  onLogout,
+}: AppShellProps) {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
   const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
   const start = useHostLifecycleStore((state) => state.start);
@@ -27,12 +35,11 @@ export function AppShell({ hostLifecycle, session, onLogout }: AppShellProps) {
           <span className="brand-mark">C</span>
           <span>ChatOS</span>
         </div>
-        <nav className="nav-list">
-          <button className="nav-item nav-item--active" type="button">
-            <span className="nav-symbol">⌂</span>
-            工作台
-          </button>
-        </nav>
+        <WorkspaceSidebar
+          hostReady={snapshot.ready}
+          ownerUserId={session.user.id}
+          workspaceIndex={workspaceIndex}
+        />
         <div className="sidebar-status">
           <span className={`status-light status-light--${snapshot.phase}`} />
           <span>{snapshot.label}</span>

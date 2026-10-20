@@ -1,5 +1,6 @@
 mod authentication;
 mod host_lifecycle;
+mod workspace_index;
 
 use authentication::{
     login, logout, register, restore_authentication_session, send_registration_code,
@@ -10,6 +11,7 @@ use host_lifecycle::{
     HostManager,
 };
 use tauri::Manager;
+use workspace_index::{list_local_projects, refresh_workspace_relations};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +26,8 @@ pub fn run() {
             send_registration_code,
             register,
             logout,
+            list_local_projects,
+            refresh_workspace_relations,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,
