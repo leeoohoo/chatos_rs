@@ -1,6 +1,6 @@
 # macOS 源码事实矩阵
 
-> 状态：持续更新；Host lifecycle 已完成首个 Windows React 准入切片
+> 状态：持续更新；Host lifecycle、Shell 与 Authentication 已进入 Windows React
 > 分支：`3.0.9.2`
 > 事实源：`clients/macos` 当前源码与测试、`clients/local_agent_host` 当前契约
 > 用途：约束 macOS 重构与 Windows React 实现，不是界面截图说明书
@@ -46,6 +46,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle / Shell | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；v44 health 契约已由 Rust/Swift/TypeScript 共享 fixture 冻结；React/Tauri 首切片已接入 typed Port | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、Windows Tauri lifecycle adapter | Runtime/bootstrap/recovery/launch/configuration/shutdown、共享 fixture、React gate 与 Tauri tests | `macOS 分层完成，可进入 React`；仅放行 lifecycle 与 Shell，不放行业务页面 |
+| Authentication | 四阶段 Gate、登录/注册、恢复重试、注册验证码倒计时、logout/login 排序与 latest-wins 已由 ViewModel 和稳定 Core Port 隔离；Windows 已按同一契约实现 | `AuthenticationGateView.swift`、`LoginView.swift` | `AuthenticationViewModel.swift` | `AuthenticationModels.swift`、`CredentialStore.swift` | `ChatOSAuthenticationService.swift`、`ChatOSAPIClient.swift`、`KeychainCredentialStore.swift`；Windows Tauri auth adapter + Credential Manager | `AuthenticationViewModelTests.swift`、Rust DTO/URL tests、React application state tests | `macOS 分层完成，可进入 React`；Windows 首切片已实现 |
 | Pet 翻译 | 模型、历史、附件与翻译 operation identity 已提取；Host/磁盘等待不再强持有窗口 ViewModel | Pet 翻译浮窗 | `PetTranslationViewModel.swift` | `PetTranslationAgent` 请求/结果、历史记录模型 | Agent model provider、`PetTranslationHistoryStore` | Agent、历史持久化、ViewModel 生命周期测试 | 禁止；等待完整源码映射与 Port 验收 |
 | Media / Story Studio | 账号 session、模型 generation、图片/视频/Story operation identity 已固定；历史、生成、保存、导入、Agent planning/runtime、批次与编辑等待不再强持有 ViewModel | AI 图片、AI 视频、AI 故事、AI 历史 | `MediaStudioViewModel.swift`、`StoryStudioViewModel*.swift` | Media/Story generation models/service | Media service、Story project store、provider/Agent adapters | Media 25 项、Story Studio 54 项及 Story Agent 回归 | 禁止；等待完整页面映射与 Port 验收 |
 | Agent Group Chat | Team/Direct change stream 保持弱 UI 订阅；补充卡片、附件 hydration、account/communication scheduler drain 与 Run refresh 均已冻结请求上下文，存储/Agent 等待不再强持有 ViewModel | Agent 私聊、团队聊天与团队工作区 | `AgentDirectChatViewModel.swift`、`AgentGroupChatViewModel.swift` | Agent room/message/proposal/todo/run models | `SQLiteAgentGroupChatStore`、Local Agent scheduler | Codable、迁移、Store、Scheduler、UI presentation/performance tests | 禁止；等待完整页面状态与操作映射 |
@@ -59,6 +60,39 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 - `WorkspaceLoadState` 将 owner、account generation 与 request identity 固定为一个 typed token，新刷新、项目删除、账号切换、登出与应用退出都会使旧 token 失效；
 - 刷新 Task 在开始时冻结 Local Projects、Workspace Relations 与 Project Run 服务，各段 registry/Connector/Host await 不强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都重新验收 token；
 - `NativeProjectRunService` 的 project root 映射跟随每次已验收快照更新；UI 继续只消费 `WorkspaceResourceResolver` 输出，不直接读取 Connector/Host 状态。
+
+### 2.2 Authentication：完整调用链
+
+入口和分层：
+
+```text
+AuthenticationGateView / LoginView
+  → AuthenticationViewModel
+  → AuthenticationServicing
+  → ChatOSAuthenticationService
+  → ChatOSAPIClient + CredentialStoring
+  → /api/user/auth/* + platform credential storage
+```
+
+冻结的服务契约：
+
+- 恢复：读取 access token 后请求 `GET /api/user/auth/me`；仅 `401` 清除凭据并返回未登录，瞬时网络错误保留凭据并允许应用再次 active 时重试；
+- 登录：`POST /api/user/auth/login`，请求为 `username/password`，响应同时兼容 `token` 与 `access_token`；
+- 注册验证码：`POST /api/user/auth/register/send-code`，请求使用 `email/invite_code`，倒计时必须读取服务端 `resend_after_seconds`；
+- 注册：`POST /api/user/auth/register`，请求使用 `email/password/invite_code/verification_code`；
+- 用户模型固定为 `id/username/display_name/role`；客户端展示 DTO 使用 camelCase，但 Adapter 负责转换；
+- 所有请求使用 `X-Chatos-Client-Surface: local-connector-desktop`；只有 user service 的 `401` 有权使全局登录失效；`x-access-token` 可刷新现有凭据；
+- Windows 认证连接超时固定 10 秒、整次请求最长 30 秒，失败必须回到带错误的可重试状态，禁止无限 loading；
+- 密码只允许 12–128 字符，验证码严格为 6 位数字；注册错误继续使用 macOS 的固定中文映射；
+- logout 立即将业务 UI 置为 unavailable，但必须等待已发出的认证操作结束，再停止 Host、清除凭据；新 login 必须等待旧 logout 完成，迟到 login 不能恢复已退出的 UI；
+- 登录成功后才用 `session.user.id` 启动 Host；账号退出时先停止 Host，再删除 access token。
+
+Windows 平台差异：
+
+- Token 由 Tauri/Rust 持有并写入 Windows Credential Manager；React 不接触 Token，禁止 `localStorage`、IndexedDB、URL、诊断或日志保存；
+- API 基址与 macOS profile 语义一致：debug 默认 `http://127.0.0.1:9080`，release 默认 `https://gateway.jgoool.com`，测试/部署可通过 `CHATOS_API_BASE_URL` 或 `CHATOS_DEPLOYMENT_PROFILE` 覆盖；
+- React 只持有不含 Token 的 `AuthSession`，并通过 `AuthenticationPort` 调用；Tauri command 是唯一网络/凭据 Adapter；
+- 系统 Credential Manager 界面属于操作系统安全界面，不受应用自绘苹果主题约束；其余登录与注册 UI 必须沿用 macOS 双栏结构与苹果主题。
 
 ## 3. 项目会话准备：完整调用链
 

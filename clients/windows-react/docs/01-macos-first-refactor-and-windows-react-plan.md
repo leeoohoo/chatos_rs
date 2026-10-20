@@ -442,7 +442,7 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 ### 阶段 3：Windows React 技术样板
 
-当前状态：执行中。`clients/windows-react` 已建立 React 19 + TypeScript + Vite + Tauri 2 工程，首个 Host lifecycle 垂直切片已使用 typed Port/Adapter 接入。Shell 只读取显式 lifecycle snapshot；Host 未就绪或握手失败时展示可恢复状态，不以无限 loading 隐藏错误。Rust、Swift、TypeScript 已共同验证 v44 health fixture，前端类型检查/测试/构建、Rust 测试及 Tauri 无 bundle 构建均已通过。Conversation 等尚未达到矩阵准入条件的业务页面仍未创建。
+当前状态：执行中。`clients/windows-react` 已建立 React 19 + TypeScript + Vite + Tauri 2 工程，Host lifecycle、Shell 与 Authentication 三个 P0 切片均通过 typed Port/Adapter 接入。Shell 只读取显式 lifecycle snapshot；Host 未就绪或握手失败时展示可恢复状态，不以无限 loading 隐藏错误。Tauri 已打包真实 Local Agent Host sidecar，完成 v44 framed health handshake、4 MiB frame/64 MiB message 限制、有界无 Secret 诊断及应用退出前的 Host 回收。自定义窗口框架保留拖拽、缩放、最小化、最大化和关闭能力，并完成浏览器视觉回归。Authentication 复用 macOS 的恢复、登录、注册、验证码倒计时与 logout/login 排序语义；Token 仅由 Rust 持有并写入 Windows Credential Manager，登录成功后才以 `user.id` 启动 Host。Windows CI 已覆盖前端架构审计、类型检查、测试、构建、Rust 测试、真实 Host 握手和 Tauri debug executable。Conversation 等尚未达到矩阵准入条件的业务页面仍未创建。
 
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 

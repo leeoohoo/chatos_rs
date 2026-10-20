@@ -1,5 +1,10 @@
+mod authentication;
 mod host_lifecycle;
 
+use authentication::{
+    login, logout, register, restore_authentication_session, send_registration_code,
+    AuthenticationManager,
+};
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
@@ -8,9 +13,17 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let authentication =
+        AuthenticationManager::from_runtime().expect("failed to configure ChatOS authentication");
     let app = tauri::Builder::default()
+        .manage(authentication)
         .manage(HostManager::default())
         .invoke_handler(tauri::generate_handler![
+            restore_authentication_session,
+            login,
+            send_registration_code,
+            register,
+            logout,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

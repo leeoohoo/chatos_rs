@@ -1,34 +1,27 @@
 import { useEffect } from "react";
+import type { AuthSession } from "../features/authentication/domain/authentication";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
-import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
-import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
-import { WindowControls } from "../platform/window/ui/WindowControls";
+import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
 
-const hostLifecycle = new TauriHostLifecycleAdapter();
-const windowChrome = new TauriWindowChromeAdapter();
+interface AppShellProps {
+  hostLifecycle: HostLifecyclePort;
+  session: AuthSession;
+  onLogout(): Promise<void>;
+}
 
-export function AppShell() {
+export function AppShell({ hostLifecycle, session, onLogout }: AppShellProps) {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
   const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
-  const refresh = useHostLifecycleStore((state) => state.refresh);
+  const start = useHostLifecycleStore((state) => state.start);
   const retry = useHostLifecycleStore((state) => state.retry);
 
   useEffect(() => {
-    void refresh(hostLifecycle);
-  }, [refresh]);
+    void start(hostLifecycle, session.user.id);
+  }, [hostLifecycle, session.user.id, start]);
 
   return (
-    <main className="app-window">
-      <header
-        className="app-titlebar"
-        data-tauri-drag-region
-        onDoubleClick={() => void windowChrome.toggleMaximize()}
-      >
-        <WindowControls windowChrome={windowChrome} />
-        <span className="app-titlebar__title" data-tauri-drag-region>ChatOS</span>
-        <span className="app-titlebar__spacer" data-tauri-drag-region />
-      </header>
+    <>
       <aside className="sidebar" aria-label="主导航">
         <div className="brand">
           <span className="brand-mark">C</span>
@@ -44,6 +37,13 @@ export function AppShell() {
           <span className={`status-light status-light--${snapshot.phase}`} />
           <span>{snapshot.label}</span>
         </div>
+        <button className="account-button" onClick={() => void onLogout()} type="button">
+          <span className="account-avatar">{(session.user.displayName ?? session.user.username).slice(0, 1).toUpperCase()}</span>
+          <span className="account-copy">
+            <strong>{session.user.displayName ?? session.user.username}</strong>
+            <small>退出登录</small>
+          </span>
+        </button>
       </aside>
       <section className="content-surface">
         <header className="workspace-header">
@@ -59,6 +59,6 @@ export function AppShell() {
           onRetry={() => void retry(hostLifecycle)}
         />
       </section>
-    </main>
+    </>
   );
 }
