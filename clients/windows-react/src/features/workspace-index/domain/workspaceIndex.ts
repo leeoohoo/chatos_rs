@@ -47,7 +47,8 @@ export interface WorkspaceIndexSnapshot {
 export type WorkspaceSelection =
   | { kind: "workbench" }
   | { kind: "contact"; id: string }
-  | { kind: "project"; id: string };
+  | { kind: "project"; id: string }
+  | { kind: "remote"; id: string };
 
 export function resolveWorkspaceIndex(
   projects: LocalProject[],

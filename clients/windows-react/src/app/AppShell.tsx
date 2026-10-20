@@ -28,6 +28,10 @@ import type { ProjectDirectoryPort } from "../features/project-directory/ports/P
 import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
 import type { ProjectGitPort } from "../features/project-git/ports/ProjectGitPort";
 import type { ProjectRunPort } from "../features/project-run/ports/ProjectRunPort";
+import { useRemoteConnectionStore } from "../features/remote-connection/application/remoteConnectionStore";
+import type { RemoteConnectionPort } from "../features/remote-connection/ports/RemoteConnectionPort";
+import { RemoteConnectionDetailView } from "../features/remote-connection/ui/RemoteConnectionDetailView";
+import { RemoteConnectionEditorSheet } from "../features/remote-connection/ui/RemoteConnectionEditorSheet";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
@@ -42,6 +46,7 @@ interface AppShellProps {
   projectDirectory: ProjectDirectoryPort;
   projectGit: ProjectGitPort;
   projectRun: ProjectRunPort;
+  remoteConnection: RemoteConnectionPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
@@ -64,6 +69,7 @@ export function AppShell({
   projectDirectory,
   projectGit,
   projectRun,
+  remoteConnection,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
@@ -85,9 +91,16 @@ export function AppShell({
   const acceptRemovedProject = useWorkspaceIndexStore((state) => state.acceptRemovedProject);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
   const removeProjectConversation = useProjectConversationStore((state) => state.remove);
+  const remoteConnections = useRemoteConnectionStore((state) => state.connections);
+  const remoteOwnerUserId = useRemoteConnectionStore((state) => state.ownerUserId);
+  const remoteHostAvailable = useRemoteConnectionStore((state) => state.hostAvailable);
+  const remoteActiveLoadRequest = useRemoteConnectionStore((state) => state.activeLoadRequest);
+  const acceptSavedRemoteConnection = useRemoteConnectionStore((state) => state.acceptSaved);
+  const acceptDeletedRemoteConnection = useRemoteConnectionStore((state) => state.acceptDeleted);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
   const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const [remoteEditorTarget, setRemoteEditorTarget] = useState<"create" | string | null>(null);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -97,6 +110,7 @@ export function AppShell({
     setSelection({ kind: "workbench" });
     setActiveSurface("workspace");
     setShowCreateProject(false);
+    setRemoteEditorTarget(null);
     resetProjectConversations(session.user.id);
   }, [resetProjectConversations, session.user.id]);
 
@@ -111,12 +125,35 @@ export function AppShell({
     }
   }, [selection, workspaceSnapshot.contacts, workspaceSnapshot.projects]);
 
+  useEffect(() => {
+    if (selection.kind !== "remote"
+      || remoteOwnerUserId !== session.user.id
+      || !remoteHostAvailable
+      || remoteActiveLoadRequest != null
+      || remoteConnections.some((connection) => connection.id === selection.id)) return;
+    setSelection({ kind: "workbench" });
+    setRemoteEditorTarget(null);
+  }, [
+    remoteActiveLoadRequest,
+    remoteConnections,
+    remoteHostAvailable,
+    remoteOwnerUserId,
+    selection,
+    session.user.id,
+  ]);
+
   const selectedProject = selection.kind === "project"
     ? workspaceSnapshot.projects.find((project) => project.id === selection.id)
     : undefined;
   const selectedContact = selection.kind === "contact"
     ? workspaceSnapshot.contacts.find((contact) => contact.id === selection.id)
     : undefined;
+  const selectedRemoteConnection = selection.kind === "remote"
+    ? remoteConnections.find((connection) => connection.id === selection.id)
+    : undefined;
+  const editingRemoteConnection = remoteEditorTarget && remoteEditorTarget !== "create"
+    ? remoteConnections.find((connection) => connection.id === remoteEditorTarget) ?? null
+    : null;
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
   const title = activeSurface === "tool-approval"
     ? "命令审批"
@@ -124,7 +161,7 @@ export function AppShell({
       ? "运行与权限"
       : activeSurface === "access-control"
         ? "访问控制"
-      : selectedProject?.title ?? selectedContact?.title ?? "工作台";
+      : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? "工作台";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
     setActiveSurface("workspace");
@@ -140,10 +177,12 @@ export function AppShell({
         <WorkspaceSidebar
           hostReady={snapshot.ready}
           ownerUserId={session.user.id}
+          remoteConnection={remoteConnection}
           workspaceIndex={workspaceIndex}
           selection={selection}
           onSelectionChange={selectWorkspace}
           onCreateProject={() => setShowCreateProject(true)}
+          onCreateRemoteConnection={() => setRemoteEditorTarget("create")}
         />
         <div className="sidebar-settings-group">
           <p>设置</p>
@@ -222,6 +261,19 @@ export function AppShell({
             ownerUserId={session.user.id}
             port={accessControl}
           />
+        ) : selectedRemoteConnection ? (
+          <RemoteConnectionDetailView
+            connection={selectedRemoteConnection}
+            connections={remoteConnections}
+            ownerUserId={session.user.id}
+            port={remoteConnection}
+            onDeleted={(connectionId) => {
+              acceptDeletedRemoteConnection(session.user.id, connectionId);
+              setRemoteEditorTarget(null);
+              setSelection({ kind: "workbench" });
+            }}
+            onEdit={() => setRemoteEditorTarget(selectedRemoteConnection.id)}
+          />
         ) : selectedProject ? (
           <ProjectWorkspaceSurface
             directoryPort={projectDirectory}
@@ -285,6 +337,20 @@ export function AppShell({
           onCreated={(project) => {
             acceptCreatedProject(session.user.id, project);
             selectWorkspace({ kind: "project", id: project.id });
+          }}
+        />
+      )}
+      {remoteEditorTarget && (
+        <RemoteConnectionEditorSheet
+          connections={remoteConnections}
+          editingConnection={editingRemoteConnection}
+          key={remoteEditorTarget}
+          ownerUserId={session.user.id}
+          port={remoteConnection}
+          onDismiss={() => setRemoteEditorTarget(null)}
+          onSaved={(connection) => {
+            acceptSavedRemoteConnection(session.user.id, connection);
+            selectWorkspace({ kind: "remote", id: connection.id });
           }}
         />
       )}

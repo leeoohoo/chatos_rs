@@ -34,7 +34,11 @@ export class TauriRemoteConnectionAdapter implements RemoteConnectionPort {
   async create(request: CreateRemoteConnectionRequest) {
     const input = remoteConnectionInputSchema.parse(request.input);
     return remoteConnectionSchema.parse(
-      await invoke("create_remote_connection", { ownerUserId: request.ownerUserId, input }),
+      await invoke("create_remote_connection", {
+        ownerUserId: request.ownerUserId,
+        presentationId: request.presentationId,
+        input,
+      }),
     );
   }
 
