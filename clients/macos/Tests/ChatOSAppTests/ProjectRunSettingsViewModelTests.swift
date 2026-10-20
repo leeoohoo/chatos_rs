@@ -7,7 +7,11 @@ import XCTest
 final class ProjectRunSettingsViewModelTests: XCTestCase {
     func testLateLoadCannotReplaceNewerCatalog() async {
         let service = ProjectRunViewModelService(deferFirstCatalog: true)
-        let model = ProjectRunSettingsViewModel(projectID: "project", service: service)
+        let model = ProjectRunSettingsViewModel(
+            projectID: "project",
+            service: service,
+            favoritePreferences: ProjectFavoriteViewModelPreferences()
+        )
 
         let stale = Task { await model.load() }
         await service.waitForFirstCatalog()
@@ -23,7 +27,11 @@ final class ProjectRunSettingsViewModelTests: XCTestCase {
 
     func testCommittedStartWithRefreshFailureIsNotReportedAsOperationFailure() async {
         let service = ProjectRunViewModelService(failStateAfterFirstFetch: true)
-        let model = ProjectRunSettingsViewModel(projectID: "project", service: service)
+        let model = ProjectRunSettingsViewModel(
+            projectID: "project",
+            service: service,
+            favoritePreferences: ProjectFavoriteViewModelPreferences()
+        )
         await model.load()
 
         await model.start()
@@ -38,7 +46,11 @@ final class ProjectRunSettingsViewModelTests: XCTestCase {
 
     func testEnvironmentSaveDoesNotOverwriteDraftEditedDuringRequest() async throws {
         let service = ProjectRunViewModelService(suspendEnvironmentUpdate: true)
-        let model = ProjectRunSettingsViewModel(projectID: "project", service: service)
+        let model = ProjectRunSettingsViewModel(
+            projectID: "project",
+            service: service,
+            favoritePreferences: ProjectFavoriteViewModelPreferences()
+        )
         await model.load()
         model.environmentVariables = [.init(key: "PORT", value: "4000")]
 
@@ -56,7 +68,11 @@ final class ProjectRunSettingsViewModelTests: XCTestCase {
 
     func testDeactivateRejectsLateLoad() async {
         let service = ProjectRunViewModelService(deferFirstCatalog: true)
-        let model = ProjectRunSettingsViewModel(projectID: "project", service: service)
+        let model = ProjectRunSettingsViewModel(
+            projectID: "project",
+            service: service,
+            favoritePreferences: ProjectFavoriteViewModelPreferences()
+        )
 
         let stale = Task { await model.load() }
         await service.waitForFirstCatalog()
@@ -67,6 +83,38 @@ final class ProjectRunSettingsViewModelTests: XCTestCase {
         XCTAssertNil(model.catalog)
         XCTAssertFalse(model.isLoading)
         XCTAssertFalse(model.isMutating)
+    }
+
+    func testFavoriteToggleUsesProjectScopedPreferencePort() {
+        let preferences = ProjectFavoriteViewModelPreferences(ids: ["project"])
+        let model = ProjectRunSettingsViewModel(
+            projectID: "project",
+            service: ProjectRunViewModelService(),
+            favoritePreferences: preferences
+        )
+
+        XCTAssertTrue(model.isFavoriteProject)
+        model.setFavoriteProject(false)
+
+        XCTAssertFalse(model.isFavoriteProject)
+        XCTAssertEqual(preferences.favoriteProjectIDs, [])
+    }
+}
+
+@MainActor
+private final class ProjectFavoriteViewModelPreferences: ProjectFavoritePreferences {
+    private(set) var favoriteProjectIDs: Set<String>
+
+    init(ids: Set<String> = []) {
+        favoriteProjectIDs = ids
+    }
+
+    func setFavorite(_ isFavorite: Bool, projectID: String) {
+        if isFavorite {
+            favoriteProjectIDs.insert(projectID)
+        } else {
+            favoriteProjectIDs.remove(projectID)
+        }
     }
 }
 

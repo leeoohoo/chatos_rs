@@ -5,7 +5,6 @@ import SwiftUI
 struct ProjectRunSettingsView: View {
     @EnvironmentObject private var model: AppModel
     @StateObject private var viewModel: ProjectRunSettingsViewModel
-    @ObservedObject private var petPreferences: PetPreferencesStore
     @State private var projectDeletionAlert: ProjectSettingsDeletionAlert?
     @State private var isDeletingProject = false
     let projectID: String
@@ -22,8 +21,11 @@ struct ProjectRunSettingsView: View {
         self.projectID = projectID
         self.projectName = projectName
         self.rootPath = rootPath
-        self.petPreferences = petPreferences
-        _viewModel = StateObject(wrappedValue: ProjectRunSettingsViewModel(projectID: projectID, service: service))
+        _viewModel = StateObject(wrappedValue: ProjectRunSettingsViewModel(
+            projectID: projectID,
+            service: service,
+            favoritePreferences: petPreferences
+        ))
     }
 
     var body: some View {
@@ -107,8 +109,8 @@ struct ProjectRunSettingsView: View {
 
     private var favoriteBinding: Binding<Bool> {
         Binding(
-            get: { petPreferences.isFavorite(projectID: projectID) },
-            set: { petPreferences.setFavorite($0, projectID: projectID) }
+            get: { viewModel.isFavoriteProject },
+            set: { viewModel.setFavoriteProject($0) }
         )
     }
 

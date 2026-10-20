@@ -1,7 +1,8 @@
+import ChatOSCore
 import Foundation
 
 @MainActor
-final class PetPreferencesStore: ObservableObject {
+final class PetPreferencesStore: ObservableObject, ProjectFavoritePreferences {
     private enum Key {
         static let enabled = "ChatOS.pet.enabled"
         static let size = "ChatOS.pet.size"

@@ -40,15 +40,24 @@ final class ProjectRunSettingsViewModel: ObservableObject {
     @Published private(set) var notice: Notice?
     @Published private(set) var errorMessage: String?
     @Published private(set) var refreshWarning: RefreshWarning?
+    @Published private(set) var isFavoriteProject: Bool
 
     let projectID: String
     private let useCase: ProjectRunUseCase
+    private let favoriteUseCase: ProjectFavoriteUseCase
     private var lifecycle = ProjectRunLifecycleState()
     private var monitorSequence: UInt64 = 0
 
-    init(projectID: String, service: any ProjectRunServicing) {
+    init(
+        projectID: String,
+        service: any ProjectRunServicing,
+        favoritePreferences: any ProjectFavoritePreferences
+    ) {
         self.projectID = projectID
         self.useCase = ProjectRunUseCase(service: service)
+        let favoriteUseCase = ProjectFavoriteUseCase(preferences: favoritePreferences)
+        self.favoriteUseCase = favoriteUseCase
+        self.isFavoriteProject = favoriteUseCase.isFavorite(projectID: projectID)
     }
 
     var targets: [ProjectRunTarget] { catalog?.targets ?? [] }
@@ -128,6 +137,10 @@ final class ProjectRunSettingsViewModel: ObservableObject {
 
     func addEnvironmentVariable() { environmentVariables.append(.init()) }
     func removeEnvironmentVariable(id: UUID) { environmentVariables.removeAll(where: { $0.id == id }) }
+
+    func setFavoriteProject(_ isFavorite: Bool) {
+        isFavoriteProject = favoriteUseCase.setFavorite(isFavorite, projectID: projectID)
+    }
 
     func start() async {
         guard let selectedTargetID else { return }
