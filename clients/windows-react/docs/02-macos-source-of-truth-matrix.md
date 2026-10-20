@@ -277,6 +277,8 @@ sendDraft
 - 时间线的 Task Graph 可用性轻量探测由 `ConversationTaskGraphAvailabilityState` 为每个 Turn 分配独立 token；新 revision、Conversation 停用或 runtime unavailable 会取消并失效未完成探测，迟到 Host 响应不得改变入口可见性，ready 后会重试被中断且尚未形成可信缓存的探测；
 - 模型、推理等级与远程连接的 optimistic 更新共享 latest-wins mutation identity；新操作会淘汰旧操作，旧成功/失败响应不得覆盖或回滚新选择，也不得结束新操作的 loading；runtime unavailable 会统一取消并失效 mutation；
 - runtime settings snapshot load 使用独立 latest-wins identity；新的 bootstrap/recovery load、任一 optimistic mutation 或 runtime unavailable 都会失效旧 load，迟到 settings/models snapshot 不得覆盖新选择或断线后的状态；
+- runtime settings 与模型目录的并发加载，以及模型、推理等级、远程连接 mutation 已统一通过 `ConversationRuntimeSettingsUseCase` 进入 port；ViewModel 不再直接编排 `ConversationRuntimeSettingsServicing` 调用；
+- Task Graph 可用性轻量探测已复用 `MessageTaskGraphUseCase`，Conversation ViewModel 不再直接调用 Graph Host port；
 - realtime 事件经 history store 合并，不允许组件自行拼接出另一套事实；
 - 历史分页游标是 ordinal，非法游标必须报错；limit 被限制在 1–100；
 - 本地 realtime 来自 Host event hub/reconcile，不是服务端 WebSocket。
@@ -324,6 +326,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSessionActivationStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsLoadStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsMutationStateTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationAttachmentImportStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSendLifecycleStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSendUseCaseTests.swift`

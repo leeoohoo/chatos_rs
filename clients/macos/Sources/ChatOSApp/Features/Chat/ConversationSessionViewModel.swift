@@ -104,9 +104,10 @@ final class ConversationSessionViewModel: ObservableObject {
     let viewportUseCase: ConversationViewportUseCase
     let turnProcessService: (any TurnProcessServicing)?
     let messageTaskGraphService: (any MessageTaskGraphServicing)?
+    private let messageTaskGraphUseCase: MessageTaskGraphUseCase?
     private let historyUseCase: ConversationHistoryUseCase?
     let realtimeService: (any ConversationRealtimeStreaming)?
-    private let runtimeSettingsService: (any ConversationRuntimeSettingsServicing)?
+    private let runtimeSettingsUseCase: ConversationRuntimeSettingsUseCase?
     let askUserPromptUseCase: ConversationAskUserPromptUseCase?
     private var olderCursor: String?
     private var requestGeneration: Int64 = 0
@@ -197,7 +198,12 @@ final class ConversationSessionViewModel: ObservableObject {
         }
         self.turnProcessService = turnProcessService
         self.messageTaskGraphService = messageTaskGraphService
-        self.runtimeSettingsService = runtimeSettingsService
+        self.messageTaskGraphUseCase = messageTaskGraphService.map {
+            MessageTaskGraphUseCase(graphService: $0)
+        }
+        self.runtimeSettingsUseCase = runtimeSettingsService.map {
+            ConversationRuntimeSettingsUseCase(service: $0)
+        }
         self.askUserPromptUseCase = askUserPromptService.map {
             ConversationAskUserPromptUseCase(service: $0)
         }
@@ -723,7 +729,7 @@ final class ConversationSessionViewModel: ObservableObject {
 
     func resolveTaskGraphAvailability(for turn: ConversationTurn) {
         let isCandidate = turn.isTaskGraphAvailable && turn.messageTaskLookup != nil
-        guard isCandidate, let messageTaskGraphService else {
+        guard isCandidate, let messageTaskGraphUseCase else {
             let hadVisibleGraph = taskGraphAvailability[turn.id] != nil
             guard taskGraphAvailabilityRevisions[turn.id] != turn.revision
                     || hadVisibleGraph
@@ -759,9 +765,10 @@ final class ConversationSessionViewModel: ObservableObject {
         }
         taskGraphAvailabilityTasks[turn.id] = Task { [weak self] in
             do {
-                let graph = try await messageTaskGraphService.fetchGraph(
+                let graph = try await messageTaskGraphUseCase.loadGraph(
                     messageID: turn.userMessage.id,
-                    lookup: turn.resolvedMessageTaskLookup
+                    lookup: turn.resolvedMessageTaskLookup,
+                    preservingStable: nil
                 )
                 guard !Task.isCancelled,
                       let self,
@@ -851,7 +858,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func setSelectedModelID(_ modelID: String) {
-        guard let runtimeSettingsService,
+        guard let runtimeSettingsUseCase,
               availableModels.contains(where: { $0.id == modelID }),
               selectedModelID != modelID else { return }
         let previous = selectedModelID
@@ -863,7 +870,7 @@ final class ConversationSessionViewModel: ObservableObject {
             let result: Result<ConversationRuntimeSettings, Error>
             do {
                 result = .success(
-                    try await runtimeSettingsService.updateModel(
+                    try await runtimeSettingsUseCase.selectModel(
                         sessionID: sessionID,
                         modelID: modelID
                     )
@@ -894,7 +901,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func setReasoningLevel(_ level: String) {
-        guard let runtimeSettingsService,
+        guard let runtimeSettingsUseCase,
               reasoningLevels.contains(level) else { return }
         let enabled = level != "none"
         guard selectedThinkingLevel != level || reasoningEnabled != enabled else { return }
@@ -909,7 +916,7 @@ final class ConversationSessionViewModel: ObservableObject {
             let result: Result<ConversationRuntimeSettings, Error>
             do {
                 result = .success(
-                    try await runtimeSettingsService.updateReasoningLevel(
+                    try await runtimeSettingsUseCase.selectReasoningLevel(
                         sessionID: sessionID,
                         level: level,
                         enabled: enabled
@@ -934,7 +941,7 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     func setRemoteConnectionID(_ connectionID: String?) {
-        guard let runtimeSettingsService,
+        guard let runtimeSettingsUseCase,
               selectedRemoteConnectionID != connectionID else { return }
         let previous = selectedRemoteConnectionID
         let token = beginRuntimeSettingsMutation()
@@ -945,7 +952,7 @@ final class ConversationSessionViewModel: ObservableObject {
             let result: Result<ConversationRuntimeSettings, Error>
             do {
                 result = .success(
-                    try await runtimeSettingsService.updateRemoteConnection(
+                    try await runtimeSettingsUseCase.selectRemoteConnection(
                         sessionID: sessionID,
                         connectionID: connectionID
                     )
@@ -983,13 +990,12 @@ final class ConversationSessionViewModel: ObservableObject {
     }
 
     private func beginRuntimeSettingsLoad() -> ConversationRuntimeSettingsLoadRequest? {
-        guard let runtimeSettingsService else { return nil }
+        guard let runtimeSettingsUseCase else { return nil }
         let token = runtimeSettingsLoadState.begin()
         let sessionID = sessionID
         let task = Task {
-            async let settings = runtimeSettingsService.fetchSettings(sessionID: sessionID)
-            async let models = runtimeSettingsService.fetchAvailableModels()
-            return try await (settings, models)
+            let snapshot = try await runtimeSettingsUseCase.load(sessionID: sessionID)
+            return (snapshot.settings, snapshot.availableModels)
         }
         return (token, task)
     }
