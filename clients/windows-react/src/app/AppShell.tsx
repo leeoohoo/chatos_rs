@@ -9,6 +9,7 @@ export function AppShell() {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
   const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
   const refresh = useHostLifecycleStore((state) => state.refresh);
+  const retry = useHostLifecycleStore((state) => state.retry);
 
   useEffect(() => {
     void refresh(hostLifecycle);
@@ -48,7 +49,7 @@ export function AppShell() {
         <HostReadyGate
           snapshot={snapshot}
           diagnostics={diagnostics}
-          onRetry={() => void refresh(hostLifecycle)}
+          onRetry={() => void retry(hostLifecycle)}
         />
       </section>
     </main>
