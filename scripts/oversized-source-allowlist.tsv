@@ -16,7 +16,7 @@ crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move c
 mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
 clients/local_agent_host/layers/infrastructure/database/src/conversation_store_tests.rs	940	2026-12-31	Split conversation store tests by query and mutation behavior
 clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	877	2026-12-31	Extract Media Studio operation and persistence state
-clients/macos/Tests/ChatOSConnectorTests/NativePluginProcessTests.swift	862	2026-12-31	Split plugin process tests by launch and transport behavior
+clients/macos/Tests/ChatOSConnectorTests/NativePluginProcessTests.swift	864	2026-12-31	Split plugin process tests by launch and transport behavior
 clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	837	2026-12-31	Split task workspace tests by presentation section
 clients/local_agent_host/src/application/requirement_survey_tools.rs	813	2026-12-31	Extract requirement survey schemas and response mapping
 clients/local_agent_host/layers/application/src/skill_runtime.rs	807	2026-12-31	Extract skill runtime activation and resource loading paths

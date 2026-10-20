@@ -213,7 +213,9 @@ final class StoryStudioTests: XCTestCase {
         let store = StoryProjectStore(root: root)
         addTeardownBlock {
             if FileManager.default.fileExists(atPath: root.path) {
-                try FileManager.default.removeItem(at: root)
+                // A provider operation intentionally outlives the ViewModel in this test.
+                // Cleanup is best-effort because its final durable write may race teardown.
+                try? FileManager.default.removeItem(at: root)
             }
         }
         let service = StoryTestService()

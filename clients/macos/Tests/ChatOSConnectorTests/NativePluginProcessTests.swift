@@ -404,7 +404,9 @@ extension NativePluginRuntimeTests {
         #expect(permittedProfile.contains("(literal \"/dev/ptmx\")"))
         #expect(permittedProfile.contains("^/dev/ttys[0-9a-f]+$"))
         #expect(permittedProfile.contains("(allow network-outbound)"))
-        #expect(permittedProfile.contains("/Applications/Xcode.app"))
+        #expect(permittedProfile.contains(
+            NativePluginSandboxProfile.canonicalPath("/Applications/Xcode.app")
+        ))
         #expect(permittedProfile.contains("/Library/Developer/CommandLineTools"))
         let preparedCache = try #require(prepared.environment["CHATOS_PLUGIN_CACHE_DIR"])
         let canonicalPreparedCache = NativePluginSandboxProfile.canonicalPath(preparedCache)
