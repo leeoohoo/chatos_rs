@@ -60,19 +60,17 @@ private struct ConversationTimelineContentView: View {
         let _ = timelineObservationState.revision
         timeline
         .sheet(item: $selectedProcessTurn) { turn in
-            if let service = conversation.turnProcessService {
-                TurnProcessSheet(turn: turn, service: service)
+            if let viewModel = conversation.makeTurnProcessViewModel(for: turn) {
+                TurnProcessSheet(viewModel: viewModel)
             }
         }
         .sheet(item: $selectedTaskTurn) { turn in
-            if let graphService = conversation.messageTaskGraphService {
-                MessageTaskWorkspaceSheet(
-                    turn: turn,
-                    graphService: graphService,
-                    realtimeService: conversation.realtimeService,
-                    initialTaskID: requestedTaskID,
-                    initialRunID: requestedRunID
-                )
+            if let viewModel = conversation.makeMessageTaskWorkspaceViewModel(
+                for: turn,
+                initialTaskID: requestedTaskID,
+                initialRunID: requestedRunID
+            ) {
+                MessageTaskWorkspaceSheet(viewModel: viewModel)
             }
         }
     }
@@ -263,12 +261,13 @@ private struct ConversationTimelineContentView: View {
                         }
                     )
                     if let selection = expandedSelection(for: turn, reply: reply),
-                       let taskGraphService = conversation.messageTaskGraphService {
+                       let viewModel = conversation.makeTaskReplyInspectorViewModel(
+                           selection: selection
+                       ) {
                         TaskReplyInlineInspectorView(
                             selection: selection,
                             requestedSection: selection.initialSection,
-                            service: taskGraphService,
-                            realtimeService: conversation.realtimeService
+                            viewModel: viewModel
                         )
                         .padding(.leading, 30)
                         .transition(.opacity.combined(with: .move(edge: .top)))

@@ -260,6 +260,7 @@ sendDraft
 - `ConversationSendLifecycleState` 已集中发送 request identity；具体 send/recovery Task 由 ViewModel 持有，`guidanceTargetInactive` 在同一 token 内自动降级为新 Turn；
 - `ConversationAttachmentImportState` 允许同一 composer generation 内多个文件/图片并发导入；发送开始会失效并取消全部旧导入，迟到的文件读取、图片归一化结果或错误不能写入发送后形成的新草稿；
 - runtime unavailable 会立即失效并取消旧发送、恢复 composer，再通过本地 History Store 回滚 optimistic Turn；旧 Host 成功/失败响应不得覆盖恢复后的草稿、时间线或 `isSending`。
+- Conversation feature state 已成为 Turn Process、Task Workspace 与内嵌 Task Inspector 的子功能 composition owner；时间线和桌面宠物 SwiftUI View 只接收已构造的子 ViewModel，不再读取或转发 `TurnProcessServicing`、`MessageTaskGraphServicing`、`ConversationRealtimeStreaming` ports。
 
 ### 4.3 Host ready、刷新与 realtime
 

@@ -10,18 +10,11 @@ struct TaskReplyInlineInspectorView: View {
     init(
         selection: TaskReplySelection,
         requestedSection: TaskReplyInspectorSection,
-        service: any MessageTaskGraphServicing,
-        realtimeService: (any ConversationRealtimeStreaming)?
+        viewModel: TaskReplyInspectorViewModel
     ) {
         self.selection = selection
         self.requestedSection = requestedSection
-        _viewModel = StateObject(
-            wrappedValue: TaskReplyInspectorViewModel(
-                selection: selection,
-                service: service,
-                realtimeService: realtimeService
-            )
-        )
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {

@@ -102,11 +102,11 @@ final class ConversationSessionViewModel: ObservableObject {
     let historyStore: any ConversationHistoryStoring
     let sendUseCase: ConversationSendUseCase?
     let viewportUseCase: ConversationViewportUseCase
-    let turnProcessService: (any TurnProcessServicing)?
-    let messageTaskGraphService: (any MessageTaskGraphServicing)?
+    private let turnProcessService: (any TurnProcessServicing)?
+    private let messageTaskGraphService: (any MessageTaskGraphServicing)?
     private let messageTaskGraphUseCase: MessageTaskGraphUseCase?
     private let historyUseCase: ConversationHistoryUseCase?
-    let realtimeService: (any ConversationRealtimeStreaming)?
+    private let realtimeService: (any ConversationRealtimeStreaming)?
     private let runtimeSettingsUseCase: ConversationRuntimeSettingsUseCase?
     let askUserPromptUseCase: ConversationAskUserPromptUseCase?
     private var olderCursor: String?
@@ -810,6 +810,42 @@ final class ConversationSessionViewModel: ObservableObject {
         taskGraphAvailabilityState.reset()
         for turnID in activeTurnIDs {
             taskGraphAvailabilityRevisions[turnID] = nil
+        }
+    }
+
+    func makeTurnProcessViewModel(
+        for turn: ConversationTurn
+    ) -> TurnProcessViewModel? {
+        turnProcessService.map {
+            TurnProcessViewModel(turn: turn, service: $0)
+        }
+    }
+
+    func makeMessageTaskWorkspaceViewModel(
+        for turn: ConversationTurn,
+        initialTaskID: String?,
+        initialRunID: String?
+    ) -> MessageTaskWorkspaceViewModel? {
+        messageTaskGraphService.map {
+            MessageTaskWorkspaceViewModel(
+                turn: turn,
+                graphService: $0,
+                realtimeService: realtimeService,
+                initialTaskID: initialTaskID,
+                initialRunID: initialRunID
+            )
+        }
+    }
+
+    func makeTaskReplyInspectorViewModel(
+        selection: TaskReplySelection
+    ) -> TaskReplyInspectorViewModel? {
+        messageTaskGraphService.map {
+            TaskReplyInspectorViewModel(
+                selection: selection,
+                service: $0,
+                realtimeService: realtimeService
+            )
         }
     }
 

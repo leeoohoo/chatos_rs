@@ -118,8 +118,8 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
                     interactionState: interactionState,
                     translationViewModel: translationViewModel,
                     notepadViewModel: notepadViewModel,
-                    onInspectTaskReply: { [weak self] selection, service in
-                        self?.presentTaskInspector(selection: selection, service: service)
+                    onInspectTaskReply: { [weak self] viewModel in
+                        self?.presentTaskInspector(viewModel: viewModel)
                     }
                 )
             )
@@ -642,10 +642,10 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func presentTaskInspector(
-        selection: TaskReplySelection,
-        service: any MessageTaskGraphServicing
+        viewModel: TaskReplyInspectorViewModel
     ) {
         guard let model, let petWindow = window else { return }
+        let selection = viewModel.selection
         dismissTaskInspector()
         let conversationPanel = isMessageInputActive ? messageInputPanel : messagePanel
 
@@ -667,8 +667,7 @@ final class PetOverlayWindowController: NSWindowController, NSWindowDelegate {
         panel.contentView = NSHostingView(
             rootView: PetQuickChatTaskInspectorView(
                 selection: selection,
-                service: service,
-                realtimeService: model.conversationService,
+                viewModel: viewModel,
                 onClose: { [weak self] in self?.dismissTaskInspector() }
             )
             .environmentObject(model)

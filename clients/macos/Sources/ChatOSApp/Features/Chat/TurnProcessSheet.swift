@@ -6,10 +6,8 @@ struct TurnProcessSheet: View {
     @StateObject private var viewModel: TurnProcessViewModel
     @Environment(\.dismiss) private var dismiss
 
-    init(turn: ConversationTurn, service: any TurnProcessServicing) {
-        _viewModel = StateObject(
-            wrappedValue: TurnProcessViewModel(turn: turn, service: service)
-        )
+    init(viewModel: TurnProcessViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {

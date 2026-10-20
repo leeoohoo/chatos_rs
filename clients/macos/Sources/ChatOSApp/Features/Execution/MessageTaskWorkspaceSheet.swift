@@ -10,22 +10,8 @@ struct MessageTaskWorkspaceSheet: View {
     @State private var showsGraphOverview = true
     @Environment(\.dismiss) private var dismiss
 
-    init(
-        turn: ConversationTurn,
-        graphService: any MessageTaskGraphServicing,
-        realtimeService: (any ConversationRealtimeStreaming)? = nil,
-        initialTaskID: String? = nil,
-        initialRunID: String? = nil
-    ) {
-        _viewModel = StateObject(
-            wrappedValue: MessageTaskWorkspaceViewModel(
-                turn: turn,
-                graphService: graphService,
-                realtimeService: realtimeService,
-                initialTaskID: initialTaskID,
-                initialRunID: initialRunID
-            )
-        )
+    init(viewModel: MessageTaskWorkspaceViewModel) {
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {

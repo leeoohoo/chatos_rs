@@ -32,7 +32,12 @@ final class ConversationSessionFactoryTests: XCTestCase {
         XCTAssertEqual(viewModel.turns.map(\.id), [turn.id])
         XCTAssertFalse(viewModel.isLocalAgentRuntimeReady)
         XCTAssertNil(viewModel.sendUseCase)
-        XCTAssertNil(viewModel.realtimeService)
+        XCTAssertNil(viewModel.makeTurnProcessViewModel(for: turn))
+        XCTAssertNil(viewModel.makeMessageTaskWorkspaceViewModel(
+            for: turn,
+            initialTaskID: nil,
+            initialRunID: nil
+        ))
     }
 
     func testFactoryEvaluatesRuntimeReadinessForEachSession() {

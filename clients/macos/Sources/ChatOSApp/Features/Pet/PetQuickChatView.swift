@@ -7,7 +7,7 @@ struct PetQuickChatView: View {
     @ObservedObject var interactionState: PetOverlayInteractionState
     let translationViewModel: PetTranslationViewModel
     let notepadViewModel: NotepadViewModel
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    let onInspectTaskReply: (TaskReplyInspectorViewModel) -> Void
 
     var body: some View {
         let resources = model.petQuickChatResources
@@ -38,7 +38,7 @@ private struct PetQuickChatContentView: View {
     let selectedResource: PetQuickChatResource?
     let conversation: ConversationSessionViewModel?
     let onDeactivateConversation: (ConversationSessionViewModel) -> Void
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    let onInspectTaskReply: (TaskReplyInspectorViewModel) -> Void
     @Environment(\.locale) private var locale
 
     var body: some View {
@@ -290,7 +290,7 @@ private struct PetQuickChatConversationView: View {
     let onBack: () -> Void
     let onClose: () -> Void
     let onDeactivateConversation: (ConversationSessionViewModel) -> Void
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    let onInspectTaskReply: (TaskReplyInspectorViewModel) -> Void
     @Environment(\.locale) private var locale
 
     var body: some View {
@@ -373,15 +373,14 @@ private struct PetQuickChatRefreshIndicator: View {
 
 private struct PetQuickChatTimeline: View {
     let conversation: ConversationSessionViewModel
-    let onInspectTaskReply: (TaskReplySelection, any MessageTaskGraphServicing) -> Void
+    let onInspectTaskReply: (TaskReplyInspectorViewModel) -> Void
     @ObservedObject private var timelineObservationState: ConversationTimelineObservationState
     @Environment(\.locale) private var locale
 
     init(
         conversation: ConversationSessionViewModel,
         onInspectTaskReply: @escaping (
-            TaskReplySelection,
-            any MessageTaskGraphServicing
+            TaskReplyInspectorViewModel
         ) -> Void
     ) {
         self.conversation = conversation
@@ -465,8 +464,10 @@ private struct PetQuickChatTimeline: View {
                 if let taskSelection {
                     Divider()
                     Button {
-                        guard let service = conversation.messageTaskGraphService else { return }
-                        onInspectTaskReply(taskSelection, service)
+                        guard let viewModel = conversation.makeTaskReplyInspectorViewModel(
+                            selection: taskSelection
+                        ) else { return }
+                        onInspectTaskReply(viewModel)
                     } label: {
                         Label(
                             localized("查看详情与执行过程", english: "View Details and Execution"),
@@ -538,19 +539,12 @@ struct PetQuickChatTaskInspectorView: View {
 
     init(
         selection: TaskReplySelection,
-        service: any MessageTaskGraphServicing,
-        realtimeService: (any ConversationRealtimeStreaming)?,
+        viewModel: TaskReplyInspectorViewModel,
         onClose: @escaping () -> Void
     ) {
         self.selection = selection
         self.onClose = onClose
-        _viewModel = StateObject(
-            wrappedValue: TaskReplyInspectorViewModel(
-                selection: selection,
-                service: service,
-                realtimeService: realtimeService
-            )
-        )
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {

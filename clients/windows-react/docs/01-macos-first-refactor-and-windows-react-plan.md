@@ -403,7 +403,7 @@ Conversation 执行过程读取已使用 Host `process` 事件载荷投影：SQL
 
 Local Agent 控制面 bootstrap 已新增绑定 owner、account generation、Host lifecycle generation 与 request ID 的 `LocalAgentControlPlaneBootstrapState`。本地快照恢复和 authenticated gateway bootstrap 共用无 AppModel 所有权的服务配置函数；API/Connector/各业务服务 await 只持有冻结 adapter，并在每一段配置后重新验收当前生命周期，只有最终同步提交会短暂恢复 AppModel。
 
-Conversation Session 的服务组合已收口到 App 层 `ConversationSessionFactory`；AppModel 不再逐项构造 ViewModel 依赖，只负责 session 缓存、LRU 淘汰与激活策略，并在每次创建时传入当前账号对应的 runtime ready 状态。
+Conversation Session 的服务组合已收口到 App 层 `ConversationSessionFactory`；AppModel 不再逐项构造 ViewModel 依赖，只负责 session 缓存、LRU 淘汰与激活策略，并在每次创建时传入当前账号对应的 runtime ready 状态。Conversation feature state 进一步统一构造 Turn Process、Task Workspace 与内嵌 Task Inspector 子 ViewModel，时间线和桌面宠物 SwiftUI View 不再读取或转发底层 ports。
 
 Conversation 的模型、推理等级与远程连接 mutation Task 已冻结 session/请求参数，Host await 期间不再强持有 ViewModel；底层忽略取消时仍可释放会话状态，返回后继续以 mutation token 验收。
 
@@ -550,7 +550,7 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. [已完成] 建立 Host v44 health fixture 与 Rust/Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备用例/per-project lifecycle、Conversation Session factory 与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、runtime settings/Turn Process 用例、子功能 composition、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 realtime orchestration 与跨平台 fixture 尚未完成。
 7. [进行中] 已创建 Tauri 2 + React 19 工程骨架并接入 Host lifecycle；继续完善 sidecar 打包、诊断和恢复，Conversation 在准入前不实现。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
