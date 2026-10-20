@@ -4,6 +4,7 @@ import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
 import type { AccessControlPort } from "../features/access-control/ports/AccessControlPort";
 import { AccessControlView } from "../features/access-control/ui/AccessControlView";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
+import { ContactConversationView } from "../features/contact-conversation/ui/ContactConversationView";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
 import type { ConversationAttachmentPort } from "../features/conversation-attachments/ports/ConversationAttachmentPort";
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
@@ -252,14 +253,17 @@ export function AppShell({
             )}
           />
         ) : selectedContact ? (
-          <div className="project-state">
-            <div className="project-state__card">
-              <div className="project-state__icon" aria-hidden="true">◇</div>
-              <h2>联系人会话已建立</h2>
-              <p>联系人入口来自 macOS 工作区关系。Conversation 时间线尚未通过 React 源码准入。</p>
-              {selectedContact.conversationId && <code className="conversation-identity">{selectedContact.conversationId}</code>}
-            </div>
-          </div>
+          <ContactConversationView
+            askUserPort={askUser}
+            attachmentPort={conversationAttachments}
+            composerPort={conversationComposer}
+            contact={selectedContact}
+            historyPort={conversationHistory}
+            ownerUserId={session.user.id}
+            realtimePort={conversationRealtime}
+            runInspectorPort={runInspector}
+            runtimeSettingsPort={conversationRuntimeSettings}
+          />
         ) : (
           <HostReadyGate
             snapshot={snapshot}

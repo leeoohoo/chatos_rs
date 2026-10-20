@@ -43,7 +43,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目运行设置 | macOS View/Feature/Application/Port 已完整分层；Windows analyzer、typed process、实例状态、偏好/Secret、Removal、Favorite 与 React 项目设置闭环已完成 | `ProjectRunSettingsView.swift`、`ProjectRunInstancesSection.swift`、`ProjectRunEnvironmentSection.swift` | `ProjectRunSettingsViewModel.swift`、`ProjectRunLifecycleState.swift`、`AppModelResources.swift`；Windows `projectRunStore` | Project Run/Removal/Favorite models 与 use cases；Windows `features/project-run` Domain/Port | macOS Run/Registry/Pet adapters；Windows `project_run`、`project_removal`、`project_favorite` + workspace resolver + Tauri Adapter | macOS Run 15、Removal 15、Favorite 8；Windows Rust Project Run 13、Removal 1、Favorite 1；React Domain/Store/UI/跨页测试 | `macOS 分层完成，可进入 React`；Windows 完整纵向切片已实现 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
-| Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环和 runtime controls 已接入 | `ConversationTimelineView.swift`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；Windows 核心发送闭环已实现 |
+| Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环、runtime controls 与联系人入口已接入 | `ConversationTimelineView.swift`、`ContactConversationView`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 与 React 联系人组合测试等 | `macOS 分层完成，可进入 React`；Windows 项目与联系人核心发送闭环已实现 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Windows 已接入基础详情、过程、Run、重试、停止、恢复和 polling | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector、共享 fixture、React latest-wins 与 Rust projection 测试 | `macOS 分层完成，可进入 React`；Windows 主检查器纵向切片已实现 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取；Windows 已按同一语义接入安全投影、表单、提交、取消和失败对账 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift`；Windows `features/ask-user` Domain/Port/Store | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands；Windows Tauri typed commands | Ask User Core、Connector、ViewModel、React domain/store/UI 与 Rust projection/validation 测试 | `macOS 分层完成，可进入 React`；Windows 完整纵向切片已实现 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取并通过干净快照验收；Windows 已接入 durable queue/单次决策、全局浮层与原决定恢复 journal | `GlobalApprovalOverlayHost`、完整审批页；Windows `GlobalToolApprovalOverlay` | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型；Windows `toolApprovalStore` | Local Connector approval models/ports；Windows `features/tool-approval` Domain/Port | platform tool worker、approval handler、Local Connector approval service；Windows Tauri typed commands/journal | Core use case/state、worker、approval handler/agent、state store、ViewModel tests；Windows projection/store/UI/journal tests | `macOS 分层完成，可进入 React`；Windows durable decision/recovery 已实现，真实 platform worker 完成前不发布对应执行能力 |
@@ -71,6 +71,13 @@ Windows 只读索引实现（2026-10-20）：
 - React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留本地项目及显式错误/重试；
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
 - 侧栏索引仍以本地 Registry 为权威；项目创建与显式文件夹授权已在独立切片通过后开放。导入、重命名、删除及其他 project context 变更仍须等待各自完整切片。
+
+### 2.1.1 联系人会话入口
+
+- macOS `ContactConversationView` 不建立第二套消息服务：选中联系人后从 `WorkspaceResourceResolver` 取得公开 Conversation ID，激活同一 `ConversationSessionViewModel` 并展示 `ConversationTimelineView`；切换资源时停用旧 session；
+- 联系人没有公开 Conversation 时只展示“还没有公开会话”空状态，不从 UI 发明 Conversation。Workspace Index 已按 Host 真值确保“叽咕狸”和“插件安装助手”两个系统联系人及其会话存在；
+- “插件安装助手”唯一的入口差异是时间线上方的隔离提示，明确 MCP、npm 包或本地 Plugin 文件夹安装能力只在该对话可用；能力本身仍由 Conversation capability snapshot 与 Host policy 决定，React 不因联系人 ID 私自发布工具；
+- Windows 新增薄 `ContactConversationView` 组合层，直接复用已准入的 History、Composer、Attachment、Realtime、Runtime Settings、Run Inspector 与 Ask User Ports；AppShell 不再显示占位卡。3 项入口测试覆盖普通联系人复用、安装助手提示和无会话空态；React 全量为 47 个测试文件、188 项通过。
 
 ### 2.2 项目目录只读树、文件预览与搜索
 
@@ -1038,10 +1045,10 @@ Windows React 已完成对应独立切片：
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
-| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh/search/read/mutation、项目创建语义与 Windows workspace 路径边界已映射；Windows 目录树、原生文件夹授权、本地项目创建、预览/搜索和文件写操作已完成 | 目录树、项目创建/授权、预览/搜索、编辑、新建与删除已进入 React；Git 与项目设置禁止 |
+| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh/search/read/mutation、项目创建、Git 与运行设置语义及 Windows workspace 路径边界已映射；Windows 完整项目工作面已完成 | 目录、创建/授权、预览/搜索、编辑、新建/删除、Git 与项目设置均已进入 React |
 | 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
-| 03 | 项目设置 | macOS Application/Port 分层完成；Windows analyzer、typed process、Job Object/process group、bounded log/state long-poll、偏好/系统凭据 Secret、Removal 与 Favorite 已完成 | 原生准入门禁完成；允许按 macOS 页面结构建立 Apple 主题 React UI |
-| 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
+| 03 | 项目设置 | macOS Application/Port 分层完成；Windows analyzer、typed process、Job Object/process group、bounded log/state long-poll、偏好/系统凭据 Secret、Removal、Favorite 与 Apple 主题 React UI 已完成 | 已进入 React |
+| 04 | 联系人聊天 | macOS 直接复用 Conversation session/timeline、空态与插件安装助手隔离提示已映射；Windows 薄组合层已完成 | 已进入 React；不创建第二套会话协议 |
 | 05 | 应用 | 未映射 | 禁止 |
 | 06 | AI 图片 | 源码映射中（generation/session 生命周期已收口） | 禁止 |
 | 07 | AI 视频 | 源码映射中（progress/保存/取消生命周期已收口） | 禁止 |
@@ -1058,7 +1065,7 @@ Windows React 已完成对应独立切片：
 | 18 | 需求调研 | 未映射 | 禁止 |
 | 19 | 本地终端 | 未映射 | 禁止 |
 | 20 | Notebook | 未映射 | 禁止 |
-| 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows owner/project/workspace、Git 进程树、输出/超时、路径成员、Secret 安全投影、typed Port/Store lifecycle 与 Apple 风格工作面已完成 | 已进入 React；项目设置仍独立禁止 |
+| 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows owner/project/workspace、Git 进程树、输出/超时、路径成员、Secret 安全投影、typed Port/Store lifecycle 与 Apple 风格工作面已完成 | 已进入 React |
 | 22 | 设置 / 通用 | 未映射 | 禁止 |
 | 23 | 设置 / 微信 | 未映射 | 禁止 |
 | 24 | 设置 / 宠物 | 未映射 | 禁止 |
@@ -1088,14 +1095,15 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 10. [已完成] 按 macOS 契约实现命令审批三态策略、模型/推理设置、风险确认、pending 决定和审计历史页；未准入的 Windows 审批 Agent 明确降级 Human。
 11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
 12. [已完成] 映射第 31 页访问控制/沙箱策略；Windows 当前仅进程树控制得到执行链路证明，因此策略只读，文件/网络隔离明确显示缺失，审批复用第 29 页唯一真值。
-13. [部分完成] 第 01 页项目工作面、目录树、预览/搜索和文件写操作已按 workspace grant、规范化相对路径、5,000 项上限及异步 lifecycle 进入 React；Git 与项目设置仍未提前开放。
+13. [已完成] 第 01 页项目工作面、目录树、预览/搜索、文件写操作、Git 与项目设置已按 workspace grant、规范化相对路径、typed process 与异步 lifecycle 进入 React。
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
 15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
 16. [已完成] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 macOS Core mutation use case；Windows Tauri 已实现 owner/project/canonical path、symlink/reparse 拒绝、原子写入、内容 revision 冲突、create-new 和删除复验。React Port/Store 已冻结 mutation identity 与请求参数，拒绝文件/项目切换后的迟到写回，并以 Apple 风格编辑、新建和删除确认交互区分副作用失败与 committed-without-refresh；Git 与项目设置继续独立实施。
 17. [已完成] 项目 Git 的 snapshot/diff/mutation 行为、进程与路径安全边界已完成源码映射，多步 mutation orchestration 已进入 macOS Core use case。Windows Tauri 已完成 owner/project/workspace/repository 双重边界、snapshot path 成员复验、无通用参数的 typed commands、有界并发输出、process group/Job Object 超时回收、remote Secret 净化与安全保留、committed-without-refresh 投影；React Port/Adapter、Store identity、Apple 风格工作面、8,000 行 diff 和打开项目文件闭环均已完成。
-18. [已完成] 第 03 页项目运行设置已完成 catalog/state/environment、analyze/default target/environment mutation、实例 start/stop/delete 与 change stream 的源码映射；macOS Core Use Case/Lifecycle 和 ViewModel request identity 已收口，Windows typed process、Secret、Removal 与 Favorite Adapter 已通过原生准入，可以进入 React。
+18. [已完成] 第 03 页项目运行设置已完成 catalog/state/environment、analyze/default target/environment mutation、实例 start/stop/delete 与 change stream 的源码映射；macOS Core Use Case/Lifecycle 和 ViewModel request identity 已收口，Windows typed process、Secret、Removal、Favorite、React Feature/Store 与 Apple 主题 UI 已形成闭环。
 19. [已完成] 项目删除已从 `AppModel` 的 Registry 直连提取为 owner/project/revision-scoped Port 与 Use Case；删除 receipt 冻结 account generation，账号切换后的迟到完成不得清理新账号展示，本机目录永不删除。Core 3 项与 Native 项目服务 12 项通过。
 20. [已完成] 宠物快捷访问已从项目设置 View 对 `PetPreferencesStore` 的直连提取为窄 Port、Application Use Case 和 Feature ViewModel 状态；明确冻结当前设备级、非账号级但与当前项目列表取交集的产品语义。Core、Store 与 ViewModel 8 项定向测试通过，第 03 页 macOS 分层达到 Windows 原生 Adapter 实施准入。
-21. [已完成] Windows Project Settings 原生门禁已完成：owner/project/workspace-scoped analyzer、typed invocation、Job Object/process group、512 KiB 日志、100 条退出实例、start/stop/delete、账号/应用/项目/root teardown、bounded long-poll、原子偏好、系统凭据 Secret、日志脱敏、revision-scoped Registry removal 与 device-wide favorite 投影均进入原生测试；下一步建立 React Feature/UI。
+21. [已完成] Windows Project Settings 原生与 React 门禁已完成：owner/project/workspace-scoped analyzer、typed invocation、Job Object/process group、512 KiB 日志、100 条退出实例、start/stop/delete、账号/应用/项目/root teardown、bounded long-poll、原子偏好、系统凭据 Secret、日志脱敏、revision-scoped Registry removal、device-wide favorite 投影、React request identity 与完整 UI 均进入测试。
+22. [已完成] 第 04 页联系人聊天按 macOS 直接复用已准入 Conversation surface；普通联系人、插件安装助手能力隔离提示及无公开会话空态已完成 React 映射，不新增协议或 Host 权限。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

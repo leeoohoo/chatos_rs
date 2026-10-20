@@ -472,6 +472,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows React 项目设置闭环）：已按 macOS `ProjectRunSettingsView`、Instances、Environment 与 `ProjectRunSettingsViewModel` 接入独立 Domain schema、typed Port/Tauri Adapter、Zustand lifecycle 和 Apple 风格项目设置页。React 只提交 opaque target/toolchain ID；运行状态通过最长 30 秒 long-poll 更新，owner/project/generation/request identity 拒绝切项目和离页后的迟到写回，mutation 互斥且失败后读取原生真值并保留原始错误。环境编辑只取得 `key + hasValue`，已有 Secret 默认以 `value: null` 保留，用户明确输入替换值时才将明文交给原生层，保存期间新草稿不会被旧结果覆盖。页面按 macOS 顺序提供宠物快捷访问、预检、目标与启动、实例与日志、工具链、环境变量、配置预览和项目移除；移除成功后同步 Workspace Index、清理该项目 Conversation cache 并返回工作台，本机目录始终保留。React 全量 46 个测试文件、185 项、TypeScript、production build 与架构审计通过，项目设置已进入 React。
 
+状态补充（2026-10-21，Windows React 联系人聊天入口）：已按 macOS `ContactConversationView` 将联系人直接组合到既有 Conversation History/Composer/Attachment/Realtime/Runtime Settings/Run Inspector/Ask User 闭环，不新建联系人专属协议。无公开 Conversation 时保持 macOS 空态；`plugin-installer` 仅增加“安装能力只在此对话可用”的隔离提示，真实能力仍服从 Host snapshot 与 policy。AppShell 已移除联系人占位卡，3 项入口测试通过，React 全量为 47 个测试文件、188 项。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
