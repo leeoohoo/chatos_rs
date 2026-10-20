@@ -84,6 +84,7 @@ pub struct ProjectGitCommit {
 pub struct ProjectGitRemote {
     name: String,
     url: String,
+    url_is_redacted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -411,12 +412,12 @@ pub async fn save_project_git_remote(
     project_id: String,
     original_name: Option<String>,
     name: String,
-    url: String,
+    url: Option<String>,
 ) -> Result<ProjectGitMutationResult, String> {
     let context = resolve_git_project(&app, owner_user_id, project_id).await?;
     let current = required_snapshot(&context).await?;
     let name = validated_remote_name(&current.repository, name).await?;
-    let url = normalized_remote_url(url)?;
+    let url = url.map(normalized_remote_url).transpose()?;
     if let Some(original_name) = original_name {
         let original_name = validated_remote_name(&current.repository, original_name).await?;
         if !current
@@ -443,16 +444,19 @@ pub async fn save_project_git_remote(
             )
             .await?;
         }
-        run_git(
-            &["remote".into(), "set-url".into(), name, url],
-            &current.repository.root,
-            &[0],
-            DEFAULT_GIT_TIMEOUT,
-            MAXIMUM_GIT_OUTPUT_BYTES,
-            "无法更新 Git 远端地址。",
-        )
-        .await?;
+        if let Some(url) = url {
+            run_git(
+                &["remote".into(), "set-url".into(), name, url],
+                &current.repository.root,
+                &[0],
+                DEFAULT_GIT_TIMEOUT,
+                MAXIMUM_GIT_OUTPUT_BYTES,
+                "无法更新 Git 远端地址。",
+            )
+            .await?;
+        }
     } else {
+        let url = url.ok_or_else(invalid_remote)?;
         run_git(
             &["remote".into(), "add".into(), name, url],
             &current.repository.root,
@@ -855,9 +859,11 @@ async fn load_remotes(repository: &GitRepositoryContext) -> Result<Vec<ProjectGi
         } else {
             String::new()
         };
+        let (url, url_is_redacted) = sanitize_remote_url(&url);
         remotes.push(ProjectGitRemote {
             name: name.to_owned(),
-            url: sanitize_remote_url(&url),
+            url,
+            url_is_redacted,
         });
     }
     Ok(remotes)
@@ -1165,12 +1171,12 @@ fn valid_object_id(value: &str) -> bool {
     (7..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn sanitize_remote_url(value: &str) -> String {
+fn sanitize_remote_url(value: &str) -> (String, bool) {
     if value.is_empty() {
-        return String::new();
+        return (String::new(), false);
     }
     if value.len() > MAXIMUM_REMOTE_URL_BYTES || value.chars().any(char::is_control) {
-        return "[远端地址已隐藏]".into();
+        return ("[远端地址已隐藏]".into(), true);
     }
     let without_suffix = value
         .split_once(['?', '#'])
@@ -1178,7 +1184,7 @@ fn sanitize_remote_url(value: &str) -> String {
         .unwrap_or(value);
     if let Some((scheme, remainder)) = without_suffix.split_once("://") {
         if scheme.eq_ignore_ascii_case("file") {
-            return "[本地远端地址已隐藏]".into();
+            return ("[本地远端地址已隐藏]".into(), true);
         }
         let authority_end = remainder.find('/').unwrap_or(remainder.len());
         let authority = &remainder[..authority_end];
@@ -1186,14 +1192,16 @@ fn sanitize_remote_url(value: &str) -> String {
             .rsplit_once('@')
             .map(|(_, host)| host)
             .unwrap_or(authority);
-        return format!("{scheme}://{host}{}", &remainder[authority_end..]);
+        let sanitized = format!("{scheme}://{host}{}", &remainder[authority_end..]);
+        let was_redacted = sanitized != value;
+        return (sanitized, was_redacted);
     }
     if let Some((userinfo, location)) = without_suffix.split_once('@') {
         if let Some((user, _)) = userinfo.split_once(':') {
             if !user.is_empty() {
-                return format!("{user}@{location}");
+                return (format!("{user}@{location}"), true);
             }
-            return location.to_owned();
+            return (location.to_owned(), true);
         }
     }
     if Path::new(without_suffix).is_absolute()
@@ -1203,9 +1211,9 @@ fn sanitize_remote_url(value: &str) -> String {
             .get(1)
             .is_some_and(|value| *value == b':')
     {
-        return "[本地远端地址已隐藏]".into();
+        return ("[本地远端地址已隐藏]".into(), true);
     }
-    without_suffix.to_owned()
+    (without_suffix.to_owned(), without_suffix != value)
 }
 
 async fn run_git(
@@ -1520,6 +1528,7 @@ mod tests {
             snapshot.remotes[0].url,
             "https://example.com/team/project.git"
         );
+        assert!(snapshot.remotes[0].url_is_redacted);
         assert!(!serde_json::to_string(&snapshot).unwrap().contains("secret"));
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert!(!serialized.contains(directory.path().to_string_lossy().as_ref()));
@@ -1613,27 +1622,27 @@ mod tests {
     fn redacts_remote_credentials_query_and_fragment() {
         assert_eq!(
             sanitize_remote_url("https://user:password@example.com/team/repo.git?token=x#part"),
-            "https://example.com/team/repo.git"
+            ("https://example.com/team/repo.git".into(), true)
         );
         assert_eq!(
             sanitize_remote_url("user:password@example.com:team/repo.git"),
-            "user@example.com:team/repo.git"
+            ("user@example.com:team/repo.git".into(), true)
         );
         assert_eq!(
             sanitize_remote_url("git@example.com:team/repo.git"),
-            "git@example.com:team/repo.git"
+            ("git@example.com:team/repo.git".into(), false)
         );
         assert_eq!(
             sanitize_remote_url("ssh://user:password@example.com/team/repo.git?token=x"),
-            "ssh://example.com/team/repo.git"
+            ("ssh://example.com/team/repo.git".into(), true)
         );
         assert_eq!(
             sanitize_remote_url("file:///Users/person/secret/repo.git"),
-            "[本地远端地址已隐藏]"
+            ("[本地远端地址已隐藏]".into(), true)
         );
         assert_eq!(
             sanitize_remote_url("/Users/person/secret/repo.git"),
-            "[本地远端地址已隐藏]"
+            ("[本地远端地址已隐藏]".into(), true)
         );
     }
 

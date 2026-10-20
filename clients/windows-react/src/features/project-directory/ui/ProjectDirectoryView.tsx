@@ -12,10 +12,14 @@ import {
 import type { ProjectDirectoryPort } from "../ports/ProjectDirectoryPort";
 
 export function ProjectDirectoryView({
+  openFileRequest,
+  onOpenFileRequestHandled,
   ownerUserId,
   projectId,
   port,
 }: {
+  openFileRequest?: { id: number; path: string } | null;
+  onOpenFileRequestHandled?(): void;
   ownerUserId: string;
   projectId: string;
   port: ProjectDirectoryPort;
@@ -27,8 +31,23 @@ export function ProjectDirectoryView({
   const [deleteEntry, setDeleteEntry] = useState<ProjectFileEntry | null>(null);
 
   useEffect(() => {
-    void state.activate(port, ownerUserId, projectId);
-  }, [ownerUserId, port, projectId]); // Store actions are stable; project identity owns activation.
+    let active = true;
+    void (async () => {
+      await useProjectDirectoryStore.getState().activate(port, ownerUserId, projectId);
+      if (!active || !openFileRequest) return;
+      const path = openFileRequest.path;
+      await useProjectDirectoryStore.getState().openFile(port, {
+        name: fileNameFromPath(path),
+        path,
+        isDirectory: false,
+        isWritable: false,
+        size: null,
+        modifiedAtUnixMs: null,
+      });
+      if (active) onOpenFileRequestHandled?.();
+    })();
+    return () => { active = false; };
+  }, [openFileRequest?.id, ownerUserId, port, projectId]); // Store actions are stable; project identity owns activation.
 
   useEffect(() => () => useProjectDirectoryStore.getState().reset(), [ownerUserId, projectId]);
 

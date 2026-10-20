@@ -25,6 +25,7 @@ import type { ProjectCreationPort } from "../features/project-creation/ports/Pro
 import { CreateProjectSheet } from "../features/project-creation/ui/CreateProjectSheet";
 import type { ProjectDirectoryPort } from "../features/project-directory/ports/ProjectDirectoryPort";
 import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
+import type { ProjectGitPort } from "../features/project-git/ports/ProjectGitPort";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
@@ -37,6 +38,7 @@ interface AppShellProps {
   projectConversation: ProjectConversationPort;
   projectCreation: ProjectCreationPort;
   projectDirectory: ProjectDirectoryPort;
+  projectGit: ProjectGitPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
@@ -57,6 +59,7 @@ export function AppShell({
   projectConversation,
   projectCreation,
   projectDirectory,
+  projectGit,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
@@ -216,6 +219,7 @@ export function AppShell({
         ) : selectedProject ? (
           <ProjectWorkspaceSurface
             directoryPort={projectDirectory}
+            gitPort={projectGit}
             ownerUserId={session.user.id}
             projectId={selectedProject.id}
             messages={(

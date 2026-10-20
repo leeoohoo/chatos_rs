@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProjectDirectoryStore } from "../application/projectDirectoryStore";
+import { useProjectGitStore } from "../../project-git/application/projectGitStore";
 import type { ProjectDirectoryListing } from "../domain/projectDirectory";
 import type { ProjectDirectoryPort } from "../ports/ProjectDirectoryPort";
+import { stubProjectGitPort } from "../../../test/projectGitFixture";
 import { ProjectDirectoryView } from "./ProjectDirectoryView";
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
 
@@ -102,13 +104,17 @@ describe("ProjectDirectoryView", () => {
 });
 
 describe("ProjectWorkspaceSurface", () => {
-  beforeEach(() => useProjectDirectoryStore.getState().reset());
+  beforeEach(() => {
+    useProjectDirectoryStore.getState().reset();
+    useProjectGitStore.getState().reset();
+  });
   afterEach(cleanup);
 
   it("defaults to macOS messages and exposes the admitted directory tab", async () => {
     render(
       <ProjectWorkspaceSurface
         directoryPort={stubPort()}
+        gitPort={stubProjectGitPort()}
         messages={<div>Conversation surface</div>}
         ownerUserId="owner-1"
         projectId="project-1"
@@ -118,6 +124,28 @@ describe("ProjectWorkspaceSurface", () => {
     expect(screen.getByRole("button", { name: "项目设置" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "项目目录" }));
     expect(await screen.findByRole("treeitem", { name: /Sources/ })).toBeInTheDocument();
+  });
+
+  it("opens a Git diff then returns to the matching project file", async () => {
+    const directoryPort = stubPort();
+    render(
+      <ProjectWorkspaceSurface
+        directoryPort={directoryPort}
+        gitPort={stubProjectGitPort()}
+        messages={<div>Conversation surface</div>}
+        ownerUserId="owner-1"
+        projectId="project-1"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Git" }));
+    fireEvent.click(await screen.findByRole("button", { name: "README.md 暂存区差异" }));
+    fireEvent.click(await screen.findByRole("button", { name: "打开文件" }));
+    expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
+    expect(directoryPort.readFile).toHaveBeenCalledWith({
+      ownerUserId: "owner-1",
+      projectId: "project-1",
+      path: "README.md",
+    });
   });
 });
 

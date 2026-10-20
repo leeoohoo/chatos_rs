@@ -11,6 +11,7 @@ import { TauriConversationRealtimeAdapter } from "../features/conversation-realt
 import { TauriConversationRuntimeSettingsAdapter } from "../features/conversation-runtime-settings/adapters/TauriConversationRuntimeSettingsAdapter";
 import { TauriRunInspectorAdapter } from "../features/run-inspector/adapters/TauriRunInspectorAdapter";
 import { TauriProjectDirectoryAdapter } from "../features/project-directory/adapters/TauriProjectDirectoryAdapter";
+import { TauriProjectGitAdapter } from "../features/project-git/adapters/TauriProjectGitAdapter";
 import { TauriProjectCreationAdapter } from "../features/project-creation/adapters/TauriProjectCreationAdapter";
 import { TauriSystemPermissionsAdapter } from "../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter";
 import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/TauriToolApprovalAdapter";
@@ -36,6 +37,7 @@ const conversationRealtime = new TauriConversationRealtimeAdapter();
 const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter();
 const runInspector = new TauriRunInspectorAdapter();
 const projectDirectory = new TauriProjectDirectoryAdapter();
+const projectGit = new TauriProjectGitAdapter();
 const projectCreation = new TauriProjectCreationAdapter();
 const systemPermissions = new TauriSystemPermissionsAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
@@ -72,6 +74,7 @@ function ApplicationRoot() {
             projectConversation={projectConversation}
             projectCreation={projectCreation}
             projectDirectory={projectDirectory}
+            projectGit={projectGit}
             conversationHistory={conversationHistory}
             conversationComposer={conversationComposer}
             conversationAttachments={conversationAttachments}

@@ -468,6 +468,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，Windows 项目 Git 原生边界）：已新增无通用参数入口的 typed Tauri Git commands，覆盖 snapshot/diff/init、stage/unstage、commit、branch/merge、remote、`pull --ff-only` 与 push。每次入口均从 owner-scoped active Project Registry 和 Connector workspace grant 解析 canonical project/workspace，repository root 不得越界；path mutation/diff 必须命中刚读取 snapshot 的对应 staged/worktree 状态。WebView DTO 不包含 repository root、absolute path、raw stderr 或带凭据/本地绝对路径的 remote URL。Git stdout/stderr 并发有界 drain，diff 上限 4 MiB、其余 16 MiB；普通命令 120 秒、网络命令 15 分钟，Unix process group 与 Windows Job Object 会在超时及主进程退出后回收整个进程树。mutation 后 snapshot 失败以显式 committed-without-refresh 返回。8 项新增原生测试及 Windows Rust 全量 106 项通过，2 项 sidecar 环境测试忽略，Clippy 通过。下一切片接入 React Port/Store lifecycle 和 Apple 风格 Git 工作面，完成前入口继续关闭。
 
+状态补充（2026-10-20，Windows React 项目 Git 闭环）：已按 macOS `ProjectGitViewModel`、Workbench、Change List、History、Diff 与 branch/remote sheets 接入 Domain schema、typed Port/Tauri Adapter、Zustand lifecycle 和 Apple 风格工作面。load/diff/mutation 使用独立 identity，mutation 淘汰旧 load/diff 且互斥；切项目和离开页面拒绝迟到写回，失败恢复最新 snapshot 但保留原始操作错误，committed-without-refresh 显式提示，提交期间新输入不会被旧提交清空。UI 提供 init、暂存/取消暂存、提交、branch switch/create/merge、remote add/edit/remove、`pull --ff-only`、push、ahead/behind、最多 80 条 history 与最多 8,000 行语义 diff，并能从 diff 按相对路径切回文件。remote URL 的脱敏标记允许仅改名时由 Rust 保留原始 Secret，不会把凭据带回 WebView。当前验收为 Windows Rust 106 项通过、2 项 sidecar 环境测试忽略，React 43 个文件 170 项通过，TypeScript、production build、架构审计与 Clippy 通过。项目 Git 已进入 React；项目设置仍等待独立 macOS 分层准入。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
