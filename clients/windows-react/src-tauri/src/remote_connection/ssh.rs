@@ -20,7 +20,8 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    fs as tokio_fs,
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     process::Command,
     sync::{watch, Mutex, Notify},
     time::{interval, timeout, Instant, MissedTickBehavior},
@@ -47,6 +48,22 @@ pub(super) type ResetFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub(super) enum SshProcessProgress {
     VerificationRequired(String),
     Completed(ProcessOutcome),
+}
+
+#[derive(Debug)]
+pub(super) enum SshProcessInput {
+    None,
+    File {
+        path: PathBuf,
+        maximum_bytes: u64,
+        expected_bytes: u64,
+    },
+}
+
+#[derive(Debug)]
+pub(super) enum SshProcessOutput {
+    Capture { maximum_bytes: usize },
+    File { path: PathBuf, maximum_bytes: u64 },
 }
 
 pub(super) trait RemoteConnectionTester: Send + Sync {
@@ -107,7 +124,10 @@ impl NativeOpenSshTester {
                 verification_code,
                 self.timeout,
                 INTERACTIVE_SESSION_TIMEOUT,
-                MAXIMUM_STDOUT_BYTES,
+                SshProcessInput::None,
+                SshProcessOutput::Capture {
+                    maximum_bytes: MAXIMUM_STDOUT_BYTES,
+                },
             )
             .await?
         {
@@ -128,7 +148,8 @@ impl NativeOpenSshTester {
         verification_code: Option<String>,
         request_timeout: Duration,
         process_lifetime: Duration,
-        maximum_stdout_bytes: usize,
+        input: SshProcessInput,
+        output: SshProcessOutput,
     ) -> Result<SshProcessProgress, String> {
         validate_material(&connection)?;
         let verification_code = normalize_verification_code(verification_code)?;
@@ -155,7 +176,8 @@ impl NativeOpenSshTester {
                     connection,
                     remote_command,
                     process_lifetime,
-                    maximum_stdout_bytes,
+                    input,
+                    output,
                 )
                 .await?;
             (session, None)
@@ -182,7 +204,8 @@ impl NativeOpenSshTester {
         connection: SshConnectionMaterial,
         remote_command: String,
         process_timeout: Duration,
-        maximum_stdout_bytes: usize,
+        input: SshProcessInput,
+        output: SshProcessOutput,
     ) -> Result<Arc<ActiveSshSession>, String> {
         let prepared = Arc::new(PreparedSshSession::create(&self.runtime_root, &connection)?);
         let executable = ssh_executable()?;
@@ -260,7 +283,8 @@ impl NativeOpenSshTester {
                 &prepared.prompt_log,
                 cancellation,
                 process_timeout,
-                maximum_stdout_bytes,
+                input,
+                output,
             )
             .await;
             *task_session.completion.lock().await = Some(result);
@@ -523,10 +547,48 @@ impl Drop for PreparedSshSession {
 pub(super) struct ProcessOutcome {
     pub(super) exit_code: i32,
     pub(super) stdout: Vec<u8>,
+    pub(super) stdout_bytes: u64,
     pub(super) stderr: Vec<u8>,
     pub(super) prompts: String,
     pub(super) timed_out: bool,
     pub(super) output_truncated: bool,
+    pub(super) output_file: Option<ProcessOutputFile>,
+}
+
+impl ProcessOutcome {
+    pub(super) fn take_output_file(&mut self) -> Option<PathBuf> {
+        self.output_file.take().map(ProcessOutputFile::into_path)
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct ProcessOutputFile {
+    path: PathBuf,
+    created: Arc<AtomicBool>,
+    retained: bool,
+}
+
+impl ProcessOutputFile {
+    pub(super) fn new(path: PathBuf, created: Arc<AtomicBool>) -> Self {
+        Self {
+            path,
+            created,
+            retained: false,
+        }
+    }
+
+    fn into_path(mut self) -> PathBuf {
+        self.retained = true;
+        self.path.clone()
+    }
+}
+
+impl Drop for ProcessOutputFile {
+    fn drop(&mut self) {
+        if !self.retained && self.created.load(Ordering::SeqCst) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
 }
 
 async fn run_isolated_process(
@@ -536,16 +598,29 @@ async fn run_isolated_process(
     prompt_log: &Path,
     mut cancellation: watch::Receiver<bool>,
     duration: Duration,
-    maximum_stdout_bytes: usize,
+    input: SshProcessInput,
+    output: SshProcessOutput,
 ) -> Result<ProcessOutcome, String> {
     let working_directory = prompt_log.parent().ok_or_else(runtime_error)?;
+    let has_input = !matches!(input, SshProcessInput::None);
+    let output_created = Arc::new(AtomicBool::new(false));
+    let output_file = match &output {
+        SshProcessOutput::File { path, .. } => {
+            Some(ProcessOutputFile::new(path.clone(), output_created.clone()))
+        }
+        SshProcessOutput::Capture { .. } => None,
+    };
     let mut command = Command::new(executable);
     command
         .args(arguments)
         .env_clear()
         .envs(environment.iter().cloned())
         .current_dir(working_directory)
-        .stdin(Stdio::null())
+        .stdin(if has_input {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(false);
@@ -569,12 +644,29 @@ async fn run_isolated_process(
     })?;
     let stdout = child.stdout.take().ok_or_else(runtime_error)?;
     let stderr = child.stderr.take().ok_or_else(runtime_error)?;
+    let input_task = match input {
+        SshProcessInput::None => None,
+        SshProcessInput::File {
+            path,
+            maximum_bytes,
+            expected_bytes,
+        } => {
+            let stdin = child.stdin.take().ok_or_else(runtime_error)?;
+            Some(tokio::spawn(write_bounded_file_to_pipe(
+                path,
+                stdin,
+                maximum_bytes,
+                expected_bytes,
+            )))
+        }
+    };
     let stdout_exceeded = Arc::new(AtomicBool::new(false));
     let stderr_exceeded = Arc::new(AtomicBool::new(false));
-    let stdout_task = tokio::spawn(read_bounded_pipe(
+    let stdout_task = tokio::spawn(read_process_output(
         stdout,
-        maximum_stdout_bytes,
+        output,
         stdout_exceeded.clone(),
+        output_created,
     ));
     let stderr_task = tokio::spawn(read_bounded_pipe(
         stderr,
@@ -608,21 +700,117 @@ async fn run_isolated_process(
     // ProxyJump and AskPass descendants can retain stdout/stderr after ssh exits.
     // Closing the job/process group here guarantees bounded drain completion.
     let _ = termination.terminate(true);
-    let stdout = join_pipe(stdout_task).await?;
+    let stdout = join_output(stdout_task).await?;
     let stderr = join_pipe(stderr_task).await?;
+    let input_result = match input_task {
+        Some(task) => Some(join_input(task).await),
+        None => None,
+    };
     let prompts = read_bounded_text(prompt_log, MAXIMUM_PROMPT_BYTES);
     if cancelled {
         return Err("SSH 连接测试已取消。".into());
     }
+    if status.success() && input_result.is_some_and(|result| result.is_err()) {
+        return Err("无法完整读取已选择的本机文件。".into());
+    }
     Ok(ProcessOutcome {
         exit_code: status.code().unwrap_or(-1),
-        stdout,
+        stdout: stdout.bytes,
+        stdout_bytes: stdout.count,
         stderr,
         prompts,
         timed_out,
         output_truncated: stdout_exceeded.load(Ordering::SeqCst)
             || stderr_exceeded.load(Ordering::SeqCst),
+        output_file,
     })
+}
+
+struct CapturedOutput {
+    bytes: Vec<u8>,
+    count: u64,
+}
+
+async fn read_process_output(
+    reader: impl AsyncRead + Unpin,
+    output: SshProcessOutput,
+    exceeded: Arc<AtomicBool>,
+    output_created: Arc<AtomicBool>,
+) -> std::io::Result<CapturedOutput> {
+    match output {
+        SshProcessOutput::Capture { maximum_bytes } => {
+            let bytes = read_bounded_pipe(reader, maximum_bytes, exceeded).await?;
+            let count = bytes.len() as u64;
+            Ok(CapturedOutput { bytes, count })
+        }
+        SshProcessOutput::File {
+            path,
+            maximum_bytes,
+        } => {
+            let mut file = tokio_fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .await?;
+            output_created.store(true, Ordering::SeqCst);
+            let count = copy_bounded(reader, &mut file, maximum_bytes, exceeded).await?;
+            file.flush().await?;
+            file.sync_all().await?;
+            Ok(CapturedOutput {
+                bytes: Vec::new(),
+                count,
+            })
+        }
+    }
+}
+
+async fn write_bounded_file_to_pipe(
+    path: PathBuf,
+    mut writer: impl AsyncWrite + Unpin,
+    maximum_bytes: u64,
+    expected_bytes: u64,
+) -> std::io::Result<()> {
+    let metadata = tokio_fs::symlink_metadata(&path).await?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != expected_bytes
+    {
+        return Err(std::io::Error::other("selected file changed"));
+    }
+    if metadata.len() > maximum_bytes {
+        return Err(std::io::Error::other("selected file too large"));
+    }
+    let file = tokio_fs::File::open(path).await?;
+    let mut limited = file.take(maximum_bytes.saturating_add(1));
+    let count = tokio::io::copy(&mut limited, &mut writer).await?;
+    writer.shutdown().await?;
+    if count > maximum_bytes || count != expected_bytes {
+        return Err(std::io::Error::other("selected file changed"));
+    }
+    Ok(())
+}
+
+async fn copy_bounded(
+    mut reader: impl AsyncRead + Unpin,
+    mut writer: impl AsyncWrite + Unpin,
+    maximum_bytes: u64,
+    exceeded: Arc<AtomicBool>,
+) -> std::io::Result<u64> {
+    let mut count = 0_u64;
+    let mut buffer = [0_u8; 64 * 1_024];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            return Ok(count);
+        }
+        let next = count.saturating_add(read as u64);
+        if next > maximum_bytes {
+            exceeded.store(true, Ordering::SeqCst);
+        }
+        if count < maximum_bytes {
+            let retained = read.min((maximum_bytes - count) as usize);
+            writer.write_all(&buffer[..retained]).await?;
+        }
+        count = next;
+    }
 }
 
 async fn wait_after_termination<F>(
@@ -650,6 +838,30 @@ async fn join_pipe(
 ) -> Result<Vec<u8>, String> {
     match timeout(TERMINATION_GRACE_PERIOD, &mut task).await {
         Ok(Ok(Ok(bytes))) => Ok(bytes),
+        Ok(_) => Err(runtime_error()),
+        Err(_) => {
+            task.abort();
+            Err(runtime_error())
+        }
+    }
+}
+
+async fn join_output(
+    mut task: tokio::task::JoinHandle<std::io::Result<CapturedOutput>>,
+) -> Result<CapturedOutput, String> {
+    match timeout(Duration::from_secs(10), &mut task).await {
+        Ok(Ok(Ok(output))) => Ok(output),
+        Ok(_) => Err(runtime_error()),
+        Err(_) => {
+            task.abort();
+            Err(runtime_error())
+        }
+    }
+}
+
+async fn join_input(mut task: tokio::task::JoinHandle<std::io::Result<()>>) -> Result<(), String> {
+    match timeout(Duration::from_secs(10), &mut task).await {
+        Ok(Ok(Ok(()))) => Ok(()),
         Ok(_) => Err(runtime_error()),
         Err(_) => {
             task.abort();
@@ -1150,14 +1362,14 @@ fn reject_reparse_point(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+pub(super) fn is_reparse_point(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
     metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(not(windows))]
-fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+pub(super) fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
     false
 }
 
@@ -1510,10 +1722,12 @@ mod tests {
                     *completion_session.completion.lock().await = Some(Ok(ProcessOutcome {
                         exit_code: 0,
                         stdout: format!("{SUCCESS_MARKER} host").into_bytes(),
+                        stdout_bytes: SUCCESS_MARKER.len() as u64 + 5,
                         stderr: Vec::new(),
                         prompts: "MFA verification code:\n".into(),
                         timed_out: false,
                         output_truncated: false,
+                        output_file: None,
                     }));
                     completion_session.changed.notify_waiters();
                     return;
@@ -1583,7 +1797,10 @@ mod tests {
                 Some("654321".into()),
                 Duration::from_secs(1),
                 Duration::from_secs(1),
-                MAXIMUM_STDOUT_BYTES,
+                SshProcessInput::None,
+                SshProcessOutput::Capture {
+                    maximum_bytes: MAXIMUM_STDOUT_BYTES,
+                },
             )
             .await
             .unwrap_err();
@@ -1698,13 +1915,110 @@ mod tests {
             &prompt_log,
             cancellation,
             Duration::from_millis(50),
-            MAXIMUM_STDOUT_BYTES,
+            SshProcessInput::None,
+            SshProcessOutput::Capture {
+                maximum_bytes: MAXIMUM_STDOUT_BYTES,
+            },
         )
         .await
         .unwrap();
         assert!(outcome.timed_out);
         tokio::time::sleep(Duration::from_millis(1_200)).await;
         assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_runtime_streams_a_bounded_file_through_stdin() {
+        let directory = tempfile::tempdir().unwrap();
+        let prompt_log = directory.path().join("prompts.log");
+        write_private_file(&prompt_log, &[]).unwrap();
+        let input = directory.path().join("input.bin");
+        let bytes = vec![0x5a; 2 * 1_024 * 1_024];
+        fs::write(&input, &bytes).unwrap();
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let outcome = run_isolated_process(
+            Path::new("/bin/cat"),
+            &[],
+            &inherited_ssh_environment(),
+            &prompt_log,
+            cancellation,
+            Duration::from_secs(5),
+            SshProcessInput::File {
+                path: input,
+                maximum_bytes: 3 * 1_024 * 1_024,
+                expected_bytes: bytes.len() as u64,
+            },
+            SshProcessOutput::Capture {
+                maximum_bytes: 3 * 1_024 * 1_024,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.stdout, bytes);
+        assert!(!outcome.output_truncated);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unclaimed_streamed_output_is_removed_on_outcome_drop() {
+        let directory = tempfile::tempdir().unwrap();
+        let prompt_log = directory.path().join("prompts.log");
+        write_private_file(&prompt_log, &[]).unwrap();
+        let output = directory.path().join("download.tmp");
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let outcome = run_isolated_process(
+            Path::new("/usr/bin/printf"),
+            &[OsString::from("payload")],
+            &inherited_ssh_environment(),
+            &prompt_log,
+            cancellation,
+            Duration::from_secs(5),
+            SshProcessInput::None,
+            SshProcessOutput::File {
+                path: output.clone(),
+                maximum_bytes: 1_024,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), b"payload");
+        drop(outcome);
+        assert!(!output.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_create_new_never_removes_an_existing_download_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let prompt_log = directory.path().join("prompts.log");
+        write_private_file(&prompt_log, &[]).unwrap();
+        let output = directory.path().join("download.tmp");
+        fs::write(&output, b"existing").unwrap();
+        let (_cancel, cancellation) = watch::channel(false);
+
+        let result = run_isolated_process(
+            Path::new("/usr/bin/printf"),
+            &[OsString::from("replacement")],
+            &inherited_ssh_environment(),
+            &prompt_log,
+            cancellation,
+            Duration::from_secs(5),
+            SshProcessInput::None,
+            SshProcessOutput::File {
+                path: output.clone(),
+                maximum_bytes: 1_024,
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(output).unwrap(), b"existing");
     }
 
     #[test]

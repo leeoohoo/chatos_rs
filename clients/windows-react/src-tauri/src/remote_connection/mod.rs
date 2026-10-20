@@ -12,10 +12,12 @@ use chatos_local_agent_protocol::{
 use credentials::{PlatformRemoteCredentialVault, RemoteCredentialVault};
 #[cfg(test)]
 use files::DisabledRemoteFileExecutor;
-use files::RemoteFileExecutor;
 pub use files::{
-    create_remote_directory, delete_remote_entry, list_remote_directory, rename_remote_entry,
+    create_remote_directory, delete_remote_entry, discard_remote_file_selections,
+    download_remote_file, list_remote_directory, pick_remote_download_destination,
+    pick_remote_upload_file, rename_remote_entry, upload_remote_file,
 };
+use files::{RemoteFileExecutor, RemoteFileSelectionStore};
 pub use models::{
     PresentedRemoteConnection, PresentedRemoteConnectionTestResult, RemoteConnectionInput,
 };
@@ -83,6 +85,7 @@ pub struct RemoteConnectionManager {
     route_provider: Arc<dyn RemoteConnectorRouteProvider>,
     tester: Arc<dyn RemoteConnectionTester>,
     file_executor: Arc<dyn RemoteFileExecutor>,
+    file_selections: RemoteFileSelectionStore,
 }
 
 impl RemoteConnectionManager {
@@ -98,6 +101,7 @@ impl RemoteConnectionManager {
             }),
             tester: runtime.clone(),
             file_executor: runtime,
+            file_selections: RemoteFileSelectionStore::default(),
         }
     }
 
@@ -113,6 +117,7 @@ impl RemoteConnectionManager {
             route_provider,
             tester,
             file_executor: Arc::new(DisabledRemoteFileExecutor),
+            file_selections: RemoteFileSelectionStore::default(),
         }
     }
 
@@ -168,7 +173,7 @@ impl RemoteConnectionManager {
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
-        self.tester.reset().await;
+        self.reset().await;
         validate_owner(owner_user_id)?;
         let prepared = self.spec(client, owner_user_id, None, &input).await?;
         let credentials = RemoteCredentialBundle::default().applying(
@@ -228,7 +233,7 @@ impl RemoteConnectionManager {
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
-        self.tester.reset().await;
+        self.reset().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -300,7 +305,7 @@ impl RemoteConnectionManager {
         expected_version: u64,
     ) -> Result<String, String> {
         let _mutation = self.mutation.lock().await;
-        self.tester.reset().await;
+        self.reset().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -517,6 +522,7 @@ impl RemoteConnectionManager {
     }
 
     pub(crate) async fn reset(&self) {
+        self.file_selections.reset();
         self.tester.reset().await;
     }
 }
