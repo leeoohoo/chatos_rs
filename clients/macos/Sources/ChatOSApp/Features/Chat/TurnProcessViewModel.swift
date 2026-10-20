@@ -8,28 +8,62 @@ final class TurnProcessViewModel: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     let turn: ConversationTurn
-    private let service: any TurnProcessServicing
+    private let useCase: TurnProcessUseCase
+    private var lifecycleState = TurnProcessLifecycleState()
+    private var loadTask: Task<Void, Never>?
 
     init(turn: ConversationTurn, service: any TurnProcessServicing) {
         self.turn = turn
-        self.service = service
+        self.useCase = TurnProcessUseCase(service: service)
     }
 
     func load() {
         guard !isLoading else { return }
+        loadTask?.cancel()
+        let token = lifecycleState.begin(
+            sessionID: turn.sessionID,
+            turnID: turn.id
+        )
+        let useCase = useCase
         isLoading = true
         errorMessage = nil
 
-        Task {
+        loadTask = Task { [weak self] in
+            let result: Result<[TurnProcessNode], Error>
             do {
-                nodes = try await service.fetchProcessNodes(
-                    sessionID: turn.sessionID,
-                    turnID: turn.id
-                )
+                result = .success(try await useCase.load(
+                    sessionID: token.sessionID,
+                    turnID: token.turnID
+                ))
             } catch {
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            isLoading = false
+
+            guard !Task.isCancelled,
+                  let self,
+                  self.lifecycleState.finish(token) else {
+                return
+            }
+
+            switch result {
+            case let .success(nodes):
+                self.nodes = nodes
+            case let .failure(error):
+                self.errorMessage = error.localizedDescription
+            }
+            self.isLoading = false
+            self.loadTask = nil
         }
+    }
+
+    func stop() {
+        loadTask?.cancel()
+        loadTask = nil
+        lifecycleState.reset()
+        isLoading = false
+    }
+
+    deinit {
+        loadTask?.cancel()
     }
 }

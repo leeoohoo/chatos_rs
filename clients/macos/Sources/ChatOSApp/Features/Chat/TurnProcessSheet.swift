@@ -44,7 +44,8 @@ struct TurnProcessSheet: View {
         }
         .frame(minWidth: 680, minHeight: 560)
         .environment(\.locale, model.interfaceLocale)
-        .task { viewModel.load() }
+        .onAppear(perform: viewModel.load)
+        .onDisappear(perform: viewModel.stop)
     }
 
     private var processTimeline: some View {
