@@ -103,13 +103,12 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         let session = workspaceLifecycleState.start()
         isLoading = true
         errorMessage = nil
+        let request = beginWorkspaceGraphRefresh(workspaceSession: session)
         initialLoadTask = Task { [weak self] in
-            guard let self else { return }
-            await self.refreshWorkspaceState(
-                refreshInspector: false,
-                workspaceSession: session
-            )
+            let result = await Self.fetchWorkspaceGraph(request)
             guard !Task.isCancelled,
+                  let self,
+                  self.applyWorkspaceGraphResult(result, request: request),
                   self.workspaceLifecycleState.accepts(session) else { return }
             self.startRealtime(workspaceSession: session)
             self.startPollingIfNeeded(workspaceSession: session)
@@ -123,12 +122,14 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         refreshTask?.cancel()
         errorMessage = nil
         resetEmptyGraphRetryBudgetIfNeeded()
+        let request = beginWorkspaceGraphRefresh(workspaceSession: session)
         refreshTask = Task { [weak self] in
-            guard let self else { return }
-            await self.refreshWorkspaceState(
-                refreshInspector: true,
-                workspaceSession: session
-            )
+            let result = await Self.fetchWorkspaceGraph(request)
+            guard !Task.isCancelled,
+                  let self,
+                  self.applyWorkspaceGraphResult(result, request: request),
+                  self.workspaceLifecycleState.accepts(session) else { return }
+            await self.refreshSelectedInspectorState()
             guard !Task.isCancelled,
                   self.workspaceLifecycleState.accepts(session) else { return }
             self.startPollingIfNeeded(workspaceSession: session)

@@ -2,6 +2,69 @@ import ChatOSCore
 import Foundation
 
 extension MessageTaskWorkspaceViewModel {
+    struct WorkspaceGraphRefreshRequest: Sendable {
+        let generation: Int
+        let graphUseCase: MessageTaskGraphUseCase
+        let messageID: String
+        let lookup: MessageTaskLookup
+        let stableGraph: MessageTaskGraphSnapshot?
+        let pollingSession: MessageTaskGraphPollingSession?
+        let workspaceSession: MessageTaskWorkspaceSession?
+    }
+
+    func beginWorkspaceGraphRefresh(
+        pollingSession: MessageTaskGraphPollingSession? = nil,
+        workspaceSession: MessageTaskWorkspaceSession? = nil
+    ) -> WorkspaceGraphRefreshRequest {
+        workspaceRefreshGeneration += 1
+        return WorkspaceGraphRefreshRequest(
+            generation: workspaceRefreshGeneration,
+            graphUseCase: graphUseCase,
+            messageID: turn.userMessage.id,
+            lookup: baseLookup,
+            stableGraph: graph,
+            pollingSession: pollingSession,
+            workspaceSession: workspaceSession
+        )
+    }
+
+    nonisolated static func fetchWorkspaceGraph(
+        _ request: WorkspaceGraphRefreshRequest
+    ) async -> Result<MessageTaskGraphSnapshot, Error> {
+        do {
+            return .success(try await request.graphUseCase.loadGraph(
+                messageID: request.messageID,
+                lookup: request.lookup,
+                preservingStable: request.stableGraph
+            ))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    @discardableResult
+    func applyWorkspaceGraphResult(
+        _ result: Result<MessageTaskGraphSnapshot, Error>,
+        request: WorkspaceGraphRefreshRequest
+    ) -> Bool {
+        guard request.generation == workspaceRefreshGeneration,
+              acceptsWorkspaceSession(request.workspaceSession),
+              request.pollingSession.map(graphPollingState.accepts) ?? true else { return false }
+        switch result {
+        case let .success(refreshedGraph):
+            applyGraph(refreshedGraph)
+            if errorMessage != nil {
+                errorMessage = nil
+            }
+        case let .failure(error):
+            let nextErrorMessage = error.localizedDescription
+            if errorMessage != nextErrorMessage {
+                errorMessage = nextErrorMessage
+            }
+        }
+        return true
+    }
+
     func refreshWorkspaceState(
         refreshInspector: Bool,
         pollingSession: MessageTaskGraphPollingSession? = nil,
@@ -9,31 +72,12 @@ extension MessageTaskWorkspaceViewModel {
     ) async {
         guard acceptsWorkspaceSession(workspaceSession),
               pollingSession.map(graphPollingState.accepts) ?? true else { return }
-        workspaceRefreshGeneration += 1
-        let refreshGeneration = workspaceRefreshGeneration
-
-        do {
-            let refreshedGraph = try await graphUseCase.loadGraph(
-                messageID: turn.userMessage.id,
-                lookup: baseLookup,
-                preservingStable: graph
-            )
-            guard refreshGeneration == workspaceRefreshGeneration,
-                  acceptsWorkspaceSession(workspaceSession),
-                  pollingSession.map(graphPollingState.accepts) ?? true else { return }
-            applyGraph(refreshedGraph)
-            if errorMessage != nil {
-                errorMessage = nil
-            }
-        } catch {
-            guard refreshGeneration == workspaceRefreshGeneration,
-                  acceptsWorkspaceSession(workspaceSession),
-                  pollingSession.map(graphPollingState.accepts) ?? true else { return }
-            let nextErrorMessage = error.localizedDescription
-            if errorMessage != nextErrorMessage {
-                errorMessage = nextErrorMessage
-            }
-        }
+        let request = beginWorkspaceGraphRefresh(
+            pollingSession: pollingSession,
+            workspaceSession: workspaceSession
+        )
+        let result = await Self.fetchWorkspaceGraph(request)
+        guard applyWorkspaceGraphResult(result, request: request) else { return }
 
         if refreshInspector,
            acceptsWorkspaceSession(workspaceSession),

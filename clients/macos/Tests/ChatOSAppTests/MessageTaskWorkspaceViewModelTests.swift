@@ -213,6 +213,22 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertNil(weakViewModel)
     }
 
+    func testDelayedInitialGraphRequestDoesNotRetainWorkspaceViewModel() async throws {
+        let service = DelayedPollingMessageTaskGraphServiceStub()
+        var viewModel: MessageTaskWorkspaceViewModel? = makeViewModel(service: service)
+        weak let weakViewModel = viewModel
+
+        viewModel?.load()
+        try await waitUntil { await service.hasDelayedGraphRequest() }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await service.resumeGraphRequest()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
