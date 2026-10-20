@@ -1,9 +1,12 @@
-use crate::attachment_tool_worker::attachment_read_tool_schema;
 use crate::authentication::{
     model_credential_environment_variable, AuthenticationManager, GatewayAgentCapability,
     GatewayModelConfig,
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
+use crate::{
+    attachment_tool_worker::attachment_read_tool_schema,
+    terminal_tool_worker::terminal_tool_schemas,
+};
 use chatos_local_agent_protocol::{
     GetCapabilityPolicySnapshotCommand, GetLatestCapabilityPolicySnapshotCommand, HostCommand,
     HostResult, ListLatestModelConfigSnapshotsCommand, LocalCapabilityPolicySnapshot,
@@ -20,7 +23,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-attachment-v2";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-terminal-v3";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -171,7 +174,7 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
     else {
         return false;
     };
-    if main.owner_user_id != owner_user_id || main.profile_key != MAIN_CHAT_PROFILE {
+    if !valid_main_chat_snapshot(&main, owner_user_id) {
         return false;
     }
     for profile_key in [TASK_EXECUTION_PROFILE, TASK_POLICY_PROFILE] {
@@ -184,11 +187,59 @@ async fn persisted_capabilities_are_complete(host: &mut ManagedHost, owner_user_
             }),
         )
         .await;
-        if !matches!(result, Ok(HostResult::CapabilityPolicySnapshot { .. })) {
+        let Ok(HostResult::CapabilityPolicySnapshot { snapshot }) = result else {
+            return false;
+        };
+        let valid = match profile_key {
+            TASK_EXECUTION_PROFILE => valid_task_execution_snapshot(&snapshot, owner_user_id),
+            TASK_POLICY_PROFILE => valid_task_policy_snapshot(&snapshot, owner_user_id),
+            _ => false,
+        };
+        if !valid {
             return false;
         }
     }
     true
+}
+
+fn valid_main_chat_snapshot(snapshot: &LocalCapabilityPolicySnapshot, owner_user_id: &str) -> bool {
+    snapshot.owner_user_id == owner_user_id
+        && snapshot.profile_key == MAIN_CHAT_PROFILE
+        && snapshot.tools == vec![attachment_read_tool_schema()]
+}
+
+fn valid_task_execution_snapshot(
+    snapshot: &LocalCapabilityPolicySnapshot,
+    owner_user_id: &str,
+) -> bool {
+    let mut expected_tools = vec![attachment_read_tool_schema()];
+    expected_tools.extend(terminal_tool_schemas());
+    snapshot.owner_user_id == owner_user_id
+        && snapshot.profile_key == TASK_EXECUTION_PROFILE
+        && snapshot.tools == expected_tools
+}
+
+fn valid_task_policy_snapshot(
+    snapshot: &LocalCapabilityPolicySnapshot,
+    owner_user_id: &str,
+) -> bool {
+    if snapshot.owner_user_id != owner_user_id
+        || snapshot.profile_key != TASK_POLICY_PROFILE
+        || !snapshot.tools.is_empty()
+    {
+        return false;
+    }
+    snapshot
+        .instructions
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .and_then(|value| {
+            value
+                .get("enabled_builtin_kinds")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+        })
+        .is_some_and(|values| values == vec![json!("TerminalController")])
 }
 
 async fn refresh_from_gateway(
@@ -542,7 +593,7 @@ async fn publish_capabilities(
     let task_policy = json!({
         "max_iterations": MAX_TASK_ITERATIONS,
         "allowed_model_config_ids": task_enabled_refs,
-        "enabled_builtin_kinds": [],
+        "enabled_builtin_kinds": ["TerminalController"],
         "external_mcp_config_ids": [],
         "plugin_components": [],
         "plugin_release_snapshots": []
@@ -563,7 +614,11 @@ async fn publish_capabilities(
             capability_policy_revision: revision.clone(),
             instructions: Some(strip_skill_frontmatter(TASK_EXECUTION_INSTRUCTIONS)),
             prefixed_input_items: Vec::new(),
-            tools: Vec::new(),
+            tools: {
+                let mut tools = vec![attachment_read_tool_schema()];
+                tools.extend(terminal_tool_schemas());
+                tools
+            },
         },
         LocalCapabilityPolicySnapshot {
             owner_user_id: owner_user_id.to_owned(),
@@ -690,5 +745,46 @@ mod tests {
             option.thinking_levels,
             ["low", "medium", "high", "xhigh", "max"]
         );
+    }
+
+    #[test]
+    fn offline_restore_rejects_the_old_attachment_only_execution_snapshot() {
+        let owner = "owner-1";
+        let snapshot = LocalCapabilityPolicySnapshot {
+            owner_user_id: owner.into(),
+            profile_key: TASK_EXECUTION_PROFILE.into(),
+            capability_policy_revision: "old-revision".into(),
+            instructions: Some("instructions".into()),
+            prefixed_input_items: Vec::new(),
+            tools: vec![attachment_read_tool_schema()],
+        };
+        assert!(!valid_task_execution_snapshot(&snapshot, owner));
+    }
+
+    #[test]
+    fn current_terminal_snapshots_pass_offline_completeness_checks() {
+        let owner = "owner-1";
+        let mut tools = vec![attachment_read_tool_schema()];
+        tools.extend(terminal_tool_schemas());
+        let execution = LocalCapabilityPolicySnapshot {
+            owner_user_id: owner.into(),
+            profile_key: TASK_EXECUTION_PROFILE.into(),
+            capability_policy_revision: "current-revision".into(),
+            instructions: Some("instructions".into()),
+            prefixed_input_items: Vec::new(),
+            tools,
+        };
+        let policy = LocalCapabilityPolicySnapshot {
+            owner_user_id: owner.into(),
+            profile_key: TASK_POLICY_PROFILE.into(),
+            capability_policy_revision: "current-revision".into(),
+            instructions: Some(
+                json!({"enabled_builtin_kinds": ["TerminalController"]}).to_string(),
+            ),
+            prefixed_input_items: Vec::new(),
+            tools: Vec::new(),
+        };
+        assert!(valid_task_execution_snapshot(&execution, owner));
+        assert!(valid_task_policy_snapshot(&policy, owner));
     }
 }

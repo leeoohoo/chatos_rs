@@ -4,7 +4,7 @@ pub(crate) mod transport;
 
 use crate::{
     attachment_tool_worker::AttachmentToolWorker, authentication::AuthenticationManager,
-    control_plane,
+    connector_state, control_plane, terminal_tool_worker::TerminalToolWorker,
 };
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
@@ -134,6 +134,23 @@ impl HostManager {
         }
         Ok(options.clone())
     }
+
+    pub(crate) async fn is_running_for(&self, owner_user_id: &str) -> bool {
+        let mut process = self.process.lock().await;
+        let running = process.as_mut().is_some_and(|host| {
+            host.owner_user_id == owner_user_id
+                && host
+                    .child
+                    .try_wait()
+                    .ok()
+                    .is_some_and(|status| status.is_none())
+        });
+        if !running {
+            *process = None;
+            *self.model_catalog.lock().await = None;
+        }
+        running
+    }
 }
 
 #[tauri::command]
@@ -146,6 +163,8 @@ pub async fn host_diagnostics(
 #[tauri::command]
 pub async fn host_lifecycle_snapshot(
     manager: State<'_, HostManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
 ) -> Result<HostLifecycleSnapshot, String> {
     let mut process = manager.process.lock().await;
     let Some(host) = process.as_mut() else {
@@ -162,6 +181,8 @@ pub async fn host_lifecycle_snapshot(
     {
         *process = None;
         *manager.model_catalog.lock().await = None;
+        attachment_worker.reset().await;
+        terminal_worker.reset().await;
         manager
             .diagnostics
             .record("host_process_exit", "unexpected")
@@ -177,6 +198,8 @@ pub async fn host_lifecycle_snapshot(
             terminate(host).await;
             *process = None;
             *manager.model_catalog.lock().await = None;
+            attachment_worker.reset().await;
+            terminal_worker.reset().await;
             manager
                 .diagnostics
                 .record("host_health_check", classify_error(&error))
@@ -197,6 +220,7 @@ pub async fn start_local_agent_host(
     app: AppHandle,
     manager: State<'_, HostManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
     authentication: State<'_, AuthenticationManager>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
@@ -222,6 +246,9 @@ pub async fn start_local_agent_host(
         if host.owner_user_id == owner_user_id && catalog_ready && health_check(host).await.is_ok()
         {
             attachment_worker
+                .configure(app.clone(), owner_user_id.clone())
+                .await;
+            terminal_worker
                 .configure(app.clone(), owner_user_id.clone())
                 .await;
             manager
@@ -254,6 +281,13 @@ pub async fn start_local_agent_host(
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|error| error.to_string())?;
+    let state_data_dir = data_dir.clone();
+    let state_owner = owner_user_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        connector_state::ensure_owner_state(&state_data_dir, &state_owner)
+    })
+    .await
+    .map_err(|_| "本地工作区状态准备任务异常退出。".to_owned())??;
     let database = data_dir.join("local-agent").join("agent.sqlite3");
     if let Some(parent) = database.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -354,6 +388,9 @@ pub async fn start_local_agent_host(
     *manager.model_catalog.lock().await = Some((worker_owner_user_id.clone(), model_options));
     *process = Some(host);
     attachment_worker
+        .configure(app.clone(), worker_owner_user_id.clone())
+        .await;
+    terminal_worker
         .configure(app.clone(), worker_owner_user_id)
         .await;
     manager
@@ -367,9 +404,11 @@ pub async fn start_local_agent_host(
 pub async fn stop_local_agent_host(
     manager: State<'_, HostManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
 ) -> Result<HostLifecycleSnapshot, String> {
     manager.diagnostics.record("host_stop", "requested").await;
     attachment_worker.reset().await;
+    terminal_worker.reset().await;
     manager.terminate_process().await;
     manager.diagnostics.record("host_stop", "stopped").await;
     Ok(HostLifecycleSnapshot::stopped(

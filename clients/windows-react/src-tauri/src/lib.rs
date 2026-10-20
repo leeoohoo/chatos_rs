@@ -1,6 +1,7 @@
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
+mod connector_state;
 mod control_plane;
 mod conversation_attachments;
 mod conversation_composer;
@@ -11,6 +12,8 @@ mod host_lifecycle;
 mod platform_execution_context;
 mod project_conversation;
 mod run_inspector;
+mod terminal_runtime;
+mod terminal_tool_worker;
 mod tool_approval;
 mod workspace_index;
 
@@ -45,6 +48,7 @@ use run_inspector::{
     restart_task_inspector, retry_task_inspector,
 };
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
+use terminal_tool_worker::TerminalToolWorker;
 use tool_approval::journal::ApprovalDecisionJournal;
 use tool_approval::{decide_tool_approval, list_tool_approvals};
 use workspace_index::{list_local_projects, refresh_workspace_relations};
@@ -61,6 +65,7 @@ pub fn run() {
         .manage(authentication)
         .manage(attachment_manager)
         .manage(AttachmentToolWorker::default())
+        .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .setup(|app| {
@@ -158,6 +163,7 @@ pub fn run() {
     let exit_code = app.run_return(|_, _| {});
     tauri::async_runtime::block_on(async {
         app_handle.state::<AttachmentToolWorker>().reset().await;
+        app_handle.state::<TerminalToolWorker>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });
     if exit_code != 0 {

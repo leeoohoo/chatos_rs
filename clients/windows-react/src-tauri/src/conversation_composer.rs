@@ -13,6 +13,7 @@ use crate::{
     attachment_tool_worker::AttachmentToolWorker,
     conversation_attachments::{AttachmentManager, AttachmentScope},
     host_lifecycle::{HostExecutionError, HostManager},
+    terminal_tool_worker::TerminalToolWorker,
 };
 
 const MAIN_CHAT_PROFILE: &str = "main_chat";
@@ -58,6 +59,7 @@ pub async fn send_conversation_draft(
     manager: State<'_, HostManager>,
     attachment_manager: State<'_, AttachmentManager>,
     attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
     input: SendConversationDraftInput,
 ) -> Result<ConversationSendAck, String> {
     let owner_user_id = required("owner_user_id", input.owner_user_id)?;
@@ -89,6 +91,7 @@ pub async fn send_conversation_draft(
                 Ok(ack) => {
                     attachment_manager.commit(attachment_scope, &attachment_ids)?;
                     attachment_worker.wake();
+                    terminal_worker.wake();
                     return Ok(ack);
                 }
                 Err(error) if error.code.as_deref() == Some("conflict") => {
@@ -113,6 +116,7 @@ pub async fn send_conversation_draft(
                     .and_then(|ack| {
                         attachment_manager.commit(attachment_scope, &attachment_ids)?;
                         attachment_worker.wake();
+                        terminal_worker.wake();
                         Ok(ack)
                     });
                 }
@@ -132,6 +136,7 @@ pub async fn send_conversation_draft(
     .await?;
     attachment_manager.commit(attachment_scope, &attachment_ids)?;
     attachment_worker.wake();
+    terminal_worker.wake();
     Ok(ack)
 }
 

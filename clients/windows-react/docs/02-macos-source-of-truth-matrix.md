@@ -793,7 +793,11 @@ Windows 第一阶段已经完成 Host durable queue/decision 与全局 Human 浮
 - Human 决定在 Host writeback 前写入私有、有界、逐记录原子发布的 journal，键绑定 owner + invocation ID + version；IPC 失败或重启后列表 reconciliation 只重放原决定，冲突决定被拒绝，Host 已不再保留相同 pending identity 时清理陈旧记录；
 - `execute_command` 允许前会重读 Run 与 Conversation，严格解析 macOS `tool_options`/`owned_paths` 形状，并从账号隔离的 Registry + Connector grant 解析项目或联系人执行根目录；cwd 仅允许根目录内已存在的目录，路径穿越、文件路径和逃逸软链接全部失败关闭；
 - 浮层挂在 `AppShell`，不依赖当前项目或页面；新审批自动展开、移除只归一化 active index，展示语义与 macOS 全局浮层一致；
-- 该阶段只证明 Human durable decision 已落 Host，且批准前置上下文已经安全解析，不宣称工具已执行。Windows platform worker、session allowlist 与设置页仍是后续独立切片。
+- Windows terminal platform worker 已接入 Host durable claim/lease/commit：前台/后台命令、poll/log/wait、stdin、kill、有界日志、超时与进程树回收均由 Rust/Tauri 原生层执行；React 不接触 Shell、文件系统或 Host DTO；
+- worker 最多并发处理 4 个 claim，30 秒 lease 每 10 秒续约，原样提交 preflight outcome；side-effecting 的未知执行结果进入 `NeedsReview`，已知 pre-effect failure 进入 Failed；Run 完成事件、任务 retry/restart/cancel、Host 失联、登出和应用退出都会释放所属进程；
+- `task_execution` 现在只发布附件及 macOS 同源六项 terminal schema，Task policy 开放 `TerminalController`；旧 attachment-only capability snapshot 被离线恢复门禁拒绝；Host 将附件读取与 `process_poll/log/wait` 标为 read-only，`execute_command/process_write/process_kill` 保持需审批的 side-effecting；
+- Windows 启动会准备 owner-scoped Connector state，同账号保留经过验证的 workspace grants，账号变化清除旧 grants；项目执行仍必须同时命中账号隔离 Registry 与当前 grant，联系人 workspace 使用 owner + Conversation 哈希隔离；
+- 该阶段已证明 Human durable decision 可以进入真实 terminal 执行与结果写回。`acceptForSession`、审批策略设置页和项目创建/授权 UI 仍是后续独立切片，不能伪造成已完成。
 
 ## 9. 次级模块生命周期审计
 
@@ -854,7 +858,7 @@ Windows 第一阶段已经完成 Host durable queue/decision 与全局 Human 浮
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
-| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层、writeback journal 与 execution context/cwd 前置校验已完成 | 允许；下一步接 platform worker/session allowlist，再实现设置页 |
+| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层、writeback journal、execution context/cwd 与 terminal platform worker 已完成 | 允许；下一步接 session allowlist，再实现设置页 |
 | 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
@@ -870,7 +874,8 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
 6. [已完成] `clients/windows-react` 已完成账号 bootstrap、History、Composer 文本/附件/显式能力/runtime controls、Realtime、Run Inspector 与 Ask User 核心闭环；后续页面继续按准入矩阵逐个垂直切片实施，禁止一次性复制整个 SwiftUI 页面。
-7. [已完成] 工具审批 / 恢复已在干净 macOS 快照通过 104 项定向测试并达到 React 准入；Windows Host durable queue/decision、安全投影、2 秒 fallback polling、全局 Human 浮层与决定 writeback journal 已完成，真实 platform worker 未完成前不得伪装或发布执行能力。
-8. [进行中] Windows 已按 macOS 边界完成 execution context/cwd 与批准前置校验；下一步实现 platform worker 与 session allowlist，完成真实执行和恢复测试后才允许发布对应平台工具，再进入审批设置页。
+7. [已完成] 工具审批 / 恢复已在干净 macOS 快照通过 104 项定向测试并达到 React 准入；Windows Host durable queue/decision、安全投影、2 秒 fallback polling、全局 Human 浮层与决定 writeback journal 已完成。
+8. [已完成] Windows 已按 macOS 边界完成 execution context/cwd、账号 Connector state、批准前置复验和 terminal platform worker；真实命令/进程、Host sidecar、claim/lease/approval/recovery 与资源回收测试通过后，`task_execution` 才发布附件及六项 terminal 能力。
+9. [进行中] 实现 account/device/workspace/exact-request 绑定的 session allowlist，扩展 Human 决定为 `acceptForSession`，应用/Host session 结束必须清空；随后实现审批模式、审批模型与运行时权限设置页。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

@@ -2,6 +2,13 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
+const READ_ONLY_TOOL_NAMES: [&str; 4] = [
+    "local_attachment_read",
+    "process_poll",
+    "process_log",
+    "process_wait",
+];
+
 pub(super) async fn spawn(
     executable: &Path,
     database: &Path,
@@ -15,6 +22,7 @@ pub(super) async fn spawn(
         .arg(database)
         .arg("--owner-user-id")
         .arg(&owner_user_id);
+    configure_tool_policy(&mut command);
     if !workers_enabled {
         command.arg("--disable-workers");
     }
@@ -36,6 +44,12 @@ pub(super) async fn spawn(
         .take()
         .ok_or_else(|| "Host stdout is unavailable".to_string())?;
     Ok(ManagedHost::new(child, input, output, owner_user_id))
+}
+
+fn configure_tool_policy(command: &mut Command) {
+    for tool_name in READ_ONLY_TOOL_NAMES {
+        command.arg("--read-only-tool").arg(tool_name);
+    }
 }
 
 fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
@@ -175,5 +189,35 @@ mod tests {
             Some(&"secret".to_string())
         );
         assert!(!environment.contains_key("CHATOS_API_BASE_URL"));
+    }
+
+    #[test]
+    fn host_policy_matches_the_macos_terminal_side_effect_boundary() {
+        let mut command = Command::new("local-agent-host");
+        configure_tool_policy(&mut command);
+        let arguments = command
+            .as_std()
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            arguments,
+            [
+                "--read-only-tool",
+                "local_attachment_read",
+                "--read-only-tool",
+                "process_poll",
+                "--read-only-tool",
+                "process_log",
+                "--read-only-tool",
+                "process_wait",
+            ]
+        );
+        assert!(!arguments.iter().any(|argument| {
+            matches!(
+                argument.as_str(),
+                "execute_command" | "process_write" | "process_kill"
+            )
+        }));
     }
 }

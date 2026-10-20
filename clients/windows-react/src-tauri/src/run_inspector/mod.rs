@@ -9,7 +9,7 @@ use chatos_local_agent_protocol::{
 };
 use tauri::State;
 
-use crate::host_lifecycle::HostManager;
+use crate::{host_lifecycle::HostManager, terminal_tool_worker::TerminalToolWorker};
 use models::{
     MessageTaskGraphInput, RunInspectorDetail, RunInspectorRun, TaskInspectorDetail,
     TaskInspectorInput, TaskMutationInput, TaskMutationReceipt,
@@ -116,9 +116,14 @@ pub async fn load_run_inspector(
 #[tauri::command]
 pub async fn retry_task_inspector(
     manager: State<'_, HostManager>,
+    terminal_worker: State<'_, TerminalToolWorker>,
     input: TaskMutationInput,
 ) -> Result<TaskMutationReceipt, String> {
     let input = validate_mutation(input)?;
+    let previous_run = latest_task_run(&manager, &input.owner_user_id, &input.task_id).await?;
+    if let Some(run) = previous_run.as_ref() {
+        terminal_worker.release_run(&run.run_id).await;
+    }
     let result = manager
         .execute(HostCommand::RetryTask(RetryTaskCommand {
             owner_user_id: input.owner_user_id,
@@ -127,15 +132,19 @@ pub async fn retry_task_inspector(
             retry_instruction: optional_text(input.instruction),
         }))
         .await?;
-    mutation_receipt(result, &input.task_id)
+    let receipt = mutation_receipt(result, &input.task_id)?;
+    terminal_worker.wake();
+    Ok(receipt)
 }
 
 #[tauri::command]
 pub async fn cancel_task_inspector(
     manager: State<'_, HostManager>,
+    terminal_worker: State<'_, TerminalToolWorker>,
     input: TaskMutationInput,
 ) -> Result<TaskMutationReceipt, String> {
     let input = validate_mutation(input)?;
+    let previous_run = latest_task_run(&manager, &input.owner_user_id, &input.task_id).await?;
     let result = manager
         .execute(HostCommand::CancelTask(CancelTaskCommand {
             owner_user_id: input.owner_user_id,
@@ -146,15 +155,24 @@ pub async fn cancel_task_inspector(
             replacement_task_ids: Vec::new(),
         }))
         .await?;
-    mutation_receipt(result, &input.task_id)
+    let receipt = mutation_receipt(result, &input.task_id)?;
+    if let Some(run) = previous_run.as_ref() {
+        terminal_worker.release_run(&run.run_id).await;
+    }
+    Ok(receipt)
 }
 
 #[tauri::command]
 pub async fn restart_task_inspector(
     manager: State<'_, HostManager>,
+    terminal_worker: State<'_, TerminalToolWorker>,
     input: TaskMutationInput,
 ) -> Result<TaskMutationReceipt, String> {
     let input = validate_mutation(input)?;
+    let previous_run = latest_task_run(&manager, &input.owner_user_id, &input.task_id).await?;
+    if let Some(run) = previous_run.as_ref() {
+        terminal_worker.release_run(&run.run_id).await;
+    }
     let result = manager
         .execute(HostCommand::RestartTask(RestartTaskCommand {
             owner_user_id: input.owner_user_id,
@@ -164,7 +182,9 @@ pub async fn restart_task_inspector(
                 .unwrap_or_else(|| "user requested recovery from task inspector".to_owned()),
         }))
         .await?;
-    mutation_receipt(result, &input.task_id)
+    let receipt = mutation_receipt(result, &input.task_id)?;
+    terminal_worker.wake();
+    Ok(receipt)
 }
 
 async fn message_graph(
