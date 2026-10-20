@@ -183,6 +183,32 @@ impl AuthenticationManager {
             .ok_or_else(|| "登录状态尚未准备好。".into())
     }
 
+    pub(crate) async fn session_generation_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<u64, String> {
+        let state = self.state.lock().await;
+        if state.user_id.as_deref() != Some(owner_user_id) || state.access_token.is_none() {
+            return Err("登录账号与本地服务账号不一致。".into());
+        }
+        Ok(state.generation)
+    }
+
+    pub(crate) async fn require_session_generation(
+        &self,
+        owner_user_id: &str,
+        generation: u64,
+    ) -> Result<(), String> {
+        let state = self.state.lock().await;
+        if state.generation != generation
+            || state.user_id.as_deref() != Some(owner_user_id)
+            || state.access_token.is_none()
+        {
+            return Err("账号会话已变化，请重试。".into());
+        }
+        Ok(())
+    }
+
     pub(crate) async fn model_catalog_for_owner(
         &self,
         owner_user_id: &str,
@@ -374,4 +400,38 @@ pub async fn logout(
     let result = manager.logout().await;
     host_manager.reset_approval_sessions();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_generation_rejects_stale_work_after_same_owner_reauthenticates() {
+        let manager = AuthenticationManager::from_runtime().unwrap();
+        {
+            let mut state = manager.state.lock().await;
+            state.generation = 41;
+            state.access_token = Some("first-token".into());
+            state.user_id = Some("alice".into());
+        }
+        let stale_generation = manager.session_generation_for_owner("alice").await.unwrap();
+
+        {
+            let mut state = manager.state.lock().await;
+            state.generation = 42;
+            state.access_token = Some("second-token".into());
+            state.user_id = Some("alice".into());
+        }
+
+        assert!(manager
+            .require_session_generation("alice", stale_generation)
+            .await
+            .is_err());
+        assert!(manager
+            .require_session_generation("alice", 42)
+            .await
+            .is_ok());
+        assert!(manager.session_generation_for_owner("bob").await.is_err());
+    }
 }

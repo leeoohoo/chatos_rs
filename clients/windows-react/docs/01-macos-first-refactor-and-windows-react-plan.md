@@ -492,6 +492,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 图片参考图边界）：本机文件和生成记录两条参考图入口已统一到 `MediaStudioImageReferenceImporting` Port、Use Case、macOS Adapter 与 owner/account session/request/source lifecycle。Core 负责最多 8 张、精确当前账号历史授权、去重合并和同步容量预检；Adapter 负责 security-scoped URL、普通图片文件校验、20 MB/6400 万像素边界、MIME 归一化，以及仅从本机/内联/无凭据 HTTPS 读取生成图片。ViewModel 不再处理文件读取、解码或 base64，清除/删除/换账号会终止迟到导入。Core 4 项、图片交互 11 项、历史/生成引用 8 项及性能策略 31 项通过。Windows provider/Secret/文件选择/历史存储差异尚需完成准入，第 06 页继续禁止 React 实现。
 
+状态补充（2026-10-21，Windows AI 图片原生生成边界）：Tauri 已新增模型目录和图片生成 typed commands。每次生成从当前账号 Gateway 精确解析单一模型，API Key 只存在于 Rust 请求与 Windows Credential Manager，不进入 React DTO、请求正文、错误或历史 manifest；文生图使用 `/images/generations`，多参考图保持 macOS 顺序并使用 `/images/edits`，请求、响应、图片数量与单图/总响应字节均有界。账号 session generation 在模型解析、provider 返回和落盘前复验，同账号重新登录也会拒绝旧请求。历史写入使用 app data 下 owner SHA-256 隔离目录、随机 content token、相对文件名、私有文件和 `fsync + rename` 原子 manifest；远端结果只允许无凭据 HTTPS，落盘失败以 `generatedWithoutPersistence` 保留已生成结果。Windows Rust 全量 214 项通过、2 项真实 sidecar 环境测试忽略，`clippy -D warnings` 通过。原生文件选择 token vault、历史分页读取和安全预览协议尚未完成，因此第 06 页仍禁止 React 实现。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

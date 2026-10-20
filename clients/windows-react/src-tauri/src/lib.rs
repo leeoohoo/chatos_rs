@@ -11,6 +11,7 @@ mod conversation_realtime;
 mod conversation_runtime_settings;
 mod host_lifecycle;
 mod local_terminal;
+mod media_studio;
 mod platform_execution_context;
 mod plugin_application;
 mod project_conversation;
@@ -59,6 +60,7 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
+use media_studio::{generate_media_studio_image, list_media_studio_models, MediaStudioManager};
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
     launch_plugin_application, list_plugin_applications, PluginApplicationManager,
@@ -145,6 +147,14 @@ pub fn run() {
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
+            app.manage(
+                MediaStudioManager::new(
+                    app.path()
+                        .app_data_dir()
+                        .map_err(|error| std::io::Error::other(error.to_string()))?,
+                )
+                .map_err(std::io::Error::other)?,
+            );
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
@@ -293,6 +303,8 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            list_media_studio_models,
+            generate_media_studio_image,
             launch_plugin_application,
             discard_plugin_application_presentation,
             handle_plugin_application_bridge_request,
