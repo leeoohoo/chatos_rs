@@ -791,8 +791,9 @@ Windows 第一阶段已经完成 Host durable queue/decision 与全局 Human 浮
 - React Store 绑定 owner 与 Host ready session，2 秒 fallback polling 短暂失败时保留最后可信队列；Host unavailable、登出或账号切换会拒绝全部迟到 refresh/decision 结果；
 - 同一审批重复点击被拒绝，不同审批可并发；决定完成后重新读取 durable queue，失败保存审批级错误并对账；
 - Human 决定在 Host writeback 前写入私有、有界、逐记录原子发布的 journal，键绑定 owner + invocation ID + version；IPC 失败或重启后列表 reconciliation 只重放原决定，冲突决定被拒绝，Host 已不再保留相同 pending identity 时清理陈旧记录；
+- `execute_command` 允许前会重读 Run 与 Conversation，严格解析 macOS `tool_options`/`owned_paths` 形状，并从账号隔离的 Registry + Connector grant 解析项目或联系人执行根目录；cwd 仅允许根目录内已存在的目录，路径穿越、文件路径和逃逸软链接全部失败关闭；
 - 浮层挂在 `AppShell`，不依赖当前项目或页面；新审批自动展开、移除只归一化 active index，展示语义与 macOS 全局浮层一致；
-- 该阶段只证明 Human durable decision 已落 Host，不宣称工具已执行。Windows platform worker、执行上下文/cwd 解析、session allowlist 与设置页仍是后续独立切片。
+- 该阶段只证明 Human durable decision 已落 Host，且批准前置上下文已经安全解析，不宣称工具已执行。Windows platform worker、session allowlist 与设置页仍是后续独立切片。
 
 ## 9. 次级模块生命周期审计
 
@@ -853,7 +854,7 @@ Windows 第一阶段已经完成 Host durable queue/decision 与全局 Human 浮
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
-| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层与 writeback journal 已完成 | 允许；下一步接 platform worker/session allowlist，再实现设置页 |
+| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层、writeback journal 与 execution context/cwd 前置校验已完成 | 允许；下一步接 platform worker/session allowlist，再实现设置页 |
 | 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
@@ -870,6 +871,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
 6. [已完成] `clients/windows-react` 已完成账号 bootstrap、History、Composer 文本/附件/显式能力/runtime controls、Realtime、Run Inspector 与 Ask User 核心闭环；后续页面继续按准入矩阵逐个垂直切片实施，禁止一次性复制整个 SwiftUI 页面。
 7. [已完成] 工具审批 / 恢复已在干净 macOS 快照通过 104 项定向测试并达到 React 准入；Windows Host durable queue/decision、安全投影、2 秒 fallback polling、全局 Human 浮层与决定 writeback journal 已完成，真实 platform worker 未完成前不得伪装或发布执行能力。
-8. [下一步] 按 macOS execution context/cwd 边界实现 Windows platform worker 与 session allowlist；完成真实执行和恢复测试后才允许发布对应平台工具，再进入审批设置页。
+8. [进行中] Windows 已按 macOS 边界完成 execution context/cwd 与批准前置校验；下一步实现 platform worker 与 session allowlist，完成真实执行和恢复测试后才允许发布对应平台工具，再进入审批设置页。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

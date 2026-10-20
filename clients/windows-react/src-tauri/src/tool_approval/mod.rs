@@ -9,9 +9,13 @@ use chatos_local_agent_protocol::{
     LocalAgentToolApprovalDecision, LocalAgentToolApprovalStatus, LocalAgentToolInvocationRecord,
     LocalAgentToolStatus,
 };
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::host_lifecycle::HostManager;
+use crate::platform_execution_context::{
+    resolve_execution_directory, resolve_platform_execution_context, resolve_terminal_command,
+    resolve_terminal_path, resolve_terminal_purpose,
+};
 use journal::{ApprovalDecisionJournal, RecordedToolApprovalDecision};
 use models::{
     ToolApproval, ToolApprovalDecision, ToolApprovalMutationInput, ToolApprovalResolution,
@@ -34,6 +38,7 @@ pub async fn list_tool_approvals(
 
 #[tauri::command]
 pub async fn decide_tool_approval(
+    app: AppHandle,
     manager: State<'_, HostManager>,
     journal: State<'_, ApprovalDecisionJournal>,
     input: ToolApprovalMutationInput,
@@ -54,6 +59,9 @@ pub async fn decide_tool_approval(
         .ok_or_else(|| "该审批已经处理或不再存在。".to_owned())?;
     if current.version != input.expected_version {
         return Err("该审批已经更新，请查看最新内容后重新决定。".into());
+    }
+    if input.decision == ToolApprovalDecision::Accept && current.tool_name == "execute_command" {
+        validate_terminal_approval(&app, &manager, &owner_user_id, &current).await?;
     }
 
     let (decision, reason) = match input.decision {
@@ -107,6 +115,29 @@ pub async fn decide_tool_approval(
         invocation_version: result.invocation.version,
         decision: input.decision,
     })
+}
+
+async fn validate_terminal_approval(
+    app: &AppHandle,
+    manager: &HostManager,
+    owner_user_id: &str,
+    invocation: &LocalAgentToolInvocationRecord,
+) -> Result<(), String> {
+    let context =
+        resolve_platform_execution_context(app, manager, owner_user_id, &invocation.run_id).await?;
+    if !context.authorization.allows_terminal() || context.workspace_scope_id.is_empty() {
+        return Err("这个 Run 没有选择终端执行能力。".into());
+    }
+    let arguments = invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "终端命令参数无效。".to_owned())?;
+    resolve_terminal_command(arguments).ok_or_else(|| "终端命令不能为空。".to_owned())?;
+    resolve_terminal_purpose(arguments)
+        .ok_or_else(|| "终端命令必须提供有效的运行目的。".to_owned())?;
+    let requested_path = resolve_terminal_path(arguments);
+    resolve_execution_directory(&context.execution_root, requested_path)?;
+    Ok(())
 }
 
 async fn reconcile_recorded_decisions(

@@ -8,6 +8,7 @@ mod conversation_history;
 mod conversation_realtime;
 mod conversation_runtime_settings;
 mod host_lifecycle;
+mod platform_execution_context;
 mod project_conversation;
 mod run_inspector;
 mod tool_approval;

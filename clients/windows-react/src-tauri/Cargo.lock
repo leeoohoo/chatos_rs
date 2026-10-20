@@ -570,6 +570,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tokio",
+ "unicode-segmentation",
  "uuid",
 ]
 
