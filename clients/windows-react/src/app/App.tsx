@@ -1,6 +1,7 @@
 import { Route, Routes } from "react-router";
 import { TauriAuthenticationAdapter } from "../features/authentication/adapters/TauriAuthenticationAdapter";
 import { TauriAskUserAdapter } from "../features/ask-user/adapters/TauriAskUserAdapter";
+import { TauriAccessControlAdapter } from "../features/access-control/adapters/TauriAccessControlAdapter";
 import { useAuthenticationStore } from "../features/authentication/application/authenticationStore";
 import { AuthenticationGate } from "../features/authentication/ui/AuthenticationGate";
 import { TauriConversationHistoryAdapter } from "../features/conversation-history/adapters/TauriConversationHistoryAdapter";
@@ -21,6 +22,7 @@ import { AppShell } from "./AppShell";
 
 const authentication = new TauriAuthenticationAdapter();
 const askUser = new TauriAskUserAdapter();
+const accessControl = new TauriAccessControlAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
@@ -60,6 +62,7 @@ function ApplicationRoot() {
       <AuthenticationGate authentication={authentication}>
         {(session) => (
           <AppShell
+            accessControl={accessControl}
             hostLifecycle={hostLifecycle}
             workspaceIndex={workspaceIndex}
             projectConversation={projectConversation}

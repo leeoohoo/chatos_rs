@@ -1,3 +1,4 @@
+mod access_control;
 mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
@@ -18,6 +19,7 @@ mod terminal_tool_worker;
 mod tool_approval;
 mod workspace_index;
 
+use access_control::load_access_control;
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
 use authentication::{
@@ -150,6 +152,7 @@ pub fn run() {
             update_tool_approval_model,
             load_system_permissions,
             request_system_permission,
+            load_access_control,
             poll_conversation_realtime,
             send_conversation_draft,
             activate_conversation_attachment_scope,

@@ -826,6 +826,32 @@ Windows React 已完成对应独立切片：
 - React Store 绑定 owner 与 Host availability，refresh/action 使用独立 request identity；短暂刷新失败保留最后可信快照，账号替换或 Host suspension 拒绝迟到结果；
 - Windows 定向验收为 Rust 82 项通过、2 项 sidecar 环境测试忽略，React 31 个文件 114 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
+### 8.7 访问控制与执行后端的 Windows 平台映射
+
+macOS 事实源：
+
+- `LocalConnectorSandboxView.swift` 固定“默认任务权限 + 运行后端”两张卡片，展示启用状态、文件权限、审批策略/审批人、网络访问、策略版本及后端隔离能力；
+- `LocalConnectorSandboxSettings` 与 `LocalConnectorSandboxBackend` 是页面传输契约，SwiftUI 不自行探测进程隔离能力；
+- `NativeLocalConnectorService.fetchSandboxBackends/fetchSandboxSettings/updateSandboxSettings` 与 `NativeConnectorPersistentState` 提供当前原生实现；现有 macOS View 选项值与持久化默认值仍有命名差异，Windows 不复制未经执行链路证明的枚举；
+- 第 31 页与第 29 页命令审批共享审批语义，但不得形成两份互相漂移的审批配置。
+
+Windows 真实能力核验：
+
+- terminal worker 在执行前重读 Host Run/Conversation 与 `tool_options`，解析 owner-scoped Registry/workspace grant，只允许规范化后的项目 cwd；
+- PowerShell 命令仍继承当前 Windows 账号 ACL 和本机网络，cwd 边界不等于操作系统级文件沙箱，审批前置校验也不等于网络隔离；
+- Windows Job Object 使用 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 并在 Run/Host/应用生命周期结束时回收进程树，只有 `processTreeControl` 可准确标记为已提供；
+- 当前没有可安全写入并由 worker 执行的文件/网络策略字段，因此不能照搬 macOS 可编辑 Toggle/Picker。
+
+Windows React 已完成对应独立切片：
+
+- Rust/Tauri 从 owner-scoped Connector state 读取现有 `approvalMode`，发布 `windows_local_process` 后端与强类型策略快照；未知审批模式失败关闭；
+- 后端状态固定为 `limited`、不可选择，准确发布 `filesystemIsolation = false`、`networkIsolation = false`、`processTreeControl = true`；
+- 默认文件权限显示 `host_account` / Windows 账号权限，网络显示 `host`；策略页面只读，直到真实隔离机制进入执行链路后才允许编辑；
+- 审批策略由现有 `request_approval / auto_approval / full_control` 映射为 macOS 页面语义，仍以第 29 页持久化设置为唯一真值；
+- React Store 绑定 owner、Host availability 与 request identity；刷新失败保留最后可信快照，账号替换、Host suspension 和页面离开拒绝迟到写回；
+- Apple 主题页面保留 macOS 两张卡片的信息层级，明确展示部分保护和缺失能力，不提供无法生效的控件；
+- Windows 定向验收为 Rust 85 项通过、2 项 sidecar 环境测试忽略，React 34 个文件 123 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
 ## 9. 次级模块生命周期审计
 
 ### 9.1 Pet 翻译
@@ -887,7 +913,7 @@ Windows React 已完成对应独立切片：
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
 | 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层、writeback journal、execution context/cwd、terminal platform worker、进程内 session allowlist、三态策略/模型设置与审计历史页已完成 | 已进入 React；审批 Agent runtime 未准入时明确降级 Human |
 | 30 | 设置 / 运行时权限 | macOS 系统权限契约与 Windows 平台差异已映射；Windows 原生能力快照、Host/owner lifecycle、刷新与 Apple 主题页面已完成 | 已进入 React；未准入 worker 明确显示为能力缺失 |
-| 31 | 设置 / 访问控制 | 未映射 | 禁止 |
+| 31 | 设置 / 访问控制 | macOS 信息结构与 Windows 执行边界已映射；Windows owner-scoped 只读策略、真实后端能力、审批真值投影、Host lifecycle 与 Apple 主题页面已完成 | 已进入 React；文件/网络隔离未实现前不发布可编辑策略 |
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成 macOS 分层，并已进入 Windows React 纵向实现。
 
@@ -906,6 +932,7 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 9. [已完成] 实现 account/device/workspace/exact-request 绑定的 terminal session allowlist，扩展 Human 决定为 `acceptForSession`，并在应用/Host session 结束时清空；journal 恢复不重建进程内授权。
 10. [已完成] 按 macOS 契约实现命令审批三态策略、模型/推理设置、风险确认、pending 决定和审计历史页；未准入的 Windows 审批 Agent 明确降级 Human。
 11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
-12. [进行中] 映射第 31 页访问控制/沙箱策略，先验证 Windows 真实执行边界与 Host policy 写入链路，再决定可编辑字段。
+12. [已完成] 映射第 31 页访问控制/沙箱策略；Windows 当前仅进程树控制得到执行链路证明，因此策略只读，文件/网络隔离明确显示缺失，审批复用第 29 页唯一真值。
+13. [进行中] 回到第 01 页项目目录，先完成项目创建、工作区授权、目录树和错误恢复的 macOS 源码映射，再按准入门禁实现 React 垂直切片。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

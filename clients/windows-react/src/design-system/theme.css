@@ -211,6 +211,36 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .system-permission-row > button { align-self: center; min-height: 29px; border: 0; border-radius: 8px; padding: 5px 10px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 10.5px; font-weight: 620; cursor: pointer; }
 .system-permission-row > button:disabled { opacity: .5; cursor: default; }
 .system-permission-row > button:focus-visible { outline: 3px solid rgba(10,132,255,.20); outline-offset: 1px; }
+.access-control-readonly { display: grid; grid-template-columns: 27px minmax(0,1fr); align-items: center; gap: 9px; border-radius: 10px; padding: 9px 10px; color: #24733b; background: rgba(48,209,88,.08); }
+.access-control-readonly > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; color: white; background: #30b954; font-size: 12px; font-weight: 750; }
+.access-control-readonly p { display: grid; gap: 2px; margin: 0; }
+.access-control-readonly strong { font-size: 11px; font-weight: 650; }
+.access-control-readonly small { color: var(--secondary); font-size: 9.5px; line-height: 1.4; }
+.access-control-warning { display: grid; grid-template-columns: 25px minmax(0,1fr); align-items: center; gap: 9px; border-radius: 10px; padding: 9px 10px; color: #9b5100; background: rgba(255,159,10,.09); font-size: 10.5px; line-height: 1.45; }
+.access-control-warning > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 50%; color: white; background: #ff9f0a; font-size: 12px; font-weight: 750; }
+.access-control-warning p { margin: 0; }
+.access-control-policy-list { display: grid; margin: 0; }
+.access-control-policy-list > div { display: grid; grid-template-columns: minmax(130px,.7fr) minmax(0,1.3fr); align-items: center; gap: 14px; min-height: 38px; border-top: 1px solid rgba(60,60,67,.08); padding: 6px 2px; }
+.access-control-policy-list dt { color: var(--secondary); font-size: 10.5px; }
+.access-control-policy-list dd { margin: 0; text-align: right; font-size: 11px; font-weight: 570; overflow-wrap: anywhere; }
+.access-control-policy-list code { color: var(--secondary); font: 10px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.access-control-backends { display: grid; }
+.access-control-backend { display: grid; grid-template-columns: 38px minmax(0,1fr); align-items: start; gap: 12px; padding: 5px 2px; }
+.access-control-backend + .access-control-backend { border-top: 1px solid rgba(60,60,67,.09); padding-top: 14px; }
+.access-control-backend__icon { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; color: #21853e; background: rgba(48,209,88,.11); font-size: 14px; font-weight: 750; }
+.access-control-backend__icon--limited { color: #ad5900; background: rgba(255,159,10,.12); }
+.access-control-backend__icon--unavailable { color: #b52b25; background: rgba(255,69,58,.10); }
+.access-control-backend > div { display: grid; min-width: 0; gap: 7px; }
+.access-control-backend header { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.access-control-backend h3, .access-control-backend p { margin: 0; }
+.access-control-backend h3 { font-size: 12px; font-weight: 650; }
+.access-control-backend p { color: var(--secondary); font-size: 10.5px; line-height: 1.5; }
+.access-control-backend__status { border-radius: 999px; padding: 3px 7px; color: #21853e; background: rgba(48,209,88,.10); font-size: 9px; font-weight: 680; }
+.access-control-backend__status--limited { color: #ad5900; background: rgba(255,159,10,.11); }
+.access-control-backend__status--unavailable { color: #b52b25; background: rgba(255,69,58,.09); }
+.access-control-capabilities { display: flex; flex-wrap: wrap; gap: 6px; }
+.access-control-capabilities span { border-radius: 999px; padding: 3px 7px; color: var(--secondary); background: rgba(120,120,128,.09); font-size: 9px; font-weight: 620; }
+.access-control-capabilities .is-enabled { color: #21853e; background: rgba(48,209,88,.09); }
 
 .approval-overlay { position: fixed; z-index: 70; right: 22px; bottom: 22px; color: #1d1d1f; }
 .approval-overlay button { border: 0; font: inherit; cursor: pointer; }

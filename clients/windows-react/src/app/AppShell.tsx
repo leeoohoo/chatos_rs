@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
+import type { AccessControlPort } from "../features/access-control/ports/AccessControlPort";
+import { AccessControlView } from "../features/access-control/ui/AccessControlView";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
 import type { ConversationAttachmentPort } from "../features/conversation-attachments/ports/ConversationAttachmentPort";
@@ -25,6 +27,7 @@ import type { WorkspaceIndexPort } from "../features/workspace-index/ports/Works
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 
 interface AppShellProps {
+  accessControl: AccessControlPort;
   hostLifecycle: HostLifecyclePort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
@@ -42,6 +45,7 @@ interface AppShellProps {
 }
 
 export function AppShell({
+  accessControl,
   hostLifecycle,
   workspaceIndex,
   projectConversation,
@@ -64,7 +68,7 @@ export function AppShell({
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -98,6 +102,8 @@ export function AppShell({
     ? "命令审批"
     : activeSurface === "runtime-permissions"
       ? "运行与权限"
+      : activeSurface === "access-control"
+        ? "访问控制"
       : selectedProject?.title ?? selectedContact?.title ?? "工作台";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
@@ -138,6 +144,15 @@ export function AppShell({
             <span aria-hidden="true">⌁</span>
             <span><strong>运行与权限</strong><small>Windows 系统能力</small></span>
           </button>
+          <button
+            aria-current={activeSurface === "access-control" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "access-control" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("access-control")}
+            type="button"
+          >
+            <span aria-hidden="true">▣</span>
+            <span><strong>访问控制</strong><small>任务执行边界</small></span>
+          </button>
         </div>
         <div className="sidebar-status">
           <span className={`status-light status-light--${snapshot.phase}`} />
@@ -159,6 +174,8 @@ export function AppShell({
                 ? "LOCAL SECURITY"
                 : activeSurface === "runtime-permissions"
                   ? "RUNTIME & PERMISSIONS"
+                  : activeSurface === "access-control"
+                    ? "ACCESS CONTROL"
                   : "LOCAL WORKSPACE"
             }</p>
             <h1>{title}</h1>
@@ -177,6 +194,12 @@ export function AppShell({
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
             port={systemPermissions}
+          />
+        ) : activeSurface === "access-control" ? (
+          <AccessControlView
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            port={accessControl}
           />
         ) : selectedProject ? (
           <ProjectConversationPlaceholder
