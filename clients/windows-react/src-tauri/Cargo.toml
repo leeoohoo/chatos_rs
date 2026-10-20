@@ -1,0 +1,22 @@
+[package]
+name = "chatos-windows-react"
+version = "0.1.0"
+description = "ChatOS Windows client"
+authors = ["AI Chat Team"]
+edition = "2021"
+
+[workspace]
+
+[lib]
+name = "chatos_windows_react_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+chatos_local_agent_protocol = { path = "../../local_agent_host/layers/interface" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.12.4", features = [] }
+tokio = { version = "1", features = ["io-util", "process", "sync", "time"] }
