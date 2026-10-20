@@ -367,7 +367,7 @@ Windows React 必须复现 macOS 的信息架构、功能、状态和苹果主�
 - 宠物、托盘、全局快捷键和通知；
 - 更新、崩溃恢复、诊断导出和发布签名。
 
-远端连接已在 macOS 完成管理、SFTP 与交互式 Terminal 的分层验收；Windows 仍必须先完成 Credential Manager、SSH/PTY、host-key、MFA、传输边界与进程树回收的原生适配，门禁通过后才能进入 React。其余尚未形成完整可验收 macOS 页面或 Port 的能力仍不得凭空补做。
+远端连接已在 macOS 完成管理、SFTP 与交互式 Terminal 的分层验收；Windows 已完成 metadata CRUD、Credential Manager 隔离、owner/version 复验和失败回滚，仍必须先完成 OpenSSH 连接测试、SSH/PTY、host-key、MFA、传输边界与进程树回收的原生适配，门禁通过后才能进入 React。其余尚未形成完整可验收 macOS 页面或 Port 的能力仍不得凭空补做。
 
 ## 9. 实施阶段与退出条件
 
@@ -421,7 +421,7 @@ Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、�
 
 全局活动定位 Ask User 前的 Prompt refresh 已改为 Conversation 显式持有的 latest-wins focus Task 与 typed token；后一次定位会淘汰前一次，Host 忽略取消时也不会因实例 async 方法而留住 Conversation。
 
-远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。创建/编辑、草稿与已保存连接测试、SSH 二次验证和删除进一步收口到 `RemoteConnectionManagementUseCase` 与 single-flight operation state；编辑器和详情页退出会失效具体请求，Connector 忽略取消时也不能保活 ViewModel 或把迟到结果写回不可见页面。SFTP 已通过 `RemoteFileUseCase` 与远端/本机/mutation 三条 typed lifecycle 分层，连续导航 latest-wins，传输和文件 mutation 区分提交失败与 committed-without-refresh，workspace 清理会拒绝迟到结果。Remote Terminal 已抽取 Core byte-stream Port、connect/session generation 和 Connector adapter；SwiftUI 不再依赖原生 SSH session、delegate、进程或凭据实现，重连/断开会拒绝旧 provider 结果和旧 session 事件。macOS 远程资源纵向切片已完成分层，下一步先做 Windows Credential Manager、SSH/PTY、host-key、MFA、传输边界与进程树回收原生适配器，通过后才能进入 React。
+远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。创建/编辑、草稿与已保存连接测试、SSH 二次验证和删除进一步收口到 `RemoteConnectionManagementUseCase` 与 single-flight operation state；编辑器和详情页退出会失效具体请求，Connector 忽略取消时也不能保活 ViewModel 或把迟到结果写回不可见页面。SFTP 已通过 `RemoteFileUseCase` 与远端/本机/mutation 三条 typed lifecycle 分层，连续导航 latest-wins，传输和文件 mutation 区分提交失败与 committed-without-refresh，workspace 清理会拒绝迟到结果。Remote Terminal 已抽取 Core byte-stream Port、connect/session generation 和 Connector adapter；SwiftUI 不再依赖原生 SSH session、delegate、进程或凭据实现，重连/断开会拒绝旧 provider 结果和旧 session 事件。macOS 远程资源纵向切片已完成分层。Windows 已完成 metadata CRUD、Credential Manager 本机凭据投影、owner/version 复验和创建/更新/删除失败回滚；下一步实现 OpenSSH 测试、SSH/PTY、host-key、MFA、传输边界与进程树回收，通过后才能进入 React。
 
 Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `ConversationHistoryRetryState`；每次 sleep 绑定具体 activation token，停用、重新激活、手动刷新或成功响应都会拒绝旧重试唤醒，不再只依赖 Task cancellation。
 

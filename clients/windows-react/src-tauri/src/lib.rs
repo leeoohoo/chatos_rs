@@ -18,6 +18,7 @@ mod project_filesystem;
 mod project_git;
 mod project_removal;
 mod project_run;
+mod remote_connection;
 mod run_inspector;
 mod system_permissions;
 mod terminal_runtime;
@@ -73,6 +74,10 @@ use project_run::{
     poll_project_run_changes, set_project_run_default_target, start_project_run, stop_project_run,
     update_project_run_environment, ProjectRunManager, ProjectRunPreferencesStore,
 };
+use remote_connection::{
+    create_remote_connection, delete_remote_connection, get_remote_connection,
+    list_remote_connections, update_remote_connection, RemoteConnectionManager,
+};
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -117,6 +122,7 @@ pub fn run() {
             app.manage(journal);
             app.manage(ApprovalSettingsStore::new(data_dir.clone()));
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
+            app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir));
             Ok(())
         })
@@ -233,6 +239,11 @@ pub fn run() {
             select_conversation_model,
             select_conversation_reasoning_level,
             select_conversation_remote_connection,
+            list_remote_connections,
+            get_remote_connection,
+            create_remote_connection,
+            update_remote_connection,
+            delete_remote_connection,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

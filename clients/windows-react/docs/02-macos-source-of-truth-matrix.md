@@ -41,7 +41,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
 | 项目目录与文件操作 | macOS 目录、预览、搜索和 mutation 契约与 Windows workspace grant 边界已映射；Windows 项目工作面、相对路径目录树、文件读写与 lifecycle 已接入 | `ProjectWorkspaceView.swift`、`ProjectDirectoryView.swift`、`ProjectFileEditorView.swift` | `ProjectDirectoryViewModel.swift`、`ProjectDirectoryExpansionStateStore.swift` | `ProjectFilesystemModels.swift`、`ProjectFilesystemMutationUseCase.swift` | `NativeProjectFilesystemService.swift`、`NativeWorkspaceFilesystem.swift`；Windows Registry/workspace resolver + Tauri filesystem adapter | macOS mutation lifecycle、Windows Rust path/revision/mutation 与 React domain/store/UI 测试 | 目录、预览、搜索、编辑、新建、删除、Git 与项目设置均已进入 React |
 | 项目运行设置 | macOS View/Feature/Application/Port 已完整分层；Windows analyzer、typed process、实例状态、偏好/Secret、Removal、Favorite 与 React 项目设置闭环已完成 | `ProjectRunSettingsView.swift`、`ProjectRunInstancesSection.swift`、`ProjectRunEnvironmentSection.swift` | `ProjectRunSettingsViewModel.swift`、`ProjectRunLifecycleState.swift`、`AppModelResources.swift`；Windows `projectRunStore` | Project Run/Removal/Favorite models 与 use cases；Windows `features/project-run` Domain/Port | macOS Run/Registry/Pet adapters；Windows `project_run`、`project_removal`、`project_favorite` + workspace resolver + Tauri Adapter | macOS Run 15、Removal 15、Favorite 8；Windows Rust Project Run 13、Removal 1、Favorite 1；React Domain/Store/UI/跨页测试 | `macOS 分层完成，可进入 React`；Windows 完整纵向切片已实现 |
-| 远程连接资源 | 列表、管理、MFA、SFTP 与交互式 Terminal 均已通过 Application use case、Core byte-stream Port 和 typed lifecycle 分层；导航 latest-wins，mutation single-flight，连接/session generation 隔离迟到结果，凭据与原生进程留在 Connector | `ResourceSidebar.swift`、Remote Connection Editor/Detail/SFTP/Terminal Views | Remote Connection/SFTP/Terminal ViewModels 与三类 lifecycle state | Remote Connection/File models/use cases、`RemoteTerminalSessionPort`/use case | `NativeRemoteConnectionService.swift`、`NativeRemoteFileService.swift`、`NativeRemoteTerminalPortAdapter.swift` | 管理、SFTP、Terminal Core/App/Connector 释放/竞态/MFA/PTY 测试 | `macOS 分层完成，可开始 Windows 原生适配器`；Credential Manager/SSH/host-key/进程回收门禁通过前不创建 React UI |
+| 远程连接资源 | 列表、管理、MFA、SFTP 与交互式 Terminal 均已通过 Application use case、Core byte-stream Port 和 typed lifecycle 分层；导航 latest-wins，mutation single-flight，连接/session generation 隔离迟到结果，凭据与原生进程留在 Connector | `ResourceSidebar.swift`、Remote Connection Editor/Detail/SFTP/Terminal Views | Remote Connection/SFTP/Terminal ViewModels 与三类 lifecycle state | Remote Connection/File models/use cases、`RemoteTerminalSessionPort`/use case | `NativeRemoteConnectionService.swift`、`NativeRemoteFileService.swift`、`NativeRemoteTerminalPortAdapter.swift` | 管理、SFTP、Terminal Core/App/Connector 释放/竞态/MFA/PTY 测试 | `macOS 分层完成`；Windows metadata CRUD 与 Credential Manager 已完成，SSH/host-key/SFTP/PTY/进程回收门禁通过前不创建 React UI |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环、runtime controls 与联系人入口已接入 | `ConversationTimelineView.swift`、`ContactConversationView`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 与 React 联系人组合测试等 | `macOS 分层完成，可进入 React`；Windows 项目与联系人核心发送闭环已实现 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Windows 已接入基础详情、过程、Run、重试、停止、恢复和 polling | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector、共享 fixture、React latest-wins 与 Rust projection 测试 | `macOS 分层完成，可进入 React`；Windows 主检查器纵向切片已实现 |
@@ -240,7 +240,15 @@ macOS 连接管理切片（2026-10-21）：
 - 编辑器和详情页共用 `RemoteConnectionOperationState` single-flight identity。保存、测试和删除互斥，页面或弹窗退出会取消具体 Task 并失效 token，底层 Connector 即使忽略取消也不能写回已经离开的页面；
 - 编辑器在远程等待期间不再强持有 ViewModel；输入表单在涉及凭据的操作期间冻结，避免测试或保存的是旧草稿而界面继续展示新输入；SSH 二次验证仍沿用原有 challenge/retry 语义；
 - 删除成功后才通过 App composition 更新列表并释放对应 Terminal/SFTP workspace；删除失败保留当前连接和页面。新增 6 项 Core/App 测试覆盖 use case 路由、single-flight、ViewModel 释放、迟到删除和二次验证；
-- 本切片只证明连接管理面。Remote Terminal、SFTP 文件浏览/传输及 Windows 凭据/SSH 平台差异尚未完成分层和安全验收，因此远程资源页仍不得进入 React。
+- 本切片只证明 macOS 连接管理面；其后的 SFTP 与 Terminal 分层见 2.2.7、2.2.8。Windows 原生管理与凭据切片已经补齐，但 SSH 测试、SFTP 与 Terminal 平台门禁尚未全部完成，因此远程资源页仍不得进入 React。
+
+Windows 原生管理与凭据切片（2026-10-21）：
+
+- Tauri 新增账号校验后的 `list/get/create/update/delete` typed commands，继续复用 Host 的远程连接 metadata CRUD；更新和删除在写入前重新读取目标并联合复验 owner、connection ID 与 expected version，不信任 WebView 缓存；
+- 本机 Connector route 只从 owner-scoped `state.json` 读取稳定 `deviceID` 与 workspace ID，React 不能提交或读取这些内部路由字段；引用已有跳板机时由原生层重新读取同账号记录并冻结 host/port/username，拒绝自引用和失效引用；
+- 登录密码、私钥路径、证书路径及三类手工跳板机凭据使用独立 Windows Credential Manager/macOS Keychain 条目；磁盘索引只保存 owner 与 connection ID，系统账户名使用 SHA-256 派生值。Host metadata、Tauri 返回值和 React projection 均不包含 Secret 或本机路径，只返回六个 `has*` 状态；
+- 创建时凭据写入失败会按 Host 返回版本删除刚创建的 metadata 并清理凭据；更新先保存下一份凭据，Host 拒绝或版本冲突时恢复上一份；删除先撤销本机凭据，Host 删除失败时恢复。列表会按 Host 真值回收已删除连接的残留 Credential Manager 引用；
+- 14 项新增原生测试覆盖 Secret 隔离、Credential Manager 容量门禁、owner scope、route 冻结、expected-version 拒绝、CRUD 成功路径、创建/更新/删除回滚及残留凭据清理。Windows Rust 全量为 135 项通过、2 项 sidecar 环境测试忽略，`clippy -D warnings` 通过；下一切片是 Windows OpenSSH 连接测试、host-key、MFA、jump host、超时与进程树回收。
 
 ### 2.2.7 SFTP 工作区分层
 
@@ -251,7 +259,7 @@ macOS SFTP 切片（2026-10-21）：
 - `RemoteSFTPViewModel` 持有具体 Remote/Local/Mutation Tasks，远程等待期间只冻结 use case、连接和操作参数，不强持有 ViewModel。连接编辑、删除、登出或 workspace 清理会 `deactivate` 并拒绝所有迟到结果；
 - 上传/下载/创建/重命名/删除期间冻结冲突操作，并分别展示成功、真实操作错误和 `committed-without-refresh` 警告；本机目录继续采用可取消 detached work 与 10,000 项上限；
 - 新增 6 项 Core/App 生命周期与回归测试，覆盖 load lane 隔离、mutation invalidation、认证顺序、导航 latest-wins、忽略取消时释放，以及删除已提交但刷新失败。现有 Remote File Service、SFTP MFA 和 workspace 隔离测试继续通过；
-- 交互式 Remote Terminal 仍直接依赖原生 session provider，尚未完成 session lifecycle/Port 验收；Windows Credential Manager、SSH 可执行边界和路径/传输安全投影也未设计完成，因此完整远程资源仍不得进入 React。
+- 该切片完成时交互式 Remote Terminal 仍直接依赖原生 session provider；其后已在 2.2.8 完成 session lifecycle/Port，Windows Credential Manager/metadata CRUD 也已完成。当前剩余的是 SSH 可执行边界、连接测试和路径/传输安全投影，因此完整远程资源仍不得进入 React。
 
 ### 2.2.8 交互式 Remote Terminal 分层
 
@@ -262,7 +270,7 @@ macOS Terminal 切片（2026-10-21）：
 - `RemoteTerminalLifecycleState` 分离 connect token 与 active session token。reconnect/disconnect 同时失效旧连接和事件流；旧 provider 忽略取消并迟到返回 session 时必须立即 close，旧 session 的 output/terminated 事件不能结束或污染新 session；
 - `NativeRemoteTerminalViewModel` 持有 connect/event Tasks，但远程 open 等待期间不强持有自身；workspace 删除、连接编辑或登出沿既有 store teardown 调用 `disconnect`，保证 Task、session、PTY 与临时凭据目录一起回收；
 - 新增 6 项 Core/App/Connector 测试，覆盖 connect/session generation、verification code 路由、MFA 重连、旧 session 事件隔离、provider 忽略取消时 ViewModel 释放，以及原生 session 到 Core Port 的适配。现有 TTY、AskPass、MFA、ControlPath 与 runtime cleanup 测试继续通过；
-- 至此 macOS 远程连接的管理、SFTP 与 Terminal 产品行为均完成源码分层。Windows 下一步只能先实现 Credential Manager、SSH/PTY、host-key、jump host/MFA、路径边界、传输上限与进程树回收的 typed Tauri Adapter；这些原生门禁通过前不得创建 React 远程资源 UI。
+- 至此 macOS 远程连接的管理、SFTP 与 Terminal 产品行为均完成源码分层。Windows 已完成 Credential Manager 与 metadata CRUD；下一步只能先实现 OpenSSH 连接测试、SSH/PTY、host-key、jump host/MFA、路径边界、传输上限与进程树回收的 typed Tauri Adapter，这些原生门禁通过前不得创建 React 远程资源 UI。
 
 ### 2.3 Authentication：完整调用链
 
