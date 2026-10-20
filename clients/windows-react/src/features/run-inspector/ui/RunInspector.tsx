@@ -1,6 +1,22 @@
 import { useEffect } from "react";
 import { useRunInspectorStore } from "../application/runInspectorStore";
+import { graphHasActiveTasks, type RunInspectorSection } from "../domain/runInspector";
 import type { RunInspectorLookup, RunInspectorPort } from "../ports/RunInspectorPort";
+import { InspectorHeaderActions, InspectorRecoveryActions } from "./RunInspectorActions";
+import {
+  InspectorState,
+  statusLabel,
+  TaskDetailSection,
+  TaskProcessSection,
+  TaskRunSection,
+} from "./RunInspectorSections";
+
+const POLL_INTERVAL_MILLISECONDS = 1_500;
+const sections: Array<{ id: RunInspectorSection; label: string }> = [
+  { id: "detail", label: "任务详情" },
+  { id: "process", label: "执行过程" },
+  { id: "run", label: "运行详情" },
+];
 
 export function RunInspectorLauncher({
   lookup,
@@ -34,16 +50,31 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
   const phase = useRunInspectorStore((state) => state.phase);
   const close = useRunInspectorStore((state) => state.close);
   const selectTask = useRunInspectorStore((state) => state.selectTask);
+  const setSection = useRunInspectorStore((state) => state.setSection);
+  const setRetryInstruction = useRunInspectorStore((state) => state.setRetryInstruction);
   const loadOlder = useRunInspectorStore((state) => state.loadOlder);
-  if (phase.kind !== "open") return null;
-  const selectedTask = phase.graph.nodes.find(
-    (node) => node.task.task_id === phase.selectedTaskId,
-  )?.task;
+  const refresh = useRunInspectorStore((state) => state.refresh);
+  const retry = useRunInspectorStore((state) => state.retry);
+  const cancel = useRunInspectorStore((state) => state.cancel);
+  const restart = useRunInspectorStore((state) => state.restart);
+  const pollingKey = phase.kind === "open" && graphHasActiveTasks(phase.graph)
+    ? `${phase.lookup.userMessageId}:${phase.selectedTaskId}`
+    : null;
 
+  useEffect(() => {
+    if (!pollingKey) return;
+    const timer = window.setInterval(() => {
+      void refresh(port);
+    }, POLL_INTERVAL_MILLISECONDS);
+    return () => window.clearInterval(timer);
+  }, [pollingKey, port, refresh]);
+
+  if (phase.kind !== "open") return null;
+  const selected = phase.taskDetail?.task;
   return (
     <div className="inspector-backdrop" role="presentation" onMouseDown={close}>
       <section
-        aria-label="运行详情"
+        aria-label="任务工作区"
         aria-modal="true"
         className="run-inspector"
         onMouseDown={(event) => event.stopPropagation()}
@@ -51,105 +82,78 @@ export function RunInspectorSheet({ port }: { port: RunInspectorPort }) {
       >
         <header className="run-inspector__header">
           <div>
-            <p className="eyebrow">TASK EXECUTION</p>
-            <h2>运行详情</h2>
+            <p className="eyebrow">TASK WORKSPACE</p>
+            <h2>任务工作区</h2>
           </div>
-          <button aria-label="关闭" className="inspector-close" onClick={close} type="button">×</button>
+          <div className="run-inspector__header-actions">
+            <InspectorHeaderActions phase={phase} onCancel={() => void cancel(port)} />
+            <button aria-label="关闭" className="inspector-close" onClick={close} type="button">×</button>
+          </div>
         </header>
         <div className="run-inspector__body">
           <nav className="run-task-list" aria-label="任务列表">
-            {phase.graph.nodes.map(({ task }) => (
+            {phase.graph.nodes.map(({ task, depth }) => (
               <button
                 className={task.task_id === phase.selectedTaskId ? "run-task run-task--active" : "run-task"}
                 key={task.task_id}
                 onClick={() => void selectTask(port, task.task_id)}
+                style={{ paddingLeft: 10 + Math.min(depth, 4) * 12 }}
                 type="button"
               >
                 <strong>{task.title}</strong>
-                <span>{task.status}</span>
+                <span>{statusLabel(task.status)}</span>
               </button>
             ))}
           </nav>
           <div className="run-detail">
             <div className="run-detail__summary">
               <div>
-                <h3>{selectedTask?.title ?? "任务"}</h3>
-                <p>{phase.detail ? statusLabel(phase.detail.run.status) : selectedTask?.status}</p>
+                <h3>{selected?.title ?? phase.graph.nodes.find(({ task }) => task.task_id === phase.selectedTaskId)?.task.title ?? "任务"}</h3>
+                <p>{statusLabel(selected?.status ?? "loading")}</p>
               </div>
-              {phase.detail && (
+              {phase.taskDetail?.run ? (
                 <span className="run-iteration">
-                  {phase.detail.run.iteration} / {phase.detail.run.maxIterations}
+                  {phase.taskDetail.run.iteration} / {phase.taskDetail.run.maxIterations}
                 </span>
-              )}
+              ) : null}
             </div>
-            {phase.isLoading ? (
-              <div className="run-detail__state"><span className="spinner" /><span>正在加载最新执行记录…</span></div>
-            ) : phase.error ? (
-              <div className="run-detail__state run-detail__state--error">{phase.error}</div>
-            ) : phase.detail ? (
-              <div className="run-event-list">
-                {phase.detail.events.map((event) => (
-                  <article className="run-event" key={event.eventId}>
-                    <span className="run-event__dot" />
-                    <div>
-                      <div className="run-event__title">
-                        <strong>{eventTitle(event.eventType)}</strong>
-                        <time>{formatTime(event.createdAtUnixMs)}</time>
-                      </div>
-                      {event.summary && <p>{event.summary}</p>}
-                      {event.status && <small>{event.status}</small>}
-                    </div>
-                  </article>
-                ))}
-                {phase.detail.events.length === 0 && <p className="run-events-empty">还没有执行记录</p>}
-                {phase.detail.eventsHasMore && (
-                  <button
-                    className="history-more"
-                    disabled={phase.isLoadingOlder}
-                    onClick={() => void loadOlder(port)}
-                    type="button"
-                  >
-                    {phase.isLoadingOlder ? "正在加载…" : "加载更早记录"}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="run-detail__state">该任务还没有 Run。</div>
-            )}
+            <div className="inspector-segmented" role="tablist" aria-label="检查内容">
+              {sections.map((section) => (
+                <button
+                  aria-selected={phase.section === section.id}
+                  className={phase.section === section.id ? "is-selected" : undefined}
+                  key={section.id}
+                  onClick={() => void setSection(port, section.id)}
+                  role="tab"
+                  type="button"
+                >
+                  {section.label}
+                </button>
+              ))}
+            </div>
+            {phase.error ? <div className="inspector-error">{phase.error}</div> : null}
+            <div className="run-detail__scroll">
+              {phase.isLoadingTask && !phase.taskDetail ? (
+                <InspectorState loading message="正在加载任务基础详情…" />
+              ) : phase.section === "detail" ? (
+                <TaskDetailSection phase={phase} />
+              ) : phase.section === "process" ? (
+                <TaskProcessSection phase={phase} />
+              ) : (
+                <TaskRunSection phase={phase} onLoadOlder={() => void loadOlder(port)} />
+              )}
+              {phase.section === "detail" ? (
+                <InspectorRecoveryActions
+                  phase={phase}
+                  onInstruction={setRetryInstruction}
+                  onRestart={() => void restart(port)}
+                  onRetry={() => void retry(port)}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
       </section>
     </div>
   );
-}
-
-function eventTitle(value: string) {
-  return value
-    .replaceAll("_", " ")
-    .replaceAll(".", " · ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function statusLabel(status: string) {
-  const labels: Record<string, string> = {
-    queued: "等待执行",
-    model_running: "模型执行中",
-    tool_running: "工具执行中",
-    waiting_user: "等待用户",
-    retry_scheduled: "等待重试",
-    paused: "已暂停",
-    needs_review: "需要处理",
-    succeeded: "已完成",
-    failed: "失败",
-    cancelled: "已取消",
-  };
-  return labels[status] ?? status;
-}
-
-function formatTime(unixMilliseconds: number) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(unixMilliseconds));
 }

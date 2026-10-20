@@ -42,7 +42,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环和 runtime controls 已接入 | `ConversationTimelineView.swift`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；Windows 核心发送闭环已实现 |
-| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；三端共享 fixture 已固定关联和最新事件顺序 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector 与共享 fixture 测试 | `macOS 分层完成，可进入 React`；等待 Conversation Realtime 后实施 |
+| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Windows 已接入基础详情、过程、Run、重试、停止、恢复和 polling | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector、共享 fixture、React latest-wins 与 Rust projection 测试 | `macOS 分层完成，可进入 React`；Windows 主检查器纵向切片已实现 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle / Shell | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；v44 health 契约已由 Rust/Swift/TypeScript 共享 fixture 冻结；React/Tauri 已接入双 Host control-plane bootstrap、Credential Manager 模型恢复、完整快照离线回退、最终 health ready gate 和附件 platform worker | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、Windows Tauri lifecycle/control-plane/attachment worker adapter | Runtime/bootstrap/recovery/launch/configuration/shutdown、共享 fixture、React gate、凭据环境净化、附件 vault/worker 与 Tauri tests | `macOS 分层完成，可进入 React`；Windows 只发布已真实执行的 `local_attachment_read` platform 能力 |
@@ -486,14 +486,17 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 
 准入结论：Run Inspector、Task Graph 与最新事件分页已达到 `macOS 分层完成，可进入 React`。
 
-Windows Run Inspector 首片（2026-10-20）：
+Windows Task Workspace / Run Inspector 纵向切片（2026-10-20）：
 
 - React 已建立独立 Run Inspector Domain/Application/Port/Adapter/UI；Conversation 只装配 Port；
 - 每条用户消息以 Conversation/Turn/Message 精确关联查询真实 Message Task Graph；`not_found` 或空 Graph 不展示入口；
-- 打开详情先固定 Task，再加载其 `active_run_id`，Task 切换和弹层关闭都会使旧 request identity 失效；
+- 打开详情先查询 Task 基础详情和最新 `GetTaskRuns` 结果，再按 detail/process/run 当前 section 加载；Task、section、弹层、分页和 mutation 均使用独立 request identity，迟到结果不得写回；
+- detail 展示目标、说明、模型输出、结果摘要、模型配置和错误；process 只投影 `task_run_process_record_process` 的 append/replace/clear 语义；run 展示最新 Run、错误和事件；
 - 最新事件固定 40 条、`newest_first=true`，更早记录固定 50 条并以当前事件数作为 offset，合并时按 event ID 去重；
-- Realtime reconcile 会刷新当前选中 Task 的 Run 首屏；没有 Run 时显示明确空状态；
-- Tauri 使用 Host `process` payload mode，只向 React 投影 event type、status、summary 和时间，不暴露完整工具参数或附件内容。
+- Conversation Realtime reconcile 会刷新 Graph、Task 和当前 section；检查器存在 active Task 时另以 1.5 秒有界 polling 降级，终态后停止；已经观察到的非空稳定 Graph 不会被瞬时空响应擦除；
+- Retry 使用 Task 当前 version 和可选 instruction；Cancel 与 Restart 同样保留 optimistic concurrency version，操作结束后重新读取持久化 Graph/Task/Run，前端不伪造任务状态；
+- Tauri 对普通 Run events 使用 Host `process` payload mode；构建过程时间线时仅在 Rust adapter 内读取受限的完整 `tool_batch_completed` 事件，再向 React 投影 heading/content/time，不暴露其他工具参数、结果或附件内容；
+- UI 采用苹果式任务侧栏、segmented control、卡片、确认停止和恢复面板，不使用旧 Windows C# 行为或视觉。
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphFocusTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskAcceptanceTests.swift`
 
@@ -834,7 +837,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 | 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
-Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成第一轮源码映射，但仍需先完成 macOS 分层。
+Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成 macOS 分层，并已进入 Windows React 纵向实现。
 
 ## 11. 当前准入与下一步
 
