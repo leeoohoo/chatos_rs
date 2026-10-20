@@ -286,7 +286,7 @@ mod tests {
     fn persists_exact_identity_and_decision_across_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
-        let record = sample_record(ToolApprovalDecision::Accept);
+        let record = sample_record(ToolApprovalDecision::AcceptForSession);
         journal.record(record.clone()).unwrap();
         drop(journal);
 

@@ -5,6 +5,7 @@ pub(crate) mod transport;
 use crate::{
     attachment_tool_worker::AttachmentToolWorker, authentication::AuthenticationManager,
     connector_state, control_plane, terminal_tool_worker::TerminalToolWorker,
+    tool_approval::session::ApprovalSessionAllowlist,
 };
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
@@ -52,6 +53,7 @@ pub struct HostManager {
     process: Mutex<Option<ManagedHost>>,
     model_catalog: Mutex<Option<(String, Vec<control_plane::ControlPlaneModelOption>)>>,
     diagnostics: HostDiagnostics,
+    approval_sessions: ApprovalSessionAllowlist,
 }
 
 #[derive(Debug)]
@@ -62,6 +64,7 @@ pub(crate) struct HostExecutionError {
 
 impl HostManager {
     async fn terminate_process(&self) {
+        self.approval_sessions.reset();
         let mut process = self.process.lock().await;
         if let Some(host) = process.as_mut() {
             terminate(host).await;
@@ -109,6 +112,7 @@ impl HostManager {
                     terminate(host).await;
                     *process = None;
                     *self.model_catalog.lock().await = None;
+                    self.approval_sessions.reset();
                 }
                 self.diagnostics
                     .record("host_request", classify_error(&error.message))
@@ -135,6 +139,14 @@ impl HostManager {
         Ok(options.clone())
     }
 
+    pub(crate) fn approval_sessions(&self) -> &ApprovalSessionAllowlist {
+        &self.approval_sessions
+    }
+
+    pub(crate) fn reset_approval_sessions(&self) {
+        self.approval_sessions.reset();
+    }
+
     pub(crate) async fn is_running_for(&self, owner_user_id: &str) -> bool {
         let mut process = self.process.lock().await;
         let running = process.as_mut().is_some_and(|host| {
@@ -148,6 +160,7 @@ impl HostManager {
         if !running {
             *process = None;
             *self.model_catalog.lock().await = None;
+            self.approval_sessions.reset();
         }
         running
     }
@@ -181,6 +194,7 @@ pub async fn host_lifecycle_snapshot(
     {
         *process = None;
         *manager.model_catalog.lock().await = None;
+        manager.approval_sessions.reset();
         attachment_worker.reset().await;
         terminal_worker.reset().await;
         manager
@@ -198,6 +212,7 @@ pub async fn host_lifecycle_snapshot(
             terminate(host).await;
             *process = None;
             *manager.model_catalog.lock().await = None;
+            manager.approval_sessions.reset();
             attachment_worker.reset().await;
             terminal_worker.reset().await;
             manager
@@ -264,6 +279,7 @@ pub async fn start_local_agent_host(
             .record("host_replace", "previous_stopped")
             .await;
     }
+    manager.approval_sessions.reset();
     *manager.model_catalog.lock().await = None;
 
     let executable = match host_executable(&app) {
@@ -465,5 +481,16 @@ mod tests {
         assert!(validate_owner("").is_err());
         assert!(validate_owner("user\nother").is_err());
         assert!(validate_owner("user-1").is_ok());
+    }
+
+    #[tokio::test]
+    async fn shutdown_clears_in_memory_approval_session() {
+        let manager = HostManager::default();
+        let generation = manager.approval_sessions().generation();
+        assert!(manager
+            .approval_sessions()
+            .insert_if_current(generation, "v2:test-scope".into()));
+        manager.shutdown().await;
+        assert!(manager.approval_sessions().is_empty());
     }
 }

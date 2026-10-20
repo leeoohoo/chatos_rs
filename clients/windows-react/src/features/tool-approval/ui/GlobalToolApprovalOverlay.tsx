@@ -168,11 +168,19 @@ function ApprovalContent({
         )}
         {allowsToolApprovalDecision(approval, "accept") && (
           <button
-            className="primary-button"
+            className="approval-accept-once"
             disabled={!hostReady || isResolving}
             onClick={() => resolve("accept")}
             type="button"
           >仅本次允许</button>
+        )}
+        {allowsToolApprovalDecision(approval, "acceptForSession") && (
+          <button
+            className="primary-button"
+            disabled={!hostReady || isResolving}
+            onClick={() => resolve("acceptForSession")}
+            type="button"
+          >本次会话允许</button>
         )}
       </div>
     </>

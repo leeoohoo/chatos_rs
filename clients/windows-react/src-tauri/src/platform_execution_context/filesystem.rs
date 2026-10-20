@@ -13,6 +13,8 @@ const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
 #[serde(rename_all = "camelCase")]
 struct ConnectorState {
     user: Option<ConnectorUser>,
+    #[serde(rename = "deviceID")]
+    device_id: Option<String>,
     #[serde(default)]
     workspaces: Vec<ConnectorWorkspace>,
 }
@@ -33,6 +35,7 @@ struct ConnectorWorkspace {
 pub(crate) struct ResolvedExecutionRoot {
     pub(crate) root: PathBuf,
     pub(crate) workspace_scope_id: String,
+    pub(crate) device_id: String,
 }
 
 pub(crate) fn resolve_project_root(
@@ -49,6 +52,8 @@ pub(crate) fn resolve_project_root(
     if state.user.as_ref().map(|user| user.id.as_str()) != Some(owner_user_id) {
         return Err(project_unavailable());
     }
+    let device_id = state.device_id.as_deref().ok_or_else(project_unavailable)?;
+    validate_identifier(device_id)?;
     let matches = state
         .workspaces
         .iter()
@@ -81,6 +86,7 @@ pub(crate) fn resolve_project_root(
     Ok(ResolvedExecutionRoot {
         root: canonical_project,
         workspace_scope_id: workspace.id.clone(),
+        device_id: device_id.to_owned(),
     })
 }
 
@@ -93,6 +99,8 @@ pub(crate) fn resolve_contact_root(
     if state.user.as_ref().map(|user| user.id.as_str()) != Some(owner_user_id) {
         return Err(project_unavailable());
     }
+    let device_id = state.device_id.as_deref().ok_or_else(project_unavailable)?;
+    validate_identifier(device_id)?;
     validate_identifier(conversation_id)?;
     let canonical_connector =
         fs::canonicalize(connector_directory).map_err(|_| project_unavailable())?;
@@ -119,6 +127,7 @@ pub(crate) fn resolve_contact_root(
             "contact:{}",
             sha256(&format!("{owner_user_id}\n{conversation_id}"))
         ),
+        device_id: device_id.to_owned(),
     })
 }
 

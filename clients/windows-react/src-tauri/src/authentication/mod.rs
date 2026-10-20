@@ -12,6 +12,8 @@ use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
+use crate::host_lifecycle::HostManager;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthUser {
@@ -322,6 +324,11 @@ pub async fn register(
 }
 
 #[tauri::command]
-pub async fn logout(manager: State<'_, AuthenticationManager>) -> Result<(), String> {
-    manager.logout().await
+pub async fn logout(
+    manager: State<'_, AuthenticationManager>,
+    host_manager: State<'_, HostManager>,
+) -> Result<(), String> {
+    let result = manager.logout().await;
+    host_manager.reset_approval_sessions();
+    result
 }

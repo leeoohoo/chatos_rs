@@ -67,6 +67,7 @@ fn project_root_is_bound_to_owner_registry_and_connector_grant() {
     let resolved = resolve_project_root(connector, "alice", "project-1").unwrap();
     assert_eq!(resolved.root, fs::canonicalize(project).unwrap());
     assert_eq!(resolved.workspace_scope_id, "workspace-1");
+    assert_eq!(resolved.device_id, "device-1");
     assert!(resolve_project_root(connector, "bob", "project-1").is_err());
 }
 
@@ -118,6 +119,7 @@ fn contact_root_is_owner_scoped_and_deterministic() {
         .root
         .starts_with(fs::canonicalize(directory.path()).unwrap()));
     assert!(first.workspace_scope_id.starts_with("contact:"));
+    assert_eq!(first.device_id, "device-1");
     assert!(resolve_contact_root(directory.path(), "bob", "conversation-1").is_err());
 }
 
@@ -163,6 +165,7 @@ fn write_state(
         connector.join("state.json"),
         serde_json::to_vec(&json!({
             "user": {"id": owner},
+            "deviceID": "device-1",
             "workspaces": [{
                 "id": workspace,
                 "absoluteRoot": absolute_root,

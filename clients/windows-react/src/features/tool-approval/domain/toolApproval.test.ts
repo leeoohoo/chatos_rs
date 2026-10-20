@@ -24,5 +24,6 @@ describe("tool approval domain", () => {
     const approval = sampleToolApproval({ availableDecisions: ["decline"] });
     expect(allowsToolApprovalDecision(approval, "decline")).toBe(true);
     expect(allowsToolApprovalDecision(approval, "accept")).toBe(false);
+    expect(allowsToolApprovalDecision(approval, "acceptForSession")).toBe(false);
   });
 });

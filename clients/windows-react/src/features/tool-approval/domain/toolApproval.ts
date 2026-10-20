@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const toolApprovalDecisionSchema = z.enum(["accept", "decline"]);
+export const toolApprovalDecisionSchema = z.enum(["accept", "acceptForSession", "decline"]);
 
 export const toolApprovalSchema = z.object({
   invocationId: z.string().trim().min(1),

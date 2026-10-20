@@ -16,7 +16,7 @@ export function sampleToolApproval(
     reason: "命令可能修改文件、依赖或远程状态。",
     createdAtUnixMs: 1_700_000_000_000,
     updatedAtUnixMs: 1_700_000_000_100,
-    availableDecisions: ["decline", "accept"],
+    availableDecisions: ["decline", "acceptForSession", "accept"],
     ...overrides,
   };
 }

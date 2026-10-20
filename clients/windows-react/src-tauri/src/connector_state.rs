@@ -22,8 +22,16 @@ pub(crate) fn ensure_owner_state(
         .and_then(Value::as_str);
     if previous_owner != Some(owner_user_id) {
         state.insert("user".into(), json!({"id": owner_user_id}));
+        state.insert("deviceID".into(), Value::String(new_device_id()));
         state.insert("workspaces".into(), Value::Array(Vec::new()));
     } else {
+        if state
+            .get("deviceID")
+            .and_then(Value::as_str)
+            .is_none_or(|value| !valid_identifier(value, 1_024))
+        {
+            state.insert("deviceID".into(), Value::String(new_device_id()));
+        }
         validate_workspaces(state.get("workspaces"))?;
     }
     if !state.contains_key("workspaces") {
@@ -31,6 +39,10 @@ pub(crate) fn ensure_owner_state(
     }
     persist_state(&connector_directory, &state_path, &state)?;
     Ok(state_path)
+}
+
+fn new_device_id() -> String {
+    format!("windows-device-{}", uuid::Uuid::new_v4())
 }
 
 fn confined_connector_directory(app_data_directory: &Path) -> Result<PathBuf, String> {
@@ -98,16 +110,19 @@ fn validate_workspaces(value: Option<&Value>) -> Result<(), String> {
                 .get(field)
                 .and_then(Value::as_str)
                 .ok_or_else(state_error)?;
-            if value.is_empty()
-                || value.trim() != value
-                || value.len() > 4_096
-                || value.chars().any(char::is_control)
-            {
+            if !valid_identifier(value, 4_096) {
                 return Err(state_error());
             }
         }
     }
     Ok(())
+}
+
+fn valid_identifier(value: &str, maximum_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && value.len() <= maximum_bytes
+        && !value.chars().any(char::is_control)
 }
 
 fn persist_state(
@@ -154,6 +169,10 @@ mod tests {
         let restored = load_state(&state_path).unwrap();
         assert_eq!(restored["user"]["id"], "owner-1");
         assert_eq!(restored["workspaces"].as_array().unwrap().len(), 1);
+        let device_id = restored["deviceID"].as_str().unwrap().to_owned();
+        assert!(device_id.starts_with("windows-device-"));
+        ensure_owner_state(directory.path(), "owner-1").unwrap();
+        assert_eq!(load_state(&state_path).unwrap()["deviceID"], device_id);
     }
 
     #[test]
@@ -170,10 +189,12 @@ mod tests {
             }]),
         );
         persist_state(state_path.parent().unwrap(), &state_path, &state).unwrap();
+        let previous_device = state["deviceID"].as_str().unwrap().to_owned();
 
         ensure_owner_state(directory.path(), "owner-2").unwrap();
         let restored = load_state(&state_path).unwrap();
         assert_eq!(restored["user"]["id"], "owner-2");
         assert!(restored["workspaces"].as_array().unwrap().is_empty());
+        assert_ne!(restored["deviceID"], previous_device);
     }
 }

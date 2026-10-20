@@ -37,8 +37,19 @@ pub fn pending_approval(invocation: &LocalAgentToolInvocationRecord) -> Option<T
         reason: presentation.reason,
         created_at_unix_ms: invocation.created_at_unix_ms,
         updated_at_unix_ms: invocation.updated_at_unix_ms,
-        available_decisions: vec![ToolApprovalDecision::Decline, ToolApprovalDecision::Accept],
+        available_decisions: available_decisions(&invocation.tool_name),
     })
+}
+
+fn available_decisions(tool_name: &str) -> Vec<ToolApprovalDecision> {
+    let mut decisions = vec![ToolApprovalDecision::Decline, ToolApprovalDecision::Accept];
+    if matches!(
+        tool_name,
+        "execute_command" | "process_write" | "process_kill"
+    ) {
+        decisions.insert(1, ToolApprovalDecision::AcceptForSession);
+    }
+    decisions
 }
 
 struct ApprovalPresentation {

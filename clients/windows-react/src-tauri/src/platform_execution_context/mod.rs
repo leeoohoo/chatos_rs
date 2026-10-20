@@ -22,6 +22,8 @@ use crate::host_lifecycle::HostManager;
 pub(crate) struct PlatformExecutionContext {
     pub(crate) execution_root: PathBuf,
     pub(crate) workspace_scope_id: String,
+    pub(crate) device_id: String,
+    pub(crate) conversation_id: String,
     pub(crate) authorization: TaskToolAuthorization,
 }
 
@@ -87,6 +89,8 @@ pub(crate) async fn resolve_platform_execution_context(
     Ok(PlatformExecutionContext {
         execution_root: resolved.root,
         workspace_scope_id: resolved.workspace_scope_id,
+        device_id: resolved.device_id,
+        conversation_id: conversation_id.to_owned(),
         authorization,
     })
 }

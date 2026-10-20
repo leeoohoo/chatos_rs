@@ -26,13 +26,45 @@ fn projects_only_safe_fields_and_never_serializes_full_arguments() {
     assert_eq!(projected[0].cwd, "clients/windows-react");
     assert_eq!(
         projected[0].available_decisions,
-        vec![ToolApprovalDecision::Decline, ToolApprovalDecision::Accept]
+        vec![
+            ToolApprovalDecision::Decline,
+            ToolApprovalDecision::AcceptForSession,
+            ToolApprovalDecision::Accept,
+        ]
     );
     let encoded = serde_json::to_string(&projected).expect("projection should serialize");
     assert!(!encoded.contains("must-never"));
     assert!(!encoded.contains("also-hidden"));
     assert!(!encoded.contains("api_key"));
     assert!(!encoded.contains("arguments"));
+}
+
+#[test]
+fn publishes_session_decision_only_for_supported_terminal_changes() {
+    let projected = project_pending(vec![
+        invocation("execute", "execute_command", json!({})),
+        invocation("write", "process_write", json!({})),
+        invocation("kill", "process_kill", json!({})),
+        invocation("other", "commit_edit_session", json!({})),
+    ]);
+    for approval in projected
+        .iter()
+        .filter(|approval| approval.invocation_id != "other")
+    {
+        assert!(approval
+            .available_decisions
+            .contains(&ToolApprovalDecision::AcceptForSession));
+    }
+    assert!(!projected
+        .iter()
+        .find(|approval| approval.invocation_id == "other")
+        .unwrap()
+        .available_decisions
+        .contains(&ToolApprovalDecision::AcceptForSession));
+    assert_eq!(
+        serde_json::to_string(&ToolApprovalDecision::AcceptForSession).unwrap(),
+        "\"acceptForSession\""
+    );
 }
 
 #[test]

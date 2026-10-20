@@ -33,6 +33,29 @@ describe("GlobalToolApprovalOverlay", () => {
     await waitFor(() => expect(screen.queryByLabelText("命令审批")).not.toBeInTheDocument());
   });
 
+  it("writes the macOS-compatible session decision when the Host publishes it", async () => {
+    const approval = sampleToolApproval();
+    const port: ToolApprovalPort = {
+      listPending: vi.fn()
+        .mockResolvedValueOnce([approval])
+        .mockResolvedValueOnce([]),
+      decide: vi.fn(async () => ({
+        invocationId: approval.invocationId,
+        invocationVersion: approval.invocationVersion + 1,
+        decision: "acceptForSession" as const,
+      })),
+    };
+    render(<GlobalToolApprovalOverlay hostReady ownerUserId="user-1" port={port} />);
+    await screen.findByText("cargo test");
+    fireEvent.click(screen.getByRole("button", { name: "本次会话允许" }));
+    await waitFor(() => expect(port.decide).toHaveBeenCalledWith({
+      ownerUserId: "user-1",
+      invocationId: approval.invocationId,
+      expectedVersion: approval.invocationVersion,
+      decision: "acceptForSession",
+    }));
+  });
+
   it("automatically expands when a new approval arrives", async () => {
     const first = sampleToolApproval({ invocationId: "a" });
     const second = sampleToolApproval({ invocationId: "b", command: "npm install" });

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ToolApprovalDecision {
     Accept,
+    AcceptForSession,
     Decline,
 }
 
