@@ -2,6 +2,7 @@ mod credentials;
 mod files;
 mod models;
 mod ssh;
+mod terminal;
 
 use crate::{authentication::AuthenticationManager, connector_state, host_lifecycle::HostManager};
 use chatos_local_agent_protocol::{
@@ -25,6 +26,14 @@ use models::{RemoteCredentialBundle, RemoteCredentialFlags};
 use ssh::{NativeOpenSshTester, RemoteConnectionTester, SshConnectionMaterial};
 use std::{collections::BTreeSet, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 use tauri::State;
+#[cfg(test)]
+use terminal::DisabledRemoteTerminalLauncher;
+pub use terminal::{
+    close_remote_terminal, discard_remote_terminal_presentation, interrupt_remote_terminal,
+    poll_remote_terminal, resize_remote_terminal, send_remote_terminal_input,
+    start_remote_terminal,
+};
+use terminal::{RemoteTerminalLauncher, RemoteTerminalRegistry};
 use tokio::sync::Mutex;
 
 type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
@@ -86,11 +95,15 @@ pub struct RemoteConnectionManager {
     tester: Arc<dyn RemoteConnectionTester>,
     file_executor: Arc<dyn RemoteFileExecutor>,
     file_selections: RemoteFileSelectionStore,
+    terminal_tester: Arc<dyn RemoteConnectionTester>,
+    terminal_launcher: Arc<dyn RemoteTerminalLauncher>,
+    terminal_sessions: RemoteTerminalRegistry,
 }
 
 impl RemoteConnectionManager {
     pub fn new(app_data_directory: PathBuf) -> Self {
         let runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
+        let terminal_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         Self {
             mutation: Mutex::new(()),
             credentials: Arc::new(PlatformRemoteCredentialVault::new(
@@ -100,8 +113,11 @@ impl RemoteConnectionManager {
                 data_directory: app_data_directory,
             }),
             tester: runtime.clone(),
-            file_executor: runtime,
+            file_executor: runtime.clone(),
             file_selections: RemoteFileSelectionStore::default(),
+            terminal_tester: terminal_runtime.clone(),
+            terminal_launcher: terminal_runtime,
+            terminal_sessions: RemoteTerminalRegistry::default(),
         }
     }
 
@@ -115,9 +131,12 @@ impl RemoteConnectionManager {
             mutation: Mutex::new(()),
             credentials,
             route_provider,
-            tester,
+            tester: tester.clone(),
             file_executor: Arc::new(DisabledRemoteFileExecutor),
             file_selections: RemoteFileSelectionStore::default(),
+            terminal_tester: tester.clone(),
+            terminal_launcher: Arc::new(DisabledRemoteTerminalLauncher),
+            terminal_sessions: RemoteTerminalRegistry::default(),
         }
     }
 
@@ -523,6 +542,8 @@ impl RemoteConnectionManager {
 
     pub(crate) async fn reset(&self) {
         self.file_selections.reset();
+        self.terminal_sessions.reset().await;
+        self.terminal_tester.reset().await;
         self.tester.reset().await;
     }
 }

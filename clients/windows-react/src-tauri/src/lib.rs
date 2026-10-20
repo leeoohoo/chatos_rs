@@ -76,10 +76,12 @@ use project_run::{
 };
 pub use remote_connection::run_ssh_askpass_helper_if_requested;
 use remote_connection::{
-    create_remote_connection, create_remote_directory, delete_remote_connection,
-    delete_remote_entry, discard_remote_file_selections, download_remote_file,
-    get_remote_connection, list_remote_connections, list_remote_directory,
-    pick_remote_download_destination, pick_remote_upload_file, rename_remote_entry,
+    close_remote_terminal, create_remote_connection, create_remote_directory,
+    delete_remote_connection, delete_remote_entry, discard_remote_file_selections,
+    discard_remote_terminal_presentation, download_remote_file, get_remote_connection,
+    interrupt_remote_terminal, list_remote_connections, list_remote_directory,
+    pick_remote_download_destination, pick_remote_upload_file, poll_remote_terminal,
+    rename_remote_entry, resize_remote_terminal, send_remote_terminal_input, start_remote_terminal,
     test_remote_connection_draft, test_saved_remote_connection, update_remote_connection,
     upload_remote_file, RemoteConnectionManager,
 };
@@ -260,6 +262,13 @@ pub fn run() {
             discard_remote_file_selections,
             upload_remote_file,
             download_remote_file,
+            start_remote_terminal,
+            send_remote_terminal_input,
+            resize_remote_terminal,
+            interrupt_remote_terminal,
+            poll_remote_terminal,
+            close_remote_terminal,
+            discard_remote_terminal_presentation,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

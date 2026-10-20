@@ -29,6 +29,7 @@ use tokio::{
 use uuid::Uuid;
 
 const ASKPASS_MODE_VARIABLE: &str = "CHATOS_SSH_ASKPASS_MODE";
+const VERIFICATION_CODE_VARIABLE: &str = "CHATOS_SSH_VERIFICATION_CODE";
 const TARGET_ALIAS: &str = "chatos-target";
 const JUMP_ALIAS: &str = "chatos-jump";
 const SUCCESS_MARKER: &str = "__CHATOS_REMOTE_OK__";
@@ -107,6 +108,87 @@ impl NativeOpenSshTester {
             timeout,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub(super) fn prepare_terminal_launch(
+        &self,
+        connection: &SshConnectionMaterial,
+        verification_code: Option<String>,
+    ) -> Result<InteractiveSshLaunch, String> {
+        validate_material(connection)?;
+        let verification_code = normalize_verification_code(verification_code)?.unwrap_or_default();
+        let prepared = Arc::new(PreparedSshSession::create(&self.runtime_root, connection)?);
+        let executable = ssh_executable()?;
+        let askpass =
+            std::env::current_exe().map_err(|_| "无法定位 ChatOS SSH 凭据助手。".to_owned())?;
+        validate_regular_executable(&askpass, "ChatOS SSH 凭据助手不可用。")?;
+        let mut environment = inherited_ssh_environment();
+        restrict_open_ssh_search_environment(&mut environment, &executable)?;
+        environment.extend([
+            (
+                OsString::from("SSH_ASKPASS"),
+                askpass.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from("SSH_ASKPASS_REQUIRE"),
+                OsString::from("force"),
+            ),
+            (OsString::from(ASKPASS_MODE_VARIABLE), OsString::from("1")),
+            (OsString::from("DISPLAY"), OsString::from("chatos:0")),
+            (OsString::from("TERM"), OsString::from("xterm-256color")),
+            (OsString::from("COLORTERM"), OsString::from("truecolor")),
+            (
+                OsString::from("CHATOS_SSH_PROMPT_LOG"),
+                prepared.prompt_log.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from("CHATOS_SSH_VERIFICATION_FILE"),
+                prepared.verification_response.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from(VERIFICATION_CODE_VARIABLE),
+                OsString::from(verification_code),
+            ),
+            (
+                OsString::from("CHATOS_SSH_TARGET_PASSWORD"),
+                OsString::from(connection.credentials.password.as_deref().unwrap_or("")),
+            ),
+            (
+                OsString::from("CHATOS_SSH_JUMP_PASSWORD"),
+                OsString::from(prepared.jump_password.as_deref().unwrap_or("")),
+            ),
+            (
+                OsString::from("CHATOS_SSH_JUMP_HOST"),
+                OsString::from(connection.spec.jump_host.as_deref().unwrap_or("")),
+            ),
+            (
+                OsString::from("CHATOS_SSH_JUMP_USER"),
+                OsString::from(connection.spec.jump_username.as_deref().unwrap_or("")),
+            ),
+        ]);
+        let mut arguments = vec![
+            // Interactive bytes are projected to React. Suppress local SSH
+            // diagnostics so config/key/runtime absolute paths cannot enter
+            // the terminal stream; connection failures are represented by
+            // the bounded native lifecycle and exit status instead.
+            OsString::from("-q"),
+            OsString::from("-tt"),
+            OsString::from("-F"),
+            prepared.config.as_os_str().to_owned(),
+            OsString::from(TARGET_ALIAS),
+        ];
+        let initial_working_directory = terminal_working_directory(connection)?;
+        if let Some(command) = remote_terminal_startup_command(&initial_working_directory) {
+            arguments.push(OsString::from(command));
+        }
+        Ok(InteractiveSshLaunch {
+            executable,
+            arguments,
+            environment,
+            working_directory: prepared.directory.clone(),
+            initial_working_directory,
+            _prepared: prepared,
+        })
     }
 
     async fn run_test(
@@ -413,6 +495,15 @@ impl NativeOpenSshTester {
             .await;
         }
     }
+}
+
+pub(super) struct InteractiveSshLaunch {
+    pub(super) executable: PathBuf,
+    pub(super) arguments: Vec<OsString>,
+    pub(super) environment: Vec<(OsString, OsString)>,
+    pub(super) working_directory: PathBuf,
+    pub(super) initial_working_directory: String,
+    _prepared: Arc<PreparedSshSession>,
 }
 
 struct ActiveSshSession {
@@ -1121,6 +1212,44 @@ fn normalize_verification_code(value: Option<String>) -> Result<Option<String>, 
         .transpose()
 }
 
+fn terminal_working_directory(material: &SshConnectionMaterial) -> Result<String, String> {
+    let directory = material
+        .spec
+        .default_remote_path
+        .as_deref()
+        .unwrap_or("~")
+        .trim();
+    if directory.is_empty() {
+        return Ok("~".into());
+    }
+    if directory.len() > 4_096
+        || directory.contains('\0')
+        || directory.contains(['\r', '\n'])
+        || directory.chars().any(|character| character.is_control())
+    {
+        return Err("远端终端初始目录无效。".into());
+    }
+    Ok(directory.to_owned())
+}
+
+fn remote_terminal_startup_command(directory: &str) -> Option<String> {
+    if directory == "~" {
+        return None;
+    }
+    let change_directory = if let Some(relative) = directory.strip_prefix("~/") {
+        format!("\"$HOME\"/{}", shell_quote(relative))
+    } else {
+        shell_quote(directory)
+    };
+    Some(format!(
+        "cd -- {change_directory} && exec \"${{SHELL:-/bin/sh}}\" -l"
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub(super) fn connection_fingerprint(material: &SshConnectionMaterial) -> String {
     let mut digest = Sha256::new();
     digest.update(serde_json::to_vec(&material.spec).unwrap_or_default());
@@ -1454,13 +1583,14 @@ pub fn run_askpass_helper_if_requested() -> bool {
     let jump_host = std::env::var("CHATOS_SSH_JUMP_HOST").unwrap_or_default();
     let jump_user = std::env::var("CHATOS_SSH_JUMP_USER").unwrap_or_default();
     let verification_file = std::env::var_os("CHATOS_SSH_VERIFICATION_FILE").map(PathBuf::from);
+    let verification_code = std::env::var(VERIFICATION_CODE_VARIABLE).unwrap_or_default();
     let response = askpass_response(
         &prompt,
         &target_password,
         &jump_password,
         &jump_host,
         &jump_user,
-        "",
+        &verification_code,
         verification_file.as_deref(),
     );
     let _ = writeln!(std::io::stdout(), "{response}");
@@ -1655,6 +1785,19 @@ mod tests {
                 None,
             ),
             "123456"
+        );
+    }
+
+    #[test]
+    fn terminal_startup_command_matches_macos_directory_semantics() {
+        assert_eq!(remote_terminal_startup_command("~"), None);
+        assert_eq!(
+            remote_terminal_startup_command("~/Work Folder"),
+            Some("cd -- \"$HOME\"/'Work Folder' && exec \"${SHELL:-/bin/sh}\" -l".into())
+        );
+        assert_eq!(
+            remote_terminal_startup_command("/srv/it's here"),
+            Some("cd -- '/srv/it'\\''s here' && exec \"${SHELL:-/bin/sh}\" -l".into())
         );
     }
 
