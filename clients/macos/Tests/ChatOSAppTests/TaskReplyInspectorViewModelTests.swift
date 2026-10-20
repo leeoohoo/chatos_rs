@@ -152,6 +152,68 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingModelOutput)
     }
 
+    func testDelayedTaskRequestDoesNotRetainInspector() async throws {
+        let service = TaskReplyInspectorServiceStub(delayFirstTaskRequest: true)
+        var viewModel: TaskReplyInspectorViewModel? = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process),
+            service: service
+        )
+        weak let weakViewModel = viewModel
+
+        viewModel?.load()
+        try await waitUntilPendingTask(service)
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await service.resumeTaskRequest()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
+    func testIdleRealtimeStreamDoesNotRetainInspector() async throws {
+        let service = TaskReplyInspectorServiceStub()
+        let realtimeService = TaskReplyInspectorRealtimeServiceStub()
+        var viewModel: TaskReplyInspectorViewModel? = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process),
+            service: service,
+            realtimeService: realtimeService
+        )
+        weak let weakViewModel = viewModel
+
+        viewModel?.load()
+        try await waitUntilRealtimeSubscribed(realtimeService)
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+    }
+
+    func testChangedSelectionRejectsLateTaskResponse() async throws {
+        let service = TaskReplyInspectorServiceStub(delayFirstTaskRequest: true)
+        let viewModel = TaskReplyInspectorViewModel(
+            selection: makeSelection(section: .process),
+            service: service
+        )
+
+        viewModel.load()
+        try await waitUntilPendingTask(service)
+        viewModel.update(selection: makeSelection(
+            section: .process,
+            turnID: "turn-2",
+            replyID: "reply-2",
+            taskID: "task-2",
+            runID: "run-2"
+        ))
+        try await waitUntilLoaded(viewModel)
+        await service.resumeTaskRequest()
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertEqual(viewModel.task?.id, "task-2")
+        XCTAssertNil(viewModel.errorMessage)
+        let calls = await service.callCounts()
+        XCTAssertEqual(calls.fetchTask, 2)
+    }
+
     func testRetryFailureRemainsVisibleWithLoadedTask() async throws {
         let service = TaskReplyInspectorServiceStub(failRetryRequest: true)
         let viewModel = TaskReplyInspectorViewModel(
@@ -319,6 +381,17 @@ final class TaskReplyInspectorViewModelTests: XCTestCase {
         XCTFail("任务重试未进入待完成状态")
     }
 
+    private func waitUntilPendingTask(
+        _ service: TaskReplyInspectorServiceStub,
+        timeoutIterations: Int = 100
+    ) async throws {
+        for _ in 0..<timeoutIterations {
+            if await service.hasPendingTaskRequest() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("任务详情请求未进入待完成状态")
+    }
+
     private func waitUntilPendingRun(
         _ service: TaskReplyInspectorServiceStub,
         timeoutIterations: Int = 100
@@ -391,11 +464,13 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     private let delayRetryRequest: Bool
     private let taskStatus: String
     private let delayRunRequest: Bool
+    private let delayFirstTaskRequest: Bool
     private var taskCalls = 0
     private var runCalls = 0
     private var runIDs: [String] = []
     private var retryContinuation: CheckedContinuation<Void, Never>?
     private var runContinuation: CheckedContinuation<Void, Never>?
+    private var taskContinuation: CheckedContinuation<Void, Never>?
 
     init(
         failRunRequest: Bool = false,
@@ -404,7 +479,8 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         fetchTaskDelayMilliseconds: Int = 0,
         delayRetryRequest: Bool = false,
         taskStatus: String = "succeeded",
-        delayRunRequest: Bool = false
+        delayRunRequest: Bool = false,
+        delayFirstTaskRequest: Bool = false
     ) {
         self.failRunRequest = failRunRequest
         self.failRetryRequest = failRetryRequest
@@ -413,6 +489,7 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         self.delayRetryRequest = delayRetryRequest
         self.taskStatus = taskStatus
         self.delayRunRequest = delayRunRequest
+        self.delayFirstTaskRequest = delayFirstTaskRequest
     }
 
     func callCounts() -> (fetchTask: Int, fetchRun: Int) {
@@ -427,6 +504,10 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         retryContinuation != nil
     }
 
+    func hasPendingTaskRequest() -> Bool {
+        taskContinuation != nil
+    }
+
     func hasPendingRunRequest() -> Bool {
         runContinuation != nil
     }
@@ -439,6 +520,11 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
     func resumeRunRequest() {
         runContinuation?.resume()
         runContinuation = nil
+    }
+
+    func resumeTaskRequest() {
+        taskContinuation?.resume()
+        taskContinuation = nil
     }
 
     func fetchGraph(
@@ -459,10 +545,15 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         lookup: MessageTaskLookup?
     ) async throws -> MessageTask {
         taskCalls += 1
+        if delayFirstTaskRequest, taskCalls == 1 {
+            await withCheckedContinuation { continuation in
+                taskContinuation = continuation
+            }
+        }
         if fetchTaskDelayMilliseconds > 0 {
             try await Task.sleep(for: .milliseconds(fetchTaskDelayMilliseconds))
         }
-        return task()
+        return task(id: taskID)
     }
 
     func fetchRun(
@@ -520,9 +611,9 @@ private actor TaskReplyInspectorServiceStub: MessageTaskGraphServicing {
         reason: String?
     ) async throws {}
 
-    private func task() -> MessageTask {
+    private func task(id: String = "task-1") -> MessageTask {
         MessageTask(
-            id: "task-1",
+            id: id,
             title: "任务一",
             status: taskStatus,
             processLog: "[2026-09-08 10:00] 开始\n执行完成",

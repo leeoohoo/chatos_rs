@@ -56,6 +56,30 @@ struct TaskReplySelection: Identifiable {
 
 @MainActor
 final class TaskReplyInspectorViewModel: ObservableObject {
+    struct LoadRequest: Sendable {
+        let generation: Int
+        let inspectorSession: MessageTaskInspectorSession
+        let selectionIdentity: String
+        let requestedSection: TaskReplyInspectorSection
+        let messageID: String
+        let taskID: String
+        let lookup: MessageTaskLookup
+        let fallbackRunID: String?
+        let prefetchedTask: MessageTask?
+        let graphUseCase: MessageTaskGraphUseCase
+        let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
+    }
+
+    enum TaskLoadOutcome {
+        case success(MessageTask)
+        case failure(String)
+    }
+
+    enum RunLoadOutcome {
+        case success(MessageTaskInspectorSectionUpdate)
+        case failure(String)
+    }
+
     private(set) var selection: TaskReplySelection
     @Published var section: TaskReplyInspectorSection
     @Published private(set) var task: MessageTask?
@@ -191,6 +215,19 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         let generation = loadGeneration
         let selection = selection
         let requestedSection = section
+        let request = LoadRequest(
+            generation: generation,
+            inspectorSession: inspectorSession,
+            selectionIdentity: selection.refreshIdentity,
+            requestedSection: requestedSection,
+            messageID: selection.reply.message.id,
+            taskID: callback.taskID,
+            lookup: lookup(callback, selection: selection),
+            fallbackRunID: callback.runID,
+            prefetchedTask: prefetchedTask,
+            graphUseCase: graphUseCase,
+            inspectorRefreshUseCase: inspectorRefreshUseCase
+        )
         loadTask?.cancel()
         if showsLoadingState {
             isLoading = true
@@ -199,61 +236,109 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             isLoadingModelOutput = requestedSection == .detail
         }
         loadTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                switch requestedSection {
-                case .process:
-                    let loadedTask = try await fetchTask(callback: callback, selection: selection)
-                    guard !Task.isCancelled,
-                          lifecycleState.accepts(inspectorSession),
-                          generation == loadGeneration else { return }
-                    apply(loadedTask)
-                case .detail:
-                    // A reply callback identifies the run that originally emitted the reply.
-                    // After a retry that ID is historical, so fetch the task first and follow its
-                    // current lastRunID instead of repeatedly rendering the original failure. A
-                    // section switch may reuse the task loaded by the process tab; background
-                    // refreshes still fetch the latest task before following its current run.
-                    let loadedTask: MessageTask
-                    if let prefetchedTask {
-                        loadedTask = prefetchedTask
-                    } else {
-                        loadedTask = try await fetchTask(
-                            callback: callback,
-                            selection: selection
-                        )
-                    }
-                    guard !Task.isCancelled,
-                          lifecycleState.accepts(inspectorSession),
-                          generation == loadGeneration else { return }
-                    apply(loadedTask)
-                    await loadLatestRun(
-                        for: loadedTask,
-                        callback: callback,
-                        selection: selection,
-                        generation: generation,
-                        inspectorSession: inspectorSession
-                    )
-                }
-            } catch {
-                guard !Task.isCancelled,
-                      lifecycleState.accepts(inspectorSession),
-                      generation == loadGeneration else { return }
-                let nextErrorMessage = error.localizedDescription
-                if errorMessage != nextErrorMessage {
-                    errorMessage = nextErrorMessage
-                }
-            }
+            let taskOutcome = await Self.fetchTask(for: request)
             guard !Task.isCancelled,
-                  lifecycleState.accepts(inspectorSession),
-                  generation == loadGeneration else { return }
-            // A realtime or polling refresh can supersede the visible refresh that set these
-            // flags. The latest generation owns cleanup even when that refresh is silent;
-            // cancelled, older generations are excluded by the guard above.
-            isLoading = false
-            isLoadingModelOutput = false
-            scheduleActiveRefreshIfNeeded(inspectorSession: inspectorSession)
+                  self?.applyTaskLoadOutcome(taskOutcome, request: request) == true else { return }
+            guard case let .success(loadedTask) = taskOutcome,
+                  request.requestedSection == .detail else {
+                self?.finishLoad(request: request)
+                return
+            }
+
+            let runOutcome = await Self.fetchLatestRun(
+                for: loadedTask,
+                request: request
+            )
+            guard !Task.isCancelled else { return }
+            self?.applyRunLoadOutcome(
+                runOutcome,
+                loadedTask: loadedTask,
+                request: request
+            )
+            self?.finishLoad(request: request)
         }
+    }
+
+    nonisolated static func fetchTask(for request: LoadRequest) async -> TaskLoadOutcome {
+        if let prefetchedTask = request.prefetchedTask {
+            return .success(prefetchedTask)
+        }
+        do {
+            return .success(try await request.graphUseCase.loadTask(
+                messageID: request.messageID,
+                taskID: request.taskID,
+                lookup: request.lookup
+            ))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    nonisolated static func fetchLatestRun(
+        for loadedTask: MessageTask,
+        request: LoadRequest
+    ) async -> RunLoadOutcome {
+        do {
+            return .success(try await request.inspectorRefreshUseCase.refreshSection(
+                .detail,
+                messageID: request.messageID,
+                lookup: request.lookup,
+                task: loadedTask,
+                fallbackRunID: request.fallbackRunID
+            ))
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    private func accepts(_ request: LoadRequest) -> Bool {
+        lifecycleState.accepts(request.inspectorSession)
+            && request.generation == loadGeneration
+            && request.selectionIdentity == selection.refreshIdentity
+            && request.requestedSection == section
+    }
+
+    @discardableResult
+    private func applyTaskLoadOutcome(
+        _ outcome: TaskLoadOutcome,
+        request: LoadRequest
+    ) -> Bool {
+        guard accepts(request) else { return false }
+        switch outcome {
+        case let .success(loadedTask):
+            apply(loadedTask)
+        case let .failure(message):
+            if errorMessage != message {
+                errorMessage = message
+            }
+        }
+        return true
+    }
+
+    private func applyRunLoadOutcome(
+        _ outcome: RunLoadOutcome,
+        loadedTask: MessageTask,
+        request: LoadRequest
+    ) {
+        guard accepts(request), task?.id == loadedTask.id else { return }
+        switch outcome {
+        case let .success(update):
+            guard case let .modelOutput(updatedTask, loadedRunID) = update else { return }
+            apply(updatedTask)
+            loadedModelOutputRunID = loadedRunID
+        case let .failure(message):
+            modelOutputError = message
+        }
+    }
+
+    private func finishLoad(request: LoadRequest) {
+        guard accepts(request) else { return }
+        // A realtime or polling refresh can supersede the visible refresh that set these
+        // flags. The latest generation owns cleanup even when that refresh is silent;
+        // cancelled, older generations are excluded by the identity checks above.
+        isLoading = false
+        isLoadingModelOutput = false
+        scheduleActiveRefreshIfNeeded(inspectorSession: request.inspectorSession)
     }
 
     func retry() {
@@ -322,48 +407,6 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         isRetrying = false
     }
 
-    private func loadLatestRun(
-        for loadedTask: MessageTask,
-        callback: TaskExecutionCallbackReference,
-        selection: TaskReplySelection,
-        generation: Int,
-        inspectorSession: MessageTaskInspectorSession
-    ) async {
-        guard let runID = loadedTask.lastRunID ?? callback.runID else { return }
-        do {
-            let update = try await inspectorRefreshUseCase.refreshSection(
-                .detail,
-                messageID: selection.reply.message.id,
-                lookup: lookup(callback, selection: selection),
-                task: loadedTask,
-                fallbackRunID: runID
-            )
-            guard !Task.isCancelled,
-                  lifecycleState.accepts(inspectorSession),
-                  generation == loadGeneration,
-                  task?.id == loadedTask.id else { return }
-            guard case let .modelOutput(updatedTask, loadedRunID) = update else { return }
-            apply(updatedTask)
-            loadedModelOutputRunID = loadedRunID
-        } catch {
-            guard !Task.isCancelled,
-                  lifecycleState.accepts(inspectorSession),
-                  generation == loadGeneration else { return }
-            modelOutputError = error.localizedDescription
-        }
-    }
-
-    private func fetchTask(
-        callback: TaskExecutionCallbackReference,
-        selection: TaskReplySelection
-    ) async throws -> MessageTask {
-        try await graphUseCase.loadTask(
-            messageID: selection.reply.message.id,
-            taskID: callback.taskID,
-            lookup: lookup(callback, selection: selection)
-        )
-    }
-
     func apply(_ loadedTask: MessageTask) {
         guard task != loadedTask else { return }
         let nextTimelineItems = TaskProcessTimelineBuilder.build(
@@ -410,20 +453,20 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         realtimeSessionID = sessionID
         realtimeTask = Task { [weak self, realtimeService, sessionID] in
             let stream = await realtimeService.events(sessionID: sessionID)
-            guard !Task.isCancelled,
-                  let self,
-                  self.lifecycleState.accepts(inspectorSession) else { return }
-            self.realtimeDidStart(
+            guard !Task.isCancelled else { return }
+            self?.realtimeDidStart(
                 sessionID: sessionID,
                 inspectorSession: inspectorSession
             )
             do {
                 for try await signal in stream {
                     guard !Task.isCancelled,
-                          self.lifecycleState.accepts(inspectorSession),
-                          signal.sessionID == sessionID,
-                          self.realtimeSessionID == sessionID else { return }
-                    self.refresh(
+                          signal.sessionID == sessionID else { return }
+                    guard self?.acceptsRealtime(
+                        sessionID: sessionID,
+                        inspectorSession: inspectorSession
+                    ) == true else { return }
+                    self?.refresh(
                         showsLoadingState: false,
                         inspectorSession: inspectorSession
                     )
@@ -431,13 +474,21 @@ final class TaskReplyInspectorViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled else { return }
             }
-            guard !Task.isCancelled,
-                  self.lifecycleState.accepts(inspectorSession) else { return }
-            self.realtimeDidEnd(
+            guard !Task.isCancelled else { return }
+            self?.realtimeDidEnd(
                 sessionID: sessionID,
                 inspectorSession: inspectorSession
             )
         }
+    }
+
+    private func acceptsRealtime(
+        sessionID: String,
+        inspectorSession: MessageTaskInspectorSession
+    ) -> Bool {
+        lifecycleState.accepts(inspectorSession)
+            && realtimeSessionID == sessionID
+            && selection.turn.sessionID == sessionID
     }
 
     private func realtimeDidStart(
