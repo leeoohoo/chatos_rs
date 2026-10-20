@@ -808,6 +808,7 @@ async fn draft_connection_test_never_writes_host_metadata() {
             "owner-1",
             password_input(RemoteSecretMutation::Replace("secret".into())),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -815,4 +816,60 @@ async fn draft_connection_test_never_writes_host_metadata() {
     assert!(result.verification_required);
     assert_eq!(result.verification_prompt.as_deref(), Some("OTP code:"));
     assert!(client.commands().is_empty());
+}
+
+#[tokio::test]
+async fn draft_connection_test_reuses_saved_credentials_without_persisting_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let vault = Arc::new(memory_vault(directory.path().join("credentials.json")));
+    vault
+        .save(
+            "owner-1",
+            "connection-1",
+            &RemoteCredentialBundle {
+                password: Some("saved-secret".into()),
+                ..RemoteCredentialBundle::default()
+            },
+        )
+        .unwrap();
+    let tester = Arc::new(CapturingTester {
+        calls: StandardMutex::new(Vec::new()),
+        result: PresentedRemoteConnectionTestResult::success(),
+    });
+    let manager = manager_with_tester(vault.clone(), tester.clone());
+    let client = ScriptedMetadata::new(vec![Ok(HostResult::RemoteConnection {
+        connection: Some(record("connection-1", 4)),
+    })]);
+
+    let result = manager
+        .test_draft(
+            &client,
+            "owner-1",
+            password_input(RemoteSecretMutation::Keep),
+            Some("connection-1".into()),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.success);
+    let calls = tester.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(
+        calls[0].0.credentials.password.as_deref(),
+        Some("saved-secret")
+    );
+    assert_eq!(
+        vault
+            .load("owner-1", "connection-1")
+            .unwrap()
+            .unwrap()
+            .password
+            .as_deref(),
+        Some("saved-secret")
+    );
+    assert!(matches!(
+        client.commands().as_slice(),
+        [HostCommand::GetRemoteConnection(_)]
+    ));
 }

@@ -435,12 +435,31 @@ impl RemoteConnectionManager {
         client: &dyn RemoteConnectionMetadataClient,
         owner_user_id: &str,
         input: RemoteConnectionInput,
+        credential_reference_id: Option<String>,
         verification_code: Option<String>,
     ) -> Result<PresentedRemoteConnectionTestResult, String> {
         let _mutation = self.mutation.lock().await;
         validate_owner(owner_user_id)?;
-        let prepared = self.spec(client, owner_user_id, None, &input).await?;
-        let credentials = RemoteCredentialBundle::default().applying(
+        let base_credentials = match credential_reference_id.as_deref() {
+            Some(connection_id) => {
+                get_record(client, owner_user_id, connection_id)
+                    .await?
+                    .ok_or_else(|| "远端连接不存在。".to_owned())?;
+                self.credentials
+                    .load(owner_user_id, connection_id)?
+                    .unwrap_or_default()
+            }
+            None => RemoteCredentialBundle::default(),
+        };
+        let prepared = self
+            .spec(
+                client,
+                owner_user_id,
+                credential_reference_id.as_deref(),
+                &input,
+            )
+            .await?;
+        let credentials = base_credentials.applying(
             &input.credentials,
             input.authentication_type,
             prepared.retain_manual_jump_credentials,
@@ -643,13 +662,20 @@ pub async fn test_remote_connection_draft(
     manager: State<'_, RemoteConnectionManager>,
     owner_user_id: String,
     input: RemoteConnectionInput,
+    credential_reference_id: Option<String>,
     verification_code: Option<String>,
 ) -> Result<PresentedRemoteConnectionTestResult, String> {
     authentication
         .access_token_for_owner(&owner_user_id)
         .await?;
     manager
-        .test_draft(&*host, &owner_user_id, input, verification_code)
+        .test_draft(
+            &*host,
+            &owner_user_id,
+            input,
+            credential_reference_id,
+            verification_code,
+        )
         .await
 }
 

@@ -26,6 +26,7 @@ export interface DeleteRemoteConnectionRequest extends SavedRemoteConnectionScop
 }
 
 export interface TestRemoteConnectionDraftRequest extends CreateRemoteConnectionRequest {
+  credentialReferenceId: string | null;
   verificationCode: string | null;
 }
 
