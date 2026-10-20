@@ -2,6 +2,47 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::*;
+use std::path::PathBuf;
+
+fn shared_fixture(name: &str) -> Vec<u8> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../contracts/local-agent/v44/fixtures")
+        .join(name);
+    std::fs::read(&path).unwrap_or_else(|error| {
+        panic!("failed to read shared contract fixture {}: {error}", path.display())
+    })
+}
+
+#[test]
+fn shared_health_fixtures_match_protocol_v44() {
+    let request: HostRequestEnvelope =
+        serde_json::from_slice(&shared_fixture("health-request.json")).expect("health request");
+    request.validate().expect("valid health request");
+    assert_eq!(request.protocol_version, LOCAL_AGENT_PROTOCOL_VERSION);
+    assert_eq!(request.command_id, "contract-health-1");
+    assert_eq!(request.command, HostCommand::Health);
+
+    let success: HostResponseEnvelope =
+        serde_json::from_slice(&shared_fixture("health-success.json")).expect("health success");
+    assert!(success.ok);
+    assert!(success.error.is_none());
+    assert!(matches!(
+        success.result,
+        Some(HostResult::Health {
+            service,
+            storage_ready: true,
+            recovered_claims: 0,
+            max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
+            max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
+        }) if service == "chatos-local-agent-host"
+    ));
+
+    let failure: HostResponseEnvelope =
+        serde_json::from_slice(&shared_fixture("health-failure.json")).expect("health failure");
+    assert!(!failure.ok);
+    assert!(failure.result.is_none());
+    assert_eq!(failure.error.expect("health error").code, "storage_unavailable");
+}
 
 #[test]
 fn run_status_round_trips_through_stable_wire_value() {

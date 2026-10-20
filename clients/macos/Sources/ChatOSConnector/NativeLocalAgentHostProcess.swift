@@ -220,7 +220,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
     private func verifyHealth() throws {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
-        let request = HealthRequest(
+        let request = NativeLocalAgentHealthRequest(
             protocolVersion: NativeLocalAgentHostProtocol.version,
             commandId: commandID,
             command: .init(type: "health")
@@ -230,7 +230,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             timeoutMilliseconds: startupTimeoutMilliseconds
         )
         let response = try JSONDecoder.localAgent.decode(
-            HealthResponse.self,
+            NativeLocalAgentHealthResponse.self,
             from: payload
         )
         guard response.protocolVersion == NativeLocalAgentHostProtocol.version,
@@ -254,7 +254,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
     func respondsToHealthCheck(timeoutMilliseconds: Int) async -> Bool {
         let commandID = "native-health-\(UUID().uuidString.lowercased())"
-        let request = HealthRequest(
+        let request = NativeLocalAgentHealthRequest(
             protocolVersion: NativeLocalAgentHostProtocol.version,
             commandId: commandID,
             command: .init(type: "health")
@@ -265,7 +265,7 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
                 timeoutMilliseconds: timeoutMilliseconds
             )
             let response = try JSONDecoder.localAgent.decode(
-                HealthResponse.self,
+                NativeLocalAgentHealthResponse.self,
                 from: payload
             )
             return response.protocolVersion == NativeLocalAgentHostProtocol.version
@@ -728,32 +728,34 @@ enum LocalAgentHostFrameCodec {
     }
 }
 
-private struct HealthRequest: Encodable {
+struct NativeLocalAgentHealthRequest: Codable, Equatable {
     let protocolVersion: Int
     let commandId: String
-    let command: HealthCommand
+    let command: NativeLocalAgentHealthCommand
 }
 
-private struct HealthCommand: Encodable {
+struct NativeLocalAgentHealthCommand: Codable, Equatable {
     let type: String
 }
 
-private struct HealthResponse: Decodable {
+struct NativeLocalAgentHealthResponse: Codable, Equatable {
     let protocolVersion: Int
     let commandId: String
     let ok: Bool
-    let result: HealthResult?
-    let error: HealthError?
+    let result: NativeLocalAgentHealthResult?
+    let error: NativeLocalAgentHealthError?
 }
 
-private struct HealthResult: Decodable {
+struct NativeLocalAgentHealthResult: Codable, Equatable {
     let type: String
+    let service: String
     let storageReady: Bool
+    let recoveredClaims: UInt64
     let maxFrameBytes: Int
     let maxMessageBytes: Int
 }
 
-private struct HealthError: Decodable {
+struct NativeLocalAgentHealthError: Codable, Equatable {
     let code: String
     let message: String
     let retryable: Bool
