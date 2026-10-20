@@ -6,13 +6,15 @@ use serde::Serialize;
 use std::{path::PathBuf, process::Stdio, time::Duration};
 use tauri::{AppHandle, Manager, State};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::Mutex,
     time::timeout,
 };
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+const FRAME_CONTINUATION_BIT: u32 = 1 << 31;
+const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -194,6 +196,14 @@ fn host_executable(app: &AppHandle) -> Result<PathBuf, String> {
     if bundled.is_file() {
         return Ok(bundled);
     }
+    if let Ok(current_executable) = std::env::current_exe() {
+        if let Some(directory) = current_executable.parent() {
+            let development = directory.join(filename);
+            if development.is_file() {
+                return Ok(development);
+            }
+        }
+    }
     Err("Local Agent Host executable is unavailable.".to_string())
 }
 
@@ -205,9 +215,9 @@ async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
             command: HostCommand::Health,
         };
         let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
-        write_frame(&mut host.input, &body).await?;
+        write_message(&mut host.input, &body).await?;
         let response: HostResponseEnvelope =
-            serde_json::from_slice(&read_frame(&mut host.output).await?)
+            serde_json::from_slice(&read_message(&mut host.output).await?)
                 .map_err(|error| error.to_string())?;
         if response.protocol_version != LOCAL_AGENT_PROTOCOL_VERSION
             || response.command_id != request.command_id
@@ -233,38 +243,64 @@ async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
     .map_err(|_| "Host health check timed out.".to_string())?
 }
 
-async fn write_frame(writer: &mut ChildStdin, body: &[u8]) -> Result<(), String> {
-    if body.is_empty() || body.len() > LOCAL_AGENT_MAX_FRAME_BYTES {
-        return Err("Host request frame is invalid.".to_string());
+async fn write_message<W>(writer: &mut W, body: &[u8]) -> Result<(), String>
+where
+    W: AsyncWrite + Unpin,
+{
+    if body.is_empty() || body.len() > LOCAL_AGENT_MAX_MESSAGE_BYTES {
+        return Err("Host request message is invalid.".to_string());
     }
-    let length = u32::try_from(body.len()).map_err(|_| "Host request is too large".to_string())?;
-    writer
-        .write_all(&length.to_be_bytes())
-        .await
-        .map_err(|error| error.to_string())?;
-    writer
-        .write_all(body)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut chunks = body.chunks(LOCAL_AGENT_MAX_FRAME_BYTES).peekable();
+    while let Some(chunk) = chunks.next() {
+        let length = u32::try_from(chunk.len())
+            .map_err(|_| "Host request frame is too large.".to_string())?;
+        let prefix = if chunks.peek().is_some() {
+            length | FRAME_CONTINUATION_BIT
+        } else {
+            length
+        };
+        writer
+            .write_all(&prefix.to_be_bytes())
+            .await
+            .map_err(|error| error.to_string())?;
+        writer
+            .write_all(chunk)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     writer.flush().await.map_err(|error| error.to_string())
 }
 
-async fn read_frame(reader: &mut ChildStdout) -> Result<Vec<u8>, String> {
-    let mut prefix = [0_u8; 4];
-    reader
-        .read_exact(&mut prefix)
-        .await
-        .map_err(|error| error.to_string())?;
-    let length = u32::from_be_bytes(prefix) as usize;
-    if length == 0 || length > LOCAL_AGENT_MAX_FRAME_BYTES {
-        return Err("Host response frame is invalid.".to_string());
+async fn read_message<R>(reader: &mut R) -> Result<Vec<u8>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut message = Vec::new();
+    loop {
+        let mut prefix = [0_u8; 4];
+        reader
+            .read_exact(&mut prefix)
+            .await
+            .map_err(|error| error.to_string())?;
+        let encoded = u32::from_be_bytes(prefix);
+        let has_more = encoded & FRAME_CONTINUATION_BIT != 0;
+        let length = (encoded & FRAME_LENGTH_MASK) as usize;
+        if length == 0
+            || length > LOCAL_AGENT_MAX_FRAME_BYTES
+            || message.len().saturating_add(length) > LOCAL_AGENT_MAX_MESSAGE_BYTES
+        {
+            return Err("Host response frame is invalid.".to_string());
+        }
+        let start = message.len();
+        message.resize(start + length, 0);
+        reader
+            .read_exact(&mut message[start..])
+            .await
+            .map_err(|error| error.to_string())?;
+        if !has_more {
+            return Ok(message);
+        }
     }
-    let mut body = vec![0; length];
-    reader
-        .read_exact(&mut body)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(body)
 }
 
 async fn terminate(host: &mut ManagedHost) {
@@ -281,11 +317,36 @@ async fn terminate(host: &mut ManagedHost) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{duplex, AsyncWriteExt};
 
     #[test]
     fn owner_validation_rejects_unscoped_or_control_values() {
         assert!(validate_owner("").is_err());
         assert!(validate_owner("user\nother").is_err());
         assert!(validate_owner("user-1").is_ok());
+    }
+
+    #[tokio::test]
+    async fn message_codec_round_trips_continuation_frames() {
+        let payload = vec![0x5a; LOCAL_AGENT_MAX_FRAME_BYTES + 257];
+        let (mut writer, mut reader) = duplex(payload.len() + 16);
+
+        write_message(&mut writer, &payload).await.expect("write");
+        let received = read_message(&mut reader).await.expect("read");
+
+        assert_eq!(received, payload);
+    }
+
+    #[tokio::test]
+    async fn message_codec_rejects_truncated_continuation() {
+        let (mut writer, mut reader) = duplex(16);
+        writer
+            .write_all(&(1_u32 | FRAME_CONTINUATION_BIT).to_be_bytes())
+            .await
+            .expect("prefix");
+        writer.write_all(&[0x5a]).await.expect("body");
+        writer.shutdown().await.expect("shutdown");
+
+        assert!(read_message(&mut reader).await.is_err());
     }
 }
