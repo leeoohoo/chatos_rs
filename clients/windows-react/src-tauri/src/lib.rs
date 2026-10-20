@@ -12,6 +12,7 @@ mod conversation_runtime_settings;
 mod host_lifecycle;
 mod platform_execution_context;
 mod project_conversation;
+mod project_creation;
 mod project_filesystem;
 mod run_inspector;
 mod system_permissions;
@@ -47,6 +48,10 @@ use host_lifecycle::{
     HostManager,
 };
 use project_conversation::prepare_project_conversation;
+use project_creation::{
+    create_local_project, discard_project_directory_selection, list_project_types,
+    pick_project_directory, ProjectCreationManager,
+};
 use project_filesystem::load_project_directory;
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -78,6 +83,7 @@ pub fn run() {
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
         .manage(ConversationRuntimeSettingsManager::default())
+        .manage(ProjectCreationManager::default())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -135,6 +141,10 @@ pub fn run() {
             register,
             logout,
             list_local_projects,
+            list_project_types,
+            pick_project_directory,
+            discard_project_directory_selection,
+            create_local_project,
             refresh_workspace_relations,
             prepare_project_conversation,
             load_project_directory,

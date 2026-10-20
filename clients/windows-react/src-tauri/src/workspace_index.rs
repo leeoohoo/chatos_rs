@@ -7,7 +7,10 @@ use serde::Serialize;
 use std::path::Path;
 use tauri::{AppHandle, Manager, State};
 
-use crate::host_lifecycle::{validate_owner, HostManager};
+use crate::{
+    host_lifecycle::{validate_owner, HostManager},
+    project_creation::{recover_project_creations, ProjectCreationManager},
+};
 
 const MAIN_CONTACT_ID: &str = "jiguli";
 const PLUGIN_INSTALLER_CONTACT_ID: &str = "plugin-installer";
@@ -51,6 +54,7 @@ pub struct WorkspaceRelationsSnapshot {
 pub async fn list_local_projects(
     app: AppHandle,
     owner_user_id: String,
+    creation_manager: State<'_, ProjectCreationManager>,
 ) -> Result<Vec<LocalProjectSummary>, String> {
     validate_owner(&owner_user_id)?;
     let data_dir = app
@@ -58,9 +62,16 @@ pub async fn list_local_projects(
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     let database = data_dir.join("NativeConnector").join("Projects.sqlite3");
-    tauri::async_runtime::spawn_blocking(move || load_local_projects(&database, &owner_user_id))
-        .await
-        .map_err(|_| "本地项目读取任务异常退出。".to_owned())?
+    let transaction_lock = creation_manager.transaction_lock();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = transaction_lock
+            .lock()
+            .map_err(|_| "无法恢复本地项目创建事务。".to_owned())?;
+        recover_project_creations(&data_dir, &owner_user_id)?;
+        load_local_projects(&database, &owner_user_id)
+    })
+    .await
+    .map_err(|_| "本地项目读取任务异常退出。".to_owned())?
 }
 
 #[tauri::command]

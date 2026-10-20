@@ -59,6 +59,28 @@ describe("workspace index application state", () => {
     expect(useWorkspaceIndexStore.getState().ownerUserId).toBe("bob");
     expect(useWorkspaceIndexStore.getState().snapshot.projects[0].id).toBe("bob-project");
   });
+
+  it("publishes a newly committed local project only into the matching owner index", async () => {
+    const port = new TestWorkspaceIndexPort();
+    await useWorkspaceIndexStore.getState().load(port, "alice", false);
+    useWorkspaceIndexStore.getState().acceptCreatedProject("bob", {
+      id: "wrong-owner",
+      name: "Wrong",
+      revision: 1,
+      projectTypeKey: "software_development",
+    });
+    expect(useWorkspaceIndexStore.getState().snapshot.projects).toHaveLength(1);
+    useWorkspaceIndexStore.getState().acceptCreatedProject("alice", {
+      id: "new-project",
+      name: "New",
+      revision: 1,
+      projectTypeKey: "desktop_application",
+    });
+    expect(useWorkspaceIndexStore.getState().snapshot.projects.map((item) => item.id)).toEqual([
+      "local",
+      "new-project",
+    ]);
+  });
 });
 
 class TestWorkspaceIndexPort implements WorkspaceIndexPort {

@@ -69,7 +69,7 @@ Windows 只读索引实现（2026-10-20）：
 - Host 中出现 project conversation 但本地 Registry 没有对应项目时，只保留关系记录，绝不凭远端关系创建或复活项目；
 - React `WorkspaceIndexPort`、Application store 和 resolver 保留 local-first 顺序、账号切换 latest-wins、远端失败保留本地项目及显式错误/重试；
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
-- 当前只放行侧栏只读索引。项目创建、导入、重命名、删除、目录授权与 project context 在各自完整切片通过前仍禁止进入 React。
+- 侧栏索引仍以本地 Registry 为权威；项目创建与显式文件夹授权已在独立切片通过后开放。导入、重命名、删除及其他 project context 变更仍须等待各自完整切片。
 
 ### 2.2 项目目录只读树
 
@@ -88,8 +88,20 @@ Windows React 已完成只读目录树：
 - 目录列表与 macOS 一致最多 5,000 项、文件夹优先排序并跳过符号链接，只投影名称、相对路径、类型、可写位、大小和修改时间；
 - React Store 以 owner/project generation 和 per-path request identity 管理根目录、展开与刷新；折叠目录会使其子树的迟到请求失效，切换项目或离开页面清空展示状态；
 - 项目工作面默认显示用户消息；目录 tab 已开放，项目设置保持禁用并明确等待对应页面准入；
-- 当前只显示目录树和文件元数据。内容预览、搜索、编辑、创建/删除、Git 与项目创建/授权均继续禁止；
+- 当前只显示目录树和文件元数据。项目创建/授权已由下方独立切片开放；内容预览、搜索、编辑、文件创建/删除和 Git 仍继续禁止；
 - Windows 定向验收为 Rust 88 项通过、2 项 sidecar 环境测试忽略，React 37 个文件 132 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
+### 2.2.1 项目创建与 Windows 文件夹授权
+
+macOS 事实源与 Windows 平台适配：
+
+- `CreateProjectSheet` / `CreateProjectViewModel` 固定项目仅保存在本机、当前所选目录本身成为项目根、创建不会自动新建同名目录、成功结果在弹窗离开后发布；Windows 用原生文件夹选择器产生显式目录授权，不复制 macOS 的已配对根目录浏览器；
+- `NativeLocalProjectsService` / `SQLiteProjectRegistry` 固定 owner-scoped Registry、创建前目录复验、同目录 active/archived 防重，以及成功 Registry 写入不因后续 pairing 变化伪装成失败；Windows 使用稳定 workspace ID/fingerprint 和跨 Connector JSON/SQLite 的恢复 journal 实现同一边界；
+- React 只持有 owner + presentation 绑定的一次性 selection ID 和目录显示名；绝对路径、canonical root 与 workspace grant 永不进入 WebView。弹窗关闭会在 React 和 Rust 两层淘汰迟到选择器结果，账号替换和保存结果也采用独立 identity；
+- 原生提交再次拒绝文件、符号链接、Windows reparse point、失效目录和 owner 不匹配；活动或归档项目不能重复注册相同 canonical root，removed 记录不阻止 Human 重新创建；
+- 27 个项目类型的 key、中文标签、说明和分类由 Rust 测试逐项对照 macOS `ChatOSSkillCatalog.json`，React 不维护第二份类型真值；
+- 成功后先关闭弹窗，再加入当前账号的 Workspace Index、选中新项目并保持 macOS 默认“用户消息”工作面；不隐式创建 Conversation、Git 仓库或 remote；
+- Windows 定向验收为 Rust 95 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 141 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
 ### 2.3 Authentication：完整调用链
 
@@ -904,7 +916,7 @@ Windows React 已完成对应独立切片：
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
-| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh 与 Windows workspace 路径边界已映射；Windows 只读目录树和生命周期已完成，创建/授权、预览、搜索、写操作仍待独立切片 | 只读目录树已进入 React；其余操作禁止 |
+| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh、项目创建语义与 Windows workspace 路径边界已映射；Windows 只读目录树、原生文件夹授权和本地项目创建已完成，预览、搜索、写操作仍待独立切片 | 目录树与项目创建/授权已进入 React；其余操作禁止 |
 | 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
@@ -955,6 +967,7 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
 12. [已完成] 映射第 31 页访问控制/沙箱策略；Windows 当前仅进程树控制得到执行链路证明，因此策略只读，文件/网络隔离明确显示缺失，审批复用第 29 页唯一真值。
 13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；预览、搜索、写操作、Git 与项目设置未提前开放。
-14. [进行中] 实现项目创建与 Windows 文件夹授权：必须由原生文件夹选择器产生显式 grant，原子写入 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/保存 lifecycle 中拒绝迟到结果。
+14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
+15. [进行中] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile` 与 `NativeWorkspaceFilesystem` 映射项目文件内容预览和只读搜索；未完成路径、大小、编码、二进制与迟到结果门禁前禁止进入 React。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

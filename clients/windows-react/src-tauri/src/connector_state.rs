@@ -3,11 +3,21 @@ use std::{
     fs::{self, File},
     io::Read,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 const MAXIMUM_STATE_BYTES: u64 = 16 * 1_024 * 1_024;
+static STATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 pub(crate) fn ensure_owner_state(
+    app_data_directory: &Path,
+    owner_user_id: &str,
+) -> Result<PathBuf, String> {
+    let _guard = lock_state()?;
+    ensure_owner_state_unlocked(app_data_directory, owner_user_id)
+}
+
+fn ensure_owner_state_unlocked(
     app_data_directory: &Path,
     owner_user_id: &str,
 ) -> Result<PathBuf, String> {
@@ -51,6 +61,7 @@ pub(crate) fn read_owner_state(
     app_data_directory: &Path,
     owner_user_id: &str,
 ) -> Result<Map<String, Value>, String> {
+    let _guard = lock_state()?;
     let connector_directory = confined_connector_directory(app_data_directory)?;
     let state_path = connector_directory.join("state.json");
     reject_symbolic_link(&state_path)?;
@@ -65,6 +76,7 @@ pub(crate) fn update_owner_state<R>(
     owner_user_id: &str,
     update: impl FnOnce(&mut Map<String, Value>) -> Result<R, String>,
 ) -> Result<R, String> {
+    let _guard = lock_state()?;
     let connector_directory = confined_connector_directory(app_data_directory)?;
     let state_path = connector_directory.join("state.json");
     reject_symbolic_link(&state_path)?;
@@ -74,6 +86,13 @@ pub(crate) fn update_owner_state<R>(
     let result = update(&mut state)?;
     persist_state(&connector_directory, &state_path, &state)?;
     Ok(result)
+}
+
+fn lock_state() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    STATE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| state_error())
 }
 
 fn new_device_id() -> String {

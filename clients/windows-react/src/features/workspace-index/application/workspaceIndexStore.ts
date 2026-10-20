@@ -23,6 +23,7 @@ interface WorkspaceIndexState {
     ownerUserId: string,
     hostReady: boolean,
   ): Promise<void>;
+  acceptCreatedProject(ownerUserId: string, project: LocalProject): void;
   reset(): void;
 }
 
@@ -85,6 +86,21 @@ export const useWorkspaceIndexStore = create<WorkspaceIndexState>((set, get) => 
         snapshot: resolveWorkspaceIndex(localProjects, preservedRelations),
       });
     }
+  },
+
+  acceptCreatedProject(ownerInput, project) {
+    const ownerUserId = ownerInput.trim();
+    const current = get();
+    if (!ownerUserId || current.ownerUserId !== ownerUserId) return;
+    const localProjects = [
+      ...current.localProjects.filter((candidate) => candidate.id !== project.id),
+      project,
+    ];
+    set({
+      localProjects,
+      snapshot: resolveWorkspaceIndex(localProjects, current.relations),
+      errorMessage: null,
+    });
   },
 
   reset() {

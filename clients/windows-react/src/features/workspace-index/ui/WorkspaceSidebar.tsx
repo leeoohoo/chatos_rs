@@ -9,6 +9,7 @@ interface WorkspaceSidebarProps {
   workspaceIndex: WorkspaceIndexPort;
   selection: WorkspaceSelection;
   onSelectionChange(selection: WorkspaceSelection): void;
+  onCreateProject(): void;
 }
 
 export function WorkspaceSidebar({
@@ -17,6 +18,7 @@ export function WorkspaceSidebar({
   workspaceIndex,
   selection,
   onSelectionChange,
+  onCreateProject,
 }: WorkspaceSidebarProps) {
   const snapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const isLoading = useWorkspaceIndexStore((state) => state.isLoading);
@@ -51,11 +53,16 @@ export function WorkspaceSidebar({
         ))}
       </SidebarSection>
 
-      <SidebarSection title="项目">
+      <SidebarSection
+        title="项目"
+        action={(
+          <button aria-label="新建项目" className="sidebar-section__action" onClick={onCreateProject} title="新建项目" type="button">＋</button>
+        )}
+      >
         {isLoading && snapshot.projects.length === 0 ? (
           <LoadingRow title="正在加载项目…" />
         ) : snapshot.projects.length === 0 ? (
-          <p className="sidebar-empty">项目保存在本机。创建能力将在项目切片验收后开放。</p>
+          <p className="sidebar-empty">项目保存在本机。点击“＋”选择文件夹并创建项目。</p>
         ) : (
           snapshot.projects.map((project) => (
             <ResourceButton
@@ -82,10 +89,18 @@ export function WorkspaceSidebar({
   );
 }
 
-function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
+function SidebarSection({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="sidebar-section">
-      <h2>{title}</h2>
+      <header><h2>{title}</h2>{action}</header>
       <div className="sidebar-section__items">{children}</div>
     </section>
   );

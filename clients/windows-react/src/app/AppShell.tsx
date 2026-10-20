@@ -21,6 +21,8 @@ import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLif
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
 import type { ProjectConversationPort } from "../features/project-conversation/ports/ProjectConversationPort";
 import { ProjectConversationPlaceholder } from "../features/project-conversation/ui/ProjectConversationPlaceholder";
+import type { ProjectCreationPort } from "../features/project-creation/ports/ProjectCreationPort";
+import { CreateProjectSheet } from "../features/project-creation/ui/CreateProjectSheet";
 import type { ProjectDirectoryPort } from "../features/project-directory/ports/ProjectDirectoryPort";
 import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
@@ -33,6 +35,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
+  projectCreation: ProjectCreationPort;
   projectDirectory: ProjectDirectoryPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
@@ -52,6 +55,7 @@ export function AppShell({
   hostLifecycle,
   workspaceIndex,
   projectConversation,
+  projectCreation,
   projectDirectory,
   conversationHistory,
   conversationComposer,
@@ -70,9 +74,11 @@ export function AppShell({
   const start = useHostLifecycleStore((state) => state.start);
   const retry = useHostLifecycleStore((state) => state.retry);
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
+  const acceptCreatedProject = useWorkspaceIndexStore((state) => state.acceptCreatedProject);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
   const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
+  const [showCreateProject, setShowCreateProject] = useState(false);
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -81,6 +87,7 @@ export function AppShell({
   useEffect(() => {
     setSelection({ kind: "workbench" });
     setActiveSurface("workspace");
+    setShowCreateProject(false);
     resetProjectConversations(session.user.id);
   }, [resetProjectConversations, session.user.id]);
 
@@ -127,6 +134,7 @@ export function AppShell({
           workspaceIndex={workspaceIndex}
           selection={selection}
           onSelectionChange={selectWorkspace}
+          onCreateProject={() => setShowCreateProject(true)}
         />
         <div className="sidebar-settings-group">
           <p>设置</p>
@@ -249,6 +257,17 @@ export function AppShell({
         ownerUserId={session.user.id}
         port={toolApproval}
       />
+      {showCreateProject && (
+        <CreateProjectSheet
+          ownerUserId={session.user.id}
+          port={projectCreation}
+          onDismiss={() => setShowCreateProject(false)}
+          onCreated={(project) => {
+            acceptCreatedProject(session.user.id, project);
+            selectWorkspace({ kind: "project", id: project.id });
+          }}
+        />
+      )}
     </>
   );
 }
