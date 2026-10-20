@@ -164,10 +164,7 @@ extension AppModel {
             )
             return
         }
-        let localAgentEventHub = localAgentEventHub
         let pendingShutdown = localAgentHostShutdownTask
-        let apiClient = apiClient
-        let localConnectorService = localConnectorService
         let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
             localConnectorService: localConnectorService,
             runtimeSettingsService: runtimeSettingsService,
@@ -178,11 +175,24 @@ extension AppModel {
             turnProcessService: turnProcessService,
             platformToolWorker: platformToolWorker
         )
-        let serviceConfigurationUseCase = LocalAgentServiceConfigurationUseCase()
-        let workspaceService = workspaceService
-        let projectConversationService = projectConversationService
-        let notepadService = notepadService
-        let remoteConnectionMetadataService = remoteConnectionMetadataService
+        let launchPort = AppLocalAgentHostLaunchAdapter(
+            host: localAgentHost,
+            eventHub: localAgentEventHub,
+            apiClient: apiClient,
+            localConnectorService: localConnectorService,
+            serviceConfigurationFactory: serviceConfigurationFactory,
+            workspaceService: workspaceService,
+            projectConversationService: projectConversationService,
+            notepadService: notepadService,
+            remoteConnectionMetadataService: remoteConnectionMetadataService,
+            isCurrent: { [weak self] in
+                !Task.isCancelled && self?.localAgentLifecycleAccepts(
+                    ownerUserID: ownerUserID,
+                    generation: generation
+                ) == true
+            }
+        )
+        let launchUseCase = LocalAgentHostLaunchUseCase()
         localAgentHostLifecycleTask = Task { [weak self] in
             defer {
                 if self?.localAgentHostLifecycleGeneration == generation {
@@ -191,92 +201,42 @@ extension AppModel {
             }
             do {
                 await pendingShutdown?.value
-                try Task.checkCancellation()
-                guard self?.authenticatedUserID == ownerUserID,
-                      self?.localAgentHostLifecycleGeneration == generation else { return }
-                await localAgentEventHub?.reset()
-                self?.localAgentRuntimeState.beginHandshake(
+                try await launchUseCase.execute(
                     ownerUserID: ownerUserID,
-                    generation: generation
-                )
-                if let host = localAgentHost as? NativeLocalAgentHostLifecycle {
-                    try await host.startForBootstrap(ownerUserID: ownerUserID)
-                } else {
-                    try await localAgentHost.start(ownerUserID: ownerUserID)
-                }
-                guard !Task.isCancelled,
-                      self?.authenticatedUserID == ownerUserID,
-                      self?.localAgentHostLifecycleGeneration == generation else {
-                    if self?.localAgentHostLifecycleGeneration == generation {
-                        await localAgentHost.stop()
-                    }
-                    return
-                }
-                self?.localAgentRuntimeState.beginSynchronization(
-                    ownerUserID: ownerUserID,
-                    generation: generation
-                )
-                if let host = localAgentHost as? NativeLocalAgentHostLifecycle {
-                    do {
-                        let memoryAccessToken = await apiClient.currentAccessToken()
-                        if let restored = try await localConnectorService.restoreLocalAgentHost(
-                            host,
+                    port: launchPort,
+                    isCurrent: { [weak self] in
+                        !Task.isCancelled && self?.localAgentLifecycleAccepts(
                             ownerUserID: ownerUserID,
-                            memoryAccessToken: memoryAccessToken
-                        ) {
-                            guard !Task.isCancelled,
-                                  self?.authenticatedUserID == ownerUserID,
-                                  self?.localAgentHostLifecycleGeneration == generation else {
-                                if self?.localAgentHostLifecycleGeneration == generation {
-                                    await host.stop()
-                                }
-                                return
-                            }
-                            try await serviceConfigurationUseCase.execute(
-                                port: serviceConfigurationFactory.makePort(
-                                    ownerUserID: ownerUserID,
-                                    bootstrap: restored
-                                ),
-                                isCurrent: { [weak self] in
-                                    !Task.isCancelled && self?.localAgentLifecycleAccepts(
-                                        ownerUserID: ownerUserID,
-                                        generation: generation
-                                    ) == true
-                                }
+                            generation: generation
+                        ) == true
+                    },
+                    onTransition: { [weak self] transition in
+                        guard let self,
+                              localAgentLifecycleAccepts(
+                                  ownerUserID: ownerUserID,
+                                  generation: generation
+                              ) else { throw CancellationError() }
+                        switch transition {
+                        case .handshaking:
+                            localAgentRuntimeState.beginHandshake(
+                                ownerUserID: ownerUserID,
+                                generation: generation
                             )
-                            guard self?.applyConfiguredLocalAgentServices(
+                        case .synchronizing:
+                            localAgentRuntimeState.beginSynchronization(
+                                ownerUserID: ownerUserID,
+                                generation: generation
+                            )
+                        case .restoredServicesReady:
+                            guard applyConfiguredLocalAgentServices(
                                 ownerUserID: ownerUserID,
                                 lifecycleGeneration: generation
-                            ) == true else { return }
+                            ) else { throw CancellationError() }
+                        case .workspaceReady:
+                            localAgentWorkspaceOwnerUserID = ownerUserID
                         }
-                    } catch is CancellationError {
-                        return
-                    } catch {
-                        // A missing or stale local snapshot must not prevent the authenticated
-                        // gateway refresh below from repairing the control plane.
                     }
-                }
-                await workspaceService?.configure(ownerUserID: ownerUserID)
-                guard !Task.isCancelled,
-                      self?.authenticatedUserID == ownerUserID,
-                      self?.localAgentHostLifecycleGeneration == generation else {
-                    if self?.localAgentHostLifecycleGeneration == generation {
-                        await localAgentHost.stop()
-                    }
-                    return
-                }
-                await projectConversationService?.configure(ownerUserID: ownerUserID)
-                guard !Task.isCancelled,
-                      self?.authenticatedUserID == ownerUserID,
-                      self?.localAgentHostLifecycleGeneration == generation else {
-                    if self?.localAgentHostLifecycleGeneration == generation {
-                        await localAgentHost.stop()
-                    }
-                    return
-                }
-                self?.localAgentWorkspaceOwnerUserID = ownerUserID
-                await notepadService.configure(ownerUserID: ownerUserID)
-                await remoteConnectionMetadataService.configure(ownerUserID: ownerUserID)
+                )
                 self?.refreshWorkspace()
                 self?.refreshRemoteConnections()
                 if refreshControlPlaneAfterStart {

@@ -45,7 +45,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；具体 Task 仍由 UI adapter 持有 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
-| Host lifecycle | Runtime ready、控制面 bootstrap、health/restart identity、八阶段 service configuration 与十二阶段 shutdown use case 已提取；顶层进程启动协调继续收口 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、`LocalAgentRuntimeState.swift`、`LocalAgentControlPlaneBootstrapState.swift`、`LocalAgentHostRecoveryState.swift`、`LocalAgentServiceConfigurationUseCase.swift`、`LocalAgentServiceShutdownUseCase.swift`（含 Ports） | `LocalAgentHostLifecycle.swift` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift`、service configuration/shutdown adapters | Runtime/bootstrap/recovery/configuration/shutdown use case、Host lifecycle 测试 | 禁止；继续提取顶层 process launch lifecycle |
+| Host lifecycle | Runtime ready、local-first launch、health/restart identity、八阶段 service configuration 与十二阶段 shutdown use cases 已提取；authenticated gateway bootstrap retry 继续收口 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、`LocalAgentRuntimeState.swift`、`LocalAgentControlPlaneBootstrapState.swift`、`LocalAgentHostRecoveryState.swift`、Host launch/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、`LocalAgentHostLaunchPort` | `NativeLocalAgentHostLifecycle.swift`、`NativeLocalAgentHostProcess.swift`、App launch adapter、service configuration/shutdown adapters | Runtime/bootstrap/recovery/launch/configuration/shutdown use case、Host lifecycle 测试 | 禁止；继续提取 gateway bootstrap retry use case |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
 
@@ -457,8 +457,10 @@ macOS 重构应把现有分散事实收敛为可测试的 `HostLifecycleState` �
 - Local Approval、Runtime Settings、Pet、Conversation、Task Graph、Ask User、Turn Process 与 Platform Tool Worker 的固定配置顺序已进入 `LocalAgentServiceConfigurationUseCase`；Connector adapter 持有 bootstrap 细节与瞬时 external MCP credential，AppModel 不再逐项调用具体服务；
 - Application use case 会在首个 stage 前及每个 Host/actor await 后重新验收当前 lifecycle，adapter 忽略 cancellation 时也不能继续配置旧账号；
 - account-scoped 服务 reset 到 Host stop 的十二阶段固定顺序已进入 `LocalAgentServiceShutdownUseCase`；Host 必须最后停止，AppModel 只负责把冻结的 shutdown adapter 串行接在上一轮 shutdown 之后；
-- 已增加 generation、owner、恢复、停止、degraded、health check、重启退避、配置顺序、迟到取消、adapter 失败短路和 Host-last shutdown 顺序测试；
-- 当前仍处于“已映射，可重构”，需要继续把顶层 Host launch/bootstrap orchestration 从 AppModel 提取到 Application use case 后才能升级 React 准入状态。
+- event hub reset、bootstrap Host 启动、本地 control-plane 恢复、workspace/project/notepad/remote metadata 配置已进入 `LocalAgentHostLaunchUseCase`；API token 与 Connector actors 的组合收口在 App composition adapter；
+- launch use case 会在每个 await 后重新验收 lifecycle，本地 snapshot 缺失仍继续 workspace 配置，而 Host 启动失败保持 fatal；
+- 已增加 generation、owner、恢复、停止、degraded、health check、重启退避、配置/launch 顺序、迟到取消、adapter 失败短路和 Host-last shutdown 顺序测试；
+- 当前仍处于“已映射，可重构”，需要继续把 authenticated gateway bootstrap retry orchestration 从 AppModel 提取到 Application use case 后才能升级 React 准入状态。
 
 ## 7. Ask User：完整调用链
 
