@@ -4,6 +4,13 @@ public protocol LocalProjectCreating: Sendable {
     func createProject(_ draft: LocalProjectDraft) async throws -> WorkspaceProject
 }
 
+public protocol PluginApplicationContextProviding: Sendable {
+    func pluginContext(
+        ownerUserID: String,
+        projectID: String
+    ) async throws -> LocalConnectorPluginApplicationContext
+}
+
 /// Local-only preview evidence. Never sent to a server or used as a permission grant.
 public struct ProjectDirectoryBinding: Sendable, Equatable {
     public let workspaceID: String

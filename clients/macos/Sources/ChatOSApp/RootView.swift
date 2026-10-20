@@ -114,9 +114,14 @@ struct RootView: View {
                 if let application = model.pluginApplication(
                     pluginID: pluginID,
                     componentKey: componentKey
+                ), let viewModel = model.makePluginApplicationHostViewModel(
+                    application: application
                 ) {
-                    PluginApplicationHostView(application: application)
-                        .id(application.id)
+                    PluginApplicationHostView(
+                        application: application,
+                        viewModel: viewModel
+                    )
+                    .id("\(application.id):\(model.workspaceAccountGeneration)")
                 } else {
                     PluginApplicationsView()
                 }

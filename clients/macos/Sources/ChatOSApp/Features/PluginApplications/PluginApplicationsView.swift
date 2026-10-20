@@ -135,16 +135,15 @@ struct PluginApplicationHostView: View {
     @EnvironmentObject private var model: AppModel
     let application: LocalConnectorPluginApplication
 
-    @State private var launch: LocalConnectorPluginApplicationLaunch?
-    @State private var errorMessage: String?
+    @StateObject private var viewModel: PluginApplicationHostViewModel
     @State private var reloadToken = 0
-    @State private var contextChosen = false
-    @State private var selectedProjectID: String?
-    @State private var launchContext: LocalConnectorPluginApplicationContext?
-    @State private var launchTask: Task<Void, Never>?
 
-    private var requiresContextSelection: Bool {
-        application.contextScope == "project" || application.contextScope == "workspace"
+    init(
+        application: LocalConnectorPluginApplication,
+        viewModel: PluginApplicationHostViewModel
+    ) {
+        self.application = application
+        _viewModel = StateObject(wrappedValue: viewModel)
     }
 
     var body: some View {
@@ -161,7 +160,8 @@ struct PluginApplicationHostView: View {
                 PluginApplicationIcon(application: application, size: 30)
                 Text(application.displayName)
                     .font(.system(size: 14, weight: .semibold))
-                if contextChosen, requiresContextSelection {
+                if viewModel.phase != .choosingContext,
+                   viewModel.requiresContextSelection {
                     Text(selectedProjectName ?? model.localized("公共项目", english: "Shared Project"))
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -169,17 +169,13 @@ struct PluginApplicationHostView: View {
                         .padding(.vertical, 4)
                         .background(.quaternary, in: Capsule())
                     Button(model.localized("切换", english: "Switch")) {
-                        launchTask?.cancel()
-                        launch = nil
-                        errorMessage = nil
-                        launchContext = nil
-                        contextChosen = false
+                        viewModel.chooseAnotherContext()
                     }
                     .buttonStyle(.borderless)
                     .font(.system(size: 11))
                 }
                 Spacer()
-                if launch != nil {
+                if viewModel.launch != nil {
                     Button {
                         reloadToken += 1
                     } label: {
@@ -195,15 +191,15 @@ struct PluginApplicationHostView: View {
             .overlay(alignment: .bottom) { Divider() }
 
             Group {
-                if requiresContextSelection && !contextChosen {
+                if viewModel.phase == .choosingContext {
                     contextPicker
-                } else if let launch {
+                } else if let launch = viewModel.launch {
                     RestrictedPluginWebView(
                         launch: launch,
-                        projectContext: launchContext,
+                        projectContext: viewModel.bridgeContext,
                         reloadToken: reloadToken
                     )
-                } else if let errorMessage {
+                } else if let errorMessage = viewModel.errorMessage {
                     ContentUnavailableView {
                         Label(
                             model.localized("应用无法打开", english: "Application Could Not Open"),
@@ -213,7 +209,7 @@ struct PluginApplicationHostView: View {
                         Text(errorMessage)
                     } actions: {
                         Button(model.localized("重试", english: "Try Again")) {
-                            start(context: launchContext)
+                            viewModel.retry()
                         }
                         Button(model.localized("返回应用列表", english: "Back to Applications")) {
                             close()
@@ -232,16 +228,13 @@ struct PluginApplicationHostView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: application.id) {
-            if !requiresContextSelection {
-                contextChosen = true
-                start(context: nil)
-            }
+            viewModel.activate()
         }
-        .onDisappear { launchTask?.cancel() }
+        .onDisappear { viewModel.deactivate() }
     }
 
     private var selectedProjectName: String? {
-        guard let selectedProjectID else { return nil }
+        guard let selectedProjectID = viewModel.selectedProjectID else { return nil }
         return model.workspaceProjects.first(where: { $0.id == selectedProjectID })?.name
     }
 
@@ -258,7 +251,7 @@ struct PluginApplicationHostView: View {
             }
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    if application.missingContext == "device" {
+                    if viewModel.allowsDeviceContext {
                         contextButton(
                             title: model.localized("公共项目", english: "Shared Project"),
                             subtitle: model.localized(
@@ -267,11 +260,7 @@ struct PluginApplicationHostView: View {
                             ),
                             systemImage: "person.crop.square"
                         ) {
-                            selectedProjectID = nil
-                            let context = LocalConnectorPluginApplicationContext.device
-                            launchContext = context
-                            contextChosen = true
-                            start(context: context)
+                            viewModel.selectDeviceContext()
                         }
                     }
                     ForEach(model.workspaceProjects) { project in
@@ -281,15 +270,7 @@ struct PluginApplicationHostView: View {
                                 ?? model.localized("ChatOS 项目", english: "ChatOS project"),
                             systemImage: "folder"
                         ) {
-                            selectedProjectID = project.id
-                            let context = LocalConnectorPluginApplicationContext(
-                                projectID: project.id,
-                                projectName: project.name,
-                                projectRoot: project.rootPath
-                            )
-                            launchContext = context
-                            contextChosen = true
-                            start(context: context)
+                            viewModel.selectProject(id: project.id)
                         }
                     }
                 }
@@ -326,24 +307,8 @@ struct PluginApplicationHostView: View {
         .buttonStyle(.plain)
     }
 
-    private func start(context: LocalConnectorPluginApplicationContext? = nil) {
-        launchTask?.cancel()
-        launch = nil
-        errorMessage = nil
-        launchTask = Task {
-            do {
-                let result = try await model.launchPluginApplication(application, context: context)
-                guard !Task.isCancelled else { return }
-                launch = result
-            } catch {
-                guard !Task.isCancelled else { return }
-                errorMessage = error.localizedDescription
-            }
-        }
-    }
-
     private func close() {
-        launchTask?.cancel()
+        viewModel.deactivate()
         model.selection = .applications
     }
 }
@@ -393,7 +358,7 @@ private struct PluginApplicationIcon: View {
 
 private struct RestrictedPluginWebView: NSViewRepresentable {
     var launch: LocalConnectorPluginApplicationLaunch
-    var projectContext: LocalConnectorPluginApplicationContext?
+    var projectContext: PluginApplicationBridgeContext?
     var reloadToken: Int
 
     func makeCoordinator() -> Coordinator {
@@ -471,7 +436,7 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
         """#
 
         private(set) var launch: LocalConnectorPluginApplicationLaunch
-        private var projectContext: LocalConnectorPluginApplicationContext?
+        private var projectContext: PluginApplicationBridgeContext?
         var allowedURL: URL
         private var loadedURL: URL?
         private var loadedReloadToken: Int?
@@ -481,7 +446,7 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
 
         init(
             launch: LocalConnectorPluginApplicationLaunch,
-            projectContext: LocalConnectorPluginApplicationContext?
+            projectContext: PluginApplicationBridgeContext?
         ) {
             self.launch = launch
             self.projectContext = projectContext
@@ -490,7 +455,7 @@ private struct RestrictedPluginWebView: NSViewRepresentable {
 
         func update(
             launch: LocalConnectorPluginApplicationLaunch,
-            projectContext: LocalConnectorPluginApplicationContext?
+            projectContext: PluginApplicationBridgeContext?
         ) {
             self.launch = launch
             self.projectContext = projectContext

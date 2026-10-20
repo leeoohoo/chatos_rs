@@ -21,9 +21,19 @@ public protocol LocalConnectorPluginApplicationListing: Sendable {
     func fetchPluginApplications() async throws -> [LocalConnectorPluginApplication]
 }
 
+public protocol LocalConnectorPluginApplicationLaunching: Sendable {
+    func launchPluginApplication(
+        pluginID: String,
+        componentKey: String,
+        context: LocalConnectorPluginApplicationContext?,
+        expectedOwnerUserID: String
+    ) async throws -> LocalConnectorPluginApplicationLaunch
+}
+
 public protocol LocalConnectorControlServicing:
     LocalConnectorApprovalServicing,
-    LocalConnectorPluginApplicationListing
+    LocalConnectorPluginApplicationListing,
+    LocalConnectorPluginApplicationLaunching
 {
     func fetchStatus() async throws -> LocalConnectorStatus
     func pairWithCurrentChatOSSession(deviceName: String?) async throws -> LocalConnectorStatus
@@ -58,12 +68,6 @@ public protocol LocalConnectorControlServicing:
     ) async throws -> LocalConnectorSandboxSettings
     func fetchPlugins() async throws -> [LocalConnectorPlugin]
     func fetchPlugins(refresh: Bool) async throws -> [LocalConnectorPlugin]
-    func launchPluginApplication(
-        pluginID: String,
-        componentKey: String,
-        context: LocalConnectorPluginApplicationContext?,
-        expectedOwnerUserID: String
-    ) async throws -> LocalConnectorPluginApplicationLaunch
     func installPlugin(id: String) async throws
     func inspectCustomMCP(_ draft: LocalConnectorCustomMCPDraft) async throws -> LocalConnectorPluginInspection
     func installCustomMCP(

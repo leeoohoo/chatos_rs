@@ -242,25 +242,19 @@ extension AppModel {
         }
     }
 
-    func launchPluginApplication(
-        _ application: LocalConnectorPluginApplication,
-        context: LocalConnectorPluginApplicationContext? = nil
-    ) async throws -> LocalConnectorPluginApplicationLaunch {
-        guard let owner = authenticatedUserID else { throw CancellationError() }
-        let accountGeneration = workspaceAccountGeneration
-        let resolved: LocalConnectorPluginApplicationContext?
-        if let projectID = context?.projectID {
-            resolved = try await localProjectsService.pluginContext(ownerUserID: owner, projectID: projectID)
-        } else {
-            resolved = context
-        }
-        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
-        let launch = try await localConnectorService.launchPluginApplication(
-            pluginID: application.pluginID, componentKey: application.componentKey, context: resolved,
-            expectedOwnerUserID: owner
+    func makePluginApplicationHostViewModel(
+        application: LocalConnectorPluginApplication
+    ) -> PluginApplicationHostViewModel? {
+        guard let ownerUserID = authenticatedUserID else { return nil }
+        return PluginApplicationHostViewModel(
+            application: application,
+            ownerUserID: ownerUserID,
+            accountGeneration: workspaceAccountGeneration,
+            useCase: PluginApplicationLaunchUseCase(
+                contextProvider: localProjectsService,
+                launcher: localConnectorService
+            )
         )
-        guard owner == authenticatedUserID, accountGeneration == workspaceAccountGeneration else { throw CancellationError() }
-        return launch
     }
 
     func reconcilePluginApplicationSelection() {
