@@ -4,6 +4,7 @@ import { useAuthenticationStore } from "../features/authentication/application/a
 import { AuthenticationGate } from "../features/authentication/ui/AuthenticationGate";
 import { TauriConversationHistoryAdapter } from "../features/conversation-history/adapters/TauriConversationHistoryAdapter";
 import { TauriConversationComposerAdapter } from "../features/conversation-composer/adapters/TauriConversationComposerAdapter";
+import { TauriConversationAttachmentAdapter } from "../features/conversation-attachments/adapters/TauriConversationAttachmentAdapter";
 import { TauriConversationRealtimeAdapter } from "../features/conversation-realtime/adapters/TauriConversationRealtimeAdapter";
 import { TauriConversationRuntimeSettingsAdapter } from "../features/conversation-runtime-settings/adapters/TauriConversationRuntimeSettingsAdapter";
 import { TauriRunInspectorAdapter } from "../features/run-inspector/adapters/TauriRunInspectorAdapter";
@@ -22,6 +23,7 @@ const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const projectConversation = new TauriProjectConversationAdapter();
 const conversationHistory = new TauriConversationHistoryAdapter();
 const conversationComposer = new TauriConversationComposerAdapter();
+const conversationAttachments = new TauriConversationAttachmentAdapter();
 const conversationRealtime = new TauriConversationRealtimeAdapter();
 const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter();
 const runInspector = new TauriRunInspectorAdapter();
@@ -57,6 +59,7 @@ function ApplicationRoot() {
             projectConversation={projectConversation}
             conversationHistory={conversationHistory}
             conversationComposer={conversationComposer}
+            conversationAttachments={conversationAttachments}
             conversationRealtime={conversationRealtime}
             conversationRuntimeSettings={conversationRuntimeSettings}
             runInspector={runInspector}

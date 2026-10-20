@@ -36,6 +36,7 @@ export const AVAILABLE_COMPOSER_CAPABILITIES: readonly ComposerCapabilityCandida
 
 export interface ConversationDraftSubmission {
   content: string;
+  attachmentIds: string[];
   explicitCapabilitySelection: ExplicitCapabilitySelection | null;
 }
 
@@ -53,13 +54,14 @@ export interface ConversationSendAck {
 
 export function planConversationSend(
   draft: string,
+  attachmentIds: readonly string[],
   explicitCapabilitySelection: ExplicitCapabilitySelection | null,
   history: ConversationHistorySnapshot,
   isSending: boolean,
 ): ConversationSendPlan {
   const content = draft.trim();
-  if (!content || isSending) return { kind: "ignore" };
-  const submission = { content, explicitCapabilitySelection };
+  if ((!content && attachmentIds.length === 0) || isSending) return { kind: "ignore" };
+  const submission = { content, attachmentIds: [...attachmentIds], explicitCapabilitySelection };
   const activeTurn = [...history.turns].reverse().find((turn) => turn.status === "running");
   if (!activeTurn) return { kind: "newTurn", submission };
   if (explicitCapabilitySelection) {

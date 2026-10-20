@@ -1,5 +1,13 @@
-import { useCallback, useEffect } from "react";
-import { ConversationComposer } from "../../conversation-composer/ui/ConversationComposer";
+import { useCallback, useEffect, useState } from "react";
+import {
+  formatAttachmentSize,
+  type ConversationAttachmentDraft,
+} from "../../conversation-attachments/domain/conversationAttachment";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
+import {
+  AttachmentPreview,
+  ConversationComposer,
+} from "../../conversation-composer/ui/ConversationComposer";
 import { useConversationComposerStore } from "../../conversation-composer/application/conversationComposerStore";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import { ConversationRealtimeObserver } from "../../conversation-realtime/ui/ConversationRealtimeObserver";
@@ -9,6 +17,7 @@ import { useRunInspectorStore } from "../../run-inspector/application/runInspect
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { RunInspectorLauncher, RunInspectorSheet } from "../../run-inspector/ui/RunInspector";
 import { useConversationHistoryStore } from "../application/conversationHistoryStore";
+import type { ConversationHistorySnapshot } from "../domain/conversationHistory";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
 
 export function ConversationHistoryView({
@@ -16,6 +25,7 @@ export function ConversationHistoryView({
   conversationId,
   port,
   composerPort,
+  attachmentPort,
   realtimePort,
   runtimeSettingsPort,
   runInspectorPort,
@@ -24,6 +34,7 @@ export function ConversationHistoryView({
   conversationId: string;
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
+  attachmentPort: ConversationAttachmentPort;
   realtimePort: ConversationRealtimePort;
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
@@ -40,9 +51,16 @@ export function ConversationHistoryView({
   }, [conversationId, load, ownerUserId, port]);
 
   useEffect(() => {
-    resetComposer(ownerUserId, conversationId);
+    resetComposer(ownerUserId, conversationId, attachmentPort);
     resetInspector(ownerUserId);
-  }, [conversationId, ownerUserId, resetComposer, resetInspector]);
+  }, [attachmentPort, conversationId, ownerUserId, resetComposer, resetInspector]);
+
+  useEffect(() => () => {
+    const composer = useConversationComposerStore.getState();
+    if (composer.ownerUserId === ownerUserId && composer.conversationId === conversationId) {
+      composer.reset("", "", attachmentPort);
+    }
+  }, [attachmentPort, conversationId, ownerUserId]);
 
   const reconcile = useCallback(
     async () => {
@@ -90,6 +108,14 @@ export function ConversationHistoryView({
               <article className={`message-bubble message-bubble--${message.role}`}>
                 <span>{displayText(message.content)}</span>
               </article>
+              <MessageAttachments
+                attachmentPort={attachmentPort}
+                attachments={phase.snapshot.attachments.filter(
+                  (attachment) => attachment.message_id === message.message_id,
+                )}
+                conversationId={conversationId}
+                ownerUserId={ownerUserId}
+              />
               {message.role === "user" && (
                 <RunInspectorLauncher
                   lookup={{
@@ -111,11 +137,93 @@ export function ConversationHistoryView({
         conversationId={conversationId}
         history={phase.snapshot}
         port={composerPort}
+        attachmentPort={attachmentPort}
         runtimeSettingsPort={runtimeSettingsPort}
         onAccepted={reconcile}
       />
       <RunInspectorSheet port={runInspectorPort} />
     </section>
+  );
+}
+
+type PersistedAttachment = ConversationHistorySnapshot["attachments"][number];
+
+function MessageAttachments({
+  attachments,
+  attachmentPort,
+  ownerUserId,
+  conversationId,
+}: {
+  attachments: PersistedAttachment[];
+  attachmentPort: ConversationAttachmentPort;
+  ownerUserId: string;
+  conversationId: string;
+}) {
+  const [drafts, setDrafts] = useState<ConversationAttachmentDraft[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<{
+    draft: ConversationAttachmentDraft;
+    authorizedLocalRef: string;
+  } | null>(null);
+  const references = attachments.map((attachment) => attachment.authorized_local_ref);
+  const referenceKey = references.join("|");
+
+  useEffect(() => {
+    let disposed = false;
+    setDrafts([]);
+    setError(null);
+    if (references.length === 0) return () => { disposed = true; };
+    void attachmentPort.loadPersisted({
+      ownerUserId,
+      conversationId,
+      draftGeneration: 0,
+    }, references).then((loaded) => {
+      if (!disposed) setDrafts(loaded);
+    }).catch((reason: unknown) => {
+      if (!disposed) setError(errorMessage(reason));
+    });
+    return () => { disposed = true; };
+  // referenceKey is the stable identity for this message's immutable attachment records.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachmentPort, conversationId, ownerUserId, referenceKey]);
+
+  if (attachments.length === 0) return null;
+  return (
+    <>
+      <div className="message-attachments" aria-label="消息附件">
+        {drafts.map((draft) => {
+          const record = attachments.find((attachment) => attachment.attachment_id === draft.id);
+          if (!record) return null;
+          return (
+            <button
+              className="message-attachment"
+              key={draft.id}
+              onClick={() => setPreview({
+                draft,
+                authorizedLocalRef: record.authorized_local_ref,
+              })}
+              type="button"
+            >
+              <span aria-hidden="true">{draft.kind === "image" ? "▧" : draft.kind === "audio" ? "♪" : "▤"}</span>
+              <strong>{draft.name}</strong>
+              <small>{formatAttachmentSize(draft.byteSize)}</small>
+            </button>
+          );
+        })}
+        {drafts.length === 0 && !error ? <span className="mini-spinner" aria-label="正在加载消息附件" /> : null}
+        {error ? <small className="message-attachments__error">{error}</small> : null}
+      </div>
+      {preview ? (
+        <AttachmentPreview
+          attachment={preview.draft}
+          attachmentPort={attachmentPort}
+          authorizedLocalRef={preview.authorizedLocalRef}
+          conversationId={conversationId}
+          onClose={() => setPreview(null)}
+          ownerUserId={ownerUserId}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -128,4 +236,10 @@ function displayText(content: unknown): string {
     }
   }
   return "";
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "无法读取消息附件。";
 }

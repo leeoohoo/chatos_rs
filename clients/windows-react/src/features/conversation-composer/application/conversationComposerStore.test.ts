@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHistorySnapshot } from "../../conversation-history/domain/conversationHistory";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
+import type { AttachmentImportResult } from "../../conversation-attachments/domain/conversationAttachment";
 import type { ConversationComposerPort } from "../ports/ConversationComposerPort";
 import {
   REQUIREMENT_SURVEY_CAPABILITY,
@@ -23,8 +25,13 @@ const snapshot: ConversationHistorySnapshot = {
   next_before_ordinal: null,
 };
 
+const attachmentPort = attachmentPortWith();
+
 describe("conversation composer store", () => {
-  beforeEach(() => useConversationComposerStore.getState().reset("owner-1", "conversation-1"));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useConversationComposerStore.getState().reset("owner-1", "conversation-1");
+  });
 
   it("clears accepted input and refreshes history", async () => {
     const port: ConversationComposerPort = {
@@ -42,12 +49,13 @@ describe("conversation composer store", () => {
       "owner-1",
       "conversation-1",
       snapshot,
+      attachmentPort,
       refreshed,
     );
 
     expect(port.sendDraft).toHaveBeenCalledWith(expect.objectContaining({
       guidanceTurnId: null,
-      submission: { content: "hello", explicitCapabilitySelection: null },
+      submission: { content: "hello", attachmentIds: [], explicitCapabilitySelection: null },
     }));
     expect(refreshed).toHaveBeenCalledOnce();
     expect(useConversationComposerStore.getState()).toMatchObject({
@@ -68,6 +76,7 @@ describe("conversation composer store", () => {
       "owner-1",
       "conversation-1",
       snapshot,
+      attachmentPort,
       async () => undefined,
     );
     useConversationComposerStore.getState().setDraft("new text");
@@ -78,6 +87,111 @@ describe("conversation composer store", () => {
       draft: "new text",
       isSending: false,
       error: "offline",
+    });
+  });
+
+  it("accepts only the active attachment draft generation and discards stale imports", () => {
+    const generation = useConversationComposerStore.getState().attachmentDraftGeneration;
+    const current = attachmentResult(generation, "current");
+    useConversationComposerStore.getState().acceptAttachmentImport(attachmentPort, current);
+    expect(useConversationComposerStore.getState().attachments.map(({ id }) => id)).toEqual([
+      "current",
+    ]);
+
+    useConversationComposerStore.getState().reset("owner-1", "conversation-2");
+    useConversationComposerStore.getState().acceptAttachmentImport(attachmentPort, current);
+    expect(useConversationComposerStore.getState().attachments).toEqual([]);
+    expect(attachmentPort.discard).toHaveBeenCalledWith(
+      current.scope,
+      ["current"],
+    );
+  });
+
+  it("keeps concurrent attachment imports in the same draft", async () => {
+    let resolveFirst!: (result: AttachmentImportResult) => void;
+    let resolveSecond!: (result: AttachmentImportResult) => void;
+    const port = attachmentPortWith({
+      pickFiles: vi.fn()
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; })),
+    });
+    const generation = useConversationComposerStore.getState().attachmentDraftGeneration;
+    const first = useConversationComposerStore.getState()
+      .pickAttachments(port, "owner-1", "conversation-1");
+    const second = useConversationComposerStore.getState()
+      .pickAttachments(port, "owner-1", "conversation-1");
+    resolveSecond(attachmentResult(generation, "second"));
+    resolveFirst(attachmentResult(generation, "first"));
+    await Promise.all([first, second]);
+
+    expect(useConversationComposerStore.getState()).toMatchObject({
+      isImportingAttachments: false,
+      attachmentImportCount: 0,
+    });
+    expect(useConversationComposerStore.getState().attachments.map(({ id }) => id)).toEqual([
+      "second",
+      "first",
+    ]);
+  });
+
+  it("sends attachment-only drafts and restores the exact attachments on failure", async () => {
+    const generation = useConversationComposerStore.getState().attachmentDraftGeneration;
+    useConversationComposerStore.getState().acceptAttachmentImport(
+      attachmentPort,
+      attachmentResult(generation, "attachment-1"),
+    );
+    const port: ConversationComposerPort = {
+      sendDraft: vi.fn().mockRejectedValue(new Error("offline")),
+    };
+
+    await useConversationComposerStore.getState().send(
+      port,
+      "owner-1",
+      "conversation-1",
+      snapshot,
+      attachmentPort,
+      async () => undefined,
+    );
+
+    expect(port.sendDraft).toHaveBeenCalledWith(expect.objectContaining({
+      submission: {
+        content: "",
+        attachmentIds: ["attachment-1"],
+        explicitCapabilitySelection: null,
+      },
+    }));
+    expect(useConversationComposerStore.getState()).toMatchObject({
+      attachments: [expect.objectContaining({ id: "attachment-1" })],
+      isSending: false,
+      error: "offline",
+    });
+  });
+
+  it("does not restore a committed attachment when only history refresh fails", async () => {
+    const generation = useConversationComposerStore.getState().attachmentDraftGeneration;
+    useConversationComposerStore.getState().acceptAttachmentImport(
+      attachmentPort,
+      attachmentResult(generation, "attachment-1"),
+    );
+    const port: ConversationComposerPort = {
+      sendDraft: vi.fn().mockResolvedValue({
+        deliveryKind: "newTurn",
+        turnId: "turn-1",
+        userMessageId: "message-1",
+      }),
+    };
+    await useConversationComposerStore.getState().send(
+      port,
+      "owner-1",
+      "conversation-1",
+      snapshot,
+      attachmentPort,
+      async () => { throw new Error("refresh failed"); },
+    );
+    expect(useConversationComposerStore.getState()).toMatchObject({
+      attachments: [],
+      isSending: false,
+      error: null,
     });
   });
 
@@ -135,7 +249,14 @@ describe("conversation composer store", () => {
     store.setDraft("需要调研");
     store.setExplicitCapabilitySelection(REQUIREMENT_SURVEY_CAPABILITY.selection);
 
-    await store.send(port, "owner-1", "conversation-1", snapshot, async () => undefined);
+    await store.send(
+      port,
+      "owner-1",
+      "conversation-1",
+      snapshot,
+      attachmentPort,
+      async () => undefined,
+    );
 
     expect(useConversationComposerStore.getState()).toMatchObject({
       draft: "需要调研",
@@ -156,6 +277,7 @@ describe("conversation composer store", () => {
       "owner-1",
       "conversation-1",
       snapshot,
+      attachmentPort,
       async () => undefined,
     );
     useConversationComposerStore.getState().reset("owner-1", "conversation-2");
@@ -170,3 +292,41 @@ describe("conversation composer store", () => {
     });
   });
 });
+
+function attachmentResult(generation: number, id: string): AttachmentImportResult {
+  return {
+    scope: {
+      ownerUserId: "owner-1",
+      conversationId: "conversation-1",
+      draftGeneration: generation,
+    },
+    attachments: [{
+      id,
+      name: `${id}.txt`,
+      mimeType: "text/plain",
+      kind: "file",
+      origin: "file",
+      byteSize: 10,
+      previewUrl: null,
+    }],
+    errors: [],
+  };
+}
+
+function attachmentPortWith(
+  overrides: Partial<ConversationAttachmentPort> = {},
+): ConversationAttachmentPort {
+  return {
+    activateScope: vi.fn().mockResolvedValue(undefined),
+    deactivateScope: vi.fn().mockResolvedValue(undefined),
+    pickFiles: vi.fn(),
+    importClipboard: vi.fn(),
+    discard: vi.fn().mockResolvedValue(undefined),
+    previewText: vi.fn(),
+    loadPersisted: vi.fn(),
+    previewPersistedText: vi.fn(),
+    onStaged: vi.fn().mockResolvedValue(() => undefined),
+    onDragState: vi.fn().mockResolvedValue(() => undefined),
+    ...overrides,
+  };
+}

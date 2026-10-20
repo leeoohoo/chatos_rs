@@ -2,6 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
 import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
@@ -17,6 +18,7 @@ interface ProjectConversationPlaceholderProps {
   port: ProjectConversationPort;
   historyPort: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
+  attachmentPort: ConversationAttachmentPort;
   realtimePort: ConversationRealtimePort;
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
@@ -30,6 +32,7 @@ export function ProjectConversationPlaceholder({
   port,
   historyPort,
   composerPort,
+  attachmentPort,
   realtimePort,
   runtimeSettingsPort,
   runInspectorPort,
@@ -77,6 +80,7 @@ export function ProjectConversationPlaceholder({
         conversationId={phase.conversationId}
         port={historyPort}
         composerPort={composerPort}
+        attachmentPort={attachmentPort}
         realtimePort={realtimePort}
         runtimeSettingsPort={runtimeSettingsPort}
         runInspectorPort={runInspectorPort}

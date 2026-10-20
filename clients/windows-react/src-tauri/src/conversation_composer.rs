@@ -1,15 +1,19 @@
 use chatos_local_agent_protocol::{
     GetConversationCommand, GetConversationRuntimeSettingsCommand,
     GetLatestCapabilityPolicySnapshotCommand, GuideConversationTurnCommand, HostCommand,
-    HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationDetail,
-    LocalConversationRuntimeSettings, LocalConversationTurnStatus, LocalModelConfigSnapshot,
-    PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
+    HostResult, ListLatestModelConfigSnapshotsCommand, LocalConversationAttachmentSpec,
+    LocalConversationDetail, LocalConversationRuntimeSettings, LocalConversationTurnStatus,
+    LocalModelConfigSnapshot, PutConversationRuntimeSettingsCommand, StartConversationTurnCommand,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tauri::State;
 
-use crate::host_lifecycle::{HostExecutionError, HostManager};
+use crate::{
+    attachment_tool_worker::AttachmentToolWorker,
+    conversation_attachments::{AttachmentManager, AttachmentScope},
+    host_lifecycle::{HostExecutionError, HostManager},
+};
 
 const MAIN_CHAT_PROFILE: &str = "main_chat";
 const MAX_ITERATIONS: u32 = 32;
@@ -27,6 +31,8 @@ pub struct SendConversationDraftInput {
 #[serde(rename_all = "camelCase")]
 struct ConversationDraftSubmission {
     content: String,
+    #[serde(default)]
+    attachment_ids: Vec<String>,
     explicit_capability_selection: Option<ExplicitCapabilitySelection>,
 }
 
@@ -50,14 +56,20 @@ pub struct ConversationSendAck {
 #[tauri::command]
 pub async fn send_conversation_draft(
     manager: State<'_, HostManager>,
+    attachment_manager: State<'_, AttachmentManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
     input: SendConversationDraftInput,
 ) -> Result<ConversationSendAck, String> {
     let owner_user_id = required("owner_user_id", input.owner_user_id)?;
     let conversation_id = required("conversation_id", input.conversation_id)?;
     let content = input.submission.content.trim().to_owned();
-    if content.is_empty() {
-        return Err("消息内容不能为空。".into());
+    if content.is_empty() && input.submission.attachment_ids.is_empty() {
+        return Err("消息或附件不能为空。".into());
     }
+    let attachment_scope = AttachmentScope::new(&owner_user_id, &conversation_id);
+    let attachment_ids = input.submission.attachment_ids.clone();
+    let attachments =
+        attachment_manager.resolve_specs(attachment_scope.clone(), &attachment_ids)?;
     let detail = conversation_context(&manager, &owner_user_id, &conversation_id).await?;
     if let Some(turn_id) = input.guidance_turn_id.as_deref() {
         if detail.turns.iter().any(|turn| {
@@ -70,10 +82,15 @@ pub async fn send_conversation_draft(
                 detail.conversation.version,
                 turn_id,
                 &content,
+                attachments.clone(),
             )
             .await
             {
-                Ok(ack) => return Ok(ack),
+                Ok(ack) => {
+                    attachment_manager.commit(attachment_scope, &attachment_ids)?;
+                    attachment_worker.wake();
+                    return Ok(ack);
+                }
                 Err(error) if error.code.as_deref() == Some("conflict") => {
                     let refreshed =
                         conversation_context(&manager, &owner_user_id, &conversation_id).await?;
@@ -90,22 +107,32 @@ pub async fn send_conversation_draft(
                         refreshed,
                         &input.submission,
                         content,
+                        attachments,
                     )
-                    .await;
+                    .await
+                    .and_then(|ack| {
+                        attachment_manager.commit(attachment_scope, &attachment_ids)?;
+                        attachment_worker.wake();
+                        Ok(ack)
+                    });
                 }
                 Err(error) => return Err(error.message),
             }
         }
     }
-    start_new_turn(
+    let ack = start_new_turn(
         &manager,
         &owner_user_id,
         &conversation_id,
         detail,
         &input.submission,
         content,
+        attachments,
     )
-    .await
+    .await?;
+    attachment_manager.commit(attachment_scope, &attachment_ids)?;
+    attachment_worker.wake();
+    Ok(ack)
 }
 
 async fn send_guidance(
@@ -115,6 +142,7 @@ async fn send_guidance(
     expected_conversation_version: u64,
     turn_id: &str,
     content: &str,
+    attachments: Vec<LocalConversationAttachmentSpec>,
 ) -> Result<ConversationSendAck, HostExecutionError> {
     let message_id = identifier("message");
     let result = manager
@@ -128,7 +156,7 @@ async fn send_guidance(
                 message_id: message_id.clone(),
                 message: content.to_owned(),
                 message_metadata: json!({"source": "native_guidance"}),
-                attachments: vec![],
+                attachments,
             },
         ))
         .await?;
@@ -153,6 +181,7 @@ async fn start_new_turn(
     detail: LocalConversationDetail,
     submission: &ConversationDraftSubmission,
     content: String,
+    attachments: Vec<LocalConversationAttachmentSpec>,
 ) -> Result<ConversationSendAck, String> {
     let settings = ensure_runtime_settings(manager, owner_user_id, conversation_id).await?;
     let capability_revision = latest_main_chat_capability(manager, owner_user_id).await?;
@@ -185,7 +214,7 @@ async fn start_new_turn(
                 run_id: identifier("run"),
                 message: content,
                 message_metadata: Value::Object(metadata),
-                attachments: vec![],
+                attachments,
                 model_config_ref: settings.selected_model_config_ref,
                 model_config_revision: settings.selected_model_config_revision,
                 capability_policy_revision: capability_revision,

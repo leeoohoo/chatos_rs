@@ -1,3 +1,4 @@
+use crate::attachment_tool_worker::attachment_read_tool_schema;
 use crate::authentication::{
     model_credential_environment_variable, AuthenticationManager, GatewayAgentCapability,
     GatewayModelConfig,
@@ -19,7 +20,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-internal-v1";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-attachment-v2";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -554,7 +555,7 @@ async fn publish_capabilities(
             capability_policy_revision: revision.clone(),
             instructions: Some(strip_skill_frontmatter(MAIN_CHAT_INSTRUCTIONS)),
             prefixed_input_items: Vec::new(),
-            tools: Vec::new(),
+            tools: vec![attachment_read_tool_schema()],
         },
         LocalCapabilityPolicySnapshot {
             owner_user_id: owner_user_id.to_owned(),

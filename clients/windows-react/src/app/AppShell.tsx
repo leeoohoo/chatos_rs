@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
+import type { ConversationAttachmentPort } from "../features/conversation-attachments/ports/ConversationAttachmentPort";
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../features/conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
@@ -22,6 +23,7 @@ interface AppShellProps {
   projectConversation: ProjectConversationPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
+  conversationAttachments: ConversationAttachmentPort;
   conversationRealtime: ConversationRealtimePort;
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
@@ -35,6 +37,7 @@ export function AppShell({
   projectConversation,
   conversationHistory,
   conversationComposer,
+  conversationAttachments,
   conversationRealtime,
   conversationRuntimeSettings,
   runInspector,
@@ -121,6 +124,7 @@ export function AppShell({
             port={projectConversation}
             historyPort={conversationHistory}
             composerPort={conversationComposer}
+            attachmentPort={conversationAttachments}
             realtimePort={conversationRealtime}
             runtimeSettingsPort={conversationRuntimeSettings}
             runInspectorPort={runInspector}

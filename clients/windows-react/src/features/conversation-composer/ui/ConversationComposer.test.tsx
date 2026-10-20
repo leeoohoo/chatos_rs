@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationHistorySnapshot } from "../../conversation-history/domain/conversationHistory";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
 import { useConversationRuntimeSettingsStore } from "../../conversation-runtime-settings/application/conversationRuntimeSettingsStore";
 import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import { useConversationComposerStore } from "../application/conversationComposerStore";
@@ -46,6 +47,19 @@ const runtimeSettingsPort: ConversationRuntimeSettingsPort = {
   selectModel: vi.fn(),
   selectReasoningLevel: vi.fn(),
   selectRemoteConnection: vi.fn(),
+};
+
+const attachmentPort: ConversationAttachmentPort = {
+  activateScope: vi.fn().mockResolvedValue(undefined),
+  deactivateScope: vi.fn().mockResolvedValue(undefined),
+  pickFiles: vi.fn(),
+  importClipboard: vi.fn(),
+  discard: vi.fn().mockResolvedValue(undefined),
+  previewText: vi.fn(),
+  loadPersisted: vi.fn(),
+  previewPersistedText: vi.fn(),
+  onStaged: vi.fn().mockResolvedValue(() => undefined),
+  onDragState: vi.fn().mockResolvedValue(() => undefined),
 };
 
 describe("ConversationComposer capability selection", () => {
@@ -104,6 +118,7 @@ describe("ConversationComposer capability selection", () => {
     await waitFor(() => expect(sendDraft).toHaveBeenCalledWith(expect.objectContaining({
       submission: {
         content: "请先分析",
+        attachmentIds: [],
         explicitCapabilitySelection: {
           kind: "requirement_survey",
           displayName: "需求调研",
@@ -124,6 +139,7 @@ function renderComposer(overrides: Partial<ConversationComposerPort> = {}) {
   };
   return render(
     <ConversationComposer
+      attachmentPort={attachmentPort}
       conversationId="conversation-1"
       history={history}
       onAccepted={async () => undefined}

@@ -37,14 +37,14 @@ function history(status: "running" | "succeeded" = "succeeded"): ConversationHis
 
 describe("conversation send policy", () => {
   it("ignores whitespace and duplicate submission", () => {
-    expect(planConversationSend("  ", null, history(), false).kind).toBe("ignore");
-    expect(planConversationSend("hello", null, history(), true).kind).toBe("ignore");
+    expect(planConversationSend("  ", [], null, history(), false).kind).toBe("ignore");
+    expect(planConversationSend("hello", [], null, history(), true).kind).toBe("ignore");
   });
 
   it("routes plain text to the active Turn as guidance", () => {
-    expect(planConversationSend(" continue ", null, history("running"), false)).toEqual({
+    expect(planConversationSend(" continue ", [], null, history("running"), false)).toEqual({
       kind: "guidance",
-      submission: { content: "continue", explicitCapabilitySelection: null },
+      submission: { content: "continue", attachmentIds: [], explicitCapabilitySelection: null },
       turnId: "turn-1",
     });
   });
@@ -52,6 +52,7 @@ describe("conversation send policy", () => {
   it("blocks an explicit capability while a Turn is active", () => {
     const result = planConversationSend(
       "make a document",
+      [],
       { kind: "plugin", displayName: "Document", pluginKey: "document" },
       history("running"),
       false,
@@ -60,7 +61,18 @@ describe("conversation send policy", () => {
   });
 
   it("starts a new Turn after the previous one completed", () => {
-    expect(planConversationSend("next", null, history("succeeded"), false).kind).toBe("newTurn");
+    expect(planConversationSend("next", [], null, history("succeeded"), false).kind).toBe("newTurn");
+  });
+
+  it("allows an attachment-only submission", () => {
+    expect(planConversationSend("", ["attachment-1"], null, history("succeeded"), false)).toEqual({
+      kind: "newTurn",
+      submission: {
+        content: "",
+        attachmentIds: ["attachment-1"],
+        explicitCapabilitySelection: null,
+      },
+    });
   });
 
   it("does not overwrite text typed while a failed send was pending", () => {

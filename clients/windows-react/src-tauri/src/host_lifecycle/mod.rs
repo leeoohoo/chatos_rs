@@ -2,7 +2,10 @@ mod diagnostics;
 mod process;
 pub(crate) mod transport;
 
-use crate::{authentication::AuthenticationManager, control_plane};
+use crate::{
+    attachment_tool_worker::AttachmentToolWorker, authentication::AuthenticationManager,
+    control_plane,
+};
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;
@@ -193,6 +196,7 @@ pub async fn host_lifecycle_snapshot(
 pub async fn start_local_agent_host(
     app: AppHandle,
     manager: State<'_, HostManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
     authentication: State<'_, AuthenticationManager>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
@@ -217,6 +221,9 @@ pub async fn start_local_agent_host(
             .is_some_and(|(owner, options)| owner == &owner_user_id && !options.is_empty());
         if host.owner_user_id == owner_user_id && catalog_ready && health_check(host).await.is_ok()
         {
+            attachment_worker
+                .configure(app.clone(), owner_user_id.clone())
+                .await;
             manager
                 .diagnostics
                 .record("host_start", "already_ready")
@@ -343,8 +350,12 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
-    *manager.model_catalog.lock().await = Some((host.owner_user_id.clone(), model_options));
+    let worker_owner_user_id = host.owner_user_id.clone();
+    *manager.model_catalog.lock().await = Some((worker_owner_user_id.clone(), model_options));
     *process = Some(host);
+    attachment_worker
+        .configure(app.clone(), worker_owner_user_id)
+        .await;
     manager
         .diagnostics
         .record("host_start_handshake", "ready")
@@ -355,8 +366,10 @@ pub async fn start_local_agent_host(
 #[tauri::command]
 pub async fn stop_local_agent_host(
     manager: State<'_, HostManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
 ) -> Result<HostLifecycleSnapshot, String> {
     manager.diagnostics.record("host_stop", "requested").await;
+    attachment_worker.reset().await;
     manager.terminate_process().await;
     manager.diagnostics.record("host_stop", "stopped").await;
     Ok(HostLifecycleSnapshot::stopped(
