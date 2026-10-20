@@ -112,6 +112,51 @@ body {
 h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .protocol-badge { padding: 5px 9px; border: 1px solid var(--separator); border-radius: 999px; color: var(--secondary); background: rgba(255,255,255,.62); font-size: 11px; }
 
+.approval-overlay { position: fixed; z-index: 70; right: 22px; bottom: 22px; color: #1d1d1f; }
+.approval-overlay button { border: 0; font: inherit; cursor: pointer; }
+.approval-overlay button:focus-visible { outline: 3px solid rgba(10,132,255,.25); outline-offset: 2px; }
+.approval-overlay button:disabled { cursor: default; opacity: .46; }
+.approval-overlay__bell { display: grid; flex: 0 0 auto; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #c75c00; background: rgba(255,159,10,.14); font-size: 15px; font-weight: 800; }
+.approval-overlay--compact, .approval-overlay--status { display: flex; align-items: center; gap: 10px; min-height: 50px; border: 1px solid rgba(255,159,10,.34); border-radius: 13px; padding: 7px 11px; background: rgba(250,250,252,.86); box-shadow: 0 16px 42px rgba(24,24,28,.20); backdrop-filter: blur(26px) saturate(1.35); text-align: left; }
+.approval-overlay--compact > span:nth-child(2), .approval-overlay--status > div { display: grid; min-width: 0; gap: 2px; }
+.approval-overlay--compact strong, .approval-overlay--status strong { font-size: 12px; font-weight: 650; }
+.approval-overlay--compact small, .approval-overlay--status small { max-width: 290px; overflow: hidden; color: var(--secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.approval-overlay--compact > span:last-child { margin-left: 4px; color: var(--secondary); font-size: 18px; }
+.approval-overlay--status button { margin-left: 5px; border-radius: 7px; padding: 5px 8px; color: var(--accent); background: rgba(10,132,255,.10); font-size: 11px; font-weight: 600; }
+.approval-overlay--expanded { display: flex; flex-direction: column; width: min(420px, calc(100vw - 44px)); max-height: min(610px, calc(100vh - 90px)); overflow: hidden; border: 1px solid rgba(60,60,67,.16); border-radius: 15px; background: rgba(250,250,252,.88); box-shadow: 0 22px 62px rgba(24,24,28,.24); backdrop-filter: blur(30px) saturate(1.42); }
+.approval-overlay__header { display: flex; align-items: center; gap: 10px; padding: 13px; border-bottom: 1px solid var(--separator); }
+.approval-overlay__header > div { display: grid; min-width: 0; gap: 2px; }
+.approval-overlay__header strong { font-size: 13px; font-weight: 650; }
+.approval-overlay__header small { color: var(--secondary); font-size: 10px; }
+.approval-overlay__header button { display: grid; place-items: center; width: 26px; height: 26px; margin-left: auto; border-radius: 7px; color: var(--secondary); background: transparent; font-size: 20px; }
+.approval-overlay__header button:hover { background: rgba(120,120,128,.10); }
+.approval-overlay__content { display: grid; gap: 12px; min-height: 0; overflow-y: auto; padding: 14px; }
+.approval-overlay__meta { display: flex; align-items: center; gap: 8px; color: var(--secondary); font-size: 10px; }
+.approval-overlay__meta time { margin-left: auto; color: var(--tertiary); font-variant-numeric: tabular-nums; }
+.approval-risk { border-radius: 999px; padding: 3px 7px; font-weight: 700; }
+.approval-risk--high { color: #c72b24; background: rgba(255,69,58,.11); }
+.approval-risk--medium { color: #b65b00; background: rgba(255,159,10,.12); }
+.approval-risk--low { color: #19753a; background: rgba(48,209,88,.12); }
+.approval-purpose { display: grid; gap: 4px; }
+.approval-purpose small { color: var(--secondary); font-size: 10px; font-weight: 620; }
+.approval-purpose strong { font-size: 13px; font-weight: 620; line-height: 1.45; }
+.approval-command { font-size: 11px; }
+.approval-command summary { color: var(--secondary); cursor: pointer; font-weight: 600; }
+.approval-command pre { max-height: 155px; margin: 7px 0 0; overflow: auto; border: 1px solid var(--separator); border-radius: 9px; padding: 10px; color: #242426; background: rgba(120,120,128,.07); font: 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.approval-cwd { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: var(--secondary); font: 10.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; user-select: text; }
+.approval-reason { margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.45; }
+.approval-error { display: flex; gap: 8px; align-items: flex-start; border-radius: 9px; padding: 8px 9px; color: #a84d00; background: rgba(255,159,10,.10); font-size: 10.5px; line-height: 1.4; }
+.approval-error span { flex: 1; }
+.approval-error button { padding: 0; color: inherit; background: transparent; font-size: 14px; }
+.approval-overlay__actions { display: flex; justify-content: flex-end; align-items: center; gap: 9px; padding: 11px 13px; border-top: 1px solid var(--separator); }
+.approval-overlay__actions button { min-height: 28px; border-radius: 8px; padding: 5px 11px; font-size: 11px; font-weight: 620; }
+.approval-overlay__actions .approval-decline { color: #c72b24; background: rgba(255,69,58,.09); }
+.approval-overlay__actions .primary-button { color: white; background: var(--accent); }
+.approval-overlay__navigation { display: flex; align-items: center; gap: 7px; min-height: 37px; padding: 7px 13px; border-top: 1px solid var(--separator); color: var(--secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.approval-overlay__navigation button { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--secondary); background: rgba(120,120,128,.08); font-size: 16px; }
+.approval-overlay__navigation-spacer { flex: 1; }
+.approval-overlay__navigation small { color: #a84d00; }
+
 .ready-gate { display: grid; place-items: center; max-width: 1040px; min-height: calc(100vh - 150px); margin: 0 auto; }
 .gate-card { width: min(480px, 100%); padding: 32px; border: 1px solid rgba(255,255,255,.9); border-radius: 22px; background: rgba(255,255,255,.76); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(1.25); text-align: center; }
 .gate-icon { display: grid; place-items: center; width: 54px; height: 54px; margin: 0 auto 20px; border-radius: 16px; background: linear-gradient(145deg, rgba(10,132,255,.16), rgba(10,132,255,.07)); color: var(--accent); font-size: 23px; }

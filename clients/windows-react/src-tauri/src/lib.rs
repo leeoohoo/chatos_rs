@@ -10,6 +10,7 @@ mod conversation_runtime_settings;
 mod host_lifecycle;
 mod project_conversation;
 mod run_inspector;
+mod tool_approval;
 mod workspace_index;
 
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
@@ -43,6 +44,7 @@ use run_inspector::{
     restart_task_inspector, retry_task_inspector,
 };
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
+use tool_approval::{decide_tool_approval, list_tool_approvals};
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -115,6 +117,8 @@ pub fn run() {
             load_ask_user_prompts,
             submit_ask_user_prompt,
             cancel_ask_user_prompt,
+            list_tool_approvals,
+            decide_tool_approval,
             poll_conversation_realtime,
             send_conversation_draft,
             activate_conversation_attachment_scope,

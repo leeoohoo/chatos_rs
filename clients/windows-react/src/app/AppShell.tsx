@@ -7,6 +7,8 @@ import type { ConversationAttachmentPort } from "../features/conversation-attach
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../features/conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
+import type { ToolApprovalPort } from "../features/tool-approval/ports/ToolApprovalPort";
+import { GlobalToolApprovalOverlay } from "../features/tool-approval/ui/GlobalToolApprovalOverlay";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
@@ -29,6 +31,7 @@ interface AppShellProps {
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
   askUser: AskUserPort;
+  toolApproval: ToolApprovalPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -44,6 +47,7 @@ export function AppShell({
   conversationRuntimeSettings,
   runInspector,
   askUser,
+  toolApproval,
   session,
   onLogout,
 }: AppShellProps) {
@@ -150,6 +154,11 @@ export function AppShell({
           />
         )}
       </section>
+      <GlobalToolApprovalOverlay
+        hostReady={snapshot.ready}
+        ownerUserId={session.user.id}
+        port={toolApproval}
+      />
     </>
   );
 }

@@ -44,7 +44,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环和 runtime controls 已接入 | `ConversationTimelineView.swift`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；Windows 核心发送闭环已实现 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Windows 已接入基础详情、过程、Run、重试、停止、恢复和 polling | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector、共享 fixture、React latest-wins 与 Rust projection 测试 | `macOS 分层完成，可进入 React`；Windows 主检查器纵向切片已实现 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取；Windows 已按同一语义接入安全投影、表单、提交、取消和失败对账 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift`；Windows `features/ask-user` Domain/Port/Store | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands；Windows Tauri typed commands | Ask User Core、Connector、ViewModel、React domain/store/UI 与 Rust projection/validation 测试 | `macOS 分层完成，可进入 React`；Windows 完整纵向切片已实现 |
-| 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取并通过干净快照验收 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | `macOS 分层完成，可进入 React`；Windows 必须先实现 durable queue/decision，再发布对应 platform capability |
+| 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取并通过干净快照验收；Windows 已接入 durable queue/单次决策与全局浮层 | `GlobalApprovalOverlayHost`、完整审批页；Windows `GlobalToolApprovalOverlay` | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型；Windows `toolApprovalStore` | Local Connector approval models/ports；Windows `features/tool-approval` Domain/Port | platform tool worker、approval handler、Local Connector approval service；Windows Tauri typed commands | Core use case/state、worker、approval handler/agent、state store、ViewModel tests；Windows projection/store/UI tests | `macOS 分层完成，可进入 React`；Windows durable queue/decision 已实现，真实 platform worker 完成前不发布对应执行能力 |
 | Host lifecycle / Shell | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；v44 health 契约已由 Rust/Swift/TypeScript 共享 fixture 冻结；React/Tauri 已接入双 Host control-plane bootstrap、Credential Manager 模型恢复、完整快照离线回退、最终 health ready gate 和附件 platform worker | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、Windows Tauri lifecycle/control-plane/attachment worker adapter | Runtime/bootstrap/recovery/launch/configuration/shutdown、共享 fixture、React gate、凭据环境净化、附件 vault/worker 与 Tauri tests | `macOS 分层完成，可进入 React`；Windows 只发布已真实执行的 `local_attachment_read` platform 能力 |
 | Authentication | 四阶段 Gate、登录/注册、恢复重试、注册验证码倒计时、logout/login 排序与 latest-wins 已由 ViewModel 和稳定 Core Port 隔离；Windows 已按同一契约实现 | `AuthenticationGateView.swift`、`LoginView.swift` | `AuthenticationViewModel.swift` | `AuthenticationModels.swift`、`CredentialStore.swift` | `ChatOSAuthenticationService.swift`、`ChatOSAPIClient.swift`、`KeychainCredentialStore.swift`；Windows Tauri auth adapter + Credential Manager | `AuthenticationViewModelTests.swift`、Rust DTO/URL tests、React application state tests | `macOS 分层完成，可进入 React`；Windows 首切片已实现 |
 | Pet 翻译 | 模型、历史、附件与翻译 operation identity 已提取；Host/磁盘等待不再强持有窗口 ViewModel | Pet 翻译浮窗 | `PetTranslationViewModel.swift` | `PetTranslationAgent` 请求/结果、历史记录模型 | Agent model provider、`PetTranslationHistoryStore` | Agent、历史持久化、ViewModel 生命周期测试 | 禁止；等待完整源码映射与 Port 验收 |
@@ -784,6 +784,15 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 
 已覆盖等待审批不阻塞已批准 claim、启动/事件恢复、durable approval typed command、同审批重复提交门禁、独立审批并发状态、决定中登出、Human 决定写回瞬时失败与重启恢复、journal 存储失败的进程内恢复、cwd/traversal/symlink 边界、AI reviewer 保守降级、session scope 隔离和登出迟到结果隔离。2026-10-20 在干净 `HEAD` 快照中完成准入复验：Core/Application 20 项、Connector/worker/handler/state 62 项、App ViewModel 21 项、Native XCTest 兼容层 1 组，共 104 项通过。该切片现允许进入 React；Windows 必须复用相同的两阶段状态语义，不能把 presentation queue 当成 durable approval 事实源，也不得在真实 platform worker 就绪前发布对应执行能力。
 
+Windows 第一阶段已经完成 Host durable queue/decision 与全局 Human 浮层：
+
+- Tauri 只投影 invocation identity/version、Run、tool name、白名单 command/purpose/cwd/source/risk/reason、时间和可用决定；完整 arguments、claim token、result/error 永不进入 React；
+- 每次决定前重新查询 Host pending queue，并再次确认 invocation identity/version、pending 状态与 approval 门禁；Host 仅支持 `approve/reject`，因此当前 UI 只提供 `accept/decline`，不伪造 `acceptForSession`；
+- React Store 绑定 owner 与 Host ready session，2 秒 fallback polling 短暂失败时保留最后可信队列；Host unavailable、登出或账号切换会拒绝全部迟到 refresh/decision 结果；
+- 同一审批重复点击被拒绝，不同审批可并发；决定完成后重新读取 durable queue，失败保存审批级错误并对账；
+- 浮层挂在 `AppShell`，不依赖当前项目或页面；新审批自动展开、移除只归一化 active index，展示语义与 macOS 全局浮层一致；
+- 该阶段只证明 Human durable decision 已落 Host，不宣称工具已执行。Windows platform worker、执行上下文/cwd 解析、决定 writeback journal、session allowlist 与设置页仍是后续独立切片。
+
 ## 9. 次级模块生命周期审计
 
 ### 9.1 Pet 翻译
@@ -843,7 +852,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 | 26 | 设置 / AI 模型 | 未映射 | 禁止 |
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
-| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成 | 允许；先实现 durable queue/decision 与全局浮层，再接 platform worker/设置页 |
+| 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision 与全局浮层已完成 | 允许；下一步接 platform worker/journal，再实现设置页 |
 | 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
@@ -859,6 +868,7 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
 6. [已完成] `clients/windows-react` 已完成账号 bootstrap、History、Composer 文本/附件/显式能力/runtime controls、Realtime、Run Inspector 与 Ask User 核心闭环；后续页面继续按准入矩阵逐个垂直切片实施，禁止一次性复制整个 SwiftUI 页面。
-7. [已完成] 工具审批 / 恢复已在干净 macOS 快照通过 104 项定向测试并达到 React 准入；Windows 从 Host durable queue/decision 和全局 Human 浮层开始，真实 platform worker 未完成前不得伪装或发布执行能力。
+7. [已完成] 工具审批 / 恢复已在干净 macOS 快照通过 104 项定向测试并达到 React 准入；Windows Host durable queue/decision、安全投影、2 秒 fallback polling 和全局 Human 浮层已完成，真实 platform worker 未完成前不得伪装或发布执行能力。
+8. [下一步] 按 macOS execution context/cwd 边界实现 Windows platform worker、决定 writeback journal 与 session allowlist；完成真实执行和恢复测试后才允许发布对应平台工具，再进入审批设置页。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

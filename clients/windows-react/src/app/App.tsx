@@ -9,6 +9,7 @@ import { TauriConversationAttachmentAdapter } from "../features/conversation-att
 import { TauriConversationRealtimeAdapter } from "../features/conversation-realtime/adapters/TauriConversationRealtimeAdapter";
 import { TauriConversationRuntimeSettingsAdapter } from "../features/conversation-runtime-settings/adapters/TauriConversationRuntimeSettingsAdapter";
 import { TauriRunInspectorAdapter } from "../features/run-inspector/adapters/TauriRunInspectorAdapter";
+import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/TauriToolApprovalAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriProjectConversationAdapter } from "../features/project-conversation/adapters/TauriProjectConversationAdapter";
@@ -29,6 +30,7 @@ const conversationAttachments = new TauriConversationAttachmentAdapter();
 const conversationRealtime = new TauriConversationRealtimeAdapter();
 const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter();
 const runInspector = new TauriRunInspectorAdapter();
+const toolApproval = new TauriToolApprovalAdapter();
 
 export function App() {
   return (
@@ -66,6 +68,7 @@ function ApplicationRoot() {
             conversationRuntimeSettings={conversationRuntimeSettings}
             runInspector={runInspector}
             askUser={askUser}
+            toolApproval={toolApproval}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
           />
