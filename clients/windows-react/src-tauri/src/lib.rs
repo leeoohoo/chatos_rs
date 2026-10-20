@@ -12,6 +12,7 @@ mod conversation_runtime_settings;
 mod host_lifecycle;
 mod local_terminal;
 mod platform_execution_context;
+mod plugin_application;
 mod project_conversation;
 mod project_creation;
 mod project_favorite;
@@ -58,6 +59,7 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
+use plugin_application::{list_plugin_applications, PluginApplicationManager};
 use project_conversation::prepare_project_conversation;
 use project_creation::{
     create_local_project, discard_project_directory_selection, list_project_types,
@@ -138,7 +140,8 @@ pub fn run() {
             app.manage(ApprovalSettingsStore::new(data_dir.clone()));
             app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
-            app.manage(ProjectFavoriteStore::new(data_dir));
+            app.manage(ProjectFavoriteStore::new(data_dir.clone()));
+            app.manage(PluginApplicationManager::new(data_dir));
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
@@ -286,6 +289,7 @@ pub fn run() {
             poll_local_terminal,
             close_local_terminal,
             discard_local_terminal_presentation,
+            list_plugin_applications,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

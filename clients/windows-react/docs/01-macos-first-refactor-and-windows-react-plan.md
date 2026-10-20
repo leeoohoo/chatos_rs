@@ -476,6 +476,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows React 本机终端闭环）：已按 macOS `TerminalWorkspaceViewModel`、`NativeLocalTerminalViewModel` 与 `LocalTerminalUseCase` 建立独立的 Domain/Port/Tauri/React 切片，没有复用 task terminal worker 或远程连接权限。Rust 原生层以 owner + presentation + generation 绑定最多 4 个交互会话；React 不提交 executable、arguments、environment 或绝对 cwd，Windows 只从系统目录解析 Windows PowerShell，并由原生层选择当前用户目录和构造不含应用 Secret 的 allowlist 环境。每个 ConPTY 会话具备 64 KiB 输入、1–1000 viewport、512 event/2 MiB 输出 ring、128 event/256 KiB poll、30 秒 long-poll 和 Windows Job Object kill-on-close；账号恢复/登录/注册/登出、Host 停止/失联/替换、页面离开和应用退出都会回收。React Store 保持 macOS 的多标签、关闭最后标签立即补建、每标签 identity/输出/标题/cwd/phase、串行输入、迟到 start/poll 隔离、搜索、清屏、Ctrl-C、OSC title/cwd 与 10,000 行 scrollback；Adapter 只在 `App.tsx` composition root 构造，UI 无 `invoke`。当前验收为 Windows Rust 184 项通过、2 项 sidecar 环境测试忽略，React 69 个测试文件、246 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步是第 05 页插件应用的 Windows 原生 runtime/bridge 安全边界。
 
+状态补充（2026-10-21，Windows Plugin 应用原生 catalog）：已按 macOS `NativeLocalConnectorService.fetchPluginApplications` 与 Host 当前账号安装记录建立 Tauri catalog 前置切片。原生层分页读取并交叉复验 installation summary/record，只接受 enabled、schema v3、Windows platform、workbench surface 和组件级必需 `process.spawn`；executable、manifest、UI source 必须 canonicalize 到 `<appData>/NativeConnector/Plugins` 下同一安装根。manifest、参数、health path、timeout 和 bridge capability 均有界，React DTO 不包含 executable、安装目录、source 路径或 Secret。11 项定向测试及 Windows Rust 全量 195 项通过、2 项真实 sidecar 环境测试忽略。该切片只完成 catalog，不代表第 05 页进入 React；下一步仍是 local HTTP runtime、进程树回收、受限 bridge 与 launch lifecycle。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
