@@ -496,6 +496,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 图片历史与预览边界）：Tauri 已新增图片历史首页/分页命令，保持 macOS 默认 10 条、1...200 上限、modified-at + record ID 游标、损坏记录隔离和只解码当前页 manifest；分页 DTO 不包含本机路径或媒体字节。`chatos-media` 协议只接受当前 owner + authentication generation 对应的随机 session token、record ID 与 content token，逐次复验 owner hash 目录、manifest 成员、相对文件名、非链接普通文件、大小和读前后元数据；返回 `nosniff + no-store`。恢复、登录、注册、登出、账号 generation 变化和应用退出都会轮换或清除 session，旧预览 URL 立即失效。Windows Rust 全量 217 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。原生参考图选择 token vault 尚未完成，第 06 页继续禁止 React。
 
+状态补充（2026-10-21，Windows AI 图片原生准入完成）：本机文件选择和当前账号生成历史引用已统一进入 owner + authentication generation + presentation-scoped 临时 vault。原生 picker 逐级拒绝 symlink/reparse，按真实内容识别 PNG/JPEG/WebP，复验普通文件、20 MiB、6400 万像素、读前后元数据和 SHA-256；最多 8 张并按内容去重。React DTO 只包含 opaque reference ID、名称、MIME、大小和 session-scoped 预览 URL，生成 command 明确拒绝 raw `referenceImages`/base64，只在 blocking worker 中把已验证字节交给 multipart provider。页面关闭、账号 lifecycle、应用退出和下次启动都会淘汰或清理 vault；迟到 picker 由 epoch tombstone 拒绝。Windows Rust 全量 222 项通过、2 项真实 sidecar 环境测试忽略，Clippy 无警告。第 06 页 Windows 原生平台差异门禁完成，下一片可以开始 React Domain/Port/Adapter/Store 和 Apple 主题 UI。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

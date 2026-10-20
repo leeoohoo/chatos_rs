@@ -1,7 +1,8 @@
 mod history;
 mod provider;
+mod reference;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -21,14 +22,17 @@ use provider::{
     make_provider_request, parse_provider_response, provider_error_detail, resolve_image_model,
     ImageGenerationRequest,
 };
+use reference::{MediaImageReferenceImportResult, MediaImageReferenceVault};
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
+const MAXIMUM_IMAGE_REFERENCES: usize = 8;
 
 #[derive(Clone)]
 pub(crate) struct MediaStudioManager {
     history: MediaStudioHistoryStore,
     provider_client: reqwest::Client,
     preview_session: Arc<Mutex<Option<MediaPreviewSession>>>,
+    references: MediaImageReferenceVault,
 }
 
 #[derive(Clone)]
@@ -46,9 +50,14 @@ impl MediaStudioManager {
             .build()
             .map_err(|_| "无法初始化图片生成网络客户端。".to_owned())?;
         Ok(Self {
-            history: MediaStudioHistoryStore::new(app_data_directory)?,
+            history: MediaStudioHistoryStore::new(app_data_directory.clone())?,
             provider_client,
             preview_session: Arc::new(Mutex::new(None)),
+            references: MediaImageReferenceVault::new(
+                app_data_directory
+                    .join("MediaStudio")
+                    .join("ReferenceVault"),
+            )?,
         })
     }
 
@@ -76,6 +85,7 @@ impl MediaStudioManager {
                 return Ok(active.token.clone());
             }
         }
+        self.references.reset();
         let token = Uuid::new_v4().to_string();
         *session = Some(MediaPreviewSession {
             owner_hash,
@@ -89,6 +99,7 @@ impl MediaStudioManager {
         if let Ok(mut session) = self.preview_session.lock() {
             *session = None;
         }
+        self.references.reset();
     }
 
     fn present_history_item(
@@ -126,28 +137,86 @@ impl MediaStudioManager {
 
     fn protocol_body(&self, path: &str) -> Result<(String, Vec<u8>), http::StatusCode> {
         let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
-        if parts.len() != 3
-            || !valid_uuid(parts[0])
-            || !valid_uuid(parts[1])
-            || !valid_content_token(parts[2])
-        {
+        if parts.len() != 3 && parts.len() != 4 {
             return Err(http::StatusCode::BAD_REQUEST);
         }
-        let owner_hash = {
+        let (owner_hash, authentication_generation) = {
             let session = self
                 .preview_session
                 .lock()
                 .map_err(|_| http::StatusCode::SERVICE_UNAVAILABLE)?;
             let active = session.as_ref().ok_or(http::StatusCode::UNAUTHORIZED)?;
-            if active.token != parts[0] {
+            if !valid_uuid(parts[0]) || active.token != parts[0] {
                 return Err(http::StatusCode::UNAUTHORIZED);
             }
-            active.owner_hash.clone()
+            (active.owner_hash.clone(), active.authentication_generation)
         };
-        self.history
-            .read_history_asset(&owner_hash, parts[1], parts[2])
-            .map_err(|_| http::StatusCode::NOT_FOUND)
+        match parts.as_slice() {
+            [_, record_id, content_token]
+                if valid_uuid(record_id) && valid_content_token(content_token) =>
+            {
+                self.history
+                    .read_history_asset(&owner_hash, record_id, content_token)
+                    .map_err(|_| http::StatusCode::NOT_FOUND)
+            }
+            [_, "reference", presentation_id, token]
+                if valid_uuid(presentation_id) && valid_uuid(token) =>
+            {
+                self.references
+                    .preview_asset(
+                        &owner_hash,
+                        authentication_generation,
+                        presentation_id,
+                        token,
+                    )
+                    .map_err(|_| http::StatusCode::NOT_FOUND)
+            }
+            _ => Err(http::StatusCode::BAD_REQUEST),
+        }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioImageGenerationRequest {
+    presentation_id: String,
+    model_config_id: String,
+    prompt: String,
+    size: Option<String>,
+    count: u8,
+    #[serde(default)]
+    reference_image_ids: Vec<String>,
+    client_request_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioReferenceSelectionInput {
+    owner_user_id: String,
+    presentation_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioReferenceDiscardInput {
+    owner_user_id: String,
+    presentation_id: String,
+    reference_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioHistoryReferenceInput {
+    record_id: String,
+    content_token: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioHistoryReferenceSelectionInput {
+    owner_user_id: String,
+    presentation_id: String,
+    assets: Vec<MediaStudioHistoryReferenceInput>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -213,17 +282,235 @@ pub(crate) async fn load_media_studio_image_history(
 }
 
 #[tauri::command]
+pub(crate) async fn pick_media_studio_reference_images(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioReferenceSelectionInput,
+) -> Result<MediaImageReferenceImportResult, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let preview_session_token = manager.activate_session(&input.owner_user_id, generation)?;
+    let (epoch, presentation_id) =
+        manager
+            .references
+            .begin_scope(&input.owner_user_id, generation, &input.presentation_id)?;
+    let paths = rfd::AsyncFileDialog::new()
+        .set_title("选择参考图")
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+        .pick_files()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|handle| handle.path().to_path_buf())
+        .collect::<Vec<_>>();
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    let references = manager.references.clone();
+    let owner_user_id = input.owner_user_id.clone();
+    let staged_presentation_id = presentation_id.clone();
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        references.stage_paths(
+            &owner_user_id,
+            generation,
+            &staged_presentation_id,
+            epoch,
+            paths,
+        )
+    })
+    .await
+    .map_err(|_| "参考图读取任务异常退出。".to_owned())?;
+    if let Err(error) = authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await
+    {
+        let _ = manager.references.close_presentation(
+            &input.owner_user_id,
+            generation,
+            &presentation_id,
+        );
+        return Err(error);
+    }
+    present_reference_previews(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &presentation_id,
+        &preview_session_token,
+        &mut result,
+    );
+    Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn stage_media_studio_history_references(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioHistoryReferenceSelectionInput,
+) -> Result<MediaImageReferenceImportResult, String> {
+    validate_owner(&input.owner_user_id)?;
+    if input.assets.len() > MAXIMUM_IMAGE_REFERENCES {
+        return Err(format!(
+            "参考图最多只能添加 {MAXIMUM_IMAGE_REFERENCES} 张。"
+        ));
+    }
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let preview_session_token = manager.activate_session(&input.owner_user_id, generation)?;
+    let (epoch, presentation_id) =
+        manager
+            .references
+            .begin_scope(&input.owner_user_id, generation, &input.presentation_id)?;
+    let history = manager.history.clone();
+    let references = manager.references.clone();
+    let owner_hash = history::owner_hash(&input.owner_user_id);
+    let owner_user_id = input.owner_user_id.clone();
+    let command_owner_user_id = input.owner_user_id.clone();
+    let staged_presentation_id = presentation_id.clone();
+    let assets = input.assets;
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        let mut values = Vec::new();
+        let mut errors = Vec::new();
+        for asset in assets {
+            match history.read_history_asset(&owner_hash, &asset.record_id, &asset.content_token) {
+                Ok((_mime_type, bytes)) => {
+                    values.push((format!("generated-{}.png", asset.content_token), bytes))
+                }
+                Err(_) => errors.push("所选生成图片不存在或不属于当前账号。".into()),
+            }
+        }
+        let mut result = references.stage_bytes(
+            &owner_user_id,
+            generation,
+            &staged_presentation_id,
+            epoch,
+            values,
+        );
+        result.errors.splice(0..0, errors);
+        result
+    })
+    .await
+    .map_err(|_| "生成图片引用任务异常退出。".to_owned())?;
+    if let Err(error) = authentication
+        .require_session_generation(&command_owner_user_id, generation)
+        .await
+    {
+        let _ = manager.references.close_presentation(
+            &command_owner_user_id,
+            generation,
+            &presentation_id,
+        );
+        return Err(error);
+    }
+    present_reference_previews(
+        &manager,
+        &command_owner_user_id,
+        generation,
+        &presentation_id,
+        &preview_session_token,
+        &mut result,
+    );
+    Ok(result)
+}
+
+fn present_reference_previews(
+    manager: &MediaStudioManager,
+    owner_user_id: &str,
+    generation: u64,
+    presentation_id: &str,
+    preview_session_token: &str,
+    result: &mut MediaImageReferenceImportResult,
+) {
+    for draft in &mut result.references {
+        if let Some(token) = manager.references.token_for_reference(
+            owner_user_id,
+            generation,
+            presentation_id,
+            &draft.id,
+        ) {
+            draft.preview_url = Some(media_reference_preview_url(
+                preview_session_token,
+                presentation_id,
+                &token,
+            ));
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn discard_media_studio_reference_images(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioReferenceDiscardInput,
+) -> Result<(), String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    manager.activate_session(&input.owner_user_id, generation)?;
+    manager.references.discard(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.reference_ids,
+    )
+}
+
+#[tauri::command]
+pub(crate) async fn discard_media_studio_presentation(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioReferenceSelectionInput,
+) -> Result<(), String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    manager
+        .references
+        .close_presentation(&input.owner_user_id, generation, &input.presentation_id)
+}
+
+#[tauri::command]
 pub(crate) async fn generate_media_studio_image(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
     owner_user_id: String,
-    request: ImageGenerationRequest,
+    request: MediaStudioImageGenerationRequest,
 ) -> Result<ImageGenerationOutcome, String> {
     validate_owner(&owner_user_id)?;
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
     let preview_session_token = manager.activate_session(&owner_user_id, generation)?;
+    let references = manager.references.clone();
+    let reference_owner = owner_user_id.clone();
+    let reference_presentation = request.presentation_id.clone();
+    let reference_ids = request.reference_image_ids.clone();
+    let reference_images = tauri::async_runtime::spawn_blocking(move || {
+        references.resolve(
+            &reference_owner,
+            generation,
+            &reference_presentation,
+            &reference_ids,
+        )
+    })
+    .await
+    .map_err(|_| "参考图读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let provider_request_input = ImageGenerationRequest {
+        model_config_id: request.model_config_id.clone(),
+        prompt: request.prompt.clone(),
+        size: request.size.clone(),
+        count: request.count,
+        reference_images,
+        client_request_id: request.client_request_id.clone(),
+    };
     let mut models = authentication
         .resolved_models_for_owner(&owner_user_id, vec![request.model_config_id.clone()])
         .await
@@ -240,7 +527,7 @@ pub(crate) async fn generate_media_studio_image(
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
-    let provider_request = make_provider_request(&runtime, &request)?;
+    let provider_request = make_provider_request(&runtime, &provider_request_input)?;
     let response = manager
         .provider_client
         .post(provider_request.url)
@@ -260,7 +547,7 @@ pub(crate) async fn generate_media_studio_image(
             provider_error_detail(&body, &runtime.api_key)
         ));
     }
-    let result = parse_provider_response(&request, &runtime, &body)?;
+    let result = parse_provider_response(&provider_request_input, &runtime, &body)?;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
@@ -311,6 +598,17 @@ fn media_preview_url(session_token: &str, record_id: &str, content_token: &str) 
     #[cfg(not(target_os = "windows"))]
     {
         format!("chatos-media://localhost/{session_token}/{record_id}/{content_token}")
+    }
+}
+
+fn media_reference_preview_url(session_token: &str, presentation_id: &str, token: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        format!("http://chatos-media.localhost/{session_token}/reference/{presentation_id}/{token}")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        format!("chatos-media://localhost/{session_token}/reference/{presentation_id}/{token}")
     }
 }
 
@@ -446,12 +744,43 @@ mod tests {
         assert!(encoded.contains("hasApiKey"));
     }
 
+    #[test]
+    fn generation_ipc_accepts_only_opaque_reference_ids() {
+        let presentation_id = Uuid::new_v4().to_string();
+        let valid = serde_json::json!({
+            "presentationId": presentation_id,
+            "modelConfigId": "image-model",
+            "prompt": "quiet lake",
+            "size": "1024x1024",
+            "count": 1,
+            "referenceImageIds": ["reference_123"],
+            "clientRequestId": "request-1"
+        });
+        let request: MediaStudioImageGenerationRequest =
+            serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(request.reference_image_ids, vec!["reference_123"]);
+
+        let mut raw_reference = valid;
+        raw_reference["referenceImages"] = serde_json::json!([{
+            "name": "secret.png",
+            "mimeType": "image/png",
+            "base64Data": "aW1hZ2U="
+        }]);
+        assert!(
+            serde_json::from_value::<MediaStudioImageGenerationRequest>(raw_reference).is_err()
+        );
+    }
+
     #[tokio::test]
     async fn persistence_failure_preserves_generated_result_without_native_paths_or_secrets() {
         let root = tempdir().unwrap();
-        let blocked_root = root.path().join("blocked");
-        fs::write(&blocked_root, b"not-a-directory").unwrap();
-        let manager = MediaStudioManager::new(blocked_root).unwrap();
+        let app_data = root.path().join("app-data");
+        let manager = MediaStudioManager::new(app_data.clone()).unwrap();
+        fs::write(
+            app_data.join("MediaStudio").join("Accounts"),
+            b"not-a-directory",
+        )
+        .unwrap();
         let preview_session_token = manager.activate_session("alice", 1).unwrap();
         let result = ImageGenerationResult {
             id: "provider-result".into(),

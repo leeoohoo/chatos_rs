@@ -61,8 +61,10 @@ use local_terminal::{
     LocalTerminalRegistry,
 };
 use media_studio::{
+    discard_media_studio_presentation, discard_media_studio_reference_images,
     generate_media_studio_image, list_media_studio_models, load_media_studio_image_history,
-    media_studio_protocol, MediaStudioManager,
+    media_studio_protocol, pick_media_studio_reference_images,
+    stage_media_studio_history_references, MediaStudioManager,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -307,6 +309,10 @@ pub fn run() {
             list_plugin_applications,
             list_media_studio_models,
             load_media_studio_image_history,
+            pick_media_studio_reference_images,
+            stage_media_studio_history_references,
+            discard_media_studio_reference_images,
+            discard_media_studio_presentation,
             generate_media_studio_image,
             launch_plugin_application,
             discard_plugin_application_presentation,

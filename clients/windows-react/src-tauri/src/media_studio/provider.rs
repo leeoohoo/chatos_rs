@@ -12,22 +12,19 @@ const MAXIMUM_GENERATED_IMAGES: usize = 10;
 const MAXIMUM_REFERENCE_IMAGES: usize = 8;
 const MAXIMUM_ERROR_DETAIL_CHARACTERS: usize = 2_000;
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImageGenerationInput {
     pub name: String,
     pub mime_type: String,
-    pub base64_data: String,
+    pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImageGenerationRequest {
     pub model_config_id: String,
     pub prompt: String,
     pub size: Option<String>,
     pub count: u8,
-    #[serde(default)]
     pub reference_images: Vec<ImageGenerationInput>,
     pub client_request_id: String,
 }
@@ -154,7 +151,7 @@ pub(crate) fn make_provider_request(
         append_field(&mut body, &boundary, "size", size);
     }
     for image in &request.reference_images {
-        let bytes = decode_reference_image(image)?;
+        let bytes = validated_reference_image(image)?;
         let field_name = if request.reference_images.len() > 1 {
             "image[]"
         } else {
@@ -175,7 +172,7 @@ pub(crate) fn make_provider_request(
             )
             .as_bytes(),
         );
-        body.extend_from_slice(&bytes);
+        body.extend_from_slice(bytes);
         body.extend_from_slice(b"\r\n");
     }
     body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
@@ -269,7 +266,7 @@ fn validate_generation_request(request: &ImageGenerationRequest) -> Result<(), S
         return Err("图片生成参数无效。".into());
     }
     for image in &request.reference_images {
-        let _ = decode_reference_image(image)?;
+        let _ = validated_reference_image(image)?;
     }
     Ok(())
 }
@@ -286,7 +283,7 @@ fn normalized_generated_mime_type(value: Option<String>) -> Result<String, Strin
     }
 }
 
-fn decode_reference_image(image: &ImageGenerationInput) -> Result<Vec<u8>, String> {
+fn validated_reference_image(image: &ImageGenerationInput) -> Result<&[u8], String> {
     let mime_type = image.mime_type.trim().to_ascii_lowercase();
     if !matches!(
         mime_type.as_str(),
@@ -294,13 +291,10 @@ fn decode_reference_image(image: &ImageGenerationInput) -> Result<Vec<u8>, Strin
     ) {
         return Err("参考图无效或超过 20 MB。".into());
     }
-    let bytes = BASE64
-        .decode(&image.base64_data)
-        .map_err(|_| "参考图无效或超过 20 MB。")?;
-    if bytes.is_empty() || bytes.len() > MAXIMUM_IMAGE_BYTES {
+    if image.bytes.is_empty() || image.bytes.len() > MAXIMUM_IMAGE_BYTES {
         return Err("参考图无效或超过 20 MB。".into());
     }
-    Ok(bytes)
+    Ok(&image.bytes)
 }
 
 fn parse_provider_base_url(raw: &str) -> Result<Url, String> {
@@ -498,12 +492,12 @@ mod tests {
                 ImageGenerationInput {
                     name: "first evil.png".into(),
                     mime_type: "image/png".into(),
-                    base64_data: png.clone(),
+                    bytes: BASE64.decode(&png).unwrap(),
                 },
                 ImageGenerationInput {
                     name: "second.webp".into(),
                     mime_type: "image/webp".into(),
-                    base64_data: png,
+                    bytes: BASE64.decode(&png).unwrap(),
                 },
             ]),
         )
