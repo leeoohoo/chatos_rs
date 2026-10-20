@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
+import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
@@ -19,6 +20,7 @@ interface AppShellProps {
   projectConversation: ProjectConversationPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
+  conversationRealtime: ConversationRealtimePort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -29,6 +31,7 @@ export function AppShell({
   projectConversation,
   conversationHistory,
   conversationComposer,
+  conversationRealtime,
   session,
   onLogout,
 }: AppShellProps) {
@@ -112,6 +115,7 @@ export function AppShell({
             port={projectConversation}
             historyPort={conversationHistory}
             composerPort={conversationComposer}
+            realtimePort={conversationRealtime}
           />
         ) : selectedContact ? (
           <div className="project-state">

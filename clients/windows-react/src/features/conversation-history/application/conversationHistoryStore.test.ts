@@ -72,6 +72,33 @@ describe("conversationHistoryStore", () => {
       expect(phase.snapshot.next_before_ordinal).toBeNull();
     }
   });
+
+  it("refreshes the latest page without discarding older history", async () => {
+    const latest = { ...fixture, next_before_ordinal: 1 };
+    const olderMessage = { ...fixture.messages[0]!, message_id: "message-older", ordinal: 0 };
+    const older = { ...fixture, messages: [olderMessage], attachments: [], next_before_ordinal: null };
+    const refreshed = {
+      ...fixture,
+      conversation: { ...fixture.conversation, version: fixture.conversation.version + 1 },
+      messages: [
+        ...fixture.messages,
+        { ...fixture.messages[1]!, message_id: "message-new", ordinal: 3 },
+      ],
+    };
+    const port = new HistoryPortStub([latest, older, refreshed]);
+
+    await useConversationHistoryStore.getState().load(port, "user-1", "conversation-1");
+    await useConversationHistoryStore.getState().loadOlder(port);
+    await useConversationHistoryStore.getState().refreshLatest(port);
+
+    const phase = useConversationHistoryStore.getState().phase;
+    expect(phase.kind).toBe("ready");
+    if (phase.kind === "ready") {
+      expect(phase.snapshot.messages.map((message) => message.ordinal)).toEqual([0, 1, 2, 3]);
+      expect(phase.snapshot.next_before_ordinal).toBeNull();
+      expect(phase.isRefreshing).toBe(false);
+    }
+  });
 });
 
 class HistoryPortStub implements ConversationHistoryPort {

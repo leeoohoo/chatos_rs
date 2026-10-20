@@ -1,6 +1,7 @@
 mod authentication;
 mod conversation_composer;
 mod conversation_history;
+mod conversation_realtime;
 mod host_lifecycle;
 mod project_conversation;
 mod workspace_index;
@@ -11,6 +12,7 @@ use authentication::{
 };
 use conversation_composer::send_conversation_draft;
 use conversation_history::load_conversation_history;
+use conversation_realtime::poll_conversation_realtime;
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
@@ -36,6 +38,7 @@ pub fn run() {
             refresh_workspace_relations,
             prepare_project_conversation,
             load_conversation_history,
+            poll_conversation_realtime,
             send_conversation_draft,
             host_diagnostics,
             host_lifecycle_snapshot,

@@ -1,7 +1,9 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { ConversationComposer } from "../../conversation-composer/ui/ConversationComposer";
 import { useConversationComposerStore } from "../../conversation-composer/application/conversationComposerStore";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
+import { ConversationRealtimeObserver } from "../../conversation-realtime/ui/ConversationRealtimeObserver";
+import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
 import { useConversationHistoryStore } from "../application/conversationHistoryStore";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
 
@@ -10,15 +12,18 @@ export function ConversationHistoryView({
   conversationId,
   port,
   composerPort,
+  realtimePort,
 }: {
   ownerUserId: string;
   conversationId: string;
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
+  realtimePort: ConversationRealtimePort;
 }) {
   const phase = useConversationHistoryStore((state) => state.phase);
   const load = useConversationHistoryStore((state) => state.load);
   const loadOlder = useConversationHistoryStore((state) => state.loadOlder);
+  const refreshLatest = useConversationHistoryStore((state) => state.refreshLatest);
   const resetComposer = useConversationComposerStore((state) => state.reset);
 
   useEffect(() => {
@@ -28,6 +33,11 @@ export function ConversationHistoryView({
   useEffect(() => {
     resetComposer(ownerUserId, conversationId);
   }, [conversationId, ownerUserId, resetComposer]);
+
+  const reconcile = useCallback(
+    () => refreshLatest(port),
+    [port, refreshLatest],
+  );
 
   if (phase.kind === "idle" || phase.kind === "loading") {
     return <div className="conversation-loading"><span className="spinner" /><span>正在加载会话记录…</span></div>;
@@ -44,6 +54,13 @@ export function ConversationHistoryView({
 
   return (
     <section className="conversation-screen">
+      <ConversationRealtimeObserver
+        ownerUserId={ownerUserId}
+        conversationId={conversationId}
+        conversationVersion={phase.snapshot.conversation.version}
+        port={realtimePort}
+        onAffected={reconcile}
+      />
       <div className="conversation-history" aria-label="会话记录">
         {phase.snapshot.next_before_ordinal != null && (
           <button className="history-more" type="button" disabled={phase.isLoadingOlder} onClick={() => void loadOlder(port)}>
@@ -51,6 +68,7 @@ export function ConversationHistoryView({
           </button>
         )}
         {phase.olderError && <p className="history-error">{phase.olderError}</p>}
+        {phase.refreshError && <p className="history-error">{phase.refreshError}</p>}
         <div className="message-list">
           {phase.snapshot.messages.map((message) => (
             <article className={`message-bubble message-bubble--${message.role}`} key={message.message_id}>
@@ -65,7 +83,7 @@ export function ConversationHistoryView({
         conversationId={conversationId}
         history={phase.snapshot}
         port={composerPort}
-        onAccepted={() => load(port, ownerUserId, conversationId, true)}
+        onAccepted={reconcile}
       />
     </section>
   );

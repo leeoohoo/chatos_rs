@@ -358,6 +358,14 @@ Windows Composer 文本发送生命周期首片（2026-10-20）：
 - 失败恢复已提交草稿但不覆盖用户等待期间的新输入；账号/Conversation 切换使迟到响应失效；
 - 当前首片只放行文本发送。附件 vault/读取 worker、能力目录和模型/推理/远程连接控件必须完成各自 Port 后再接入。
 
+Windows Realtime 实现（2026-10-20）：
+
+- React 已建立独立 Realtime Domain/Application/Port/Adapter/Observer，Conversation 页面只装配 typed Port；
+- Tauri 首次订阅读取 owner-scoped 最新 durable event cursor，之后以有界 page 读取 routing payload，并按已知 Run ID 或 `conversation_id` 判断是否影响当前会话；
+- 即使事件页为空，也以 Conversation version 变化触发 reconcile，避免漏掉游标初始化和事件过滤边界内的持久化变化；
+- reconcile 使用静默 latest refresh 并按稳定 ID 合并，保留已加载的 older cursor 和旧消息；失败保留现有时间线并有界重试，不出现全屏 loading；
+- 当前 stdio adapter 使用短周期非阻塞事件页读取，避免单连接长等待占住业务命令；后续若 Tauri transport 增加真正多路复用，可替换为与 macOS Event Hub 相同的 Host `wait_events` 长轮询，Application 层无需变化。
+
 ## 5. Task Graph / Run Inspector：完整调用链
 
 ### 5.1 UI 与 Port
@@ -816,6 +824,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 3. [已完成] 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
-6. [进行中] `clients/windows-react` 已完成 History 与 Composer 文本发送生命周期首片；下一步完成账号 bootstrap、Composer 附件/能力/运行时控件，再按 Realtime→Run Inspector 创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
+6. [进行中] `clients/windows-react` 已完成 History、Composer 文本发送生命周期首片与 Realtime；下一步完成账号 bootstrap、Composer 附件/能力/运行时控件，再创建 Run Inspector feature，禁止一次性复制整个 SwiftUI 页面。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

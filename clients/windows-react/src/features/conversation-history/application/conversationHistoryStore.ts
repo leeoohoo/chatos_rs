@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   idleConversationHistory,
+  mergeLatestHistory,
   mergeOlderHistory,
   type ConversationHistoryPhase,
 } from "../domain/conversationHistory";
@@ -14,6 +15,7 @@ interface ConversationHistoryState {
   phase: ConversationHistoryPhase;
   load(port: ConversationHistoryPort, ownerUserId: string, conversationId: string, force?: boolean): Promise<void>;
   loadOlder(port: ConversationHistoryPort): Promise<void>;
+  refreshLatest(port: ConversationHistoryPort): Promise<void>;
   reset(ownerUserId?: string): void;
 }
 
@@ -43,7 +45,16 @@ export const useConversationHistoryStore = create<ConversationHistoryState>((set
         || snapshot.conversation.conversation_id !== conversationId) {
         throw new Error("Host 返回了错误的会话历史。");
       }
-      set({ phase: { kind: "ready", snapshot, isLoadingOlder: false, olderError: null } });
+      set({
+        phase: {
+          kind: "ready",
+          snapshot,
+          isLoadingOlder: false,
+          olderError: null,
+          isRefreshing: false,
+          refreshError: null,
+        },
+      });
     } catch (error) {
       if (!accepts(get, ownerUserId, conversationId, requestId)) return;
       set({ phase: { kind: "failed", message: errorMessage(error) } });
@@ -75,6 +86,8 @@ export const useConversationHistoryStore = create<ConversationHistoryState>((set
           snapshot: mergeOlderHistory(snapshot, older),
           isLoadingOlder: false,
           olderError: null,
+          isRefreshing: false,
+          refreshError: current.phase.refreshError,
         },
       });
     } catch (error) {
@@ -85,6 +98,47 @@ export const useConversationHistoryStore = create<ConversationHistoryState>((set
           snapshot,
           isLoadingOlder: false,
           olderError: errorMessage(error),
+          isRefreshing: false,
+          refreshError: current.phase.refreshError,
+        },
+      });
+    }
+  },
+
+  async refreshLatest(port) {
+    const current = get();
+    if (!current.ownerUserId || !current.conversationId || current.phase.kind !== "ready") return;
+    if (current.phase.isRefreshing || current.phase.isLoadingOlder) return;
+    const requestId = current.requestSequence + 1;
+    const snapshot = current.phase.snapshot;
+    set({
+      requestSequence: requestId,
+      requestId,
+      phase: { ...current.phase, isRefreshing: true, refreshError: null },
+    });
+    try {
+      const latest = await port.loadHistory(current.ownerUserId, current.conversationId);
+      if (!accepts(get, current.ownerUserId, current.conversationId, requestId)) return;
+      set({
+        phase: {
+          kind: "ready",
+          snapshot: mergeLatestHistory(snapshot, latest),
+          isLoadingOlder: false,
+          olderError: current.phase.olderError,
+          isRefreshing: false,
+          refreshError: null,
+        },
+      });
+    } catch (error) {
+      if (!accepts(get, current.ownerUserId, current.conversationId, requestId)) return;
+      set({
+        phase: {
+          kind: "ready",
+          snapshot,
+          isLoadingOlder: false,
+          olderError: current.phase.olderError,
+          isRefreshing: false,
+          refreshError: errorMessage(error),
         },
       });
     }
