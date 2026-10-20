@@ -10,6 +10,40 @@ pub(crate) struct ProjectRunAnalysisSnapshot {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectRunState {
+    pub(crate) project_id: String,
+    pub(crate) status: &'static str,
+    pub(crate) is_busy: bool,
+    pub(crate) is_running: bool,
+    pub(crate) revision: u64,
+    pub(crate) instances: Vec<ProjectRunInstance>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectRunInstance {
+    pub(crate) id: String,
+    pub(crate) target_id: String,
+    pub(crate) name: String,
+    pub(crate) cwd: String,
+    pub(crate) status: &'static str,
+    pub(crate) is_busy: bool,
+    pub(crate) is_running: bool,
+    pub(crate) log: String,
+    pub(crate) log_truncated: bool,
+    pub(crate) started_at_unix_ms: i64,
+    pub(crate) exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProjectRunChangeSnapshot {
+    pub(crate) timed_out: bool,
+    pub(crate) state: ProjectRunState,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ProjectRunCatalog {
     pub(crate) project_id: String,
     pub(crate) status: &'static str,
@@ -128,4 +162,12 @@ pub(crate) struct ProjectRunAnalysis {
     pub(crate) targets: Vec<AnalyzedProjectRunTarget>,
     pub(crate) configuration_files: Vec<ProjectRunConfigurationFile>,
     pub(crate) toolchains: BTreeMap<String, Vec<DiscoveredToolchain>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ResolvedProjectRunTarget {
+    pub(crate) presentation: ProjectRunTarget,
+    pub(crate) executable: PathBuf,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) cwd: PathBuf,
 }

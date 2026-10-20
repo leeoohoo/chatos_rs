@@ -1,8 +1,13 @@
-use super::{analyze_resolved_project, analyzer::analyze_project};
+use super::{
+    analyze_resolved_project,
+    analyzer::{analyze_project, resolve_project_run_target},
+    models::{ProjectRunTarget, ResolvedProjectRunTarget},
+    runtime::{test_scope, ProjectRunManager},
+};
 use crate::workspace_index::open_project_registry;
 use rusqlite::params;
 use serde_json::json;
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Duration};
 
 #[test]
 fn analyzer_matches_macos_target_priority_and_uses_only_relative_paths() {
@@ -120,4 +125,154 @@ fn resolved_projection_enforces_owner_project_workspace_and_hides_absolute_paths
     assert_eq!(snapshot.catalog.targets[0].cwd, ".");
     assert!(!serialized.contains(&project.path().to_string_lossy().to_string()));
     assert!(analyze_resolved_project(app_data.path(), "other", "project").is_err());
+}
+
+#[test]
+fn launch_resolution_accepts_only_a_fresh_analyzer_target_id() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::create_dir(directory.path().join("src")).unwrap();
+    fs::write(directory.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+    fs::write(
+        directory.path().join("Cargo.toml"),
+        "[package]\nname='typed-run'\nversion='0.1.0'\nedition='2021'\n",
+    )
+    .unwrap();
+    let analysis = analyze_project(directory.path()).unwrap();
+    let target_id = analysis
+        .targets
+        .iter()
+        .find(|target| target.presentation.command == "cargo run")
+        .unwrap()
+        .presentation
+        .id
+        .clone();
+
+    let resolved = resolve_project_run_target(directory.path(), &target_id).unwrap();
+
+    assert_eq!(resolved.arguments, ["run"]);
+    assert_eq!(resolved.cwd, fs::canonicalize(directory.path()).unwrap());
+    assert_eq!(
+        resolved
+            .executable
+            .file_stem()
+            .and_then(|value| value.to_str()),
+        Some("cargo")
+    );
+    assert!(resolve_project_run_target(directory.path(), "invented-target").is_err());
+}
+
+#[tokio::test]
+async fn runtime_projects_typed_process_output_and_owner_scoped_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let manager = ProjectRunManager::default();
+    let owner = test_scope(&root, "owner-1", "project-1");
+    let other = test_scope(&root, "owner-2", "project-1");
+    let target = test_target(
+        std::env::current_exe().unwrap(),
+        vec!["--help".into()],
+        &root,
+    );
+
+    let mut state = manager.start(&owner, target).await.unwrap();
+    assert_eq!(state.instances.len(), 1);
+    assert!(manager.snapshot(&other).await.unwrap().instances.is_empty());
+    assert!(manager.stop(&other, &state.instances[0].id).await.is_err());
+
+    for _ in 0..20 {
+        if !state.is_running {
+            break;
+        }
+        state = manager
+            .poll_changes(&owner, state.revision, 1_000)
+            .await
+            .unwrap()
+            .state;
+    }
+
+    assert!(!state.is_running);
+    assert_eq!(state.instances[0].status, "exited");
+    assert_eq!(state.instances[0].exit_code, Some(0));
+    assert!(state.instances[0].log.starts_with("$ typed test\n"));
+    assert!(state.instances[0].log.contains("进程已退出"));
+    let timed_out = manager
+        .poll_changes(&owner, state.revision, 10)
+        .await
+        .unwrap();
+    assert!(timed_out.timed_out);
+    manager.reset().await;
+}
+
+#[tokio::test]
+async fn teardown_wakes_a_pending_state_poll_and_resets_its_cursor() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let initial = manager.snapshot(&scope).await.unwrap();
+    let resetter = manager.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        resetter.reset().await;
+    });
+    let before = std::time::Instant::now();
+
+    let result = manager
+        .poll_changes(&scope, initial.revision, 5_000)
+        .await
+        .unwrap();
+
+    assert!(!result.timed_out);
+    assert!(before.elapsed() < Duration::from_secs(1));
+    assert_eq!(result.state.revision, 0);
+    assert!(result.state.instances.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_terminates_the_owned_project_process_group() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let target = test_target(
+        "/bin/sh".into(),
+        vec!["-c".into(), "sleep 60 & wait".into()],
+        &root,
+    );
+    let started = manager.start(&scope, target).await.unwrap();
+    let instance_id = started.instances[0].id.clone();
+    let before = std::time::Instant::now();
+
+    let stopped = manager.stop(&scope, &instance_id).await.unwrap();
+
+    assert!(before.elapsed() < Duration::from_secs(4));
+    assert!(!stopped.is_running);
+    assert!(matches!(stopped.instances[0].status, "exited" | "failed"));
+    manager.reset().await;
+}
+
+fn test_target(
+    executable: std::path::PathBuf,
+    arguments: Vec<String>,
+    cwd: &Path,
+) -> ResolvedProjectRunTarget {
+    ResolvedProjectRunTarget {
+        presentation: ProjectRunTarget {
+            id: "target-1".into(),
+            label: "Typed test".into(),
+            kind: "test".into(),
+            language: None,
+            cwd: ".".into(),
+            command: "typed test".into(),
+            source: "test".into(),
+            is_default: true,
+            entrypoint: None,
+            manifest_path: None,
+            required_toolchains: Vec::new(),
+        },
+        executable,
+        arguments,
+        cwd: cwd.to_path_buf(),
+    }
 }

@@ -12,7 +12,7 @@ use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
-use crate::host_lifecycle::HostManager;
+use crate::{host_lifecycle::HostManager, project_run::ProjectRunManager};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -284,8 +284,15 @@ fn api_message(error: ApiError) -> String {
 #[tauri::command]
 pub async fn restore_authentication_session(
     manager: State<'_, AuthenticationManager>,
+    project_runs: State<'_, ProjectRunManager>,
 ) -> Result<Option<AuthSession>, String> {
-    manager.restore_session().await
+    let session = manager.restore_session().await?;
+    if let Some(session) = &session {
+        project_runs.retain_owner(&session.user.id).await;
+    } else {
+        project_runs.reset().await;
+    }
+    Ok(session)
 }
 
 #[tauri::command]
@@ -293,8 +300,11 @@ pub async fn login(
     username: String,
     password: String,
     manager: State<'_, AuthenticationManager>,
+    project_runs: State<'_, ProjectRunManager>,
 ) -> Result<AuthSession, String> {
-    manager.login(username, password).await
+    let session = manager.login(username, password).await?;
+    project_runs.retain_owner(&session.user.id).await;
+    Ok(session)
 }
 
 #[tauri::command]
@@ -317,17 +327,22 @@ pub async fn register(
     invite_code: String,
     verification_code: String,
     manager: State<'_, AuthenticationManager>,
+    project_runs: State<'_, ProjectRunManager>,
 ) -> Result<AuthSession, String> {
-    manager
+    let session = manager
         .register(email, password, invite_code, verification_code)
-        .await
+        .await?;
+    project_runs.retain_owner(&session.user.id).await;
+    Ok(session)
 }
 
 #[tauri::command]
 pub async fn logout(
     manager: State<'_, AuthenticationManager>,
     host_manager: State<'_, HostManager>,
+    project_runs: State<'_, ProjectRunManager>,
 ) -> Result<(), String> {
+    project_runs.reset().await;
     let result = manager.logout().await;
     host_manager.reset_approval_sessions();
     result

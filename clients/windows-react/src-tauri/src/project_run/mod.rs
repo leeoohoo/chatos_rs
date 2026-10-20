@@ -1,14 +1,19 @@
 mod analyzer;
 mod models;
+mod runtime;
 #[cfg(test)]
 mod tests;
 
-use analyzer::analyze_project;
+use analyzer::{analyze_project, resolve_project_run_target};
 use models::{
-    ProjectRunAnalysisSnapshot, ProjectRunCatalog, ProjectRunEnvironment, ProjectRunValidationIssue,
+    ProjectRunAnalysisSnapshot, ProjectRunCatalog, ProjectRunChangeSnapshot, ProjectRunEnvironment,
+    ProjectRunState, ProjectRunValidationIssue,
 };
+pub(crate) use runtime::ProjectRunManager;
+use runtime::ProjectRunScope;
 use std::collections::{BTreeMap, HashSet};
-use tauri::{AppHandle, Manager};
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Manager, State};
 
 use crate::{host_lifecycle::validate_owner, platform_execution_context::resolve_project_root};
 
@@ -29,6 +34,74 @@ pub(crate) async fn analyze_project_run(
     })
     .await
     .map_err(|_| "项目运行分析任务异常退出。".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn load_project_run_state(
+    app: AppHandle,
+    manager: State<'_, ProjectRunManager>,
+    owner_user_id: String,
+    project_id: String,
+) -> Result<ProjectRunState, String> {
+    let scope = resolve_scope(&app, owner_user_id, project_id).await?;
+    manager.snapshot(&scope).await
+}
+
+#[tauri::command]
+pub(crate) async fn poll_project_run_changes(
+    app: AppHandle,
+    manager: State<'_, ProjectRunManager>,
+    owner_user_id: String,
+    project_id: String,
+    after_revision: u64,
+    timeout_ms: u64,
+) -> Result<ProjectRunChangeSnapshot, String> {
+    let scope = resolve_scope(&app, owner_user_id, project_id).await?;
+    manager
+        .poll_changes(&scope, after_revision, timeout_ms)
+        .await
+}
+
+#[tauri::command]
+pub(crate) async fn start_project_run(
+    app: AppHandle,
+    manager: State<'_, ProjectRunManager>,
+    owner_user_id: String,
+    project_id: String,
+    target_id: String,
+) -> Result<ProjectRunState, String> {
+    validate_identifier(&target_id)?;
+    let scope = resolve_scope(&app, owner_user_id, project_id).await?;
+    let root = scope.project_root.clone();
+    let target =
+        tauri::async_runtime::spawn_blocking(move || resolve_project_run_target(&root, &target_id))
+            .await
+            .map_err(|_| "项目运行分析任务异常退出。".to_owned())??;
+    manager.start(&scope, target).await
+}
+
+#[tauri::command]
+pub(crate) async fn stop_project_run(
+    app: AppHandle,
+    manager: State<'_, ProjectRunManager>,
+    owner_user_id: String,
+    project_id: String,
+    instance_id: String,
+) -> Result<ProjectRunState, String> {
+    let scope = resolve_scope(&app, owner_user_id, project_id).await?;
+    manager.stop(&scope, &instance_id).await
+}
+
+#[tauri::command]
+pub(crate) async fn delete_project_run_instance(
+    app: AppHandle,
+    manager: State<'_, ProjectRunManager>,
+    owner_user_id: String,
+    project_id: String,
+    instance_id: String,
+) -> Result<ProjectRunState, String> {
+    let scope = resolve_scope(&app, owner_user_id, project_id).await?;
+    manager.delete(&scope, &instance_id).await
 }
 
 fn analyze_resolved_project(
@@ -117,6 +190,40 @@ fn analyze_resolved_project(
             terminal_ui_enabled: false,
         },
     })
+}
+
+async fn resolve_scope(
+    app: &AppHandle,
+    owner_user_id: String,
+    project_id: String,
+) -> Result<ProjectRunScope, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&project_id)?;
+    let app_data_directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "无法读取项目运行环境。".to_owned())?;
+    let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id).await?;
+    Ok(ProjectRunScope {
+        owner_user_id,
+        project_id,
+        project_root: root,
+    })
+}
+
+async fn resolved_project_root(
+    app_data_directory: &Path,
+    owner_user_id: &str,
+    project_id: &str,
+) -> Result<PathBuf, String> {
+    let connector = app_data_directory.join("NativeConnector");
+    let owner = owner_user_id.to_owned();
+    let project = project_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        resolve_project_root(&connector, &owner, &project).map(|resolved| resolved.root)
+    })
+    .await
+    .map_err(|_| "项目运行目录解析任务异常退出。".to_owned())?
 }
 
 fn validate_identifier(value: &str) -> Result<(), String> {

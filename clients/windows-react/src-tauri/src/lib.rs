@@ -64,7 +64,10 @@ use project_git::{
     push_project_git, remove_project_git_remote, save_project_git_remote, stage_project_git_paths,
     switch_project_git_branch, unstage_project_git_paths,
 };
-use project_run::analyze_project_run;
+use project_run::{
+    analyze_project_run, delete_project_run_instance, load_project_run_state,
+    poll_project_run_changes, start_project_run, stop_project_run, ProjectRunManager,
+};
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -96,6 +99,7 @@ pub fn run() {
         .manage(HostManager::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
+        .manage(ProjectRunManager::default())
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -180,6 +184,11 @@ pub fn run() {
             pull_project_git,
             push_project_git,
             analyze_project_run,
+            load_project_run_state,
+            poll_project_run_changes,
+            start_project_run,
+            stop_project_run,
+            delete_project_run_instance,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,
@@ -224,6 +233,7 @@ pub fn run() {
     tauri::async_runtime::block_on(async {
         app_handle.state::<AttachmentToolWorker>().reset().await;
         app_handle.state::<TerminalToolWorker>().reset().await;
+        app_handle.state::<ProjectRunManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });
     if exit_code != 0 {

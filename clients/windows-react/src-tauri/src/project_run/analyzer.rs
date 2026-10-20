@@ -1,6 +1,7 @@
 use super::models::{
     AnalyzedProjectRunTarget, DiscoveredToolchain, ProjectRunAnalysis, ProjectRunConfigurationFile,
     ProjectRunExecutable, ProjectRunInvocation, ProjectRunTarget, ProjectRunToolchainOption,
+    ResolvedProjectRunTarget,
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -172,6 +173,69 @@ pub(crate) fn analyze_project(root: &Path) -> Result<ProjectRunAnalysis, String>
         configuration_files,
         toolchains: discover_toolchains(),
     })
+}
+
+pub(crate) fn resolve_project_run_target(
+    root: &Path,
+    target_id: &str,
+) -> Result<ResolvedProjectRunTarget, String> {
+    let canonical_root = fs::canonicalize(root).map_err(|_| unavailable())?;
+    let analysis = analyze_project(&canonical_root)?;
+    let target = analysis
+        .targets
+        .into_iter()
+        .find(|target| target.presentation.id == target_id)
+        .ok_or_else(|| "运行目标不存在，请重新分析项目。".to_owned())?;
+    let cwd = resolve_project_path(&canonical_root, &target.presentation.cwd, true)?;
+    let executable = match &target.invocation.executable {
+        ProjectRunExecutable::Toolchain(kind) => analysis
+            .toolchains
+            .get(kind)
+            .and_then(|options| options.first())
+            .map(|option| option.executable.clone())
+            .ok_or_else(|| format!("没有发现可用的 {kind} 工具链。"))?,
+        ProjectRunExecutable::ProjectFile(path) => {
+            resolve_project_path(&canonical_root, path, false)?
+        }
+    };
+    Ok(ResolvedProjectRunTarget {
+        presentation: target.presentation,
+        executable,
+        arguments: target.invocation.arguments,
+        cwd,
+    })
+}
+
+fn resolve_project_path(root: &Path, relative: &str, directory: bool) -> Result<PathBuf, String> {
+    if relative.is_empty()
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
+        || relative.chars().any(char::is_control)
+    {
+        return Err(unavailable());
+    }
+    let mut path = root.to_path_buf();
+    if relative != "." {
+        for component in relative.split('/') {
+            if component.is_empty() || component == "." || component == ".." {
+                return Err(unavailable());
+            }
+            path.push(component);
+            let metadata = fs::symlink_metadata(&path).map_err(|_| unavailable())?;
+            if is_link_or_reparse_point(&metadata) {
+                return Err(unavailable());
+            }
+        }
+    }
+    let canonical = fs::canonicalize(&path).map_err(|_| unavailable())?;
+    let metadata = fs::symlink_metadata(&canonical).map_err(|_| unavailable())?;
+    if !canonical.starts_with(root)
+        || is_link_or_reparse_point(&metadata)
+        || directory != metadata.is_dir()
+    {
+        return Err(unavailable());
+    }
+    Ok(canonical)
 }
 
 fn known_detection_files(directory: &Path) -> HashMap<String, PathBuf> {
@@ -676,11 +740,25 @@ fn find_executable(name: &str) -> Option<PathBuf> {
     for directory in env::split_paths(&path) {
         for extension in extensions {
             let candidate = directory.join(format!("{name}{extension}"));
-            let Ok(metadata) = fs::symlink_metadata(&candidate) else {
+            let executable = if candidate.is_absolute() {
+                candidate
+            } else {
+                env::current_dir().ok()?.join(candidate)
+            };
+            let Ok(metadata) = fs::symlink_metadata(&executable) else {
                 continue;
             };
-            if metadata.is_file() && !is_link_or_reparse_point(&metadata) {
-                return fs::canonicalize(candidate).ok();
+            if !metadata.is_file() && !is_link_or_reparse_point(&metadata) {
+                continue;
+            }
+            let Ok(canonical) = fs::canonicalize(&executable) else {
+                continue;
+            };
+            let Ok(resolved_metadata) = fs::symlink_metadata(&canonical) else {
+                continue;
+            };
+            if resolved_metadata.is_file() && !is_link_or_reparse_point(&resolved_metadata) {
+                return Some(executable);
             }
         }
     }
