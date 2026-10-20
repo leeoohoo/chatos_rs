@@ -7,6 +7,20 @@ import XCTest
 
 @MainActor
 final class MediaStudioImageInteractionTests: XCTestCase {
+    func testImageWorkspaceImportsLocalReferencesAndEnforcesCapacityBeforeReading() async throws {
+        let (vm, _, upload) = try await fixture()
+
+        vm.addInputImages(from: [upload])
+        try await wait { !vm.isLoadingInputImages }
+        XCTAssertEqual(vm.inputImages.map(\.name), ["upload.png"])
+        XCTAssertNil(vm.errorMessage)
+
+        vm.addInputImages(from: Array(repeating: upload, count: 8))
+        XCTAssertFalse(vm.isLoadingInputImages)
+        XCTAssertEqual(vm.inputImages.map(\.name), ["upload.png"])
+        XCTAssertEqual(vm.errorMessage, "一次最多选择 8 张参考图。")
+    }
+
     func testSelectAnySavedImageAsVideoReferenceWithoutStartingGeneration() async throws {
         let (vm, service, _) = try await fixture()
         vm.prompt = "keep image prompt"

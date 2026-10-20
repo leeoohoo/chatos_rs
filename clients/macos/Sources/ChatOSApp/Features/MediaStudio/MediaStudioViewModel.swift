@@ -1,15 +1,8 @@
-import AppKit
 import ChatOSAPI
 import ChatOSCore
 import Combine
 import Foundation
-import ImageIO
 import UniformTypeIdentifiers
-
-enum MediaStudioInputImagePolicy {
-    static let maximumBytes = 20 * 1_024 * 1_024
-    static let maximumSourcePixelCount = 64_000_000
-}
 
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
@@ -80,6 +73,8 @@ final class MediaStudioViewModel: ObservableObject {
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
     private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
     private let historyUseCase: MediaStudioHistoryUseCase
+    private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
+    private let imageReferenceImporter: any MediaStudioImageReferenceImporting
     let stories: StoryStudioViewModel
     private var hasLoaded = false
     private var videoGenerationTask: Task<Void, Never>?
@@ -100,8 +95,7 @@ final class MediaStudioViewModel: ObservableObject {
     private var videoAudioSelectionID = UUID()
     private var videoAudioTask: Task<Void, Never>?
     private var inputImagesTask: Task<Void, Never>?
-    private var inputImagesSelectionID = UUID()
-    private let imageTransport: any HTTPTransport
+    private var imageReferenceState = MediaStudioImageReferenceState()
 
     init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
         self.service = service
@@ -111,9 +105,13 @@ final class MediaStudioViewModel: ObservableObject {
         )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
+        let imageReferenceImporter = MediaStudioImageReferenceImporter(transport: imageTransport)
+        self.imageReferenceImporter = imageReferenceImporter
+        self.imageReferenceUseCase = MediaStudioImageReferenceUseCase(
+            importer: imageReferenceImporter
+        )
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
         self.historyStore = historyStore
-        self.imageTransport = imageTransport
     }
 
     deinit {
@@ -454,118 +452,121 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     func addInputImages(from urls: [URL]) {
-        guard ownerID != nil, !urls.isEmpty else { return }
-        guard inputImages.count + urls.count <= 8 else {
-            errorMessage = MediaStudioInputImageError.tooManyReferences.localizedDescription
+        guard let ownerID, !urls.isEmpty else { return }
+        do {
+            try imageReferenceUseCase.validateCapacity(
+                currentCount: inputImages.count,
+                requestedCount: urls.count
+            )
+        } catch {
+            errorMessage = error.localizedDescription
             return
         }
         inputImagesTask?.cancel()
-        inputImagesSelectionID = UUID()
-        let selection = inputImagesSelectionID
+        let token = imageReferenceState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID,
+            source: .localFiles
+        )
+        let useCase = imageReferenceUseCase
+        let current = inputImages
         errorMessage = nil
-        let session = sessionID
         isLoadingInputImages = true
         inputImagesTask = Task { [weak self] in
             let result: Result<[ImageGenerationInputImage], Error>
             do {
-                result = .success(try await AppCancellableDetachedWork.run {
-                    try urls.map { try Self.loadInputImage(from: $0) }
-                })
+                result = .success(try await useCase.importLocalFiles(urls, current: current))
             } catch {
                 result = .failure(error)
             }
-            guard !Task.isCancelled,
-                  let self,
-                  self.sessionID == session,
-                  self.inputImagesSelectionID == selection else { return }
-            switch result {
-            case let .success(images):
-                var merged = self.inputImages
-                for image in images where !merged.contains(image) { merged.append(image) }
-                if merged.count <= 8 {
-                    self.inputImages = merged
-                } else {
-                    self.errorMessage = MediaStudioInputImageError.tooManyReferences
-                        .localizedDescription
-                }
-            case let .failure(error):
-                self.errorMessage = error.localizedDescription
-            }
-            self.isLoadingInputImages = false
-            self.inputImagesTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishImageReferenceImport(result, token: token)
         }
     }
 
     func addGeneratedImagesAsReferences(_ assets: [GeneratedMediaAsset]) {
-        guard ownerID != nil, !assets.isEmpty,
+        guard let ownerID, !assets.isEmpty,
               assets.allSatisfy({ asset in history.contains { $0.images.contains(asset) } }) else { return }
-        guard inputImages.count + assets.count <= 8 else {
-            errorMessage = MediaStudioInputImageError.tooManyReferences.localizedDescription
+        do {
+            try imageReferenceUseCase.validateCapacity(
+                currentCount: inputImages.count,
+                requestedCount: assets.count
+            )
+        } catch {
+            errorMessage = error.localizedDescription
             return
         }
         inputImagesTask?.cancel()
-        inputImagesSelectionID = UUID()
-        let selection = inputImagesSelectionID
-        let session = sessionID
-        let transport = imageTransport
+        let token = imageReferenceState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID,
+            source: .generatedHistory
+        )
+        let useCase = imageReferenceUseCase
+        let current = inputImages
+        let authorizedHistory = history
         errorMessage = nil
         isLoadingInputImages = true
         inputImagesTask = Task { [weak self] in
             let result: Result<[ImageGenerationInputImage], Error>
             do {
-                var loaded: [ImageGenerationInputImage] = []
-                for asset in assets {
-                    try Task.checkCancellation()
-                    let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
-                    let input = try await AppCancellableDetachedWork.run {
-                        try Self.makeInputImage(
-                            data: data,
-                            name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
-                            mimeType: asset.mimeType
-                        )
-                    }
-                    loaded.append(input)
-                }
-                result = .success(loaded)
+                result = .success(try await useCase.importGeneratedAssets(
+                    assets,
+                    authorizedBy: authorizedHistory,
+                    current: current
+                ))
             } catch {
                 result = .failure(error)
             }
-            guard !Task.isCancelled,
-                  let self,
-                  self.sessionID == session,
-                  self.inputImagesSelectionID == selection else { return }
-            switch result {
-            case let .success(loaded):
-                var merged = self.inputImages
-                for image in loaded where !merged.contains(image) { merged.append(image) }
-                if merged.count <= 8 {
-                    self.inputImages = merged
-                } else {
-                    self.errorMessage = MediaStudioInputImageError.tooManyReferences
-                        .localizedDescription
-                }
-            case let .failure(error):
-                self.errorMessage = error.localizedDescription
-            }
-            self.isLoadingInputImages = false
-            self.inputImagesTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishImageReferenceImport(result, token: token)
         }
     }
 
+    private func finishImageReferenceImport(
+        _ result: Result<[ImageGenerationInputImage], Error>,
+        token: MediaStudioImageReferenceToken
+    ) {
+        guard imageReferenceState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        switch result {
+        case let .success(images): inputImages = images
+        case let .failure(error): errorMessage = error.localizedDescription
+        }
+        guard imageReferenceState.finish(token) else { return }
+        isLoadingInputImages = false
+        inputImagesTask = nil
+    }
+
     func removeInputImage() {
+        imageReferenceState.reset()
+        inputImagesTask?.cancel()
+        inputImagesTask = nil
+        isLoadingInputImages = false
         inputImages = []
     }
 
     func removeInputImage(at index: Int) {
         guard inputImages.indices.contains(index), !isGenerating else { return }
+        if isLoadingInputImages {
+            imageReferenceState.reset()
+            inputImagesTask?.cancel()
+            inputImagesTask = nil
+            isLoadingInputImages = false
+        }
         inputImages.remove(at: index)
     }
 
     func selectVideoInputImage(from url: URL) {
+        let importer = imageReferenceImporter
         loadVideoInputImage {
-            try await AppCancellableDetachedWork.run {
-                try Self.loadInputImage(from: url)
+            guard let image = try await importer.importLocalFiles([url]).first else {
+                throw MediaStudioInputImageError.cannotDecode
             }
+            return image
         }
     }
 
@@ -573,16 +574,12 @@ final class MediaStudioViewModel: ObservableObject {
         // A dismissed picker from a previous account must not import that account's media.
         guard ownerID != nil, history.contains(where: { $0.images.contains(asset) }) else { return }
         section = .video
-        let transport = imageTransport
+        let importer = imageReferenceImporter
         loadVideoInputImage {
-            let data = try await MediaStudioImageLoader.data(for: asset, transport: transport)
-            return try await AppCancellableDetachedWork.run {
-                try Self.makeInputImage(
-                    data: data,
-                    name: "generated-\(asset.id).\(Self.fileExtension(for: asset.mimeType))",
-                    mimeType: asset.mimeType
-                )
+            guard let image = try await importer.importGeneratedAssets([asset]).first else {
+                throw MediaStudioInputImageError.cannotDecode
             }
+            return image
         }
     }
 
@@ -669,7 +666,7 @@ final class MediaStudioViewModel: ObservableObject {
         ownerID = nil
         imageGenerationTask?.cancel()
         imageGenerationTask = nil
-        inputImagesSelectionID = UUID()
+        imageReferenceState.reset()
         inputImagesTask?.cancel()
         inputImagesTask = nil
         isLoadingInputImages = false
@@ -756,32 +753,6 @@ final class MediaStudioViewModel: ObservableObject {
         modelsLoadTask = nil
     }
 
-    nonisolated private static func loadInputImage(from url: URL) throws -> ImageGenerationInputImage {
-        try Task.checkCancellation()
-        let accessed = url.startAccessingSecurityScopedResource()
-        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentTypeKey])
-        guard values.isRegularFile == true,
-              values.contentType?.conforms(to: .image) == true else {
-            throw MediaStudioInputImageError.notAnImage
-        }
-        if let fileSize = values.fileSize, fileSize > 20 * 1024 * 1024 {
-            throw MediaStudioInputImageError.tooLarge
-        }
-
-        let sourceData = try AppBoundedFileReader.read(
-            url,
-            maximumBytes: 20 * 1_024 * 1_024
-        )
-        try Task.checkCancellation()
-        return try makeInputImage(
-            data: sourceData,
-            name: url.lastPathComponent,
-            mimeType: values.contentType?.preferredMIMEType
-        )
-    }
-
     nonisolated private static func loadReferenceAudio(from url: URL) throws -> VideoGenerationInputAudio {
         try Task.checkCancellation()
         let accessed = url.startAccessingSecurityScopedResource()
@@ -816,76 +787,6 @@ final class MediaStudioViewModel: ObservableObject {
         )
     }
 
-    nonisolated private static func makeInputImage(
-        data: Data,
-        name: String,
-        mimeType: String? = nil
-    ) throws -> ImageGenerationInputImage {
-        try Task.checkCancellation()
-        guard !data.isEmpty,
-              data.count <= MediaStudioInputImagePolicy.maximumBytes else {
-            throw MediaStudioInputImageError.tooLarge
-        }
-        guard let source = CGImageSourceCreateWithData(data as CFData, [
-                kCGImageSourceShouldCache: false,
-              ] as CFDictionary),
-              CGImageSourceGetCount(source) > 0,
-              CGImageSourceGetStatus(source) == .statusComplete,
-              CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
-                as? [CFString: Any],
-              let widthValue = properties[kCGImagePropertyPixelWidth] as? NSNumber,
-              let heightValue = properties[kCGImagePropertyPixelHeight] as? NSNumber else {
-            throw MediaStudioInputImageError.cannotDecode
-        }
-        let width = widthValue.doubleValue
-        let height = heightValue.doubleValue
-        guard width.isFinite, height.isFinite,
-              width > 0, height > 0,
-              width * height <= Double(MediaStudioInputImagePolicy.maximumSourcePixelCount) else {
-            throw MediaStudioInputImageError.cannotDecode
-        }
-        try Task.checkCancellation()
-        let base64Data = data.base64EncodedString()
-        try Task.checkCancellation()
-        return ImageGenerationInputImage(
-            name: name,
-            mimeType: normalizedImageMIMEType(mimeType),
-            base64Data: base64Data
-        )
-    }
-
-    nonisolated private static func normalizedImageMIMEType(_ value: String?) -> String {
-        guard let value, let type = UTType(mimeType: value), type.conforms(to: .image) else {
-            return "image/png"
-        }
-        return type.preferredMIMEType ?? value
-    }
-
-    nonisolated private static func fileExtension(for mimeType: String) -> String {
-        UTType(mimeType: mimeType)?.preferredFilenameExtension ?? "png"
-    }
-
-}
-
-private enum MediaStudioInputImageError: LocalizedError {
-    case notAnImage
-    case cannotDecode
-    case tooLarge
-    case tooManyReferences
-
-    var errorDescription: String? {
-        switch self {
-        case .notAnImage:
-            "请选择有效的图片文件。"
-        case .cannotDecode:
-            "无法读取这张图片，请换一张后重试。"
-        case .tooLarge:
-            "参考图不能超过 20 MB。"
-        case .tooManyReferences:
-            "一次最多选择 8 张参考图。"
-        }
-    }
 }
 
 private enum MediaStudioReferenceAudioError: LocalizedError {
