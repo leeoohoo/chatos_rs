@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class MessageTaskWorkspaceViewModel: ObservableObject {
-    enum InspectorSection: String, CaseIterable {
+    enum InspectorSection: String, CaseIterable, Sendable {
         case detail = "任务详情"
         case process = "执行过程"
         case run = "运行详情"
@@ -126,11 +126,18 @@ final class MessageTaskWorkspaceViewModel: ObservableObject {
         refreshTask = Task { [weak self] in
             let result = await Self.fetchWorkspaceGraph(request)
             guard !Task.isCancelled,
-                  let self,
-                  self.applyWorkspaceGraphResult(result, request: request),
-                  self.workspaceLifecycleState.accepts(session) else { return }
-            await self.refreshSelectedInspectorState()
+                  self?.applyWorkspaceGraphResult(result, request: request) == true,
+                  self?.workspaceLifecycleState.accepts(session) == true else { return }
+            if let inspectorRequest = self?.beginSelectedInspectorRefresh() {
+                let outcome = await Self.fetchSelectedInspectorRefresh(inspectorRequest)
+                guard !Task.isCancelled,
+                      self?.applySelectedInspectorRefresh(
+                          outcome,
+                          request: inspectorRequest
+                      ) == true else { return }
+            }
             guard !Task.isCancelled,
+                  let self,
                   self.workspaceLifecycleState.accepts(session) else { return }
             self.startPollingIfNeeded(workspaceSession: session)
             self.refreshTask = nil

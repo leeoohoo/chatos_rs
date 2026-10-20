@@ -12,6 +12,23 @@ extension MessageTaskWorkspaceViewModel {
         let workspaceSession: MessageTaskWorkspaceSession?
     }
 
+    struct WorkspaceInspectorRefreshRequest: Sendable {
+        let token: MessageTaskInspectorRequestToken
+        let requestedTaskID: String
+        let requestedSection: InspectorSection
+        let selectedTask: MessageTask
+        let messageID: String
+        let lookup: MessageTaskLookup
+        let graphUseCase: MessageTaskGraphUseCase
+        let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
+    }
+
+    struct WorkspaceInspectorRefreshOutcome {
+        let detail: MessageTask?
+        let update: MessageTaskInspectorSectionUpdate?
+        let error: Error?
+    }
+
     func beginWorkspaceGraphRefresh(
         pollingSession: MessageTaskGraphPollingSession? = nil,
         workspaceSession: MessageTaskWorkspaceSession? = nil
@@ -61,6 +78,97 @@ extension MessageTaskWorkspaceViewModel {
             if errorMessage != nextErrorMessage {
                 errorMessage = nextErrorMessage
             }
+        }
+        return true
+    }
+
+    func beginSelectedInspectorRefresh() -> WorkspaceInspectorRefreshRequest? {
+        guard let selectedTask else { return nil }
+        cancelInspectorRequests()
+        let requestedSection = inspectorSection
+        let token = inspectorRequestState.beginSnapshot(
+            contextID: "\(selectedTask.id):refresh:\(requestedSection.rawValue)"
+        )
+        let target = target(for: selectedTask)
+        return WorkspaceInspectorRefreshRequest(
+            token: token,
+            requestedTaskID: selectedTask.id,
+            requestedSection: requestedSection,
+            selectedTask: selectedTask,
+            messageID: target.messageID,
+            lookup: target.lookup,
+            graphUseCase: graphUseCase,
+            inspectorRefreshUseCase: inspectorRefreshUseCase
+        )
+    }
+
+    nonisolated static func fetchSelectedInspectorRefresh(
+        _ request: WorkspaceInspectorRefreshRequest
+    ) async -> WorkspaceInspectorRefreshOutcome {
+        do {
+            let detail = try await request.graphUseCase.loadTask(
+                messageID: request.messageID,
+                taskID: request.requestedTaskID,
+                lookup: request.lookup
+            )
+            do {
+                let update = try await request.inspectorRefreshUseCase.refreshSection(
+                    request.requestedSection.applicationSection,
+                    messageID: request.messageID,
+                    lookup: request.lookup,
+                    task: detail
+                )
+                return WorkspaceInspectorRefreshOutcome(
+                    detail: detail,
+                    update: update,
+                    error: nil
+                )
+            } catch {
+                return WorkspaceInspectorRefreshOutcome(
+                    detail: detail,
+                    update: nil,
+                    error: error
+                )
+            }
+        } catch {
+            return WorkspaceInspectorRefreshOutcome(
+                detail: nil,
+                update: nil,
+                error: error
+            )
+        }
+    }
+
+    @discardableResult
+    func applySelectedInspectorRefresh(
+        _ outcome: WorkspaceInspectorRefreshOutcome,
+        request: WorkspaceInspectorRefreshRequest
+    ) -> Bool {
+        guard inspectorRequestState.accepts(request.token),
+              selectedTask?.id == request.requestedTaskID,
+              inspectorSection == request.requestedSection else { return false }
+        defer { _ = inspectorRequestState.finish(request.token) }
+        if let detail = outcome.detail {
+            taskDetail = detail
+        }
+        if let error = outcome.error {
+            errorMessage = error.localizedDescription
+            return true
+        }
+        guard let update = outcome.update else { return true }
+        switch update {
+        case .preserve:
+            break
+        case .clearRun:
+            runDetail = nil
+            loadedModelOutputRunID = nil
+        case let .modelOutput(task, runID):
+            loadedModelOutputRunID = runID
+            taskDetail = task
+        case let .run(task, detail):
+            runDetail = detail
+            loadedModelOutputRunID = detail.run.id
+            taskDetail = task
         }
         return true
     }
@@ -302,52 +410,9 @@ extension MessageTaskWorkspaceViewModel {
     }
 
     func refreshSelectedInspectorState() async {
-        guard let selectedTask else { return }
-        cancelInspectorRequests()
-        let requestedTaskID = selectedTask.id
-        let requestedSection = inspectorSection
-        let token = inspectorRequestState.beginSnapshot(
-            contextID: "\(requestedTaskID):refresh:\(requestedSection.rawValue)"
-        )
-        defer { _ = inspectorRequestState.finish(token) }
-        let target = target(for: selectedTask)
-        do {
-            let detail = try await graphUseCase.loadTask(
-                messageID: target.messageID,
-                taskID: selectedTask.id,
-                lookup: target.lookup
-            )
-            guard inspectorRequestState.accepts(token),
-                  self.selectedTask?.id == requestedTaskID else { return }
-            taskDetail = detail
-            let update = try await inspectorRefreshUseCase.refreshSection(
-                requestedSection.applicationSection,
-                messageID: target.messageID,
-                lookup: target.lookup,
-                task: detail
-            )
-            guard inspectorRequestState.accepts(token),
-                  self.selectedTask?.id == requestedTaskID,
-                  inspectorSection == requestedSection else { return }
-            switch update {
-            case .preserve:
-                break
-            case .clearRun:
-                runDetail = nil
-                loadedModelOutputRunID = nil
-            case let .modelOutput(task, runID):
-                loadedModelOutputRunID = runID
-                taskDetail = task
-            case let .run(task, detail):
-                runDetail = detail
-                loadedModelOutputRunID = detail.run.id
-                taskDetail = task
-            }
-        } catch {
-            guard inspectorRequestState.accepts(token),
-                  self.selectedTask?.id == requestedTaskID else { return }
-            errorMessage = error.localizedDescription
-        }
+        guard let request = beginSelectedInspectorRefresh() else { return }
+        let outcome = await Self.fetchSelectedInspectorRefresh(request)
+        applySelectedInspectorRefresh(outcome, request: request)
     }
 
     private func beginInspectorSnapshotRequest(
@@ -474,7 +539,7 @@ extension MessageTaskWorkspaceViewModel {
 }
 
 private extension MessageTaskWorkspaceViewModel.InspectorSection {
-    var applicationSection: MessageTaskInspectorSection {
+    nonisolated var applicationSection: MessageTaskInspectorSection {
         switch self {
         case .detail: .detail
         case .process: .process

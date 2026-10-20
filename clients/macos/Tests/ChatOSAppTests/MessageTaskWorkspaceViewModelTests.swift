@@ -229,6 +229,26 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertNil(weakViewModel)
     }
 
+    func testDelayedManualInspectorRefreshDoesNotRetainWorkspaceViewModel() async throws {
+        let service = DelayedWorkspaceRefreshInspectorServiceStub()
+        var viewModel: MessageTaskWorkspaceViewModel? = makeViewModel(service: service)
+        weak let weakViewModel = viewModel
+        let task = MessageTask(id: "task-1", title: "任务", status: "running")
+        _ = viewModel?.workspaceLifecycleState.start()
+        viewModel?.select(task)
+        try await waitUntil { viewModel?.taskDetail?.id == task.id }
+
+        viewModel?.refresh()
+        try await waitUntil { await service.hasDelayedRefreshRequest() }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await service.resumeRefreshRequest()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertNil(weakViewModel)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -266,6 +286,67 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
             graphService: service
         )
     }
+}
+
+private actor DelayedWorkspaceRefreshInspectorServiceStub: MessageTaskGraphServicing {
+    private var taskRequestCount = 0
+    private var refreshContinuation: CheckedContinuation<Void, Never>?
+
+    func hasDelayedRefreshRequest() -> Bool { refreshContinuation != nil }
+
+    func resumeRefreshRequest() {
+        refreshContinuation?.resume()
+        refreshContinuation = nil
+    }
+
+    func fetchGraph(
+        messageID _: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTaskGraphSnapshot {
+        .populated
+    }
+
+    func fetchTask(
+        messageID _: String,
+        taskID: String,
+        lookup _: MessageTaskLookup?
+    ) async throws -> MessageTask {
+        taskRequestCount += 1
+        if taskRequestCount == 2 {
+            await withCheckedContinuation { continuation in
+                refreshContinuation = continuation
+            }
+        }
+        return MessageTask(id: taskID, title: "任务", status: "running")
+    }
+
+    func fetchRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        includeEvents _: Bool,
+        eventLimit _: Int,
+        eventOffset _: Int
+    ) async throws -> MessageTaskRunDetail {
+        let task = MessageTask(id: "task-1", title: "任务", status: "running")
+        return .init(task: task, run: .init(id: runID, taskID: task.id), events: [])
+    }
+
+    func retryRun(
+        messageID _: String,
+        runID: String,
+        lookup _: MessageTaskLookup?,
+        instruction _: String?
+    ) async throws -> MessageTaskRun {
+        .init(id: runID, taskID: "task-1")
+    }
+
+    func cancelTask(
+        messageID _: String,
+        taskID _: String,
+        lookup _: MessageTaskLookup?,
+        reason _: String?
+    ) async throws {}
 }
 
 private actor NonCancellableInspectorMessageTaskGraphServiceStub: MessageTaskGraphServicing {
