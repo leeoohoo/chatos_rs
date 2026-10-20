@@ -473,6 +473,15 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `clients/windows-react/src/conversation-run-contract.test.ts`
 
 准入结论：Run Inspector、Task Graph 与最新事件分页已达到 `macOS 分层完成，可进入 React`。
+
+Windows Run Inspector 首片（2026-10-20）：
+
+- React 已建立独立 Run Inspector Domain/Application/Port/Adapter/UI；Conversation 只装配 Port；
+- 每条用户消息以 Conversation/Turn/Message 精确关联查询真实 Message Task Graph；`not_found` 或空 Graph 不展示入口；
+- 打开详情先固定 Task，再加载其 `active_run_id`，Task 切换和弹层关闭都会使旧 request identity 失效；
+- 最新事件固定 40 条、`newest_first=true`，更早记录固定 50 条并以当前事件数作为 offset，合并时按 event ID 去重；
+- Realtime reconcile 会刷新当前选中 Task 的 Run 首屏；没有 Run 时显示明确空状态；
+- Tauri 使用 Host `process` payload mode，只向 React 投影 event type、status、summary 和时间，不暴露完整工具参数或附件内容。
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphFocusTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskAcceptanceTests.swift`
 
@@ -824,6 +833,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 3. [已完成] 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
-6. [进行中] `clients/windows-react` 已完成 History、Composer 文本发送生命周期首片与 Realtime；下一步完成账号 bootstrap、Composer 附件/能力/运行时控件，再创建 Run Inspector feature，禁止一次性复制整个 SwiftUI 页面。
+6. [进行中] `clients/windows-react` 已完成 History、Composer 文本发送生命周期首片、Realtime 与 Run Inspector 首片；下一步完成账号 bootstrap、Composer 附件/能力/运行时控件，禁止一次性复制整个 SwiftUI 页面。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

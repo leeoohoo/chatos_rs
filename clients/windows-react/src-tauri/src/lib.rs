@@ -4,6 +4,7 @@ mod conversation_history;
 mod conversation_realtime;
 mod host_lifecycle;
 mod project_conversation;
+mod run_inspector;
 mod workspace_index;
 
 use authentication::{
@@ -18,6 +19,7 @@ use host_lifecycle::{
     HostManager,
 };
 use project_conversation::prepare_project_conversation;
+use run_inspector::{load_message_task_graph, load_run_inspector};
 use tauri::Manager;
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
@@ -37,6 +39,8 @@ pub fn run() {
             list_local_projects,
             refresh_workspace_relations,
             prepare_project_conversation,
+            load_message_task_graph,
+            load_run_inspector,
             load_conversation_history,
             poll_conversation_realtime,
             send_conversation_draft,

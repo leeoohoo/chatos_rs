@@ -3,6 +3,7 @@ import type { AuthSession } from "../features/authentication/domain/authenticati
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
+import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
@@ -21,6 +22,7 @@ interface AppShellProps {
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationRealtime: ConversationRealtimePort;
+  runInspector: RunInspectorPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -32,6 +34,7 @@ export function AppShell({
   conversationHistory,
   conversationComposer,
   conversationRealtime,
+  runInspector,
   session,
   onLogout,
 }: AppShellProps) {
@@ -116,6 +119,7 @@ export function AppShell({
             historyPort={conversationHistory}
             composerPort={conversationComposer}
             realtimePort={conversationRealtime}
+            runInspectorPort={runInspector}
           />
         ) : selectedContact ? (
           <div className="project-state">

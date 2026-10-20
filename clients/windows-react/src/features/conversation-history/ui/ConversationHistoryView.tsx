@@ -4,6 +4,9 @@ import { useConversationComposerStore } from "../../conversation-composer/applic
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import { ConversationRealtimeObserver } from "../../conversation-realtime/ui/ConversationRealtimeObserver";
 import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
+import { useRunInspectorStore } from "../../run-inspector/application/runInspectorStore";
+import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
+import { RunInspectorLauncher, RunInspectorSheet } from "../../run-inspector/ui/RunInspector";
 import { useConversationHistoryStore } from "../application/conversationHistoryStore";
 import type { ConversationHistoryPort } from "../ports/ConversationHistoryPort";
 
@@ -13,18 +16,21 @@ export function ConversationHistoryView({
   port,
   composerPort,
   realtimePort,
+  runInspectorPort,
 }: {
   ownerUserId: string;
   conversationId: string;
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
   realtimePort: ConversationRealtimePort;
+  runInspectorPort: RunInspectorPort;
 }) {
   const phase = useConversationHistoryStore((state) => state.phase);
   const load = useConversationHistoryStore((state) => state.load);
   const loadOlder = useConversationHistoryStore((state) => state.loadOlder);
   const refreshLatest = useConversationHistoryStore((state) => state.refreshLatest);
   const resetComposer = useConversationComposerStore((state) => state.reset);
+  const resetInspector = useRunInspectorStore((state) => state.reset);
 
   useEffect(() => {
     void load(port, ownerUserId, conversationId);
@@ -32,11 +38,17 @@ export function ConversationHistoryView({
 
   useEffect(() => {
     resetComposer(ownerUserId, conversationId);
-  }, [conversationId, ownerUserId, resetComposer]);
+    resetInspector(ownerUserId);
+  }, [conversationId, ownerUserId, resetComposer, resetInspector]);
 
   const reconcile = useCallback(
-    () => refreshLatest(port),
-    [port, refreshLatest],
+    async () => {
+      await Promise.all([
+        refreshLatest(port),
+        useRunInspectorStore.getState().refresh(runInspectorPort),
+      ]);
+    },
+    [port, refreshLatest, runInspectorPort],
   );
 
   if (phase.kind === "idle" || phase.kind === "loading") {
@@ -71,9 +83,22 @@ export function ConversationHistoryView({
         {phase.refreshError && <p className="history-error">{phase.refreshError}</p>}
         <div className="message-list">
           {phase.snapshot.messages.map((message) => (
-            <article className={`message-bubble message-bubble--${message.role}`} key={message.message_id}>
-              <span>{displayText(message.content)}</span>
-            </article>
+            <div className={`message-row message-row--${message.role}`} key={message.message_id}>
+              <article className={`message-bubble message-bubble--${message.role}`}>
+                <span>{displayText(message.content)}</span>
+              </article>
+              {message.role === "user" && (
+                <RunInspectorLauncher
+                  lookup={{
+                    ownerUserId,
+                    conversationId,
+                    turnId: message.turn_id,
+                    userMessageId: message.message_id,
+                  }}
+                  port={runInspectorPort}
+                />
+              )}
+            </div>
           ))}
         </div>
         {phase.snapshot.messages.length === 0 && <p className="conversation-empty">还没有消息</p>}
@@ -85,6 +110,7 @@ export function ConversationHistoryView({
         port={composerPort}
         onAccepted={reconcile}
       />
+      <RunInspectorSheet port={runInspectorPort} />
     </section>
   );
 }

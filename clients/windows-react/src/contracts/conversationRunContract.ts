@@ -95,10 +95,7 @@ const taskSchema = z.object({
   updated_at_unix_ms: z.number().int().nonnegative(),
 });
 
-export const messageTaskGraphResponseSchema = successEnvelope(
-  z.object({
-    type: z.literal("message_task_graph"),
-    graph: z.object({
+export const messageTaskGraphSchema = z.object({
       root_task_ids: z.array(z.string().min(1)),
       nodes: z.array(
         z.object({
@@ -118,23 +115,30 @@ export const messageTaskGraphResponseSchema = successEnvelope(
       source_conversation_id: z.string().min(1),
       source_turn_id: z.string().min(1),
       source_user_message_id: z.string().min(1).nullable(),
-    }),
+    });
+
+export const messageTaskGraphResponseSchema = successEnvelope(
+  z.object({
+    type: z.literal("message_task_graph"),
+    graph: messageTaskGraphSchema,
   }),
 );
+
+export type MessageTaskGraph = z.infer<typeof messageTaskGraphSchema>;
+
+export const runEventSchema = z.object({
+  cursor: z.number().int().nonnegative(),
+  event_id: z.string().min(1),
+  run_id: z.string().min(1),
+  event_type: z.string().min(1),
+  payload: z.unknown(),
+  created_at_unix_ms: z.number().int().nonnegative(),
+});
 
 export const runEventsResponseSchema = successEnvelope(
   z.object({
     type: z.literal("events"),
-    events: z.array(
-      z.object({
-        cursor: z.number().int().nonnegative(),
-        event_id: z.string().min(1),
-        run_id: z.string().min(1),
-        event_type: z.string().min(1),
-        payload: z.unknown(),
-        created_at_unix_ms: z.number().int().nonnegative(),
-      }),
-    ),
+    events: z.array(runEventSchema),
     next_cursor: z.number().int().nonnegative(),
   }),
 );
