@@ -14,8 +14,8 @@ use tokio::task::JoinSet;
 
 use crate::{
     host_lifecycle::HostManager, local_terminal::LocalTerminalRegistry,
-    plugin_application::PluginApplicationManager, project_run::ProjectRunManager,
-    remote_connection::RemoteConnectionManager,
+    media_studio::MediaStudioManager, plugin_application::PluginApplicationManager,
+    project_run::ProjectRunManager, remote_connection::RemoteConnectionManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -318,7 +318,9 @@ pub async fn restore_authentication_session(
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
+    media_studio: State<'_, MediaStudioManager>,
 ) -> Result<Option<AuthSession>, String> {
+    media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
@@ -340,7 +342,9 @@ pub async fn login(
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
+    media_studio: State<'_, MediaStudioManager>,
 ) -> Result<AuthSession, String> {
+    media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
@@ -373,7 +377,9 @@ pub async fn register(
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
+    media_studio: State<'_, MediaStudioManager>,
 ) -> Result<AuthSession, String> {
+    media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
@@ -392,7 +398,9 @@ pub async fn logout(
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
     plugin_applications: State<'_, PluginApplicationManager>,
+    media_studio: State<'_, MediaStudioManager>,
 ) -> Result<(), String> {
+    media_studio.reset();
     plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;

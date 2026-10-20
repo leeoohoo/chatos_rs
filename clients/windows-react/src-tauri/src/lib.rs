@@ -60,7 +60,10 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
-use media_studio::{generate_media_studio_image, list_media_studio_models, MediaStudioManager};
+use media_studio::{
+    generate_media_studio_image, list_media_studio_models, load_media_studio_image_history,
+    media_studio_protocol, MediaStudioManager,
+};
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
     launch_plugin_application, list_plugin_applications, PluginApplicationManager,
@@ -120,11 +123,15 @@ pub fn run() {
         AuthenticationManager::from_runtime().expect("failed to configure ChatOS authentication");
     let attachment_manager =
         AttachmentManager::from_runtime().expect("failed to configure attachment vault");
+    let media_studio_manager =
+        MediaStudioManager::from_runtime().expect("failed to configure media studio");
     let protocol_attachment_manager = attachment_manager.clone();
+    let protocol_media_studio_manager = media_studio_manager.clone();
     let drop_attachment_manager = attachment_manager.clone();
     let app = tauri::Builder::default()
         .manage(authentication)
         .manage(attachment_manager)
+        .manage(media_studio_manager)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
@@ -147,18 +154,13 @@ pub fn run() {
             app.manage(RemoteConnectionManager::new(data_dir.clone()));
             app.manage(ProjectFavoriteStore::new(data_dir.clone()));
             app.manage(PluginApplicationManager::new(data_dir));
-            app.manage(
-                MediaStudioManager::new(
-                    app.path()
-                        .app_data_dir()
-                        .map_err(|error| std::io::Error::other(error.to_string()))?,
-                )
-                .map_err(std::io::Error::other)?,
-            );
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
             attachment_protocol(protocol_attachment_manager.clone(), request)
+        })
+        .register_uri_scheme_protocol("chatos-media", move |_context, request| {
+            media_studio_protocol(protocol_media_studio_manager.clone(), request)
         })
         .on_webview_event(move |webview, event| {
             let emit_drag_state = |targeted| {
@@ -304,6 +306,7 @@ pub fn run() {
             discard_local_terminal_presentation,
             list_plugin_applications,
             list_media_studio_models,
+            load_media_studio_image_history,
             generate_media_studio_image,
             launch_plugin_application,
             discard_plugin_application_presentation,
@@ -323,6 +326,7 @@ pub fn run() {
         app_handle.state::<ProjectRunManager>().reset().await;
         app_handle.state::<RemoteConnectionManager>().reset().await;
         app_handle.state::<LocalTerminalRegistry>().reset().await;
+        app_handle.state::<MediaStudioManager>().reset();
         app_handle.state::<PluginApplicationManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });

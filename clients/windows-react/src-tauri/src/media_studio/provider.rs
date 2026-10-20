@@ -209,10 +209,7 @@ pub(crate) fn parse_provider_response(
             .id
             .and_then(non_empty)
             .unwrap_or_else(|| format!("{result_id}:image:{index}"));
-        let mime_type = item
-            .mime_type
-            .and_then(non_empty)
-            .unwrap_or_else(|| "image/png".into());
+        let mime_type = normalized_generated_mime_type(item.mime_type)?;
         if let Some(base64_data) = item.b64_json.or(item.base64) {
             let decoded = BASE64
                 .decode(&base64_data)
@@ -275,6 +272,18 @@ fn validate_generation_request(request: &ImageGenerationRequest) -> Result<(), S
         let _ = decode_reference_image(image)?;
     }
     Ok(())
+}
+
+fn normalized_generated_mime_type(value: Option<String>) -> Result<String, String> {
+    let value = value
+        .and_then(non_empty)
+        .unwrap_or_else(|| "image/png".into())
+        .to_ascii_lowercase();
+    match value.as_str() {
+        "image/png" | "image/jpeg" | "image/webp" | "image/gif" => Ok(value),
+        "image/jpg" => Ok("image/jpeg".into()),
+        _ => Err("模型返回的数据格式无法识别。".into()),
+    }
 }
 
 fn decode_reference_image(image: &ImageGenerationInput) -> Result<Vec<u8>, String> {
