@@ -1,4 +1,4 @@
-mod process;
+pub(crate) mod process;
 mod projection;
 #[cfg(test)]
 mod tests;

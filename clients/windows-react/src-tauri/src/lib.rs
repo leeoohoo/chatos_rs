@@ -14,6 +14,7 @@ mod platform_execution_context;
 mod project_conversation;
 mod project_creation;
 mod project_filesystem;
+mod project_git;
 mod run_inspector;
 mod system_permissions;
 mod terminal_runtime;
@@ -55,6 +56,12 @@ use project_creation::{
 use project_filesystem::{
     create_project_entry, delete_project_entry, load_project_directory, read_project_file,
     search_project_content, search_project_entries, write_project_file,
+};
+use project_git::{
+    commit_project_git, create_project_git_branch, initialize_project_git_repository,
+    load_project_git_diff, load_project_git_snapshot, merge_project_git_branch, pull_project_git,
+    push_project_git, remove_project_git_remote, save_project_git_remote, stage_project_git_paths,
+    switch_project_git_branch, unstage_project_git_paths,
 };
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -157,6 +164,19 @@ pub fn run() {
             write_project_file,
             create_project_entry,
             delete_project_entry,
+            load_project_git_snapshot,
+            load_project_git_diff,
+            initialize_project_git_repository,
+            stage_project_git_paths,
+            unstage_project_git_paths,
+            commit_project_git,
+            switch_project_git_branch,
+            create_project_git_branch,
+            merge_project_git_branch,
+            save_project_git_remote,
+            remove_project_git_remote,
+            pull_project_git,
+            push_project_git,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,

@@ -365,7 +365,7 @@ pub(super) fn now_unix_ms() -> i64 {
         .min(i64::MAX as u128) as i64
 }
 
-enum ProcessTermination {
+pub(crate) enum ProcessTermination {
     #[cfg(windows)]
     WindowsJob(std::os::windows::io::OwnedHandle),
     #[cfg(not(windows))]
@@ -373,7 +373,7 @@ enum ProcessTermination {
 }
 
 impl ProcessTermination {
-    fn attach(child: &Child) -> io::Result<Self> {
+    pub(crate) fn attach(child: &Child) -> io::Result<Self> {
         #[cfg(windows)]
         {
             use std::os::windows::io::{FromRawHandle, RawHandle};
@@ -416,7 +416,7 @@ impl ProcessTermination {
         }
     }
 
-    fn terminate(&self, force: bool) -> io::Result<()> {
+    pub(crate) fn terminate(&self, force: bool) -> io::Result<()> {
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;

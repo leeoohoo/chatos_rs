@@ -147,7 +147,17 @@ macOS 事实源与已完成分层：
 - repository root 必须位于 Connector workspace root 内，文件路径与 snapshot absolute path 必须同时通过 repository 边界复验；branch 由 `git check-ref-format --branch` 验证，commit message、remote name/url 去除首尾空白后不得为空；
 - 多步“mutation→snapshot refresh”已从 ViewModel 移入 Core `ProjectGitUseCase`。副作用成功但 snapshot 刷新失败返回 committed-without-refresh，仍清理已提交的旧提交说明、发布 working-tree revision，并明确提示刷新失败，不把成功 mutation 误报为失败；
 - ViewModel 的 load、diff 和 mutation 分别使用 request identity。新 load/diff 淘汰旧请求；mutation 与 load/diff 隔离且同一时间只允许一个。迟到状态/差异不得覆盖当前展示，提交期间新输入的 message 不得被旧提交完成清空；mutation 失败后尝试恢复最新 snapshot，但保留原始操作错误；
-- 新增 5 项 `ProjectGitViewModelTests`，并复验 4 项 `NativeProjectGitServiceTests` 与 3 项项目文件 mutation lifecycle 测试。macOS Git 已达到 Windows 原生边界实施准入；Windows React 仍保持 Git 入口关闭，直到 owner/project/workspace 解析、Git 进程边界、typed Port/Store lifecycle 与 Apple 风格 UI 分别完成。
+- 新增 5 项 `ProjectGitViewModelTests`，并复验 4 项 `NativeProjectGitServiceTests` 与 3 项项目文件 mutation lifecycle 测试。macOS Git 已达到 Windows 原生边界实施准入。
+
+Windows 原生边界（2026-10-20）：
+
+- `project_git.rs` 已提供 snapshot、diff、init、stage/unstage、commit、switch/create/merge branch、remote add/rename/set-url/remove、`pull --ff-only` 与 push 的独立 Tauri command；没有开放通用 Git arguments 或 Shell 入口；
+- 每个入口先按 owner + active Project Registry + Connector workspace grant 重新解析 canonical project/workspace root；`rev-parse --show-toplevel` 得到的 repository root 必须仍位于 workspace 内。stage/unstage/diff 会重新读取 snapshot，并只接受当前 snapshot 中具有对应 index/worktree 状态的规范化便携相对路径；
+- React 安全投影不包含 repository root、absolute path 或 raw stderr。remote URL 会移除所有 URI userinfo、query、fragment，SCP 风格疑似密码，并隐藏 `file://`、Unix/Windows 绝对本地路径；这是 Windows 为 Secret 与本机路径隔离增加的安全投影，原始 URL 只留在 Rust 命令边界；
+- Git 子进程固定 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=Never`、`LC_ALL=C`，stdout/stderr 并发 drain 且合计有界；普通命令 120 秒、pull/push 15 分钟、diff 4 MiB、其余输出 16 MiB。Unix 使用独立 process group，Windows 使用 kill-on-close Job Object；超时或 Git 主进程退出后回收整个进程树，避免 hook/helper 保留 pipe 造成假存活；
+- branch 和 remote name 经 `git check-ref-format` 复验；commit message、remote name/url 具有空值、首尾空白、控制字符和长度门禁。所有失败只返回固定安全分类，不把命令 stderr、绝对路径或凭据带到 WebView；
+- mutation 成功后返回 nullable snapshot 与显式 `committedWithoutRefresh`，刷新失败不会把已经发生的副作用误报成失败；commit log 使用 NUL 字段解析，最多 80 条，并对 object ID、字段长度、UTF-8 和控制字符执行 schema 验证；
+- 新增 8 项原生测试，覆盖真实仓库 status/stage/commit/diff、branch/merge/remote、snapshot 路径成员关系、workspace 越界、输出上限、超时进程组、remote Secret 净化、committed-without-refresh 与 DTO 无绝对路径。Windows Rust 全量为 106 项通过、2 项 sidecar 环境测试忽略，`clippy -D warnings` 通过；React Git 入口仍关闭，下一切片实现 typed Port/Store lifecycle 与 Apple 风格工作面。
 
 ### 2.3 Authentication：完整调用链
 
@@ -982,7 +992,7 @@ Windows React 已完成对应独立切片：
 | 18 | 需求调研 | 未映射 | 禁止 |
 | 19 | 本地终端 | 未映射 | 禁止 |
 | 20 | Notebook | 未映射 | 禁止 |
-| 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows 原生边界尚未实施 | 禁止进入 React，下一步先实现 Windows owner/project/workspace 与 Git 进程边界 |
+| 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows owner/project/workspace、Git 进程树、输出/超时、路径成员与 Secret 安全投影原生边界已完成 | 禁止进入 React，下一步实现 typed Port/Store lifecycle 与 Apple 风格工作面 |
 | 22 | 设置 / 通用 | 未映射 | 禁止 |
 | 23 | 设置 / 微信 | 未映射 | 禁止 |
 | 24 | 设置 / 宠物 | 未映射 | 禁止 |
@@ -1016,6 +1026,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
 15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
 16. [已完成] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 macOS Core mutation use case；Windows Tauri 已实现 owner/project/canonical path、symlink/reparse 拒绝、原子写入、内容 revision 冲突、create-new 和删除复验。React Port/Store 已冻结 mutation identity 与请求参数，拒绝文件/项目切换后的迟到写回，并以 Apple 风格编辑、新建和删除确认交互区分副作用失败与 committed-without-refresh；Git 与项目设置继续独立实施。
-17. [macOS 准入已完成] 项目 Git 的 snapshot/diff/mutation 行为、进程与路径安全边界已完成源码映射；多步 mutation orchestration 已进入 Core use case，ViewModel load/diff/mutation identity 与 committed-without-refresh 已由 5 项生命周期测试覆盖。下一步实现 Windows 原生 Git 边界，React 入口继续关闭。
+17. [Windows 原生边界已完成] 项目 Git 的 snapshot/diff/mutation 行为、进程与路径安全边界已完成源码映射；多步 mutation orchestration 已进入 macOS Core use case。Windows Tauri 已完成 owner/project/workspace/repository 双重边界、snapshot path 成员复验、无通用参数的 typed commands、有界并发输出、process group/Job Object 超时回收、remote Secret 净化和 committed-without-refresh 投影。下一步实现 React Port/Store lifecycle 与 Apple 风格工作面，入口在该切片验收前继续关闭。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

@@ -34,6 +34,7 @@ struct ConnectorWorkspace {
 
 pub(crate) struct ResolvedExecutionRoot {
     pub(crate) root: PathBuf,
+    pub(crate) workspace_root: PathBuf,
     pub(crate) workspace_scope_id: String,
     pub(crate) device_id: String,
 }
@@ -85,6 +86,7 @@ pub(crate) fn resolve_project_root(
     }
     Ok(ResolvedExecutionRoot {
         root: canonical_project,
+        workspace_root: canonical_workspace,
         workspace_scope_id: workspace.id.clone(),
         device_id: device_id.to_owned(),
     })
@@ -123,6 +125,7 @@ pub(crate) fn resolve_contact_root(
     }
     Ok(ResolvedExecutionRoot {
         root: canonical,
+        workspace_root: canonical_connector,
         workspace_scope_id: format!(
             "contact:{}",
             sha256(&format!("{owner_user_id}\n{conversation_id}"))
