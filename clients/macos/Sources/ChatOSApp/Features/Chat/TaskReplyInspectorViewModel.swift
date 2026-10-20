@@ -94,7 +94,7 @@ final class TaskReplyInspectorViewModel: ObservableObject {
 
     private let graphUseCase: MessageTaskGraphUseCase
     private let inspectorRefreshUseCase: MessageTaskInspectorRefreshUseCase
-    private let realtimeService: (any ConversationRealtimeStreaming)?
+    private let realtimeUseCase: ConversationRealtimeUseCase?
     private let pollingInterval: @Sendable (Bool) -> Duration
     private var loadTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
@@ -121,7 +121,9 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         self.inspectorRefreshUseCase = MessageTaskInspectorRefreshUseCase(
             graphService: service
         )
-        self.realtimeService = realtimeService
+        self.realtimeUseCase = realtimeService.map {
+            ConversationRealtimeUseCase(service: $0)
+        }
         self.pollingInterval = pollingInterval
     }
 
@@ -447,12 +449,12 @@ final class TaskReplyInspectorViewModel: ObservableObject {
         inspectorSession: MessageTaskInspectorSession
     ) {
         guard lifecycleState.accepts(inspectorSession),
-              let realtimeService else { return }
+              let realtimeUseCase else { return }
         let sessionID = selection.turn.sessionID
         guard realtimeTask == nil, realtimeSessionID != sessionID else { return }
         realtimeSessionID = sessionID
-        realtimeTask = Task { [weak self, realtimeService, sessionID] in
-            let stream = await realtimeService.events(sessionID: sessionID)
+        realtimeTask = Task { [weak self, realtimeUseCase, sessionID] in
+            let stream = await realtimeUseCase.events(sessionID: sessionID)
             guard !Task.isCancelled else { return }
             self?.realtimeDidStart(
                 sessionID: sessionID,

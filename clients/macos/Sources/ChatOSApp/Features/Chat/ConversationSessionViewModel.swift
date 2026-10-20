@@ -107,6 +107,7 @@ final class ConversationSessionViewModel: ObservableObject {
     private let messageTaskGraphUseCase: MessageTaskGraphUseCase?
     private let historyUseCase: ConversationHistoryUseCase?
     private let realtimeService: (any ConversationRealtimeStreaming)?
+    private let realtimeUseCase: ConversationRealtimeUseCase?
     private let runtimeSettingsUseCase: ConversationRuntimeSettingsUseCase?
     let askUserPromptUseCase: ConversationAskUserPromptUseCase?
     private var olderCursor: String?
@@ -190,6 +191,9 @@ final class ConversationSessionViewModel: ObservableObject {
             )
         }
         self.realtimeService = realtimeService
+        self.realtimeUseCase = realtimeService.map {
+            ConversationRealtimeUseCase(service: $0)
+        }
         self.sendUseCase = commandService.map {
             ConversationSendUseCase(
                 commandService: $0,
@@ -1073,12 +1077,12 @@ final class ConversationSessionViewModel: ObservableObject {
 
     private func startRealtime(activation: ConversationSessionActivation) {
         guard activationState.accepts(activation),
-              let realtimeService,
+              let realtimeUseCase,
               realtimeTask == nil else { return }
         let sessionID = sessionID
 
         realtimeTask = Task { [weak self] in
-            let stream = await realtimeService.events(sessionID: sessionID)
+            let stream = await realtimeUseCase.events(sessionID: sessionID)
             do {
                 for try await signal in stream {
                     guard !Task.isCancelled else { return }
@@ -1088,7 +1092,7 @@ final class ConversationSessionViewModel: ObservableObject {
                     } else {
                         return
                     }
-                    switch ConversationRealtimePolicy.action(for: signal) {
+                    switch realtimeUseCase.action(for: signal) {
                     case .refreshAskUserPrompts:
                         let request: AskUserPromptRefreshRequest?
                         if let self {

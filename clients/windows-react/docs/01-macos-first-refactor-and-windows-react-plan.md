@@ -550,7 +550,7 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. [已完成] 建立 Host v44 health fixture 与 Rust/Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备用例/per-project lifecycle、Conversation Session factory 与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、runtime settings/Turn Process 用例、子功能 composition、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 realtime orchestration 与跨平台 fixture 尚未完成。
+6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、runtime settings/realtime/Turn Process 用例、子功能 composition、polling 决策、polling session 与 Workspace presentation session 生命周期已提取；macOS 分层已收口，跨平台 fixture 与最终准入验收尚未完成。
 7. [进行中] 已创建 Tauri 2 + React 19 工程骨架并接入 Host lifecycle；继续完善 sidecar 打包、诊断和恢复，Conversation 在准入前不实现。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 

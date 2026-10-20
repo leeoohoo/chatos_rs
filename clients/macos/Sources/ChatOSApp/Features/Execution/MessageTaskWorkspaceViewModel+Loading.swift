@@ -434,10 +434,10 @@ extension MessageTaskWorkspaceViewModel {
     }
 
     func startRealtime(workspaceSession: MessageTaskWorkspaceSession) {
-        guard let realtimeService, realtimeTask == nil else { return }
+        guard let realtimeUseCase, realtimeTask == nil else { return }
         let sessionID = turn.sessionID
         realtimeTask = Task { [weak self] in
-            let stream = await realtimeService.events(sessionID: sessionID)
+            let stream = await realtimeUseCase.events(sessionID: sessionID)
             guard !Task.isCancelled,
                   self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
             self?.hasActiveRealtimeStream = true

@@ -230,7 +230,7 @@ UI：
 - `ConversationViewportUseCase` 已统一底部锚点、未读清零和变更后的 snapshot 返回；底部状态是否发布的判定也已从 SwiftUI 移入 Core；
 - `ConversationLatestRefreshState` 已固定 250ms debounce、silent/visible 优先级、in-flight 合并和单次 pending follow-up；
 - `ConversationHistoryRetryState` 已固定 2/5/10/20 秒有界重试预算并绑定当前 activation identity；停用或重新激活后旧 sleep 不得发起新刷新；
-- `ConversationViewportMutationState` 已把 timeline anchor 与 mark-read 建模为两条独立 latest-wins lane；ViewModel 持有对应 Task，Conversation 停用会统一取消并失效 token，迟到的本地 snapshot 不得写回不可见页面，而 History Store 真值仍可在下次 snapshot 中恢复；因此尚未放行 React。
+- `ConversationViewportMutationState` 已把 timeline anchor 与 mark-read 建模为两条独立 latest-wins lane；ViewModel 持有对应 Task，Conversation 停用会统一取消并失效 token，迟到的本地 snapshot 不得写回不可见页面，而 History Store 真值仍可在下次 snapshot 中恢复。
 
 ### 4.2 发送状态机
 
@@ -286,6 +286,8 @@ sendDraft
 
 `ConversationRealtimePolicy` 已集中 Ask User 优先级、终态/history 刷新、失败信息与忽略事件的判定；`ConversationSessionActivationState` 已集中可见 activation identity；ViewModel 只执行对应动作、校验 runtime ready 并管理 stream Task。
 
+`ConversationRealtimeUseCase` 已统一 Conversation、内嵌 Inspector 与 Task Workspace 的 typed stream 订阅入口，并复用上述事件动作映射；三个 Feature State 均不再直接调用 `ConversationRealtimeStreaming` port。
+
 ### 4.4 Adapter 与 Host 契约
 
 Port：
@@ -324,6 +326,7 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationHistoryUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationInteractionPolicyTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationLatestRefreshStateTests.swift`
+- `clients/macos/Tests/ChatOSCoreTests/ConversationRealtimeUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationSessionActivationStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsLoadStateTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/ConversationRuntimeSettingsMutationStateTests.swift`
@@ -385,7 +388,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - Conversation 执行过程通过 Host `process` payload mode 读取 durable events；SQLite 只投影 mapper 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数。macOS 固定每页 25 条、最多 400 页，保持原有 10,000 事件上限且让每页稳定低于 IPC frame 限制；
 - 旧版 Turn Process 弹层已改由 `TurnProcessUseCase` 执行 typed session/turn 查询，并用 `TurnProcessLifecycleState` 绑定当前可见请求；弹层关闭会取消具体 Task、立即失效 token，忽略取消的迟到结果不得回写或保活 ViewModel；
 - `MessageTaskInspectorRequestState` 已统一 Inspector 最新快照与 Run 事件分页的 request identity；同一 Task 重载、section 切换和刷新都会拒绝旧结果，新的快照也会淘汰旧分页；
-- `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射，因此尚未放行 React。
+- `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射。Conversation / Run Inspector 的 macOS 分层已收口，当前只剩跨平台 fixture 与最终准入验收。
 
 ### 5.3 并发、空结果与降级
 
