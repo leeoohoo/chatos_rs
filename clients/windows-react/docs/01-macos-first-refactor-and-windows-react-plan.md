@@ -458,6 +458,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，项目文件内容预览与只读搜索）：已按 macOS `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 接入文本、图片、二进制状态预览，以及文件名/相对路径和文件内容并行搜索。每次请求仍从 owner-scoped Registry 与 workspace grant 解析项目根，逐级拒绝符号链接和 Windows reparse point，React 只接收规范化相对路径。文本预览上限 2 MiB、图片 25 MiB、内容搜索单文件 2 MiB；二进制取前 8,000 字节检测 NUL，文本按 UTF-8 容错解码。搜索最多访问 20,000 项、最长 3 秒、最多返回 500 项，大小写与变音符号不敏感，跳过 macOS 同源的 13 个生成/依赖目录，摘要最多 2,000 字符。搜索采用 280 ms 防抖并并发执行文件名与内容查询；项目切换、页面离开、清空查询、选择新文件和后续查询都会以 request identity 淘汰迟到结果，单路失败仍保留另一条可信结果。当前仍只读，不开放编辑、创建/删除、Git 或项目设置。当前验收为 Windows Rust 97 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 144 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步是项目文件写操作的审批与竞态边界切片。
 
+状态补充（2026-10-20，macOS 项目文件 mutation 准入）：`writeFile/createFile/createDirectory/deleteEntry` 的多步 service orchestration 已从 `ProjectDirectoryViewModel` 提取到 Core `ProjectFilesystemMutationUseCase`。保存会冻结文件路径和草稿，创建/删除会冻结父目录与目标；单个 ViewModel 只允许一个 mutation，刷新、选择新文件或迟到的重读不得覆盖当前展示。写入、创建或删除已经提交但后续 read/list 失败时返回“已提交但刷新失败”的强类型结果，UI 不再把成功的副作用误报为失败。macOS 新增 3 项生命周期测试，覆盖保存期间切换文件、创建/删除后以 mutation 结果刷新父目录，以及创建已提交但刷新失败的恢复语义。该子切片已达到 React 写操作准入；Windows 仍需独立实现 canonical path、原子写入、冲突检测与 mutation identity 后才可开放 UI。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

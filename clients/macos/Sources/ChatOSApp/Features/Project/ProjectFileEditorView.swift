@@ -189,10 +189,12 @@ struct ProjectFileEditorView: View {
                     Button(model.localized("使用默认应用打开", english: "Open with Default App"), systemImage: "arrow.up.forward.app") { Task { await viewModel.openSelected(mode: .default) } }
                     Divider()
                     Button(model.localized("删除", english: "Delete"), systemImage: "trash", role: .destructive) { Task { await viewModel.deleteSelected() } }
+                        .disabled(viewModel.isMutating)
                 } label: { Image(systemName: "ellipsis.circle") }
                 if file.isWritable && !file.isBinary {
                     Button(model.localized("编辑", english: "Edit"), systemImage: "pencil") { viewModel.beginEditing() }
                         .buttonStyle(.borderedProminent)
+                        .disabled(viewModel.isMutating)
                 }
             }
         }

@@ -122,6 +122,7 @@ struct ProjectDirectoryView: View {
                     .menuStyle(.borderlessButton)
                 Button { Task { await viewModel.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain)
+                    .disabled(viewModel.isMutating)
                     .help(model.localized("刷新", english: "Refresh"))
             }
             .padding(12)
@@ -265,7 +266,10 @@ struct ProjectDirectoryView: View {
                     Task { await viewModel.create(name: name, directory: kind == .directory) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(createName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    createName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || viewModel.isMutating
+                )
             }
         }
         .padding(24)

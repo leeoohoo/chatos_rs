@@ -115,6 +115,16 @@ macOS 事实源与 Windows 实现：
 - Apple 风格侧栏新增搜索框、分组结果、截断提示和局部 loading；右侧提供文本目标行、图片棋盘背景、二进制不可预览与可恢复错误状态。此切片只读，不开放写入、创建、删除、外部打开、Git 或项目设置；
 - Windows 全量验收为 Rust 97 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 144 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
+### 2.2.3 项目文件写操作准入
+
+macOS 已完成写操作分层与生命周期收口：
+
+- Core `ProjectFilesystemMutationUseCase` 统一保存后重读、创建后刷新父目录和删除后刷新父目录；`ProjectDirectoryViewModel` 不再自行串联多段 filesystem service 调用；
+- 保存冻结目标路径和草稿，创建冻结父目录/名称/类型，删除冻结目标/父目录/类型；同一 ViewModel 只允许一个 mutation，迟到结果必须同时匹配 mutation identity 与当前选择；
+- 用户在保存等待期间切换文件时，旧文件仍按明确动作完成写入，但迟到重读不能替换新文件的预览、草稿或编辑状态；
+- 写入、创建或删除已成功，而随后的 read/list 刷新失败时，Core 返回 committed-without-refresh 结果；UI 明确显示“操作已完成但刷新失败”，不能把已发生的副作用伪装成整体失败；
+- 新增 3 项 `ProjectDirectoryMutationLifecycleTests`，覆盖迟到保存、创建/删除父目录刷新，以及提交后刷新失败。该边界现允许 Windows React 实施；Windows 还必须补齐 canonical path/reparse point、原子写、内容 revision 冲突和 owner/project/mutation identity。
+
 ### 2.3 Authentication：完整调用链
 
 入口和分层：
@@ -981,6 +991,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；写操作、Git 与项目设置未提前开放。
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
 15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
-16. [下一步] 按 macOS `writeFile/createFile/createDirectory/deleteEntry` 端口拆分项目文件写操作，先冻结确认、冲突、失败恢复与迟到结果规则，再决定 React 准入；Git 与项目设置继续独立实施。
+16. [macOS 已完成，可进入 React] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 Core mutation use case，冻结请求身份并区分副作用失败与“已提交但刷新失败”；下一步实现 Windows canonical path、原子写入、内容 revision 冲突与 React mutation lifecycle。Git 与项目设置继续独立实施。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

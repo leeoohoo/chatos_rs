@@ -62,10 +62,12 @@ final class ProjectDirectoryViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isSearching = false
     @Published private(set) var isSaving = false
+    @Published private(set) var isMutating = false
     @Published private(set) var errorMessage: String?
 
     let rootPath: String?
     private let service: any ProjectFilesystemServicing
+    private let mutationUseCase: ProjectFilesystemMutationUseCase
     private let codeNavigationService: any ProjectCodeNavigationServicing
     private let expansionStateStore: any ProjectDirectoryExpansionStateStoring
     private var childrenByPath: [String: [ProjectFileEntry]] = [:]
@@ -73,6 +75,8 @@ final class ProjectDirectoryViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var navigationTask: Task<Void, Never>?
     private var navigationHistory: [NavigationPoint] = []
+    private var mutationSequence = 0
+    private var activeMutation: MutationRequest?
 
     init(
         projectID: String,
@@ -86,6 +90,7 @@ final class ProjectDirectoryViewModel: ObservableObject {
         )
         self.rootPath = rootPath
         self.service = service
+        self.mutationUseCase = ProjectFilesystemMutationUseCase(service: service)
         self.codeNavigationService = codeNavigationService
         self.expansionStateStore = expansionStateStore
         self.expandedPaths = expansionStateStore.loadExpandedPaths()
@@ -327,55 +332,88 @@ final class ProjectDirectoryViewModel: ObservableObject {
     }
 
     func save() async {
-        guard let path = selectedFile?.path else { return }
+        guard let path = selectedFile?.path,
+              let request = beginMutation(kind: .save, path: path) else { return }
+        defer { finishMutation(request) }
+        let content = draft
         isSaving = true
         errorMessage = nil
         do {
-            try await service.writeFile(path: path, content: draft)
-            selectedFile = try await service.readFile(path: path)
-            draft = selectedFile?.content ?? draft
+            let result = try await mutationUseCase.save(path: path, content: content)
+            guard acceptsMutation(request) else { return }
+            guard selectedPath == path else { return }
+            if let file = result.refreshedFile {
+                selectedFile = file
+                draft = file.content
+            } else {
+                selectedFile?.content = content
+                draft = content
+                errorMessage = "文件已保存，但最新内容暂时无法重新读取。"
+            }
             selectedLine = nil
             clearCodeNavigation(clearHistory: false)
             isEditing = false
         } catch {
+            guard acceptsMutation(request) else { return }
             errorMessage = error.localizedDescription
         }
-        isSaving = false
     }
 
     func create(name: String, directory: Bool) async {
-        guard let parent = creationParentPath else { return }
+        guard let parent = creationParentPath,
+              let request = beginMutation(kind: .create, path: parent) else { return }
+        defer { finishMutation(request) }
         errorMessage = nil
         do {
-            if directory {
-                try await service.createDirectory(parentPath: parent, name: name)
-            } else {
-                try await service.createFile(parentPath: parent, name: name)
-            }
+            let result = try await mutationUseCase.create(
+                parentPath: parent,
+                name: name,
+                kind: directory ? .directory : .file
+            )
+            guard acceptsMutation(request) else { return }
             expandedPaths.insert(parent)
             persistExpandedPaths()
-            await loadChildren(of: parent, forceRefresh: true)
+            if let listing = result.refreshedListing {
+                applyListing(listing, for: parent)
+            } else {
+                errorMessage = "项目文件已创建，但目录暂时无法刷新。"
+            }
         } catch {
+            guard acceptsMutation(request) else { return }
             errorMessage = error.localizedDescription
         }
     }
 
     func deleteSelected() async {
-        guard let selectedPath, selectedPath != rootPath else { return }
+        guard let selectedPath, selectedPath != rootPath,
+              let request = beginMutation(kind: .delete, path: selectedPath) else { return }
+        defer { finishMutation(request) }
         let selected = allEntries.first(where: { $0.path == selectedPath })
+        let parent = parentPath(of: selectedPath)
         do {
-            try await service.deleteEntry(path: selectedPath, recursive: selected?.isDirectory == true)
-            let parent = parentPath(of: selectedPath)
+            let result = try await mutationUseCase.delete(
+                path: selectedPath,
+                parentPath: parent,
+                isDirectory: selected?.isDirectory == true
+            )
+            guard acceptsMutation(request) else { return }
             expandedPaths = expandedPaths.filter { path in
                 path != selectedPath && !path.hasPrefix(selectedPath + "/")
             }
             persistExpandedPaths()
-            self.selectedPath = nil
-            selectedFile = nil
-            selectedLine = nil
-            clearCodeNavigation(clearHistory: true)
-            if let parent { await loadChildren(of: parent, forceRefresh: true) }
+            if self.selectedPath == selectedPath {
+                self.selectedPath = nil
+                selectedFile = nil
+                selectedLine = nil
+                clearCodeNavigation(clearHistory: true)
+            }
+            if let parent, let listing = result.refreshedListing {
+                applyListing(listing, for: parent)
+            } else {
+                errorMessage = "项目文件已删除，但目录暂时无法刷新。"
+            }
         } catch {
+            guard acceptsMutation(request) else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -389,6 +427,48 @@ final class ProjectDirectoryViewModel: ObservableObject {
     func dismissError() { errorMessage = nil }
 
     private var allEntries: [ProjectFileEntry] { childrenByPath.values.flatMap { $0 } }
+
+    private enum MutationKind: Equatable, Sendable {
+        case save
+        case create
+        case delete
+    }
+
+    private struct MutationRequest: Equatable, Sendable {
+        let id: Int
+        let kind: MutationKind
+        let path: String
+    }
+
+    private func beginMutation(kind: MutationKind, path: String) -> MutationRequest? {
+        guard activeMutation == nil else {
+            errorMessage = "另一个项目文件操作仍在进行，请稍候。"
+            return nil
+        }
+        mutationSequence += 1
+        let request = MutationRequest(id: mutationSequence, kind: kind, path: path)
+        activeMutation = request
+        isMutating = true
+        return request
+    }
+
+    private func acceptsMutation(_ request: MutationRequest) -> Bool {
+        activeMutation == request
+    }
+
+    private func finishMutation(_ request: MutationRequest) {
+        guard acceptsMutation(request) else { return }
+        activeMutation = nil
+        isMutating = false
+        if request.kind == .save { isSaving = false }
+    }
+
+    private func applyListing(_ listing: ProjectDirectoryListing, for path: String) {
+        guard listing.path == path, shouldRetainChildren(of: path) else { return }
+        reconcileExpandedPaths(with: listing)
+        childrenByPath[path] = listing.entries.sorted(by: entrySort)
+        rebuildVisibleEntries()
+    }
 
     private var creationParentPath: String? {
         guard let rootPath = rootPath?.trimmedNonEmpty else { return nil }
