@@ -47,6 +47,22 @@ pub struct HostManager {
     diagnostics: HostDiagnostics,
 }
 
+impl HostManager {
+    async fn terminate_process(&self) {
+        let mut process = self.process.lock().await;
+        if let Some(host) = process.as_mut() {
+            terminate(host).await;
+        }
+        *process = None;
+    }
+
+    pub async fn shutdown(&self) {
+        self.diagnostics.record("host_shutdown", "requested").await;
+        self.terminate_process().await;
+        self.diagnostics.record("host_shutdown", "stopped").await;
+    }
+}
+
 #[tauri::command]
 pub async fn host_diagnostics(
     manager: State<'_, HostManager>,
@@ -214,11 +230,7 @@ pub async fn stop_local_agent_host(
     manager: State<'_, HostManager>,
 ) -> Result<HostLifecycleSnapshot, String> {
     manager.diagnostics.record("host_stop", "requested").await;
-    let mut process = manager.process.lock().await;
-    if let Some(host) = process.as_mut() {
-        terminate(host).await;
-    }
-    *process = None;
+    manager.terminate_process().await;
     manager.diagnostics.record("host_stop", "stopped").await;
     Ok(HostLifecycleSnapshot::stopped(
         "Local Agent Host 已停止。",
