@@ -67,6 +67,8 @@
 .remote-workspace-tabs button { display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
 .remote-workspace-tabs button span { color: var(--accent); font-size: 10px; }
 .remote-workspace__content { display: grid; min-height: 0; flex: 1; place-items: start stretch; overflow: auto; padding: 20px; }
+.remote-workspace__content--files { display: block; padding: 0; overflow: hidden; }
+.remote-workspace__content--files > * { height: 100%; }
 .remote-detail-card { width: min(720px,100%); margin: 0 auto; border: 1px solid var(--separator); border-radius: 14px; padding: 18px; background: rgba(255,255,255,.72); }
 .remote-detail-card__buttons { display: flex; gap: 9px; margin-bottom: 16px; }
 .remote-detail-card__buttons .primary-button { color: white; background: var(--accent); box-shadow: 0 5px 14px rgba(10,132,255,.18); }

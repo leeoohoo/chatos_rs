@@ -1,0 +1,69 @@
+.remote-sftp { display: grid; min-width: 0; min-height: 500px; grid-template-rows: auto auto minmax(0,1fr); background: rgba(248,248,250,.52); }
+.remote-sftp button, .remote-sftp input { font: inherit; }
+.remote-sftp button { cursor: pointer; }
+.remote-sftp button:disabled, .remote-sftp input:disabled { cursor: default; opacity: .45; }
+.remote-sftp button:focus-visible, .remote-sftp input:focus-visible { outline: 3px solid rgba(10,132,255,.2); outline-offset: 1px; }
+.remote-sftp__toolbar { display: flex; min-height: 43px; align-items: center; gap: 10px; border-bottom: 1px solid var(--separator); padding: 6px 11px; background: rgba(255,255,255,.62); }
+.remote-sftp__toolbar > strong { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.remote-sftp__toolbar > strong span { color: var(--accent); font-size: 14px; }
+.remote-sftp__toolbar > label:not(.remote-sftp__hidden) { display: flex; width: min(220px,34%); align-items: center; gap: 6px; margin-left: auto; border: 1px solid var(--separator); border-radius: 8px; padding: 5px 8px; background: rgba(255,255,255,.72); }
+.remote-sftp__toolbar input[type="search"] { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; font-size: 10px; }
+.remote-sftp__hidden { display: flex; align-items: center; gap: 5px; color: var(--secondary); font-size: 9.5px; }
+.remote-sftp__hidden input { accent-color: var(--accent); }
+.remote-sftp__feedback { display: flex; min-height: 32px; align-items: center; gap: 8px; border-bottom: 1px solid rgba(48,209,88,.16); padding: 7px 12px; color: #217a35; background: rgba(48,209,88,.08); font-size: 9.5px; }
+.remote-sftp__feedback.is-warning { color: #9b5100; border-color: rgba(255,159,10,.17); background: rgba(255,159,10,.09); }
+.remote-sftp__feedback > span:nth-child(2) { min-width: 0; flex: 1; }
+.remote-sftp__feedback button { border: 0; color: inherit; background: transparent; font-size: 15px; }
+.remote-sftp__panes { display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(230px,30%) minmax(430px,1fr); }
+.remote-sftp-local { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0,1fr) auto; border-right: 1px solid var(--separator); background: rgba(246,246,248,.68); }
+.remote-sftp-local > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--separator); padding: 8px 10px; }
+.remote-sftp-local > header > div { display: grid; min-width: 0; gap: 2px; }
+.remote-sftp-local > header strong { font-size: 10.5px; }
+.remote-sftp-local > header small { overflow: hidden; color: var(--secondary); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-sftp-local > header button, .remote-sftp-pathbar button { min-height: 27px; border: 0; border-radius: 7px; padding: 4px 8px; color: var(--accent); background: rgba(10,132,255,.08); font-size: 9.5px; font-weight: 620; }
+.remote-sftp-local__selection { display: grid; align-content: center; justify-items: center; padding: 22px; text-align: center; }
+.remote-sftp-local__selection > span { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 15px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 23px; }
+.remote-sftp-local__selection strong { max-width: 100%; overflow: hidden; margin-top: 12px; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-sftp-local__selection small { margin-top: 5px; color: var(--secondary); font-size: 9px; line-height: 1.5; }
+.remote-sftp-local > footer, .remote-sftp-transfer { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 9px; border-top: 1px solid var(--separator); padding: 9px 10px; background: rgba(255,255,255,.45); }
+.remote-sftp-local > footer > span, .remote-sftp-transfer > span { overflow: hidden; color: var(--secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.remote-sftp .primary-button { min-height: 29px; border: 0; border-radius: 8px; padding: 5px 10px; color: white; background: var(--accent); box-shadow: 0 4px 12px rgba(10,132,255,.18); font-size: 9.5px; font-weight: 620; }
+.remote-sftp-remote { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0,1fr) auto; }
+.remote-sftp-pathbar { display: grid; min-height: 52px; grid-template-columns: minmax(0,1fr) 1fr auto auto auto auto auto; align-items: center; gap: 5px; border-bottom: 1px solid var(--separator); padding: 7px 9px; background: rgba(255,255,255,.54); }
+.remote-sftp-pathbar > div { display: grid; min-width: 0; gap: 2px; }
+.remote-sftp-pathbar strong { font-size: 10.5px; }
+.remote-sftp-pathbar code { overflow: hidden; color: var(--secondary); font: 8.5px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-overflow: ellipsis; white-space: nowrap; }
+.remote-sftp-pathbar .danger-link { color: #d52b1e; background: rgba(255,59,48,.08); }
+.remote-file-browser { min-height: 0; overflow: auto; }
+.remote-file-browser__columns, .remote-file-browser > button { display: grid; grid-template-columns: minmax(190px,1fr) 75px 120px; align-items: center; gap: 8px; }
+.remote-file-browser__columns { position: sticky; z-index: 1; top: 0; min-height: 27px; border-bottom: 1px solid var(--separator); padding: 4px 10px; color: var(--secondary); background: rgba(246,246,248,.94); font-size: 8.5px; font-weight: 620; }
+.remote-file-browser > button { width: 100%; min-height: 34px; border: 0; border-bottom: 1px solid rgba(60,60,67,.07); padding: 4px 10px; color: inherit; background: transparent; text-align: left; }
+.remote-file-browser > button:hover { background: rgba(118,118,128,.06); }
+.remote-file-browser > button.is-selected { color: #0068d6; background: rgba(10,132,255,.12); }
+.remote-file-browser > button > span:not(:first-child) { color: var(--secondary); font-size: 8.5px; }
+.remote-file-browser__name { display: grid; min-width: 0; grid-template-columns: 18px minmax(0,1fr) auto; align-items: center; gap: 5px; }
+.remote-file-browser__name i { color: var(--accent); font-size: 12px; font-style: normal; }
+.remote-file-browser__name strong { overflow: hidden; font-size: 10px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
+.remote-file-browser__name small { color: var(--tertiary); font: 8px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.remote-file-browser__empty { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 8px; color: var(--secondary); font-size: 10px; }
+.remote-file-dialog-backdrop { position: fixed; z-index: 140; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(22,22,26,.24); backdrop-filter: blur(8px); }
+.remote-file-dialog { display: grid; width: min(430px,100%); justify-items: center; border: 1px solid rgba(255,255,255,.82); border-radius: 18px; padding: 24px; color: var(--text,#1d1d1f); background: rgba(250,250,252,.97); box-shadow: 0 28px 80px rgba(0,0,0,.28); text-align: center; }
+.remote-file-dialog > span { display: grid; width: 45px; height: 45px; place-items: center; border-radius: 14px; color: white; background: linear-gradient(145deg,#69b6ff,#0878e8); box-shadow: 0 8px 20px rgba(10,132,255,.22); font-size: 21px; }
+.remote-file-dialog > span.is-danger { background: linear-gradient(145deg,#ff7b72,#ff3b30); box-shadow: 0 8px 20px rgba(255,59,48,.2); font-weight: 760; }
+.remote-file-dialog h3 { margin: 14px 0 7px; font-size: 17px; }
+.remote-file-dialog > p { margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.55; }
+.remote-file-dialog__field { display: grid; width: 100%; gap: 5px; margin-top: 17px; text-align: left; }
+.remote-file-dialog__field span { font-size: 10px; font-weight: 620; }
+.remote-file-dialog__field input { height: 32px; border: 1px solid var(--separator); border-radius: 8px; padding: 6px 9px; color: inherit; outline: none; background: rgba(255,255,255,.82); font-size: 11px; }
+.remote-file-dialog__error { width: 100%; margin-top: 8px !important; border-radius: 8px; padding: 7px 9px; color: #9b5100 !important; background: rgba(255,159,10,.09); text-align: left; }
+.remote-file-dialog footer { display: flex; justify-content: center; gap: 9px; margin-top: 19px; }
+.remote-file-dialog footer button { min-height: 31px; border: 0; border-radius: 8px; padding: 6px 13px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 10.5px; font-weight: 620; }
+.remote-file-dialog footer .danger-button { color: white; background: #ff3b30; box-shadow: 0 5px 14px rgba(255,59,48,.18); }
+
+@media (prefers-color-scheme: dark) {
+  .remote-sftp, .remote-sftp-local { background: rgba(42,42,46,.72); }
+  .remote-sftp__toolbar, .remote-sftp-pathbar, .remote-sftp-local > footer, .remote-sftp-transfer { background: rgba(48,48,52,.62); }
+  .remote-file-browser__columns { background: rgba(48,48,52,.95); }
+  .remote-file-dialog { border-color: rgba(255,255,255,.1); background: rgba(42,42,46,.97); }
+  .remote-file-dialog__field input { background: rgba(72,72,76,.9); }
+}

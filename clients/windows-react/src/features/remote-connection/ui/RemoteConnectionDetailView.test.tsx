@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteConnectionPort } from "../ports/RemoteConnectionPort";
+import type { RemoteFilePort } from "../../remote-files/ports/RemoteFilePort";
 import { remoteConnectionFixture } from "../../../test/remoteConnectionFixture";
 import { RemoteConnectionDetailView } from "./RemoteConnectionDetailView";
 
@@ -47,10 +48,25 @@ function renderView(adapter = port(), onDeleted = vi.fn()) {
       connections={[connection]}
       ownerUserId="alice"
       port={adapter}
+      remoteFilePort={remoteFilePort()}
       onDeleted={onDeleted}
       onEdit={() => undefined}
     />,
   );
+}
+
+function remoteFilePort(): RemoteFilePort {
+  return {
+    listDirectory: vi.fn(async () => ({ status: "completed" as const, listing: { path: "/", parentPath: null, entries: [], truncated: false } })),
+    createDirectory: vi.fn(),
+    renameEntry: vi.fn(),
+    deleteEntry: vi.fn(),
+    pickUploadFile: vi.fn(async () => null),
+    pickDownloadDestination: vi.fn(async () => null),
+    uploadFile: vi.fn(),
+    downloadFile: vi.fn(),
+    discardSelections: vi.fn(async () => undefined),
+  };
 }
 
 function port(overrides: Partial<RemoteConnectionPort> = {}): RemoteConnectionPort {

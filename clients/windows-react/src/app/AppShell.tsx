@@ -32,6 +32,7 @@ import { useRemoteConnectionStore } from "../features/remote-connection/applicat
 import type { RemoteConnectionPort } from "../features/remote-connection/ports/RemoteConnectionPort";
 import { RemoteConnectionDetailView } from "../features/remote-connection/ui/RemoteConnectionDetailView";
 import { RemoteConnectionEditorSheet } from "../features/remote-connection/ui/RemoteConnectionEditorSheet";
+import type { RemoteFilePort } from "../features/remote-files/ports/RemoteFilePort";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
@@ -47,6 +48,7 @@ interface AppShellProps {
   projectGit: ProjectGitPort;
   projectRun: ProjectRunPort;
   remoteConnection: RemoteConnectionPort;
+  remoteFile: RemoteFilePort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
@@ -70,6 +72,7 @@ export function AppShell({
   projectGit,
   projectRun,
   remoteConnection,
+  remoteFile,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
@@ -267,6 +270,7 @@ export function AppShell({
             connections={remoteConnections}
             ownerUserId={session.user.id}
             port={remoteConnection}
+            remoteFilePort={remoteFile}
             onDeleted={(connectionId) => {
               acceptDeletedRemoteConnection(session.user.id, connectionId);
               setRemoteEditorTarget(null);

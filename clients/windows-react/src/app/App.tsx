@@ -15,6 +15,7 @@ import { TauriProjectGitAdapter } from "../features/project-git/adapters/TauriPr
 import { TauriProjectRunAdapter } from "../features/project-run/adapters/TauriProjectRunAdapter";
 import { TauriProjectCreationAdapter } from "../features/project-creation/adapters/TauriProjectCreationAdapter";
 import { TauriRemoteConnectionAdapter } from "../features/remote-connection/adapters/TauriRemoteConnectionAdapter";
+import { TauriRemoteFileAdapter } from "../features/remote-files/adapters/TauriRemoteFileAdapter";
 import { TauriSystemPermissionsAdapter } from "../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter";
 import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/TauriToolApprovalAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
@@ -43,6 +44,7 @@ const projectGit = new TauriProjectGitAdapter();
 const projectRun = new TauriProjectRunAdapter();
 const projectCreation = new TauriProjectCreationAdapter();
 const remoteConnection = new TauriRemoteConnectionAdapter();
+const remoteFile = new TauriRemoteFileAdapter();
 const systemPermissions = new TauriSystemPermissionsAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 
@@ -78,6 +80,7 @@ function ApplicationRoot() {
             projectConversation={projectConversation}
             projectCreation={projectCreation}
             remoteConnection={remoteConnection}
+            remoteFile={remoteFile}
             projectDirectory={projectDirectory}
             projectGit={projectGit}
             projectRun={projectRun}

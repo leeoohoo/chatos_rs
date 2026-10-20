@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { useRemoteConnectionDetailStore } from "../application/remoteConnectionDetailStore";
 import type { RemoteConnection } from "../domain/remoteConnection";
 import type { RemoteConnectionPort } from "../ports/RemoteConnectionPort";
+import type { RemoteFilePort } from "../../remote-files/ports/RemoteFilePort";
+import { RemoteSftpWorkspace } from "../../remote-files/ui/RemoteSftpWorkspace";
 import { RemoteVerificationDialog } from "./RemoteVerificationDialog";
 import "./remoteConnection.css";
 
@@ -18,6 +20,7 @@ export function RemoteConnectionDetailView({
   connections,
   ownerUserId,
   port,
+  remoteFilePort,
   onDeleted,
   onEdit,
 }: {
@@ -25,6 +28,7 @@ export function RemoteConnectionDetailView({
   connections: RemoteConnection[];
   ownerUserId: string;
   port: RemoteConnectionPort;
+  remoteFilePort: RemoteFilePort;
   onDeleted(connectionId: string): void;
   onEdit(): void;
 }) {
@@ -87,11 +91,13 @@ export function RemoteConnectionDetailView({
           ))}
         </div>
       </header>
-      <div className="remote-workspace__content" role="tabpanel">
+      <div className={`remote-workspace__content ${selectedTab === "files" ? "remote-workspace__content--files" : ""}`} role="tabpanel">
         {selectedTab === "details" ? (
           <ConnectionDetails connection={connection} connections={connections} onOpenFiles={() => setSelectedTab("files")} onOpenTerminal={() => setSelectedTab("terminal")} />
+        ) : selectedTab === "files" ? (
+          <RemoteSftpWorkspace connectionId={connection.id} ownerUserId={ownerUserId} port={remoteFilePort} />
         ) : (
-          <PendingWorkspace kind={selectedTab} connection={connection} />
+          <PendingWorkspace connection={connection} />
         )}
       </div>
 
@@ -156,13 +162,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
 }
 
-function PendingWorkspace({ kind, connection }: { kind: Exclude<RemoteWorkspaceTab, "details">; connection: RemoteConnection }) {
-  const terminal = kind === "terminal";
+function PendingWorkspace({ connection }: { connection: RemoteConnection }) {
   return (
     <div className="remote-workspace-placeholder">
-      <span aria-hidden="true">{terminal ? ">_" : "▰"}</span>
-      <h3>{terminal ? "远程终端" : "SFTP 文件"}</h3>
-      <p>{connection.username}@{connection.host} 的{terminal ? "交互式终端" : "远端文件工作区"}将在连接建立后显示在这里。</p>
+      <span aria-hidden="true">{">_"}</span>
+      <h3>远程终端</h3>
+      <p>{connection.username}@{connection.host} 的交互式终端将在连接建立后显示在这里。</p>
       <small>原生安全传输层已就绪，界面连接功能正在接入。</small>
     </div>
   );
