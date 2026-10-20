@@ -1,8 +1,23 @@
 # path	max_lines	expires_on	reason
 # First-party source at or above 800 lines must have a bounded budget and an expiry.
 config_center_service/backend/src/state/tests.rs	2557	2026-12-31	Split state read/write, publish, and recovery scenarios
+clients/local_agent_host/layers/infrastructure/database/src/task_conversation_writeback_tests.rs	2361	2026-12-31	Split conversation writeback scenarios by recovery and terminal state
 config_center_service/backend/src/catalog/tests.rs	2335	2026-12-31	Split catalog parsing, version, and permission scenarios
 clients/macos/Tests/ChatOSConnectorTests/LocalAgentChatToolProviderTests.swift	1999	2026-12-31	Split local agent tool-provider tests by tool family
+clients/macos/Tests/ChatOSAppTests/ConversationSessionViewModelTests.swift	1825	2026-12-31	Split conversation session tests by history, sending, and realtime behavior
+clients/local_agent_host/layers/infrastructure/database/src/task_lifecycle_tests.rs	1571	2026-12-31	Split task lifecycle tests by scheduling and recovery phase
+clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentPlatformToolWorkerTests.swift	1491	2026-12-31	Split platform worker tests by tool family and lifecycle behavior
 crates/chatos_ai_runtime/src/runtime/tests.rs	1479	2026-12-31	Split AI runtime tests by execution phase
+clients/local_agent_host/src/application/task_tools_tests.rs	1404	2026-12-31	Split task tool tests by command and state transition
+clients/local_agent_host/layers/profiles/src/planner_tests.rs	1287	2026-12-31	Split planner tests by profile and continuation behavior
+clients/macos/Tests/ChatOSConnectorTests/NativeAgentPluginToolProviderTests.swift	1264	2026-12-31	Split plugin tool provider tests by discovery and invocation behavior
+clients/macos/Sources/ChatOSApp/Features/Chat/ConversationSessionViewModel.swift	1213	2026-12-31	Extract conversation feature state and orchestration responsibilities
 crates/chatos_cloud_agent_runtime/src/lib_inline_tests.rs	1128	2026-12-31	Move cloud runtime inline tests into layered test modules
 mcp/src/implementations/builtin/code_maintainer/tests.rs	1082	2026-12-31	Split code maintainer read, edit, and verification scenarios
+clients/local_agent_host/layers/infrastructure/database/src/conversation_store_tests.rs	940	2026-12-31	Split conversation store tests by query and mutation behavior
+clients/macos/Sources/ChatOSApp/Features/MediaStudio/MediaStudioViewModel.swift	877	2026-12-31	Extract Media Studio operation and persistence state
+clients/macos/Tests/ChatOSConnectorTests/NativePluginProcessTests.swift	862	2026-12-31	Split plugin process tests by launch and transport behavior
+clients/macos/Tests/ChatOSAppTests/MessageTaskWorkspaceViewModelTests.swift	837	2026-12-31	Split task workspace tests by presentation section
+clients/local_agent_host/src/application/requirement_survey_tools.rs	813	2026-12-31	Extract requirement survey schemas and response mapping
+clients/local_agent_host/layers/application/src/skill_runtime.rs	807	2026-12-31	Extract skill runtime activation and resource loading paths
+clients/macos/Sources/ChatOSConnector/NativeAgentPluginToolProvider.swift	802	2026-12-31	Extract plugin tool discovery and invocation adapters

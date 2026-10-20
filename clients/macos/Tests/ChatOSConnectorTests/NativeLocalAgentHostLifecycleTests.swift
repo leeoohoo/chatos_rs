@@ -497,6 +497,10 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
             .map { URL(fileURLWithPath: $0) }
             ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            if ProcessInfo.processInfo.environment["CHATOS_REQUIRE_NATIVE_HOST_TESTS"] == "1" {
+                XCTFail("Required native Host integration executable is missing")
+                return
+            }
             throw XCTSkip("Build chatos_local_agent_host before running the native lifecycle test")
         }
         let root = FileManager.default.temporaryDirectory
