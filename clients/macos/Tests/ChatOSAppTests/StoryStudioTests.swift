@@ -205,6 +205,46 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(persisted.projects[0].segments.allSatisfy { $0.video != nil })
     }
 
+    func testPendingVideoGenerationDoesNotRetainStoryStudioViewModel() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryVideoLifetimeTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let service = StoryTestService()
+        await service.setDelay(true)
+        var viewModel: StoryStudioViewModel? = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store
+        )
+        weak let weakViewModel = viewModel
+        viewModel?.activate(userID: "alice")
+        if let viewModel { try await idle(viewModel) }
+        let draft = try await readyProject(store)
+        let created = await viewModel?.create(draft, availableModels: models)
+        XCTAssertTrue(created == true)
+        viewModel?.selectedSegments = ["s1"]
+        viewModel?.generateBatch(availableModels: models)
+        for _ in 0..<100 {
+            let events = await service.events()
+            if events.contains("video") { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let events = await service.events()
+        XCTAssertTrue(events.contains("video"))
+
+        viewModel = nil
+        for _ in 0..<20 where weakViewModel != nil { await Task.yield() }
+        XCTAssertNil(weakViewModel)
+        try await Task.sleep(for: .milliseconds(120))
+    }
+
     func testPreviousVideoGuidanceSendsPreviousCutWithoutFrameInputs() async throws {
         let (vm, store, service) = try await fixture()
         var draft = makeProject()
