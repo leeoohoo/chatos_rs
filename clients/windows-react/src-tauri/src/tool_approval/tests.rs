@@ -4,7 +4,10 @@ use chatos_local_agent_protocol::{
 };
 use serde_json::json;
 
-use super::{models::ToolApprovalDecision, project_pending};
+use super::{
+    models::{ToolApprovalDecision, ToolApprovalMode},
+    policy_auto_approval_candidate, project_pending,
+};
 
 #[test]
 fn projects_only_safe_fields_and_never_serializes_full_arguments() {
@@ -119,6 +122,30 @@ fn sorts_queue_by_creation_time_then_identity() {
             .collect::<Vec<_>>(),
         ["a", "b", "z"]
     );
+}
+
+#[test]
+fn full_control_never_auto_approves_unqualified_or_non_terminal_tools() {
+    let terminal = invocation("terminal", "execute_command", json!({}));
+    let edit = invocation("edit", "commit_edit_session", json!({}));
+    assert!(policy_auto_approval_candidate(
+        ToolApprovalMode::FullControl,
+        &terminal,
+    ));
+    assert!(!policy_auto_approval_candidate(
+        ToolApprovalMode::AutoApproval,
+        &terminal,
+    ));
+    assert!(!policy_auto_approval_candidate(
+        ToolApprovalMode::FullControl,
+        &edit,
+    ));
+    let mut already_approved = terminal;
+    already_approved.approval_status = LocalAgentToolApprovalStatus::Approved;
+    assert!(!policy_auto_approval_candidate(
+        ToolApprovalMode::FullControl,
+        &already_approved,
+    ));
 }
 
 fn invocation(

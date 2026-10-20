@@ -8,7 +8,9 @@ import type { ConversationRealtimePort } from "../features/conversation-realtime
 import type { ConversationRuntimeSettingsPort } from "../features/conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
 import type { ToolApprovalPort } from "../features/tool-approval/ports/ToolApprovalPort";
+import type { ToolApprovalSettingsPort } from "../features/tool-approval/ports/ToolApprovalSettingsPort";
 import { GlobalToolApprovalOverlay } from "../features/tool-approval/ui/GlobalToolApprovalOverlay";
+import { ToolApprovalSettingsView } from "../features/tool-approval/ui/ToolApprovalSettingsView";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
@@ -31,7 +33,7 @@ interface AppShellProps {
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
   askUser: AskUserPort;
-  toolApproval: ToolApprovalPort;
+  toolApproval: ToolApprovalPort & ToolApprovalSettingsPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -58,6 +60,7 @@ export function AppShell({
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval">("workspace");
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -65,6 +68,7 @@ export function AppShell({
 
   useEffect(() => {
     setSelection({ kind: "workbench" });
+    setActiveSurface("workspace");
     resetProjectConversations(session.user.id);
   }, [resetProjectConversations, session.user.id]);
 
@@ -86,7 +90,13 @@ export function AppShell({
     ? workspaceSnapshot.contacts.find((contact) => contact.id === selection.id)
     : undefined;
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
-  const title = selectedProject?.title ?? selectedContact?.title ?? "工作台";
+  const title = activeSurface === "tool-approval"
+    ? "命令审批"
+    : selectedProject?.title ?? selectedContact?.title ?? "工作台";
+  const selectWorkspace = (nextSelection: WorkspaceSelection) => {
+    setSelection(nextSelection);
+    setActiveSurface("workspace");
+  };
 
   return (
     <>
@@ -100,8 +110,17 @@ export function AppShell({
           ownerUserId={session.user.id}
           workspaceIndex={workspaceIndex}
           selection={selection}
-          onSelectionChange={setSelection}
+          onSelectionChange={selectWorkspace}
         />
+        <button
+          aria-current={activeSurface === "tool-approval" ? "page" : undefined}
+          className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
+          onClick={() => setActiveSurface("tool-approval")}
+          type="button"
+        >
+          <span aria-hidden="true">⚙︎</span>
+          <span><strong>命令审批</strong><small>本机安全策略</small></span>
+        </button>
         <div className="sidebar-status">
           <span className={`status-light status-light--${snapshot.phase}`} />
           <span>{snapshot.label}</span>
@@ -117,12 +136,19 @@ export function AppShell({
       <section className="content-surface">
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">LOCAL WORKSPACE</p>
+            <p className="eyebrow">{activeSurface === "tool-approval" ? "LOCAL SECURITY" : "LOCAL WORKSPACE"}</p>
             <h1>{title}</h1>
           </div>
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
         </header>
-        {selectedProject ? (
+        {activeSurface === "tool-approval" ? (
+          <ToolApprovalSettingsView
+            approvalPort={toolApproval}
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            settingsPort={toolApproval}
+          />
+        ) : selectedProject ? (
           <ProjectConversationPlaceholder
             ownerUserId={session.user.id}
             project={selectedProject}

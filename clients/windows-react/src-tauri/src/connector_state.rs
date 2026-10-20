@@ -24,6 +24,12 @@ pub(crate) fn ensure_owner_state(
         state.insert("user".into(), json!({"id": owner_user_id}));
         state.insert("deviceID".into(), Value::String(new_device_id()));
         state.insert("workspaces".into(), Value::Array(Vec::new()));
+        state.insert(
+            "approvalMode".into(),
+            Value::String("request_approval".into()),
+        );
+        state.remove("commandApprovalModelConfigID");
+        state.remove("commandApprovalThinkingLevel");
     } else {
         if state
             .get("deviceID")
@@ -39,6 +45,35 @@ pub(crate) fn ensure_owner_state(
     }
     persist_state(&connector_directory, &state_path, &state)?;
     Ok(state_path)
+}
+
+pub(crate) fn read_owner_state(
+    app_data_directory: &Path,
+    owner_user_id: &str,
+) -> Result<Map<String, Value>, String> {
+    let connector_directory = confined_connector_directory(app_data_directory)?;
+    let state_path = connector_directory.join("state.json");
+    reject_symbolic_link(&state_path)?;
+    let state = load_state(&state_path)?;
+    validate_owner(&state, owner_user_id)?;
+    validate_workspaces(state.get("workspaces"))?;
+    Ok(state)
+}
+
+pub(crate) fn update_owner_state<R>(
+    app_data_directory: &Path,
+    owner_user_id: &str,
+    update: impl FnOnce(&mut Map<String, Value>) -> Result<R, String>,
+) -> Result<R, String> {
+    let connector_directory = confined_connector_directory(app_data_directory)?;
+    let state_path = connector_directory.join("state.json");
+    reject_symbolic_link(&state_path)?;
+    let mut state = load_state(&state_path)?;
+    validate_owner(&state, owner_user_id)?;
+    validate_workspaces(state.get("workspaces"))?;
+    let result = update(&mut state)?;
+    persist_state(&connector_directory, &state_path, &state)?;
+    Ok(result)
 }
 
 fn new_device_id() -> String {
@@ -118,6 +153,20 @@ fn validate_workspaces(value: Option<&Value>) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_owner(state: &Map<String, Value>, owner_user_id: &str) -> Result<(), String> {
+    if state
+        .get("user")
+        .and_then(Value::as_object)
+        .and_then(|user| user.get("id"))
+        .and_then(Value::as_str)
+        == Some(owner_user_id)
+    {
+        Ok(())
+    } else {
+        Err(state_error())
+    }
+}
+
 fn valid_identifier(value: &str, maximum_bytes: usize) -> bool {
     !value.is_empty()
         && value.trim() == value
@@ -163,12 +212,18 @@ mod tests {
                 "fingerprint": "fingerprint-1"
             }]),
         );
+        state.insert("approvalMode".into(), json!("full_control"));
+        state.insert("commandApprovalModelConfigID".into(), json!("model-1"));
+        state.insert("commandApprovalThinkingLevel".into(), json!("high"));
         persist_state(state_path.parent().unwrap(), &state_path, &state).unwrap();
 
         ensure_owner_state(directory.path(), "owner-1").unwrap();
         let restored = load_state(&state_path).unwrap();
         assert_eq!(restored["user"]["id"], "owner-1");
         assert_eq!(restored["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(restored["approvalMode"], "full_control");
+        assert_eq!(restored["commandApprovalModelConfigID"], "model-1");
+        assert_eq!(restored["commandApprovalThinkingLevel"], "high");
         let device_id = restored["deviceID"].as_str().unwrap().to_owned();
         assert!(device_id.starts_with("windows-device-"));
         ensure_owner_state(directory.path(), "owner-1").unwrap();
@@ -188,6 +243,9 @@ mod tests {
                 "fingerprint": "fingerprint-1"
             }]),
         );
+        state.insert("approvalMode".into(), json!("full_control"));
+        state.insert("commandApprovalModelConfigID".into(), json!("model-1"));
+        state.insert("commandApprovalThinkingLevel".into(), json!("high"));
         persist_state(state_path.parent().unwrap(), &state_path, &state).unwrap();
         let previous_device = state["deviceID"].as_str().unwrap().to_owned();
 
@@ -196,5 +254,24 @@ mod tests {
         assert_eq!(restored["user"]["id"], "owner-2");
         assert!(restored["workspaces"].as_array().unwrap().is_empty());
         assert_ne!(restored["deviceID"], previous_device);
+        assert_eq!(restored["approvalMode"], "request_approval");
+        assert!(restored.get("commandApprovalModelConfigID").is_none());
+        assert!(restored.get("commandApprovalThinkingLevel").is_none());
+    }
+
+    #[test]
+    fn owner_scoped_updates_preserve_unrelated_connector_state() {
+        let directory = tempfile::tempdir().unwrap();
+        ensure_owner_state(directory.path(), "owner-1").unwrap();
+        update_owner_state(directory.path(), "owner-1", |state| {
+            state.insert("approvalMode".into(), json!("full_control"));
+            Ok(())
+        })
+        .unwrap();
+        let restored = read_owner_state(directory.path(), "owner-1").unwrap();
+        assert_eq!(restored["approvalMode"], "full_control");
+        assert!(restored.get("deviceID").is_some());
+        assert!(restored.get("workspaces").is_some());
+        assert!(read_owner_state(directory.path(), "owner-2").is_err());
     }
 }

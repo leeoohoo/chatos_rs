@@ -8,7 +8,7 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::models::ToolApprovalDecision;
+use super::models::{ToolApprovalDecision, ToolApprovalMode};
 
 const MAXIMUM_ENTRIES: usize = 256;
 const MAXIMUM_RECORD_BYTES: u64 = 16 * 1_024;
@@ -19,6 +19,8 @@ pub struct RecordedToolApprovalDecision {
     pub owner_user_id: String,
     pub invocation_id: String,
     pub invocation_version: u64,
+    #[serde(default)]
+    pub mode: Option<ToolApprovalMode>,
     pub decision: ToolApprovalDecision,
     pub decided_by: String,
     pub reason: String,
@@ -73,7 +75,10 @@ impl ApprovalDecisionJournal {
             .collect()
     }
 
-    pub fn record(&self, record: RecordedToolApprovalDecision) -> Result<(), String> {
+    pub fn record(
+        &self,
+        record: RecordedToolApprovalDecision,
+    ) -> Result<RecordedToolApprovalDecision, String> {
         record.validate()?;
         let mut records = self
             .records
@@ -90,7 +95,7 @@ impl ApprovalDecisionJournal {
                 && existing.decided_by == record.decided_by
                 && existing.reason == record.reason
             {
-                Ok(())
+                Ok(existing.clone())
             } else {
                 Err("a different decision is already recorded for this approval version".into())
             };
@@ -105,12 +110,12 @@ impl ApprovalDecisionJournal {
             records.pop();
         }
         write_record(&self.directory, &record)?;
-        records.push(record);
+        records.push(record.clone());
         records.sort_by(|left, right| {
             (right.recorded_at_unix_ms, right.invocation_id.as_str())
                 .cmp(&(left.recorded_at_unix_ms, left.invocation_id.as_str()))
         });
-        Ok(())
+        Ok(record)
     }
 
     pub fn remove(&self, record: &RecordedToolApprovalDecision) -> Result<(), String> {
@@ -287,7 +292,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
         let record = sample_record(ToolApprovalDecision::AcceptForSession);
-        journal.record(record.clone()).unwrap();
+        assert_eq!(journal.record(record.clone()).unwrap(), record);
         drop(journal);
 
         let reopened = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
@@ -317,17 +322,35 @@ mod tests {
     }
 
     #[test]
-    fn same_decision_is_idempotent_even_when_retry_time_changes() {
+    fn same_decision_preserves_original_mode_and_time_across_retries() {
         let directory = tempfile::tempdir().unwrap();
         let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
         let original = sample_record(ToolApprovalDecision::Accept);
         journal.record(original.clone()).unwrap();
         let mut retry = original.clone();
         retry.recorded_at_unix_ms += 100;
-        journal.record(retry.clone()).unwrap();
+        retry.mode = Some(ToolApprovalMode::FullControl);
+        assert_eq!(journal.record(retry.clone()).unwrap(), original);
         assert_eq!(journal.snapshot("owner-1"), vec![original]);
         journal.remove(&retry).unwrap();
         assert!(journal.snapshot("owner-1").is_empty());
+    }
+
+    #[test]
+    fn loads_journal_records_written_before_mode_was_persisted() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut record = sample_record(ToolApprovalDecision::Accept);
+        record.mode = None;
+        let mut value = serde_json::to_value(&record).unwrap();
+        value.as_object_mut().unwrap().remove("mode");
+        fs::write(
+            record_path(directory.path(), &record),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+
+        let journal = ApprovalDecisionJournal::open(directory.path().into()).unwrap();
+        assert_eq!(journal.snapshot("owner-1"), vec![record]);
     }
 
     #[test]
@@ -355,6 +378,7 @@ mod tests {
             owner_user_id: "owner-1".into(),
             invocation_id: "invocation-1".into(),
             invocation_version: 2,
+            mode: Some(ToolApprovalMode::RequestApproval),
             decision,
             decided_by: "windows-react-human".into(),
             reason: "user decision".into(),

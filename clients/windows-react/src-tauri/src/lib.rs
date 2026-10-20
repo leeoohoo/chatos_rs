@@ -50,7 +50,11 @@ use run_inspector::{
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
 use terminal_tool_worker::TerminalToolWorker;
 use tool_approval::journal::ApprovalDecisionJournal;
-use tool_approval::{decide_tool_approval, list_tool_approvals};
+use tool_approval::settings::ApprovalSettingsStore;
+use tool_approval::{
+    decide_tool_approval, list_tool_approvals, load_tool_approval_settings,
+    update_tool_approval_mode, update_tool_approval_model,
+};
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -78,6 +82,7 @@ pub fn run() {
             )
             .map_err(std::io::Error::other)?;
             app.manage(journal);
+            app.manage(ApprovalSettingsStore::new(data_dir));
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
@@ -138,6 +143,9 @@ pub fn run() {
             cancel_ask_user_prompt,
             list_tool_approvals,
             decide_tool_approval,
+            load_tool_approval_settings,
+            update_tool_approval_mode,
+            update_tool_approval_model,
             poll_conversation_realtime,
             send_conversation_draft,
             activate_conversation_attachment_scope,

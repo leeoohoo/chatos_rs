@@ -2,6 +2,7 @@ pub(crate) mod journal;
 mod models;
 mod projection;
 pub(crate) mod session;
+pub(crate) mod settings;
 #[cfg(test)]
 mod tests;
 
@@ -19,27 +20,53 @@ use crate::platform_execution_context::{
 };
 use journal::{ApprovalDecisionJournal, RecordedToolApprovalDecision};
 use models::{
-    ToolApproval, ToolApprovalDecision, ToolApprovalMutationInput, ToolApprovalResolution,
+    ToolApproval, ToolApprovalDecision, ToolApprovalMode, ToolApprovalModeMutationInput,
+    ToolApprovalModelMutationInput, ToolApprovalMutationInput, ToolApprovalResolution,
+    ToolApprovalSettings,
 };
 use projection::pending_approval;
 use session::ApprovalSessionScope;
+use settings::ApprovalSettingsStore;
 
 const APPROVAL_LIMIT: u32 = 100;
 const REVIEWER_ID: &str = "windows-react-human";
 const SESSION_REVIEWER_ID: &str = "windows-react-session";
 const SESSION_APPROVAL_REASON: &str = "用户已允许当前 Windows 客户端会话执行此类操作。";
+const POLICY_REVIEWER_ID: &str = "windows-react-policy";
+const POLICY_APPROVAL_REASON: &str = "当前 Windows 审批策略允许直接执行此操作。";
 
 #[tauri::command]
 pub async fn list_tool_approvals(
     app: AppHandle,
     manager: State<'_, HostManager>,
     journal: State<'_, ApprovalDecisionJournal>,
+    settings: State<'_, ApprovalSettingsStore>,
     owner_user_id: String,
 ) -> Result<Vec<ToolApproval>, String> {
     let owner_user_id = required("owner_user_id", owner_user_id)?;
-    let invocations = reconcile_recorded_decisions(&manager, &journal, &owner_user_id).await?;
+    let mode = load_approval_mode(&settings, &owner_user_id).await?;
     let invocations =
-        reconcile_session_decisions(&app, &manager, &journal, &owner_user_id, invocations).await?;
+        reconcile_recorded_decisions(&manager, &journal, &settings, &owner_user_id, mode).await?;
+    let invocations = reconcile_session_decisions(
+        &app,
+        &manager,
+        &journal,
+        &settings,
+        &owner_user_id,
+        mode,
+        invocations,
+    )
+    .await?;
+    let invocations = reconcile_policy_decisions(
+        &app,
+        &manager,
+        &journal,
+        &settings,
+        &owner_user_id,
+        mode,
+        invocations,
+    )
+    .await?;
     Ok(project_pending(invocations))
 }
 
@@ -48,6 +75,7 @@ pub async fn decide_tool_approval(
     app: AppHandle,
     manager: State<'_, HostManager>,
     journal: State<'_, ApprovalDecisionJournal>,
+    settings: State<'_, ApprovalSettingsStore>,
     input: ToolApprovalMutationInput,
 ) -> Result<ToolApprovalResolution, String> {
     let owner_user_id = required("owner_user_id", input.owner_user_id)?;
@@ -89,11 +117,14 @@ pub async fn decide_tool_approval(
         }
         ToolApprovalDecision::Decline => "用户已在 Windows 客户端拒绝这次操作。",
     };
+    let mode = load_approval_mode(&settings, &owner_user_id).await?;
     let resolved = submit_decision(
         &manager,
         &journal,
+        &settings,
         &owner_user_id,
         &current,
+        mode,
         input.decision,
         REVIEWER_ID,
         reason,
@@ -112,6 +143,59 @@ pub async fn decide_tool_approval(
         invocation_version: resolved.version,
         decision: input.decision,
     })
+}
+
+#[tauri::command]
+pub async fn load_tool_approval_settings(
+    manager: State<'_, HostManager>,
+    settings: State<'_, ApprovalSettingsStore>,
+    owner_user_id: String,
+) -> Result<ToolApprovalSettings, String> {
+    let owner_user_id = required("owner_user_id", owner_user_id)?;
+    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
+}
+
+#[tauri::command]
+pub async fn update_tool_approval_mode(
+    manager: State<'_, HostManager>,
+    settings: State<'_, ApprovalSettingsStore>,
+    input: ToolApprovalModeMutationInput,
+) -> Result<ToolApprovalSettings, String> {
+    let owner_user_id = required("owner_user_id", input.owner_user_id)?;
+    if !manager.is_running_for(&owner_user_id).await {
+        return Err("Local Agent Host 尚未就绪。".into());
+    }
+    let store = settings.inner().clone();
+    let owner = owner_user_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.update_mode(&owner, input.mode, input.risk_acknowledged)
+    })
+    .await
+    .map_err(|_| "审批设置任务异常退出。".to_owned())??;
+    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
+}
+
+#[tauri::command]
+pub async fn update_tool_approval_model(
+    manager: State<'_, HostManager>,
+    settings: State<'_, ApprovalSettingsStore>,
+    input: ToolApprovalModelMutationInput,
+) -> Result<ToolApprovalSettings, String> {
+    let owner_user_id = required("owner_user_id", input.owner_user_id)?;
+    let models = manager.model_options(&owner_user_id).await?;
+    let store = settings.inner().clone();
+    let owner = owner_user_id.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.update_model(
+            &owner,
+            input.selected_model_id,
+            input.selected_thinking_level,
+            &models,
+        )
+    })
+    .await
+    .map_err(|_| "审批模型设置任务异常退出。".to_owned())??;
+    approval_settings_snapshot(&manager, &settings, &owner_user_id).await
 }
 
 async fn resolve_terminal_approval_scope(
@@ -191,7 +275,9 @@ async fn reconcile_session_decisions(
     app: &AppHandle,
     manager: &HostManager,
     journal: &ApprovalDecisionJournal,
+    settings: &ApprovalSettingsStore,
     owner_user_id: &str,
+    mode: ToolApprovalMode,
     mut invocations: Vec<LocalAgentToolInvocationRecord>,
 ) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
     if manager.approval_sessions().is_empty() {
@@ -213,8 +299,10 @@ async fn reconcile_session_decisions(
         submit_decision(
             manager,
             journal,
+            settings,
             owner_user_id,
             invocation,
+            mode,
             ToolApprovalDecision::Accept,
             SESSION_REVIEWER_ID,
             SESSION_APPROVAL_REASON,
@@ -228,11 +316,59 @@ async fn reconcile_session_decisions(
     Ok(invocations)
 }
 
+async fn reconcile_policy_decisions(
+    app: &AppHandle,
+    manager: &HostManager,
+    journal: &ApprovalDecisionJournal,
+    settings: &ApprovalSettingsStore,
+    owner_user_id: &str,
+    mode: ToolApprovalMode,
+    mut invocations: Vec<LocalAgentToolInvocationRecord>,
+) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
+    if mode != ToolApprovalMode::FullControl {
+        // The Windows approval Agent runtime has not crossed its source-of-truth gate yet.
+        // auto_approval therefore follows macOS's unavailable-reviewer fallback and remains
+        // in the Human queue instead of silently granting access.
+        return Ok(invocations);
+    }
+    let mut changed = false;
+    for invocation in invocations
+        .iter()
+        .filter(|invocation| policy_auto_approval_candidate(mode, invocation))
+    {
+        if resolve_terminal_approval_scope(app, manager, owner_user_id, invocation)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        submit_decision(
+            manager,
+            journal,
+            settings,
+            owner_user_id,
+            invocation,
+            mode,
+            ToolApprovalDecision::Accept,
+            POLICY_REVIEWER_ID,
+            POLICY_APPROVAL_REASON,
+        )
+        .await?;
+        changed = true;
+    }
+    if changed {
+        invocations = load_pending(manager, owner_user_id).await?;
+    }
+    Ok(invocations)
+}
+
 async fn submit_decision(
     manager: &HostManager,
     journal: &ApprovalDecisionJournal,
+    settings: &ApprovalSettingsStore,
     owner_user_id: &str,
     invocation: &LocalAgentToolInvocationRecord,
+    mode: ToolApprovalMode,
     decision: ToolApprovalDecision,
     decided_by: &str,
     reason: &str,
@@ -241,12 +377,24 @@ async fn submit_decision(
         owner_user_id: owner_user_id.to_owned(),
         invocation_id: invocation.invocation_id.clone(),
         invocation_version: invocation.version,
+        mode: Some(mode),
         decision,
         decided_by: decided_by.to_owned(),
         reason: reason.to_owned(),
         recorded_at_unix_ms: now_unix_ms(),
     };
-    journal.record(record.clone())?;
+    let approval =
+        pending_approval(invocation).ok_or_else(|| "该审批已经处理或不再存在。".to_owned())?;
+    let record = journal.record(record)?;
+    record_approval_history(
+        settings,
+        owner_user_id,
+        approval,
+        record.mode.unwrap_or(mode),
+        decision,
+        record.recorded_at_unix_ms,
+    )
+    .await?;
     let result = manager
         .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
             owner_user_id: owner_user_id.to_owned(),
@@ -272,10 +420,53 @@ async fn submit_decision(
     Ok(result.invocation)
 }
 
+async fn approval_settings_snapshot(
+    manager: &HostManager,
+    settings: &ApprovalSettingsStore,
+    owner_user_id: &str,
+) -> Result<ToolApprovalSettings, String> {
+    let models = manager.model_options(owner_user_id).await?;
+    let store = settings.clone();
+    let owner = owner_user_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || store.load(&owner, &models))
+        .await
+        .map_err(|_| "审批设置任务异常退出。".to_owned())?
+}
+
+async fn load_approval_mode(
+    settings: &ApprovalSettingsStore,
+    owner_user_id: &str,
+) -> Result<ToolApprovalMode, String> {
+    let store = settings.clone();
+    let owner = owner_user_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || store.mode(&owner))
+        .await
+        .map_err(|_| "审批设置任务异常退出。".to_owned())?
+}
+
+async fn record_approval_history(
+    settings: &ApprovalSettingsStore,
+    owner_user_id: &str,
+    approval: ToolApproval,
+    mode: ToolApprovalMode,
+    decision: ToolApprovalDecision,
+    decided_at_unix_ms: i64,
+) -> Result<(), String> {
+    let store = settings.clone();
+    let owner = owner_user_id.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.record_decision(&owner, &approval, mode, decision, decided_at_unix_ms)
+    })
+    .await
+    .map_err(|_| "审批记录任务异常退出。".to_owned())?
+}
+
 async fn reconcile_recorded_decisions(
     manager: &HostManager,
     journal: &ApprovalDecisionJournal,
+    settings: &ApprovalSettingsStore,
     owner_user_id: &str,
+    fallback_mode: ToolApprovalMode,
 ) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
     let mut invocations = load_pending(manager, owner_user_id).await?;
     let mut changed = false;
@@ -290,6 +481,17 @@ async fn reconcile_recorded_decisions(
             let _ = journal.remove(&record);
             continue;
         };
+        let approval =
+            pending_approval(invocation).ok_or_else(|| "该审批已经处理或不再存在。".to_owned())?;
+        record_approval_history(
+            settings,
+            owner_user_id,
+            approval,
+            record.mode.unwrap_or(fallback_mode),
+            record.decision,
+            record.recorded_at_unix_ms,
+        )
+        .await?;
         let result = manager
             .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
                 owner_user_id: owner_user_id.to_owned(),
@@ -343,6 +545,15 @@ fn is_session_terminal_tool(tool_name: &str) -> bool {
         tool_name,
         "execute_command" | "process_write" | "process_kill"
     )
+}
+
+fn policy_auto_approval_candidate(
+    mode: ToolApprovalMode,
+    invocation: &LocalAgentToolInvocationRecord,
+) -> bool {
+    mode == ToolApprovalMode::FullControl
+        && is_pending(invocation)
+        && is_session_terminal_tool(&invocation.tool_name)
 }
 
 async fn load_pending(
