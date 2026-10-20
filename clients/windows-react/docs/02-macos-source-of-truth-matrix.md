@@ -46,6 +46,8 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；进入契约冻结与跨层验收 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、service adapters | Runtime/bootstrap/recovery/launch/configuration/shutdown use case、Host lifecycle 测试 | 禁止；等待跨层验收与共享契约 fixture |
+| Pet 翻译 | 模型、历史、附件与翻译 operation identity 已提取；Host/磁盘等待不再强持有窗口 ViewModel | Pet 翻译浮窗 | `PetTranslationViewModel.swift` | `PetTranslationAgent` 请求/结果、历史记录模型 | Agent model provider、`PetTranslationHistoryStore` | Agent、历史持久化、ViewModel 生命周期测试 | 禁止；等待完整源码映射与 Port 验收 |
+| Media Studio | 账号 session、模型 generation、图片/视频 operation 与输入选择 identity 已固定；历史、生成、保存及导入等待不再强持有 ViewModel | AI 图片、AI 视频、AI 历史 | `MediaStudioViewModel.swift` | Media generation models/service | Media service、`MediaStudioHistoryStore`、HTTP transport | History、image interaction、video canvas、ViewModel 测试 | 禁止；Story 与完整页面映射尚未完成 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
 
@@ -643,7 +645,23 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 
 已覆盖等待审批不阻塞已批准 claim、启动/事件恢复、durable approval typed command、同审批重复提交门禁、独立审批并发状态、决定中登出、Human 决定写回瞬时失败与重启恢复、journal 存储失败的进程内恢复、cwd/traversal/symlink 边界、AI reviewer 保守降级、session scope 隔离和登出迟到结果隔离。Windows 后续必须复用相同的两阶段状态语义，不能把 presentation queue 当成 durable approval 事实源。
 
-## 9. 31 个页面的准入状态
+## 9. 次级模块生命周期审计
+
+### 9.1 Pet 翻译
+
+- 模型加载、历史读取/清空、附件导入与翻译均由 ViewModel 显式持有并在销毁时取消；不再创建无法管理的裸 Task。
+- 每次翻译使用独立 `translationOperationID`。流式 delta、最终文本、历史落盘和动画收尾都必须匹配当前 operation；取消后迟到 delta 或完成结果不得写回。
+- 翻译 Agent 和历史 Store 在请求开始前冻结；模型、Agent 与磁盘 await 期间只保留弱 UI 引用。提交翻译时会失效并取消仍在读取的附件，避免发送后附件迟到回填到新草稿。
+- 已验证延迟模型请求不会阻止翻译窗口释放，并保留“一键截图在模型就绪后自动提交”、成功后清空 composer、历史 newest-first 与容量限制语义。
+
+### 9.2 Media Studio
+
+- 账号切换继续以 `sessionID` 隔离全部结果；模型目录使用独立 generation，图片与视频分别使用 operation ID，输入图片/视频首帧/参考音频继续使用 selection ID。
+- 历史首页/分页、图片生成→本地保存、视频生成→进度→本地保存，以及所有媒体读取任务都先完成 adapter/磁盘工作，再以 weak ViewModel 恢复并联合验收 identity。
+- 图片生成成功但本地保存失败时仍显示生成结果并给出历史错误；视频保存失败继续保留失败画布语义；取消视频必须拒绝服务端迟到完成。这些均为现有 macOS 行为，不得由 Windows 自行修改。
+- Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。Story Studio 尚未完成同级审计，因此 AI Studio 页面仍不具备 React 准入资格。
+
+## 10. 31 个页面的准入状态
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
@@ -652,10 +670,10 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
 | 05 | 应用 | 未映射 | 禁止 |
-| 06 | AI 图片 | 未映射 | 禁止 |
-| 07 | AI 视频 | 未映射 | 禁止 |
+| 06 | AI 图片 | 源码映射中（generation/session 生命周期已收口） | 禁止 |
+| 07 | AI 视频 | 源码映射中（progress/保存/取消生命周期已收口） | 禁止 |
 | 08 | AI 故事 | 未映射 | 禁止 |
-| 09 | AI 历史 | 未映射 | 禁止 |
+| 09 | AI 历史 | 源码映射中（本地分页与账号隔离已收口） | 禁止 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
 | 12 | Agent 团队概览 | 未映射 | 禁止 |
@@ -681,7 +699,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成第一轮源码映射，但仍需先完成 macOS 分层。
 
-## 10. 第一条切片的下一步
+## 11. 第一条切片的下一步
 
 按以下顺序实施，不能跳过到 React 页面：
 

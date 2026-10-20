@@ -13,6 +13,17 @@ enum MediaStudioInputImagePolicy {
 
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
+    private enum ImageGenerationOutcome {
+        case saved(HistoryItem)
+        case unsaved(ImageGenerationResult, String)
+        case failed(String)
+    }
+
+    private enum VideoGenerationCompletion {
+        case success(VideoHistoryItem)
+        case failure(String)
+    }
+
     enum Section: String, CaseIterable, Identifiable {
         case image
         case video
@@ -97,6 +108,7 @@ final class MediaStudioViewModel: ObservableObject {
     private let historyStore: MediaStudioHistoryStore
     private var ownerID: String?
     private var sessionID = UUID()
+    private var imageOperationID = UUID()
     private var videoOperationID = UUID()
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
@@ -130,21 +142,30 @@ final class MediaStudioViewModel: ObservableObject {
         stories.activate(userID: userID)
         isLoadingHistory = true
         let session = sessionID
-        historyLoadTask = Task {
+        let historyStore = historyStore
+        historyLoadTask = Task { [weak self] in
+            let result: Result<MediaStudioHistoryStore.Snapshot, Error>
             do {
-                let snapshot = try await historyStore.load(owner: userID)
-                guard sessionID == session else { return }
-                history = snapshot.images
-                videoHistory = snapshot.videos
-                historyCursor = snapshot.nextCursor
-                hasMoreHistory = snapshot.nextCursor != nil
-                unreadableHistoryCount = snapshot.unreadableCount
-                updateHistoryReadError()
+                result = .success(try await historyStore.load(owner: userID))
             } catch {
-                guard sessionID == session else { return }
-                historyErrorMessage = "读取创作记录失败：\(error.localizedDescription)"
+                result = .failure(error)
             }
-            isLoadingHistory = false
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session else { return }
+            switch result {
+            case let .success(snapshot):
+                self.history = snapshot.images
+                self.videoHistory = snapshot.videos
+                self.historyCursor = snapshot.nextCursor
+                self.hasMoreHistory = snapshot.nextCursor != nil
+                self.unreadableHistoryCount = snapshot.unreadableCount
+                self.updateHistoryReadError()
+            case let .failure(error):
+                self.historyErrorMessage = "读取创作记录失败：\(error.localizedDescription)"
+            }
+            self.isLoadingHistory = false
+            self.historyLoadTask = nil
         }
     }
 
@@ -152,28 +173,37 @@ final class MediaStudioViewModel: ObservableObject {
         guard let ownerID, let cursor = historyCursor,
               !isLoadingHistory, !isLoadingMoreHistory else { return }
         let session = sessionID
+        let historyStore = historyStore
         isLoadingMoreHistory = true
-        historyLoadTask = Task {
-            defer { if sessionID == session { isLoadingMoreHistory = false } }
+        historyLoadTask = Task { [weak self] in
+            let result: Result<MediaStudioHistoryStore.Snapshot, Error>
             do {
-                let snapshot = try await historyStore.load(owner: ownerID, after: cursor)
-                guard sessionID == session, !Task.isCancelled else { return }
-                let imageIDs = Set(history.map(\.id))
-                let videoIDs = Set(videoHistory.map(\.id))
-                history.append(contentsOf: snapshot.images.filter { !imageIDs.contains($0.id) })
-                videoHistory.append(contentsOf: snapshot.videos.filter { !videoIDs.contains($0.id) })
-                history.sort { $0.createdAt > $1.createdAt }
-                videoHistory.sort { $0.createdAt > $1.createdAt }
-                historyCursor = snapshot.nextCursor
-                hasMoreHistory = snapshot.nextCursor != nil
-                unreadableHistoryCount += snapshot.unreadableCount
-                updateHistoryReadError()
-            } catch is CancellationError {
-                return
+                result = .success(try await historyStore.load(owner: ownerID, after: cursor))
             } catch {
-                guard sessionID == session else { return }
-                historyErrorMessage = "读取更多创作记录失败：\(error.localizedDescription)"
+                result = .failure(error)
             }
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session else { return }
+            switch result {
+            case let .success(snapshot):
+                let imageIDs = Set(self.history.map(\.id))
+                let videoIDs = Set(self.videoHistory.map(\.id))
+                self.history.append(contentsOf: snapshot.images.filter { !imageIDs.contains($0.id) })
+                self.videoHistory.append(
+                    contentsOf: snapshot.videos.filter { !videoIDs.contains($0.id) }
+                )
+                self.history.sort { $0.createdAt > $1.createdAt }
+                self.videoHistory.sort { $0.createdAt > $1.createdAt }
+                self.historyCursor = snapshot.nextCursor
+                self.hasMoreHistory = snapshot.nextCursor != nil
+                self.unreadableHistoryCount += snapshot.unreadableCount
+                self.updateHistoryReadError()
+            case let .failure(error):
+                self.historyErrorMessage = "读取更多创作记录失败：\(error.localizedDescription)"
+            }
+            self.isLoadingMoreHistory = false
+            self.historyLoadTask = nil
         }
     }
 
@@ -234,6 +264,8 @@ final class MediaStudioViewModel: ObservableObject {
     func generate() {
         guard canGenerate, let selectedModelID, let ownerID else { return }
         let session = sessionID
+        imageOperationID = UUID()
+        let operation = imageOperationID
         let submittedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = ImageGenerationRequest(
             modelConfigID: selectedModelID, prompt: submittedPrompt,
@@ -242,37 +274,64 @@ final class MediaStudioViewModel: ObservableObject {
         )
         isGenerating = true
         errorMessage = nil
-        imageGenerationTask = Task {
+        let service = service
+        let historyStore = historyStore
+        imageGenerationTask?.cancel()
+        imageGenerationTask = Task { [weak self] in
+            let outcome: ImageGenerationOutcome
             do {
                 let result = try await service.generateImage(request)
-                guard sessionID == session else { return }
                 do {
-                    let item = try await historyStore.saveImage(result, prompt: submittedPrompt, owner: ownerID)
-                    guard sessionID == session else { return }
-                    history.insert(item, at: 0)
+                    outcome = .saved(try await historyStore.saveImage(
+                        result,
+                        prompt: submittedPrompt,
+                        owner: ownerID
+                    ))
                 } catch {
-                    guard sessionID == session else { return }
-                    // Keep the generated result visible even when the disk/download fails.
-                    history.insert(
-                        HistoryItem(
-                            id: result.id,
-                            prompt: submittedPrompt,
-                            modelName: result.modelName,
-                            createdAt: ISO8601DateFormatter().date(from: result.createdAt) ?? Date(),
-                            images: result.images
-                        ),
-                        at: 0
-                    )
-                    historyErrorMessage = "图片已生成，但未能保存到本机：\(error.localizedDescription)"
-                    errorMessage = historyErrorMessage
+                    outcome = .unsaved(result, error.localizedDescription)
                 }
             } catch {
-                guard sessionID == session else { return }
-                errorMessage = error.localizedDescription
+                outcome = .failed(error.localizedDescription)
             }
-            isGenerating = false
-            imageGenerationTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishImageGeneration(
+                outcome,
+                prompt: submittedPrompt,
+                session: session,
+                operation: operation
+            )
         }
+    }
+
+    private func finishImageGeneration(
+        _ outcome: ImageGenerationOutcome,
+        prompt: String,
+        session: UUID,
+        operation: UUID
+    ) {
+        guard sessionID == session, imageOperationID == operation else { return }
+        switch outcome {
+        case let .saved(item):
+            history.insert(item, at: 0)
+        case let .unsaved(result, message):
+            // Keep the generated result visible even when the disk/download fails.
+            history.insert(
+                HistoryItem(
+                    id: result.id,
+                    prompt: prompt,
+                    modelName: result.modelName,
+                    createdAt: ISO8601DateFormatter().date(from: result.createdAt) ?? Date(),
+                    images: result.images
+                ),
+                at: 0
+            )
+            historyErrorMessage = "图片已生成，但未能保存到本机：\(message)"
+            errorMessage = historyErrorMessage
+        case let .failed(message):
+            errorMessage = message
+        }
+        isGenerating = false
+        imageGenerationTask = nil
     }
 
     func generateVideo() {
@@ -289,9 +348,11 @@ final class MediaStudioViewModel: ObservableObject {
         isGeneratingVideo = true
         videoProgress = .init(status: "submitting")
         errorMessage = nil
+        let service = service
+        let historyStore = historyStore
         videoGenerationTask?.cancel()
         videoGenerationTask = Task { [weak self] in
-            guard let self else { return }
+            var isSaving = false
             do {
                 let result = try await service.generateVideo(request) { [weak self] progress in
                     await MainActor.run {
@@ -299,28 +360,69 @@ final class MediaStudioViewModel: ObservableObject {
                         self?.videoProgress = progress
                     }
                 }
-                guard sessionID == session, videoOperationID == operation else { return }
-                videoProgress = .init(status: "saving")
-                let item = try await historyStore.saveVideo(result, prompt: submittedPrompt, owner: ownerID)
-                guard sessionID == session, videoOperationID == operation else { return }
-                videoHistory.insert(item, at: 0)
-                videoProgress = .init(status: "completed", percent: 100)
-            } catch is CancellationError {
-                guard sessionID == session, videoOperationID == operation else { return }
-                videoProgress = nil
-            } catch {
-                guard sessionID == session, videoOperationID == operation else { return }
-                if videoProgress?.status == "saving" {
-                    historyErrorMessage = "视频已生成，但未能保存到本机：\(error.localizedDescription)"
-                    errorMessage = historyErrorMessage
-                } else {
-                    errorMessage = error.localizedDescription
+                guard !Task.isCancelled,
+                      self?.beginSavingVideo(session: session, operation: operation) == true else {
+                    return
                 }
-                videoProgress = .init(status: "failed")
+                isSaving = true
+                let item = try await historyStore.saveVideo(result, prompt: submittedPrompt, owner: ownerID)
+                guard !Task.isCancelled else { return }
+                self?.finishVideoGeneration(
+                    .success(item),
+                    session: session,
+                    operation: operation,
+                    failedWhileSaving: false
+                )
+            } catch is CancellationError {
+                guard !Task.isCancelled else { return }
+                self?.finishCancelledVideoGeneration(session: session, operation: operation)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.finishVideoGeneration(
+                    .failure(error.localizedDescription),
+                    session: session,
+                    operation: operation,
+                    failedWhileSaving: isSaving
+                )
             }
-            isGeneratingVideo = false
-            videoGenerationTask = nil
         }
+    }
+
+    private func beginSavingVideo(session: UUID, operation: UUID) -> Bool {
+        guard sessionID == session, videoOperationID == operation else { return false }
+        videoProgress = .init(status: "saving")
+        return true
+    }
+
+    private func finishVideoGeneration(
+        _ result: VideoGenerationCompletion,
+        session: UUID,
+        operation: UUID,
+        failedWhileSaving: Bool
+    ) {
+        guard sessionID == session, videoOperationID == operation else { return }
+        switch result {
+        case let .success(item):
+            videoHistory.insert(item, at: 0)
+            videoProgress = .init(status: "completed", percent: 100)
+        case let .failure(message):
+            if failedWhileSaving {
+                historyErrorMessage = "视频已生成，但未能保存到本机：\(message)"
+                errorMessage = historyErrorMessage
+            } else {
+                errorMessage = message
+            }
+            videoProgress = .init(status: "failed")
+        }
+        isGeneratingVideo = false
+        videoGenerationTask = nil
+    }
+
+    private func finishCancelledVideoGeneration(session: UUID, operation: UUID) {
+        guard sessionID == session, videoOperationID == operation else { return }
+        videoProgress = nil
+        isGeneratingVideo = false
+        videoGenerationTask = nil
     }
 
     func cancelVideoGeneration() {
@@ -347,23 +449,34 @@ final class MediaStudioViewModel: ObservableObject {
         errorMessage = nil
         let session = sessionID
         isLoadingInputImages = true
-        inputImagesTask = Task {
+        inputImagesTask = Task { [weak self] in
+            let result: Result<[ImageGenerationInputImage], Error>
             do {
-                let images = try await AppCancellableDetachedWork.run {
+                result = .success(try await AppCancellableDetachedWork.run {
                     try urls.map { try Self.loadInputImage(from: $0) }
-                }
-                guard sessionID == session, inputImagesSelectionID == selection else { return }
-                var merged = inputImages
-                for image in images where !merged.contains(image) { merged.append(image) }
-                guard merged.count <= 8 else { throw MediaStudioInputImageError.tooManyReferences }
-                inputImages = merged
+                })
             } catch {
-                guard sessionID == session, inputImagesSelectionID == selection else { return }
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            guard sessionID == session, inputImagesSelectionID == selection else { return }
-            isLoadingInputImages = false
-            inputImagesTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session,
+                  self.inputImagesSelectionID == selection else { return }
+            switch result {
+            case let .success(images):
+                var merged = self.inputImages
+                for image in images where !merged.contains(image) { merged.append(image) }
+                if merged.count <= 8 {
+                    self.inputImages = merged
+                } else {
+                    self.errorMessage = MediaStudioInputImageError.tooManyReferences
+                        .localizedDescription
+                }
+            case let .failure(error):
+                self.errorMessage = error.localizedDescription
+            }
+            self.isLoadingInputImages = false
+            self.inputImagesTask = nil
         }
     }
 
@@ -381,7 +494,8 @@ final class MediaStudioViewModel: ObservableObject {
         let transport = imageTransport
         errorMessage = nil
         isLoadingInputImages = true
-        inputImagesTask = Task {
+        inputImagesTask = Task { [weak self] in
+            let result: Result<[ImageGenerationInputImage], Error>
             do {
                 var loaded: [ImageGenerationInputImage] = []
                 for asset in assets {
@@ -396,18 +510,29 @@ final class MediaStudioViewModel: ObservableObject {
                     }
                     loaded.append(input)
                 }
-                guard sessionID == session, inputImagesSelectionID == selection else { return }
-                var merged = inputImages
-                for image in loaded where !merged.contains(image) { merged.append(image) }
-                guard merged.count <= 8 else { throw MediaStudioInputImageError.tooManyReferences }
-                inputImages = merged
+                result = .success(loaded)
             } catch {
-                guard sessionID == session, inputImagesSelectionID == selection else { return }
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            guard sessionID == session, inputImagesSelectionID == selection else { return }
-            isLoadingInputImages = false
-            inputImagesTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session,
+                  self.inputImagesSelectionID == selection else { return }
+            switch result {
+            case let .success(loaded):
+                var merged = self.inputImages
+                for image in loaded where !merged.contains(image) { merged.append(image) }
+                if merged.count <= 8 {
+                    self.inputImages = merged
+                } else {
+                    self.errorMessage = MediaStudioInputImageError.tooManyReferences
+                        .localizedDescription
+                }
+            case let .failure(error):
+                self.errorMessage = error.localizedDescription
+            }
+            self.isLoadingInputImages = false
+            self.inputImagesTask = nil
         }
     }
 
@@ -452,17 +577,23 @@ final class MediaStudioViewModel: ObservableObject {
         errorMessage = nil
         isLoadingVideoInputImage = true
         let session = sessionID
-        videoInputTask = Task {
+        videoInputTask = Task { [weak self] in
+            let result: Result<ImageGenerationInputImage, Error>
             do {
-                let image = try await load()
-                guard sessionID == session, videoInputSelectionID == selection else { return }
-                videoInputImage = image
+                result = .success(try await load())
             } catch {
-                guard sessionID == session, videoInputSelectionID == selection else { return }
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            isLoadingVideoInputImage = false
-            videoInputTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session,
+                  self.videoInputSelectionID == selection else { return }
+            switch result {
+            case let .success(image): self.videoInputImage = image
+            case let .failure(error): self.errorMessage = error.localizedDescription
+            }
+            self.isLoadingVideoInputImage = false
+            self.videoInputTask = nil
         }
     }
 
@@ -481,20 +612,25 @@ final class MediaStudioViewModel: ObservableObject {
         let session = sessionID
         errorMessage = nil
         isLoadingVideoReferenceAudio = true
-        videoAudioTask = Task {
+        videoAudioTask = Task { [weak self] in
+            let result: Result<VideoGenerationInputAudio, Error>
             do {
-                let audio = try await AppCancellableDetachedWork.run {
+                result = .success(try await AppCancellableDetachedWork.run {
                     try Self.loadReferenceAudio(from: url)
-                }
-                guard sessionID == session, videoAudioSelectionID == selection else { return }
-                videoReferenceAudio = audio
+                })
             } catch {
-                guard sessionID == session, videoAudioSelectionID == selection else { return }
-                errorMessage = error.localizedDescription
+                result = .failure(error)
             }
-            guard sessionID == session, videoAudioSelectionID == selection else { return }
-            isLoadingVideoReferenceAudio = false
-            videoAudioTask = nil
+            guard !Task.isCancelled,
+                  let self,
+                  self.sessionID == session,
+                  self.videoAudioSelectionID == selection else { return }
+            switch result {
+            case let .success(audio): self.videoReferenceAudio = audio
+            case let .failure(error): self.errorMessage = error.localizedDescription
+            }
+            self.isLoadingVideoReferenceAudio = false
+            self.videoAudioTask = nil
         }
     }
 

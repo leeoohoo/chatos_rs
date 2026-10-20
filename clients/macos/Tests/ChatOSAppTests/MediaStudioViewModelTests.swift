@@ -53,6 +53,35 @@ final class MediaStudioViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoadingModels)
     }
 
+    func testDelayedImageGenerationDoesNotRetainViewModel() async throws {
+        let service = DelayedMediaStudioImageService()
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MediaStudioViewModelTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var viewModel: MediaStudioViewModel? = MediaStudioViewModel(
+            service: service,
+            historyStore: MediaStudioHistoryStore(root: root)
+        )
+        weak let weakViewModel = viewModel
+        viewModel?.activate(userID: "media-studio-test")
+        viewModel?.loadIfNeeded()
+        try await waitUntil {
+            viewModel?.selectedModelID == "image-model"
+                && viewModel?.isLoadingHistory == false
+        }
+        viewModel?.prompt = "A quiet lake"
+
+        viewModel?.generate()
+        try await waitUntil { await service.hasDelayedImageRequest() }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+
+        await service.resumeImageRequest()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertNil(weakViewModel)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -61,6 +90,57 @@ final class MediaStudioViewModelTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Timed out waiting for media studio state")
+    }
+}
+
+private actor DelayedMediaStudioImageService: MediaGenerationServicing {
+    private var imageContinuation: CheckedContinuation<Void, Never>?
+
+    func fetchModels() async throws -> [MediaGenerationModel] {
+        [
+            .init(
+                id: "image-model",
+                name: "Image Model",
+                provider: "openai",
+                modelName: "gpt-image-1",
+                enabled: true,
+                taskEnabled: false,
+                hasAPIKey: true
+            ),
+        ]
+    }
+
+    func generateImage(_ request: ImageGenerationRequest) async throws -> ImageGenerationResult {
+        await withCheckedContinuation { continuation in
+            imageContinuation = continuation
+        }
+        return .init(
+            id: "image-result",
+            modelConfigID: request.modelConfigID,
+            modelName: "gpt-image-1",
+            createdAt: "2026-10-20T00:00:00Z",
+            images: [
+                .init(
+                    id: "asset-1",
+                    mimeType: "image/png",
+                    base64Data: Data([0x89, 0x50, 0x4E, 0x47]).base64EncodedString()
+                ),
+            ]
+        )
+    }
+
+    func generateVideo(
+        _ request: VideoGenerationRequest,
+        progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
+    ) async throws -> VideoGenerationResult {
+        throw URLError(.badServerResponse)
+    }
+
+    func hasDelayedImageRequest() -> Bool { imageContinuation != nil }
+
+    func resumeImageRequest() {
+        imageContinuation?.resume()
+        imageContinuation = nil
     }
 }
 
