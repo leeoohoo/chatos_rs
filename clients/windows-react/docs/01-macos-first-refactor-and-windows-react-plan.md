@@ -488,6 +488,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 图片模型目录）：模型目录读取和既有 `MiniMax-H3` 视频模型准入规则已移入 `MediaStudioModelCatalogUseCase`，ViewModel 不再直接调用 provider 或解释后端目录，只消费 image/video 两个强类型集合并保留有效选中项。目录请求以 owner/account session/request token 联合验收，连续刷新、账号切换、登出和页面释放均拒绝迟到结果；Core 2 项及 ViewModel 5 项定向回归通过。历史分页、参考图导入和 Windows 平台边界仍未完整准入，第 06 页继续禁止 React 实现。
 
+状态补充（2026-10-21，macOS AI 图片历史边界）：图片/视频历史 DTO、游标、页面、读取 Port、首屏/下一页 Use Case 和合并规则已移入 Core，磁盘 Store 不再用 ViewModel 类型作为返回契约。分页大小在 Application 层限制为 1...200，下一页统一去重、按创建时间排序、累加损坏记录并推进游标；owner/account session/request/page kind typed token 拒绝换账号、重复加载和页面释放后的迟到结果。Core 3 项、磁盘 Store 8 项及 ViewModel 5 项定向回归通过。参考图导入和 Windows 平台边界仍未完整准入，第 06 页继续禁止 React 实现。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

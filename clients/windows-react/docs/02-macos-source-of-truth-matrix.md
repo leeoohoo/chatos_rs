@@ -1154,6 +1154,7 @@ Windows React 已完成对应独立切片：
 - 第 06 页图片生成已完成第一段 Application 分层：Core 新增窄 `MediaImageGenerating`、`MediaStudioImageHistoryPersisting`、`MediaStudioImageGenerationUseCase` 与 `MediaStudioImageGenerationState`。ViewModel 不再直接编排“调用 provider → 保存本地历史”，只冻结 request/owner、持有 Task 并消费 `saved / generatedWithoutPersistence` 强类型结果；账号 session、owner 与 request token 共同拒绝迟到写回。
 - “生成成功但保存失败仍展示结果”的既有语义现在由 Use Case 明确表达；取消在 provider 返回后、历史保存前重新检查，不会把旧账号结果写入磁盘。3 项 Core 测试覆盖 Port 路由、持久化失败和 lifecycle token，既有 Media Studio ViewModel/History/Image Interaction 22 项通过。模型目录、历史分页、参考图导入和 Windows 平台媒体/凭据边界仍需继续完成，当前不得进入 React。
 - 模型目录已收口到 `MediaStudioModelCatalogUseCase`：Gateway/Connector 继续实现窄 `MediaGenerationModelCatalogProviding` Port，Application 层保留当前完整图片候选，并精确复现仅允许 `MiniMax-H3` 进入视频候选的 macOS 规则。`MediaStudioModelCatalogState` 联合绑定 owner、account session 与 request，ViewModel 只消费目录快照、协调选中项和 loading/error 展示。Core 2 项及 ViewModel 5 项回归覆盖规则、连续刷新与跨账号迟到结果。
+- 历史首页/分页已收口到 `MediaStudioHistoryLoading`、`MediaStudioHistoryUseCase` 与 `MediaStudioHistoryLoadState`：Core 拥有图片/视频历史 DTO、游标、页面及合并规则，磁盘 Store 不再反向依赖 ViewModel 类型。首屏替换、下一页去重/排序、损坏记录累计、游标推进和 1...200 页大小上限由 Application 层定义；owner/account session/request/page kind 联合拒绝迟到结果。Core 3 项、Store 8 项及 ViewModel 5 项回归通过。
 - 历史首页/分页、图片生成→本地保存、视频生成→进度→本地保存，以及所有媒体读取任务都先完成 adapter/磁盘工作，再以 weak ViewModel 恢复并联合验收 identity。
 - 图片生成成功但本地保存失败时仍显示生成结果并给出历史错误；视频保存失败继续保留失败画布语义；取消视频必须拒绝服务端迟到完成。这些均为现有 macOS 行为，不得由 Windows 自行修改。
 - Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。
@@ -1178,7 +1179,7 @@ Windows React 已完成对应独立切片：
 | 03 | 项目设置 | macOS Application/Port 分层完成；Windows analyzer、typed process、Job Object/process group、bounded log/state long-poll、偏好/系统凭据 Secret、Removal、Favorite 与 Apple 主题 React UI 已完成 | 已进入 React |
 | 04 | 联系人聊天 | macOS 直接复用 Conversation session/timeline、空态与插件安装助手隔离提示已映射；Windows 薄组合层已完成 | 已进入 React；不创建第二套会话协议 |
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
-| 06 | AI 图片 | 源码映射中；生成/本地保存及模型目录已进入 Core 窄 Port/Use Case 与 typed lifecycle，历史分页、参考图和 Windows 平台边界继续收口 | 禁止；等待完整页面/Port 与平台差异验收 |
+| 06 | AI 图片 | 源码映射中；生成/本地保存、模型目录及历史分页已进入 Core 窄 Port/Use Case 与 typed lifecycle，参考图和 Windows 平台边界继续收口 | 禁止；等待完整页面/Port 与平台差异验收 |
 | 07 | AI 视频 | 源码映射中（progress/保存/取消生命周期已收口） | 禁止 |
 | 08 | AI 故事 | 源码映射中（项目/历史/生成/批次/Agent/编辑生命周期已收口） | 禁止；等待完整 Port 与平台差异验收 |
 | 09 | AI 历史 | 源码映射中（本地分页与账号隔离已收口） | 禁止 |
@@ -1242,5 +1243,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 29. [已完成] 第 05 页 Windows React 已完成 strict Domain DTO、typed Port/Tauri Adapter、latest-wins Store、Apple 风格列表/Host/context picker 与 sandbox iframe；CSP 只增加 loopback `frame-src`，React 全量 74 个测试文件、258 项通过，production build、类型检查和架构审计通过。
 30. [已完成] 第 06 页 AI 图片开始按 macOS 事实源分层；图片生成与本地历史保存已收口到 Core 窄 Port/Use Case/typed lifecycle，生成成功但保存失败及跨账号迟到结果均有明确语义和回归覆盖。
 31. [已完成] 第 06 页模型目录读取、`MiniMax-H3` 视频准入规则及 owner/account/request lifecycle 已进入 Core Use Case；连续刷新和跨账号迟到响应不会覆盖当前目录。下一片继续历史首页/分页边界。
+32. [已完成] 第 06 页历史首页/分页的 DTO、Port、Use Case、合并规则与 owner/account/request/page lifecycle 已进入 Core，磁盘 Store 不再暴露 ViewModel 类型。下一片继续参考图导入边界。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

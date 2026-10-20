@@ -28,14 +28,7 @@ final class MediaStudioViewModel: ObservableObject {
     }
 
     typealias HistoryItem = MediaStudioImageHistoryItem
-
-    struct VideoHistoryItem: Identifiable, Equatable, Sendable {
-        var id: String
-        var prompt: String
-        var modelName: String
-        var createdAt: Date
-        var fileURL: URL
-    }
+    typealias VideoHistoryItem = MediaStudioVideoHistoryItem
 
     enum VideoCanvasState: Equatable {
         case progress(VideoGenerationProgress)
@@ -86,13 +79,15 @@ final class MediaStudioViewModel: ObservableObject {
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
     private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
+    private let historyUseCase: MediaStudioHistoryUseCase
     let stories: StoryStudioViewModel
     private var hasLoaded = false
     private var videoGenerationTask: Task<Void, Never>?
     private var imageGenerationTask: Task<Void, Never>?
     private var historyLoadTask: Task<Void, Never>?
-    private var historyCursor: MediaStudioHistoryStore.Cursor?
+    private var historyCursor: MediaStudioHistoryCursor?
     private var unreadableHistoryCount = 0
+    private var historyLoadState = MediaStudioHistoryLoadState()
     private var modelsLoadTask: Task<Void, Never>?
     private var modelCatalogState = MediaStudioModelCatalogState()
     private let historyStore: MediaStudioHistoryStore
@@ -115,6 +110,7 @@ final class MediaStudioViewModel: ObservableObject {
             history: historyStore
         )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
+        self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
         self.historyStore = historyStore
         self.imageTransport = imageTransport
@@ -136,70 +132,97 @@ final class MediaStudioViewModel: ObservableObject {
         ownerID = userID
         stories.activate(userID: userID)
         isLoadingHistory = true
-        let session = sessionID
-        let historyStore = historyStore
+        let token = historyLoadState.begin(
+            ownerUserID: userID,
+            accountSessionID: sessionID,
+            kind: .initial
+        )
+        let useCase = historyUseCase
         historyLoadTask = Task { [weak self] in
-            let result: Result<MediaStudioHistoryStore.Snapshot, Error>
+            let result: Result<MediaStudioHistoryPage, Error>
             do {
-                result = .success(try await historyStore.load(owner: userID))
+                result = .success(try await useCase.loadInitial(owner: userID))
             } catch {
                 result = .failure(error)
             }
-            guard !Task.isCancelled,
-                  let self,
-                  self.sessionID == session else { return }
-            switch result {
-            case let .success(snapshot):
-                self.history = snapshot.images
-                self.videoHistory = snapshot.videos
-                self.historyCursor = snapshot.nextCursor
-                self.hasMoreHistory = snapshot.nextCursor != nil
-                self.unreadableHistoryCount = snapshot.unreadableCount
-                self.updateHistoryReadError()
-            case let .failure(error):
-                self.historyErrorMessage = "读取创作记录失败：\(error.localizedDescription)"
-            }
-            self.isLoadingHistory = false
-            self.historyLoadTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishHistoryLoad(result, token: token)
         }
     }
 
     func loadMoreHistory() {
         guard let ownerID, let cursor = historyCursor,
               !isLoadingHistory, !isLoadingMoreHistory else { return }
-        let session = sessionID
-        let historyStore = historyStore
+        let token = historyLoadState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID,
+            kind: .next(cursor)
+        )
+        let useCase = historyUseCase
         isLoadingMoreHistory = true
         historyLoadTask = Task { [weak self] in
-            let result: Result<MediaStudioHistoryStore.Snapshot, Error>
+            let result: Result<MediaStudioHistoryPage, Error>
             do {
-                result = .success(try await historyStore.load(owner: ownerID, after: cursor))
+                result = .success(try await useCase.loadNext(owner: ownerID, after: cursor))
             } catch {
                 result = .failure(error)
             }
-            guard !Task.isCancelled,
-                  let self,
-                  self.sessionID == session else { return }
-            switch result {
-            case let .success(snapshot):
-                let imageIDs = Set(self.history.map(\.id))
-                let videoIDs = Set(self.videoHistory.map(\.id))
-                self.history.append(contentsOf: snapshot.images.filter { !imageIDs.contains($0.id) })
-                self.videoHistory.append(
-                    contentsOf: snapshot.videos.filter { !videoIDs.contains($0.id) }
-                )
-                self.history.sort { $0.createdAt > $1.createdAt }
-                self.videoHistory.sort { $0.createdAt > $1.createdAt }
-                self.historyCursor = snapshot.nextCursor
-                self.hasMoreHistory = snapshot.nextCursor != nil
-                self.unreadableHistoryCount += snapshot.unreadableCount
-                self.updateHistoryReadError()
-            case let .failure(error):
-                self.historyErrorMessage = "读取更多创作记录失败：\(error.localizedDescription)"
-            }
-            self.isLoadingMoreHistory = false
-            self.historyLoadTask = nil
+            guard !Task.isCancelled else { return }
+            self?.finishHistoryLoad(result, token: token)
         }
+    }
+
+    private func finishHistoryLoad(
+        _ result: Result<MediaStudioHistoryPage, Error>,
+        token: MediaStudioHistoryLoadToken
+    ) {
+        guard historyLoadState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        switch result {
+        case let .success(page):
+            let collection: MediaStudioHistoryCollection
+            switch token.kind {
+            case .initial:
+                collection = historyUseCase.replacing(with: page)
+            case .next:
+                collection = historyUseCase.merging(page, into: currentHistoryCollection())
+            }
+            applyHistoryCollection(collection)
+        case let .failure(error):
+            switch token.kind {
+            case .initial:
+                historyErrorMessage = "读取创作记录失败：\(error.localizedDescription)"
+            case .next:
+                historyErrorMessage = "读取更多创作记录失败：\(error.localizedDescription)"
+            }
+        }
+        guard historyLoadState.finish(token) else { return }
+        switch token.kind {
+        case .initial: isLoadingHistory = false
+        case .next: isLoadingMoreHistory = false
+        }
+        historyLoadTask = nil
+    }
+
+    private func currentHistoryCollection() -> MediaStudioHistoryCollection {
+        MediaStudioHistoryCollection(
+            images: history,
+            videos: videoHistory,
+            unreadableCount: unreadableHistoryCount,
+            nextCursor: historyCursor
+        )
+    }
+
+    private func applyHistoryCollection(_ collection: MediaStudioHistoryCollection) {
+        history = collection.images
+        videoHistory = collection.videos
+        historyCursor = collection.nextCursor
+        hasMoreHistory = collection.nextCursor != nil
+        unreadableHistoryCount = collection.unreadableCount
+        updateHistoryReadError()
     }
 
     private func updateHistoryReadError() {
@@ -652,6 +675,7 @@ final class MediaStudioViewModel: ObservableObject {
         isLoadingInputImages = false
         historyLoadTask?.cancel()
         historyLoadTask = nil
+        historyLoadState.reset()
         isLoadingHistory = false
         isLoadingMoreHistory = false
         hasMoreHistory = false

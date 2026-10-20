@@ -5,21 +5,12 @@ import Foundation
 
 /// Each completed creation has its own atomic manifest and local media files.
 /// Relative filenames keep records valid across app reinstalls and directory moves.
-actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
+actor MediaStudioHistoryStore: MediaStudioHistoryLoading, MediaStudioImageHistoryPersisting {
     private static let maximumManifestBytes = 2 * 1_024 * 1_024
-    nonisolated static let defaultPageSize = 60
+    nonisolated static let defaultPageSize = MediaStudioHistoryUseCase.defaultPageSize
 
-    struct Cursor: Sendable, Equatable {
-        fileprivate var modifiedAt: Date
-        fileprivate var recordID: String
-    }
-
-    struct Snapshot: Sendable {
-        var images: [MediaStudioViewModel.HistoryItem] = []
-        var videos: [MediaStudioViewModel.VideoHistoryItem] = []
-        var unreadableCount = 0
-        var nextCursor: Cursor?
-    }
+    typealias Cursor = MediaStudioHistoryCursor
+    typealias Snapshot = MediaStudioHistoryPage
 
     private struct Candidate {
         var folder: URL
@@ -53,7 +44,12 @@ actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
     }
 
     func load(owner: String, after cursor: Cursor? = nil,
-              limit requestedLimit: Int = defaultPageSize) throws -> Snapshot {
+              limit requestedLimit: Int = defaultPageSize) async throws -> Snapshot {
+        try loadPage(owner: owner, after: cursor, limit: requestedLimit)
+    }
+
+    private func loadPage(owner: String, after cursor: Cursor?,
+                          limit requestedLimit: Int) throws -> Snapshot {
         let directory = ownerDirectory(owner)
         guard FileManager.default.fileExists(atPath: directory.path) else { return Snapshot() }
         let limit = min(max(requestedLimit, 1), 200)
@@ -140,7 +136,7 @@ actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
         return value.recordID < cursor.recordID
     }
 
-    func saveImage(_ result: ImageGenerationResult, prompt: String, owner: String) async throws -> MediaStudioViewModel.HistoryItem {
+    func saveImage(_ result: ImageGenerationResult, prompt: String, owner: String) async throws -> MediaStudioImageHistoryItem {
         guard !result.images.isEmpty else { throw HistoryError.invalidRecord }
         let folder = try newFolder(owner: owner)
         var assets: [Asset] = []
@@ -172,7 +168,7 @@ actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
         return imageItem(entry, folder: folder)
     }
 
-    func saveVideo(_ result: VideoGenerationResult, prompt: String, owner: String) throws -> MediaStudioViewModel.VideoHistoryItem {
+    func saveVideo(_ result: VideoGenerationResult, prompt: String, owner: String) throws -> MediaStudioVideoHistoryItem {
         guard !result.videoData.isEmpty else { throw HistoryError.invalidRecord }
         let folder = try newFolder(owner: owner)
         let filename = "video.\(result.mimeType == "video/quicktime" ? "mov" : "mp4")"
@@ -201,14 +197,14 @@ actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
         try data.write(to: folder.appendingPathComponent("record.json"), options: .atomic)
     }
 
-    private func imageItem(_ entry: Entry, folder: URL) -> MediaStudioViewModel.HistoryItem {
+    private func imageItem(_ entry: Entry, folder: URL) -> MediaStudioImageHistoryItem {
         .init(id: entry.id, prompt: entry.prompt, modelName: entry.modelName, createdAt: entry.createdAt,
               images: entry.assets.map {
                   .init(id: $0.id, mimeType: $0.mimeType, url: localURL(folder: folder, filename: $0.filename), revisedPrompt: $0.revisedPrompt)
               })
     }
 
-    private func videoItem(_ entry: Entry, folder: URL) -> MediaStudioViewModel.VideoHistoryItem {
+    private func videoItem(_ entry: Entry, folder: URL) -> MediaStudioVideoHistoryItem {
         .init(id: entry.id, prompt: entry.prompt, modelName: entry.modelName, createdAt: entry.createdAt,
               fileURL: localURL(folder: folder, filename: entry.assets[0].filename))
     }
