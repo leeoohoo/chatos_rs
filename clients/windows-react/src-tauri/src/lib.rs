@@ -10,6 +10,7 @@ mod conversation_history;
 mod conversation_realtime;
 mod conversation_runtime_settings;
 mod host_lifecycle;
+mod local_terminal;
 mod platform_execution_context;
 mod project_conversation;
 mod project_creation;
@@ -51,6 +52,11 @@ use conversation_runtime_settings::{
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
+};
+use local_terminal::{
+    close_local_terminal, discard_local_terminal_presentation, interrupt_local_terminal,
+    poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
+    LocalTerminalRegistry,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -115,6 +121,7 @@ pub fn run() {
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
         .manage(HostManager::default())
+        .manage(LocalTerminalRegistry::default())
         .manage(ConversationRuntimeSettingsManager::default())
         .manage(ProjectCreationManager::default())
         .manage(ProjectRunManager::default())
@@ -272,6 +279,13 @@ pub fn run() {
             poll_remote_terminal,
             close_remote_terminal,
             discard_remote_terminal_presentation,
+            start_local_terminal,
+            send_local_terminal_input,
+            resize_local_terminal,
+            interrupt_local_terminal,
+            poll_local_terminal,
+            close_local_terminal,
+            discard_local_terminal_presentation,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,
@@ -286,6 +300,7 @@ pub fn run() {
         app_handle.state::<TerminalToolWorker>().reset().await;
         app_handle.state::<ProjectRunManager>().reset().await;
         app_handle.state::<RemoteConnectionManager>().reset().await;
+        app_handle.state::<LocalTerminalRegistry>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });
     if exit_code != 0 {

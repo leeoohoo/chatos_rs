@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
 import type { AccessControlPort } from "../features/access-control/ports/AccessControlPort";
@@ -19,6 +19,7 @@ import { ToolApprovalSettingsView } from "../features/tool-approval/ui/ToolAppro
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
+import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
 import type { ProjectConversationPort } from "../features/project-conversation/ports/ProjectConversationPort";
 import { ProjectConversationPlaceholder } from "../features/project-conversation/ui/ProjectConversationPlaceholder";
@@ -39,9 +40,15 @@ import type { WorkspaceSelection } from "../features/workspace-index/domain/work
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 
+const LocalTerminalWorkspace = lazy(async () => {
+  const module = await import("../features/local-terminal/ui/LocalTerminalWorkspace");
+  return { default: module.LocalTerminalWorkspace };
+});
+
 interface AppShellProps {
   accessControl: AccessControlPort;
   hostLifecycle: HostLifecyclePort;
+  localTerminal: LocalTerminalPort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
   projectCreation: ProjectCreationPort;
@@ -67,6 +74,7 @@ interface AppShellProps {
 export function AppShell({
   accessControl,
   hostLifecycle,
+  localTerminal,
   workspaceIndex,
   projectConversation,
   projectCreation,
@@ -167,6 +175,8 @@ export function AppShell({
       ? "运行与权限"
       : activeSurface === "access-control"
         ? "访问控制"
+      : selection.kind === "terminal"
+        ? "本机终端"
       : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? "工作台";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
@@ -267,6 +277,14 @@ export function AppShell({
             ownerUserId={session.user.id}
             port={accessControl}
           />
+        ) : selection.kind === "terminal" ? (
+          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入本机终端…</div>}>
+            <LocalTerminalWorkspace
+              hostReady={snapshot.ready}
+              ownerUserId={session.user.id}
+              port={localTerminal}
+            />
+          </Suspense>
         ) : selectedRemoteConnection ? (
           <RemoteConnectionDetailView
             connection={selectedRemoteConnection}

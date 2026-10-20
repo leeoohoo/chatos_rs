@@ -66,8 +66,17 @@ export function WorkspaceSidebar({
         onClick={() => onSelectionChange({ kind: "workbench" })}
         type="button"
       >
-        <span className="nav-symbol">⌂</span>
+        <span aria-hidden="true" className="nav-symbol">⌂</span>
         工作台
+      </button>
+      <button
+        className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
+        disabled={!hostReady}
+        onClick={() => onSelectionChange({ kind: "terminal" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">⌘</span>
+        本机终端
       </button>
 
       <SidebarSection title="联系人">

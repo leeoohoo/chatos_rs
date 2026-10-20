@@ -46,6 +46,7 @@ export interface WorkspaceIndexSnapshot {
 
 export type WorkspaceSelection =
   | { kind: "workbench" }
+  | { kind: "terminal" }
   | { kind: "contact"; id: string }
   | { kind: "project"; id: string }
   | { kind: "remote"; id: string };

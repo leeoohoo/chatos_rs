@@ -337,7 +337,11 @@ macOS 本机 Terminal 切片（2026-10-21）：
 - 本机与远程终端共用无进程能力的 `NativeByteStreamTerminalView` renderer，输入与 resize 只转发给 typed Port，OSC title/目录、搜索、链接白名单和剪贴板仍由展示层负责；
 - Connector 事件缓冲最多 256 个 chunk。消费者追不上时不静默丢失控制序列，而是发布显式 failure、终止进程组并结束 stream，防止高速输出重新形成无界内存；
 - 定向验收为 Core 2 项、Connector 本机 PTY 3 项、App 4 项通过；既有 Native Terminal Executor 6 项同时通过。完整 macOS 回归仍作为提交门禁；
-- Windows 第 19 页必须另建 owner + presentation + generation 绑定的 ConPTY typed session，并完成 cwd 授权、受限环境、输入/输出预算、resize、进程树回收、账号/Host/页面 teardown 与 React Store identity 后才可进入 UI。现有 task terminal worker 面向 Host durable tool invocation，不是交互式页面 Port，禁止复用其权限来绕过本页准入。
+- Windows 第 19 页已建立独立 owner + presentation + generation 绑定的 ConPTY typed session；现有 task terminal worker 与远程终端仅提供进程回收技术参考，没有复用其 Host durable tool invocation 或 SSH 权限；
+- React 只提交 owner、opaque presentation/session identity、输入字节、viewport 和 poll cursor，不提交 executable、arguments、environment 或 cwd。Windows 原生层从系统目录解析 Windows PowerShell，选择当前用户目录并构造不含应用 Secret 的 allowlist 环境；
+- 原生层限制每 owner 最多 4 个会话、64 KiB 单次输入、1–1000 viewport、512 event/2 MiB retained output、128 event/256 KiB 单次 poll 与 30 秒 long-poll；Windows Job Object 在 close/reset/drop 时回收进程树；
+- React `LocalTerminalPort`、Tauri Adapter、Zustand workspace Store 与 Apple 主题 UI 保持 macOS 的多标签、关闭最后标签立即补建、10,000 行 scrollback、搜索、清屏、中断、OSC title/cwd；每标签冻结 owner/workspace generation/presentation/session/tab generation，关闭、离页、账号或 Host 变化后的迟到 start/poll 不得写回；
+- Authentication restore/login/register/logout、Host stop/失联/替换、页面 discard 与应用退出均接入原生 reset。Rust 5 项本机终端定向测试、React 12 项切片测试及全量门禁通过，第 19 页已进入 Windows React。
 
 ### 2.3 Authentication：完整调用链
 
@@ -1214,6 +1218,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 22. [已完成] 第 04 页联系人聊天按 macOS 直接复用已准入 Conversation surface；普通联系人、插件安装助手能力隔离提示及无公开会话空态已完成 React 映射，不新增协议或 Host 权限。
 23. [已完成] 远程资源已完成 Windows metadata/Credential Manager、固定 OpenSSH、host-key、jump host/MFA、目录读取/mutation、committed-without-refresh、opaque 本机选择、8 GiB 流式上传/下载与交互式 ConPTY/OpenSSH session；React 连接管理、SFTP 和 xterm Terminal 工作区已按 macOS 事实源接入并通过全量门禁。
 24. [已完成] 第 05 页应用列表与启动已完成 macOS 分层：Listing/Launch 使用独立 Port/Application Use Case，Feature ViewModel 管理 context/launch identity，项目根路径不进入 UI/WebView，迟到启动结果在切换 context、离页与账号替换后均被拒绝；Windows 等待 plugin runtime/bridge/Tauri 原生安全边界准入。
-25. [已完成] 第 19 页本机终端已完成 macOS 分层：SwiftUI 只消费 Core byte-stream Port，登录 Shell、环境、PTY、进程组与输出预算留在 Connector；多标签、OSC、搜索、中断、关闭及账号 teardown 语义保持。Windows 等待独立 ConPTY 交互 session 门禁，不复用 task terminal worker 冒充页面能力。
+25. [已完成] 第 19 页本机终端已完成 macOS 分层，并以独立 ConPTY session、typed Tauri Port、多标签 Store 和 Apple 主题 UI 进入 Windows React；task terminal worker 与远程终端权限未被复用，账号/Host/页面/退出 teardown、预算和迟到结果门禁均进入测试。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

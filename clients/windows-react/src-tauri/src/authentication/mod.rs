@@ -13,8 +13,8 @@ use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
 use crate::{
-    host_lifecycle::HostManager, project_run::ProjectRunManager,
-    remote_connection::RemoteConnectionManager,
+    host_lifecycle::HostManager, local_terminal::LocalTerminalRegistry,
+    project_run::ProjectRunManager, remote_connection::RemoteConnectionManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -289,7 +289,9 @@ pub async fn restore_authentication_session(
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
+    local_terminals: State<'_, LocalTerminalRegistry>,
 ) -> Result<Option<AuthSession>, String> {
+    local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager.restore_session().await?;
     if let Some(session) = &session {
@@ -307,7 +309,9 @@ pub async fn login(
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
+    local_terminals: State<'_, LocalTerminalRegistry>,
 ) -> Result<AuthSession, String> {
+    local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager.login(username, password).await?;
     project_runs.retain_owner(&session.user.id).await;
@@ -336,7 +340,9 @@ pub async fn register(
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
+    local_terminals: State<'_, LocalTerminalRegistry>,
 ) -> Result<AuthSession, String> {
+    local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager
         .register(email, password, invite_code, verification_code)
@@ -351,7 +357,9 @@ pub async fn logout(
     host_manager: State<'_, HostManager>,
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
+    local_terminals: State<'_, LocalTerminalRegistry>,
 ) -> Result<(), String> {
+    local_terminals.reset().await;
     remote_connections.reset().await;
     project_runs.reset().await;
     let result = manager.logout().await;
