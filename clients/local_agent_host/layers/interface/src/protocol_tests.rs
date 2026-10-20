@@ -9,7 +9,10 @@ fn shared_fixture(name: &str) -> Vec<u8> {
         .join("../../../contracts/local-agent/v44/fixtures")
         .join(name);
     std::fs::read(&path).unwrap_or_else(|error| {
-        panic!("failed to read shared contract fixture {}: {error}", path.display())
+        panic!(
+            "failed to read shared contract fixture {}: {error}",
+            path.display()
+        )
     })
 }
 
@@ -41,7 +44,63 @@ fn shared_health_fixtures_match_protocol_v44() {
         serde_json::from_slice(&shared_fixture("health-failure.json")).expect("health failure");
     assert!(!failure.ok);
     assert!(failure.result.is_none());
-    assert_eq!(failure.error.expect("health error").code, "storage_unavailable");
+    assert_eq!(
+        failure.error.expect("health error").code,
+        "storage_unavailable"
+    );
+}
+
+#[test]
+fn shared_conversation_run_fixtures_preserve_cross_platform_links() {
+    let history: HostResponseEnvelope =
+        serde_json::from_slice(&shared_fixture("conversation-history-success.json"))
+            .expect("conversation history");
+    let history = match history.result.expect("history result") {
+        HostResult::ConversationHistory { page } => page,
+        other => panic!("unexpected history result: {other:?}"),
+    };
+    assert_eq!(history.conversation.conversation_id, "conversation-1");
+    assert_eq!(history.turns[0].run_id, "run-1");
+    assert_eq!(history.messages[0].message_id, "message-user-1");
+    assert_eq!(
+        history.attachments[0].authorized_local_ref,
+        "local-attachment:authority-1"
+    );
+    assert_eq!(history.next_before_ordinal, None);
+
+    let graph: HostResponseEnvelope =
+        serde_json::from_slice(&shared_fixture("message-task-graph-success.json"))
+            .expect("message task graph");
+    let graph = match graph.result.expect("graph result") {
+        HostResult::MessageTaskGraph { graph } => graph,
+        other => panic!("unexpected graph result: {other:?}"),
+    };
+    assert_eq!(
+        graph.source_conversation_id,
+        history.conversation.conversation_id
+    );
+    assert_eq!(graph.source_turn_id, history.turns[0].turn_id);
+    assert_eq!(
+        graph.source_user_message_id.as_deref(),
+        Some(history.messages[0].message_id.as_str())
+    );
+    assert_eq!(graph.nodes[0].task.active_run_id.as_deref(), Some("run-1"));
+
+    let events: HostResponseEnvelope =
+        serde_json::from_slice(&shared_fixture("run-events-latest-success.json"))
+            .expect("latest run events");
+    let (events, next_cursor) = match events.result.expect("events result") {
+        HostResult::Events {
+            events,
+            next_cursor,
+        } => (events, next_cursor),
+        other => panic!("unexpected events result: {other:?}"),
+    };
+    assert!(events
+        .windows(2)
+        .all(|pair| pair[0].cursor > pair[1].cursor));
+    assert!(events.iter().all(|event| event.run_id == "run-1"));
+    assert_eq!(next_cursor, events.last().expect("oldest event").cursor);
 }
 
 #[test]

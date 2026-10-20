@@ -337,7 +337,9 @@ Adapter：
 - `clients/macos/Tests/ChatOSCoreTests/ConversationViewportUseCaseTests.swift`
 - `clients/macos/Tests/ChatOSAppTests/ConversationTimelineBottomSyncPolicyTests.swift`
 
-Windows 对应契约测试必须复用相同 fixture，并覆盖上述分支；不能只做组件快照测试。
+共享 Host v44 fixture 已固定 Conversation history、Message Task Graph 与最新 Run events，并由 Rust interface、Swift Connector、TypeScript Zod contract 同时读取验证；Windows 后续实现必须继续复用这些 fixture，并覆盖上述状态分支，不能只做组件快照测试。
+
+准入结论：Conversation 核心时间线与发送/恢复状态机已达到 `macOS 分层完成，可进入 React`；React 实现仍必须按 History→Composer→Realtime 的垂直顺序逐片落地。
 
 ## 5. Task Graph / Run Inspector：完整调用链
 
@@ -388,7 +390,7 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - Conversation 执行过程通过 Host `process` payload mode 读取 durable events；SQLite 只投影 mapper 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数。macOS 固定每页 25 条、最多 400 页，保持原有 10,000 事件上限且让每页稳定低于 IPC frame 限制；
 - 旧版 Turn Process 弹层已改由 `TurnProcessUseCase` 执行 typed session/turn 查询，并用 `TurnProcessLifecycleState` 绑定当前可见请求；弹层关闭会取消具体 Task、立即失效 token，忽略取消的迟到结果不得回写或保活 ViewModel；
 - `MessageTaskInspectorRequestState` 已统一 Inspector 最新快照与 Run 事件分页的 request identity；同一 Task 重载、section 切换和刷新都会拒绝旧结果，新的快照也会淘汰旧分页；
-- `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射。Conversation / Run Inspector 的 macOS 分层已收口，当前只剩跨平台 fixture 与最终准入验收。
+- `MessageTaskGraphPollingState` 已持有 polling session identity，`MessageTaskWorkspaceLifecycleState` 已持有弹层 presentation session；SwiftUI ViewModel 只保留具体 Task 的取消、realtime 降级协调与 loading 映射。
 
 ### 5.3 并发、空结果与降级
 
@@ -441,6 +443,11 @@ Adapter：`clients/macos/Sources/ChatOSConnector/NativeLocalAgentMessageTaskGrap
 - `clients/macos/Tests/ChatOSAppTests/TaskGraphDeliveryPresentationTests.swift`
 - `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentMessageTaskGraphServiceTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphNormalizerTests.swift`
+- `clients/macos/Tests/ChatOSConnectorTests/NativeLocalAgentHostContractFixtureTests.swift`
+- `clients/local_agent_host/layers/interface/src/protocol_tests.rs`
+- `clients/windows-react/src/conversation-run-contract.test.ts`
+
+准入结论：Run Inspector、Task Graph 与最新事件分页已达到 `macOS 分层完成，可进入 React`。
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskGraphFocusTests.swift`
 - `clients/macos/Tests/ChatOSCoreTests/MessageTaskAcceptanceTests.swift`
 
@@ -750,7 +757,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
 | 01 | 项目目录 | 源码映射中 | 禁止 |
-| 02 | 项目消息 | 已映射，可重构 | 禁止；等待 macOS 分层 |
+| 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
 | 05 | 应用 | 未映射 | 禁止 |
@@ -788,10 +795,10 @@ Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图
 Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业务页面仍按以下顺序实施，不能越过各自行准入门禁：
 
 1. 完成 Windows Host sidecar 打包、退出联动、有界诊断和账号 bootstrap adapter；
-2. 继续让 macOS Conversation 与 Run Inspector 仅依赖已提取 ports，并完成剩余 UI Task/service orchestration 收口；
-3. 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
-4. 为下一条业务切片固定 Rust/Swift/TypeScript fixture；
-5. 将该切片状态改为 `macOS 分层完成，可进入 React`；
-6. 才创建 `clients/windows-react` 下对应的 React feature。
+2. [已完成] 让 macOS Conversation 与 Run Inspector 仅依赖已提取 ports/use cases，并完成 UI Task/service orchestration 收口；
+3. [已完成] 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
+4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
+5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
+6. 下一步在 `clients/windows-react` 按 History→Composer→Realtime→Run Inspector 顺序创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

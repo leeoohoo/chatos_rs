@@ -442,7 +442,7 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 ### 阶段 3：Windows React 技术样板
 
-当前状态：执行中。`clients/windows-react` 已建立 React 19 + TypeScript + Vite + Tauri 2 工程，Host lifecycle、Shell、Authentication、只读 Workspace Index 与项目会话准备 P0 切片均通过 typed Port/Adapter 接入。Shell 只读取显式 lifecycle snapshot；Host 未就绪或握手失败时展示可恢复状态，不以无限 loading 隐藏错误。Tauri 已打包真实 Local Agent Host sidecar，完成 v44 framed health/business request、4 MiB frame/64 MiB message 限制、有界无 Secret 诊断及应用退出前的 Host 回收。自定义窗口框架保留拖拽、缩放、最小化、最大化和关闭能力，并完成浏览器视觉回归。Authentication 复用 macOS 的恢复、登录、注册、验证码倒计时与 logout/login 排序语义；Token 仅由 Rust 持有并写入 Windows Credential Manager，登录成功后才以 `user.id` 启动 Host。Workspace Index 复用 macOS 的客户端本地项目权威与 local-first 两阶段加载：本地 SQLite 项目先展示，Host 联系人/会话关系随后刷新，远端关系不得发明项目。项目点击后以 Registry context 校验、Host project binding 幂等复用/创建和并发失败二次查询完成四态准备；React 不读 SQLite，也不伪造尚未准入的时间线。Windows CI 已覆盖前端架构审计、类型检查、测试、构建、Rust 测试、真实 Host 业务请求、Tauri release build 和 NSIS 安装包产物上传。Conversation 时间线等尚未达到矩阵准入条件的业务页面仍未创建。
+当前状态：执行中。`clients/windows-react` 已建立 React 19 + TypeScript + Vite + Tauri 2 工程，Host lifecycle、Shell、Authentication、只读 Workspace Index 与项目会话准备 P0 切片均通过 typed Port/Adapter 接入。Shell 只读取显式 lifecycle snapshot；Host 未就绪或握手失败时展示可恢复状态，不以无限 loading 隐藏错误。Tauri 已打包真实 Local Agent Host sidecar，完成 v44 framed health/business request、4 MiB frame/64 MiB message 限制、有界无 Secret 诊断及应用退出前的 Host 回收。自定义窗口框架保留拖拽、缩放、最小化、最大化和关闭能力，并完成浏览器视觉回归。Authentication 复用 macOS 的恢复、登录、注册、验证码倒计时与 logout/login 排序语义；Token 仅由 Rust 持有并写入 Windows Credential Manager，登录成功后才以 `user.id` 启动 Host。Workspace Index 复用 macOS 的客户端本地项目权威与 local-first 两阶段加载：本地 SQLite 项目先展示，Host 联系人/会话关系随后刷新，远端关系不得发明项目。项目点击后以 Registry context 校验、Host project binding 幂等复用/创建和并发失败二次查询完成四态准备；React 不读 SQLite，也不伪造尚未准入的时间线。Windows CI 已覆盖前端架构审计、类型检查、测试、构建、Rust 测试、真实 Host 业务请求、Tauri release build 和 NSIS 安装包产物上传。Conversation + Run Inspector 的 macOS 分层与 Rust/Swift/TypeScript 共享 fixture 已完成准入，下一步按 History→Composer→Realtime→Run Inspector 分片实现 React feature。
 
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
@@ -550,8 +550,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
 4. [已完成] 建立 Host v44 health fixture 与 Rust/Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备用例/per-project lifecycle、Conversation Session factory 与 Run Inspector 分页规则已提取。
-6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、runtime settings/realtime/Turn Process 用例、子功能 composition、polling 决策、polling session 与 Workspace presentation session 生命周期已提取；macOS 分层已收口，跨平台 fixture 与最终准入验收尚未完成。
-7. [进行中] 已创建 Tauri 2 + React 19 工程骨架并接入 Host lifecycle；继续完善 sidecar 打包、诊断和恢复，Conversation 在准入前不实现。
+6. [已完成] Conversation + Run Inspector 的 macOS 分层、Application use case 路由、typed lifecycle、子功能 composition 与 Rust/Swift/TypeScript 共享 fixture 已完成，并通过最终 React 准入验收。
+7. [进行中] 已创建 Tauri 2 + React 19 工程骨架并接入 Host lifecycle；Conversation 已准入，按 History→Composer→Realtime→Run Inspector 顺序实施。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
 ## 13. 完成定义
