@@ -20,6 +20,7 @@ export interface CreateRemoteConnectionRequest extends RemoteConnectionScope {
 }
 
 export interface UpdateRemoteConnectionRequest extends SavedRemoteConnectionScope {
+  presentationId: string;
   expectedVersion: number;
   input: RemoteConnectionInput;
 }

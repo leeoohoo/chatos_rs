@@ -168,6 +168,9 @@ export type RemoteConnection = z.infer<typeof remoteConnectionSchema>;
 export type RemoteConnectionInput = z.infer<typeof remoteConnectionInputSchema>;
 export type RemoteConnectionTestResult = z.infer<typeof remoteConnectionTestResultSchema>;
 export type RemoteSecretMutation = z.infer<typeof remoteSecretMutationSchema>;
+export type RemoteCredentialMutation = z.infer<typeof remoteCredentialMutationSchema>;
+export type RemoteAuthenticationType = z.infer<typeof remoteAuthenticationTypeSchema>;
+export type RemoteHostKeyPolicy = z.infer<typeof remoteHostKeyPolicySchema>;
 export type RemoteCredentialFileKind = z.infer<typeof remoteCredentialFileKindSchema>;
 export type RemoteCredentialFileSelection = z.infer<typeof remoteCredentialFileSelectionSchema>;
 

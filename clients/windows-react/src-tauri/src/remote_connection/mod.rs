@@ -108,7 +108,8 @@ pub struct RemoteConnectionManager {
 
 impl RemoteConnectionManager {
     pub fn new(app_data_directory: PathBuf) -> Self {
-        let runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
+        let test_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
+        let file_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         let terminal_runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         Self {
             mutation: Mutex::new(()),
@@ -118,9 +119,9 @@ impl RemoteConnectionManager {
             route_provider: Arc::new(ConnectorStateRouteProvider {
                 data_directory: app_data_directory,
             }),
-            tester: runtime.clone(),
+            tester: test_runtime,
             credential_file_selections: RemoteCredentialFileSelectionStore::default(),
-            file_executor: runtime.clone(),
+            file_executor: file_runtime,
             file_selections: RemoteFileSelectionStore::default(),
             terminal_tester: terminal_runtime.clone(),
             terminal_launcher: terminal_runtime,

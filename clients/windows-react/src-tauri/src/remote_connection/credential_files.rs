@@ -240,6 +240,7 @@ pub async fn discard_remote_credential_file_selections(
 ) -> Result<(), String> {
     crate::host_lifecycle::validate_owner(&owner_user_id)?;
     validate_presentation_id(&presentation_id)?;
+    manager.tester.reset().await;
     manager
         .credential_file_selections
         .discard(&owner_user_id, &presentation_id);
