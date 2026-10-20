@@ -66,6 +66,7 @@ struct RegistrationCodeResponse {
 pub(crate) struct GatewayModelConfig {
     pub id: String,
     pub owner_user_id: String,
+    pub name: String,
     pub provider: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -80,6 +81,8 @@ pub(crate) struct GatewayModelConfig {
     pub has_api_key: bool,
     #[serde(default)]
     pub supports_images: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
     #[serde(default)]
     pub supports_responses: bool,
 }

@@ -47,6 +47,7 @@ impl HostLifecycleSnapshot {
 #[derive(Default)]
 pub struct HostManager {
     process: Mutex<Option<ManagedHost>>,
+    model_catalog: Mutex<Option<(String, Vec<control_plane::ControlPlaneModelOption>)>>,
     diagnostics: HostDiagnostics,
 }
 
@@ -63,6 +64,7 @@ impl HostManager {
             terminate(host).await;
         }
         *process = None;
+        *self.model_catalog.lock().await = None;
     }
 
     pub async fn shutdown(&self) {
@@ -103,6 +105,7 @@ impl HostManager {
                 if error.fatal {
                     terminate(host).await;
                     *process = None;
+                    *self.model_catalog.lock().await = None;
                 }
                 self.diagnostics
                     .record("host_request", classify_error(&error.message))
@@ -113,6 +116,20 @@ impl HostManager {
                 })
             }
         }
+    }
+
+    pub(crate) async fn model_options(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<control_plane::ControlPlaneModelOption>, String> {
+        let catalog = self.model_catalog.lock().await;
+        let Some((owner, options)) = catalog.as_ref() else {
+            return Err("本地模型目录尚未就绪。".into());
+        };
+        if owner != owner_user_id {
+            return Err("本地模型目录与当前账号不一致。".into());
+        }
+        Ok(options.clone())
     }
 }
 
@@ -141,6 +158,7 @@ pub async fn host_lifecycle_snapshot(
         .is_some()
     {
         *process = None;
+        *manager.model_catalog.lock().await = None;
         manager
             .diagnostics
             .record("host_process_exit", "unexpected")
@@ -155,6 +173,7 @@ pub async fn host_lifecycle_snapshot(
         Err(error) => {
             terminate(host).await;
             *process = None;
+            *manager.model_catalog.lock().await = None;
             manager
                 .diagnostics
                 .record("host_health_check", classify_error(&error))
@@ -190,7 +209,14 @@ pub async fn start_local_agent_host(
     manager.diagnostics.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
-        if host.owner_user_id == owner_user_id && health_check(host).await.is_ok() {
+        let catalog_ready = manager
+            .model_catalog
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|(owner, options)| owner == &owner_user_id && !options.is_empty());
+        if host.owner_user_id == owner_user_id && catalog_ready && health_check(host).await.is_ok()
+        {
             manager
                 .diagnostics
                 .record("host_start", "already_ready")
@@ -204,6 +230,7 @@ pub async fn start_local_agent_host(
             .record("host_replace", "previous_stopped")
             .await;
     }
+    *manager.model_catalog.lock().await = None;
 
     let executable = match host_executable(&app) {
         Ok(executable) => executable,
@@ -285,6 +312,7 @@ pub async fn start_local_agent_host(
         )
         .await;
 
+    let model_options = prepared.model_options;
     let mut credential_environment = prepared.credential_environment;
     let spawn_result = spawn(
         &executable,
@@ -315,6 +343,7 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
+    *manager.model_catalog.lock().await = Some((host.owner_user_id.clone(), model_options));
     *process = Some(host);
     manager
         .diagnostics

@@ -3,6 +3,7 @@ import { ConversationHistoryView } from "../../conversation-history/ui/Conversat
 import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
+import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import type { WorkspaceResourceItem } from "../../workspace-index/domain/workspaceIndex";
 import { useProjectConversationStore } from "../application/projectConversationStore";
@@ -17,6 +18,7 @@ interface ProjectConversationPlaceholderProps {
   historyPort: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
   realtimePort: ConversationRealtimePort;
+  runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
 }
 
@@ -29,6 +31,7 @@ export function ProjectConversationPlaceholder({
   historyPort,
   composerPort,
   realtimePort,
+  runtimeSettingsPort,
   runInspectorPort,
 }: ProjectConversationPlaceholderProps) {
   const phase = useProjectConversationStore((state) => state.phase(project.id));
@@ -75,6 +78,7 @@ export function ProjectConversationPlaceholder({
         port={historyPort}
         composerPort={composerPort}
         realtimePort={realtimePort}
+        runtimeSettingsPort={runtimeSettingsPort}
         runInspectorPort={runInspectorPort}
       />
     );

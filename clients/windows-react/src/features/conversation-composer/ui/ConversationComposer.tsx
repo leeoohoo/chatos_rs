@@ -2,18 +2,22 @@ import type { KeyboardEvent } from "react";
 import type { ConversationHistorySnapshot } from "../../conversation-history/domain/conversationHistory";
 import { useConversationComposerStore } from "../application/conversationComposerStore";
 import type { ConversationComposerPort } from "../ports/ConversationComposerPort";
+import { ConversationRuntimeControls } from "../../conversation-runtime-settings/ui/ConversationRuntimeControls";
+import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 
 export function ConversationComposer({
   ownerUserId,
   conversationId,
   history,
   port,
+  runtimeSettingsPort,
   onAccepted,
 }: {
   ownerUserId: string;
   conversationId: string;
   history: ConversationHistorySnapshot;
   port: ConversationComposerPort;
+  runtimeSettingsPort: ConversationRuntimeSettingsPort;
   onAccepted(): Promise<void>;
 }) {
   const draft = useConversationComposerStore((state) => state.draft);
@@ -33,6 +37,11 @@ export function ConversationComposer({
 
   return (
     <section className="conversation-composer" aria-label="消息输入">
+      <ConversationRuntimeControls
+        ownerUserId={ownerUserId}
+        conversationId={conversationId}
+        port={runtimeSettingsPort}
+      />
       {error && <p className="composer-error" role="alert">{error}</p>}
       <div className="composer-input">
         <textarea

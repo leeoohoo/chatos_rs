@@ -3,6 +3,7 @@ mod control_plane;
 mod conversation_composer;
 mod conversation_history;
 mod conversation_realtime;
+mod conversation_runtime_settings;
 mod host_lifecycle;
 mod project_conversation;
 mod run_inspector;
@@ -15,6 +16,11 @@ use authentication::{
 use conversation_composer::send_conversation_draft;
 use conversation_history::load_conversation_history;
 use conversation_realtime::poll_conversation_realtime;
+use conversation_runtime_settings::{
+    load_conversation_runtime_settings, select_conversation_model,
+    select_conversation_reasoning_level, select_conversation_remote_connection,
+    ConversationRuntimeSettingsManager,
+};
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
@@ -31,6 +37,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(authentication)
         .manage(HostManager::default())
+        .manage(ConversationRuntimeSettingsManager::default())
         .invoke_handler(tauri::generate_handler![
             restore_authentication_session,
             login,
@@ -45,6 +52,10 @@ pub fn run() {
             load_conversation_history,
             poll_conversation_realtime,
             send_conversation_draft,
+            load_conversation_runtime_settings,
+            select_conversation_model,
+            select_conversation_reasoning_level,
+            select_conversation_remote_connection,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

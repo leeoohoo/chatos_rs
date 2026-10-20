@@ -5,6 +5,7 @@ import { AuthenticationGate } from "../features/authentication/ui/Authentication
 import { TauriConversationHistoryAdapter } from "../features/conversation-history/adapters/TauriConversationHistoryAdapter";
 import { TauriConversationComposerAdapter } from "../features/conversation-composer/adapters/TauriConversationComposerAdapter";
 import { TauriConversationRealtimeAdapter } from "../features/conversation-realtime/adapters/TauriConversationRealtimeAdapter";
+import { TauriConversationRuntimeSettingsAdapter } from "../features/conversation-runtime-settings/adapters/TauriConversationRuntimeSettingsAdapter";
 import { TauriRunInspectorAdapter } from "../features/run-inspector/adapters/TauriRunInspectorAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
@@ -22,6 +23,7 @@ const projectConversation = new TauriProjectConversationAdapter();
 const conversationHistory = new TauriConversationHistoryAdapter();
 const conversationComposer = new TauriConversationComposerAdapter();
 const conversationRealtime = new TauriConversationRealtimeAdapter();
+const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter();
 const runInspector = new TauriRunInspectorAdapter();
 
 export function App() {
@@ -56,6 +58,7 @@ function ApplicationRoot() {
             conversationHistory={conversationHistory}
             conversationComposer={conversationComposer}
             conversationRealtime={conversationRealtime}
+            conversationRuntimeSettings={conversationRuntimeSettings}
             runInspector={runInspector}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}

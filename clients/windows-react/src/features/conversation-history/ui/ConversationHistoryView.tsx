@@ -4,6 +4,7 @@ import { useConversationComposerStore } from "../../conversation-composer/applic
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import { ConversationRealtimeObserver } from "../../conversation-realtime/ui/ConversationRealtimeObserver";
 import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
+import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import { useRunInspectorStore } from "../../run-inspector/application/runInspectorStore";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { RunInspectorLauncher, RunInspectorSheet } from "../../run-inspector/ui/RunInspector";
@@ -16,6 +17,7 @@ export function ConversationHistoryView({
   port,
   composerPort,
   realtimePort,
+  runtimeSettingsPort,
   runInspectorPort,
 }: {
   ownerUserId: string;
@@ -23,6 +25,7 @@ export function ConversationHistoryView({
   port: ConversationHistoryPort;
   composerPort: ConversationComposerPort;
   realtimePort: ConversationRealtimePort;
+  runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
 }) {
   const phase = useConversationHistoryStore((state) => state.phase);
@@ -108,6 +111,7 @@ export function ConversationHistoryView({
         conversationId={conversationId}
         history={phase.snapshot}
         port={composerPort}
+        runtimeSettingsPort={runtimeSettingsPort}
         onAccepted={reconcile}
       />
       <RunInspectorSheet port={runInspectorPort} />
