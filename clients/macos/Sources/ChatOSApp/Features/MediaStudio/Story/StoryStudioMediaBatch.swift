@@ -18,32 +18,71 @@ extension StoryStudioViewModel {
             generateBatch(availableModels: batch.models, userIdeas: batch.userIdeas ?? "")
             return
         }
-        run("准备批量制作") { owner, token in
+        let store = store
+        let media = media
+        run("准备批量制作") { [weak self, store, media] owner, token in
             guard owner == batch.owner,
                   try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: project) else {
                 throw StoryAgentError.projectChanged
             }
-            let existing = try await self.store.inspectMediaBatches(owner: owner, projectID: project.id)
+            let existing = try await store.inspectMediaBatches(owner: owner, projectID: project.id)
             guard existing.unreadable == 0, !existing.hasUnfinished else { throw StoryBatchError.activeBatch }
-            try await self.executeMediaBatch(batch, token: token)
+            let result = try await Self.executeMediaBatch(
+                batch,
+                store: store,
+                media: media,
+                check: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.check(token)
+                },
+                shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
+                publish: { [weak self] snapshot in
+                    await self?.publishMediaBatch(snapshot, token: token)
+                }
+            )
+            if let error = result.error { self?.errorMessage = error }
         }
     }
     func resumeMediaBatch(_ id: UUID) {
         guard let project else { return }
-        run("恢复原制作批次") { owner, token in
-            let batch = try await self.store.loadMediaBatch(owner: owner, projectID: project.id, batchID: id)
+        let store = store
+        let media = media
+        run("恢复原制作批次") { [weak self, store, media] owner, token in
+            let batch = try await store.loadMediaBatch(
+                owner: owner,
+                projectID: project.id,
+                batchID: id
+            )
             guard !batch.finished else { throw StoryAgentError.invalidRun }
-            try await self.executeMediaBatch(batch, token: token)
+            let result = try await Self.executeMediaBatch(
+                batch,
+                store: store,
+                media: media,
+                check: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.check(token)
+                },
+                shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
+                publish: { [weak self] snapshot in
+                    await self?.publishMediaBatch(snapshot, token: token)
+                }
+            )
+            if let error = result.error { self?.errorMessage = error }
         }
     }
     /// Explicit UI confirmation only. Unresolved video intents are retained for the existing
     /// verified-job recovery UI; only this batch's image locks can be released.
     func abandonMediaBatch(_ id: UUID) {
         guard let project else { return }
-        run("结束已核对的制作批次") { owner, token in
-            var batch = try await self.store.loadMediaBatch(owner: owner, projectID: project.id, batchID: id)
+        let store = store
+        run("结束已核对的制作批次") { [weak self, store] owner, token in
+            var batch = try await store.loadMediaBatch(
+                owner: owner,
+                projectID: project.id,
+                batchID: id
+            )
             guard !batch.finished else { throw StoryAgentError.invalidRun }
-            try self.check(token)
+            try Task.checkCancellation()
             batch.draft = project; batch.expectedProjectDigest = try StoryAgentRun.digest(project)
             let intents = Set(batch.jobs.values.map(\.intentID))
             for var resource in batch.draft.resources where resource.imageGenerationAttemptID.map(intents.contains) == true {
@@ -60,20 +99,38 @@ extension StoryStudioViewModel {
             }
             batch.status = .abandoned; batch.updatedAt = Date()
             batch.events.append(.init(detail: "用户核对后结束本批，保留已有结果及视频任务"))
-            try await self.store.commitMediaBatch(batch)
-            self.publishMediaBatch(batch, token: token)
+            try await store.commitMediaBatch(batch)
+            try Task.checkCancellation()
+            self?.publishMediaBatch(batch, token: token)
         }
     }
-    func executeMediaBatch(_ batch: StoryMediaBatch, token: UUID) async throws {
-        try check(token)
-        let service = try await boundMedia(token)
-        let coordinator = StoryMediaBatchSession(batch: batch, store: store, media: service,
-            check: { [weak self] in guard let self else { throw CancellationError() }; try await self.check(token) },
-            shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
-            publish: { [weak self] snapshot in await self?.publishMediaBatch(snapshot, token: token) })
+    nonisolated static func executeMediaBatch(
+        _ batch: StoryMediaBatch,
+        store: StoryProjectStore,
+        media: any MediaGenerationServicing,
+        check: @escaping @Sendable () async throws -> Void,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        publish: @escaping @Sendable (StoryMediaBatch) async -> Void
+    ) async throws -> StoryMediaBatch {
+        try await check()
+        let service: any MediaGenerationServicing
+        if let bindable = media as? any SessionBoundMediaGenerationServicing {
+            service = try await bindable.boundToCurrentSession()
+        } else {
+            service = media
+        }
+        try await check()
+        let coordinator = StoryMediaBatchSession(
+            batch: batch,
+            store: store,
+            media: service,
+            check: check,
+            shouldPause: shouldPause,
+            publish: publish
+        )
         let result = try await coordinator.run()
-        try check(token)
-        if let error = result.error { errorMessage = error }
+        try await check()
+        return result
     }
     func boundMedia(_ token: UUID) async throws -> any MediaGenerationServicing {
         try check(token)
@@ -110,11 +167,24 @@ extension StoryStudioViewModel {
         isBusy = true; operation = label; errorMessage = nil; pauseRequested = false; progress = nil; activeSegmentID = nil
         streamingModelText = ""; streamingToolName = nil
         activeProjectID = selectedProjectID
-        task = Task {
-            do { try await body(owner, token) }
-            catch { if session == token { errorMessage = error.localizedDescription } }
-            guard session == token else { return }
-            isBusy = false; operation = ""; task = nil; progress = nil; activeSegmentID = nil; activeProjectID = nil
+        task = Task { [weak self] in
+            let result: Result<Void, Error>
+            do {
+                try await body(owner, token)
+                result = .success(())
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.session == token else { return }
+            if case .failure(let error) = result, !(error is CancellationError) {
+                self.errorMessage = error.localizedDescription
+            }
+            self.isBusy = false
+            self.operation = ""
+            self.task = nil
+            self.progress = nil
+            self.activeSegmentID = nil
+            self.activeProjectID = nil
         }
     }
     func clearImageGenerationLockNoticeIfNeeded() {
