@@ -1,6 +1,6 @@
 # macOS 源码事实矩阵
 
-> 状态：阶段 0 基线，持续更新
+> 状态：持续更新；Host lifecycle 已完成首个 Windows React 准入切片
 > 分支：`3.0.9.2`
 > 事实源：`clients/macos` 当前源码与测试、`clients/local_agent_host` 当前契约
 > 用途：约束 macOS 重构与 Windows React 实现，不是界面截图说明书
@@ -45,9 +45,9 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Graph/Inspector 请求与 realtime/polling 长期等待均不再强持有对应 ViewModel | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
-| Host lifecycle | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；进入契约冻结与跨层验收 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、service adapters | Runtime/bootstrap/recovery/launch/configuration/shutdown use case、Host lifecycle 测试 | 禁止；等待跨层验收与共享契约 fixture |
+| Host lifecycle / Shell | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；v44 health 契约已由 Rust/Swift/TypeScript 共享 fixture 冻结；React/Tauri 首切片已接入 typed Port | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、Windows Tauri lifecycle adapter | Runtime/bootstrap/recovery/launch/configuration/shutdown、共享 fixture、React gate 与 Tauri tests | `macOS 分层完成，可进入 React`；仅放行 lifecycle 与 Shell，不放行业务页面 |
 | Pet 翻译 | 模型、历史、附件与翻译 operation identity 已提取；Host/磁盘等待不再强持有窗口 ViewModel | Pet 翻译浮窗 | `PetTranslationViewModel.swift` | `PetTranslationAgent` 请求/结果、历史记录模型 | Agent model provider、`PetTranslationHistoryStore` | Agent、历史持久化、ViewModel 生命周期测试 | 禁止；等待完整源码映射与 Port 验收 |
-| Media Studio | 账号 session、模型 generation、图片/视频 operation 与输入选择 identity 已固定；历史、生成、保存及导入等待不再强持有 ViewModel | AI 图片、AI 视频、AI 历史 | `MediaStudioViewModel.swift` | Media generation models/service | Media service、`MediaStudioHistoryStore`、HTTP transport | History、image interaction、video canvas、ViewModel 测试 | 禁止；Story 与完整页面映射尚未完成 |
+| Media / Story Studio | 账号 session、模型 generation、图片/视频/Story operation identity 已固定；历史、生成、保存、导入、Agent planning/runtime、批次与编辑等待不再强持有 ViewModel | AI 图片、AI 视频、AI 故事、AI 历史 | `MediaStudioViewModel.swift`、`StoryStudioViewModel*.swift` | Media/Story generation models/service | Media service、Story project store、provider/Agent adapters | Media 25 项、Story Studio 54 项及 Story Agent 回归 | 禁止；等待完整页面映射与 Port 验收 |
 | Agent Group Chat | Team/Direct change stream 保持弱 UI 订阅；补充卡片、附件 hydration、account/communication scheduler drain 与 Run refresh 均已冻结请求上下文，存储/Agent 等待不再强持有 ViewModel | Agent 私聊、团队聊天与团队工作区 | `AgentDirectChatViewModel.swift`、`AgentGroupChatViewModel.swift` | Agent room/message/proposal/todo/run models | `SQLiteAgentGroupChatStore`、Local Agent scheduler | Codable、迁移、Store、Scheduler、UI presentation/performance tests | 禁止；等待完整页面状态与操作映射 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
@@ -470,7 +470,9 @@ macOS 重构应把现有分散事实收敛为可测试的 `HostLifecycleState` �
 - authenticated gateway bootstrap 的 `立即 / 1s / 2s / 5s / 10s` 有界重试已进入 `LocalAgentControlPlaneBootstrapUseCase`；credential refresh deferred 通过 Application non-retryable error contract 明确短路，其他错误只在最后一次失败后上抛；
 - API credential、Connector bootstrap 和 service configuration 组合收口在 App composition adapter，token/lifecycle 校验覆盖 sleep、token 读取、Host bootstrap 与逐服务配置后的每个 await；
 - 已增加 generation、owner、恢复、停止、degraded、health check、重启退避、配置/launch/bootstrap 顺序、迟到取消、non-retryable 短路、adapter 失败和 Host-last shutdown 测试；
-- Host lifecycle 的 Application 边界已经形成，下一步补齐跨层验收与 Rust/Swift/TypeScript 共享 fixture 后再升级 React 准入状态。
+- `clients/contracts/local-agent/v44` 已提供 canonical health request/success/failure fixture；Rust interface、Swift Connector 与 TypeScript 均读取同一份 fixture，固定协议版本 44、4 MiB frame、64 MiB message 和 `chatos-local-agent-host` service identity；
+- `clients/windows-react` 已建立 typed `HostLifecyclePort`、Tauri adapter、Zustand presentation store 和 `HostReadyGate`；Rust Tauri command 使用真实 framed health handshake，不以子进程存在代替 ready；
+- Host lifecycle 与 Shell 已升级为 `macOS 分层完成，可进入 React`。当前准入只覆盖生命周期和 Shell；账号 bootstrap、Conversation 以及其他业务页面仍按各自行状态门禁执行。
 
 ## 7. Ask User：完整调用链
 
@@ -660,7 +662,9 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 - 账号切换继续以 `sessionID` 隔离全部结果；模型目录使用独立 generation，图片与视频分别使用 operation ID，输入图片/视频首帧/参考音频继续使用 selection ID。
 - 历史首页/分页、图片生成→本地保存、视频生成→进度→本地保存，以及所有媒体读取任务都先完成 adapter/磁盘工作，再以 weak ViewModel 恢复并联合验收 identity。
 - 图片生成成功但本地保存失败时仍显示生成结果并给出历史错误；视频保存失败继续保留失败画布语义；取消视频必须拒绝服务端迟到完成。这些均为现有 macOS 行为，不得由 Windows 自行修改。
-- Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。Story Studio 尚未完成同级审计，因此 AI Studio 页面仍不具备 React 准入资格。
+- Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。
+- Story Studio 已完成项目首屏/分页、Agent history、media batch、图片/首尾帧/视频生成、进度恢复、末帧提取、顺序批次、Agent planning/runtime、编辑/导入/保存与镜头细化的 await ownership 审计；所有请求先冻结 Store/service/project snapshot，I/O 完成后才弱恢复 UI 并验收 identity。
+- Story provider 图片/视频生成悬挂时 ViewModel 可释放；Story Studio 54 项与 Story Agent 相关测试通过。完整 UI/Port 映射与跨平台媒体能力差异仍未完成，因此 AI Studio 页面仍不具备 React 准入资格。
 
 ### 9.3 Agent Group Chat
 
@@ -682,7 +686,7 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 | 05 | 应用 | 未映射 | 禁止 |
 | 06 | AI 图片 | 源码映射中（generation/session 生命周期已收口） | 禁止 |
 | 07 | AI 视频 | 源码映射中（progress/保存/取消生命周期已收口） | 禁止 |
-| 08 | AI 故事 | 未映射 | 禁止 |
+| 08 | AI 故事 | 源码映射中（项目/历史/生成/批次/Agent/编辑生命周期已收口） | 禁止；等待完整 Port 与平台差异验收 |
 | 09 | AI 历史 | 源码映射中（本地分页与账号隔离已收口） | 禁止 |
 | 10 | Agent 管理 | 未映射 | 禁止 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
@@ -709,15 +713,15 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成第一轮源码映射，但仍需先完成 macOS 分层。
 
-## 11. 第一条切片的下一步
+## 11. 当前准入与下一步
 
-按以下顺序实施，不能跳过到 React 页面：
+Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业务页面仍按以下顺序实施，不能越过各自行准入门禁：
 
-1. 从现有 Swift 行为提取 Host lifecycle、Conversation、Run Inspector、Ask User 与 Approval Application use cases/ports，不改变产品语义；
-2. 让 macOS Conversation 与 Run Inspector 仅依赖这些 ports；
+1. 完成 Windows Host sidecar 打包、退出联动、有界诊断和账号 bootstrap adapter；
+2. 继续让 macOS Conversation 与 Run Inspector 仅依赖已提取 ports，并完成剩余 UI Task/service orchestration 收口；
 3. 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
-4. 固定 Rust/Swift/TypeScript fixture；
-5. 将本矩阵状态改为 `macOS 分层完成，可进入 React`；
+4. 为下一条业务切片固定 Rust/Swift/TypeScript fixture；
+5. 将该切片状态改为 `macOS 分层完成，可进入 React`；
 6. 才创建 `clients/windows-react` 下对应的 React feature。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

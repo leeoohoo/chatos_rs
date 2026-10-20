@@ -1,8 +1,8 @@
 # ChatOS 3.0.9：macOS 深度重构与 Windows React 客户端实施方案
 
-> 状态：执行中（阶段 0）
-> 日期：2026-10-19
-> 适用分支：`3.0.9.1` 及后续开发分支
+> 状态：执行中（阶段 0–3 并行；Host lifecycle 技术样板已落地）
+> 日期：2026-10-20
+> 适用分支：`3.0.9.2` 及后续开发分支
 > 唯一产品基准：当前实际运行的 macOS 客户端
 > 源码事实矩阵：[`02-macos-source-of-truth-matrix.md`](./02-macos-source-of-truth-matrix.md)
 
@@ -442,6 +442,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 ### 阶段 3：Windows React 技术样板
 
+当前状态：执行中。`clients/windows-react` 已建立 React 19 + TypeScript + Vite + Tauri 2 工程，首个 Host lifecycle 垂直切片已使用 typed Port/Adapter 接入。Shell 只读取显式 lifecycle snapshot；Host 未就绪或握手失败时展示可恢复状态，不以无限 loading 隐藏错误。Rust、Swift、TypeScript 已共同验证 v44 health fixture，前端类型检查/测试/构建、Rust 测试及 Tauri 无 bundle 构建均已通过。Conversation 等尚未达到矩阵准入条件的业务页面仍未创建。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
@@ -546,10 +548,10 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 1. [已完成] 删除旧 `clients/windows` 及所有构建引用，并以独立提交完成。
 2. [进行中] 为当前 macOS 主窗口、创建项目弹窗、Conversation、任务动态和执行详情采集最新基线。
 3. [进行中] 输出页面—用例—接口—平台能力矩阵；Conversation 与 Run Inspector 为首批源码映射。
-4. 建立 Host schema/fixture 与 Swift/TypeScript 契约验证原型。
+4. [已完成] 建立 Host v44 health fixture 与 Rust/Swift/TypeScript 契约验证原型。
 5. [进行中] 在 macOS 建立 Application Port 和 Composition Root；Host runtime 状态、项目 Conversation 准备用例/per-project lifecycle、Conversation Session factory 与 Run Inspector 分页规则已提取。
 6. [进行中] 迁移 Conversation + Run Inspector 作为第一条完整垂直切片；Conversation bootstrap/send/attachment import/activation/realtime/runtime recovery/runtime settings load/viewport mutation/per-turn Graph availability、Graph、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用、section polling 恢复与 presentation/retry identity、Application use case 路由、polling 决策、polling session 与 Workspace presentation session 生命周期已提取，其余 service orchestration 与 typed lifecycle port 尚未完成。
-7. 创建 Tauri 2 + React 19 工程骨架，并只接入这条已稳定切片。
+7. [进行中] 已创建 Tauri 2 + React 19 工程骨架并接入 Host lifecycle；继续完善 sidecar 打包、诊断和恢复，Conversation 在准入前不实现。
 8. 通过真实 macOS/Windows 对照验收后，再进入下一批页面。
 
 ## 13. 完成定义
