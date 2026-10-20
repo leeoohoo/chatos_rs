@@ -1,11 +1,15 @@
 mod history;
 mod provider;
 mod reference;
+mod video_history;
+mod video_input;
+mod video_job;
+mod video_provider;
 
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::Ordering, Arc, Mutex},
 };
 use tauri::{http, State};
 use uuid::Uuid;
@@ -23,6 +27,18 @@ use provider::{
     ImageGenerationRequest,
 };
 use reference::{MediaImageReferenceImportResult, MediaImageReferenceVault};
+use video_history::{
+    MediaStudioVideoHistoryStore, VideoHistoryCursor, VideoHistoryItem, VideoHistoryPage,
+};
+use video_input::{MediaVideoAudioDraft, MediaVideoInputVault};
+use video_job::{
+    MediaStudioVideoJobRegistry, MediaStudioVideoJobSnapshot, VideoPollStart, VideoPollWork,
+};
+use video_provider::{
+    make_video_create_request, make_video_result, parse_video_job, resolve_video_model,
+    video_content_endpoint, video_job_endpoint, VideoGenerationRequest, VideoInput,
+    MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+};
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
 const MAXIMUM_IMAGE_REFERENCES: usize = 8;
@@ -30,9 +46,12 @@ const MAXIMUM_IMAGE_REFERENCES: usize = 8;
 #[derive(Clone)]
 pub(crate) struct MediaStudioManager {
     history: MediaStudioHistoryStore,
+    video_history: MediaStudioVideoHistoryStore,
     provider_client: reqwest::Client,
     preview_session: Arc<Mutex<Option<MediaPreviewSession>>>,
     references: MediaImageReferenceVault,
+    video_inputs: MediaVideoInputVault,
+    video_jobs: MediaStudioVideoJobRegistry,
 }
 
 #[derive(Clone)]
@@ -51,6 +70,7 @@ impl MediaStudioManager {
             .map_err(|_| "无法初始化图片生成网络客户端。".to_owned())?;
         Ok(Self {
             history: MediaStudioHistoryStore::new(app_data_directory.clone())?,
+            video_history: MediaStudioVideoHistoryStore::new(app_data_directory.clone()),
             provider_client,
             preview_session: Arc::new(Mutex::new(None)),
             references: MediaImageReferenceVault::new(
@@ -58,6 +78,12 @@ impl MediaStudioManager {
                     .join("MediaStudio")
                     .join("ReferenceVault"),
             )?,
+            video_inputs: MediaVideoInputVault::new(
+                app_data_directory
+                    .join("MediaStudio")
+                    .join("VideoInputVault"),
+            )?,
+            video_jobs: MediaStudioVideoJobRegistry::default(),
         })
     }
 
@@ -86,6 +112,8 @@ impl MediaStudioManager {
             }
         }
         self.references.reset();
+        self.video_inputs.reset();
+        self.video_jobs.reset();
         let token = Uuid::new_v4().to_string();
         *session = Some(MediaPreviewSession {
             owner_hash,
@@ -114,6 +142,19 @@ impl MediaStudioManager {
                 &asset.content_token,
             ));
         }
+        item
+    }
+
+    fn present_video_history_item(
+        &self,
+        mut item: VideoHistoryItem,
+        preview_session_token: &str,
+    ) -> VideoHistoryItem {
+        item.preview_url = Some(media_preview_url(
+            preview_session_token,
+            &item.id,
+            &item.content_token,
+        ));
         item
     }
 
@@ -157,6 +198,10 @@ impl MediaStudioManager {
             {
                 self.history
                     .read_history_asset(&owner_hash, record_id, content_token)
+                    .or_else(|_| {
+                        self.video_history
+                            .read_asset(&owner_hash, record_id, content_token)
+                    })
                     .map_err(|_| http::StatusCode::NOT_FOUND)
             }
             [_, "reference", presentation_id, token]
@@ -189,6 +234,20 @@ pub(crate) struct MediaStudioImageGenerationRequest {
     client_request_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioVideoGenerationRequest {
+    presentation_id: String,
+    model_config_id: String,
+    prompt: String,
+    size: String,
+    seconds: u8,
+    ratio: String,
+    input_image_id: Option<String>,
+    reference_audio_id: Option<String>,
+    client_request_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct MediaStudioReferenceSelectionInput {
@@ -202,6 +261,22 @@ pub(crate) struct MediaStudioReferenceDiscardInput {
     owner_user_id: String,
     presentation_id: String,
     reference_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioVideoAudioDiscardInput {
+    owner_user_id: String,
+    presentation_id: String,
+    reference_audio_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct MediaStudioVideoJobInput {
+    owner_user_id: String,
+    presentation_id: String,
+    job_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -282,6 +357,35 @@ pub(crate) async fn load_media_studio_image_history(
 }
 
 #[tauri::command]
+pub(crate) async fn load_media_studio_video_history(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    owner_user_id: String,
+    after: Option<VideoHistoryCursor>,
+    limit: Option<usize>,
+) -> Result<VideoHistoryPage, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let preview_session_token = manager.activate_session(&owner_user_id, generation)?;
+    let history = manager.video_history.clone();
+    let load_owner = owner_user_id.clone();
+    let mut page = tauri::async_runtime::spawn_blocking(move || {
+        history.load_page(&load_owner, after, limit.unwrap_or(10))
+    })
+    .await
+    .map_err(|_| "视频历史读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    for item in &mut page.items {
+        *item = manager.present_video_history_item(item.clone(), &preview_session_token);
+    }
+    Ok(page)
+}
+
+#[tauri::command]
 pub(crate) async fn pick_media_studio_reference_images(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
@@ -342,6 +446,60 @@ pub(crate) async fn pick_media_studio_reference_images(
         &mut result,
     );
     Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn pick_media_studio_video_reference_audio(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioReferenceSelectionInput,
+) -> Result<Option<MediaVideoAudioDraft>, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    manager.activate_session(&input.owner_user_id, generation)?;
+    let (epoch, presentation_id) = manager.video_inputs.begin_scope(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+    )?;
+    let path = rfd::AsyncFileDialog::new()
+        .set_title("选择参考音频")
+        .add_filter("音频", &["mp3", "wav", "m4a", "aac"])
+        .pick_file()
+        .await
+        .map(|handle| handle.path().to_path_buf());
+    let Some(path) = path else { return Ok(None) };
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    let inputs = manager.video_inputs.clone();
+    let owner_user_id = input.owner_user_id.clone();
+    let staged_presentation_id = presentation_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        inputs.stage_path(
+            &owner_user_id,
+            generation,
+            &staged_presentation_id,
+            epoch,
+            path,
+        )
+    })
+    .await
+    .map_err(|_| "参考音频读取任务异常退出。".to_owned())?;
+    if let Err(error) = authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await
+    {
+        let _ = manager.video_inputs.close_presentation(
+            &input.owner_user_id,
+            generation,
+            &presentation_id,
+        );
+        return Err(error);
+    }
+    result.map(Some)
 }
 
 #[tauri::command]
@@ -460,6 +618,24 @@ pub(crate) async fn discard_media_studio_reference_images(
 }
 
 #[tauri::command]
+pub(crate) async fn discard_media_studio_video_reference_audio(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioVideoAudioDiscardInput,
+) -> Result<(), String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    manager.video_inputs.discard(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.reference_audio_id,
+    )
+}
+
+#[tauri::command]
 pub(crate) async fn discard_media_studio_presentation(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, MediaStudioManager>,
@@ -469,9 +645,24 @@ pub(crate) async fn discard_media_studio_presentation(
     let generation = authentication
         .session_generation_for_owner(&input.owner_user_id)
         .await?;
-    manager
-        .references
-        .close_presentation(&input.owner_user_id, generation, &input.presentation_id)
+    let reference_result = manager.references.close_presentation(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+    );
+    let video_input_result = manager.video_inputs.close_presentation(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+    );
+    let video_job_result = manager.video_jobs.discard_presentation(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+    );
+    reference_result
+        .and(video_input_result)
+        .and(video_job_result)
 }
 
 #[tauri::command]
@@ -561,6 +752,347 @@ pub(crate) async fn generate_media_studio_image(
     .await)
 }
 
+#[tauri::command]
+pub(crate) async fn start_media_studio_video_generation(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    owner_user_id: String,
+    request: MediaStudioVideoGenerationRequest,
+) -> Result<MediaStudioVideoJobSnapshot, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    manager.activate_session(&owner_user_id, generation)?;
+
+    let input_image = if let Some(reference_id) = request.input_image_id.as_deref() {
+        let references = manager.references.clone();
+        let reference_owner = owner_user_id.clone();
+        let presentation_id = request.presentation_id.clone();
+        let reference_id = reference_id.to_owned();
+        let mut values = tauri::async_runtime::spawn_blocking(move || {
+            references.resolve(
+                &reference_owner,
+                generation,
+                &presentation_id,
+                &[reference_id],
+            )
+        })
+        .await
+        .map_err(|_| "视频首帧读取任务异常退出。".to_owned())??;
+        values.pop().map(|value| VideoInput {
+            mime_type: value.mime_type,
+            bytes: value.bytes,
+        })
+    } else {
+        None
+    };
+    let reference_audio = request
+        .reference_audio_id
+        .as_deref()
+        .map(|audio_id| {
+            manager.video_inputs.resolve(
+                &owner_user_id,
+                generation,
+                &request.presentation_id,
+                audio_id,
+            )
+        })
+        .transpose()?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+
+    let provider_input = VideoGenerationRequest {
+        model_config_id: request.model_config_id.clone(),
+        prompt: request.prompt.clone(),
+        size: request.size.clone(),
+        seconds: request.seconds,
+        ratio: request.ratio.clone(),
+        input_image,
+        reference_audio,
+        client_request_id: request.client_request_id.clone(),
+    };
+    let mut models = authentication
+        .resolved_models_for_owner(&owner_user_id, vec![request.model_config_id.clone()])
+        .await
+        .map_err(|error| error.message)?;
+    if models.len() != 1 {
+        return Err("所选模型已不可用。".into());
+    }
+    let runtime = resolve_video_model(&owner_user_id, &request.model_config_id, models.remove(0))?;
+    authentication.save_model_credential(
+        &owner_user_id,
+        &runtime.model_config_id,
+        &runtime.api_key,
+    )?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let wire = make_video_create_request(&runtime, &provider_input)?;
+    let response = manager
+        .provider_client
+        .post(wire.url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .bearer_auth(&runtime.api_key)
+        .body(wire.body)
+        .send()
+        .await
+        .map_err(|_| "无法连接视频模型服务。".to_owned())?;
+    let status = response.status();
+    let body = read_bounded_response(
+        response,
+        MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+        "无法读取视频模型响应。",
+        "模型返回的视频任务数据过大。",
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(format!(
+            "创建视频任务失败（HTTP {}）：{}",
+            status.as_u16(),
+            provider_error_detail(&body, &runtime.api_key)
+        ));
+    }
+    let provider_job = parse_video_job(&body, &runtime.api_key)?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    manager.video_jobs.register(
+        &owner_user_id,
+        generation,
+        &request.presentation_id,
+        provider_input,
+        runtime,
+        provider_job,
+    )
+}
+
+#[tauri::command]
+pub(crate) async fn poll_media_studio_video_generation(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioVideoJobInput,
+) -> Result<MediaStudioVideoJobSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let preview_session_token = manager.activate_session(&input.owner_user_id, generation)?;
+    let start = manager.video_jobs.begin_poll(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.job_id,
+    )?;
+    let VideoPollStart::Work(work) = start else {
+        let VideoPollStart::Snapshot(snapshot) = start else {
+            unreachable!()
+        };
+        return Ok(*snapshot);
+    };
+    match advance_video_job(
+        &authentication,
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &preview_session_token,
+        &work,
+    )
+    .await
+    {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error) => manager.video_jobs.fail(&work, error.clone()).or(Err(error)),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_media_studio_video_generation(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioVideoJobInput,
+) -> Result<(), String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    manager.video_jobs.cancel(
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.job_id,
+    )
+}
+
+async fn advance_video_job(
+    authentication: &AuthenticationManager,
+    manager: &MediaStudioManager,
+    owner_user_id: &str,
+    generation: u64,
+    preview_session_token: &str,
+    work: &VideoPollWork,
+) -> Result<MediaStudioVideoJobSnapshot, String> {
+    if work.cancelled.load(Ordering::Acquire) {
+        return Err("视频生成已取消。".into());
+    }
+    let provider_job = if work.provider_job.should_poll() {
+        authentication
+            .require_session_generation(owner_user_id, generation)
+            .await?;
+        let url = video_job_endpoint(&work.runtime, &work.provider_job.id)?;
+        let response = manager
+            .provider_client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .bearer_auth(&work.runtime.api_key)
+            .send()
+            .await
+            .map_err(|_| "无法查询视频生成任务。".to_owned())?;
+        let status = response.status();
+        let body = read_bounded_response(
+            response,
+            MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+            "无法读取视频任务响应。",
+            "模型返回的视频任务数据过大。",
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(format!(
+                "查询视频任务失败（HTTP {}）：{}",
+                status.as_u16(),
+                provider_error_detail(&body, &work.runtime.api_key)
+            ));
+        }
+        authentication
+            .require_session_generation(owner_user_id, generation)
+            .await?;
+        if work.cancelled.load(Ordering::Acquire) {
+            return Err("视频生成已取消。".into());
+        }
+        parse_video_job(&body, &work.runtime.api_key)?
+    } else {
+        work.provider_job.clone()
+    };
+
+    if provider_job.is_failed() {
+        return Err(format!(
+            "视频生成失败：{}",
+            provider_job
+                .error_message
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("模型未提供失败原因")
+        ));
+    }
+    if provider_job.should_poll() {
+        return manager.video_jobs.update_waiting(work, provider_job);
+    }
+    manager
+        .video_jobs
+        .begin_download(work, provider_job.clone())?;
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    if work.cancelled.load(Ordering::Acquire) {
+        return Err("视频生成已取消。".into());
+    }
+
+    let (response, forwards_credential) = if let Some(url) = provider_job.content_url.clone() {
+        (
+            manager
+                .provider_client
+                .get(url)
+                .header(reqwest::header::ACCEPT, "video/mp4")
+                .send()
+                .await,
+            false,
+        )
+    } else {
+        let url = video_content_endpoint(&work.runtime, &provider_job.id)?;
+        (
+            manager
+                .provider_client
+                .get(url)
+                .header(reqwest::header::ACCEPT, "video/mp4")
+                .bearer_auth(&work.runtime.api_key)
+                .send()
+                .await,
+            true,
+        )
+    };
+    let response = response.map_err(|_| "无法下载生成的视频。".to_owned())?;
+    if !forwards_credential && response.url().scheme() != "https" {
+        return Err("模型返回的视频下载地址无效。".into());
+    }
+    let status = response.status();
+    let mime_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("video/mp4")
+        .to_owned();
+    let body = read_bounded_response(
+        response,
+        MAXIMUM_VIDEO_BYTES,
+        "无法读取生成的视频。",
+        "模型返回的视频文件过大。",
+    )
+    .await?;
+    if !status.is_success() {
+        return Err(format!(
+            "下载视频内容失败（HTTP {}）：{}",
+            status.as_u16(),
+            provider_error_detail(
+                &body,
+                if forwards_credential {
+                    &work.runtime.api_key
+                } else {
+                    ""
+                }
+            )
+        ));
+    }
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    if work.cancelled.load(Ordering::Acquire) {
+        return Err("视频生成已取消。".into());
+    }
+    let result = make_video_result(
+        &work.request,
+        &work.runtime,
+        &provider_job,
+        &mime_type,
+        body,
+    )?;
+    manager.video_jobs.begin_saving(work)?;
+    let history = manager.video_history.clone();
+    let owner = owner_user_id.to_owned();
+    let prompt = work.request.prompt.trim().to_owned();
+    let cancelled = Arc::clone(&work.cancelled);
+    let persisted = tauri::async_runtime::spawn_blocking(move || {
+        history.persist_video(&owner, &prompt, &result, &cancelled)
+    })
+    .await
+    .map_err(|_| "视频历史保存任务异常退出。".to_owned())?;
+    authentication
+        .require_session_generation(owner_user_id, generation)
+        .await?;
+    if work.cancelled.load(Ordering::Acquire) {
+        return Err("视频生成已取消。".into());
+    }
+    match persisted {
+        Ok(item) => manager.video_jobs.complete(
+            work,
+            manager.present_video_history_item(item, preview_session_token),
+        ),
+        Err(error) => manager
+            .video_jobs
+            .fail(work, format!("视频已生成，但未能保存到本机：{error}")),
+    }
+}
+
 async fn persist_generation_result(
     manager: &MediaStudioManager,
     owner_user_id: &str,
@@ -640,6 +1172,28 @@ async fn read_provider_response(mut response: reqwest::Response) -> Result<Vec<u
     {
         if body.len().saturating_add(chunk.len()) > MAXIMUM_PROVIDER_RESPONSE_BYTES {
             return Err("模型返回的数据过大。".into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_bounded_response(
+    mut response: reqwest::Response,
+    maximum_bytes: usize,
+    read_error: &str,
+    too_large_error: &str,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum_bytes as u64)
+    {
+        return Err(too_large_error.into());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| read_error.to_owned())? {
+        if body.len().saturating_add(chunk.len()) > maximum_bytes {
+            return Err(too_large_error.into());
         }
         body.extend_from_slice(&chunk);
     }
@@ -771,6 +1325,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn video_generation_ipc_accepts_only_opaque_native_inputs() {
+        let presentation_id = Uuid::new_v4().to_string();
+        let valid = serde_json::json!({
+            "presentationId": presentation_id,
+            "modelConfigId": "video-model",
+            "prompt": "running dog",
+            "size": "768P",
+            "seconds": 4,
+            "ratio": "16:9",
+            "inputImageId": "reference_123",
+            "referenceAudioId": "video_audio_123",
+            "clientRequestId": "request-1"
+        });
+        let request: MediaStudioVideoGenerationRequest =
+            serde_json::from_value(valid.clone()).unwrap();
+        assert_eq!(request.input_image_id.as_deref(), Some("reference_123"));
+        assert_eq!(
+            request.reference_audio_id.as_deref(),
+            Some("video_audio_123")
+        );
+
+        let mut raw_media = valid;
+        raw_media["inputImage"] = serde_json::json!({
+            "mimeType": "image/png",
+            "base64Data": "aW1hZ2U="
+        });
+        assert!(serde_json::from_value::<MediaStudioVideoGenerationRequest>(raw_media).is_err());
+    }
+
     #[tokio::test]
     async fn persistence_failure_preserves_generated_result_without_native_paths_or_secrets() {
         let root = tempdir().unwrap();
@@ -858,6 +1442,41 @@ mod tests {
         );
         let replacement = manager.activate_session("alice", 8).unwrap();
         assert_ne!(session, replacement);
+        assert_eq!(
+            manager.protocol_body(&path).unwrap_err(),
+            http::StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn video_preview_uses_the_same_owner_generation_protocol_boundary() {
+        use std::sync::atomic::AtomicBool;
+
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        let session = manager.activate_session("alice", 7).unwrap();
+        let item = manager
+            .video_history
+            .persist_video(
+                "alice",
+                "clip",
+                &video_provider::VideoGenerationResult {
+                    id: "provider-video".into(),
+                    model_config_id: "video-model".into(),
+                    model_name: "MiniMax-H3".into(),
+                    created_at_unix_ms: 1_700_000_000_000,
+                    mime_type: "video/mp4".into(),
+                    video_data: b"video-bytes".to_vec(),
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let path = format!("/{}/{}/{}", session, item.id, item.content_token);
+        let (mime_type, bytes) = manager.protocol_body(&path).unwrap();
+        assert_eq!(mime_type, "video/mp4");
+        assert_eq!(bytes, b"video-bytes");
+
+        manager.reset();
         assert_eq!(
             manager.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
