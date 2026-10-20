@@ -177,6 +177,7 @@ export type MediaStudioHistoryCursor = z.infer<typeof mediaStudioHistoryCursorSc
 export type MediaStudioHistoryPage = z.infer<typeof mediaStudioHistoryPageSchema>;
 export type MediaStudioReference = z.infer<typeof mediaStudioReferenceSchema>;
 export type MediaStudioReferenceImportResult = z.infer<typeof mediaStudioReferenceImportResultSchema>;
+export type MediaStudioGeneratedAsset = z.infer<typeof mediaStudioGeneratedAssetSchema>;
 export type MediaStudioGenerationResult = z.infer<typeof mediaStudioGenerationResultSchema>;
 export type MediaStudioGenerationOutcome = z.infer<typeof mediaStudioGenerationOutcomeSchema>;
 export type MediaStudioGenerationRequest = z.infer<typeof mediaStudioGenerationRequestSchema>;
