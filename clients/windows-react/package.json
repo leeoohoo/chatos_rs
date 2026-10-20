@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "audit:architecture": "node scripts/audit-architecture.mjs",
     "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

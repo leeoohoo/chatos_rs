@@ -230,6 +230,7 @@ jobs:
 
       - name: Verify React application
         run: |
+          npm --prefix clients/windows-react run audit:architecture
           npm --prefix clients/windows-react run typecheck
           npm --prefix clients/windows-react test
           npm --prefix clients/windows-react run build
