@@ -4,7 +4,7 @@
 //! Framed IPC adapters for the client-owned Local Agent Host.
 
 use chatos_local_agent_protocol::{
-    HostRequestEnvelope, HostResponseEnvelope, LOCAL_AGENT_MAX_FRAME_BYTES,
+    HostError, HostRequestEnvelope, HostResponseEnvelope, LOCAL_AGENT_MAX_FRAME_BYTES,
 };
 use std::{io, sync::Arc};
 use thiserror::Error;
@@ -76,7 +76,7 @@ where
             tokio::spawn(async move {
                 let _permit = permit;
                 let response = handler.handle_request(request).await;
-                let encoded = serde_json::to_vec(&response).map_err(HostTransportError::from);
+                let encoded = encode_bounded_response(response);
                 let _ = response_tx.send(encoded).await;
             });
         }
@@ -97,6 +97,26 @@ where
             }
         }
     }
+}
+
+fn encode_bounded_response(response: HostResponseEnvelope) -> Result<Vec<u8>, HostTransportError> {
+    let encoded = serde_json::to_vec(&response)?;
+    if encoded.len() <= LOCAL_AGENT_MAX_FRAME_BYTES {
+        return Ok(encoded);
+    }
+    let fallback = HostResponseEnvelope::failure(
+        response.command_id,
+        HostError::new(
+            "response_too_large",
+            "Local Agent Host response exceeded the IPC frame limit; request a smaller page or reduced payload.",
+            true,
+        ),
+    );
+    let encoded = serde_json::to_vec(&fallback)?;
+    if encoded.len() > LOCAL_AGENT_MAX_FRAME_BYTES {
+        return Err(HostTransportError::FrameTooLarge);
+    }
+    Ok(encoded)
 }
 
 pub async fn read_frame<R>(reader: &mut R) -> Result<Option<Vec<u8>>, HostTransportError>
@@ -450,16 +470,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oversized_response_stops_transport_while_request_stream_is_open() {
+    async fn oversized_response_returns_an_error_without_stopping_transport() {
         struct OversizedResponseHandler;
 
         #[async_trait::async_trait]
         impl HostRequestHandler for OversizedResponseHandler {
             async fn handle_request(&self, request: HostRequestEnvelope) -> HostResponseEnvelope {
+                let oversized = request.command_id == "oversized-response";
                 HostResponseEnvelope::success(
                     request.command_id,
                     HostResult::Health {
-                        service: "x".repeat(LOCAL_AGENT_MAX_FRAME_BYTES),
+                        service: if oversized {
+                            "x".repeat(LOCAL_AGENT_MAX_FRAME_BYTES)
+                        } else {
+                            "healthy".to_string()
+                        },
                         storage_ready: true,
                         recovered_claims: 0,
                     },
@@ -478,10 +503,34 @@ mod tests {
             .await
             .expect("write");
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(1), server_task)
+        let response = read_frame(&mut client)
             .await
-            .expect("writer failure must stop the transport")
-            .expect("join");
-        assert!(matches!(result, Err(HostTransportError::FrameTooLarge)));
+            .expect("read fallback")
+            .expect("fallback response");
+        let response = decode_response(&response).expect("decode fallback");
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("oversize error").code,
+            "response_too_large"
+        );
+
+        let health = HostRequestEnvelope {
+            protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
+            command_id: "health-after-oversized-response".to_string(),
+            command: HostCommand::Health,
+        };
+        write_frame(&mut client, &serde_json::to_vec(&health).expect("request"))
+            .await
+            .expect("write health");
+        let response = read_frame(&mut client)
+            .await
+            .expect("read health fallback")
+            .expect("health fallback response");
+        let response = decode_response(&response).expect("decode health fallback");
+        assert!(response.ok);
+        assert!(response.error.is_none());
+
+        drop(client);
+        server_task.await.expect("join").expect("server");
     }
 }

@@ -260,6 +260,7 @@ UI 只能在 `ready` 后发业务命令。启动阶段允许展示应用 Shell �
 
 - 启动握手和协议版本检查；
 - 请求超时、取消和 correlation id；
+- 单次响应超过 frame 上限时返回有界 `response_too_large` 错误并保持健康传输，调用方必须改用更小分页或精简 payload；
 - reader/writer 任一退出即终止整条传输并回收 Host；
 - 重启后的 Conversation/Run/Task 恢复；
 - 账号切换时先终止旧账号 Host，再启动新账号 Host；
