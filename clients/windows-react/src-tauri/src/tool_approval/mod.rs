@@ -1,3 +1,4 @@
+pub(crate) mod journal;
 mod models;
 mod projection;
 #[cfg(test)]
@@ -11,6 +12,7 @@ use chatos_local_agent_protocol::{
 use tauri::State;
 
 use crate::host_lifecycle::HostManager;
+use journal::{ApprovalDecisionJournal, RecordedToolApprovalDecision};
 use models::{
     ToolApproval, ToolApprovalDecision, ToolApprovalMutationInput, ToolApprovalResolution,
 };
@@ -22,16 +24,18 @@ const REVIEWER_ID: &str = "windows-react-human";
 #[tauri::command]
 pub async fn list_tool_approvals(
     manager: State<'_, HostManager>,
+    journal: State<'_, ApprovalDecisionJournal>,
     owner_user_id: String,
 ) -> Result<Vec<ToolApproval>, String> {
     let owner_user_id = required("owner_user_id", owner_user_id)?;
-    let invocations = load_pending(&manager, &owner_user_id).await?;
+    let invocations = reconcile_recorded_decisions(&manager, &journal, &owner_user_id).await?;
     Ok(project_pending(invocations))
 }
 
 #[tauri::command]
 pub async fn decide_tool_approval(
     manager: State<'_, HostManager>,
+    journal: State<'_, ApprovalDecisionJournal>,
     input: ToolApprovalMutationInput,
 ) -> Result<ToolApprovalResolution, String> {
     let owner_user_id = required("owner_user_id", input.owner_user_id)?;
@@ -62,6 +66,16 @@ pub async fn decide_tool_approval(
             "用户已在 Windows 客户端拒绝这次操作。",
         ),
     };
+    let record = RecordedToolApprovalDecision {
+        owner_user_id: owner_user_id.clone(),
+        invocation_id: invocation_id.clone(),
+        invocation_version: current.version,
+        decision: input.decision,
+        decided_by: REVIEWER_ID.into(),
+        reason: reason.into(),
+        recorded_at_unix_ms: now_unix_ms(),
+    };
+    journal.record(record.clone())?;
     let result = manager
         .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
             owner_user_id,
@@ -87,11 +101,74 @@ pub async fn decide_tool_approval(
     {
         return Err("Local Agent Host 返回了不匹配的审批结果。".into());
     }
+    let _ = journal.remove(&record);
     Ok(ToolApprovalResolution {
         invocation_id,
         invocation_version: result.invocation.version,
         decision: input.decision,
     })
+}
+
+async fn reconcile_recorded_decisions(
+    manager: &HostManager,
+    journal: &ApprovalDecisionJournal,
+    owner_user_id: &str,
+) -> Result<Vec<LocalAgentToolInvocationRecord>, String> {
+    let mut invocations = load_pending(manager, owner_user_id).await?;
+    let mut changed = false;
+    for record in journal.snapshot(owner_user_id) {
+        let matching = invocations.iter().find(|invocation| {
+            record.matches(owner_user_id, &invocation.invocation_id, invocation.version)
+                && is_pending(invocation)
+        });
+        let Some(invocation) = matching else {
+            // Host is authoritative: a missing exact identity/version means the write either
+            // succeeded before transport loss or this bounded record is stale.
+            let _ = journal.remove(&record);
+            continue;
+        };
+        let result = manager
+            .execute(HostCommand::DecideToolApproval(DecideToolApprovalCommand {
+                owner_user_id: owner_user_id.to_owned(),
+                invocation_id: invocation.invocation_id.clone(),
+                expected_version: invocation.version,
+                decision: host_decision(record.decision),
+                decided_by: record.decided_by.clone(),
+                reason: record.reason.clone(),
+            }))
+            .await?;
+        let HostResult::ToolApproval { result } = result else {
+            return Err("Local Agent Host 返回了错误的审批恢复响应。".into());
+        };
+        if result.invocation.invocation_id != record.invocation_id
+            || result.invocation.run_id != invocation.run_id
+            || !result.invocation.requires_approval
+            || result.invocation.version <= record.invocation_version
+            || result.invocation.approval_status != expected_status(record.decision)
+        {
+            return Err("Local Agent Host 返回了不匹配的审批恢复结果。".into());
+        }
+        let _ = journal.remove(&record);
+        changed = true;
+    }
+    if changed {
+        invocations = load_pending(manager, owner_user_id).await?;
+    }
+    Ok(invocations)
+}
+
+fn host_decision(decision: ToolApprovalDecision) -> LocalAgentToolApprovalDecision {
+    match decision {
+        ToolApprovalDecision::Accept => LocalAgentToolApprovalDecision::Approve,
+        ToolApprovalDecision::Decline => LocalAgentToolApprovalDecision::Reject,
+    }
+}
+
+fn expected_status(decision: ToolApprovalDecision) -> LocalAgentToolApprovalStatus {
+    match decision {
+        ToolApprovalDecision::Accept => LocalAgentToolApprovalStatus::Approved,
+        ToolApprovalDecision::Decline => LocalAgentToolApprovalStatus::Rejected,
+    }
 }
 
 async fn load_pending(
@@ -138,4 +215,12 @@ fn required(field: &str, value: String) -> Result<String, String> {
     } else {
         Ok(trimmed.to_owned())
     }
+}
+
+fn now_unix_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(1)
 }

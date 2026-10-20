@@ -44,6 +44,7 @@ use run_inspector::{
     restart_task_inspector, retry_task_inspector,
 };
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
+use tool_approval::journal::ApprovalDecisionJournal;
 use tool_approval::{decide_tool_approval, list_tool_approvals};
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
@@ -61,6 +62,18 @@ pub fn run() {
         .manage(AttachmentToolWorker::default())
         .manage(HostManager::default())
         .manage(ConversationRuntimeSettingsManager::default())
+        .setup(|app| {
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let journal = ApprovalDecisionJournal::open(
+                data_dir.join("local-agent").join("approval-decisions"),
+            )
+            .map_err(std::io::Error::other)?;
+            app.manage(journal);
+            Ok(())
+        })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
             attachment_protocol(protocol_attachment_manager.clone(), request)
         })
