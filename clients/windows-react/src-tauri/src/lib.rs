@@ -77,13 +77,14 @@ use project_run::{
 pub use remote_connection::run_ssh_askpass_helper_if_requested;
 use remote_connection::{
     close_remote_terminal, create_remote_connection, create_remote_directory,
-    delete_remote_connection, delete_remote_entry, discard_remote_file_selections,
-    discard_remote_terminal_presentation, download_remote_file, get_remote_connection,
-    interrupt_remote_terminal, list_remote_connections, list_remote_directory,
-    pick_remote_download_destination, pick_remote_upload_file, poll_remote_terminal,
-    rename_remote_entry, resize_remote_terminal, send_remote_terminal_input, start_remote_terminal,
-    test_remote_connection_draft, test_saved_remote_connection, update_remote_connection,
-    upload_remote_file, RemoteConnectionManager,
+    delete_remote_connection, delete_remote_entry, discard_remote_credential_file_selections,
+    discard_remote_file_selections, discard_remote_terminal_presentation, download_remote_file,
+    get_remote_connection, interrupt_remote_terminal, list_remote_connections,
+    list_remote_directory, pick_remote_credential_file, pick_remote_download_destination,
+    pick_remote_upload_file, poll_remote_terminal, rename_remote_entry, resize_remote_terminal,
+    send_remote_terminal_input, start_remote_terminal, test_remote_connection_draft,
+    test_saved_remote_connection, update_remote_connection, upload_remote_file,
+    RemoteConnectionManager,
 };
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -253,6 +254,8 @@ pub fn run() {
             delete_remote_connection,
             test_remote_connection_draft,
             test_saved_remote_connection,
+            pick_remote_credential_file,
+            discard_remote_credential_file_selections,
             list_remote_directory,
             create_remote_directory,
             rename_remote_entry,

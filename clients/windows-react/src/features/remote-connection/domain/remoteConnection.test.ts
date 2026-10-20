@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  keepRemoteCredentials,
+  remoteConnectionInputSchema,
   remoteConnectionSchema,
   remoteConnectionTestResultSchema,
   sortRemoteConnections,
@@ -33,6 +35,33 @@ describe("remote connection domain", () => {
       message: "需要验证",
       verificationPrompt: null,
     })).toThrow();
+  });
+
+  it("accepts only opaque native selections for SSH key files", () => {
+    const input = {
+      name: null,
+      host: "server.example.com",
+      port: 22,
+      username: "deploy",
+      authenticationType: "private_key" as const,
+      defaultRemotePath: null,
+      hostKeyPolicy: "strict" as const,
+      jumpEnabled: false,
+      jumpConnectionId: null,
+      jumpHost: null,
+      jumpPort: null,
+      jumpUsername: null,
+      credentials: {
+        ...keepRemoteCredentials(),
+        privateKeyPath: { action: "replace" as const, value: "C:\\Users\\alice\\.ssh\\id_ed25519" },
+      },
+    };
+    expect(() => remoteConnectionInputSchema.parse(input)).toThrow();
+    input.credentials.privateKeyPath.value = "remote-credential-file-selection-1";
+    expect(remoteConnectionInputSchema.parse(input).credentials.privateKeyPath).toEqual({
+      action: "replace",
+      value: "remote-credential-file-selection-1",
+    });
   });
 
   it("sorts by the macOS list contract without mutating the input", () => {

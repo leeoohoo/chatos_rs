@@ -177,6 +177,7 @@ async fn create_keeps_secrets_out_of_host_metadata_and_presentation() {
         .create(
             &client,
             "owner-1",
+            None,
             password_input(RemoteSecretMutation::Replace(" top-secret ".into())),
         )
         .await
@@ -233,6 +234,7 @@ async fn update_restores_previous_credentials_when_host_rejects_version() {
             "owner-1",
             "connection-1",
             4,
+            None,
             password_input(RemoteSecretMutation::Replace("new-secret".into())),
         )
         .await
@@ -265,6 +267,19 @@ async fn update_commits_metadata_version_and_replaces_incompatible_credentials()
         )
         .unwrap();
     let manager = manager_with_vault(vault.clone());
+    let private_key = directory.path().join("id_ed25519");
+    std::fs::write(&private_key, b"private-key").unwrap();
+    let private_key = private_key.canonicalize().unwrap();
+    let selection = manager
+        .credential_file_selections
+        .stage(
+            "owner-1",
+            "editor-1",
+            credential_files::RemoteCredentialFileKind::PrivateKey,
+            private_key.clone(),
+            "id_ed25519".into(),
+        )
+        .unwrap();
     let mut updated = record("connection-1", 5);
     updated.authentication_type = LocalRemoteAuthenticationType::PrivateKey;
     let client = ScriptedMetadata::new(vec![
@@ -277,11 +292,17 @@ async fn update_commits_metadata_version_and_replaces_incompatible_credentials()
     ]);
     let mut input = password_input(RemoteSecretMutation::Keep);
     input.authentication_type = LocalRemoteAuthenticationType::PrivateKey;
-    input.credentials.private_key_path =
-        RemoteSecretMutation::Replace("C:\\Users\\alice\\.ssh\\id_ed25519".into());
+    input.credentials.private_key_path = RemoteSecretMutation::Replace(selection.selection_id);
 
     let presented = manager
-        .update(&client, "owner-1", "connection-1", 4, input)
+        .update(
+            &client,
+            "owner-1",
+            "connection-1",
+            4,
+            Some("editor-1"),
+            input,
+        )
         .await
         .unwrap();
 
@@ -290,10 +311,7 @@ async fn update_commits_metadata_version_and_replaces_incompatible_credentials()
     assert!(presented.has_private_key_path);
     let stored = vault.load("owner-1", "connection-1").unwrap().unwrap();
     assert!(stored.password.is_none());
-    assert_eq!(
-        stored.private_key_path.as_deref(),
-        Some("C:\\Users\\alice\\.ssh\\id_ed25519")
-    );
+    assert_eq!(stored.private_key_path.as_deref(), private_key.to_str());
     let commands = client.commands();
     let HostCommand::UpdateRemoteConnection(command) = &commands[1] else {
         panic!("expected update command");
@@ -462,6 +480,7 @@ async fn update_rejects_stale_expected_version_before_touching_credentials() {
             "owner-1",
             "connection-1",
             6,
+            None,
             password_input(RemoteSecretMutation::Replace("new-secret".into())),
         )
         .await
@@ -505,7 +524,10 @@ async fn referenced_jump_connection_is_owner_scoped_and_supplies_route_metadata(
     input.jump_username = Some("untrusted".into());
     input.credentials.jump_password = RemoteSecretMutation::Replace("must-not-store".into());
 
-    manager.create(&client, "owner-1", input).await.unwrap();
+    manager
+        .create(&client, "owner-1", None, input)
+        .await
+        .unwrap();
 
     let commands = client.commands();
     let HostCommand::CreateRemoteConnection(command) = &commands[1] else {
@@ -619,6 +641,7 @@ async fn create_rolls_back_host_metadata_when_credential_save_fails() {
         .create(
             &client,
             "owner-1",
+            None,
             password_input(RemoteSecretMutation::Replace("secret".into())),
         )
         .await
@@ -651,6 +674,7 @@ async fn create_requires_the_mac_source_of_truth_authentication_material() {
         .create(
             &client,
             "owner-1",
+            None,
             password_input(RemoteSecretMutation::Keep),
         )
         .await
@@ -671,6 +695,7 @@ async fn create_rejects_a_secret_larger_than_the_credential_manager_boundary() {
         .create(
             &client,
             "owner-1",
+            None,
             password_input(RemoteSecretMutation::Replace("x".repeat(1_025))),
         )
         .await
@@ -809,6 +834,7 @@ async fn draft_connection_test_never_writes_host_metadata() {
             password_input(RemoteSecretMutation::Replace("secret".into())),
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -846,6 +872,7 @@ async fn draft_connection_test_reuses_saved_credentials_without_persisting_chang
             &client,
             "owner-1",
             password_input(RemoteSecretMutation::Keep),
+            None,
             Some("connection-1".into()),
             None,
         )

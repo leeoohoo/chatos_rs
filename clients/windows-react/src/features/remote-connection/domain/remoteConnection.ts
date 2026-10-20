@@ -27,6 +27,22 @@ export const remoteAuthenticationTypeSchema = z.enum([
 
 export const remoteHostKeyPolicySchema = z.enum(["strict", "accept_new"]);
 
+export const remoteCredentialFileKindSchema = z.enum([
+  "private_key",
+  "certificate",
+  "jump_private_key",
+  "jump_certificate",
+]);
+
+export const remoteCredentialFileSelectionSchema = z.object({
+  selectionId: remoteConnectionIdentifierSchema,
+  fileName: safeText(1_024).min(1).refine(
+    (value) => !value.includes("/") && !value.includes("\\"),
+    "凭据文件名不能包含路径。",
+  ),
+  kind: remoteCredentialFileKindSchema,
+}).strict();
+
 export const remoteConnectionSchema = z.object({
   id: remoteConnectionIdentifierSchema,
   name: labelSchema,
@@ -82,13 +98,25 @@ export const remoteSecretMutationSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("replace"), value: z.string().min(1).max(1_024) }).strict(),
 ]);
 
+export const remoteCredentialFileMutationSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("keep") }).strict(),
+  z.object({ action: z.literal("clear") }).strict(),
+  z.object({
+    action: z.literal("replace"),
+    value: remoteConnectionIdentifierSchema.refine(
+      (value) => value.startsWith("remote-credential-file-"),
+      "SSH 凭据必须来自本机文件选择器。",
+    ),
+  }).strict(),
+]);
+
 export const remoteCredentialMutationSchema = z.object({
   password: remoteSecretMutationSchema,
-  privateKeyPath: remoteSecretMutationSchema,
-  certificatePath: remoteSecretMutationSchema,
+  privateKeyPath: remoteCredentialFileMutationSchema,
+  certificatePath: remoteCredentialFileMutationSchema,
   jumpPassword: remoteSecretMutationSchema,
-  jumpPrivateKeyPath: remoteSecretMutationSchema,
-  jumpCertificatePath: remoteSecretMutationSchema,
+  jumpPrivateKeyPath: remoteCredentialFileMutationSchema,
+  jumpCertificatePath: remoteCredentialFileMutationSchema,
 }).strict();
 
 export const remoteConnectionInputSchema = z.object({
@@ -140,6 +168,8 @@ export type RemoteConnection = z.infer<typeof remoteConnectionSchema>;
 export type RemoteConnectionInput = z.infer<typeof remoteConnectionInputSchema>;
 export type RemoteConnectionTestResult = z.infer<typeof remoteConnectionTestResultSchema>;
 export type RemoteSecretMutation = z.infer<typeof remoteSecretMutationSchema>;
+export type RemoteCredentialFileKind = z.infer<typeof remoteCredentialFileKindSchema>;
+export type RemoteCredentialFileSelection = z.infer<typeof remoteCredentialFileSelectionSchema>;
 
 export function sortRemoteConnections(connections: RemoteConnection[]) {
   return [...connections].sort((left, right) => left.name.localeCompare(

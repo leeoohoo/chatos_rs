@@ -1,3 +1,4 @@
+mod credential_files;
 mod credentials;
 mod files;
 mod models;
@@ -9,6 +10,10 @@ use chatos_local_agent_protocol::{
     CreateRemoteConnectionCommand, DeleteRemoteConnectionCommand, GetRemoteConnectionCommand,
     HostCommand, HostResult, ListRemoteConnectionsCommand, LocalRemoteConnection,
     LocalRemoteConnectionSpec, UpdateRemoteConnectionCommand,
+};
+use credential_files::RemoteCredentialFileSelectionStore;
+pub use credential_files::{
+    discard_remote_credential_file_selections, pick_remote_credential_file,
 };
 use credentials::{PlatformRemoteCredentialVault, RemoteCredentialVault};
 #[cfg(test)]
@@ -93,6 +98,7 @@ pub struct RemoteConnectionManager {
     credentials: Arc<dyn RemoteCredentialVault>,
     route_provider: Arc<dyn RemoteConnectorRouteProvider>,
     tester: Arc<dyn RemoteConnectionTester>,
+    credential_file_selections: RemoteCredentialFileSelectionStore,
     file_executor: Arc<dyn RemoteFileExecutor>,
     file_selections: RemoteFileSelectionStore,
     terminal_tester: Arc<dyn RemoteConnectionTester>,
@@ -113,6 +119,7 @@ impl RemoteConnectionManager {
                 data_directory: app_data_directory,
             }),
             tester: runtime.clone(),
+            credential_file_selections: RemoteCredentialFileSelectionStore::default(),
             file_executor: runtime.clone(),
             file_selections: RemoteFileSelectionStore::default(),
             terminal_tester: terminal_runtime.clone(),
@@ -132,6 +139,7 @@ impl RemoteConnectionManager {
             credentials,
             route_provider,
             tester: tester.clone(),
+            credential_file_selections: RemoteCredentialFileSelectionStore::default(),
             file_executor: Arc::new(DisabledRemoteFileExecutor),
             file_selections: RemoteFileSelectionStore::default(),
             terminal_tester: tester.clone(),
@@ -189,14 +197,20 @@ impl RemoteConnectionManager {
         &self,
         client: &dyn RemoteConnectionMetadataClient,
         owner_user_id: &str,
+        presentation_id: Option<&str>,
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
-        self.reset().await;
+        self.reset_runtime().await;
         validate_owner(owner_user_id)?;
+        let credential_mutation = self.credential_file_selections.resolve_mutation(
+            owner_user_id,
+            presentation_id,
+            &input.credentials,
+        )?;
         let prepared = self.spec(client, owner_user_id, None, &input).await?;
         let credentials = RemoteCredentialBundle::default().applying(
-            &input.credentials,
+            &credential_mutation,
             input.authentication_type,
             prepared.retain_manual_jump_credentials,
         )?;
@@ -237,10 +251,12 @@ impl RemoteConnectionManager {
                 credential_cleanup,
             ));
         }
-        Ok(PresentedRemoteConnection::from_record(
-            connection,
-            credentials.flags(),
-        ))
+        let presented = PresentedRemoteConnection::from_record(connection, credentials.flags());
+        if let Some(presentation_id) = presentation_id {
+            self.credential_file_selections
+                .discard(owner_user_id, presentation_id);
+        }
+        Ok(presented)
     }
 
     async fn update(
@@ -249,10 +265,11 @@ impl RemoteConnectionManager {
         owner_user_id: &str,
         connection_id: &str,
         expected_version: u64,
+        presentation_id: Option<&str>,
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
-        self.reset().await;
+        self.reset_runtime().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -270,8 +287,13 @@ impl RemoteConnectionManager {
             .credentials
             .load(owner_user_id, connection_id)?
             .unwrap_or_default();
-        let next = previous.clone().applying(
+        let credential_mutation = self.credential_file_selections.resolve_mutation(
+            owner_user_id,
+            presentation_id,
             &input.credentials,
+        )?;
+        let next = previous.clone().applying(
+            &credential_mutation,
             input.authentication_type,
             prepared.retain_manual_jump_credentials,
         )?;
@@ -310,10 +332,12 @@ impl RemoteConnectionManager {
         {
             return Err(metadata_response_error());
         }
-        Ok(PresentedRemoteConnection::from_record(
-            connection,
-            next.flags(),
-        ))
+        let presented = PresentedRemoteConnection::from_record(connection, next.flags());
+        if let Some(presentation_id) = presentation_id {
+            self.credential_file_selections
+                .discard(owner_user_id, presentation_id);
+        }
+        Ok(presented)
     }
 
     async fn delete(
@@ -324,7 +348,7 @@ impl RemoteConnectionManager {
         expected_version: u64,
     ) -> Result<String, String> {
         let _mutation = self.mutation.lock().await;
-        self.reset().await;
+        self.reset_runtime().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -435,6 +459,7 @@ impl RemoteConnectionManager {
         client: &dyn RemoteConnectionMetadataClient,
         owner_user_id: &str,
         input: RemoteConnectionInput,
+        presentation_id: Option<&str>,
         credential_reference_id: Option<String>,
         verification_code: Option<String>,
     ) -> Result<PresentedRemoteConnectionTestResult, String> {
@@ -459,8 +484,13 @@ impl RemoteConnectionManager {
                 &input,
             )
             .await?;
-        let credentials = base_credentials.applying(
+        let credential_mutation = self.credential_file_selections.resolve_mutation(
+            owner_user_id,
+            presentation_id,
             &input.credentials,
+        )?;
+        let credentials = base_credentials.applying(
+            &credential_mutation,
             input.authentication_type,
             prepared.retain_manual_jump_credentials,
         )?;
@@ -560,6 +590,11 @@ impl RemoteConnectionManager {
     }
 
     pub(crate) async fn reset(&self) {
+        self.credential_file_selections.reset();
+        self.reset_runtime().await;
+    }
+
+    async fn reset_runtime(&self) {
         self.file_selections.reset();
         self.terminal_sessions.reset().await;
         self.terminal_tester.reset().await;
@@ -606,12 +641,16 @@ pub async fn create_remote_connection(
     authentication: State<'_, AuthenticationManager>,
     manager: State<'_, RemoteConnectionManager>,
     owner_user_id: String,
+    presentation_id: String,
     input: RemoteConnectionInput,
 ) -> Result<PresentedRemoteConnection, String> {
     authentication
         .access_token_for_owner(&owner_user_id)
         .await?;
-    manager.create(&*host, &owner_user_id, input).await
+    credential_files::validate_presentation_id(&presentation_id)?;
+    manager
+        .create(&*host, &owner_user_id, Some(&presentation_id), input)
+        .await
 }
 
 #[tauri::command]
@@ -622,17 +661,20 @@ pub async fn update_remote_connection(
     owner_user_id: String,
     connection_id: String,
     expected_version: u64,
+    presentation_id: String,
     input: RemoteConnectionInput,
 ) -> Result<PresentedRemoteConnection, String> {
     authentication
         .access_token_for_owner(&owner_user_id)
         .await?;
+    credential_files::validate_presentation_id(&presentation_id)?;
     manager
         .update(
             &*host,
             &owner_user_id,
             &connection_id,
             expected_version,
+            Some(&presentation_id),
             input,
         )
         .await
@@ -662,17 +704,20 @@ pub async fn test_remote_connection_draft(
     manager: State<'_, RemoteConnectionManager>,
     owner_user_id: String,
     input: RemoteConnectionInput,
+    presentation_id: String,
     credential_reference_id: Option<String>,
     verification_code: Option<String>,
 ) -> Result<PresentedRemoteConnectionTestResult, String> {
     authentication
         .access_token_for_owner(&owner_user_id)
         .await?;
+    credential_files::validate_presentation_id(&presentation_id)?;
     manager
         .test_draft(
             &*host,
             &owner_user_id,
             input,
+            Some(&presentation_id),
             credential_reference_id,
             verification_code,
         )

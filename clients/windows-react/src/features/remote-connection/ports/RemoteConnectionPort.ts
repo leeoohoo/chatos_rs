@@ -1,5 +1,7 @@
 import type {
   RemoteConnection,
+  RemoteCredentialFileKind,
+  RemoteCredentialFileSelection,
   RemoteConnectionInput,
   RemoteConnectionTestResult,
 } from "../domain/remoteConnection";
@@ -13,6 +15,7 @@ export interface SavedRemoteConnectionScope extends RemoteConnectionScope {
 }
 
 export interface CreateRemoteConnectionRequest extends RemoteConnectionScope {
+  presentationId: string;
   input: RemoteConnectionInput;
 }
 
@@ -42,4 +45,10 @@ export interface RemoteConnectionPort {
   delete(request: DeleteRemoteConnectionRequest): Promise<string>;
   testDraft(request: TestRemoteConnectionDraftRequest): Promise<RemoteConnectionTestResult>;
   testSaved(request: TestSavedRemoteConnectionRequest): Promise<RemoteConnectionTestResult>;
+  pickCredentialFile(
+    request: RemoteConnectionScope & { presentationId: string; kind: RemoteCredentialFileKind },
+  ): Promise<RemoteCredentialFileSelection | null>;
+  discardCredentialFileSelections(
+    request: RemoteConnectionScope & { presentationId: string },
+  ): Promise<void>;
 }

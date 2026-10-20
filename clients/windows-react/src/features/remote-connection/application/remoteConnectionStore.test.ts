@@ -81,6 +81,8 @@ function port(overrides: Partial<RemoteConnectionPort> = {}): RemoteConnectionPo
       message: "连接成功",
       verificationPrompt: null,
     })),
+    pickCredentialFile: vi.fn(async () => null),
+    discardCredentialFileSelections: vi.fn(async () => undefined),
     ...overrides,
   };
 }

@@ -5,6 +5,7 @@ import {
   remoteConnectionListSchema,
   remoteConnectionSchema,
   remoteConnectionTestResultSchema,
+  remoteCredentialFileSelectionSchema,
 } from "../domain/remoteConnection";
 import type {
   CreateRemoteConnectionRequest,
@@ -61,5 +62,19 @@ export class TauriRemoteConnectionAdapter implements RemoteConnectionPort {
     return remoteConnectionTestResultSchema.parse(
       await invoke("test_saved_remote_connection", { ...request }),
     );
+  }
+
+  async pickCredentialFile(
+    request: Parameters<RemoteConnectionPort["pickCredentialFile"]>[0],
+  ) {
+    return remoteCredentialFileSelectionSchema.nullable().parse(
+      await invoke("pick_remote_credential_file", { ...request }),
+    );
+  }
+
+  async discardCredentialFileSelections(
+    request: Parameters<RemoteConnectionPort["discardCredentialFileSelections"]>[0],
+  ) {
+    await invoke("discard_remote_credential_file_selections", { ...request });
   }
 }
