@@ -570,6 +570,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "tokio",
+ "unicode-normalization",
  "unicode-segmentation",
  "uuid",
  "windows-sys 0.60.2",

@@ -30,12 +30,22 @@ describe("ProjectDirectoryView", () => {
     });
   });
 
-  it("shows only relative file details and does not claim preview support", async () => {
+  it("loads file content using only a project-relative path", async () => {
     render(<ProjectDirectoryView ownerUserId="owner-1" port={stubPort()} projectId="project-1" />);
     fireEvent.click(await screen.findByRole("treeitem", { name: /README.md/ }));
+    expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
     expect(screen.getByText("/README.md")).toBeInTheDocument();
     expect(screen.queryByText(/C:\\/)).not.toBeInTheDocument();
-    expect(screen.getByText(/文件预览与编辑将在后续独立切片/)).toBeInTheDocument();
+  });
+
+  it("searches names and content then opens a matching line", async () => {
+    const port = stubPort();
+    render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
+    fireEvent.change(await screen.findByRole("searchbox", { name: "搜索项目文件" }), { target: { value: "hello" } });
+    fireEvent.click(await screen.findByRole("button", { name: /README.md 第 1 行/ }));
+    expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
+    expect(port.searchEntries).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 100 }));
+    expect(port.searchContent).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 200 }));
   });
 });
 
@@ -62,6 +72,35 @@ describe("ProjectWorkspaceSurface", () => {
 function stubPort(): ProjectDirectoryPort {
   return {
     loadDirectory: vi.fn(async (request) => request.path === "" ? rootListing() : sourcesListing()),
+    readFile: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.path,
+      name: request.path.split("/").at(-1) ?? request.path,
+      contentType: "text/markdown",
+      contentEncoding: "utf8" as const,
+      isBinary: false,
+      isImage: false,
+      isWritable: true,
+      size: 7,
+      modifiedAtUnixMs: 1,
+      content: "# Hello",
+    })),
+    searchEntries: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      query: request.query,
+      matches: [rootListing().entries[1]],
+      visitedDirectories: 1,
+      visitedEntries: 2,
+      isTruncated: false,
+    })),
+    searchContent: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      query: request.query,
+      matches: [{ path: "README.md", line: 1, column: 3, text: "# Hello" }],
+      scannedFiles: 1,
+      visitedEntries: 2,
+      isTruncated: false,
+    })),
   };
 }
 

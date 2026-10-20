@@ -456,6 +456,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，项目创建与 Windows 文件夹授权）：已按 macOS `CreateProjectSheet`、`CreateProjectViewModel`、`NativeLocalProjectsService` 与 `SQLiteProjectRegistry` 固定“本地项目、所选目录本身为根、成功后再发布选择”的语义，并以 Windows 原生文件夹选择器替代 macOS 已配对根目录浏览。React 仅接收绑定 owner + presentation 的一次性 opaque selection ID 与目录显示名，绝对路径只存在 Rust；弹窗关闭、账号替换、重复选择和保存分别以 identity 拒绝迟到结果，原生 tombstone 同时拒绝关闭后才返回的选择器结果。提交会重新 canonicalize 目录并拒绝文件、符号链接和 Windows reparse point；稳定 workspace ID/fingerprint、owner-scoped grant 与 Project Registry 记录通过有界恢复 journal 收口，跨 JSON/SQLite 中途退出可幂等补齐。活动或归档项目不能重复注册相同 canonical root，removed 项目可重新注册；Connector state 全部读写增加进程内串行化，避免审批设置与文件夹 grant 相互覆盖。27 个项目类型字段由测试逐项对照 macOS `ChatOSSkillCatalog.json`。创建成功先关闭弹窗，再原子加入当前账号侧栏、选中新项目并进入默认“用户消息”工作面。当前验收为 Windows Rust 95 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 141 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步是项目文件内容预览与只读搜索切片。
 
+状态补充（2026-10-20，项目文件内容预览与只读搜索）：已按 macOS `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 接入文本、图片、二进制状态预览，以及文件名/相对路径和文件内容并行搜索。每次请求仍从 owner-scoped Registry 与 workspace grant 解析项目根，逐级拒绝符号链接和 Windows reparse point，React 只接收规范化相对路径。文本预览上限 2 MiB、图片 25 MiB、内容搜索单文件 2 MiB；二进制取前 8,000 字节检测 NUL，文本按 UTF-8 容错解码。搜索最多访问 20,000 项、最长 3 秒、最多返回 500 项，大小写与变音符号不敏感，跳过 macOS 同源的 13 个生成/依赖目录，摘要最多 2,000 字符。搜索采用 280 ms 防抖并并发执行文件名与内容查询；项目切换、页面离开、清空查询、选择新文件和后续查询都会以 request identity 淘汰迟到结果，单路失败仍保留另一条可信结果。当前仍只读，不开放编辑、创建/删除、Git 或项目设置。当前验收为 Windows Rust 97 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 144 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步是项目文件写操作的审批与竞态边界切片。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

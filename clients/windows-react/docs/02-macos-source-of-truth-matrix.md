@@ -71,7 +71,7 @@ Windows 只读索引实现（2026-10-20）：
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
 - 侧栏索引仍以本地 Registry 为权威；项目创建与显式文件夹授权已在独立切片通过后开放。导入、重命名、删除及其他 project context 变更仍须等待各自完整切片。
 
-### 2.2 项目目录只读树
+### 2.2 项目目录只读树、文件预览与搜索
 
 macOS 事实源：
 
@@ -88,7 +88,7 @@ Windows React 已完成只读目录树：
 - 目录列表与 macOS 一致最多 5,000 项、文件夹优先排序并跳过符号链接，只投影名称、相对路径、类型、可写位、大小和修改时间；
 - React Store 以 owner/project generation 和 per-path request identity 管理根目录、展开与刷新；折叠目录会使其子树的迟到请求失效，切换项目或离开页面清空展示状态；
 - 项目工作面默认显示用户消息；目录 tab 已开放，项目设置保持禁用并明确等待对应页面准入；
-- 当前只显示目录树和文件元数据。项目创建/授权已由下方独立切片开放；内容预览、搜索、编辑、文件创建/删除和 Git 仍继续禁止；
+- 目录树与文件元数据之外，项目创建/授权已由下方独立切片开放，内容预览与只读搜索已由 2.2.2 独立切片开放；编辑、文件创建/删除和 Git 仍继续禁止；
 - Windows 定向验收为 Rust 88 项通过、2 项 sidecar 环境测试忽略，React 37 个文件 132 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
 ### 2.2.1 项目创建与 Windows 文件夹授权
@@ -102,6 +102,18 @@ macOS 事实源与 Windows 平台适配：
 - 27 个项目类型的 key、中文标签、说明和分类由 Rust 测试逐项对照 macOS `ChatOSSkillCatalog.json`，React 不维护第二份类型真值；
 - 成功后先关闭弹窗，再加入当前账号的 Workspace Index、选中新项目并保持 macOS 默认“用户消息”工作面；不隐式创建 Conversation、Git 仓库或 remote；
 - Windows 定向验收为 Rust 95 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 141 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
+### 2.2.2 项目文件内容预览与只读搜索
+
+macOS 事实源与 Windows 实现：
+
+- `ProjectDirectoryViewModel` 的文件选择与 280 ms 搜索防抖分别映射为 preview/search request identity；切项目、离开目录页、清空查询、选择新文件或发起更新查询会立即淘汰旧结果；
+- `NativeWorkspaceFilesystem.read` 的边界保持一致：文本最多 2 MiB、图片最多 25 MiB，前 8,000 字节含 NUL 视为二进制，非二进制按 UTF-8 容错解码；图片、普通二进制与文本使用明确的强类型投影，React 不接收绝对路径；
+- 文件名与相对路径搜索、内容搜索并行执行，分别最多返回 100/200 项；Rust 原生层统一限制任一调用最多 500 项、20,000 次访问和 3 秒，内容搜索单文件最多 2 MiB，行号和列号从 1 开始，单行摘要最多 2,000 字符；
+- 搜索与 macOS 一致大小写/变音符号不敏感，并跳过 `.git`、`.build`、`.cache`、`.next`、`.idea`、`.vscode`、`node_modules`、`DerivedData`、`Pods`、`target`、`dist`、`build`、`vendor`；目录枚举本身也按剩余访问预算截断，不能先把超大目录完整读入内存；
+- 每次读文件或搜索都重新从 owner-scoped Registry 与 workspace grant 解析 canonical root，并逐级拒绝符号链接和 Windows reparse point；React schema 再次约束相对路径、大小、编码、数量与摘要长度；
+- Apple 风格侧栏新增搜索框、分组结果、截断提示和局部 loading；右侧提供文本目标行、图片棋盘背景、二进制不可预览与可恢复错误状态。此切片只读，不开放写入、创建、删除、外部打开、Git 或项目设置；
+- Windows 全量验收为 Rust 97 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 144 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
 ### 2.3 Authentication：完整调用链
 
@@ -916,7 +928,7 @@ Windows React 已完成对应独立切片：
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
-| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh、项目创建语义与 Windows workspace 路径边界已映射；Windows 只读目录树、原生文件夹授权和本地项目创建已完成，预览、搜索、写操作仍待独立切片 | 目录树与项目创建/授权已进入 React；其余操作禁止 |
+| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh/search/read、项目创建语义与 Windows workspace 路径边界已映射；Windows 只读目录树、原生文件夹授权、本地项目创建、文件预览与只读搜索已完成，写操作仍待独立切片 | 目录树、项目创建/授权、预览与只读搜索已进入 React；写操作、Git 与项目设置禁止 |
 | 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
@@ -966,8 +978,9 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 10. [已完成] 按 macOS 契约实现命令审批三态策略、模型/推理设置、风险确认、pending 决定和审计历史页；未准入的 Windows 审批 Agent 明确降级 Human。
 11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
 12. [已完成] 映射第 31 页访问控制/沙箱策略；Windows 当前仅进程树控制得到执行链路证明，因此策略只读，文件/网络隔离明确显示缺失，审批复用第 29 页唯一真值。
-13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；预览、搜索、写操作、Git 与项目设置未提前开放。
+13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；写操作、Git 与项目设置未提前开放。
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
-15. [进行中] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile` 与 `NativeWorkspaceFilesystem` 映射项目文件内容预览和只读搜索；未完成路径、大小、编码、二进制与迟到结果门禁前禁止进入 React。
+15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
+16. [下一步] 按 macOS `writeFile/createFile/createDirectory/deleteEntry` 端口拆分项目文件写操作，先冻结确认、冲突、失败恢复与迟到结果规则，再决定 React 准入；Git 与项目设置继续独立实施。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

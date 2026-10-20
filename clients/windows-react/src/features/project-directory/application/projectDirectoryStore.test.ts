@@ -51,12 +51,62 @@ describe("project directory store", () => {
     expect(useProjectDirectoryStore.getState().listings[""]).toEqual(rootListing());
     expect(useProjectDirectoryStore.getState().error).toBe("directory offline");
   });
+
+  it("rejects a late file preview after selecting another file", async () => {
+    const first = deferred<Awaited<ReturnType<ProjectDirectoryPort["readFile"]>>>();
+    const port = stubPort(async () => rootListing());
+    port.readFile = vi.fn(async (request) => request.path === "a.txt" ? first.promise : fileContent(request.path, "second"));
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    const stale = useProjectDirectoryStore.getState().openFile(port, fileEntry("a.txt"));
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("b.txt"));
+    first.resolve(fileContent("a.txt", "first"));
+    await stale;
+    expect(useProjectDirectoryStore.getState().selectedFile?.path).toBe("b.txt");
+    expect(useProjectDirectoryStore.getState().selectedFile?.content).toBe("second");
+  });
+
+  it("keeps partial search results and rejects a stale query", async () => {
+    const first = deferred<Awaited<ReturnType<ProjectDirectoryPort["searchEntries"]>>>();
+    const port = stubPort(async () => rootListing());
+    port.searchEntries = vi.fn(async (request) => request.query === "old" ? first.promise : ({
+      projectId: request.projectId, query: request.query, matches: [fileEntry("new.txt")],
+      visitedDirectories: 1, visitedEntries: 1, isTruncated: false,
+    }));
+    port.searchContent = vi.fn(async (request) => ({
+      projectId: request.projectId, query: request.query, matches: [], scannedFiles: 1, visitedEntries: 1, isTruncated: false,
+    }));
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    useProjectDirectoryStore.getState().setSearchText("old");
+    const stale = useProjectDirectoryStore.getState().search(port, "old");
+    useProjectDirectoryStore.getState().setSearchText("new");
+    await useProjectDirectoryStore.getState().search(port, "new");
+    first.resolve({ projectId: "project-1", query: "old", matches: [fileEntry("old.txt")], visitedDirectories: 1, visitedEntries: 1, isTruncated: false });
+    await stale;
+    expect(useProjectDirectoryStore.getState().searchSnapshot?.query).toBe("new");
+    expect(useProjectDirectoryStore.getState().searchSnapshot?.entries[0].path).toBe("new.txt");
+  });
 });
 
 type AccessLoad = (request: ProjectDirectoryLoadRequest) => Promise<ProjectDirectoryListing>;
 
 function stubPort(load: AccessLoad): ProjectDirectoryPort {
-  return { loadDirectory: vi.fn(load) };
+  return {
+    loadDirectory: vi.fn(load),
+    readFile: vi.fn(async (request) => fileContent(request.path, "content")),
+    searchEntries: vi.fn(async (request) => ({ projectId: request.projectId, query: request.query, matches: [], visitedDirectories: 1, visitedEntries: 1, isTruncated: false })),
+    searchContent: vi.fn(async (request) => ({ projectId: request.projectId, query: request.query, matches: [], scannedFiles: 1, visitedEntries: 1, isTruncated: false })),
+  };
+}
+
+function fileEntry(path: string) {
+  return { name: path, path, isDirectory: false, isWritable: true, size: 10, modifiedAtUnixMs: 1 };
+}
+
+function fileContent(path: string, content: string) {
+  return {
+    projectId: "project-1", path, name: path, contentType: "text/plain", contentEncoding: "utf8" as const,
+    isBinary: false, isImage: false, isWritable: true, size: content.length, modifiedAtUnixMs: 1, content,
+  };
 }
 
 function rootListing(): ProjectDirectoryListing {

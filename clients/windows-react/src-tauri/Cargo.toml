@@ -25,6 +25,7 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 sha2 = "0.10"
 uuid = { version = "1", features = ["v4"] }
 unicode-segmentation = "1"
+unicode-normalization = "0.1"
 mime_guess = "2"
 rfd = "0.15"
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }

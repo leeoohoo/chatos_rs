@@ -52,7 +52,9 @@ use project_creation::{
     create_local_project, discard_project_directory_selection, list_project_types,
     pick_project_directory, ProjectCreationManager,
 };
-use project_filesystem::load_project_directory;
+use project_filesystem::{
+    load_project_directory, read_project_file, search_project_content, search_project_entries,
+};
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -148,6 +150,9 @@ pub fn run() {
             refresh_workspace_relations,
             prepare_project_conversation,
             load_project_directory,
+            read_project_file,
+            search_project_entries,
+            search_project_content,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,

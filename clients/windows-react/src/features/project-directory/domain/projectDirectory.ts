@@ -52,6 +52,62 @@ export const projectDirectoryListingSchema = z.object({
 export type ProjectFileEntry = z.infer<typeof projectFileEntrySchema>;
 export type ProjectDirectoryListing = z.infer<typeof projectDirectoryListingSchema>;
 
+export const projectFileContentSchema = z.object({
+  projectId: z.string().trim().min(1).max(1_024),
+  path: portableRelativePath.refine((path) => path.length > 0),
+  name: z.string().min(1).max(1_024),
+  contentType: z.string().min(1).max(256),
+  contentEncoding: z.enum(["utf8", "base64"]),
+  isBinary: z.boolean(),
+  isImage: z.boolean(),
+  isWritable: z.boolean(),
+  size: z.number().int().nonnegative().max(25 * 1_024 * 1_024),
+  modifiedAtUnixMs: z.number().int().nonnegative().nullable(),
+  content: z.string().max(36 * 1_024 * 1_024),
+}).strict().superRefine((file, context) => {
+  if (file.isBinary !== (file.contentEncoding === "base64")) {
+    context.addIssue({ code: "custom", message: "文件编码与二进制标记不一致。", path: ["contentEncoding"] });
+  }
+});
+
+export const projectEntrySearchResultSchema = z.object({
+  projectId: z.string().trim().min(1).max(1_024),
+  query: z.string().trim().min(1).max(1_024),
+  matches: z.array(projectFileEntrySchema).max(500),
+  visitedDirectories: z.number().int().nonnegative().max(20_000),
+  visitedEntries: z.number().int().nonnegative().max(20_000),
+  isTruncated: z.boolean(),
+}).strict();
+
+export const projectContentMatchSchema = z.object({
+  path: portableRelativePath.refine((path) => path.length > 0),
+  line: z.number().int().positive(),
+  column: z.number().int().positive(),
+  text: z.string().max(2_000),
+}).strict();
+
+export const projectContentSearchResultSchema = z.object({
+  projectId: z.string().trim().min(1).max(1_024),
+  query: z.string().trim().min(1).max(1_024),
+  matches: z.array(projectContentMatchSchema).max(500),
+  scannedFiles: z.number().int().nonnegative().max(20_000),
+  visitedEntries: z.number().int().nonnegative().max(20_000),
+  isTruncated: z.boolean(),
+}).strict();
+
+export type ProjectFileContent = z.infer<typeof projectFileContentSchema>;
+export type ProjectEntrySearchResult = z.infer<typeof projectEntrySearchResultSchema>;
+export type ProjectContentMatch = z.infer<typeof projectContentMatchSchema>;
+export type ProjectContentSearchResult = z.infer<typeof projectContentSearchResultSchema>;
+
+export interface ProjectSearchSnapshot {
+  query: string;
+  entries: ProjectFileEntry[];
+  content: ProjectContentMatch[];
+  entryTruncated: boolean;
+  contentTruncated: boolean;
+}
+
 export interface VisibleProjectEntry {
   entry: ProjectFileEntry;
   depth: number;
@@ -78,4 +134,14 @@ export function flattenDirectoryTree(
 
 export function displayProjectPath(path: string) {
   return path === "" ? "/" : `/${path}`;
+}
+
+export function fileNameFromPath(path: string) {
+  return path.split("/").at(-1) ?? path;
+}
+
+export function projectImageDataUrl(file: ProjectFileContent) {
+  if (!file.isImage) return null;
+  if (file.contentEncoding === "base64") return `data:${file.contentType};base64,${file.content}`;
+  return `data:${file.contentType};charset=utf-8,${encodeURIComponent(file.content)}`;
 }

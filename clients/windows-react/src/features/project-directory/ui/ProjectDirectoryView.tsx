@@ -2,7 +2,11 @@ import { useEffect } from "react";
 import { useProjectDirectoryStore } from "../application/projectDirectoryStore";
 import {
   displayProjectPath,
+  fileNameFromPath,
   flattenDirectoryTree,
+  projectImageDataUrl,
+  type ProjectContentMatch,
+  type ProjectFileContent,
   type ProjectFileEntry,
 } from "../domain/projectDirectory";
 import type { ProjectDirectoryPort } from "../ports/ProjectDirectoryPort";
@@ -16,41 +20,52 @@ export function ProjectDirectoryView({
   projectId: string;
   port: ProjectDirectoryPort;
 }) {
-  const listings = useProjectDirectoryStore((state) => state.listings);
-  const expandedPaths = useProjectDirectoryStore((state) => state.expandedPaths);
-  const loadingPaths = useProjectDirectoryStore((state) => state.loadingPaths);
-  const selectedEntry = useProjectDirectoryStore((state) => state.selectedEntry);
-  const rootLoading = useProjectDirectoryStore((state) => state.rootLoading);
-  const error = useProjectDirectoryStore((state) => state.error);
-  const activate = useProjectDirectoryStore((state) => state.activate);
-  const toggle = useProjectDirectoryStore((state) => state.toggle);
-  const select = useProjectDirectoryStore((state) => state.select);
-  const refresh = useProjectDirectoryStore((state) => state.refresh);
-  const reset = useProjectDirectoryStore((state) => state.reset);
+  const state = useProjectDirectoryStore();
 
   useEffect(() => {
-    void activate(port, ownerUserId, projectId);
-  }, [activate, ownerUserId, port, projectId]);
+    void state.activate(port, ownerUserId, projectId);
+  }, [ownerUserId, port, projectId]); // Store actions are stable; project identity owns activation.
 
-  useEffect(() => () => reset(), [ownerUserId, projectId, reset]);
+  useEffect(() => () => useProjectDirectoryStore.getState().reset(), [ownerUserId, projectId]);
 
-  const visibleEntries = flattenDirectoryTree(listings, expandedPaths, loadingPaths);
-  const root = listings[""];
+  useEffect(() => {
+    const query = state.searchText.trim();
+    if (!query) return;
+    const timer = window.setTimeout(() => {
+      void useProjectDirectoryStore.getState().search(port, query);
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [port, state.searchText]);
+
+  const visibleEntries = flattenDirectoryTree(state.listings, state.expandedPaths, state.loadingPaths);
+  const root = state.listings[""];
+  const searching = state.searchText.trim().length > 0;
 
   return (
     <div className="project-directory" aria-label="项目目录">
       <aside className="project-directory__sidebar">
         <header className="project-directory__toolbar">
-          <div><span aria-hidden="true">▱</span><strong>项目文件</strong></div>
-          <button disabled={rootLoading} onClick={() => void refresh(port)} title="刷新目录" type="button">↻</button>
+          <label className="project-directory-search">
+            <span aria-hidden="true">⌕</span>
+            <input
+              aria-label="搜索项目文件"
+              onChange={(event) => state.setSearchText(event.target.value)}
+              placeholder="搜索项目文件"
+              type="search"
+              value={state.searchText}
+            />
+          </label>
+          <button disabled={state.rootLoading} onClick={() => void state.refresh(port)} title="刷新目录" type="button">↻</button>
         </header>
-        {error && (
+        {state.error && (
           <div className="project-directory__error" role="alert">
-            <span>{error}</span>
-            <button onClick={() => void refresh(port)} type="button">重试</button>
+            <span>{state.error}</span>
+            <button onClick={() => void state.refresh(port)} type="button">重试</button>
           </div>
         )}
-        {rootLoading && !root ? (
+        {searching ? (
+          <SearchResults port={port} />
+        ) : state.rootLoading && !root ? (
           <div className="project-directory__empty"><span className="mini-spinner" aria-hidden="true" />正在读取项目目录…</div>
         ) : !root ? (
           <div className="project-directory__empty">项目目录暂时不可用。</div>
@@ -65,28 +80,75 @@ export function ProjectDirectoryView({
                 loading={item.loading}
                 depth={item.depth}
                 key={item.entry.path}
-                selected={selectedEntry?.path === item.entry.path}
-                onActivate={() => item.entry.isDirectory
-                  ? void toggle(port, item.entry)
-                  : select(item.entry)}
+                selected={state.selectedEntry?.path === item.entry.path}
+                onActivate={() => void state.toggle(port, item.entry)}
               />
             ))}
           </div>
         )}
-        {root?.isTruncated && <p className="project-directory__truncated">目录超过 5,000 项，只显示前 5,000 项。</p>}
+        {!searching && root?.isTruncated && <p className="project-directory__truncated">目录超过 5,000 项，只显示前 5,000 项。</p>}
       </aside>
       <section className="project-directory__detail">
-        {selectedEntry ? (
-          <EntryDetail entry={selectedEntry} />
-        ) : (
-          <div className="project-directory__welcome">
-            <span aria-hidden="true">▱</span>
-            <h2>选择项目文件</h2>
-            <p>目录树来自本机 Registry 与 workspace grant；绝对路径不会发送到 React。</p>
-          </div>
-        )}
+        <FilePreview port={port} />
       </section>
     </div>
+  );
+}
+
+function SearchResults({ port }: { port: ProjectDirectoryPort }) {
+  const snapshot = useProjectDirectoryStore((state) => state.searchSnapshot);
+  const loading = useProjectDirectoryStore((state) => state.searchLoading);
+  const error = useProjectDirectoryStore((state) => state.searchError);
+  const query = useProjectDirectoryStore((state) => state.searchText.trim());
+  const openEntry = useProjectDirectoryStore((state) => state.openSearchEntry);
+  const openMatch = useProjectDirectoryStore((state) => state.openContentMatch);
+  const hasResults = (snapshot?.entries.length ?? 0) + (snapshot?.content.length ?? 0) > 0;
+  return (
+    <div className="project-directory-search-results" aria-label="项目搜索结果">
+      {error && <div className="project-directory-search-results__error" role="alert">{error}</div>}
+      {snapshot?.content.length ? (
+        <SearchSection title="文件内容">
+          {snapshot.content.map((match) => (
+            <ContentMatchRow key={`${match.path}:${match.line}:${match.column}`} match={match} onOpen={() => void openMatch(port, match)} />
+          ))}
+        </SearchSection>
+      ) : null}
+      {snapshot?.entries.length ? (
+        <SearchSection title="文件和目录">
+          {snapshot.entries.map((entry) => (
+            <button className="project-search-row" key={entry.path} onClick={() => void openEntry(port, entry)} type="button">
+              <span aria-hidden="true">{entry.isDirectory ? "▰" : "▤"}</span>
+              <span><strong>{entry.name}</strong><small>{displayProjectPath(entry.path)}</small></span>
+            </button>
+          ))}
+        </SearchSection>
+      ) : null}
+      {snapshot && (snapshot.entryTruncated || snapshot.contentTruncated) && (
+        <p className="project-directory__truncated">搜索达到 macOS 同源的时间、访问量或结果上限，结果可能不完整。</p>
+      )}
+      {loading ? (
+        <div className="project-directory-search-results__status"><span className="mini-spinner" aria-hidden="true" />正在搜索文件内容…</div>
+      ) : !hasResults && !error ? (
+        <div className="project-directory__empty">没有找到“{query}”</div>
+      ) : null}
+    </div>
+  );
+}
+
+function SearchSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="project-search-section"><h3>{title}</h3>{children}</section>;
+}
+
+function ContentMatchRow({ match, onOpen }: { match: ProjectContentMatch; onOpen(): void }) {
+  return (
+    <button className="project-search-row project-search-row--content" onClick={onOpen} type="button">
+      <span aria-hidden="true">⌕</span>
+      <span>
+        <strong>{fileNameFromPath(match.path)} <em>第 {match.line} 行</em></strong>
+        <code>{match.text.trim()}</code>
+        <small>{displayProjectPath(match.path)}</small>
+      </span>
+    </button>
   );
 }
 
@@ -124,6 +186,67 @@ function DirectoryRow({
   );
 }
 
+function FilePreview({ port }: { port: ProjectDirectoryPort }) {
+  const entry = useProjectDirectoryStore((state) => state.selectedEntry);
+  const file = useProjectDirectoryStore((state) => state.selectedFile);
+  const targetLine = useProjectDirectoryStore((state) => state.selectedLine);
+  const loading = useProjectDirectoryStore((state) => state.previewLoading);
+  const error = useProjectDirectoryStore((state) => state.previewError);
+  const openFile = useProjectDirectoryStore((state) => state.openFile);
+  if (!entry) {
+    return <Welcome icon="▱" title="选择一个文件">从左侧项目目录中选择文件以预览；绝对路径不会发送到 React。</Welcome>;
+  }
+  if (entry.isDirectory) return <EntryDetail entry={entry} />;
+  if (loading) return <Welcome icon={<span className="mini-spinner" />} title="正在读取文件">{displayProjectPath(entry.path)}</Welcome>;
+  if (error) {
+    return (
+      <Welcome icon="!" title="无法预览文件">
+        <span>{error}</span>
+        <button className="project-file-preview__retry" onClick={() => void openFile(port, entry, targetLine ?? undefined)} type="button">重试</button>
+      </Welcome>
+    );
+  }
+  if (!file) return <EntryDetail entry={entry} />;
+  return <FileContent file={file} targetLine={targetLine} />;
+}
+
+function FileContent({ file, targetLine }: { file: ProjectFileContent; targetLine: number | null }) {
+  const imageUrl = projectImageDataUrl(file);
+  return (
+    <article className="project-file-preview">
+      <header>
+        <div><strong>{file.name}</strong><code>{displayProjectPath(file.path)}</code></div>
+        <span>{formatBytes(file.size)} · {file.isWritable ? "可写" : "只读"}</span>
+      </header>
+      {imageUrl ? (
+        <div className="project-file-preview__image"><img alt={file.name} src={imageUrl} /></div>
+      ) : file.isBinary ? (
+        <Welcome icon="▤" title="二进制文件">此文件不能在文本预览器中显示。</Welcome>
+      ) : (
+        <pre className="project-file-preview__text" aria-label={`${file.name} 文件内容`}>
+          <code>{targetLine ? highlightedContent(file.content, targetLine) : file.content}</code>
+        </pre>
+      )}
+    </article>
+  );
+}
+
+function highlightedContent(content: string, targetLine: number) {
+  return content.split("\n").map((line, index, lines) => (
+    <span className={index + 1 === targetLine ? "is-target-line" : undefined} key={index}>
+      {line}{index < lines.length - 1 ? "\n" : ""}
+    </span>
+  ));
+}
+
+function Welcome({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+  return (
+    <div className="project-directory__welcome">
+      <span aria-hidden="true">{icon}</span><h2>{title}</h2><p>{children}</p>
+    </div>
+  );
+}
+
 function EntryDetail({ entry }: { entry: ProjectFileEntry }) {
   return (
     <div className="project-directory-detail-card">
@@ -136,7 +259,6 @@ function EntryDetail({ entry }: { entry: ProjectFileEntry }) {
         {!entry.isDirectory && <div><dt>大小</dt><dd>{formatBytes(entry.size ?? 0)}</dd></div>}
         <div><dt>修改时间</dt><dd>{formatTime(entry.modifiedAtUnixMs)}</dd></div>
       </dl>
-      {!entry.isDirectory && <p>文件预览与编辑将在后续独立切片通过内容边界验收后开放。</p>}
     </div>
   );
 }
