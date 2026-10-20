@@ -13,8 +13,10 @@ mod host_lifecycle;
 mod platform_execution_context;
 mod project_conversation;
 mod project_creation;
+mod project_favorite;
 mod project_filesystem;
 mod project_git;
+mod project_removal;
 mod project_run;
 mod run_inspector;
 mod system_permissions;
@@ -54,6 +56,7 @@ use project_creation::{
     create_local_project, discard_project_directory_selection, list_project_types,
     pick_project_directory, ProjectCreationManager,
 };
+use project_favorite::{load_project_favorites, set_project_favorite, ProjectFavoriteStore};
 use project_filesystem::{
     create_project_entry, delete_project_entry, load_project_directory, read_project_file,
     search_project_content, search_project_entries, write_project_file,
@@ -64,6 +67,7 @@ use project_git::{
     push_project_git, remove_project_git_remote, save_project_git_remote, stage_project_git_paths,
     switch_project_git_branch, unstage_project_git_paths,
 };
+use project_removal::remove_local_project;
 use project_run::{
     analyze_project_run, delete_project_run_instance, load_project_run_state,
     poll_project_run_changes, set_project_run_default_target, start_project_run, stop_project_run,
@@ -112,7 +116,8 @@ pub fn run() {
             .map_err(std::io::Error::other)?;
             app.manage(journal);
             app.manage(ApprovalSettingsStore::new(data_dir.clone()));
-            app.manage(ProjectRunPreferencesStore::new(data_dir));
+            app.manage(ProjectRunPreferencesStore::new(data_dir.clone()));
+            app.manage(ProjectFavoriteStore::new(data_dir));
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
@@ -185,6 +190,9 @@ pub fn run() {
             remove_project_git_remote,
             pull_project_git,
             push_project_git,
+            remove_local_project,
+            load_project_favorites,
+            set_project_favorite,
             analyze_project_run,
             load_project_run_state,
             poll_project_run_changes,

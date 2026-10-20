@@ -235,6 +235,33 @@ impl ProjectRunManager {
         terminate_all(processes, "登录账号已切换").await;
     }
 
+    pub(crate) async fn release_project(&self, owner_user_id: &str, project_id: &str) {
+        let (processes, signal) = {
+            let mut store = self.store.lock().await;
+            let ids = store
+                .instances
+                .iter()
+                .filter(|(_, process)| {
+                    process.owner_user_id == owner_user_id && process.project_id == project_id
+                })
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>();
+            let processes = ids
+                .into_iter()
+                .filter_map(|id| store.instances.remove(&id))
+                .collect::<Vec<_>>();
+            let signal = store.changes.remove(&ProjectKey {
+                owner_user_id: owner_user_id.to_owned(),
+                project_id: project_id.to_owned(),
+            });
+            (processes, signal)
+        };
+        if let Some(signal) = signal {
+            signal.bump();
+        }
+        terminate_all(processes, "项目已移除").await;
+    }
+
     pub(crate) async fn reset(&self) {
         let (processes, signals) = {
             let mut store = self.store.lock().await;

@@ -278,6 +278,37 @@ fn preferences_reject_invalid_environment_and_persist_default_target() {
         .is_err());
 }
 
+#[test]
+fn removing_project_preferences_drops_secret_references_and_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("preferences.json");
+    let preferences = memory_preferences(path.clone());
+    preferences
+        .set_default_target("owner", "project", "0123456789abcdef0123".into())
+        .unwrap();
+    preferences
+        .update_environment(
+            "owner",
+            "project",
+            Default::default(),
+            vec![ProjectRunEnvironmentMutation {
+                key: "DEPLOY_KEY".into(),
+                value: Some("remove-this-secret".into()),
+            }],
+        )
+        .unwrap();
+
+    preferences.remove_project("owner", "project").unwrap();
+
+    let (selection, environment) = preferences.projection("owner", "project").unwrap();
+    assert!(selection.default_target_id.is_none());
+    assert!(selection.selected_toolchains.is_empty());
+    assert!(environment.is_empty());
+    let persisted = fs::read_to_string(path).unwrap();
+    assert!(!persisted.contains("DEPLOY_KEY"));
+    assert!(!persisted.contains("remove-this-secret"));
+}
+
 #[tokio::test]
 async fn runtime_projects_typed_process_output_and_owner_scoped_state() {
     let directory = tempfile::tempdir().unwrap();
@@ -367,6 +398,28 @@ async fn stop_terminates_the_owned_project_process_group() {
     assert!(!stopped.is_running);
     assert!(matches!(stopped.instances[0].status, "exited" | "failed"));
     manager.reset().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn project_release_removes_state_and_terminates_the_process_tree() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let target = test_target(
+        "/bin/sh".into(),
+        vec!["-c".into(), "sleep 60 & wait".into()],
+        &root,
+    );
+    let state = manager.start(&scope, target).await.unwrap();
+    assert!(state.is_running);
+    let before = std::time::Instant::now();
+
+    manager.release_project("owner", "project").await;
+
+    assert!(before.elapsed() < Duration::from_secs(4));
+    assert!(manager.snapshot(&scope).await.unwrap().instances.is_empty());
 }
 
 #[cfg(unix)]

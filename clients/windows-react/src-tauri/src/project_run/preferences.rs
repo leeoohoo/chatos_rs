@@ -258,6 +258,52 @@ impl ProjectRunPreferencesStore {
         Ok(())
     }
 
+    pub(crate) fn remove_project(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+    ) -> Result<(), String> {
+        let _guard = self.guard()?;
+        let mut file = self.load_file()?;
+        self.cleanup_retired_secrets(&mut file);
+        let removed = file
+            .owners
+            .get_mut(owner_user_id)
+            .and_then(|owner| owner.projects.remove(project_id));
+        let Some(removed) = removed else {
+            let _ = self.save_file(&file);
+            return Ok(());
+        };
+        if file
+            .owners
+            .get(owner_user_id)
+            .is_some_and(|owner| owner.projects.is_empty())
+        {
+            file.owners.remove(owner_user_id);
+        }
+        if file
+            .retired_secrets
+            .len()
+            .saturating_add(removed.environment.len())
+            > MAXIMUM_RETIRED_SECRETS
+        {
+            return Err("项目环境变量的待清理安全记录过多。".into());
+        }
+        file.retired_secrets
+            .extend(removed.environment.into_iter().map(|(key, reference)| {
+                RetiredSecretReference {
+                    owner_user_id: owner_user_id.to_owned(),
+                    project_id: project_id.to_owned(),
+                    key,
+                    secret_id: reference.secret_id,
+                }
+            }));
+        self.save_file(&file)?;
+        self.cleanup_retired_secrets(&mut file);
+        let _ = self.save_file(&file);
+        Ok(())
+    }
+
     fn cleanup_retired_secrets(&self, file: &mut PreferencesFile) {
         file.retired_secrets.retain(|reference| {
             let account = secret_account(
