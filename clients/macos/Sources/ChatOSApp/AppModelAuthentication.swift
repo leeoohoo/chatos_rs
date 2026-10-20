@@ -467,34 +467,27 @@ extension AppModel {
             $0.localAgentRuntimeDidBecomeUnavailable()
         }
         guard let localAgentHost else { return }
-        let commandService = commandService
-        let petActivityService = petActivityService
-        let messageTaskGraphService = messageTaskGraphService
-        let askUserPromptService = askUserPromptService
-        let turnProcessService = turnProcessService
-        let runtimeSettingsService = runtimeSettingsService
-        let platformToolWorker = platformToolWorker
-        let workspaceService = workspaceService
-        let projectConversationService = projectConversationService
-        let notepadService = notepadService
-        let remoteConnectionMetadataService = remoteConnectionMetadataService
+        let shutdownPort = NativeLocalAgentServiceShutdownAdapter(
+            commandService: commandService,
+            petActivityService: petActivityService,
+            messageTaskGraphService: messageTaskGraphService,
+            askUserPromptService: askUserPromptService,
+            turnProcessService: turnProcessService,
+            runtimeSettingsService: runtimeSettingsService,
+            platformToolWorker: platformToolWorker,
+            workspaceService: workspaceService,
+            projectConversationService: projectConversationService,
+            notepadService: notepadService,
+            remoteConnectionMetadataService: remoteConnectionMetadataService,
+            host: localAgentHost
+        )
+        let shutdownUseCase = LocalAgentServiceShutdownUseCase()
         let previousShutdown = localAgentHostShutdownTask
         localAgentHostShutdownGeneration &+= 1
         let shutdownGeneration = localAgentHostShutdownGeneration
         localAgentHostShutdownTask = Task { [weak self] in
             await previousShutdown?.value
-            await commandService?.reset()
-            await petActivityService?.reset()
-            await messageTaskGraphService?.reset()
-            await askUserPromptService?.reset()
-            await turnProcessService?.reset()
-            await runtimeSettingsService?.reset()
-            await platformToolWorker?.reset()
-            await workspaceService?.reset()
-            await projectConversationService?.reset()
-            await notepadService.reset()
-            await remoteConnectionMetadataService.reset()
-            await localAgentHost.stop()
+            await shutdownUseCase.execute(port: shutdownPort)
             guard let self,
                   localAgentHostShutdownGeneration == shutdownGeneration else { return }
             localAgentHostShutdownTask = nil
