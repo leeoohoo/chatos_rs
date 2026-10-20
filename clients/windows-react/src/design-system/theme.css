@@ -137,6 +137,19 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .project-state__actions { margin-top: 22px; }
 .conversation-identity { max-width: 100%; margin-top: 18px; overflow: hidden; border: 1px solid var(--separator); border-radius: 8px; padding: 6px 9px; color: var(--secondary); background: rgba(120,120,128,.07); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
+.conversation-loading, .conversation-error { display: grid; min-height: calc(100vh - 190px); place-content: center; justify-items: center; gap: 12px; color: var(--secondary); font-size: 13px; }
+.conversation-error { width: min(460px, 100%); min-height: 0; margin: 100px auto 0; border: 1px solid var(--separator); border-radius: 18px; padding: 28px; background: var(--surface); box-shadow: var(--shadow); text-align: center; }
+.conversation-error strong { color: inherit; font-size: 16px; }
+.conversation-history { display: grid; width: min(820px, 100%); margin: 0 auto; gap: 14px; }
+.history-more { justify-self: center; border: 0; padding: 5px 10px; color: var(--accent); background: transparent; font-size: 12px; font-weight: 600; cursor: pointer; }
+.history-more:disabled { color: var(--tertiary); cursor: default; }
+.history-error { margin: 0; color: #ff3b30; text-align: center; font-size: 12px; }
+.message-list { display: flex; flex-direction: column; gap: 12px; }
+.message-bubble { width: fit-content; max-width: min(680px, 86%); border: 1px solid var(--separator); border-radius: 15px; padding: 10px 13px; background: var(--surface); box-shadow: 0 4px 14px rgba(0,0,0,.035); font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.message-bubble--user { align-self: flex-end; border-color: transparent; color: white; background: var(--accent); }
+.message-bubble--assistant { align-self: flex-start; }
+.conversation-empty { margin: 120px 0 0; color: var(--secondary); text-align: center; font-size: 13px; }
+
 .account-button { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 3px; border: 0; border-radius: 10px; padding: 8px 9px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
 .account-button:hover { background: rgba(120,120,128,.1); }
 .account-button:focus-visible { outline: 3px solid rgba(10,132,255,.24); outline-offset: 1px; }

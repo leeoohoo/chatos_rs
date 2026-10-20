@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router";
 import { TauriAuthenticationAdapter } from "../features/authentication/adapters/TauriAuthenticationAdapter";
 import { useAuthenticationStore } from "../features/authentication/application/authenticationStore";
 import { AuthenticationGate } from "../features/authentication/ui/AuthenticationGate";
+import { TauriConversationHistoryAdapter } from "../features/conversation-history/adapters/TauriConversationHistoryAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriProjectConversationAdapter } from "../features/project-conversation/adapters/TauriProjectConversationAdapter";
@@ -15,6 +16,7 @@ const hostLifecycle = new TauriHostLifecycleAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const projectConversation = new TauriProjectConversationAdapter();
+const conversationHistory = new TauriConversationHistoryAdapter();
 
 export function App() {
   return (
@@ -45,6 +47,7 @@ function ApplicationRoot() {
             hostLifecycle={hostLifecycle}
             workspaceIndex={workspaceIndex}
             projectConversation={projectConversation}
+            conversationHistory={conversationHistory}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
           />

@@ -1,4 +1,5 @@
 mod authentication;
+mod conversation_history;
 mod host_lifecycle;
 mod project_conversation;
 mod workspace_index;
@@ -7,6 +8,7 @@ use authentication::{
     login, logout, register, restore_authentication_session, send_registration_code,
     AuthenticationManager,
 };
+use conversation_history::load_conversation_history;
 use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
@@ -31,6 +33,7 @@ pub fn run() {
             list_local_projects,
             refresh_workspace_relations,
             prepare_project_conversation,
+            load_conversation_history,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

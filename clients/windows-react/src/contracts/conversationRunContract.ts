@@ -61,18 +61,22 @@ const attachmentSchema = z.object({
   created_at_unix_ms: z.number().int().nonnegative(),
 });
 
+export const conversationHistoryPageSchema = z.object({
+  conversation: conversationIdentitySchema,
+  turns: z.array(turnSchema),
+  messages: z.array(messageSchema),
+  attachments: z.array(attachmentSchema),
+  next_before_ordinal: z.number().int().positive().nullable(),
+});
+
 export const conversationHistoryResponseSchema = successEnvelope(
   z.object({
     type: z.literal("conversation_history"),
-    page: z.object({
-      conversation: conversationIdentitySchema,
-      turns: z.array(turnSchema),
-      messages: z.array(messageSchema),
-      attachments: z.array(attachmentSchema),
-      next_before_ordinal: z.number().int().positive().nullable(),
-    }),
+    page: conversationHistoryPageSchema,
   }),
 );
+
+export type ConversationHistoryPage = z.infer<typeof conversationHistoryPageSchema>;
 
 const taskSchema = z.object({
   graph_id: z.string().min(1),

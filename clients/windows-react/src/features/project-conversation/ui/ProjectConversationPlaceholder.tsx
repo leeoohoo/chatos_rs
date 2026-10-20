@@ -1,4 +1,6 @@
 import { useEffect, type ReactNode } from "react";
+import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
+import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
 import type { WorkspaceResourceItem } from "../../workspace-index/domain/workspaceIndex";
 import { useProjectConversationStore } from "../application/projectConversationStore";
 import type { ProjectConversationPort } from "../ports/ProjectConversationPort";
@@ -9,6 +11,7 @@ interface ProjectConversationPlaceholderProps {
   hostReady: boolean;
   defaultContactReady: boolean;
   port: ProjectConversationPort;
+  historyPort: ConversationHistoryPort;
 }
 
 export function ProjectConversationPlaceholder({
@@ -17,6 +20,7 @@ export function ProjectConversationPlaceholder({
   hostReady,
   defaultContactReady,
   port,
+  historyPort,
 }: ProjectConversationPlaceholderProps) {
   const phase = useProjectConversationStore((state) => state.phase(project.id));
   const prepare = useProjectConversationStore((state) => state.prepare);
@@ -55,7 +59,13 @@ export function ProjectConversationPlaceholder({
     );
   }
   if (phase.kind === "available") {
-    return <ProjectStateCard icon="✓" title="项目会话已准备" description="项目绑定已按 macOS 规则完成。Conversation 时间线将在对应切片通过源码准入后接入。"><code className="conversation-identity">{phase.conversationId}</code></ProjectStateCard>;
+    return (
+      <ConversationHistoryView
+        ownerUserId={ownerUserId}
+        conversationId={phase.conversationId}
+        port={historyPort}
+      />
+    );
   }
   const description = !hostReady
     ? "本地任务服务就绪后会自动继续。"

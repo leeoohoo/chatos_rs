@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
+import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
@@ -15,6 +16,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
+  conversationHistory: ConversationHistoryPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -23,6 +25,7 @@ export function AppShell({
   hostLifecycle,
   workspaceIndex,
   projectConversation,
+  conversationHistory,
   session,
   onLogout,
 }: AppShellProps) {
@@ -104,6 +107,7 @@ export function AppShell({
             hostReady={snapshot.ready}
             defaultContactReady={defaultContactReady}
             port={projectConversation}
+            historyPort={conversationHistory}
           />
         ) : selectedContact ? (
           <div className="project-state">

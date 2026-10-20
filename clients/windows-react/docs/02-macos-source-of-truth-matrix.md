@@ -341,6 +341,14 @@ Adapter：
 
 准入结论：Conversation 核心时间线与发送/恢复状态机已达到 `macOS 分层完成，可进入 React`；React 实现仍必须按 History→Composer→Realtime 的垂直顺序逐片落地。
 
+Windows History 实现（2026-10-20）：
+
+- React 已建立 `conversation-history` Domain/Application/Port/Adapter/UI，页面不直接调用 Tauri；
+- Tauri 固定以 macOS 相同的 10 条 page size 调用 Host `get_conversation_history`，并在返回前校验 owner 与 Conversation identity；
+- latest 与 older loading/error 独立，older 使用 `next_before_ordinal`，消息、Turn 与附件按稳定 ID 合并，消息按 ordinal 展示；
+- owner/Conversation 切换会使旧 request identity 失效，失败保持到显式重试，React StrictMode 重渲染不会重复请求；
+- 当前只读 History 已接入项目会话 available 页面；Composer、Realtime 与 Run Inspector 仍按后续子切片实施，未提前伪造。
+
 ## 5. Task Graph / Run Inspector：完整调用链
 
 ### 5.1 UI 与 Port
@@ -799,6 +807,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 3. [已完成] 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
-6. 下一步在 `clients/windows-react` 按 History→Composer→Realtime→Run Inspector 顺序创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
+6. [进行中] `clients/windows-react` 已完成 History 子切片；下一步按 Composer→Realtime→Run Inspector 顺序创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
