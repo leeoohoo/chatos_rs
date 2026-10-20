@@ -1,9 +1,10 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from "react";
 import { useRemoteConnectionDetailStore } from "../application/remoteConnectionDetailStore";
 import type { RemoteConnection } from "../domain/remoteConnection";
 import type { RemoteConnectionPort } from "../ports/RemoteConnectionPort";
 import type { RemoteFilePort } from "../../remote-files/ports/RemoteFilePort";
 import { RemoteSftpWorkspace } from "../../remote-files/ui/RemoteSftpWorkspace";
+import type { RemoteTerminalPort } from "../../remote-terminal/ports/RemoteTerminalPort";
 import { RemoteVerificationDialog } from "./RemoteVerificationDialog";
 import "./remoteConnection.css";
 
@@ -15,12 +16,18 @@ const tabs: Array<{ id: RemoteWorkspaceTab; label: string; icon: string }> = [
   { id: "details", label: "连接信息", icon: "ⓘ" },
 ];
 
+const RemoteTerminalWorkspace = lazy(async () => {
+  const module = await import("../../remote-terminal/ui/RemoteTerminalWorkspace");
+  return { default: module.RemoteTerminalWorkspace };
+});
+
 export function RemoteConnectionDetailView({
   connection,
   connections,
   ownerUserId,
   port,
   remoteFilePort,
+  remoteTerminalPort,
   onDeleted,
   onEdit,
 }: {
@@ -29,6 +36,7 @@ export function RemoteConnectionDetailView({
   ownerUserId: string;
   port: RemoteConnectionPort;
   remoteFilePort: RemoteFilePort;
+  remoteTerminalPort: RemoteTerminalPort;
   onDeleted(connectionId: string): void;
   onEdit(): void;
 }) {
@@ -91,13 +99,21 @@ export function RemoteConnectionDetailView({
           ))}
         </div>
       </header>
-      <div className={`remote-workspace__content ${selectedTab === "files" ? "remote-workspace__content--files" : ""}`} role="tabpanel">
+      <div className={`remote-workspace__content ${selectedTab !== "details" ? "remote-workspace__content--embedded" : ""}`} role="tabpanel">
         {selectedTab === "details" ? (
           <ConnectionDetails connection={connection} connections={connections} onOpenFiles={() => setSelectedTab("files")} onOpenTerminal={() => setSelectedTab("terminal")} />
         ) : selectedTab === "files" ? (
           <RemoteSftpWorkspace connectionId={connection.id} ownerUserId={ownerUserId} port={remoteFilePort} />
         ) : (
-          <PendingWorkspace connection={connection} />
+          <Suspense fallback={<div className="remote-workspace-embedded-loading"><span className="mini-spinner" />正在准备远程终端…</div>}>
+            <RemoteTerminalWorkspace
+              connectionId={connection.id}
+              connectionName={connection.name}
+              initialWorkingDirectory={connection.defaultRemotePath ?? "~"}
+              ownerUserId={ownerUserId}
+              port={remoteTerminalPort}
+            />
+          </Suspense>
         )}
       </div>
 
@@ -160,17 +176,6 @@ function ConnectionDetails({ connection, connections, onOpenFiles, onOpenTermina
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-function PendingWorkspace({ connection }: { connection: RemoteConnection }) {
-  return (
-    <div className="remote-workspace-placeholder">
-      <span aria-hidden="true">{">_"}</span>
-      <h3>远程终端</h3>
-      <p>{connection.username}@{connection.host} 的交互式终端将在连接建立后显示在这里。</p>
-      <small>原生安全传输层已就绪，界面连接功能正在接入。</small>
-    </div>
-  );
 }
 
 function authenticationLabel(type: RemoteConnection["authenticationType"]) {

@@ -240,7 +240,7 @@ macOS 连接管理切片（2026-10-21）：
 - 编辑器和详情页共用 `RemoteConnectionOperationState` single-flight identity。保存、测试和删除互斥，页面或弹窗退出会取消具体 Task 并失效 token，底层 Connector 即使忽略取消也不能写回已经离开的页面；
 - 编辑器在远程等待期间不再强持有 ViewModel；输入表单在涉及凭据的操作期间冻结，避免测试或保存的是旧草稿而界面继续展示新输入；SSH 二次验证仍沿用原有 challenge/retry 语义；
 - 删除成功后才通过 App composition 更新列表并释放对应 Terminal/SFTP workspace；删除失败保留当前连接和页面。新增 6 项 Core/App 测试覆盖 use case 路由、single-flight、ViewModel 释放、迟到删除和二次验证；
-- 本切片只证明 macOS 连接管理面；其后的 SFTP 与 Terminal 分层见 2.2.7、2.2.8。Windows 原生管理与凭据切片已经补齐，但 SSH 测试、SFTP 与 Terminal 平台门禁尚未全部完成，因此远程资源页仍不得进入 React。
+- 本切片只证明 macOS 连接管理面；其后的 SFTP 与 Terminal 分层见 2.2.7、2.2.8。Windows 后续已补齐 SSH 测试、SFTP、Terminal 原生门禁及对应 React 工作区，当前结论以 2.2.8 的完整远程资源验收为准。
 
 Windows 原生管理与凭据切片（2026-10-21）：
 
@@ -267,7 +267,7 @@ macOS SFTP 切片（2026-10-21）：
 - `RemoteSFTPViewModel` 持有具体 Remote/Local/Mutation Tasks，远程等待期间只冻结 use case、连接和操作参数，不强持有 ViewModel。连接编辑、删除、登出或 workspace 清理会 `deactivate` 并拒绝所有迟到结果；
 - 上传/下载/创建/重命名/删除期间冻结冲突操作，并分别展示成功、真实操作错误和 `committed-without-refresh` 警告；本机目录继续采用可取消 detached work 与 10,000 项上限；
 - 新增 6 项 Core/App 生命周期与回归测试，覆盖 load lane 隔离、mutation invalidation、认证顺序、导航 latest-wins、忽略取消时释放，以及删除已提交但刷新失败。现有 Remote File Service、SFTP MFA 和 workspace 隔离测试继续通过；
-- 该切片完成时交互式 Remote Terminal 仍直接依赖原生 session provider；其后已在 2.2.8 完成 session lifecycle/Port，Windows Credential Manager/metadata CRUD 也已完成。当前剩余的是 SSH 可执行边界、连接测试和路径/传输安全投影，因此完整远程资源仍不得进入 React。
+- 该切片完成时交互式 Remote Terminal 仍直接依赖原生 session provider；其后已在 2.2.8 完成 session lifecycle/Port。Windows 后续也已完成固定 SSH 可执行边界、连接测试、路径/传输安全投影、Terminal 原生 session 与 React 工作区，当前结论以 2.2.8 为准。
 
 Windows 远端目录与 mutation 原生切片（2026-10-21）：
 
@@ -283,7 +283,7 @@ Windows 本机选择与流式传输原生切片（2026-10-21）：
 - 上传启动前重新 canonicalize 并拒绝 symlink/reparse point、类型或大小变化，通过有界 stdin 流式写入远端同目录随机临时文件；远端复验精确字节数后才以覆盖 rename 或 no-clobber hard-link 提交，再在同一 SSH 会话刷新目录。副作用与 committed-without-refresh 继续保持强类型区分；
 - 下载只允许普通非 symlink 远端文件，远端先在 stderr NUL frame 中声明大小，Rust 将 stdout 流式写入目标目录 `create_new` 临时文件并同时执行 8 GiB 硬上限；退出后必须复验声明大小与实际字节数一致，才使用 Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)`/Unix rename 覆盖，未确认覆盖则用同卷 hard-link 原子拒绝竞态覆盖；
 - 临时下载文件由原生 RAII guard 管理：认证失败、超限、取消、超时、调用方丢弃结果或保存失败都会清理；`create_new` 失败绝不删除已有路径。WebView 不接收本机路径、远端 shell、raw stderr、Secret、进程或文件句柄；
-- 7 项新增原生测试覆盖 selection scope/reset、上传临时文件与精确大小、symlink 拒绝、stdin 流式传输、未领取下载清理、`create_new` 失败保留原文件，以及无覆盖确认的原子落盘。Windows Rust 全量为 165 项通过、2 项 sidecar 环境测试忽略，`clippy -D warnings` 通过；下一切片是交互式 ConPTY/OpenSSH session。
+- 7 项新增原生测试覆盖 selection scope/reset、上传临时文件与精确大小、symlink 拒绝、stdin 流式传输、未领取下载清理、`create_new` 失败保留原文件，以及无覆盖确认的原子落盘。该切片完成时 Windows Rust 全量为 165 项通过、2 项 sidecar 环境测试忽略，`clippy -D warnings` 通过；其后的交互式 ConPTY/OpenSSH session 已在 2.2.8 完成。
 
 ### 2.2.8 交互式 Remote Terminal 分层
 
@@ -294,7 +294,23 @@ macOS Terminal 切片（2026-10-21）：
 - `RemoteTerminalLifecycleState` 分离 connect token 与 active session token。reconnect/disconnect 同时失效旧连接和事件流；旧 provider 忽略取消并迟到返回 session 时必须立即 close，旧 session 的 output/terminated 事件不能结束或污染新 session；
 - `NativeRemoteTerminalViewModel` 持有 connect/event Tasks，但远程 open 等待期间不强持有自身；workspace 删除、连接编辑或登出沿既有 store teardown 调用 `disconnect`，保证 Task、session、PTY 与临时凭据目录一起回收；
 - 新增 6 项 Core/App/Connector 测试，覆盖 connect/session generation、verification code 路由、MFA 重连、旧 session 事件隔离、provider 忽略取消时 ViewModel 释放，以及原生 session 到 Core Port 的适配。现有 TTY、AskPass、MFA、ControlPath 与 runtime cleanup 测试继续通过；
-- 至此 macOS 远程连接的管理、SFTP 与 Terminal 产品行为均完成源码分层。Windows 已完成 Credential Manager、metadata CRUD、OpenSSH 连接测试、host-key、jump host/MFA、远端目录 mutation、opaque 本机选择和流式传输边界；下一步实现交互式 ConPTY/SSH session，该原生门禁通过前不得创建 React 远程资源 UI。
+- 至此 macOS 远程连接的管理、SFTP 与 Terminal 产品行为均完成源码分层。
+
+Windows ConPTY/OpenSSH 原生切片（2026-10-21）：
+
+- Tauri 新增 start/send/resize/interrupt/poll/close/discard 七类 typed commands；每次 start 都重新读取 owner-scoped 连接 metadata、跳板机与 Credential Manager 内容，React 不提交 SSH executable、config、Secret、本机路径或进程句柄；
+- Windows 使用 `portable-pty`/ConPTY 启动固定 OpenSSH，仍复用受限环境、私有临时 config、AskPass、host-key、jump host 和 MFA 语义。进程由 kill-on-close Job Object 管理；Unix 验收使用独立 process group；关闭、账号切换、登出、应用退出或 presentation discard 会回收整棵进程树；
+- session identity 同时绑定 owner、presentation、connection、epoch 与 generation；每个 owner 最多 4 个 active/in-flight session。旧 connect 迟到完成会立即关闭，旧 session output/terminated 事件不能污染新连接；
+- 输入每次最多 64 KiB，输出 ring 最多 512 个事件/2 MiB，单次 poll 最多 128 个事件/256 KiB，long-poll 最长 30 秒；游标截断显式返回，resize 限定 1–1,000 行列；
+- 9 项原生测试覆盖 MFA 路由、真实 PTY 有序输出与退出、连接 generation、in-flight session 上限、reset 回收、输入/identity 校验、输出事件/字节预算和尺寸边界。Windows Rust 全量为 179 项通过、2 项 sidecar 环境测试忽略，`clippy -D warnings` 通过。
+
+Windows React 远程资源工作区（2026-10-21）：
+
+- 连接管理、编辑、草稿/已保存连接测试、MFA 与删除已通过独立 Domain、Application Store、Port 和 Tauri Adapter 接入；删除成功后才释放当前连接的 SFTP/Terminal 展示，失败保留页面与连接；
+- SFTP 已提供远端/本机双栏浏览、原生文件选择、上传、下载、新建目录、重命名与删除，并保持远端导航、本机导航、mutation 三条 identity 隔离和 committed-without-refresh 语义；
+- Terminal 使用 xterm.js 标准终端仿真，并以懒加载独立 chunk 接入；UI 支持输入、resize、中断、断开、重连、MFA、搜索、清屏、OSC 7 工作目录与 OSC title。Store 串行输入并联合校验 owner/presentation/session/generation，保留最多 2 MiB 输出，游标截断会显示明确提示；
+- React 不读取凭据、本机绝对路径、SSH 参数或进程句柄；`invoke` 仅存在于 Adapter，Adapter 只在 `App.tsx` composition root 构造。远程资源页面保持 macOS tab 顺序与 Apple 主题；
+- 当前全量验收为 React 65 个测试文件、235 项通过，TypeScript、Vite production build、架构审计与生产依赖审计通过；Rust 179 项通过、2 项 sidecar 环境测试忽略，格式检查及 `clippy -D warnings` 通过。远程连接管理、SFTP 与 Terminal 已全部进入 React。
 
 ### 2.3 Authentication：完整调用链
 
@@ -1169,6 +1185,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 20. [已完成] 宠物快捷访问已从项目设置 View 对 `PetPreferencesStore` 的直连提取为窄 Port、Application Use Case 和 Feature ViewModel 状态；明确冻结当前设备级、非账号级但与当前项目列表取交集的产品语义。Core、Store 与 ViewModel 8 项定向测试通过，第 03 页 macOS 分层达到 Windows 原生 Adapter 实施准入。
 21. [已完成] Windows Project Settings 原生与 React 门禁已完成：owner/project/workspace-scoped analyzer、typed invocation、Job Object/process group、512 KiB 日志、100 条退出实例、start/stop/delete、账号/应用/项目/root teardown、bounded long-poll、原子偏好、系统凭据 Secret、日志脱敏、revision-scoped Registry removal、device-wide favorite 投影、React request identity 与完整 UI 均进入测试。
 22. [已完成] 第 04 页联系人聊天按 macOS 直接复用已准入 Conversation surface；普通联系人、插件安装助手能力隔离提示及无公开会话空态已完成 React 映射，不新增协议或 Host 权限。
-23. [原生层已完成] 远程资源已完成 Windows metadata/Credential Manager、固定 OpenSSH、host-key、jump host/MFA、目录读取/mutation、committed-without-refresh、opaque 本机选择与 8 GiB 流式上传/下载边界；下一门禁为交互式 ConPTY/SSH session，完成前远程资源 React 入口继续关闭。
+23. [已完成] 远程资源已完成 Windows metadata/Credential Manager、固定 OpenSSH、host-key、jump host/MFA、目录读取/mutation、committed-without-refresh、opaque 本机选择、8 GiB 流式上传/下载与交互式 ConPTY/OpenSSH session；React 连接管理、SFTP 和 xterm Terminal 工作区已按 macOS 事实源接入并通过全量门禁。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

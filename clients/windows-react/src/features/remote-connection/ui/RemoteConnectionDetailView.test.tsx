@@ -2,8 +2,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RemoteConnectionPort } from "../ports/RemoteConnectionPort";
 import type { RemoteFilePort } from "../../remote-files/ports/RemoteFilePort";
+import type { RemoteTerminalPort } from "../../remote-terminal/ports/RemoteTerminalPort";
 import { remoteConnectionFixture } from "../../../test/remoteConnectionFixture";
 import { RemoteConnectionDetailView } from "./RemoteConnectionDetailView";
+
+vi.mock("../../remote-terminal/ui/RemoteTerminalWorkspace", () => ({
+  RemoteTerminalWorkspace: () => <div role="application" aria-label="远程终端输出" />,
+}));
 
 afterEach(() => {
   cleanup();
@@ -11,7 +16,7 @@ afterEach(() => {
 });
 
 describe("RemoteConnectionDetailView", () => {
-  it("uses the macOS tab order and opens on connection details", () => {
+  it("uses the macOS tab order and opens on connection details", async () => {
     renderView();
     const tablist = screen.getByRole("tablist", { name: "远端工作区" });
     expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
@@ -22,6 +27,10 @@ describe("RemoteConnectionDetailView", () => {
     expect(screen.getByRole("tab", { name: /连接信息/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("严格校验")).toBeVisible();
     expect(screen.getByText("这台 Windows 设备 · ChatOS 客户端")).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: /远程终端/ }));
+    expect(await screen.findByRole("application", { name: "远程终端输出" })).toBeVisible();
+    fireEvent.click(screen.getByRole("tab", { name: /SFTP 文件/ }));
+    expect(screen.getByRole("region", { name: "SFTP 文件工作区" })).toBeVisible();
   });
 
   it("deletes only after showing the source-of-truth safety explanation", async () => {
@@ -49,10 +58,23 @@ function renderView(adapter = port(), onDeleted = vi.fn()) {
       ownerUserId="alice"
       port={adapter}
       remoteFilePort={remoteFilePort()}
+      remoteTerminalPort={remoteTerminalPort()}
       onDeleted={onDeleted}
       onEdit={() => undefined}
     />,
   );
+}
+
+function remoteTerminalPort(): RemoteTerminalPort {
+  return {
+    start: vi.fn(async () => ({ status: "started" as const, sessionId: "remote-terminal-1", initialWorkingDirectory: "~" })),
+    sendInput: vi.fn(async () => undefined),
+    resize: vi.fn(async () => undefined),
+    interrupt: vi.fn(async () => undefined),
+    poll: vi.fn(async () => ({ sessionId: "remote-terminal-1", running: false, exitCode: 0, events: [], nextCursor: 0, truncated: false, timedOut: false })),
+    close: vi.fn(async () => undefined),
+    discardPresentation: vi.fn(async () => undefined),
+  };
 }
 
 function remoteFilePort(): RemoteFilePort {
