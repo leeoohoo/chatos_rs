@@ -1,23 +1,31 @@
 use super::transport::ManagedHost;
-use std::{path::Path, process::Stdio};
+use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
 pub(super) async fn spawn(
     executable: &Path,
     database: &Path,
     owner_user_id: String,
+    credential_environment: &BTreeMap<String, String>,
+    workers_enabled: bool,
 ) -> Result<ManagedHost, String> {
     let mut command = Command::new(executable);
     command
         .arg("--database")
         .arg(database)
         .arg("--owner-user-id")
-        .arg(&owner_user_id)
+        .arg(&owner_user_id);
+    if !workers_enabled {
+        command.arg("--disable-workers");
+    }
+    command
         .arg("--stdio")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
+    command.env_clear();
+    command.envs(safe_environment(credential_environment));
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let input = child
         .stdin
@@ -28,6 +36,44 @@ pub(super) async fn spawn(
         .take()
         .ok_or_else(|| "Host stdout is unavailable".to_string())?;
     Ok(ManagedHost::new(child, input, output, owner_user_id))
+}
+
+fn safe_environment(credential_environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    const ALLOWED: &[&str] = &[
+        "APPDATA",
+        "ComSpec",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "SHELL",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USER",
+        "USERPROFILE",
+        "WINDIR",
+    ];
+    let mut environment = ALLOWED
+        .iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| ((*name).into(), value))
+        })
+        .collect::<BTreeMap<_, _>>();
+    environment.extend(
+        credential_environment
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    environment
 }
 
 #[cfg(test)]
@@ -48,6 +94,8 @@ mod tests {
             &executable,
             &database,
             "windows-integration-owner".to_string(),
+            &BTreeMap::new(),
+            true,
         )
         .await
         .expect("spawn prepared Host");
@@ -67,9 +115,15 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary database directory");
         let database = directory.path().join("agent.sqlite3");
         let owner = "windows-integration-owner";
-        let mut host = spawn(&executable, &database, owner.to_string())
-            .await
-            .expect("spawn prepared Host");
+        let mut host = spawn(
+            &executable,
+            &database,
+            owner.to_string(),
+            &BTreeMap::new(),
+            true,
+        )
+        .await
+        .expect("spawn prepared Host");
 
         health_check(&mut host).await.expect("v44 health handshake");
         let result = request(
@@ -107,5 +161,19 @@ mod tests {
 
         terminate(&mut host).await;
         assert!(host.child.try_wait().expect("child status").is_some());
+    }
+
+    #[test]
+    fn child_environment_keeps_only_allowlisted_process_values_and_credentials() {
+        let credentials = BTreeMap::from([(
+            "CHATOS_LOCAL_AGENT_MODEL_TEST".to_string(),
+            "secret".to_string(),
+        )]);
+        let environment = safe_environment(&credentials);
+        assert_eq!(
+            environment.get("CHATOS_LOCAL_AGENT_MODEL_TEST"),
+            Some(&"secret".to_string())
+        );
+        assert!(!environment.contains_key("CHATOS_API_BASE_URL"));
     }
 }

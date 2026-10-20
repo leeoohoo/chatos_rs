@@ -1,12 +1,13 @@
 mod diagnostics;
 mod process;
-mod transport;
+pub(crate) mod transport;
 
+use crate::{authentication::AuthenticationManager, control_plane};
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
 use process::spawn;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 use transport::{health_check, request, terminate, ManagedHost};
@@ -173,6 +174,7 @@ pub async fn host_lifecycle_snapshot(
 pub async fn start_local_agent_host(
     app: AppHandle,
     manager: State<'_, HostManager>,
+    authentication: State<'_, AuthenticationManager>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
     if let Err(error) = validate_owner(&owner_user_id) {
@@ -182,6 +184,9 @@ pub async fn start_local_agent_host(
             .await;
         return Err(error);
     }
+    authentication
+        .access_token_for_owner(&owner_user_id)
+        .await?;
     manager.diagnostics.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
@@ -219,7 +224,16 @@ pub async fn start_local_agent_host(
     if let Some(parent) = database.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut host = match spawn(&executable, &database, owner_user_id).await {
+    let empty_environment = BTreeMap::new();
+    let mut bootstrap_host = match spawn(
+        &executable,
+        &database,
+        owner_user_id.clone(),
+        &empty_environment,
+        false,
+    )
+    .await
+    {
         Ok(host) => host,
         Err(error) => {
             manager
@@ -229,11 +243,75 @@ pub async fn start_local_agent_host(
             return Err(error.to_string());
         }
     };
+    if let Err(error) = health_check(&mut bootstrap_host).await {
+        terminate(&mut bootstrap_host).await;
+        manager
+            .diagnostics
+            .record("host_start_handshake", classify_error(&error))
+            .await;
+        return Err(error);
+    }
+    manager
+        .diagnostics
+        .record("host_bootstrap", "synchronizing")
+        .await;
+    let prepared = match control_plane::synchronize(
+        authentication.inner(),
+        &mut bootstrap_host,
+        &owner_user_id,
+    )
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            terminate(&mut bootstrap_host).await;
+            manager
+                .diagnostics
+                .record("host_bootstrap", classify_error(&error))
+                .await;
+            return Err(error);
+        }
+    };
+    terminate(&mut bootstrap_host).await;
+    manager
+        .diagnostics
+        .record(
+            "host_bootstrap",
+            if prepared.restored_offline {
+                "offline_restored"
+            } else {
+                "refreshed"
+            },
+        )
+        .await;
+
+    let mut credential_environment = prepared.credential_environment;
+    let spawn_result = spawn(
+        &executable,
+        &database,
+        owner_user_id,
+        &credential_environment,
+        true,
+    )
+    .await;
+    for credential in credential_environment.values_mut() {
+        credential.clear();
+    }
+    let mut host = match spawn_result {
+        Ok(host) => host,
+        Err(error) => {
+            manager
+                .diagnostics
+                .record("host_worker_spawn", "failed")
+                .await;
+            return Err(error);
+        }
+    };
     if let Err(error) = health_check(&mut host).await {
         terminate(&mut host).await;
         manager
             .diagnostics
-            .record("host_start_handshake", classify_error(&error))
+            .record("host_worker_handshake", classify_error(&error))
             .await;
         return Err(error);
     }

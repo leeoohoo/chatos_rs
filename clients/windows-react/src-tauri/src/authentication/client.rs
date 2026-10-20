@@ -10,6 +10,7 @@ const MAXIMUM_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 pub struct AuthenticationApiClient {
     client: Client,
     user_service_url: Url,
+    gateway_url: Url,
 }
 
 #[derive(Debug)]
@@ -61,6 +62,62 @@ struct RegistrationCodeResponse {
     resend_after_seconds: i64,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayModelConfig {
+    pub id: String,
+    pub owner_user_id: String,
+    pub provider: String,
+    pub model: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub task_thinking_level: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_output_tokens: Option<i64>,
+    pub enabled: bool,
+    #[serde(default)]
+    pub task_enabled: Option<bool>,
+    #[serde(default)]
+    pub has_api_key: bool,
+    #[serde(default)]
+    pub supports_images: bool,
+    #[serde(default)]
+    pub supports_responses: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayAgentCapability {
+    pub agent_key: String,
+    pub owner_user_id: String,
+    pub policy_revision: String,
+    #[serde(default = "default_true")]
+    pub agent_enabled: bool,
+    #[serde(default)]
+    pub mcps: Vec<GatewayResolvedCapability>,
+    #[serde(default)]
+    pub plugins: Vec<GatewayResolvedCapability>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayResolvedCapability {
+    pub binding: GatewayCapabilityBinding,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct GatewayCapabilityBinding {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Default, Deserialize)]
 struct ErrorPayload {
     message: Option<String>,
@@ -84,7 +141,17 @@ impl AuthenticationApiClient {
         {
             return Err("ChatOS API 地址无效。".into());
         }
-        let prefix = url.path().trim_matches('/');
+        let prefix = url.path().trim_matches('/').to_owned();
+        let mut gateway_url = url.clone();
+        let gateway_path = if prefix.is_empty() {
+            "/".to_owned()
+        } else {
+            // A trailing slash makes all control-plane paths relative to the deployment prefix.
+            format!("/{prefix}/")
+        };
+        gateway_url.set_path(&gateway_path);
+        gateway_url.set_query(None);
+        gateway_url.set_fragment(None);
         let path = if prefix.is_empty() {
             "/api/user/".to_owned()
         } else {
@@ -100,6 +167,7 @@ impl AuthenticationApiClient {
                 .build()
                 .map_err(|_| "无法初始化 ChatOS 网络客户端。".to_owned())?,
             user_service_url: url,
+            gateway_url,
         })
     }
 
@@ -183,6 +251,70 @@ impl AuthenticationApiClient {
         ))
     }
 
+    pub(crate) async fn model_configs(
+        &self,
+        access_token: &str,
+    ) -> Result<Vec<GatewayModelConfig>, ApiError> {
+        self.control_plane_request("api/model-configs", None, access_token)
+            .await
+    }
+
+    pub(crate) async fn model_config(
+        &self,
+        access_token: &str,
+        model_config_ref: &str,
+    ) -> Result<GatewayModelConfig, ApiError> {
+        self.control_plane_request(
+            "api/model-configs",
+            Some((model_config_ref, "include_secret=true")),
+            access_token,
+        )
+        .await
+    }
+
+    pub(crate) async fn local_agent_capability(
+        &self,
+        access_token: &str,
+    ) -> Result<GatewayAgentCapability, ApiError> {
+        self.control_plane_request(
+            "api/plugin-management/agent-capabilities",
+            Some(("local_agent_execution_agent", "")),
+            access_token,
+        )
+        .await
+    }
+
+    async fn control_plane_request<R: DeserializeOwned>(
+        &self,
+        base_path: &str,
+        tail_and_query: Option<(&str, &str)>,
+        access_token: &str,
+    ) -> Result<R, ApiError> {
+        let mut url = self.gateway_url.clone();
+        {
+            let mut segments = url.path_segments_mut().map_err(|_| ApiError {
+                message: "ChatOS API 地址无效。".into(),
+                unauthorized: false,
+            })?;
+            segments.pop_if_empty();
+            for segment in base_path.split('/') {
+                segments.push(segment);
+            }
+            if let Some((tail, _)) = tail_and_query {
+                segments.push(tail);
+            }
+        }
+        if let Some((_, query)) = tail_and_query {
+            if !query.is_empty() {
+                url.set_query(Some(query));
+            }
+        }
+        let reply = self
+            .send::<(), R>(url, "GET", None, Some(access_token))
+            .await?;
+        Ok(reply.value)
+    }
+
     async fn request<B: Serialize + ?Sized, R: DeserializeOwned>(
         &self,
         endpoint: &str,
@@ -194,6 +326,16 @@ impl AuthenticationApiClient {
             message: "ChatOS API 地址无效。".into(),
             unauthorized: false,
         })?;
+        self.send(url, method, body, access_token).await
+    }
+
+    async fn send<B: Serialize + ?Sized, R: DeserializeOwned>(
+        &self,
+        url: Url,
+        method: &str,
+        body: Option<&B>,
+        access_token: Option<&str>,
+    ) -> Result<ApiReply<R>, ApiError> {
         let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| ApiError {
             message: "请求方法无效。".into(),
             unauthorized: false,
@@ -327,6 +469,7 @@ mod tests {
             client.user_service_url.as_str(),
             "https://example.test/prefix/api/user/"
         );
+        assert_eq!(client.gateway_url.as_str(), "https://example.test/prefix/");
     }
 
     #[test]

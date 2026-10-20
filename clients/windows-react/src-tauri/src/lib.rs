@@ -1,4 +1,5 @@
 mod authentication;
+mod control_plane;
 mod conversation_composer;
 mod conversation_history;
 mod conversation_realtime;

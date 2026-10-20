@@ -16,10 +16,10 @@ const FRAME_CONTINUATION_BIT: u32 = 1 << 31;
 const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
 
 #[derive(Debug)]
-pub(super) struct HostRequestFailure {
-    pub(super) message: String,
-    pub(super) code: Option<String>,
-    pub(super) fatal: bool,
+pub(crate) struct HostRequestFailure {
+    pub(crate) message: String,
+    pub(crate) code: Option<String>,
+    pub(crate) fatal: bool,
 }
 
 impl HostRequestFailure {
@@ -40,7 +40,7 @@ impl HostRequestFailure {
     }
 }
 
-pub(super) struct ManagedHost {
+pub(crate) struct ManagedHost {
     pub(super) child: Child,
     pub(super) input: ChildStdin,
     output: ChildStdout,
@@ -81,7 +81,7 @@ pub(super) async fn health_check(host: &mut ManagedHost) -> Result<(), String> {
     }
 }
 
-pub(super) async fn request(
+pub(crate) async fn request(
     host: &mut ManagedHost,
     command: HostCommand,
 ) -> Result<HostResult, HostRequestFailure> {

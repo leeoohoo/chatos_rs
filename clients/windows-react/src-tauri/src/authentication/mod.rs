@@ -4,10 +4,13 @@ mod credentials;
 use std::sync::Arc;
 
 use client::{ApiError, AuthenticationApiClient};
+pub(crate) use client::{GatewayAgentCapability, GatewayModelConfig};
+pub(crate) use credentials::model_credential_environment_variable;
 use credentials::{CredentialStore, PlatformCredentialStore};
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
+use tokio::task::JoinSet;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -34,6 +37,7 @@ pub struct RegistrationCodeDelivery {
 struct AuthenticationState {
     generation: u64,
     access_token: Option<String>,
+    user_id: Option<String>,
 }
 
 pub struct AuthenticationManager {
@@ -50,6 +54,7 @@ impl AuthenticationManager {
             state: Mutex::new(AuthenticationState {
                 generation: 0,
                 access_token: None,
+                user_id: None,
             }),
         })
     }
@@ -67,8 +72,12 @@ impl AuthenticationManager {
         };
         match self.client.restore(&token).await {
             Ok((session, refreshed_token)) => {
-                self.commit_token(generation, refreshed_token.as_deref().unwrap_or(&token))
-                    .await?;
+                self.commit_token(
+                    generation,
+                    refreshed_token.as_deref().unwrap_or(&token),
+                    &session.user.id,
+                )
+                .await?;
                 Ok(Some(session))
             }
             Err(error) if error.unauthorized => {
@@ -90,7 +99,8 @@ impl AuthenticationManager {
             .login(&username, &password)
             .await
             .map_err(api_message)?;
-        self.commit_token(generation, &token).await?;
+        self.commit_token(generation, &token, &session.user.id)
+            .await?;
         Ok(session)
     }
 
@@ -112,17 +122,24 @@ impl AuthenticationManager {
             )
             .await
             .map_err(api_message)?;
-        self.commit_token(generation, &token).await?;
+        self.commit_token(generation, &token, &session.user.id)
+            .await?;
         Ok(session)
     }
 
-    async fn commit_token(&self, generation: u64, token: &str) -> Result<(), String> {
+    async fn commit_token(
+        &self,
+        generation: u64,
+        token: &str,
+        user_id: &str,
+    ) -> Result<(), String> {
         let mut state = self.state.lock().await;
         if state.generation != generation {
             return Err("认证操作已被更新的请求替代。".into());
         }
         self.credentials.save_access_token(token)?;
         state.access_token = Some(token.to_owned());
+        state.user_id = Some(user_id.to_owned());
         Ok(())
     }
 
@@ -133,6 +150,7 @@ impl AuthenticationManager {
         }
         self.credentials.delete_access_token()?;
         state.access_token = None;
+        state.user_id = None;
         Ok(())
     }
 
@@ -141,7 +159,119 @@ impl AuthenticationManager {
         state.generation = state.generation.wrapping_add(1);
         self.credentials.delete_access_token()?;
         state.access_token = None;
+        state.user_id = None;
         Ok(())
+    }
+
+    pub(crate) async fn access_token_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<String, String> {
+        let state = self.state.lock().await;
+        if state.user_id.as_deref() != Some(owner_user_id) {
+            return Err("登录账号与本地服务账号不一致。".into());
+        }
+        state
+            .access_token
+            .clone()
+            .ok_or_else(|| "登录状态尚未准备好。".into())
+    }
+
+    pub(crate) async fn model_catalog_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<GatewayModelConfig>, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(|message| ApiError {
+                message,
+                unauthorized: true,
+            })?;
+        self.client.model_configs(&token).await
+    }
+
+    pub(crate) async fn resolved_models_for_owner(
+        &self,
+        owner_user_id: &str,
+        model_config_refs: Vec<String>,
+    ) -> Result<Vec<GatewayModelConfig>, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(|message| ApiError {
+                message,
+                unauthorized: true,
+            })?;
+        let concurrency = Arc::new(Semaphore::new(4));
+        let mut tasks = JoinSet::new();
+        for (index, model_config_ref) in model_config_refs.into_iter().enumerate() {
+            let client = self.client.clone();
+            let token = token.clone();
+            let concurrency = Arc::clone(&concurrency);
+            tasks.spawn(async move {
+                let _permit = concurrency.acquire_owned().await.map_err(|_| ApiError {
+                    message: "模型配置刷新已取消。".into(),
+                    unauthorized: false,
+                })?;
+                client
+                    .model_config(&token, &model_config_ref)
+                    .await
+                    .map(|model| (index, model))
+            });
+        }
+        let mut resolved = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok(model)) => resolved.push(model),
+                Ok(Err(error)) => {
+                    tasks.abort_all();
+                    return Err(error);
+                }
+                Err(_) => {
+                    tasks.abort_all();
+                    return Err(ApiError {
+                        message: "模型配置刷新已取消。".into(),
+                        unauthorized: false,
+                    });
+                }
+            }
+        }
+        resolved.sort_by_key(|(index, _)| *index);
+        Ok(resolved.into_iter().map(|(_, model)| model).collect())
+    }
+
+    pub(crate) async fn local_agent_capability_for_owner(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<GatewayAgentCapability, ApiError> {
+        let token = self
+            .access_token_for_owner(owner_user_id)
+            .await
+            .map_err(|message| ApiError {
+                message,
+                unauthorized: true,
+            })?;
+        self.client.local_agent_capability(&token).await
+    }
+
+    pub(crate) fn load_model_credential(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
+    ) -> Result<Option<String>, String> {
+        self.credentials
+            .load_model_credential(owner_user_id, model_config_ref)
+    }
+
+    pub(crate) fn save_model_credential(
+        &self,
+        owner_user_id: &str,
+        model_config_ref: &str,
+        credential: &str,
+    ) -> Result<(), String> {
+        self.credentials
+            .save_model_credential(owner_user_id, model_config_ref, credential)
     }
 }
 
