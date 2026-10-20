@@ -251,14 +251,14 @@ struct ResourceSidebar: View {
                 RemoteConnectionEditorSheetHost(
                     editingConnection: nil,
                     connections: model.remoteConnections,
-                    service: model.remoteConnectionService,
+                    useCase: model.remoteConnectionManagementUseCase,
                     onSaved: model.registerRemoteConnection
                 )
             case let .editRemoteConnection(id):
                 RemoteConnectionEditorSheetHost(
                     editingConnection: model.remoteConnection(id: id),
                     connections: model.remoteConnections,
-                    service: model.remoteConnectionService,
+                    useCase: model.remoteConnectionManagementUseCase,
                     onSaved: model.registerRemoteConnection
                 )
             }

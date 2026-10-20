@@ -9,6 +9,10 @@ import SwiftUI
 
 @MainActor
 extension AppModel {
+    var remoteConnectionManagementUseCase: RemoteConnectionManagementUseCase {
+        RemoteConnectionManagementUseCase(service: remoteConnectionService)
+    }
+
     func workspaceProject(id: String) -> WorkspaceProject? {
         workspaceProjects.first(where: { $0.id == id })
     }
@@ -206,8 +210,7 @@ extension AppModel {
         selection = .remote(connection.id)
     }
 
-    func deleteRemoteConnection(id: String) async throws {
-        try await remoteConnectionService.deleteConnection(id: id)
+    func unregisterRemoteConnection(id: String) {
         remoteConnectionWorkspaceStore.removeWorkspace(for: id)
         remoteConnections.removeAll(where: { $0.id == id })
         if selection == .remote(id) {

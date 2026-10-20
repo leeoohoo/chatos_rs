@@ -8,13 +8,13 @@ struct RemoteConnectionEditorSheetHost: View {
     init(
         editingConnection: RemoteConnection?,
         connections: [RemoteConnection],
-        service: any RemoteConnectionServicing,
+        useCase: RemoteConnectionManagementUseCase,
         onSaved: @escaping (RemoteConnection) -> Void
     ) {
         _viewModel = StateObject(wrappedValue: RemoteConnectionEditorViewModel(
             editingConnection: editingConnection,
             connections: connections,
-            service: service
+            useCase: useCase
         ))
         self.onSaved = onSaved
     }
@@ -42,6 +42,7 @@ private struct RemoteConnectionEditorSheet: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .disabled(viewModel.isBusy)
             Divider()
             footer
         }
@@ -50,6 +51,13 @@ private struct RemoteConnectionEditorSheet: View {
         .sheet(isPresented: verificationPresented) {
             verificationSheet
         }
+        .onChange(of: viewModel.savedConnection) { _, connection in
+            guard let connection else { return }
+            onSaved(connection)
+            viewModel.consumeSavedConnection()
+            dismiss()
+        }
+        .onDisappear(perform: viewModel.deactivate)
     }
 
     private var header: some View {
@@ -96,7 +104,7 @@ private struct RemoteConnectionEditorSheet: View {
     private var footer: some View {
         HStack {
             Button {
-                Task { await viewModel.testConnection() }
+                viewModel.testConnection()
             } label: {
                 if viewModel.isTesting {
                     ProgressView().controlSize(.small)
@@ -113,12 +121,7 @@ private struct RemoteConnectionEditorSheet: View {
             Button(viewModel.editingConnection == nil
                    ? model.localized("创建", english: "Create")
                    : model.localized("保存", english: "Save")) {
-                Task {
-                    if let connection = await viewModel.save() {
-                        onSaved(connection)
-                        dismiss()
-                    }
-                }
+                viewModel.save()
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
@@ -149,7 +152,7 @@ private struct RemoteConnectionEditorSheet: View {
             HStack {
                 Spacer()
                 Button("取消") { viewModel.verificationPrompt = nil }
-                Button("验证") { Task { await viewModel.submitVerification() } }
+                Button("验证") { viewModel.submitVerification() }
                     .buttonStyle(.borderedProminent)
                     .disabled(viewModel.isTesting)
             }

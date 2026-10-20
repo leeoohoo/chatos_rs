@@ -4,15 +4,22 @@ import SwiftUI
 struct RemoteConnectionDetailView: View {
     @EnvironmentObject private var model: AppModel
     let connectionID: String
+    @StateObject private var viewModel: RemoteConnectionDetailViewModel
 
     @State private var showingEditor = false
     @State private var showingDeleteConfirmation = false
-    @State private var isTesting = false
-    @State private var notice: String?
-    @State private var errorMessage: String?
-    @State private var verificationPrompt: String?
-    @State private var verificationCode = ""
     @State private var selectedTab: RemoteConnectionWorkspaceTab = .initial
+
+    init(
+        connectionID: String,
+        useCase: RemoteConnectionManagementUseCase
+    ) {
+        self.connectionID = connectionID
+        _viewModel = StateObject(wrappedValue: RemoteConnectionDetailViewModel(
+            connectionID: connectionID,
+            useCase: useCase
+        ))
+    }
 
     var body: some View {
         Group {
@@ -20,12 +27,12 @@ struct RemoteConnectionDetailView: View {
                 VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 14) {
                         connectionHeader(connection)
-                        if let notice {
-                            Label(notice, systemImage: "checkmark.circle.fill")
+                        if let notice = viewModel.notice {
+                            Label(localizedFeedback(notice), systemImage: "checkmark.circle.fill")
                                 .foregroundStyle(.green)
                         }
-                        if let errorMessage {
-                            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        if let errorMessage = viewModel.errorMessage {
+                            Label(localizedFeedback(errorMessage), systemImage: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
                         }
 
@@ -80,7 +87,7 @@ struct RemoteConnectionDetailView: View {
             RemoteConnectionEditorSheetHost(
                 editingConnection: connection,
                 connections: model.remoteConnections,
-                service: model.remoteConnectionService,
+                useCase: model.remoteConnectionManagementUseCase,
                 onSaved: model.registerRemoteConnection
             )
         }
@@ -91,15 +98,18 @@ struct RemoteConnectionDetailView: View {
             titleVisibility: .visible
         ) {
             Button("删除", role: .destructive) {
-                Task {
-                    do { try await model.deleteRemoteConnection(id: connectionID) }
-                    catch { errorMessage = error.localizedDescription }
-                }
+                viewModel.deleteConnection()
             }
             Button("取消", role: .cancel) {}
         } message: {
             Text("只会删除 ChatOS 保存的连接配置，不会修改远端服务器。")
         }
+        .onChange(of: viewModel.deletedConnectionID) { _, deletedConnectionID in
+            guard let deletedConnectionID else { return }
+            model.unregisterRemoteConnection(id: deletedConnectionID)
+            viewModel.consumeDeletedConnection()
+        }
+        .onDisappear(perform: viewModel.deactivate)
     }
 
     private var connection: RemoteConnection? { model.remoteConnection(id: connectionID) }
@@ -119,10 +129,10 @@ struct RemoteConnectionDetailView: View {
             }
             Spacer()
             StatusCapsule(
-                title: isTesting
+                title: viewModel.isTesting
                     ? model.localized("测试中", english: "Testing")
                     : model.localized("已保存", english: "Saved"),
-                color: isTesting ? .orange : .green
+                color: viewModel.isTesting ? .orange : .green
             )
         }
     }
@@ -197,66 +207,49 @@ struct RemoteConnectionDetailView: View {
     private func toolbar(_ connection: RemoteConnection) -> some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
-                Task { await testSavedConnection(code: nil) }
+                viewModel.testSavedConnection(code: nil)
             } label: {
                 Label("测试连接", systemImage: "bolt.horizontal.circle")
             }
-            .disabled(isTesting)
+            .disabled(viewModel.isBusy)
             Button("编辑", systemImage: "pencil") { showingEditor = true }
+                .disabled(viewModel.isBusy)
             Menu {
                 Button("删除连接", systemImage: "trash", role: .destructive) {
                     showingDeleteConfirmation = true
                 }
+                .disabled(viewModel.isBusy)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
         }
     }
 
-    private func testSavedConnection(code: String?) async {
-        isTesting = true
-        notice = nil
-        errorMessage = nil
-        do {
-            let result = try await model.remoteConnectionService.testSaved(
-                id: connectionID,
-                verificationCode: code
-            )
-            notice = result.message?.nonEmpty
-                ?? model.localized("连接测试成功。", english: "Connection test succeeded.")
-            verificationPrompt = nil
-            verificationCode = ""
-        } catch let challenge as RemoteVerificationChallenge {
-            verificationPrompt = challenge.prompt
-            verificationCode = ""
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-        isTesting = false
-    }
-
     private var verificationPresented: Binding<Bool> {
         Binding(
-            get: { verificationPrompt != nil },
-            set: { if !$0 { verificationPrompt = nil } }
+            get: { viewModel.verificationPrompt != nil },
+            set: { if !$0 { viewModel.verificationPrompt = nil } }
         )
     }
 
     private var verificationSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("SSH 二次验证").appFont(.title3.weight(.semibold))
-            Text(verificationPrompt ?? model.localized("请输入验证码。", english: "Enter the verification code."))
+            Text(viewModel.verificationPrompt ?? model.localized("请输入验证码。", english: "Enter the verification code."))
                 .appFont(.body).foregroundStyle(.secondary)
-            TextField("验证码", text: $verificationCode).textFieldStyle(.roundedBorder)
+            TextField("验证码", text: $viewModel.verificationCode).textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
-                Button("取消") { verificationPrompt = nil }
+                Button("取消") { viewModel.verificationPrompt = nil }
                 Button("验证") {
-                    let code = verificationCode
-                    Task { await testSavedConnection(code: code) }
+                    viewModel.testSavedConnection(code: viewModel.verificationCode)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(verificationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    viewModel.isTesting
+                        || viewModel.verificationCode
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
             }
         }
         .padding(22)
@@ -278,6 +271,22 @@ struct RemoteConnectionDetailView: View {
         }
         if let host = connection.jumpHost { return host }
         return model.localized("已启用", english: "Enabled")
+    }
+
+    private func localizedFeedback(_ message: String) -> String {
+        switch message {
+        case "连接测试成功。":
+            model.localized("连接测试成功。", english: "Connection test succeeded.")
+        case "请输入验证码。":
+            model.localized("请输入验证码。", english: "Enter the verification code.")
+        case "验证码未通过，请重新输入。":
+            model.localized(
+                "验证码未通过，请重新输入。",
+                english: "The verification code was rejected. Try again."
+            )
+        default:
+            message
+        }
     }
 }
 
@@ -305,12 +314,5 @@ enum RemoteConnectionWorkspaceTab: String, CaseIterable, Identifiable {
         case .files: "externaldrive.connected.to.line.below"
         case .details: "info.circle"
         }
-    }
-}
-
-private extension String {
-    var nonEmpty: String? {
-        let value = trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 }

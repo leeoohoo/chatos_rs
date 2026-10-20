@@ -123,7 +123,10 @@ struct RootView: View {
             case .terminal:
                 TerminalWorkspaceView(workspace: model.terminalWorkspace)
             case let .remote(remoteID):
-                RemoteConnectionDetailView(connectionID: remoteID)
+                RemoteConnectionDetailView(
+                    connectionID: remoteID,
+                    useCase: model.remoteConnectionManagementUseCase
+                )
                     .id(remoteID)
             case nil:
                 ContentUnavailableView(

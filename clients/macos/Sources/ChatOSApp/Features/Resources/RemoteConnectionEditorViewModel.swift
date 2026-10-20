@@ -1,4 +1,3 @@
-import ChatOSConnector
 import ChatOSCore
 import Foundation
 
@@ -44,20 +43,23 @@ final class RemoteConnectionEditorViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var verificationPrompt: String?
     @Published var verificationCode = ""
+    @Published private(set) var savedConnection: RemoteConnection?
 
     let editingConnection: RemoteConnection?
     let connections: [RemoteConnection]
 
-    private let service: any RemoteConnectionServicing
+    private let useCase: RemoteConnectionManagementUseCase
+    private var operationState = RemoteConnectionOperationState()
+    private var operationTask: Task<Void, Never>?
 
     init(
         editingConnection: RemoteConnection?,
         connections: [RemoteConnection],
-        service: any RemoteConnectionServicing
+        useCase: RemoteConnectionManagementUseCase
     ) {
         self.editingConnection = editingConnection
         self.connections = connections
-        self.service = service
+        self.useCase = useCase
 
         if let connection = editingConnection {
             name = connection.name
@@ -86,24 +88,18 @@ final class RemoteConnectionEditorViewModel: ObservableObject {
 
     var isBusy: Bool { isSaving || isTesting }
 
-    func testConnection() async {
+    func testConnection() {
         errorMessage = nil
         successMessage = nil
         do {
             let draft = try buildDraft()
-            isTesting = true
-            let result = try await service.testDraft(draft, verificationCode: nil)
-            successMessage = result.message?.nonEmpty ?? "连接测试成功。"
-        } catch let challenge as RemoteVerificationChallenge {
-            verificationPrompt = challenge.prompt
-            verificationCode = ""
+            beginTest(draft: draft, verificationCode: nil)
         } catch {
             errorMessage = error.localizedDescription
         }
-        isTesting = false
     }
 
-    func submitVerification() async {
+    func submitVerification() {
         let code = verificationCode.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty else {
             errorMessage = "请输入验证码。"
@@ -112,39 +108,109 @@ final class RemoteConnectionEditorViewModel: ObservableObject {
         errorMessage = nil
         do {
             let draft = try buildDraft()
-            isTesting = true
-            let result = try await service.testDraft(draft, verificationCode: code)
-            successMessage = result.message?.nonEmpty ?? "二次验证通过，连接测试成功。"
-            verificationPrompt = nil
-            verificationCode = ""
-        } catch let challenge as RemoteVerificationChallenge {
-            verificationPrompt = challenge.prompt
-            errorMessage = "验证码未通过，请重新输入。"
+            beginTest(draft: draft, verificationCode: code)
         } catch {
             errorMessage = error.localizedDescription
         }
-        isTesting = false
     }
 
-    func save() async -> RemoteConnection? {
+    func save() {
         errorMessage = nil
         successMessage = nil
         do {
             let draft = try buildDraft()
-            isSaving = true
-            let connection: RemoteConnection
-            if let editingConnection {
-                connection = try await service.updateConnection(id: editingConnection.id, draft: draft)
-            } else {
-                connection = try await service.createConnection(draft)
+            guard let token = operationState.begin(.save) else { return }
+            publishOperationState()
+            let useCase = useCase
+            let editingConnectionID = editingConnection?.id
+            operationTask = Task { [weak self] in
+                let result: Result<RemoteConnection, Error>
+                do {
+                    result = .success(try await useCase.save(
+                        editingConnectionID: editingConnectionID,
+                        draft: draft
+                    ))
+                } catch {
+                    result = .failure(error)
+                }
+                guard !Task.isCancelled,
+                      let self,
+                      self.operationState.accepts(token) else { return }
+                switch result {
+                case let .success(connection):
+                    self.savedConnection = connection
+                case let .failure(error):
+                    self.errorMessage = error.localizedDescription
+                }
+                self.finishOperation(token)
             }
-            isSaving = false
-            return connection
         } catch {
             errorMessage = error.localizedDescription
-            isSaving = false
-            return nil
         }
+    }
+
+    func consumeSavedConnection() {
+        savedConnection = nil
+    }
+
+    func deactivate() {
+        operationTask?.cancel()
+        operationTask = nil
+        operationState.reset()
+        publishOperationState()
+    }
+
+    private func beginTest(
+        draft: RemoteConnectionDraft,
+        verificationCode: String?
+    ) {
+        guard let token = operationState.begin(.testDraft) else { return }
+        publishOperationState()
+        let useCase = useCase
+        operationTask = Task { [weak self] in
+            let result: Result<RemoteConnectionTestResult, Error>
+            do {
+                result = .success(try await useCase.testDraft(
+                    draft,
+                    verificationCode: verificationCode
+                ))
+            } catch {
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.operationState.accepts(token) else { return }
+            switch result {
+            case let .success(testResult):
+                self.successMessage = testResult.message?.nonEmpty
+                    ?? (verificationCode == nil
+                        ? "连接测试成功。"
+                        : "二次验证通过，连接测试成功。")
+                self.verificationPrompt = nil
+                self.verificationCode = ""
+            case let .failure(challenge as RemoteVerificationChallenge):
+                self.verificationPrompt = challenge.prompt
+                if verificationCode != nil {
+                    self.errorMessage = "验证码未通过，请重新输入。"
+                }
+                self.verificationCode = ""
+            case let .failure(error):
+                self.errorMessage = error.localizedDescription
+            }
+            self.finishOperation(token)
+        }
+    }
+
+    private func finishOperation(_ token: RemoteConnectionOperationToken) {
+        guard operationState.finish(token) else { return }
+        operationTask = nil
+        publishOperationState()
+    }
+
+    private func publishOperationState() {
+        let kind = operationState.activeToken?.kind
+        isSaving = kind == .save
+        isTesting = kind == .testDraft
     }
 
     private func buildDraft() throws -> RemoteConnectionDraft {

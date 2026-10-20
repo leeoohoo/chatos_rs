@@ -421,7 +421,7 @@ Ask User 提交或取消失败后的 Host 对账刷新已拆为请求句柄、�
 
 全局活动定位 Ask User 前的 Prompt refresh 已改为 Conversation 显式持有的 latest-wins focus Task 与 typed token；后一次定位会淘汰前一次，Host 忽略取消时也不会因实例 async 方法而留住 Conversation。
 
-远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。
+远程连接列表已由 Core `RemoteConnectionListUseCase` 统一查询与排序，并使用绑定账号 generation 的 typed latest-wins token；AppModel 在 IO 期间不再强持有自身，账号切换或更新请求会拒绝旧列表、错误与 loading 写回。创建/编辑、草稿与已保存连接测试、SSH 二次验证和删除进一步收口到 `RemoteConnectionManagementUseCase` 与 single-flight operation state；编辑器和详情页退出会失效具体请求，Connector 忽略取消时也不能保活 ViewModel 或把迟到结果写回不可见页面。Remote Terminal 与 SFTP 工作区仍需独立完成生命周期和 Port 分层，完整远程资源在此之前不进入 React。
 
 Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `ConversationHistoryRetryState`；每次 sleep 绑定具体 activation token，停用、重新激活、手动刷新或成功响应都会拒绝旧重试唤醒，不再只依赖 Task cancellation。
 
