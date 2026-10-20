@@ -438,44 +438,56 @@ extension MessageTaskWorkspaceViewModel {
         let sessionID = turn.sessionID
         realtimeTask = Task { [weak self] in
             let stream = await realtimeService.events(sessionID: sessionID)
-            guard let self,
-                  !Task.isCancelled,
-                  self.workspaceLifecycleState.accepts(workspaceSession) else { return }
-            self.hasActiveRealtimeStream = true
-            self.startPollingIfNeeded(workspaceSession: workspaceSession)
+            guard !Task.isCancelled,
+                  self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
+            self?.hasActiveRealtimeStream = true
+            self?.startPollingIfNeeded(workspaceSession: workspaceSession)
             do {
                 for try await signal in stream {
                     guard !Task.isCancelled,
-                          self.workspaceLifecycleState.accepts(workspaceSession) else { return }
-                    let shouldRefreshWorkspace = self.graphUseCase.shouldRefreshWorkspace(
+                          self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
+                    let shouldRefreshWorkspace = self?.graphUseCase.shouldRefreshWorkspace(
                         for: signal,
-                        turnID: self.turn.id
-                    )
+                        turnID: self?.turn.id ?? ""
+                    ) == true
                     if signal.kind != .reconcile {
-                        self.applyRealtimeSignal(signal)
+                        self?.applyRealtimeSignal(signal)
                     }
                     if shouldRefreshWorkspace {
-                        await self.refreshWorkspaceState(
-                            refreshInspector: true,
+                        guard let graphRequest = self?.beginWorkspaceGraphRefresh(
                             workspaceSession: workspaceSession
-                        )
+                        ) else { return }
+                        let graphResult = await Self.fetchWorkspaceGraph(graphRequest)
                         guard !Task.isCancelled,
-                              self.workspaceLifecycleState.accepts(workspaceSession) else { return }
-                        self.startPollingIfNeeded(workspaceSession: workspaceSession)
+                              self?.applyWorkspaceGraphResult(
+                                  graphResult,
+                                  request: graphRequest
+                              ) == true else { return }
+                        if let inspectorRequest = self?.beginSelectedInspectorRefresh() {
+                            let outcome = await Self.fetchSelectedInspectorRefresh(inspectorRequest)
+                            guard !Task.isCancelled,
+                                  self?.applySelectedInspectorRefresh(
+                                      outcome,
+                                      request: inspectorRequest
+                                  ) == true else { return }
+                        }
+                        guard !Task.isCancelled,
+                              self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
+                        self?.startPollingIfNeeded(workspaceSession: workspaceSession)
                     }
                 }
             } catch {
                 guard !Task.isCancelled,
-                      self.workspaceLifecycleState.accepts(workspaceSession) else { return }
-                if self.errorMessage == nil {
-                    self.errorMessage = "实时进度连接已中断：\(error.localizedDescription)"
+                      self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
+                if self?.errorMessage == nil {
+                    self?.errorMessage = "实时进度连接已中断：\(error.localizedDescription)"
                 }
             }
             guard !Task.isCancelled,
-                  self.workspaceLifecycleState.accepts(workspaceSession) else { return }
-            self.hasActiveRealtimeStream = false
-            self.realtimeTask = nil
-            self.startPollingIfNeeded(workspaceSession: workspaceSession)
+                  self?.workspaceLifecycleState.accepts(workspaceSession) == true else { return }
+            self?.hasActiveRealtimeStream = false
+            self?.realtimeTask = nil
+            self?.startPollingIfNeeded(workspaceSession: workspaceSession)
         }
     }
 
@@ -493,37 +505,49 @@ extension MessageTaskWorkspaceViewModel {
         let session = graphPollingState.startSession()
         pollingTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self,
-                      !Task.isCancelled,
-                      self.acceptsWorkspaceSession(workspaceSession),
-                      self.graphPollingState.accepts(session) else { return }
-                let isEmptyGraphRetry = self.shouldRetryEmptyGraph
+                guard !Task.isCancelled,
+                      self?.acceptsWorkspaceSession(workspaceSession) == true,
+                      self?.graphPollingState.accepts(session) == true else { return }
+                let isEmptyGraphRetry = self?.shouldRetryEmptyGraph == true
                 let interval = MessageTaskGraphPollingState.interval(
                     isEmptyGraphRetry: isEmptyGraphRetry,
-                    hasActiveRealtimeStream: self.hasActiveRealtimeStream
+                    hasActiveRealtimeStream: self?.hasActiveRealtimeStream == true
                 )
                 try? await Task.sleep(for: interval)
                 guard !Task.isCancelled,
-                      self.acceptsWorkspaceSession(workspaceSession),
-                      self.graphPollingState.accepts(session) else { return }
-                await self.refreshWorkspaceState(
-                    refreshInspector: true,
-                    pollingSession: session,
-                    workspaceSession: workspaceSession
-                )
+                      self?.acceptsWorkspaceSession(workspaceSession) == true,
+                      self?.graphPollingState.accepts(session) == true,
+                      let graphRequest = self?.beginWorkspaceGraphRefresh(
+                          pollingSession: session,
+                          workspaceSession: workspaceSession
+                      ) else { return }
+                let graphResult = await Self.fetchWorkspaceGraph(graphRequest)
                 guard !Task.isCancelled,
-                      self.acceptsWorkspaceSession(workspaceSession),
-                      self.graphPollingState.accepts(session) else { return }
-                if isEmptyGraphRetry {
-                    self.recordEmptyGraphRetryAttempt()
+                      self?.applyWorkspaceGraphResult(
+                          graphResult,
+                          request: graphRequest
+                      ) == true else { return }
+                if let inspectorRequest = self?.beginSelectedInspectorRefresh() {
+                    let outcome = await Self.fetchSelectedInspectorRefresh(inspectorRequest)
+                    guard !Task.isCancelled,
+                          self?.applySelectedInspectorRefresh(
+                              outcome,
+                              request: inspectorRequest
+                          ) == true else { return }
                 }
-                let shouldContinue = self.graphPollingState.shouldPoll(
-                    graph: self.graph,
-                    expectsTaskGraph: self.expectsTaskGraph
-                )
+                guard !Task.isCancelled,
+                      self?.acceptsWorkspaceSession(workspaceSession) == true,
+                      self?.graphPollingState.accepts(session) == true else { return }
+                if isEmptyGraphRetry {
+                    self?.recordEmptyGraphRetryAttempt()
+                }
+                let shouldContinue = self?.graphPollingState.shouldPoll(
+                    graph: self?.graph,
+                    expectsTaskGraph: self?.expectsTaskGraph == true
+                ) == true
                 if !shouldContinue {
-                    if self.graphPollingState.finish(session) {
-                        self.pollingTask = nil
+                    if self?.graphPollingState.finish(session) == true {
+                        self?.pollingTask = nil
                     }
                     return
                 }

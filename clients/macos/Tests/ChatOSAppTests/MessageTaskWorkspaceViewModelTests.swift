@@ -249,6 +249,23 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         XCTAssertNil(weakViewModel)
     }
 
+    func testIdleRealtimeStreamDoesNotRetainWorkspaceViewModel() async throws {
+        let service = MessageTaskGraphServiceStub(graphs: [.empty])
+        let realtime = NeverEndingWorkspaceRealtimeServiceStub()
+        var viewModel: MessageTaskWorkspaceViewModel? = makeViewModel(
+            service: service,
+            realtimeService: realtime
+        )
+        weak let weakViewModel = viewModel
+        let session = viewModel!.workspaceLifecycleState.start()
+
+        viewModel?.startRealtime(workspaceSession: session)
+        try await waitUntil { viewModel?.hasActiveRealtimeStream == true }
+        viewModel = nil
+
+        XCTAssertNil(weakViewModel)
+    }
+
     private func waitUntil(
         _ condition: @escaping @MainActor () async -> Bool
     ) async throws {
@@ -260,7 +277,8 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
     }
 
     private func makeViewModel(
-        service: any MessageTaskGraphServicing
+        service: any MessageTaskGraphServicing,
+        realtimeService: (any ConversationRealtimeStreaming)? = nil
     ) -> MessageTaskWorkspaceViewModel {
         let turn = ConversationTurn(
             id: "turn-1",
@@ -283,8 +301,17 @@ final class MessageTaskWorkspaceViewModelTests: XCTestCase {
         )
         return MessageTaskWorkspaceViewModel(
             turn: turn,
-            graphService: service
+            graphService: service,
+            realtimeService: realtimeService
         )
+    }
+}
+
+private actor NeverEndingWorkspaceRealtimeServiceStub: ConversationRealtimeStreaming {
+    func events(
+        sessionID _: String
+    ) -> AsyncThrowingStream<ConversationRealtimeSignal, Error> {
+        AsyncThrowingStream { _ in }
     }
 }
 
