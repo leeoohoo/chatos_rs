@@ -9,14 +9,21 @@ final class ProjectGitViewModel: ObservableObject {
     @Published private(set) var isPerformingOperation = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var worktreeRevision = 0
-    @Published var commitMessage = ""
+    @Published var commitMessage = "" {
+        didSet { commitMessageRevision += 1 }
+    }
 
     let projectRoot: String?
-    private let service: any ProjectGitServicing
+    private let useCase: ProjectGitUseCase
+    private var requestSequence = 0
+    private var commitMessageRevision = 0
+    private var activeLoadRequest: Int?
+    private var activeDiffRequest: DiffRequest?
+    private var activeMutationRequest: MutationRequest?
 
     init(projectRoot: String?, service: any ProjectGitServicing) {
         self.projectRoot = projectRoot
-        self.service = service
+        self.useCase = ProjectGitUseCase(service: service)
     }
 
     var stagedChanges: [ProjectGitChange] {
@@ -34,37 +41,52 @@ final class ProjectGitViewModel: ObservableObject {
             snapshot = .unavailable
             return
         }
+        guard activeMutationRequest == nil else { return }
+        let request = nextRequestID()
+        activeLoadRequest = request
+        activeDiffRequest = nil
         isLoading = true
         errorMessage = nil
+        defer { finishLoad(request) }
         do {
-            snapshot = try await service.snapshot(projectRoot: projectRoot)
+            let snapshot = try await useCase.snapshot(projectRoot: projectRoot)
+            guard activeLoadRequest == request else { return }
+            self.snapshot = snapshot
         } catch {
+            guard activeLoadRequest == request else { return }
             errorMessage = error.localizedDescription
         }
-        isLoading = false
     }
 
     func initializeRepository() async {
-        await mutate {
-            try await service.initializeRepository(projectRoot: try requiredProjectRoot())
-        }
+        await mutate(.initializeRepository)
     }
 
     func showDiff(for change: ProjectGitChange, staged: Bool) async {
-        guard let projectRoot else { return }
+        guard let projectRoot, activeMutationRequest == nil else { return }
+        let request = DiffRequest(id: nextRequestID(), path: change.path, staged: staged)
+        activeDiffRequest = request
         errorMessage = nil
         do {
-            selectedDiff = try await service.diff(
+            let diff = try await useCase.diff(
                 projectRoot: projectRoot,
                 change: change,
                 staged: staged
             )
+            guard activeDiffRequest == request else { return }
+            guard diff.path == change.path, diff.isStaged == staged else {
+                throw ProjectGitViewModelError.mismatchedDiff
+            }
+            selectedDiff = diff
         } catch {
+            guard activeDiffRequest == request else { return }
             errorMessage = error.localizedDescription
         }
+        if activeDiffRequest == request { activeDiffRequest = nil }
     }
 
     func clearDiff() {
+        activeDiffRequest = nil
         selectedDiff = nil
     }
 
@@ -85,133 +107,133 @@ final class ProjectGitViewModel: ObservableObject {
     }
 
     func commit() async {
-        let message = commitMessage
-        await mutate {
-            try await service.commit(
-                projectRoot: try requiredProjectRoot(),
-                message: message
-            )
-        } onSuccess: {
-            commitMessage = ""
-        }
+        let message = CommitMessageRequest(value: commitMessage, revision: commitMessageRevision)
+        await mutate(.commit(message: message.value), committedMessage: message)
     }
 
     func switchBranch(_ branch: String) async {
         guard branch != snapshot.currentBranch else { return }
-        await mutate(updatesWorkingTree: true) {
-            try await service.switchBranch(
-                projectRoot: try requiredProjectRoot(),
-                branch: branch
-            )
-        }
+        await mutate(.switchBranch(branch: branch))
     }
 
     func createBranch(name: String, switchToBranch: Bool) async {
-        await mutate(updatesWorkingTree: switchToBranch) {
-            try await service.createBranch(
-                projectRoot: try requiredProjectRoot(),
-                name: name,
-                switchToBranch: switchToBranch
-            )
-        }
+        await mutate(.createBranch(name: name, switchToBranch: switchToBranch))
     }
 
     func mergeBranch(_ branch: String) async {
-        await mutate(updatesWorkingTree: true) {
-            try await service.mergeBranch(
-                projectRoot: try requiredProjectRoot(),
-                branch: branch
-            )
-        }
+        await mutate(.mergeBranch(branch: branch))
     }
 
     func saveRemote(originalName: String?, name: String, url: String) async {
-        await mutate {
-            try await service.saveRemote(
-                projectRoot: try requiredProjectRoot(),
-                originalName: originalName,
-                name: name,
-                url: url
-            )
-        }
+        await mutate(.saveRemote(originalName: originalName, name: name, url: url))
     }
 
     func removeRemote(_ name: String) async {
-        await mutate {
-            try await service.removeRemote(
-                projectRoot: try requiredProjectRoot(),
-                name: name
-            )
-        }
+        await mutate(.removeRemote(name: name))
     }
 
     func pull() async {
-        await mutate(updatesWorkingTree: true) {
-            try await service.pull(projectRoot: try requiredProjectRoot())
-        }
+        await mutate(.pull)
     }
 
     func push() async {
-        await mutate {
-            try await service.push(projectRoot: try requiredProjectRoot())
-        }
+        await mutate(.push)
     }
 
     func dismissError() { errorMessage = nil }
 
     private func stage(paths: [String]) async {
         guard !paths.isEmpty else { return }
-        await mutate {
-            try await service.stage(
-                projectRoot: try requiredProjectRoot(),
-                paths: paths
-            )
-        }
+        await mutate(.stage(paths: paths))
     }
 
     private func unstage(paths: [String]) async {
         guard !paths.isEmpty else { return }
-        await mutate {
-            try await service.unstage(
-                projectRoot: try requiredProjectRoot(),
-                paths: paths
-            )
-        }
+        await mutate(.unstage(paths: paths))
     }
 
     private func mutate(
-        updatesWorkingTree: Bool = false,
-        _ operation: () async throws -> Void,
-        onSuccess: () -> Void = {}
+        _ mutation: ProjectGitMutation,
+        committedMessage: CommitMessageRequest? = nil
     ) async {
-        guard !isPerformingOperation else { return }
+        guard activeMutationRequest == nil else { return }
+        guard let projectRoot else {
+            errorMessage = ProjectGitViewModelError.missingProjectRoot.localizedDescription
+            return
+        }
+        let request = MutationRequest(id: nextRequestID(), mutation: mutation)
+        activeMutationRequest = request
+        activeLoadRequest = nil
+        activeDiffRequest = nil
+        isLoading = false
         isPerformingOperation = true
         errorMessage = nil
+        defer { finishMutation(request) }
         do {
-            try await operation()
-            onSuccess()
-            if updatesWorkingTree { worktreeRevision += 1 }
+            let result = try await useCase.mutate(projectRoot: projectRoot, mutation: mutation)
+            guard activeMutationRequest == request else { return }
+            if let committedMessage, commitMessageRevision == committedMessage.revision {
+                commitMessage = ""
+            }
+            if mutation.updatesWorkingTree { worktreeRevision += 1 }
             selectedDiff = nil
-            if let projectRoot {
-                snapshot = try await service.snapshot(projectRoot: projectRoot)
+            if let refreshedSnapshot = result.refreshedSnapshot {
+                snapshot = refreshedSnapshot
+            } else {
+                errorMessage = "Git 操作已完成，但最新状态暂时无法刷新。"
             }
         } catch {
-            errorMessage = error.localizedDescription
-            if let projectRoot {
-                snapshot = (try? await service.snapshot(projectRoot: projectRoot)) ?? snapshot
-            }
+            guard activeMutationRequest == request else { return }
+            let operationError = error.localizedDescription
+            let recoveredSnapshot = try? await useCase.snapshot(projectRoot: projectRoot)
+            guard activeMutationRequest == request else { return }
+            if let recoveredSnapshot { snapshot = recoveredSnapshot }
+            errorMessage = operationError
         }
+    }
+
+    private func nextRequestID() -> Int {
+        requestSequence += 1
+        return requestSequence
+    }
+
+    private func finishLoad(_ request: Int) {
+        guard activeLoadRequest == request else { return }
+        activeLoadRequest = nil
+        isLoading = false
+    }
+
+    private func finishMutation(_ request: MutationRequest) {
+        guard activeMutationRequest == request else { return }
+        activeMutationRequest = nil
         isPerformingOperation = false
     }
 
-    private func requiredProjectRoot() throws -> String {
-        guard let projectRoot else { throw ProjectGitViewModelError.missingProjectRoot }
-        return projectRoot
+    private struct DiffRequest: Equatable {
+        let id: Int
+        let path: String
+        let staged: Bool
+    }
+
+    private struct MutationRequest: Equatable {
+        let id: Int
+        let mutation: ProjectGitMutation
+    }
+
+    private struct CommitMessageRequest {
+        let value: String
+        let revision: Int
     }
 }
 
 private enum ProjectGitViewModelError: LocalizedError {
     case missingProjectRoot
+    case mismatchedDiff
 
-    var errorDescription: String? { "这个项目还没有连接本机目录。" }
+    var errorDescription: String? {
+        switch self {
+        case .missingProjectRoot: "这个项目还没有连接本机目录。"
+        case .mismatchedDiff: "Git 差异返回了不匹配的文件。"
+        }
+    }
 }

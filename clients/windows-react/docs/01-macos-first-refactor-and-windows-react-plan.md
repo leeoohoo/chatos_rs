@@ -464,6 +464,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，Windows 项目文件 mutation React 闭环）：已按 macOS `ProjectDirectoryViewModel` 与 `ProjectFileEditorView` 将保存、新建文件/目录和删除接入 typed React Port/Adapter、Zustand Store 与 Apple 风格 UI。Store 冻结 owner、project、generation、目标、revision、草稿和创建父目录；同一展示 session 只允许一个 mutation。保存期间切换文件不撤销已开始的副作用，但迟到结果不得覆盖新文件；切项目、刷新和离开页面会淘汰旧 UI 写回。revision 冲突保留草稿与编辑状态；保存已提交但重读失败时展示已提交提示、保留新内容并暂时禁用再次写入；创建/删除已提交但目录刷新失败时保留最后可信树并提示刷新。创建位置遵循 macOS 的“所选目录/所选文件父目录/项目根”规则，二进制和只读文件不开放编辑；删除必须经过苹果主题确认弹框，文件删除携带读取时 revision。当前验收为 Windows Rust 98 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 153 项通过，TypeScript、production build、架构审计与 Clippy 通过。项目目录下一独立切片为 Git 工作面；项目设置仍保持关闭，等待各自的 macOS 分层准入。
 
+状态补充（2026-10-20，macOS 项目 Git 准入）：已按 `ProjectGitWorkbenchView`、`ProjectGitViewModel`、`ProjectGitServicing`、`NativeProjectGitService` 与 parser 建立完整源码事实映射。init、stage/unstage、commit、branch、merge、remote、pull/push 后的 snapshot 刷新已收口到 Core `ProjectGitUseCase`；副作用成功但刷新失败返回 committed-without-refresh，不再误报 Git 操作失败。ViewModel 的 load、diff 和 mutation 均有独立 request identity，同一时间只允许一个 mutation，迟到 snapshot/diff 不得覆盖当前展示，mutation 会淘汰旧 load/diff；提交期间新输入的 message 不会被旧提交完成清空，失败恢复 snapshot 时保留原始操作错误。5 项新 ViewModel 生命周期测试、4 项既有 Native Git 集成测试和 3 项文件 mutation 回归通过。该页面现只允许进入 Windows 原生 Git 边界实施；Windows React Git 入口继续关闭，直到 owner/project/workspace 解析、进程/输出/超时限制和 typed lifecycle 全部完成。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

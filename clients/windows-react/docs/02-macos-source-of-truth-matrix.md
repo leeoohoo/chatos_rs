@@ -39,7 +39,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例、账号绑定 per-project lifecycle、强类型展示阶段与 Conversation Session composition factory 已提取；Windows 已按同一四态接入 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift`、Windows Registry + Host adapter | Preparation state/use case、Session factory、Connector 竞态/绑定、React latest-wins 与 Rust Registry 测试 | `macOS 分层完成，可进入 React`；项目会话准备已实现，不放行 Conversation 时间线 |
 | 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
-| 项目目录只读树 | macOS 目录列表/展开/刷新契约与 Windows workspace grant 边界已映射；Windows 项目工作面、相对路径目录树和 lifecycle 已接入 | `ProjectWorkspaceView.swift`、`ProjectDirectoryView.swift` | `ProjectDirectoryViewModel.swift`、`ProjectDirectoryExpansionStateStore.swift` | `ProjectFilesystemModels.swift` | `NativeProjectFilesystemService.swift`、`NativeWorkspaceFilesystem.swift`；Windows Registry/workspace resolver + Tauri filesystem adapter | macOS ViewModel/性能策略、Windows Rust path/listing 与 React domain/store/UI 测试 | 只读目录树已进入 React；预览/搜索/写操作、Git、项目设置仍禁止 |
+| 项目目录与文件操作 | macOS 目录、预览、搜索和 mutation 契约与 Windows workspace grant 边界已映射；Windows 项目工作面、相对路径目录树、文件读写与 lifecycle 已接入 | `ProjectWorkspaceView.swift`、`ProjectDirectoryView.swift`、`ProjectFileEditorView.swift` | `ProjectDirectoryViewModel.swift`、`ProjectDirectoryExpansionStateStore.swift` | `ProjectFilesystemModels.swift`、`ProjectFilesystemMutationUseCase.swift` | `NativeProjectFilesystemService.swift`、`NativeWorkspaceFilesystem.swift`；Windows Registry/workspace resolver + Tauri filesystem adapter | macOS mutation lifecycle、Windows Rust path/revision/mutation 与 React domain/store/UI 测试 | 目录、预览、搜索、编辑、新建和删除已进入 React；Git、项目设置仍禁止 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环和 runtime controls 已接入 | `ConversationTimelineView.swift`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；Windows 核心发送闭环已实现 |
@@ -88,7 +88,7 @@ Windows React 已完成只读目录树：
 - 目录列表与 macOS 一致最多 5,000 项、文件夹优先排序并跳过符号链接，只投影名称、相对路径、类型、可写位、大小和修改时间；
 - React Store 以 owner/project generation 和 per-path request identity 管理根目录、展开与刷新；折叠目录会使其子树的迟到请求失效，切换项目或离开页面清空展示状态；
 - 项目工作面默认显示用户消息；目录 tab 已开放，项目设置保持禁用并明确等待对应页面准入；
-- 目录树与文件元数据之外，项目创建/授权已由下方独立切片开放，内容预览与只读搜索已由 2.2.2 独立切片开放；编辑、文件创建/删除和 Git 仍继续禁止；
+- 目录树与文件元数据之外，项目创建/授权、内容预览与搜索、编辑及文件创建/删除已由后续独立切片开放；Git 与项目设置仍继续禁止；
 - Windows 定向验收为 Rust 88 项通过、2 项 sidecar 环境测试忽略，React 37 个文件 132 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
 
 ### 2.2.1 项目创建与 Windows 文件夹授权
@@ -135,6 +135,19 @@ Windows React/Tauri 已完成对应垂直切片：
 - 创建父目录严格复用 macOS 规则：选择目录时在该目录创建，选择文件时在其父目录创建，无选择时在项目根创建。编辑仅对 `isWritable && !isBinary` 的内容开放；删除通过 Apple 风格确认弹框执行；
 - React UI 使用苹果主题的编辑器工具栏、新建 sheet、分段类型选择器、危险操作确认框和局部错误反馈，没有开放尚未验收的 Git 或项目设置；
 - Windows 全量验收为 Rust 98 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 153 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
+### 2.2.4 项目 Git 工作面准入
+
+macOS 事实源与已完成分层：
+
+- 页面事实源为 `ProjectGitWorkbenchView`、`ProjectGitChangeListView`、`ProjectGitHistoryView`、`ProjectGitDiffView` 与三个 branch/remote sheet；状态事实源为 `ProjectGitViewModel`，契约为 `ProjectGitModels.ProjectGitServicing`，原生实现为 `NativeProjectGitService` 与 `NativeProjectGitParser`；
+- snapshot 固定读取 repository root、HEAD/当前或 detached branch、upstream、ahead/behind、porcelain v1 `-z` changes、本地 branches、最多 80 条全分支提交历史和 remotes。变更同时按 index/worktree 状态进入 staged 与 working-tree 分组，冲突优先、其余按路径排序；
+- diff 只允许 snapshot 中的项目相对路径，普通/暂存差异最多 4 MiB；未跟踪文件使用 `--no-index /dev/null`。UI 最多解析 8,000 行并保留 hunk、旧/新行号、增删和上下文语义；
+- mutation 包含 init、stage/unstage、commit、switch/create/merge branch、remote add/rename/set-url/remove、`pull --ff-only` 和 push；无 upstream 时 push 使用首个 remote 发布当前 branch。单次普通 Git 命令默认 120 秒，pull/push 15 分钟，普通输出最多 16 MiB；原生进程超时会终止整个进程组；
+- repository root 必须位于 Connector workspace root 内，文件路径与 snapshot absolute path 必须同时通过 repository 边界复验；branch 由 `git check-ref-format --branch` 验证，commit message、remote name/url 去除首尾空白后不得为空；
+- 多步“mutation→snapshot refresh”已从 ViewModel 移入 Core `ProjectGitUseCase`。副作用成功但 snapshot 刷新失败返回 committed-without-refresh，仍清理已提交的旧提交说明、发布 working-tree revision，并明确提示刷新失败，不把成功 mutation 误报为失败；
+- ViewModel 的 load、diff 和 mutation 分别使用 request identity。新 load/diff 淘汰旧请求；mutation 与 load/diff 隔离且同一时间只允许一个。迟到状态/差异不得覆盖当前展示，提交期间新输入的 message 不得被旧提交完成清空；mutation 失败后尝试恢复最新 snapshot，但保留原始操作错误；
+- 新增 5 项 `ProjectGitViewModelTests`，并复验 4 项 `NativeProjectGitServiceTests` 与 3 项项目文件 mutation lifecycle 测试。macOS Git 已达到 Windows 原生边界实施准入；Windows React 仍保持 Git 入口关闭，直到 owner/project/workspace 解析、Git 进程边界、typed Port/Store lifecycle 与 Apple 风格 UI 分别完成。
 
 ### 2.3 Authentication：完整调用链
 
@@ -949,7 +962,7 @@ Windows React 已完成对应独立切片：
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
-| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh/search/read、项目创建语义与 Windows workspace 路径边界已映射；Windows 只读目录树、原生文件夹授权、本地项目创建、文件预览与只读搜索已完成，写操作仍待独立切片 | 目录树、项目创建/授权、预览与只读搜索已进入 React；写操作、Git 与项目设置禁止 |
+| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh/search/read/mutation、项目创建语义与 Windows workspace 路径边界已映射；Windows 目录树、原生文件夹授权、本地项目创建、预览/搜索和文件写操作已完成 | 目录树、项目创建/授权、预览/搜索、编辑、新建与删除已进入 React；Git 与项目设置禁止 |
 | 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
@@ -969,7 +982,7 @@ Windows React 已完成对应独立切片：
 | 18 | 需求调研 | 未映射 | 禁止 |
 | 19 | 本地终端 | 未映射 | 禁止 |
 | 20 | Notebook | 未映射 | 禁止 |
-| 21 | 项目 Git | 未映射 | 禁止 |
+| 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows 原生边界尚未实施 | 禁止进入 React，下一步先实现 Windows owner/project/workspace 与 Git 进程边界 |
 | 22 | 设置 / 通用 | 未映射 | 禁止 |
 | 23 | 设置 / 微信 | 未映射 | 禁止 |
 | 24 | 设置 / 宠物 | 未映射 | 禁止 |
@@ -1003,5 +1016,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
 15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
 16. [已完成] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 macOS Core mutation use case；Windows Tauri 已实现 owner/project/canonical path、symlink/reparse 拒绝、原子写入、内容 revision 冲突、create-new 和删除复验。React Port/Store 已冻结 mutation identity 与请求参数，拒绝文件/项目切换后的迟到写回，并以 Apple 风格编辑、新建和删除确认交互区分副作用失败与 committed-without-refresh；Git 与项目设置继续独立实施。
+17. [macOS 准入已完成] 项目 Git 的 snapshot/diff/mutation 行为、进程与路径安全边界已完成源码映射；多步 mutation orchestration 已进入 Core use case，ViewModel load/diff/mutation identity 与 committed-without-refresh 已由 5 项生命周期测试覆盖。下一步实现 Windows 原生 Git 边界，React 入口继续关闭。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
