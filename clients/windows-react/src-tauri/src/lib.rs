@@ -60,8 +60,8 @@ use local_terminal::{
     LocalTerminalRegistry,
 };
 use plugin_application::{
-    discard_plugin_application_presentation, launch_plugin_application, list_plugin_applications,
-    PluginApplicationManager,
+    discard_plugin_application_presentation, handle_plugin_application_bridge_request,
+    launch_plugin_application, list_plugin_applications, PluginApplicationManager,
 };
 use project_conversation::prepare_project_conversation;
 use project_creation::{
@@ -295,6 +295,7 @@ pub fn run() {
             list_plugin_applications,
             launch_plugin_application,
             discard_plugin_application_presentation,
+            handle_plugin_application_bridge_request,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,

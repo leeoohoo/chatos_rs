@@ -40,6 +40,8 @@ const DEFAULT_LAUNCH_TIMEOUT_MS: u64 = 15_000;
 const HEALTH_REQUEST_TIMEOUT_MS: u64 = 700;
 const HEALTH_RETRY_MS: u64 = 80;
 const TERMINATION_GRACE_MS: u64 = 2_000;
+const MAXIMUM_BRIDGE_REQUEST_BYTES: usize = 256 * 1_024;
+const HOST_CONTEXT_READ_CAPABILITY: &str = "host.context.read";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -64,8 +66,11 @@ pub(super) enum PluginApplicationContextSelection {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PresentedPluginApplicationLaunch {
     session_id: String,
+    host_session_nonce: String,
     application: PresentedPluginApplication,
     url: String,
+    bridge_origin: String,
+    bridge_capabilities: Vec<String>,
     storage_partition_id: String,
     context: Option<PresentedPluginApplicationContext>,
     release_id: String,
@@ -105,8 +110,38 @@ struct PresentationKey {
 struct PresentationState {
     generation: u64,
     active: bool,
-    runtime_key: Option<RuntimeKey>,
-    session_id: Option<String>,
+    bridge: Option<BridgeSession>,
+}
+
+#[derive(Clone)]
+struct BridgeSession {
+    runtime_key: RuntimeKey,
+    session_id: String,
+    host_session_nonce: String,
+    origin: String,
+    capabilities: Vec<String>,
+    context: Option<PresentedPluginApplicationContext>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PluginApplicationBridgeRequest {
+    pub(crate) owner_user_id: String,
+    pub(crate) presentation_id: String,
+    pub(crate) generation: u64,
+    pub(crate) session_id: String,
+    pub(crate) host_session_nonce: String,
+    pub(crate) origin: String,
+    pub(crate) request_id: String,
+    pub(crate) method: String,
+    pub(crate) payload: Value,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PresentedPluginApplicationBridgeResponse {
+    request_id: String,
+    result: Value,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -304,8 +339,7 @@ impl PluginApplicationRuntime {
             if current.generation <= generation {
                 current.generation = generation;
                 current.active = false;
-                current.runtime_key = None;
-                current.session_id = None;
+                current.bridge = None;
             }
         } else if state.presentations.len() < MAXIMUM_PRESENTATIONS {
             state.presentations.insert(
@@ -313,8 +347,7 @@ impl PluginApplicationRuntime {
                 PresentationState {
                     generation,
                     active: false,
-                    runtime_key: None,
-                    session_id: None,
+                    bridge: None,
                 },
             );
         } else {
@@ -371,8 +404,7 @@ impl PluginApplicationRuntime {
             PresentationState {
                 generation: request.generation,
                 active: true,
-                runtime_key: None,
-                session_id: None,
+                bridge: None,
             },
         );
         Ok(())
@@ -403,6 +435,21 @@ impl PluginApplicationRuntime {
             return Err(stale_launch_error());
         }
         let session_id = Uuid::new_v4().to_string();
+        let host_session_nonce = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let bridge_origin = validated_loopback_origin(&process.base_url)?;
+        let bridge_capabilities = application
+            .bridge_capabilities
+            .iter()
+            .filter(|capability| capability.as_str() == HOST_CONTEXT_READ_CAPABILITY)
+            .cloned()
+            .collect::<Vec<_>>();
+        let presented_context = match (&host_context.project_id, &host_context.project_name) {
+            (Some(project_id), Some(project_name)) => Some(PresentedPluginApplicationContext {
+                project_id: project_id.clone(),
+                project_name: project_name.clone(),
+            }),
+            _ => None,
+        };
         let mut state = self.state.lock().await;
         if self.epoch() != expected_epoch
             || !state
@@ -417,23 +464,74 @@ impl PluginApplicationRuntime {
             .get_mut(&presentation_key(request))
             .filter(|state| state.active && state.generation == request.generation)
             .ok_or_else(stale_launch_error)?;
-        presentation.runtime_key = Some(runtime_key.clone());
-        presentation.session_id = Some(session_id.clone());
+        presentation.bridge = Some(BridgeSession {
+            runtime_key: runtime_key.clone(),
+            session_id: session_id.clone(),
+            host_session_nonce: host_session_nonce.clone(),
+            origin: bridge_origin.clone(),
+            capabilities: bridge_capabilities.clone(),
+            context: presented_context.clone(),
+        });
         Ok(PresentedPluginApplicationLaunch {
             session_id,
+            host_session_nonce,
             storage_partition_id: storage_partition_id(&application.id(), &runtime_key.scope_key),
             url: process.base_url.clone(),
-            context: match (&host_context.project_id, &host_context.project_name) {
-                (Some(project_id), Some(project_name)) => Some(PresentedPluginApplicationContext {
-                    project_id: project_id.clone(),
-                    project_name: project_name.clone(),
-                }),
-                _ => None,
-            },
+            bridge_origin,
+            bridge_capabilities,
+            context: presented_context,
             release_id: process.release_id.clone(),
             release_digest: process.release_digest.clone(),
             version: process.version.clone(),
             application,
+        })
+    }
+
+    pub(super) async fn bridge_request(
+        &self,
+        request: PluginApplicationBridgeRequest,
+    ) -> Result<PresentedPluginApplicationBridgeResponse, String> {
+        validate_bridge_request(&request)?;
+        let state = self.state.lock().await;
+        let presentation = state
+            .presentations
+            .get(&PresentationKey {
+                owner_user_id: request.owner_user_id.clone(),
+                presentation_id: request.presentation_id.clone(),
+            })
+            .filter(|presentation| {
+                presentation.active && presentation.generation == request.generation
+            })
+            .ok_or_else(stale_bridge_error)?;
+        let bridge = presentation
+            .bridge
+            .as_ref()
+            .filter(|bridge| {
+                bridge.session_id == request.session_id
+                    && bridge.host_session_nonce == request.host_session_nonce
+                    && bridge.origin == request.origin
+                    && bridge.capabilities.contains(&request.method)
+            })
+            .ok_or_else(stale_bridge_error)?;
+        let process = state
+            .processes
+            .get(&bridge.runtime_key)
+            .filter(|process| process.alive.load(Ordering::SeqCst))
+            .ok_or_else(stale_bridge_error)?;
+        if validated_loopback_origin(&process.base_url)? != bridge.origin {
+            return Err(stale_bridge_error());
+        }
+        let result = match request.method.as_str() {
+            HOST_CONTEXT_READ_CAPABILITY => serde_json::json!({
+                "projectId": bridge.context.as_ref().map(|context| &context.project_id),
+                "projectName": bridge.context.as_ref().map(|context| &context.project_name),
+                "capabilities": bridge.capabilities,
+            }),
+            _ => return Err("Plugin 宿主能力尚未实现。".into()),
+        };
+        Ok(PresentedPluginApplicationBridgeResponse {
+            request_id: request.request_id,
+            result,
         })
     }
 
@@ -590,6 +688,44 @@ fn validate_launch_request(request: &PluginApplicationLaunchRequest) -> Result<(
         validate_text(project_id, 1_024)?;
     }
     Ok(())
+}
+
+fn validate_bridge_request(request: &PluginApplicationBridgeRequest) -> Result<(), String> {
+    validate_text(&request.owner_user_id, 512)?;
+    validate_text(&request.presentation_id, 512)?;
+    validate_text(&request.session_id, 256)?;
+    validate_text(&request.request_id, 256)?;
+    validate_text(&request.method, 256)?;
+    if request.generation == 0
+        || request.host_session_nonce.len() != 64
+        || !request
+            .host_session_nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+        || validated_loopback_origin(&request.origin)? != request.origin
+        || !request.payload.is_object()
+        || serde_json::to_vec(request)
+            .map(|bytes| bytes.len() > MAXIMUM_BRIDGE_REQUEST_BYTES)
+            .unwrap_or(true)
+    {
+        return Err(stale_bridge_error());
+    }
+    Ok(())
+}
+
+fn validated_loopback_origin(value: &str) -> Result<String, String> {
+    let url = reqwest::Url::parse(value).map_err(|_| stale_bridge_error())?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("127.0.0.1")
+        || url.port().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(stale_bridge_error());
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
 fn presentation_key(request: &PluginApplicationLaunchRequest) -> PresentationKey {
@@ -1265,6 +1401,10 @@ fn stale_launch_error() -> String {
     "Plugin 应用启动请求已失效。".into()
 }
 
+fn stale_bridge_error() -> String {
+    "Plugin 应用 Bridge 会话无效。".into()
+}
+
 fn plugin_runtime_error() -> String {
     "Plugin 应用运行环境无效。".into()
 }
@@ -1327,7 +1467,7 @@ mod tests {
                         "source": "./ui/index.html",
                         "title": "Plugin Runtime",
                         "surface": "workbench",
-                        "bridgeCapabilities": ["host.context.read"],
+                        "bridgeCapabilities": ["host.context.read", "artifact.read"],
                         "runtime": {
                             "type": "local_http",
                             "bin": "fixture",
@@ -1470,16 +1610,56 @@ mod tests {
         assert_eq!(first.url, second.url);
         assert_ne!(first.session_id, second.session_id);
         assert!(first.url.starts_with("http://127.0.0.1:"));
+        assert_eq!(second.bridge_capabilities, ["host.context.read"]);
+        assert_eq!(second.host_session_nonce.len(), 64);
+        assert!(second
+            .application
+            .bridge_capabilities
+            .contains(&"artifact.read".to_owned()));
         assert_eq!(runtime.state.lock().await.processes.len(), 1);
         let serialized = serde_json::to_string(&first).unwrap();
         assert!(!serialized.contains(&fixture.app_data.to_string_lossy().to_string()));
         assert!(!serialized.contains("API_TOKEN"));
         assert!(!serialized.contains("secret-reference"));
 
+        let bridge_request = PluginApplicationBridgeRequest {
+            owner_user_id: "owner-1".into(),
+            presentation_id: "presentation-1".into(),
+            generation: 2,
+            session_id: second.session_id.clone(),
+            host_session_nonce: second.host_session_nonce.clone(),
+            origin: second.bridge_origin.clone(),
+            request_id: "request-1".into(),
+            method: "host.context.read".into(),
+            payload: json!({}),
+        };
+        let bridge_response = runtime
+            .bridge_request(bridge_request.clone())
+            .await
+            .unwrap();
+        assert_eq!(bridge_response.request_id, "request-1");
+        assert_eq!(
+            bridge_response.result["capabilities"],
+            json!(["host.context.read"])
+        );
+        assert!(bridge_response.result["projectId"].is_null());
+        assert!(bridge_response.result["projectName"].is_null());
+
+        let mut wrong_origin = bridge_request.clone();
+        wrong_origin.origin = "http://127.0.0.1:1".into();
+        assert!(runtime.bridge_request(wrong_origin).await.is_err());
+        let mut wrong_nonce = bridge_request.clone();
+        wrong_nonce.host_session_nonce = "0".repeat(64);
+        assert!(runtime.bridge_request(wrong_nonce).await.is_err());
+        let mut undeclared = bridge_request.clone();
+        undeclared.method = "artifact.read".into();
+        assert!(runtime.bridge_request(undeclared).await.is_err());
+
         runtime
             .discard_presentation("owner-1", "presentation-1", 2)
             .await
             .unwrap();
+        assert!(runtime.bridge_request(bridge_request).await.is_err());
         assert!(runtime
             .launch(epoch, fixture.request(2), fixture.resolved.clone())
             .await
@@ -1703,5 +1883,35 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), 36);
         assert!(!first.contains("secret-project"));
+    }
+
+    #[test]
+    fn bridge_envelope_is_bounded_and_accepts_only_an_exact_loopback_origin() {
+        let request = PluginApplicationBridgeRequest {
+            owner_user_id: "owner-1".into(),
+            presentation_id: "presentation-1".into(),
+            generation: 1,
+            session_id: "session-1".into(),
+            host_session_nonce: "a".repeat(64),
+            origin: "http://127.0.0.1:43210".into(),
+            request_id: "request-1".into(),
+            method: "host.context.read".into(),
+            payload: json!({}),
+        };
+        assert!(validate_bridge_request(&request).is_ok());
+
+        for invalid_origin in [
+            "http://localhost:43210",
+            "https://127.0.0.1:43210",
+            "http://127.0.0.1:43210/path",
+            "http://user@127.0.0.1:43210",
+        ] {
+            let mut invalid = request.clone();
+            invalid.origin = invalid_origin.into();
+            assert!(validate_bridge_request(&invalid).is_err());
+        }
+        let mut oversized = request;
+        oversized.payload = json!({"value": "x".repeat(MAXIMUM_BRIDGE_REQUEST_BYTES)});
+        assert!(validate_bridge_request(&oversized).is_err());
     }
 }

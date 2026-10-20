@@ -15,7 +15,8 @@ use tauri::State;
 
 mod runtime;
 use runtime::{
-    PluginApplicationLaunchRequest, PluginApplicationRuntime, PresentedPluginApplicationLaunch,
+    PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
+    PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
 };
 
 const MAXIMUM_INSTALLATIONS: usize = 1_000;
@@ -334,6 +335,18 @@ pub async fn discard_plugin_application_presentation(
         .runtime
         .discard_presentation(&owner_user_id, &presentation_id, generation)
         .await
+}
+
+#[tauri::command]
+pub async fn handle_plugin_application_bridge_request(
+    authentication: State<'_, crate::authentication::AuthenticationManager>,
+    manager: State<'_, PluginApplicationManager>,
+    request: PluginApplicationBridgeRequest,
+) -> Result<PresentedPluginApplicationBridgeResponse, String> {
+    authentication
+        .access_token_for_owner(&request.owner_user_id)
+        .await?;
+    manager.runtime.bridge_request(request).await
 }
 
 async fn list_installation_summaries(

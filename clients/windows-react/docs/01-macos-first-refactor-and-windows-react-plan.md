@@ -480,6 +480,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows Plugin 应用 local HTTP runtime）：已按 macOS `NativePluginApplicationRuntime`、`NativePluginRuntimeContextResolver` 与 `PluginApplicationLaunchUseCase` 建立 launch 前置切片。每次启动重新读取 Host 安装真值；package bin、manifest source 和 executable 均锁定安装根且拒绝 symlink/reparse。原生层解析 Node/参数，构造不含应用 Secret 的 allowlist 环境，按 user/plugin/project/workspace/device 生成 SHA-256 隔离 data/cache，只向 UI 返回 project ID/name。服务使用 `127.0.0.1` 随机端口、有界 health timeout、无 redirect/proxy 客户端和固定缓冲输出 drain；相同 release/digest/version 才复用。owner/presentation/generation/context 与 runtime epoch 拒绝 teardown 后迟到启动；每账号最多 8 个进程，Windows Job Object/Unix process group 在失败、账号、Host 和应用退出时回收。Windows 当前只具备受限环境与进程生命周期边界，不伪装成 macOS Seatbelt 文件/网络沙箱。Plugin 定向 21 项及 Rust 全量 205 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。第 05 页仍等待 origin/navigation/session 绑定的受限 bridge，完成前不创建 React UI。
 
+状态补充（2026-10-21，Windows Plugin 应用原生 bridge 准入）：已按 macOS `RestrictedPluginWebView` 当前真实能力将原生 bridge 收窄为 `host.context.read`，不因 manifest 声明而提前开放 `artifact.*`。launch 产生独立 session 与 64 位随机 nonce，bridge 请求同时复验认证 owner、presentation、generation、session、nonce、精确 `http://127.0.0.1:<port>` origin、存活 runtime 和 256 KiB envelope；discard、账号/Host reset 或进程退出后旧请求失败关闭。返回 context 只有 project ID/name 和已准入 capability，不含项目根、安装路径或 Secret。Plugin 定向 22 项、Rust 全量 206 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。至此第 05 页达到 React 准入；下一片建立 typed Port/Adapter、latest-wins Store、项目 context picker、exact `event.source`/origin 校验和 sandbox iframe Host。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
