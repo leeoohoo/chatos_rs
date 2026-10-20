@@ -15,6 +15,7 @@ public actor NativeLocalAgentConversationService:
     }
 
     private let client: NativeLocalAgentConversationClient
+    private let runtimeClient: NativeLocalAgentRuntimeClient
     private let eventHub: NativeLocalAgentEventHub
     private let attachmentVault: NativeLocalAgentAttachmentVault
     private let runtimeSettings: NativeLocalAgentConversationRuntimeSettingsService
@@ -29,6 +30,7 @@ public actor NativeLocalAgentConversationService:
         eventHub: NativeLocalAgentEventHub? = nil
     ) {
         self.client = NativeLocalAgentConversationClient(host: host)
+        self.runtimeClient = NativeLocalAgentRuntimeClient(host: host)
         self.eventHub = eventHub ?? NativeLocalAgentEventHub(host: host)
         self.attachmentVault = NativeLocalAgentAttachmentVault(rootURL: attachmentRootURL)
         self.runtimeSettings = runtimeSettings
@@ -186,17 +188,36 @@ public actor NativeLocalAgentConversationService:
             ownerUserID: context.ownerUserID,
             conversationID: conversationID
         )
-        let target = turnID.flatMap { id in detail.turns.first(where: { $0.turnID == id }) }
-            ?? detail.turns.last(where: { $0.status == "running" })
-        guard let target, target.status == "running" else {
-            throw ConversationCommandError.guidanceTargetInactive
+        let target: LocalAgentConversationTurnRecord?
+        if let turnID {
+            // A stale pet card must never cancel a different, newer Turn.
+            target = detail.turns.first(where: { $0.turnID == turnID })
+        } else {
+            target = detail.turns.last(where: { $0.status == "running" })
+        }
+        guard let target else { return }
+        var expectedRunVersion: UInt64?
+        if target.status != "running" {
+            // NeedsReview reconciles the visible Turn to failed, while its Run
+            // remains cancellable. Match the Host's reviewed-Turn action gate.
+            guard target.status == "failed" else { return }
+            let run = try await runtimeClient.run(
+                ownerUserID: context.ownerUserID,
+                runID: target.runID
+            )
+            guard run.status == "needs_review" else { return }
+            guard run.ownerEntityType == "conversation_turn",
+                  run.ownerEntityID == target.turnID else {
+                throw NativeLocalAgentHostError.invalidResponse
+            }
+            expectedRunVersion = run.version
         }
         _ = try await client.cancelTurn(
             ownerUserID: context.ownerUserID,
             conversationID: conversationID,
             expectedConversationVersion: detail.conversation.version,
             turnID: target.turnID,
-            expectedRunVersion: nil,
+            expectedRunVersion: expectedRunVersion,
             reason: "user requested stop"
         )
     }

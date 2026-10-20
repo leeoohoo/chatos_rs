@@ -101,6 +101,7 @@ impl LocalTaskToolExecutor {
     ) -> Result<Value, String> {
         let output = match invocation.tool_name.as_str() {
             RESOLVE_TASK_FOLLOWUP_TOOL => {
+                *phase = "task_followup_review";
                 super::task_followup_tool::resolve(self, invocation, &parent, side_effects_started)
                     .await?
             }

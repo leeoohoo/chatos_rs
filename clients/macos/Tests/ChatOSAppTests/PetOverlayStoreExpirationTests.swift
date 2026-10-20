@@ -70,6 +70,35 @@ struct PetOverlayStoreExpirationTests {
         #expect(store.presentation.activeWorkCount == 0)
     }
 
+    @Test("dismissed review stays hidden during recovery until the Run changes")
+    @MainActor
+    func dismissedReviewDoesNotReappearDuringRecovery() {
+        let store = PetOverlayStore()
+        var review = PetActivity(
+            id: "local-run:review",
+            source: .chat,
+            kind: .reviewing,
+            title: "本地对话",
+            route: .init(conversationID: "conversation-1", turnID: "turn-1", runID: "review"),
+            activityVersion: "3"
+        )
+        store.apply(.upsert(review))
+        store.dismiss(review, disposition: .ignored)
+        store.apply(.upsert(review))
+        store.reconcileActivities(
+            [review], sources: [.chat], expectedVersions: store.versions(for: [.chat])
+        )
+        #expect(store.activities.isEmpty)
+        #expect(store.presentation == .idle)
+
+        review.activityVersion = "4"
+        review.kind = .cancelled
+        store.reconcileActivities(
+            [review], sources: [.chat], expectedVersions: store.versions(for: [.chat])
+        )
+        #expect(store.activities.first?.kind == .cancelled)
+    }
+
     private func makeActivity(id: String, expiresAt: Date?) -> PetActivity {
         PetActivity(
             id: id,

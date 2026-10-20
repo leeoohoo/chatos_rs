@@ -231,6 +231,11 @@ extension PetMessageView {
                         interactionState.isMessageExpanded = false
                         store.dismiss(activity, disposition: .acknowledged)
                     }
+                } else if activity.kind == .reviewing {
+                    Button("忽略") {
+                        interactionState.isMessageExpanded = false
+                        store.dismiss(activity, disposition: .ignored)
+                    }
                 }
                 Spacer()
                 if (activity.kind == .working || activity.kind == .reviewing), canCancel(activity) {
