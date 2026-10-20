@@ -168,13 +168,17 @@ extension AppModel {
         let pendingShutdown = localAgentHostShutdownTask
         let apiClient = apiClient
         let localConnectorService = localConnectorService
-        let runtimeSettingsService = runtimeSettingsService
-        let petActivityService = petActivityService
-        let commandService = commandService
-        let messageTaskGraphService = messageTaskGraphService
-        let askUserPromptService = askUserPromptService
-        let turnProcessService = turnProcessService
-        let platformToolWorker = platformToolWorker
+        let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
+            localConnectorService: localConnectorService,
+            runtimeSettingsService: runtimeSettingsService,
+            petActivityService: petActivityService,
+            commandService: commandService,
+            messageTaskGraphService: messageTaskGraphService,
+            askUserPromptService: askUserPromptService,
+            turnProcessService: turnProcessService,
+            platformToolWorker: platformToolWorker
+        )
+        let serviceConfigurationUseCase = LocalAgentServiceConfigurationUseCase()
         let workspaceService = workspaceService
         let projectConversationService = projectConversationService
         let notepadService = notepadService
@@ -228,17 +232,11 @@ extension AppModel {
                                 }
                                 return
                             }
-                            try await Self.configureLocalAgentServices(
-                                ownerUserID: ownerUserID,
-                                bootstrap: restored,
-                                localConnectorService: localConnectorService,
-                                runtimeSettingsService: runtimeSettingsService,
-                                petActivityService: petActivityService,
-                                commandService: commandService,
-                                messageTaskGraphService: messageTaskGraphService,
-                                askUserPromptService: askUserPromptService,
-                                turnProcessService: turnProcessService,
-                                platformToolWorker: platformToolWorker,
+                            try await serviceConfigurationUseCase.execute(
+                                port: serviceConfigurationFactory.makePort(
+                                    ownerUserID: ownerUserID,
+                                    bootstrap: restored
+                                ),
                                 isCurrent: { [weak self] in
                                     !Task.isCancelled && self?.localAgentLifecycleAccepts(
                                         ownerUserID: ownerUserID,
@@ -523,13 +521,17 @@ extension AppModel {
         )
         let apiClient = apiClient
         let localConnectorService = localConnectorService
-        let runtimeSettingsService = runtimeSettingsService
-        let petActivityService = petActivityService
-        let commandService = commandService
-        let messageTaskGraphService = messageTaskGraphService
-        let askUserPromptService = askUserPromptService
-        let turnProcessService = turnProcessService
-        let platformToolWorker = platformToolWorker
+        let serviceConfigurationFactory = NativeLocalAgentServiceConfigurationFactory(
+            localConnectorService: localConnectorService,
+            runtimeSettingsService: runtimeSettingsService,
+            petActivityService: petActivityService,
+            commandService: commandService,
+            messageTaskGraphService: messageTaskGraphService,
+            askUserPromptService: askUserPromptService,
+            turnProcessService: turnProcessService,
+            platformToolWorker: platformToolWorker
+        )
+        let serviceConfigurationUseCase = LocalAgentServiceConfigurationUseCase()
         localAgentBootstrapTask = Task { [weak self] in
             let retryDelays: [Duration?] = [
                 nil,
@@ -560,17 +562,11 @@ extension AppModel {
                         }
                         return
                     }
-                    try await Self.configureLocalAgentServices(
-                        ownerUserID: ownerUserID,
-                        bootstrap: bootstrap,
-                        localConnectorService: localConnectorService,
-                        runtimeSettingsService: runtimeSettingsService,
-                        petActivityService: petActivityService,
-                        commandService: commandService,
-                        messageTaskGraphService: messageTaskGraphService,
-                        askUserPromptService: askUserPromptService,
-                        turnProcessService: turnProcessService,
-                        platformToolWorker: platformToolWorker,
+                    try await serviceConfigurationUseCase.execute(
+                        port: serviceConfigurationFactory.makePort(
+                            ownerUserID: ownerUserID,
+                            bootstrap: bootstrap
+                        ),
                         isCurrent: { [weak self] in
                             !Task.isCancelled
                                 && self?.localAgentControlPlaneBootstrapAccepts(token) == true
@@ -676,50 +672,6 @@ extension AppModel {
                 errorMessage: error.localizedDescription
             )
         }
-    }
-
-    private static func configureLocalAgentServices(
-        ownerUserID: String,
-        bootstrap: NativeLocalAgentBootstrapResult,
-        localConnectorService: NativeLocalConnectorService,
-        runtimeSettingsService: NativeLocalAgentConversationRuntimeSettingsService?,
-        petActivityService: NativeLocalAgentPetActivityService?,
-        commandService: NativeLocalAgentConversationService?,
-        messageTaskGraphService: NativeLocalAgentMessageTaskGraphService?,
-        askUserPromptService: NativeLocalAgentAskUserPromptService?,
-        turnProcessService: NativeLocalAgentTurnProcessService?,
-        platformToolWorker: NativeLocalAgentPlatformToolWorker?,
-        isCurrent: () -> Bool
-    ) async throws {
-        guard isCurrent() else { throw CancellationError() }
-        await localConnectorService.configureLocalApprovalAgent(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
-        )
-        guard isCurrent() else { throw CancellationError() }
-        try await runtimeSettingsService?.configure(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
-        )
-        guard isCurrent() else { throw CancellationError() }
-        await petActivityService?.configure(ownerUserID: ownerUserID)
-        guard isCurrent() else { throw CancellationError() }
-        try await commandService?.configure(
-            ownerUserID: ownerUserID,
-            bootstrap: bootstrap
-        )
-        guard isCurrent() else { throw CancellationError() }
-        await messageTaskGraphService?.configure(ownerUserID: ownerUserID)
-        guard isCurrent() else { throw CancellationError() }
-        await askUserPromptService?.configure(ownerUserID: ownerUserID)
-        guard isCurrent() else { throw CancellationError() }
-        await turnProcessService?.configure(ownerUserID: ownerUserID)
-        guard isCurrent() else { throw CancellationError() }
-        try await platformToolWorker?.configure(
-            ownerUserID: ownerUserID,
-            externalMCPConfigs: bootstrap.externalMCPConfigs
-        )
-        guard isCurrent() else { throw CancellationError() }
     }
 
     private func deactivateAllConversations() {
