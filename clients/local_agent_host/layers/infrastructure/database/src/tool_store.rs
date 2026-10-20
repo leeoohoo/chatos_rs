@@ -2,7 +2,7 @@
 // Required Notice: Copyright (c) 2025 AI Chat Team
 
 use super::{
-    tool_store_execution::{advance_run_after_tool, recover_expired_on},
+    tool_store_execution::{advance_run_after_tool, json_encoded_size, recover_expired_on},
     tool_store_record::{
         decode_invocation, fetch_invocation, outcome_fields, tool_execution_route,
     },
@@ -506,8 +506,10 @@ impl LocalAgentToolStore for SqliteClientStorage {
                     "invocation_id": invocation.invocation_id,
                     "call_id": invocation.call_id,
                     "status": invocation.status,
-                    "result": invocation.result,
-                    "error": invocation.error
+                    "error": invocation.error,
+                    "result_size_bytes": invocation.result.as_ref().and_then(|value| {
+                        json_encoded_size(value).ok()
+                    })
                 }),
                 now_unix_ms,
             )

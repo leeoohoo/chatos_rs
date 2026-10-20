@@ -55,6 +55,8 @@ pub enum HostResult {
         service: String,
         storage_ready: bool,
         recovered_claims: u64,
+        max_frame_bytes: usize,
+        max_message_bytes: usize,
     },
     MemorySyncStatus {
         status: LocalMemorySyncStatus,

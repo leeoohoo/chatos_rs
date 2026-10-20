@@ -230,6 +230,8 @@ impl LocalAgentRuntime {
                     service: "chatos-local-agent-host".to_string(),
                     storage_ready: true,
                     recovered_claims: self.recovered_claims.load(Ordering::Acquire),
+                    max_frame_bytes: chatos_local_agent_protocol::LOCAL_AGENT_MAX_FRAME_BYTES,
+                    max_message_bytes: chatos_local_agent_protocol::LOCAL_AGENT_MAX_MESSAGE_BYTES,
                 })
             }
             HostCommand::GetMemorySyncStatus(command) => {

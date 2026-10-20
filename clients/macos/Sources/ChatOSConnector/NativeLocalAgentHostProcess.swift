@@ -245,7 +245,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
             )
         }
         guard response.result?.type == "health",
-              response.result?.storageReady == true else {
+              response.result?.storageReady == true,
+              response.result?.maxFrameBytes == LocalAgentHostFrameCodec.maximumFrameBytes,
+              response.result?.maxMessageBytes == LocalAgentHostFrameCodec.maximumMessageBytes else {
             throw NativeLocalAgentHostError.invalidResponse
         }
     }
@@ -271,6 +273,8 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
                 && response.ok
                 && response.result?.type == "health"
                 && response.result?.storageReady == true
+                && response.result?.maxFrameBytes == LocalAgentHostFrameCodec.maximumFrameBytes
+                && response.result?.maxMessageBytes == LocalAgentHostFrameCodec.maximumMessageBytes
         } catch {
             return false
         }
@@ -280,6 +284,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         _ payload: Data,
         timeoutMilliseconds: Int? = nil
     ) throws -> Data {
+        guard LocalAgentHostFrameCodec.isValidMessage(payload) else {
+            throw NativeLocalAgentHostError.messageTooLarge
+        }
         let deadline = LocalAgentHostFrameCodec.deadline(
             timeoutMilliseconds: timeoutMilliseconds ?? requestTimeoutMilliseconds
         )
@@ -291,6 +298,9 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
         _ payload: Data,
         timeoutMilliseconds: Int? = nil
     ) async throws -> Data {
+        guard LocalAgentHostFrameCodec.isValidMessage(payload) else {
+            throw NativeLocalAgentHostError.messageTooLarge
+        }
         let commandID = try Self.commandID(in: payload)
         let timeout = timeoutMilliseconds ?? requestTimeoutMilliseconds
         return try await withTaskCancellationHandler {
@@ -534,20 +544,39 @@ final class ManagedLocalAgentHostProcess: @unchecked Sendable {
 
 enum LocalAgentHostFrameCodec {
     static let maximumFrameBytes = 4 * 1_024 * 1_024
+    static let maximumMessageBytes = 64 * 1_024 * 1_024
     private static let maximumPollSliceMilliseconds: UInt64 = 250
+    private static let continuationBit: UInt32 = 1 << 31
+    private static let lengthMask = ~continuationBit
+
+    static func isValidMessage(_ payload: Data) -> Bool {
+        !payload.isEmpty && payload.count <= maximumMessageBytes
+    }
 
     static func write(
         _ payload: Data,
         to handle: FileHandle,
         deadline: UInt64 = deadline(timeoutMilliseconds: 75_000)
     ) throws {
-        guard !payload.isEmpty, payload.count <= maximumFrameBytes else {
-            throw NativeLocalAgentHostError.invalidFrame
+        guard isValidMessage(payload) else {
+            throw NativeLocalAgentHostError.messageTooLarge
         }
-        var length = UInt32(payload.count).bigEndian
-        let header = withUnsafeBytes(of: &length) { Data($0) }
-        try writeExactly(header, to: handle.fileDescriptor, deadline: deadline)
-        try writeExactly(payload, to: handle.fileDescriptor, deadline: deadline)
+        var offset = 0
+        while offset < payload.count {
+            let length = min(maximumFrameBytes, payload.count - offset)
+            let hasMore = offset + length < payload.count
+            var encodedLength = UInt32(length)
+            if hasMore { encodedLength |= continuationBit }
+            encodedLength = encodedLength.bigEndian
+            let header = withUnsafeBytes(of: &encodedLength) { Data($0) }
+            try writeExactly(header, to: handle.fileDescriptor, deadline: deadline)
+            try writeExactly(
+                payload.subdata(in: offset..<(offset + length)),
+                to: handle.fileDescriptor,
+                deadline: deadline
+            )
+            offset += length
+        }
     }
 
     static func read(
@@ -555,24 +584,32 @@ enum LocalAgentHostFrameCodec {
         deadline: UInt64 = deadline(timeoutMilliseconds: 75_000),
         shouldCancel: @Sendable () -> Bool = { false }
     ) throws -> Data {
-        let header = try readExactly(
-            4,
-            from: handle.fileDescriptor,
-            deadline: deadline,
-            shouldCancel: shouldCancel
-        )
-        let length = header.withUnsafeBytes { rawBuffer in
-            rawBuffer.loadUnaligned(as: UInt32.self).bigEndian
+        var message = Data()
+        while true {
+            let header = try readExactly(
+                4,
+                from: handle.fileDescriptor,
+                deadline: deadline,
+                shouldCancel: shouldCancel
+            )
+            let encodedLength = header.withUnsafeBytes { rawBuffer in
+                rawBuffer.loadUnaligned(as: UInt32.self).bigEndian
+            }
+            let hasMore = encodedLength & continuationBit != 0
+            let length = Int(encodedLength & lengthMask)
+            guard length > 0,
+                  length <= maximumFrameBytes,
+                  message.count <= maximumMessageBytes - length else {
+                throw NativeLocalAgentHostError.invalidFrame
+            }
+            message.append(try readExactly(
+                length,
+                from: handle.fileDescriptor,
+                deadline: deadline,
+                shouldCancel: shouldCancel
+            ))
+            if !hasMore { return message }
         }
-        guard length > 0, length <= maximumFrameBytes else {
-            throw NativeLocalAgentHostError.invalidFrame
-        }
-        return try readExactly(
-            Int(length),
-            from: handle.fileDescriptor,
-            deadline: deadline,
-            shouldCancel: shouldCancel
-        )
     }
 
     static func deadline(timeoutMilliseconds: Int) -> UInt64 {
@@ -712,6 +749,8 @@ private struct HealthResponse: Decodable {
 private struct HealthResult: Decodable {
     let type: String
     let storageReady: Bool
+    let maxFrameBytes: Int
+    let maxMessageBytes: Int
 }
 
 private struct HealthError: Decodable {

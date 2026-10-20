@@ -421,10 +421,10 @@ authenticated
 
 ### 6.3 握手、请求与假健康防护
 
-- 协议版本当前为 `43`；request/response 必须同时匹配 protocol version 与 command ID；
+- 协议版本当前为 `44`；request/response 必须同时匹配 protocol version 与 command ID；
 - 启动必须通过 `health`，且 `storage_ready == true` 后才返回 managed process；
-- stdio frame 使用 4 字节大端长度前缀，最大 4 MiB；
-- Host 响应编码超过 4 MiB 时返回有界、可重试的 `response_too_large` 错误，并保持传输继续服务后续请求；这属于单请求降级，不等同于 writer 失败；
+- stdio 物理 frame 使用 4 字节大端长度前缀，单帧最大 4 MiB；高位为 continuation 标志，自动重组的逻辑消息最大 64 MiB；
+- Host 响应编码超过 64 MiB 逻辑消息上限时返回有界、可重试的 `response_too_large` 错误，并保持传输继续服务后续请求；这属于单请求降级，不等同于 writer 失败；
 - 多路复用请求按 command ID 保存 continuation，各自有取消与超时；
 - reader 退出或 writer 失败会关闭 transport 并失败所有 pending response；lifecycle 收到传输失败后移除并终止对应 Host，不能留下“进程还在但无法回包”的假健康状态；
 - 单次长轮询超时先以 1 秒 health probe 检查同一进程：健康则只返回该请求超时，不连坐其他并发请求；health 失败才使 Host 失效；

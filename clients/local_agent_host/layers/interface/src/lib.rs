@@ -3,8 +3,10 @@
 
 //! Stable, cross-platform contracts for the client-owned Local Agent Host.
 //!
-//! The protocol uses length-prefixed JSON frames. It deliberately contains no
-//! database, model-provider, plugin, or platform-specific IPC implementation.
+//! The protocol uses bounded, length-prefixed JSON message chunks. Small messages use a
+//! single frame; larger messages are split into frames without allowing an unbounded
+//! allocation. It deliberately contains no database, model-provider, plugin, or
+//! platform-specific IPC implementation.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -124,8 +126,16 @@ pub use tool::{
     LocalAgentToolOutcome, LocalAgentToolStatus, RenewToolClaimCommand,
 };
 
-pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 43;
+pub const LOCAL_AGENT_PROTOCOL_VERSION: u32 = 44;
+/// Maximum bytes in one physical IPC frame. The high bit of the frame prefix is reserved
+/// as the continuation flag, so this limit must stay below `i32::MAX`.
 pub const LOCAL_AGENT_MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+/// Maximum bytes in one reassembled JSON request or response.
+///
+/// This is intentionally separate from the physical frame limit: application payloads can
+/// grow beyond one frame, while corrupt or hostile peers still cannot force an unbounded
+/// allocation. Payloads above this boundary must use an artifact/reference workflow.
+pub const LOCAL_AGENT_MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 pub const LOCAL_AGENT_MAX_INPUT_BYTES: usize = 256 * 1024;
 pub const LOCAL_AGENT_MAX_EVENT_PAGE_SIZE: u32 = 500;
 

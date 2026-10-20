@@ -166,14 +166,18 @@ Repeat `--read-only-tool <name>` for native tools whose interrupted execution is
 
 ## Frame format
 
-Each request and response is:
+Each request and response is one logical JSON message. Messages are split into one or more
+physical frames:
 
 ```text
-4-byte unsigned big-endian JSON length
-JSON payload bytes
+4-byte unsigned big-endian frame length (high bit means another frame follows)
+frame payload bytes
 ```
 
-Frames are limited to 1 MiB. The connection can carry multiple request/response pairs.
+Physical frames are limited to 4 MiB and reassembled messages are limited to 64 MiB. Small
+messages retain the original single-frame encoding. The connection can carry multiple
+request/response pairs. An oversized application response fails only its command; it does not
+terminate the transport.
 
 Example health request:
 

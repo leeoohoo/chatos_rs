@@ -932,6 +932,29 @@ final class NativeLocalAgentPlatformToolWorkerTests: XCTestCase {
         await worker.reset()
     }
 
+    func testWorkerRetriesTransientRenewalFailuresBeforeLeaseExpiry() async throws {
+        let host = PlatformToolHostStub(mode: .renewingClaimAfterTransientFailures(2))
+        let executor = DelayedPlatformToolExecutor(delay: .milliseconds(700))
+        let worker = NativeLocalAgentPlatformToolWorker(
+            client: .init(host: host),
+            executor: executor,
+            workerID: "worker-1",
+            claimLeaseDurationMilliseconds: 1_000,
+            claimHeartbeatInterval: .milliseconds(50)
+        )
+        await worker.configure(ownerUserID: "user-1")
+
+        for _ in 0..<200 {
+            if await host.commitCount() > 0 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let commits = await host.commitCount()
+        let renewals = await host.renewalCount()
+        XCTAssertEqual(commits, 1)
+        XCTAssertGreaterThanOrEqual(renewals, 3)
+        await worker.reset()
+    }
+
     func testWorkerDoesNotCommitAfterClaimRenewalIsRejected() async throws {
         let host = PlatformToolHostStub(mode: .renewingClaim(renewalAccepted: false))
         let executor = DelayedPlatformToolExecutor(delay: .seconds(2))
@@ -1177,6 +1200,7 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         case preflightDeniedClaim
         case onePendingApproval
         case renewingClaim(renewalAccepted: Bool)
+        case renewingClaimAfterTransientFailures(Int)
         case eventDrivenClaim
         case terminalEvent(String)
         case concurrentClaims(Int)
@@ -1278,7 +1302,8 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
                 ])
             }
             let hasClaim = switch mode {
-            case .oneSideEffectingClaim, .preflightDeniedClaim, .renewingClaim: true
+            case .oneSideEffectingClaim, .preflightDeniedClaim, .renewingClaim,
+                 .renewingClaimAfterTransientFailures: true
             case .idle, .onePendingApproval, .terminalEvent: false
             case .eventDrivenClaim: eventDelivered
             case .concurrentClaims, .staggeredClaims: false
@@ -1308,8 +1333,13 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
             ])
         case "renew_tool_claim":
             renewals += 1
+            if case let .renewingClaimAfterTransientFailures(count) = mode,
+               renewals <= count {
+                throw URLError(.networkConnectionLost)
+            }
             let accepted = switch mode {
             case let .renewingClaim(renewalAccepted): renewalAccepted
+            case .renewingClaimAfterTransientFailures: true
             case .idle, .oneSideEffectingClaim, .preflightDeniedClaim,
                  .onePendingApproval, .eventDrivenClaim, .terminalEvent, .concurrentClaims,
                  .staggeredClaims, .delayedClaim: true
@@ -1382,7 +1412,8 @@ private actor PlatformToolHostStub: LocalAgentHostClientServicing {
         switch mode {
         case .eventDrivenClaim, .terminalEvent,
              .oneSideEffectingClaim, .preflightDeniedClaim: true
-        case .idle, .onePendingApproval, .renewingClaim, .concurrentClaims,
+        case .idle, .onePendingApproval, .renewingClaim,
+             .renewingClaimAfterTransientFailures, .concurrentClaims,
              .staggeredClaims, .delayedClaim: false
         }
     }

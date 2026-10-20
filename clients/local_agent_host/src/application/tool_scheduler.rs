@@ -154,7 +154,7 @@ impl LocalToolScheduler {
             lease_duration_ms: self.lease_duration_ms,
             include_tool_names: include_tool_names.clone(),
             exclude_tool_names: exclude_tool_names.clone(),
-            execution_route: self.execution_route.clone(),
+            execution_route: self.execution_route,
         }
         .validate()?;
         self.include_tool_names = include_tool_names;
@@ -173,7 +173,7 @@ impl LocalToolScheduler {
                     lease_duration_ms: self.lease_duration_ms,
                     include_tool_names: self.include_tool_names.clone(),
                     exclude_tool_names: self.exclude_tool_names.clone(),
-                    execution_route: self.execution_route.clone(),
+                    execution_route: self.execution_route,
                 }),
             ))
             .await?;

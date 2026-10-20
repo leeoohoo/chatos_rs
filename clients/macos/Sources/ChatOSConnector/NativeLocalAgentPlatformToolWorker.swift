@@ -1,5 +1,6 @@
 import ChatOSCore
 import Foundation
+import OSLog
 
 enum NativeLocalAgentPlatformToolPollingPolicy {
   static let activityWindow = Duration.seconds(15)
@@ -20,9 +21,19 @@ enum NativeLocalAgentPlatformToolPollingPolicy {
 }
 
 public actor NativeLocalAgentPlatformToolWorker {
+  private static let logger = Logger(
+    subsystem: "com.chatos.swift-client",
+    category: "LocalAgentToolLease"
+  )
+
+  private enum ClaimLeaseLoss: Sendable {
+    case rejected
+    case renewalUnavailable(String)
+  }
+
   private enum ClaimExecutionResult: Sendable {
     case outcome(LocalAgentToolOutcome)
-    case leaseLost
+    case leaseLost(ClaimLeaseLoss)
   }
 
   private enum PollGroupResult: Sendable {
@@ -436,6 +447,14 @@ public actor NativeLocalAgentPlatformToolWorker {
     let executor = self.executor
     let leaseDurationMilliseconds = claimLeaseDurationMilliseconds
     let heartbeatInterval = claimHeartbeatInterval
+    let leaseDuration = Duration.milliseconds(Int64(min(
+      leaseDurationMilliseconds,
+      UInt64(Int64.max)
+    )))
+    let currentUnixMilliseconds = Int64(Date().timeIntervalSince1970 * 1_000)
+    let initialLeaseRemaining = claim.invocation.claimUntilUnixMs.map {
+      Duration.milliseconds(max(0, $0 - currentUnixMilliseconds))
+    } ?? leaseDuration
     return await withTaskGroup(
       of: ClaimExecutionResult.self,
       returning: LocalAgentToolOutcome?.self
@@ -449,26 +468,47 @@ public actor NativeLocalAgentPlatformToolWorker {
           ))
       }
       group.addTask {
+        let clock = ContinuousClock()
+        var knownValidUntil = clock.now.advanced(by: initialLeaseRemaining)
+        var nextDelay = min(heartbeatInterval, initialLeaseRemaining)
         do {
           while !Task.isCancelled {
-            try await Task.sleep(for: heartbeatInterval)
+            try await Task.sleep(for: nextDelay)
             try Task.checkCancellation()
-            guard
-              try await client.renew(
+            do {
+              let renewalStartedAt = clock.now
+              guard try await client.renew(
                 ownerUserID: ownerUserID,
                 claim: claim,
                 leaseDurationMilliseconds: leaseDurationMilliseconds
+              ) else {
+                return .leaseLost(.rejected)
+              }
+              // The Host starts the renewed lease while handling this call. Measuring from
+              // request start is conservative and never overstates the known-valid window.
+              knownValidUntil = renewalStartedAt.advanced(by: leaseDuration)
+              nextDelay = min(heartbeatInterval, leaseDuration)
+            } catch is CancellationError {
+              throw CancellationError()
+            } catch {
+              let errorType = String(reflecting: type(of: error))
+              let now = clock.now
+              guard now < knownValidUntil else {
+                return .leaseLost(.renewalUnavailable(errorType))
+              }
+              let remaining = now.duration(to: knownValidUntil)
+              nextDelay = min(.milliseconds(250), remaining)
+              Self.logger.warning(
+                "Tool claim renewal temporarily unavailable; retrying before lease expiry. invocation=\(claim.invocation.invocationID, privacy: .public) error_type=\(errorType, privacy: .public)"
               )
-            else {
-              return .leaseLost
             }
           }
         } catch is CancellationError {
-          return .leaseLost
+          return .leaseLost(.renewalUnavailable("cancelled"))
         } catch {
-          return .leaseLost
+          return .leaseLost(.renewalUnavailable(String(reflecting: type(of: error))))
         }
-        return .leaseLost
+        return .leaseLost(.renewalUnavailable("heartbeat_stopped"))
       }
 
       guard let first = await group.next() else {
@@ -478,7 +518,18 @@ public actor NativeLocalAgentPlatformToolWorker {
       group.cancelAll()
       switch first {
       case .outcome(let outcome): return outcome
-      case .leaseLost: return nil
+      case .leaseLost(let reason):
+        switch reason {
+        case .rejected:
+          Self.logger.error(
+            "Tool claim renewal was rejected; cancelling execution. invocation=\(claim.invocation.invocationID, privacy: .public)"
+          )
+        case .renewalUnavailable(let errorType):
+          Self.logger.error(
+            "Tool claim could not be renewed before expiry; cancelling execution. invocation=\(claim.invocation.invocationID, privacy: .public) error_type=\(errorType, privacy: .public)"
+          )
+        }
+        return nil
       }
     }
   }

@@ -8,6 +8,30 @@ use super::{
 use chatos_local_agent_protocol::LocalAgentToolStatus;
 use serde_json::{json, Value};
 use sqlx::{Row, SqliteConnection};
+use std::io;
+
+pub(super) fn json_encoded_size(value: &Value) -> Result<usize, serde_json::Error> {
+    #[derive(Default)]
+    struct CountingWriter(usize);
+
+    impl io::Write for CountingWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(buffer.len())
+                .ok_or_else(|| io::Error::other("serialized JSON size overflow"))?;
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = CountingWriter::default();
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.0)
+}
 
 pub(super) async fn recover_expired_on(
     connection: &mut SqliteConnection,
@@ -313,18 +337,61 @@ pub(super) async fn advance_run_after_tool(
     .await
     .db()?;
     if updated.rows_affected() == 1 {
+        let event_payload = tool_batch_event_payload(&continuation);
         SqliteClientStorage::insert_event(
             connection,
             event_id,
             run_id,
             "tool_batch_completed",
-            &continuation,
+            &event_payload,
             now_unix_ms,
         )
         .await
         .db()?;
     }
     Ok(())
+}
+
+fn tool_batch_event_payload(continuation: &Value) -> Value {
+    let invocations = continuation
+        .get("invocations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|invocation| {
+            let record = invocation.as_object()?;
+            let tool_name = record.get("tool_name")?.as_str()?;
+            let mut summary = serde_json::Map::new();
+            for key in [
+                "invocation_id",
+                "call_id",
+                "tool_name",
+                "execution_route",
+                "status",
+                "error",
+            ] {
+                if let Some(value) = record.get(key) {
+                    summary.insert(key.to_string(), value.clone());
+                }
+            }
+            if tool_name == "task_run_process_record_process" {
+                if let Some(arguments) = record.get("arguments") {
+                    summary.insert("arguments".to_string(), arguments.clone());
+                }
+            }
+            if let Some(result) = record.get("result").filter(|value| !value.is_null()) {
+                if let Ok(size) = json_encoded_size(result) {
+                    summary.insert("result_size_bytes".to_string(), json!(size));
+                }
+            }
+            Some(Value::Object(summary))
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "type": "tool_results_summary",
+        "batch_id": continuation.get("batch_id"),
+        "invocations": invocations,
+    })
 }
 
 async fn tool_batch_continuation(
@@ -354,4 +421,42 @@ async fn tool_batch_continuation(
         "batch_id": batch_id,
         "invocations": invocations
     }))
+}
+
+#[cfg(test)]
+mod event_payload_tests {
+    use super::*;
+
+    #[test]
+    fn batch_events_exclude_results_and_unrelated_arguments() {
+        let payload = tool_batch_event_payload(&json!({
+            "type": "tool_results",
+            "batch_id": "batch-1",
+            "invocations": [
+                {
+                    "invocation_id": "invocation-1",
+                    "call_id": "call-1",
+                    "tool_name": "browser_login",
+                    "execution_route": "platform",
+                    "arguments": {"password": "must-not-enter-events"},
+                    "status": "succeeded",
+                    "result": {"content": "large result"}
+                },
+                {
+                    "invocation_id": "invocation-2",
+                    "call_id": "call-2",
+                    "tool_name": "task_run_process_record_process",
+                    "execution_route": "platform",
+                    "arguments": {"operation": "append", "content": "checked tests"},
+                    "status": "succeeded",
+                    "result": {"ok": true}
+                }
+            ]
+        }));
+        let invocations = payload["invocations"].as_array().expect("summaries");
+        assert!(invocations[0].get("result").is_none());
+        assert!(invocations[0].get("arguments").is_none());
+        assert_eq!(invocations[0]["result_size_bytes"], 26);
+        assert_eq!(invocations[1]["arguments"]["operation"], "append");
+    }
 }

@@ -13,7 +13,7 @@ public extension Notification.Name {
 }
 
 enum NativeLocalAgentHostProtocol {
-    static let version = 43
+    static let version = 44
 }
 
 public enum NativeLocalAgentConcurrencyPolicy {
@@ -392,6 +392,7 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
     case ownerMismatch
     case invalidCredentialEnvironment
     case invalidFrame
+    case messageTooLarge
     case requestTimedOut
     case invalidResponse
     case hostError(code: String, message: String, retryable: Bool)
@@ -414,6 +415,8 @@ enum NativeLocalAgentHostError: LocalizedError, Equatable {
             "Local Agent Host credential environment is invalid."
         case .invalidFrame:
             "Local Agent Host returned an invalid frame."
+        case .messageTooLarge:
+            "Local Agent Host message exceeded the 64 MiB logical message limit; use an artifact reference for larger payloads."
         case .requestTimedOut:
             "Local Agent Host did not respond before the request deadline."
         case .invalidResponse:

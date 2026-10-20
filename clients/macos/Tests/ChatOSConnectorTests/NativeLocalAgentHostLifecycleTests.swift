@@ -2,6 +2,7 @@
 import ChatOSCore
 import Darwin
 import Foundation
+import SQLite3
 import XCTest
 
 final class NativeLocalAgentHostLifecycleTests: XCTestCase {
@@ -467,6 +468,127 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         XCTAssertEqual(try LocalAgentHostFrameCodec.read(from: replay.fileHandleForReading), payload)
     }
 
+    func testFrameCodecChunksAndReassemblesLogicalMessages() throws {
+        let pipe = Pipe()
+        let payload = Data(
+            repeating: 0x5A,
+            count: LocalAgentHostFrameCodec.maximumFrameBytes + 257
+        )
+        let written = expectation(description: "chunked message written")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try LocalAgentHostFrameCodec.write(payload, to: pipe.fileHandleForWriting)
+                try pipe.fileHandleForWriting.close()
+            } catch {
+                XCTFail("chunked write failed: \(error)")
+            }
+            written.fulfill()
+        }
+
+        XCTAssertEqual(try LocalAgentHostFrameCodec.read(from: pipe.fileHandleForReading), payload)
+        wait(for: [written], timeout: 2)
+    }
+
+    func testActualHostChunksLargeRequestsAndResponses() async throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let executable = ProcessInfo.processInfo.environment["CHATOS_LOCAL_AGENT_HOST_PATH"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? repository.appendingPathComponent("target-shared/debug/chatos_local_agent_host")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw XCTSkip("Build chatos_local_agent_host before running the native lifecycle test")
+        }
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chatos-large-ipc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appendingPathComponent("local-agent.sqlite3")
+        let lifecycle = NativeLocalAgentHostLifecycle(configuration: .init(
+            executableURL: executable,
+            databaseURL: databaseURL
+        ))
+
+        func request(_ command: [String: Any]) async throws -> [String: Any] {
+            let data = try JSONSerialization.data(withJSONObject: command)
+            let result = try await lifecycle.request(command: data)
+            return try XCTUnwrap(
+                JSONSerialization.jsonObject(with: result) as? [String: Any]
+            )
+        }
+
+        do {
+            try await lifecycle.startForBootstrap(ownerUserID: "user-1")
+            let response = try await request([
+                "type": "health",
+                "padding": String(
+                    repeating: "x",
+                    count: LocalAgentHostFrameCodec.maximumFrameBytes + 1_024
+                ),
+            ])
+            XCTAssertEqual(response["type"] as? String, "health")
+            let followup = try await request(["type": "health"])
+            XCTAssertEqual(followup["type"] as? String, "health")
+            await lifecycle.stop()
+
+            var database: OpaquePointer?
+            XCTAssertEqual(sqlite3_open_v2(
+                databaseURL.path,
+                &database,
+                SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX,
+                nil
+            ), SQLITE_OK)
+            let openedDatabase = try XCTUnwrap(database)
+            var statement: OpaquePointer?
+            let sql = """
+                INSERT INTO local_agent_runs(
+                  run_id, owner_user_id, owner_entity_type, owner_entity_id, profile_key,
+                  model_config_ref, model_config_revision, capability_policy_revision,
+                  input_json, status, iteration, max_iterations, version,
+                  terminal_outcome_json, created_at_unix_ms, updated_at_unix_ms
+                ) VALUES(
+                  'large-response-run', 'user-1', 'conversation', 'large-response-conversation',
+                  'main_chat', 'model-1', 'revision-1', 'policy-1', '{}', 'succeeded',
+                  1, 4, 1, ?, 1, 1
+                )
+                """
+            XCTAssertEqual(
+                sqlite3_prepare_v2(openedDatabase, sql, -1, &statement, nil),
+                SQLITE_OK
+            )
+            let prepared = try XCTUnwrap(statement)
+            let largeContent = String(
+                repeating: "y",
+                count: LocalAgentHostFrameCodec.maximumFrameBytes + 1_024
+            )
+            let terminalOutcome = try JSONSerialization.data(withJSONObject: [
+                "content": largeContent,
+            ])
+            let terminalOutcomeText = String(decoding: terminalOutcome, as: UTF8.self)
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            XCTAssertEqual(terminalOutcomeText.withCString {
+                sqlite3_bind_text(prepared, 1, $0, -1, transient)
+            }, SQLITE_OK)
+            XCTAssertEqual(sqlite3_step(prepared), SQLITE_DONE)
+            sqlite3_finalize(prepared)
+            sqlite3_close(openedDatabase)
+
+            try await lifecycle.startForBootstrap(ownerUserID: "user-1")
+            let run = try await NativeLocalAgentRuntimeClient(host: lifecycle).run(
+                ownerUserID: "user-1",
+                runID: "large-response-run"
+            )
+            guard case let .object(outcome)? = run.terminalOutcome,
+                  case let .string(roundTrippedContent)? = outcome["content"] else {
+                return XCTFail("Large terminal outcome did not round-trip")
+            }
+            XCTAssertEqual(roundTrippedContent.count, largeContent.count)
+            await lifecycle.stop()
+        } catch {
+            await lifecycle.stop()
+            throw error
+        }
+    }
+
     func testFrameCodecReadUsesDeadline() throws {
         let pipe = Pipe()
         defer {
@@ -560,7 +682,7 @@ final class NativeLocalAgentHostLifecycleTests: XCTestCase {
         let sink = Pipe()
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.write(Data(), to: sink.fileHandleForWriting))
         XCTAssertThrowsError(try LocalAgentHostFrameCodec.write(
-            Data(count: LocalAgentHostFrameCodec.maximumFrameBytes + 1),
+            Data(count: LocalAgentHostFrameCodec.maximumMessageBytes + 1),
             to: sink.fileHandleForWriting
         ))
 

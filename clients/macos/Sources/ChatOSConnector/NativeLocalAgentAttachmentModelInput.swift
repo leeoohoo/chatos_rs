@@ -4,7 +4,8 @@ import Foundation
 import ImageIO
 
 enum NativeLocalAgentAttachmentModelInput {
-    // Match the shared MCP runtime's image budget, below the 4 MiB IPC frame.
+    // Match the shared MCP runtime's image budget. The Local Agent transport can chunk
+    // logical messages, but model inputs remain independently bounded.
     static let maximumModelBytes = 2 * 1_024 * 1_024
 
     static func result(

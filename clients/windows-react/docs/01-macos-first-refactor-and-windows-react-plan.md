@@ -260,7 +260,7 @@ UI 只能在 `ready` 后发业务命令。启动阶段允许展示应用 Shell �
 
 - 启动握手和协议版本检查；
 - 请求超时、取消和 correlation id；
-- 单次响应超过 frame 上限时返回有界 `response_too_large` 错误并保持健康传输，调用方必须改用更小分页或精简 payload；
+- 单次响应超过 64 MiB 逻辑消息上限时返回有界 `response_too_large` 错误并保持健康传输，调用方必须改用更小分页、精简 payload 或 Artifact 引用；
 - reader/writer 任一退出即终止整条传输并回收 Host；
 - 重启后的 Conversation/Run/Task 恢复；
 - 账号切换时先终止旧账号 Host，再启动新账号 Host；
@@ -395,7 +395,7 @@ Workspace Inspector 的详情、模型输出、Run 与事件分页 Task 已冻�
 
 内嵌 Task Inspector 在 detail 加载中切回 process 时会重新挂起当前活跃 Task 的 polling；取消模型输出请求不能同时让执行过程停止刷新。
 
-Conversation 执行过程读取已使用 Host `process` 事件载荷投影：SQLite 查询阶段只保留映射 UI 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数；macOS 以每页 25 条、最多 400 页的既有 10,000 事件上限读取，避免单页事件越过 4 MiB IPC frame，同时仍完整合并工具生命周期。
+Conversation 执行过程读取已使用 Host `process` 事件载荷投影：SQLite 查询阶段只保留映射 UI 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数；macOS 以每页 25 条、最多 400 页的既有 10,000 事件上限读取以控制内存与解码成本，超过 4 MiB 的逻辑消息由 IPC 自动分片，同时仍完整合并工具生命周期。
 
 项目 Conversation 准备现已由 Core `ProjectConversationPort`、per-project token state 与 AppModel 持有的具体 Task 共同管理；项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。准备 Task 会在进入 Application use case 前冻结 owner、project、contact、account generation 与 port；Context/Host await 期间不再强持有 AppModel，返回后仍须联合验收账号、项目存在性和 per-project token。
 

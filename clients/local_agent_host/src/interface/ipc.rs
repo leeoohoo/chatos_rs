@@ -5,6 +5,7 @@
 
 use chatos_local_agent_protocol::{
     HostError, HostRequestEnvelope, HostResponseEnvelope, LOCAL_AGENT_MAX_FRAME_BYTES,
+    LOCAL_AGENT_MAX_MESSAGE_BYTES,
 };
 use std::{io, sync::Arc};
 use thiserror::Error;
@@ -14,6 +15,8 @@ use tokio::{
 };
 
 const MAX_IN_FLIGHT_REQUESTS: usize = 128;
+const FRAME_CONTINUATION_BIT: u32 = 1 << 31;
+const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
 
 #[async_trait::async_trait]
 pub trait HostRequestHandler: Send + Sync {
@@ -24,7 +27,9 @@ pub trait HostRequestHandler: Send + Sync {
 pub enum HostTransportError {
     #[error("IPC I/O failed: {0}")]
     Io(#[from] io::Error),
-    #[error("IPC frame exceeds the {LOCAL_AGENT_MAX_FRAME_BYTES} byte limit")]
+    #[error(
+        "IPC message exceeds the {LOCAL_AGENT_MAX_MESSAGE_BYTES} byte limit or contains an invalid frame"
+    )]
     FrameTooLarge,
     #[error("IPC frame contains invalid JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
@@ -44,9 +49,24 @@ where
 }
 
 pub async fn serve_reader_writer<R, W, H>(
+    reader: R,
+    writer: W,
+    handler: Arc<H>,
+) -> Result<(), HostTransportError>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+    H: HostRequestHandler + ?Sized + 'static,
+{
+    serve_reader_writer_with_response_limit(reader, writer, handler, LOCAL_AGENT_MAX_MESSAGE_BYTES)
+        .await
+}
+
+async fn serve_reader_writer_with_response_limit<R, W, H>(
     mut reader: R,
     mut writer: W,
     handler: Arc<H>,
+    maximum_response_bytes: usize,
 ) -> Result<(), HostTransportError>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -76,7 +96,7 @@ where
             tokio::spawn(async move {
                 let _permit = permit;
                 let response = handler.handle_request(request).await;
-                let encoded = encode_bounded_response(response);
+                let encoded = encode_bounded_response(response, maximum_response_bytes);
                 let _ = response_tx.send(encoded).await;
             });
         }
@@ -99,56 +119,149 @@ where
     }
 }
 
-fn encode_bounded_response(response: HostResponseEnvelope) -> Result<Vec<u8>, HostTransportError> {
-    let encoded = serde_json::to_vec(&response)?;
-    if encoded.len() <= LOCAL_AGENT_MAX_FRAME_BYTES {
+fn encode_bounded_response(
+    response: HostResponseEnvelope,
+    maximum_response_bytes: usize,
+) -> Result<Vec<u8>, HostTransportError> {
+    if let Some(encoded) = encode_json_with_limit(&response, maximum_response_bytes)? {
         return Ok(encoded);
     }
     let fallback = HostResponseEnvelope::failure(
         response.command_id,
         HostError::new(
             "response_too_large",
-            "Local Agent Host response exceeded the IPC frame limit; request a smaller page or reduced payload.",
+            "Local Agent Host response exceeded the IPC message limit; use a smaller page, reduced payload, or artifact reference.",
             true,
         ),
     );
-    let encoded = serde_json::to_vec(&fallback)?;
-    if encoded.len() > LOCAL_AGENT_MAX_FRAME_BYTES {
-        return Err(HostTransportError::FrameTooLarge);
+    encode_json_with_limit(&fallback, maximum_response_bytes)?
+        .ok_or(HostTransportError::FrameTooLarge)
+}
+
+fn encode_json_with_limit<T: serde::Serialize>(
+    value: &T,
+    maximum_bytes: usize,
+) -> Result<Option<Vec<u8>>, HostTransportError> {
+    struct LimitedWriter {
+        bytes: Vec<u8>,
+        maximum_bytes: usize,
+        exceeded: bool,
     }
-    Ok(encoded)
+
+    impl io::Write for LimitedWriter {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            if buffer.len() > self.maximum_bytes.saturating_sub(self.bytes.len()) {
+                self.exceeded = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::FileTooLarge,
+                    "serialized IPC response exceeds the message limit",
+                ));
+            }
+            self.bytes.extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = LimitedWriter {
+        bytes: Vec::with_capacity(maximum_bytes.min(64 * 1024)),
+        maximum_bytes,
+        exceeded: false,
+    };
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => Ok(Some(writer.bytes)),
+        Err(_) if writer.exceeded => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub async fn read_frame<R>(reader: &mut R) -> Result<Option<Vec<u8>>, HostTransportError>
 where
     R: AsyncRead + Unpin,
 {
-    let mut prefix = [0_u8; 4];
-    let first = reader.read(&mut prefix[..1]).await?;
-    if first == 0 {
+    let Some((length, has_more)) = read_frame_prefix(reader, true).await? else {
         return Ok(None);
+    };
+    let mut message = Vec::with_capacity(length);
+    read_frame_body(reader, length, &mut message).await?;
+    let mut has_more = has_more;
+    while has_more {
+        let (length, continuation) = read_frame_prefix(reader, false)
+            .await?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof))?;
+        if message.len().saturating_add(length) > LOCAL_AGENT_MAX_MESSAGE_BYTES {
+            return Err(HostTransportError::FrameTooLarge);
+        }
+        read_frame_body(reader, length, &mut message).await?;
+        has_more = continuation;
     }
-    reader.read_exact(&mut prefix[1..]).await?;
-    let length = u32::from_be_bytes(prefix) as usize;
-    if length == 0 || length > LOCAL_AGENT_MAX_FRAME_BYTES {
-        return Err(HostTransportError::FrameTooLarge);
-    }
-    let mut body = vec![0_u8; length];
-    reader.read_exact(&mut body).await?;
-    Ok(Some(body))
+    Ok(Some(message))
 }
 
 pub async fn write_frame<W>(writer: &mut W, body: &[u8]) -> Result<(), HostTransportError>
 where
     W: AsyncWrite + Unpin,
 {
-    if body.is_empty() || body.len() > LOCAL_AGENT_MAX_FRAME_BYTES {
+    if body.is_empty() || body.len() > LOCAL_AGENT_MAX_MESSAGE_BYTES {
         return Err(HostTransportError::FrameTooLarge);
     }
-    let length = u32::try_from(body.len()).map_err(|_| HostTransportError::FrameTooLarge)?;
-    writer.write_all(&length.to_be_bytes()).await?;
-    writer.write_all(body).await?;
+    let mut chunks = body.chunks(LOCAL_AGENT_MAX_FRAME_BYTES).peekable();
+    while let Some(chunk) = chunks.next() {
+        let length = u32::try_from(chunk.len()).map_err(|_| HostTransportError::FrameTooLarge)?;
+        let prefix = if chunks.peek().is_some() {
+            length | FRAME_CONTINUATION_BIT
+        } else {
+            length
+        };
+        writer.write_all(&prefix.to_be_bytes()).await?;
+        writer.write_all(chunk).await?;
+    }
     writer.flush().await?;
+    Ok(())
+}
+
+async fn read_frame_prefix<R>(
+    reader: &mut R,
+    allow_clean_eof: bool,
+) -> Result<Option<(usize, bool)>, HostTransportError>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut prefix = [0_u8; 4];
+    let first = reader.read(&mut prefix[..1]).await?;
+    if first == 0 {
+        if allow_clean_eof {
+            return Ok(None);
+        }
+        return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+    }
+    reader.read_exact(&mut prefix[1..]).await?;
+    let encoded = u32::from_be_bytes(prefix);
+    let has_more = encoded & FRAME_CONTINUATION_BIT != 0;
+    let length = (encoded & FRAME_LENGTH_MASK) as usize;
+    if length == 0 || length > LOCAL_AGENT_MAX_FRAME_BYTES {
+        return Err(HostTransportError::FrameTooLarge);
+    }
+    Ok(Some((length, has_more)))
+}
+
+async fn read_frame_body<R>(
+    reader: &mut R,
+    length: usize,
+    message: &mut Vec<u8>,
+) -> Result<(), HostTransportError>
+where
+    R: AsyncRead + Unpin,
+{
+    if message.len().saturating_add(length) > LOCAL_AGENT_MAX_MESSAGE_BYTES {
+        return Err(HostTransportError::FrameTooLarge);
+    }
+    let start = message.len();
+    message.resize(start + length, 0);
+    reader.read_exact(&mut message[start..]).await?;
     Ok(())
 }
 
@@ -424,6 +537,8 @@ mod tests {
                         service: "test".to_string(),
                         storage_ready: true,
                         recovered_claims: 0,
+                        max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
+                        max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
                     },
                 )
             }
@@ -470,6 +585,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn messages_larger_than_one_frame_are_chunked_and_reassembled() {
+        let payload = vec![0x5a; LOCAL_AGENT_MAX_FRAME_BYTES + 257];
+        let expected = payload.clone();
+        let (mut writer, mut reader) = tokio::io::duplex(16 * 1024);
+        let write_task = tokio::spawn(async move { write_frame(&mut writer, &payload).await });
+
+        let received = read_frame(&mut reader)
+            .await
+            .expect("read chunked message")
+            .expect("message");
+        assert_eq!(received, expected);
+        write_task
+            .await
+            .expect("join writer")
+            .expect("write chunks");
+    }
+
+    #[tokio::test]
     async fn oversized_response_returns_an_error_without_stopping_transport() {
         struct OversizedResponseHandler;
 
@@ -481,19 +614,27 @@ mod tests {
                     request.command_id,
                     HostResult::Health {
                         service: if oversized {
-                            "x".repeat(LOCAL_AGENT_MAX_FRAME_BYTES)
+                            "x".repeat(2_048)
                         } else {
                             "healthy".to_string()
                         },
                         storage_ready: true,
                         recovered_claims: 0,
+                        max_frame_bytes: LOCAL_AGENT_MAX_FRAME_BYTES,
+                        max_message_bytes: LOCAL_AGENT_MAX_MESSAGE_BYTES,
                     },
                 )
             }
         }
 
         let (mut client, server) = tokio::io::duplex(16 * 1024);
-        let server_task = tokio::spawn(serve_stream(server, Arc::new(OversizedResponseHandler)));
+        let (server_reader, server_writer) = tokio::io::split(server);
+        let server_task = tokio::spawn(serve_reader_writer_with_response_limit(
+            server_reader,
+            server_writer,
+            Arc::new(OversizedResponseHandler),
+            1_024,
+        ));
         let request = HostRequestEnvelope {
             protocol_version: LOCAL_AGENT_PROTOCOL_VERSION,
             command_id: "oversized-response".to_string(),
