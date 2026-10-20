@@ -3,7 +3,12 @@ use chatos_local_agent_protocol::{
     LOCAL_AGENT_MAX_FRAME_BYTES, LOCAL_AGENT_MAX_MESSAGE_BYTES, LOCAL_AGENT_PROTOCOL_VERSION,
 };
 use serde::Serialize;
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    process::Stdio,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tauri::{AppHandle, Manager, State};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -15,6 +20,7 @@ use tokio::{
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
 const FRAME_CONTINUATION_BIT: u32 = 1 << 31;
 const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
+const DIAGNOSTIC_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,9 +61,60 @@ struct ManagedHost {
     owner_user_id: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostDiagnosticEntry {
+    sequence: u64,
+    timestamp_unix_ms: u64,
+    event: &'static str,
+    outcome: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostDiagnosticsSnapshot {
+    capacity: usize,
+    entries: Vec<HostDiagnosticEntry>,
+}
+
+#[derive(Default)]
+struct HostDiagnosticsState {
+    next_sequence: u64,
+    entries: VecDeque<HostDiagnosticEntry>,
+}
+
 #[derive(Default)]
 pub struct HostManager {
     process: Mutex<Option<ManagedHost>>,
+    diagnostics: Mutex<HostDiagnosticsState>,
+}
+
+impl HostManager {
+    async fn record(&self, event: &'static str, outcome: &'static str) {
+        let mut diagnostics = self.diagnostics.lock().await;
+        diagnostics.next_sequence = diagnostics.next_sequence.saturating_add(1);
+        let sequence = diagnostics.next_sequence;
+        if diagnostics.entries.len() == DIAGNOSTIC_CAPACITY {
+            diagnostics.entries.pop_front();
+        }
+        diagnostics.entries.push_back(HostDiagnosticEntry {
+            sequence,
+            timestamp_unix_ms: unix_timestamp_milliseconds(),
+            event,
+            outcome,
+        });
+    }
+}
+
+#[tauri::command]
+pub async fn host_diagnostics(
+    manager: State<'_, HostManager>,
+) -> Result<HostDiagnosticsSnapshot, String> {
+    let diagnostics = manager.diagnostics.lock().await;
+    Ok(HostDiagnosticsSnapshot {
+        capacity: DIAGNOSTIC_CAPACITY,
+        entries: diagnostics.entries.iter().cloned().collect(),
+    })
 }
 
 #[tauri::command]
@@ -78,6 +135,7 @@ pub async fn host_lifecycle_snapshot(
         .is_some()
     {
         *process = None;
+        manager.record("host_process_exit", "unexpected").await;
         return Ok(HostLifecycleSnapshot::stopped(
             "Local Agent Host 已退出，可以重新启动。",
             true,
@@ -88,6 +146,9 @@ pub async fn host_lifecycle_snapshot(
         Err(error) => {
             terminate(host).await;
             *process = None;
+            manager
+                .record("host_health_check", classify_diagnostic_error(&error))
+                .await;
             Ok(HostLifecycleSnapshot {
                 phase: "degraded",
                 ready: false,
@@ -105,17 +166,29 @@ pub async fn start_local_agent_host(
     manager: State<'_, HostManager>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
-    validate_owner(&owner_user_id)?;
+    if let Err(error) = validate_owner(&owner_user_id) {
+        manager.record("host_start", "invalid_owner").await;
+        return Err(error);
+    }
+    manager.record("host_start", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
         if host.owner_user_id == owner_user_id && health_check(host).await.is_ok() {
+            manager.record("host_start", "already_ready").await;
             return Ok(HostLifecycleSnapshot::ready());
         }
         terminate(host).await;
         *process = None;
+        manager.record("host_replace", "previous_stopped").await;
     }
 
-    let executable = host_executable(&app)?;
+    let executable = match host_executable(&app) {
+        Ok(executable) => executable,
+        Err(error) => {
+            manager.record("host_executable", "unavailable").await;
+            return Err(error);
+        }
+    };
     let data_dir = app
         .path()
         .app_data_dir()
@@ -136,9 +209,27 @@ pub async fn start_local_agent_host(
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
-    let input = child.stdin.take().ok_or("Host stdin is unavailable")?;
-    let output = child.stdout.take().ok_or("Host stdout is unavailable")?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            manager.record("host_process_spawn", "failed").await;
+            return Err(error.to_string());
+        }
+    };
+    let input = match child.stdin.take() {
+        Some(input) => input,
+        None => {
+            manager.record("host_transport", "stdin_unavailable").await;
+            return Err("Host stdin is unavailable".to_string());
+        }
+    };
+    let output = match child.stdout.take() {
+        Some(output) => output,
+        None => {
+            manager.record("host_transport", "stdout_unavailable").await;
+            return Err("Host stdout is unavailable".to_string());
+        }
+    };
     let mut host = ManagedHost {
         child,
         input,
@@ -147,9 +238,13 @@ pub async fn start_local_agent_host(
     };
     if let Err(error) = health_check(&mut host).await {
         terminate(&mut host).await;
+        manager
+            .record("host_start_handshake", classify_diagnostic_error(&error))
+            .await;
         return Err(error);
     }
     *process = Some(host);
+    manager.record("host_start_handshake", "ready").await;
     Ok(HostLifecycleSnapshot::ready())
 }
 
@@ -157,15 +252,38 @@ pub async fn start_local_agent_host(
 pub async fn stop_local_agent_host(
     manager: State<'_, HostManager>,
 ) -> Result<HostLifecycleSnapshot, String> {
+    manager.record("host_stop", "requested").await;
     let mut process = manager.process.lock().await;
     if let Some(host) = process.as_mut() {
         terminate(host).await;
     }
     *process = None;
+    manager.record("host_stop", "stopped").await;
     Ok(HostLifecycleSnapshot::stopped(
         "Local Agent Host 已停止。",
         false,
     ))
+}
+
+fn unix_timestamp_milliseconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn classify_diagnostic_error(error: &str) -> &'static str {
+    if error.contains("timed out") {
+        "timeout"
+    } else if error.contains("response frame") || error.contains("early eof") {
+        "invalid_transport"
+    } else if error.contains("protocol v44") || error.contains("protocol_version") {
+        "protocol_mismatch"
+    } else {
+        "failed"
+    }
 }
 
 fn validate_owner(owner: &str) -> Result<(), String> {
@@ -348,5 +466,33 @@ mod tests {
         writer.shutdown().await.expect("shutdown");
 
         assert!(read_message(&mut reader).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn diagnostics_are_bounded_and_monotonic() {
+        let manager = HostManager::default();
+        for _ in 0..(DIAGNOSTIC_CAPACITY + 3) {
+            manager.record("test", "ok").await;
+        }
+
+        let diagnostics = manager.diagnostics.lock().await;
+        assert_eq!(diagnostics.entries.len(), DIAGNOSTIC_CAPACITY);
+        assert_eq!(
+            diagnostics.entries.front().map(|entry| entry.sequence),
+            Some(4)
+        );
+        assert_eq!(
+            diagnostics.entries.back().map(|entry| entry.sequence),
+            Some((DIAGNOSTIC_CAPACITY + 3) as u64),
+        );
+    }
+
+    #[test]
+    fn diagnostic_errors_are_reduced_to_safe_categories() {
+        assert_eq!(
+            classify_diagnostic_error("Host health check timed out."),
+            "timeout"
+        );
+        assert_eq!(classify_diagnostic_error("token=secret-value"), "failed");
     }
 }

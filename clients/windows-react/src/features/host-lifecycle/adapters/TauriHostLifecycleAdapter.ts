@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { hostLifecycleSnapshotSchema, type HostLifecycleSnapshot } from "../domain/hostLifecycle";
+import {
+  hostDiagnosticsSnapshotSchema,
+  hostLifecycleSnapshotSchema,
+  type HostDiagnosticsSnapshot,
+  type HostLifecycleSnapshot,
+} from "../domain/hostLifecycle";
 import type { HostLifecyclePort } from "../ports/HostLifecyclePort";
 
 export class TauriHostLifecycleAdapter implements HostLifecyclePort {
@@ -7,6 +12,10 @@ export class TauriHostLifecycleAdapter implements HostLifecyclePort {
     return hostLifecycleSnapshotSchema.parse(
       await invoke("host_lifecycle_snapshot"),
     );
+  }
+
+  async diagnostics(): Promise<HostDiagnosticsSnapshot> {
+    return hostDiagnosticsSnapshotSchema.parse(await invoke("host_diagnostics"));
   }
 
   async start(ownerUserId: string): Promise<HostLifecycleSnapshot> {

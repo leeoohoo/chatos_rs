@@ -1,7 +1,11 @@
-import type { HostLifecycleSnapshot } from "../domain/hostLifecycle";
+import type {
+  HostDiagnosticEntry,
+  HostLifecycleSnapshot,
+} from "../domain/hostLifecycle";
 
 interface HostReadyGateProps {
   snapshot: HostLifecycleSnapshot;
+  diagnostics?: HostDiagnosticEntry[];
   onRetry(): void;
 }
 
@@ -12,7 +16,11 @@ const workingPhases = new Set([
   "restarting",
 ]);
 
-export function HostReadyGate({ snapshot, onRetry }: HostReadyGateProps) {
+export function HostReadyGate({
+  snapshot,
+  diagnostics = [],
+  onRetry,
+}: HostReadyGateProps) {
   if (snapshot.ready) {
     return (
       <div className="ready-gate">
@@ -38,6 +46,19 @@ export function HostReadyGate({ snapshot, onRetry }: HostReadyGateProps) {
           <div className="gate-actions">
             <button className="primary-button" type="button" onClick={onRetry}>重新检查</button>
           </div>
+        ) : null}
+        {diagnostics.length > 0 && !working ? (
+          <details className="diagnostics-panel">
+            <summary>诊断记录</summary>
+            <ol>
+              {diagnostics.slice(-5).map((entry) => (
+                <li key={entry.sequence}>
+                  <code>{entry.event}</code>
+                  <span>{entry.outcome}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
         ) : null}
       </section>
     </div>

@@ -20,6 +20,21 @@ export const hostLifecycleSnapshotSchema = z.object({
 
 export type HostLifecycleSnapshot = z.infer<typeof hostLifecycleSnapshotSchema>;
 
+export const hostDiagnosticEntrySchema = z.object({
+  sequence: z.number().int().positive(),
+  timestampUnixMs: z.number().int().nonnegative(),
+  event: z.string().min(1),
+  outcome: z.string().min(1),
+});
+
+export const hostDiagnosticsSnapshotSchema = z.object({
+  capacity: z.number().int().positive(),
+  entries: z.array(hostDiagnosticEntrySchema),
+});
+
+export type HostDiagnosticEntry = z.infer<typeof hostDiagnosticEntrySchema>;
+export type HostDiagnosticsSnapshot = z.infer<typeof hostDiagnosticsSnapshotSchema>;
+
 export const hostPhaseLabels: Record<HostLifecycleSnapshot["phase"], string> = {
   stopped: "本地服务未启动",
   launching: "正在启动本地服务",

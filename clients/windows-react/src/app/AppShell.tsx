@@ -7,6 +7,7 @@ const hostLifecycle = new TauriHostLifecycleAdapter();
 
 export function AppShell() {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
+  const diagnostics = useHostLifecycleStore((state) => state.diagnostics);
   const refresh = useHostLifecycleStore((state) => state.refresh);
 
   useEffect(() => {
@@ -46,6 +47,7 @@ export function AppShell() {
         </header>
         <HostReadyGate
           snapshot={snapshot}
+          diagnostics={diagnostics}
           onRetry={() => void refresh(hostLifecycle)}
         />
       </section>

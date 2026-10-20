@@ -78,6 +78,12 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .gate-actions { display: flex; justify-content: center; margin-top: 22px; }
 .primary-button { border: 0; border-radius: 9px; padding: 8px 16px; color: white; background: var(--accent); box-shadow: 0 5px 14px rgba(10,132,255,.22); font-weight: 580; cursor: pointer; }
 .primary-button:focus-visible { outline: 3px solid rgba(10,132,255,.28); outline-offset: 2px; }
+.diagnostics-panel { margin-top: 22px; border-top: 1px solid var(--separator); padding-top: 14px; color: var(--secondary); text-align: left; font-size: 12px; }
+.diagnostics-panel summary { width: fit-content; margin: 0 auto; cursor: pointer; user-select: none; }
+.diagnostics-panel ol { display: grid; gap: 7px; margin: 14px 0 0; padding: 0; list-style: none; }
+.diagnostics-panel li { display: flex; justify-content: space-between; gap: 14px; border-radius: 8px; padding: 7px 9px; background: rgba(120,120,128,.08); }
+.diagnostics-panel code { overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.diagnostics-panel span { color: var(--tertiary); }
 .spinner { width: 22px; height: 22px; border: 2px solid rgba(10,132,255,.18); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
