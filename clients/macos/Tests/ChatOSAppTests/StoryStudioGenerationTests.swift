@@ -250,6 +250,53 @@ extension StoryStudioTests {
         XCTAssertNotNil(vm.project?.segments.first?.firstFrame)
     }
 
+    func testPendingAssetGenerationDoesNotRetainStoryStudioViewModel() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryAssetLifetimeTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 16,
+            pixelsHigh: 16,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let service = ConcurrentStoryImageService(imageData: png)
+        var viewModel: StoryStudioViewModel? = StoryStudioViewModel(media: service, store: store)
+        weak let weakViewModel = viewModel
+        viewModel?.activate(userID: "alice")
+        if let viewModel { try await idle(viewModel) }
+        var project = makeProject()
+        project.props = [.init(id: "key", name: "钥匙", description: "一把旧铜钥匙")]
+        let created = await viewModel?.create(project, availableModels: models)
+        XCTAssertTrue(created == true)
+
+        viewModel?.generateAsset("key")
+        for _ in 0..<100 where await service.callCount(resourceID: "key") == 0 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let callCount = await service.callCount(resourceID: "key")
+        XCTAssertEqual(callCount, 1)
+
+        viewModel = nil
+        for _ in 0..<20 where weakViewModel != nil { await Task.yield() }
+        XCTAssertNil(weakViewModel)
+        await service.finish(resourceID: "key")
+    }
+
     func testStoreRejectsCompletionForAnotherAttemptID() async throws {
         let (_, store, _) = try await fixture()
         var project = makeProject()

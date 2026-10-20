@@ -12,60 +12,97 @@ extension StoryStudioViewModel {
         guard asset.imageGenerationAttemptID == nil else { errorMessage = StoryError.unresolvedSubmission.localizedDescription; return }
         let token = session
         let attemptID = UUID()
+        let store = store
+        let media = media
         activeAssetGenerations.insert(key)
         assetGenerationErrors[key] = nil
-        let generationTask = Task { [weak self] in
-            guard let self else { return }
-            await self.performAssetGeneration(key: key, attemptID: attemptID, owner: owner, token: token,
-                                              userIdeas: userIdeas)
+        let generationTask = Task { [weak self, store, media] in
+            let result: Result<StoryProject, Error>
+            do {
+                result = .success(try await Self.performAssetGeneration(
+                    key: key, attemptID: attemptID, owner: owner,
+                    userIdeas: userIdeas, store: store, media: media,
+                    publishIntent: { [weak self] project in
+                        await self?.publishProject(project, token: token)
+                    }
+                ))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.session == token else { return }
+            self.activeAssetGenerations.remove(key)
+            self.assetGenerationTasks[key] = nil
+            self.clearImageGenerationLockNoticeIfNeeded()
+            switch result {
+            case .success(let project):
+                self.publishProject(project, token: token)
+            case .failure(let error):
+                guard !(error is CancellationError), !Task.isCancelled else { return }
+                self.assetGenerationErrors[key] = error.localizedDescription
+            }
         }
         assetGenerationTasks[key] = generationTask
     }
 
-    func performAssetGeneration(key: AssetGenerationKey, attemptID: UUID, owner: String, token: UUID,
-                                        userIdeas: String) async {
-        defer {
-            if session == token {
-                activeAssetGenerations.remove(key)
-                assetGenerationTasks[key] = nil
-                clearImageGenerationLockNoticeIfNeeded()
-            }
+    nonisolated static func performAssetGeneration(
+        key: AssetGenerationKey,
+        attemptID: UUID,
+        owner: String,
+        userIdeas: String,
+        store: StoryProjectStore,
+        media: any MediaGenerationServicing,
+        publishIntent: @escaping @Sendable (StoryProject) async -> Void
+    ) async throws -> StoryProject {
+        try Task.checkCancellation()
+        let intent = try await store.beginAssetImageGeneration(
+            projectID: key.projectID,
+            resourceID: key.resourceID,
+            attemptID: attemptID,
+            owner: owner
+        )
+        await publishIntent(intent.project)
+        try Task.checkCancellation()
+        let service: any MediaGenerationServicing
+        if let bindable = media as? any SessionBoundMediaGenerationServicing {
+            service = try await bindable.boundToCurrentSession()
+        } else {
+            service = media
         }
-        do {
-            try check(token)
-            let intent = try await store.beginAssetImageGeneration(projectID: key.projectID,
-                                                                    resourceID: key.resourceID,
-                                                                    attemptID: attemptID, owner: owner)
-            try check(token)
-            publishProject(intent.project, token: token)
-            let service = try await boundMedia(token)
-            let result = try await service.generateImage(.init(
-                modelConfigID: intent.project.models.imageModelID,
-                prompt: StoryGenerationContext.assetPrompt(intent.project, resource: intent.resource,
-                                                           userIdeas: userIdeas), size: nil, count: 1,
-                clientRequestID: attemptID.uuidString, projectID: key.projectID.uuidString,
-                resourceID: key.resourceID
-            ))
-            try check(token)
-            guard result.clientRequestID == nil || result.clientRequestID == attemptID.uuidString,
-                  result.projectID == nil || result.projectID == key.projectID.uuidString,
-                  result.resourceID == nil || result.resourceID == key.resourceID,
-                  let generated = result.images.first else { throw StoryError.invalidPlan }
-            let data = try await MediaStudioImageLoader.data(for: generated)
-            try check(token)
-            let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
-            let completed = try await store.completeAssetImageGeneration(
-                png, mimeType: "image/png", projectID: key.projectID, resourceID: key.resourceID,
-                attemptID: attemptID, providerResultID: result.id, providerAssetID: generated.id, owner: owner
-            )
-            try check(token)
-            publishProject(completed.0, token: token)
-        } catch is CancellationError {
-            // The durable attempt remains unresolved if submission may have reached the provider.
-        } catch {
-            guard session == token else { return }
-            assetGenerationErrors[key] = error.localizedDescription
-        }
+        try Task.checkCancellation()
+        let result = try await service.generateImage(.init(
+            modelConfigID: intent.project.models.imageModelID,
+            prompt: StoryGenerationContext.assetPrompt(
+                intent.project,
+                resource: intent.resource,
+                userIdeas: userIdeas
+            ),
+            size: nil,
+            count: 1,
+            clientRequestID: attemptID.uuidString,
+            projectID: key.projectID.uuidString,
+            resourceID: key.resourceID
+        ))
+        try Task.checkCancellation()
+        guard result.clientRequestID == nil || result.clientRequestID == attemptID.uuidString,
+              result.projectID == nil || result.projectID == key.projectID.uuidString,
+              result.resourceID == nil || result.resourceID == key.resourceID,
+              let generated = result.images.first else { throw StoryError.invalidPlan }
+        let data = try await MediaStudioImageLoader.data(for: generated)
+        try Task.checkCancellation()
+        let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
+        try Task.checkCancellation()
+        let completed = try await store.completeAssetImageGeneration(
+            png,
+            mimeType: "image/png",
+            projectID: key.projectID,
+            resourceID: key.resourceID,
+            attemptID: attemptID,
+            providerResultID: result.id,
+            providerAssetID: generated.id,
+            owner: owner
+        )
+        try Task.checkCancellation()
+        return completed.0
     }
 
     func updateAssetPrompt(_ assetID: String, prompt: String) {
