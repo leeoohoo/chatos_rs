@@ -178,6 +178,7 @@ pub(crate) fn analyze_project(root: &Path) -> Result<ProjectRunAnalysis, String>
 pub(crate) fn resolve_project_run_target(
     root: &Path,
     target_id: &str,
+    selected_toolchains: &BTreeMap<String, String>,
 ) -> Result<ResolvedProjectRunTarget, String> {
     let canonical_root = fs::canonicalize(root).map_err(|_| unavailable())?;
     let analysis = analyze_project(&canonical_root)?;
@@ -188,22 +189,54 @@ pub(crate) fn resolve_project_run_target(
         .ok_or_else(|| "运行目标不存在，请重新分析项目。".to_owned())?;
     let cwd = resolve_project_path(&canonical_root, &target.presentation.cwd, true)?;
     let executable = match &target.invocation.executable {
-        ProjectRunExecutable::Toolchain(kind) => analysis
-            .toolchains
-            .get(kind)
-            .and_then(|options| options.first())
-            .map(|option| option.executable.clone())
-            .ok_or_else(|| format!("没有发现可用的 {kind} 工具链。"))?,
+        ProjectRunExecutable::Toolchain(kind) => {
+            selected_toolchain(&analysis.toolchains, selected_toolchains, kind)?
+                .executable
+                .clone()
+        }
         ProjectRunExecutable::ProjectFile(path) => {
             resolve_project_path(&canonical_root, path, false)?
         }
     };
+    let mut toolchain_directories = Vec::new();
+    for kind in &target.presentation.required_toolchains {
+        let option = selected_toolchain(&analysis.toolchains, selected_toolchains, kind)?;
+        let Some(directory) = option.executable.parent() else {
+            return Err(format!("没有发现可用的 {kind} 工具链。"));
+        };
+        if !toolchain_directories
+            .iter()
+            .any(|current| current == directory)
+        {
+            toolchain_directories.push(directory.to_path_buf());
+        }
+    }
     Ok(ResolvedProjectRunTarget {
         presentation: target.presentation,
         executable,
         arguments: target.invocation.arguments,
         cwd,
+        environment: BTreeMap::new(),
+        toolchain_directories,
     })
+}
+
+fn selected_toolchain<'a>(
+    toolchains: &'a BTreeMap<String, Vec<DiscoveredToolchain>>,
+    selected: &BTreeMap<String, String>,
+    kind: &str,
+) -> Result<&'a DiscoveredToolchain, String> {
+    let options = toolchains
+        .get(kind)
+        .ok_or_else(|| format!("没有发现可用的 {kind} 工具链。"))?;
+    let option = if let Some(selected_id) = selected.get(kind) {
+        options
+            .iter()
+            .find(|option| option.presentation.id == *selected_id)
+    } else {
+        options.first()
+    };
+    option.ok_or_else(|| format!("所选 {kind} 工具链已不可用，请重新选择。"))
 }
 
 fn resolve_project_path(root: &Path, relative: &str, directory: bool) -> Result<PathBuf, String> {

@@ -104,6 +104,7 @@ struct ManagedProjectRun {
     target_id: String,
     name: String,
     cwd: String,
+    redactions: Vec<String>,
     termination: ProcessTermination,
     state: Mutex<ManagedProjectRunState>,
     changed: Arc<ProjectChangeSignal>,
@@ -378,6 +379,10 @@ impl ManagedProjectRun {
 
     async fn snapshot(&self) -> ProjectRunInstance {
         let state = self.state.lock().await;
+        let mut log = String::from_utf8_lossy(&state.log).into_owned();
+        for value in &self.redactions {
+            log = log.replace(value, "[已隐藏]");
+        }
         ProjectRunInstance {
             id: self.id.clone(),
             target_id: self.target_id.clone(),
@@ -394,7 +399,7 @@ impl ManagedProjectRun {
                 state.status,
                 ManagedStatus::Running | ManagedStatus::Stopping
             ),
-            log: String::from_utf8_lossy(&state.log).into_owned(),
+            log,
             log_truncated: state.log_truncated,
             started_at_unix_ms: state.started_at_unix_ms,
             exit_code: state.exit_code,
@@ -491,14 +496,25 @@ impl ManagedProjectRun {
 
 async fn spawn_project_run(
     scope: &ProjectRunScope,
-    target: ResolvedProjectRunTarget,
+    mut target: ResolvedProjectRunTarget,
     sequence: u64,
     changed: Arc<ProjectChangeSignal>,
 ) -> Result<Arc<ManagedProjectRun>, String> {
+    let mut redactions = target
+        .environment
+        .values()
+        .filter_map(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    redactions.sort_by(|left, right| right.len().cmp(&left.len()).then_with(|| left.cmp(right)));
+    redactions.dedup();
+    prepare_launch_environment(&mut target)?;
     let mut command = Command::new(&target.executable);
     command
         .args(&target.arguments)
         .current_dir(&target.cwd)
+        .envs(&target.environment)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -531,6 +547,7 @@ async fn spawn_project_run(
         target_id: target.presentation.id,
         name: target.presentation.label,
         cwd: target.presentation.cwd,
+        redactions,
         termination,
         state: Mutex::new(ManagedProjectRunState {
             status: ManagedStatus::Running,
@@ -551,6 +568,28 @@ async fn spawn_project_run(
         stderr_task,
     ));
     Ok(process)
+}
+
+fn prepare_launch_environment(target: &mut ResolvedProjectRunTarget) -> Result<(), String> {
+    if target.toolchain_directories.is_empty() {
+        return Ok(());
+    }
+    let path_key = target
+        .environment
+        .keys()
+        .find(|key| key.to_string_lossy().eq_ignore_ascii_case("PATH"))
+        .cloned();
+    let base = path_key
+        .as_ref()
+        .and_then(|key| target.environment.remove(key))
+        .or_else(|| std::env::var_os("PATH"));
+    let mut entries = target.toolchain_directories.clone();
+    if let Some(base) = base {
+        entries.extend(std::env::split_paths(&base));
+    }
+    let path = std::env::join_paths(entries).map_err(|_| "无法构建项目工具链环境。".to_owned())?;
+    target.environment.insert("PATH".into(), path);
+    Ok(())
 }
 
 async fn read_pipe(process: Arc<ManagedProjectRun>, mut pipe: impl AsyncRead + Unpin) {

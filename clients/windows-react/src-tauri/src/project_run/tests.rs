@@ -2,6 +2,7 @@ use super::{
     analyze_resolved_project,
     analyzer::{analyze_project, resolve_project_run_target},
     models::{ProjectRunTarget, ResolvedProjectRunTarget},
+    preferences::{tests_support::memory_preferences, ProjectRunEnvironmentMutation},
     runtime::{test_scope, ProjectRunManager},
 };
 use crate::workspace_index::open_project_registry;
@@ -147,7 +148,8 @@ fn launch_resolution_accepts_only_a_fresh_analyzer_target_id() {
         .id
         .clone();
 
-    let resolved = resolve_project_run_target(directory.path(), &target_id).unwrap();
+    let resolved =
+        resolve_project_run_target(directory.path(), &target_id, &Default::default()).unwrap();
 
     assert_eq!(resolved.arguments, ["run"]);
     assert_eq!(resolved.cwd, fs::canonicalize(directory.path()).unwrap());
@@ -158,7 +160,122 @@ fn launch_resolution_accepts_only_a_fresh_analyzer_target_id() {
             .and_then(|value| value.to_str()),
         Some("cargo")
     );
-    assert!(resolve_project_run_target(directory.path(), "invented-target").is_err());
+    assert!(
+        resolve_project_run_target(directory.path(), "invented-target", &Default::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn preferences_persist_only_secret_references_and_project_masked_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("preferences.json");
+    let preferences = memory_preferences(path.clone());
+    let selected = std::collections::BTreeMap::from([(
+        "cargo".into(),
+        "tool_0123456789abcdef01234567".into(),
+    )]);
+
+    preferences
+        .update_environment(
+            "owner",
+            "project",
+            selected.clone(),
+            vec![ProjectRunEnvironmentMutation {
+                key: "API_TOKEN".into(),
+                value: Some("never-write-this-value".into()),
+            }],
+        )
+        .unwrap();
+
+    let persisted = fs::read_to_string(&path).unwrap();
+    assert!(persisted.contains("API_TOKEN"));
+    assert!(!persisted.contains("never-write-this-value"));
+    let (selection, projection) = preferences.projection("owner", "project").unwrap();
+    assert_eq!(selection.selected_toolchains, selected);
+    assert_eq!(projection.len(), 1);
+    assert_eq!(projection[0].key, "API_TOKEN");
+    assert!(projection[0].has_value);
+    assert!(!serde_json::to_string(&projection)
+        .unwrap()
+        .contains("never-write-this-value"));
+    assert_eq!(
+        preferences
+            .launch_preferences("owner", "project")
+            .unwrap()
+            .environment["API_TOKEN"],
+        "never-write-this-value"
+    );
+
+    preferences
+        .update_environment(
+            "owner",
+            "project",
+            Default::default(),
+            vec![ProjectRunEnvironmentMutation {
+                key: "API_TOKEN".into(),
+                value: None,
+            }],
+        )
+        .unwrap();
+    assert_eq!(
+        preferences
+            .launch_preferences("owner", "project")
+            .unwrap()
+            .environment["API_TOKEN"],
+        "never-write-this-value"
+    );
+
+    preferences
+        .update_environment("owner", "project", Default::default(), Vec::new())
+        .unwrap();
+    assert!(preferences
+        .launch_preferences("owner", "project")
+        .unwrap()
+        .environment
+        .is_empty());
+}
+
+#[test]
+fn preferences_reject_invalid_environment_and_persist_default_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = memory_preferences(directory.path().join("preferences.json"));
+    let target_id = "0123456789abcdef0123";
+
+    preferences
+        .set_default_target("owner", "project", target_id.into())
+        .unwrap();
+    assert_eq!(
+        preferences
+            .projection("owner", "project")
+            .unwrap()
+            .0
+            .default_target_id
+            .as_deref(),
+        Some(target_id)
+    );
+    assert!(preferences
+        .update_environment(
+            "owner",
+            "project",
+            Default::default(),
+            vec![ProjectRunEnvironmentMutation {
+                key: "BAD=KEY".into(),
+                value: Some("value".into()),
+            }],
+        )
+        .is_err());
+    assert!(preferences
+        .update_environment(
+            "owner",
+            "project",
+            Default::default(),
+            vec![ProjectRunEnvironmentMutation {
+                key: "NEW_KEY".into(),
+                value: None,
+            }],
+        )
+        .is_err());
 }
 
 #[tokio::test]
@@ -252,6 +369,41 @@ async fn stop_terminates_the_owned_project_process_group() {
     manager.reset().await;
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_redacts_environment_secrets_from_project_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(directory.path()).unwrap();
+    let manager = ProjectRunManager::default();
+    let scope = test_scope(&root, "owner", "project");
+    let mut target = test_target(
+        "/bin/sh".into(),
+        vec!["-c".into(), "printf '%s' \"$PROJECT_RUN_SECRET\"".into()],
+        &root,
+    );
+    target.environment.insert(
+        "PROJECT_RUN_SECRET".into(),
+        "secret-spanning-any-output-chunk".into(),
+    );
+    let mut state = manager.start(&scope, target).await.unwrap();
+    for _ in 0..20 {
+        if !state.is_running {
+            break;
+        }
+        state = manager
+            .poll_changes(&scope, state.revision, 1_000)
+            .await
+            .unwrap()
+            .state;
+    }
+
+    assert!(!state.instances[0]
+        .log
+        .contains("secret-spanning-any-output-chunk"));
+    assert!(state.instances[0].log.contains("[已隐藏]"));
+    manager.reset().await;
+}
+
 fn test_target(
     executable: std::path::PathBuf,
     arguments: Vec<String>,
@@ -274,5 +426,7 @@ fn test_target(
         executable,
         arguments,
         cwd: cwd.to_path_buf(),
+        environment: Default::default(),
+        toolchain_directories: Vec::new(),
     }
 }

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -164,10 +164,11 @@ pub(crate) struct ProjectRunAnalysis {
     pub(crate) toolchains: BTreeMap<String, Vec<DiscoveredToolchain>>,
 }
 
-#[derive(Debug)]
 pub(crate) struct ResolvedProjectRunTarget {
     pub(crate) presentation: ProjectRunTarget,
     pub(crate) executable: PathBuf,
     pub(crate) arguments: Vec<String>,
     pub(crate) cwd: PathBuf,
+    pub(crate) environment: BTreeMap<OsString, OsString>,
+    pub(crate) toolchain_directories: Vec<PathBuf>,
 }

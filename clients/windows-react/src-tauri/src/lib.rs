@@ -66,7 +66,8 @@ use project_git::{
 };
 use project_run::{
     analyze_project_run, delete_project_run_instance, load_project_run_state,
-    poll_project_run_changes, start_project_run, stop_project_run, ProjectRunManager,
+    poll_project_run_changes, set_project_run_default_target, start_project_run, stop_project_run,
+    update_project_run_environment, ProjectRunManager, ProjectRunPreferencesStore,
 };
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -110,7 +111,8 @@ pub fn run() {
             )
             .map_err(std::io::Error::other)?;
             app.manage(journal);
-            app.manage(ApprovalSettingsStore::new(data_dir));
+            app.manage(ApprovalSettingsStore::new(data_dir.clone()));
+            app.manage(ProjectRunPreferencesStore::new(data_dir));
             Ok(())
         })
         .register_uri_scheme_protocol("chatos-attachment", move |_context, request| {
@@ -189,6 +191,8 @@ pub fn run() {
             start_project_run,
             stop_project_run,
             delete_project_run_instance,
+            set_project_run_default_target,
+            update_project_run_environment,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,
