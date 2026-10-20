@@ -3,6 +3,8 @@ import type {
   ProjectDirectoryListing,
   ProjectEntrySearchResult,
   ProjectFileContent,
+  ProjectFileWriteResult,
+  ProjectEntryMutationResult,
 } from "../domain/projectDirectory";
 
 export interface ProjectDirectoryLoadRequest {
@@ -17,6 +19,27 @@ export interface ProjectDirectoryPort {
   readFile(request: ProjectFileRequest): Promise<ProjectFileContent>;
   searchEntries(request: ProjectSearchRequest): Promise<ProjectEntrySearchResult>;
   searchContent(request: ProjectSearchRequest): Promise<ProjectContentSearchResult>;
+  writeFile(request: ProjectFileWriteRequest): Promise<ProjectFileWriteResult>;
+  createEntry(request: ProjectEntryCreateRequest): Promise<ProjectEntryMutationResult>;
+  deleteEntry(request: ProjectEntryDeleteRequest): Promise<ProjectEntryMutationResult>;
+}
+
+export interface ProjectFileWriteRequest extends ProjectFileRequest {
+  expectedRevision: string;
+  content: string;
+}
+
+export interface ProjectEntryCreateRequest {
+  ownerUserId: string;
+  projectId: string;
+  parentPath: string;
+  name: string;
+  kind: "file" | "directory";
+}
+
+export interface ProjectEntryDeleteRequest extends ProjectFileRequest {
+  kind: "file" | "directory";
+  expectedRevision: string | null;
 }
 
 export interface ProjectFileRequest {

@@ -85,6 +85,97 @@ describe("project directory store", () => {
     expect(useProjectDirectoryStore.getState().searchSnapshot?.query).toBe("new");
     expect(useProjectDirectoryStore.getState().searchSnapshot?.entries[0].path).toBe("new.txt");
   });
+
+  it("does not let a late save overwrite a newly selected file", async () => {
+    const write = deferred<Awaited<ReturnType<ProjectDirectoryPort["writeFile"]>>>();
+    const port = stubPort(async () => rootListing());
+    port.writeFile = vi.fn(async () => write.promise);
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("a.txt"));
+    useProjectDirectoryStore.getState().beginEditing();
+    useProjectDirectoryStore.getState().setDraft("saved first");
+    const stale = useProjectDirectoryStore.getState().save(port);
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("b.txt"));
+    write.resolve({ projectId: "project-1", path: "a.txt", file: fileContent("a.txt", "saved first") });
+    await stale;
+    expect(useProjectDirectoryStore.getState().selectedFile?.path).toBe("b.txt");
+    expect(useProjectDirectoryStore.getState().selectedFile?.content).toBe("content");
+    expect(useProjectDirectoryStore.getState().mutationKind).toBeNull();
+  });
+
+  it("preserves the draft and editing state when a revision conflict rejects save", async () => {
+    const port = stubPort(async () => rootListing());
+    port.writeFile = vi.fn(async () => { throw new Error("文件已被其他程序修改，请重新加载后再保存。"); });
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("README.md"));
+    useProjectDirectoryStore.getState().beginEditing();
+    useProjectDirectoryStore.getState().setDraft("local draft");
+    await useProjectDirectoryStore.getState().save(port);
+    expect(useProjectDirectoryStore.getState().draft).toBe("local draft");
+    expect(useProjectDirectoryStore.getState().isEditing).toBe(true);
+    expect(useProjectDirectoryStore.getState().mutationError).toContain("其他程序修改");
+  });
+
+  it("marks a committed file read-only when the post-save refresh fails", async () => {
+    const port = stubPort(async () => rootListing());
+    port.writeFile = vi.fn(async (request) => ({ projectId: request.projectId, path: request.path, file: null }));
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("README.md"));
+    useProjectDirectoryStore.getState().beginEditing();
+    useProjectDirectoryStore.getState().setDraft("committed text");
+    await useProjectDirectoryStore.getState().save(port);
+    expect(useProjectDirectoryStore.getState().selectedFile?.content).toBe("committed text");
+    expect(useProjectDirectoryStore.getState().selectedFile?.isWritable).toBe(false);
+    expect(useProjectDirectoryStore.getState().isEditing).toBe(false);
+    expect(useProjectDirectoryStore.getState().mutationError).toContain("文件已保存");
+  });
+
+  it("applies a creation refresh only to the frozen parent directory", async () => {
+    const port = stubPort(async (request) => request.path === "" ? rootListing() : childListing());
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().toggle(port, rootListing().entries[0]);
+    const refreshed = {
+      ...childListing(),
+      entries: [...childListing().entries, fileEntry("Sources/New.ts")],
+    };
+    port.createEntry = vi.fn(async () => ({
+      projectId: "project-1", path: "Sources/New.ts", parentPath: "Sources", listing: refreshed,
+    }));
+    await useProjectDirectoryStore.getState().createEntry(port, "New.ts", "file");
+    expect(port.createEntry).toHaveBeenCalledWith(expect.objectContaining({ parentPath: "Sources", name: "New.ts" }));
+    expect(useProjectDirectoryStore.getState().listings.Sources).toEqual(refreshed);
+    expect(useProjectDirectoryStore.getState().listings[""]).toEqual(rootListing());
+  });
+
+  it("deletes a file using the exact revision that was read", async () => {
+    const port = stubPort(async () => rootListing());
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("README.md"));
+    await useProjectDirectoryStore.getState().deleteSelected(port);
+    expect(port.deleteEntry).toHaveBeenCalledWith({
+      ownerUserId: "owner-1",
+      projectId: "project-1",
+      path: "README.md",
+      kind: "file",
+      expectedRevision: "a".repeat(64),
+    });
+  });
+
+  it("rejects a late mutation after the active project changes", async () => {
+    const write = deferred<Awaited<ReturnType<ProjectDirectoryPort["writeFile"]>>>();
+    const port = stubPort(async (request) => ({ ...rootListing(), projectId: request.projectId }));
+    port.writeFile = vi.fn(async () => write.promise);
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-1");
+    await useProjectDirectoryStore.getState().openFile(port, fileEntry("README.md"));
+    useProjectDirectoryStore.getState().beginEditing();
+    const stale = useProjectDirectoryStore.getState().save(port);
+    await useProjectDirectoryStore.getState().activate(port, "owner-1", "project-2");
+    write.resolve({ projectId: "project-1", path: "README.md", file: fileContent("README.md", "late") });
+    await stale;
+    expect(useProjectDirectoryStore.getState().projectId).toBe("project-2");
+    expect(useProjectDirectoryStore.getState().selectedFile).toBeNull();
+    expect(useProjectDirectoryStore.getState().mutationError).toBeNull();
+  });
 });
 
 type AccessLoad = (request: ProjectDirectoryLoadRequest) => Promise<ProjectDirectoryListing>;
@@ -95,6 +186,19 @@ function stubPort(load: AccessLoad): ProjectDirectoryPort {
     readFile: vi.fn(async (request) => fileContent(request.path, "content")),
     searchEntries: vi.fn(async (request) => ({ projectId: request.projectId, query: request.query, matches: [], visitedDirectories: 1, visitedEntries: 1, isTruncated: false })),
     searchContent: vi.fn(async (request) => ({ projectId: request.projectId, query: request.query, matches: [], scannedFiles: 1, visitedEntries: 1, isTruncated: false })),
+    writeFile: vi.fn(async (request) => ({ projectId: request.projectId, path: request.path, file: fileContent(request.path, request.content) })),
+    createEntry: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.parentPath ? `${request.parentPath}/${request.name}` : request.name,
+      parentPath: request.parentPath,
+      listing: request.parentPath === "" ? rootListing() : childListing(),
+    })),
+    deleteEntry: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.path,
+      parentPath: request.path.includes("/") ? request.path.slice(0, request.path.lastIndexOf("/")) : "",
+      listing: rootListing(),
+    })),
   };
 }
 

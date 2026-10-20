@@ -96,10 +96,25 @@ export const projectContentSearchResultSchema = z.object({
   isTruncated: z.boolean(),
 }).strict();
 
+export const projectFileWriteResultSchema = z.object({
+  projectId: z.string().trim().min(1).max(1_024),
+  path: portableRelativePath.refine((path) => path.length > 0),
+  file: projectFileContentSchema.nullable(),
+}).strict();
+
+export const projectEntryMutationResultSchema = z.object({
+  projectId: z.string().trim().min(1).max(1_024),
+  path: portableRelativePath.refine((path) => path.length > 0),
+  parentPath: portableRelativePath,
+  listing: projectDirectoryListingSchema.nullable(),
+}).strict();
+
 export type ProjectFileContent = z.infer<typeof projectFileContentSchema>;
 export type ProjectEntrySearchResult = z.infer<typeof projectEntrySearchResultSchema>;
 export type ProjectContentMatch = z.infer<typeof projectContentMatchSchema>;
 export type ProjectContentSearchResult = z.infer<typeof projectContentSearchResultSchema>;
+export type ProjectFileWriteResult = z.infer<typeof projectFileWriteResultSchema>;
+export type ProjectEntryMutationResult = z.infer<typeof projectEntryMutationResultSchema>;
 
 export interface ProjectSearchSnapshot {
   query: string;

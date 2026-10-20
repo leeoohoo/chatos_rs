@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useProjectDirectoryStore } from "../application/projectDirectoryStore";
 import type { ProjectDirectoryListing } from "../domain/projectDirectory";
@@ -46,6 +46,58 @@ describe("ProjectDirectoryView", () => {
     expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Hello");
     expect(port.searchEntries).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 100 }));
     expect(port.searchContent).toHaveBeenCalledWith(expect.objectContaining({ query: "hello", limit: 200 }));
+  });
+
+  it("edits and saves a writable text file through the native port", async () => {
+    const port = stubPort();
+    render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("treeitem", { name: /README.md/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "编辑" }));
+    const editor = screen.getByRole("textbox", { name: "README.md 编辑内容" });
+    fireEvent.change(editor, { target: { value: "# Updated" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(port.writeFile).toHaveBeenCalledWith({
+      ownerUserId: "owner-1",
+      projectId: "project-1",
+      path: "README.md",
+      expectedRevision: "a".repeat(64),
+      content: "# Updated",
+    }));
+    expect(await screen.findByLabelText("README.md 文件内容")).toHaveTextContent("# Updated");
+  });
+
+  it("creates a folder in the macOS-equivalent selected parent", async () => {
+    const port = stubPort();
+    render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("treeitem", { name: /Sources/ }));
+    fireEvent.click(screen.getByRole("button", { name: "新建项目文件或文件夹" }));
+    fireEvent.click(screen.getByRole("button", { name: "文件夹" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "文件夹名称" }), { target: { value: "Components" } });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+    await waitFor(() => expect(port.createEntry).toHaveBeenCalledWith({
+      ownerUserId: "owner-1",
+      projectId: "project-1",
+      parentPath: "Sources",
+      name: "Components",
+      kind: "directory",
+    }));
+  });
+
+  it("confirms deletion and sends the file revision", async () => {
+    const port = stubPort();
+    render(<ProjectDirectoryView ownerUserId="owner-1" port={port} projectId="project-1" />);
+    fireEvent.click(await screen.findByRole("treeitem", { name: /README.md/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除" }));
+    const dialog = screen.getByRole("alertdialog", { name: "删除“README.md”？" });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(port.deleteEntry).toHaveBeenCalledWith({
+      ownerUserId: "owner-1",
+      projectId: "project-1",
+      path: "README.md",
+      kind: "file",
+      expectedRevision: "a".repeat(64),
+    }));
   });
 });
 
@@ -101,6 +153,36 @@ function stubPort(): ProjectDirectoryPort {
       scannedFiles: 1,
       visitedEntries: 2,
       isTruncated: false,
+    })),
+    writeFile: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.path,
+      file: {
+        projectId: request.projectId,
+        path: request.path,
+        name: request.path.split("/").at(-1) ?? request.path,
+        contentType: "text/markdown",
+        contentEncoding: "utf8" as const,
+        isBinary: false,
+        isImage: false,
+        isWritable: true,
+        size: request.content.length,
+        modifiedAtUnixMs: 2,
+        revision: "b".repeat(64),
+        content: request.content,
+      },
+    })),
+    createEntry: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.parentPath ? `${request.parentPath}/${request.name}` : request.name,
+      parentPath: request.parentPath,
+      listing: request.parentPath === "Sources" ? sourcesListing() : rootListing(),
+    })),
+    deleteEntry: vi.fn(async (request) => ({
+      projectId: request.projectId,
+      path: request.path,
+      parentPath: request.path.includes("/") ? request.path.slice(0, request.path.lastIndexOf("/")) : "",
+      listing: rootListing(),
     })),
   };
 }

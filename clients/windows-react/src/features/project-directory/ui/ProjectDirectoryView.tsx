@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useProjectDirectoryStore } from "../application/projectDirectoryStore";
 import {
   displayProjectPath,
@@ -21,6 +21,10 @@ export function ProjectDirectoryView({
   port: ProjectDirectoryPort;
 }) {
   const state = useProjectDirectoryStore();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createKind, setCreateKind] = useState<"file" | "directory">("file");
+  const [createName, setCreateName] = useState("");
+  const [deleteEntry, setDeleteEntry] = useState<ProjectFileEntry | null>(null);
 
   useEffect(() => {
     void state.activate(port, ownerUserId, projectId);
@@ -55,7 +59,14 @@ export function ProjectDirectoryView({
               value={state.searchText}
             />
           </label>
-          <button disabled={state.rootLoading} onClick={() => void state.refresh(port)} title="刷新目录" type="button">↻</button>
+          <button
+            aria-label="新建项目文件或文件夹"
+            disabled={!root || state.mutationKind != null}
+            onClick={() => setCreateOpen(true)}
+            title="新建文件或文件夹"
+            type="button"
+          >＋</button>
+          <button disabled={state.rootLoading || state.mutationKind != null} onClick={() => void state.refresh(port)} title="刷新目录" type="button">↻</button>
         </header>
         {state.error && (
           <div className="project-directory__error" role="alert">
@@ -89,8 +100,46 @@ export function ProjectDirectoryView({
         {!searching && root?.isTruncated && <p className="project-directory__truncated">目录超过 5,000 项，只显示前 5,000 项。</p>}
       </aside>
       <section className="project-directory__detail">
-        <FilePreview port={port} />
+        {state.mutationError && <div className="project-directory-mutation-error" role="alert">{state.mutationError}</div>}
+        <div className="project-directory__detail-content">
+          <FilePreview onRequestDelete={setDeleteEntry} port={port} />
+        </div>
       </section>
+      {createOpen && (
+        <CreateEntrySheet
+          kind={createKind}
+          mutationKind={state.mutationKind}
+          name={createName}
+          parentPath={creationParentPath(state.selectedEntry)}
+          onCancel={() => {
+            if (state.mutationKind) return;
+            setCreateOpen(false);
+            setCreateName("");
+          }}
+          onKindChange={setCreateKind}
+          onNameChange={setCreateName}
+          onSubmit={() => {
+            const name = createName.trim();
+            if (!name || state.mutationKind) return;
+            setCreateOpen(false);
+            setCreateName("");
+            void state.createEntry(port, name, createKind);
+          }}
+        />
+      )}
+      {deleteEntry && (
+        <DeleteEntryDialog
+          entry={deleteEntry}
+          pending={state.mutationKind === "delete"}
+          onCancel={() => {
+            if (state.mutationKind !== "delete") setDeleteEntry(null);
+          }}
+          onConfirm={() => {
+            setDeleteEntry(null);
+            void state.deleteSelected(port);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -186,7 +235,7 @@ function DirectoryRow({
   );
 }
 
-function FilePreview({ port }: { port: ProjectDirectoryPort }) {
+function FilePreview({ port, onRequestDelete }: { port: ProjectDirectoryPort; onRequestDelete(entry: ProjectFileEntry): void }) {
   const entry = useProjectDirectoryStore((state) => state.selectedEntry);
   const file = useProjectDirectoryStore((state) => state.selectedFile);
   const targetLine = useProjectDirectoryStore((state) => state.selectedLine);
@@ -196,7 +245,7 @@ function FilePreview({ port }: { port: ProjectDirectoryPort }) {
   if (!entry) {
     return <Welcome icon="▱" title="选择一个文件">从左侧项目目录中选择文件以预览；绝对路径不会发送到 React。</Welcome>;
   }
-  if (entry.isDirectory) return <EntryDetail entry={entry} />;
+  if (entry.isDirectory) return <EntryDetail entry={entry} onRequestDelete={() => onRequestDelete(entry)} />;
   if (loading) return <Welcome icon={<span className="mini-spinner" />} title="正在读取文件">{displayProjectPath(entry.path)}</Welcome>;
   if (error) {
     return (
@@ -206,19 +255,61 @@ function FilePreview({ port }: { port: ProjectDirectoryPort }) {
       </Welcome>
     );
   }
-  if (!file) return <EntryDetail entry={entry} />;
-  return <FileContent file={file} targetLine={targetLine} />;
+  if (!file) return <EntryDetail entry={entry} onRequestDelete={() => onRequestDelete(entry)} />;
+  return <FileContent file={file} onRequestDelete={() => onRequestDelete(entry)} port={port} targetLine={targetLine} />;
 }
 
-function FileContent({ file, targetLine }: { file: ProjectFileContent; targetLine: number | null }) {
+function FileContent({
+  file,
+  targetLine,
+  port,
+  onRequestDelete,
+}: {
+  file: ProjectFileContent;
+  targetLine: number | null;
+  port: ProjectDirectoryPort;
+  onRequestDelete(): void;
+}) {
   const imageUrl = projectImageDataUrl(file);
+  const draft = useProjectDirectoryStore((state) => state.draft);
+  const isEditing = useProjectDirectoryStore((state) => state.isEditing);
+  const mutationKind = useProjectDirectoryStore((state) => state.mutationKind);
+  const beginEditing = useProjectDirectoryStore((state) => state.beginEditing);
+  const setDraft = useProjectDirectoryStore((state) => state.setDraft);
+  const cancelEditing = useProjectDirectoryStore((state) => state.cancelEditing);
+  const save = useProjectDirectoryStore((state) => state.save);
   return (
     <article className="project-file-preview">
       <header>
         <div><strong>{file.name}</strong><code>{displayProjectPath(file.path)}</code></div>
-        <span>{formatBytes(file.size)} · {file.isWritable ? "可写" : "只读"}</span>
+        <div className="project-file-preview__actions">
+          <span>{formatBytes(file.size)} · {file.isWritable ? "可写" : "只读"}</span>
+          {isEditing ? (
+            <>
+              <button disabled={mutationKind != null} onClick={cancelEditing} type="button">取消</button>
+              <button className="primary-button" disabled={mutationKind != null} onClick={() => void save(port)} type="button">
+                {mutationKind === "save" ? <><span className="mini-spinner" aria-hidden="true" />保存中…</> : "保存"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="danger-link" disabled={mutationKind != null} onClick={onRequestDelete} type="button">删除</button>
+              {file.isWritable && !file.isBinary && (
+                <button className="primary-button" disabled={mutationKind != null} onClick={beginEditing} type="button">编辑</button>
+              )}
+            </>
+          )}
+        </div>
       </header>
-      {imageUrl ? (
+      {isEditing ? (
+        <textarea
+          aria-label={`${file.name} 编辑内容`}
+          className="project-file-editor"
+          onChange={(event) => setDraft(event.target.value)}
+          spellCheck={false}
+          value={draft}
+        />
+      ) : imageUrl ? (
         <div className="project-file-preview__image"><img alt={file.name} src={imageUrl} /></div>
       ) : file.isBinary ? (
         <Welcome icon="▤" title="二进制文件">此文件不能在文本预览器中显示。</Welcome>
@@ -247,7 +338,8 @@ function Welcome({ icon, title, children }: { icon: React.ReactNode; title: stri
   );
 }
 
-function EntryDetail({ entry }: { entry: ProjectFileEntry }) {
+function EntryDetail({ entry, onRequestDelete }: { entry: ProjectFileEntry; onRequestDelete(): void }) {
+  const mutationKind = useProjectDirectoryStore((state) => state.mutationKind);
   return (
     <div className="project-directory-detail-card">
       <span className="project-directory-detail-card__icon" aria-hidden="true">{entry.isDirectory ? "▰" : "▤"}</span>
@@ -259,8 +351,107 @@ function EntryDetail({ entry }: { entry: ProjectFileEntry }) {
         {!entry.isDirectory && <div><dt>大小</dt><dd>{formatBytes(entry.size ?? 0)}</dd></div>}
         <div><dt>修改时间</dt><dd>{formatTime(entry.modifiedAtUnixMs)}</dd></div>
       </dl>
+      <button className="project-entry-delete" disabled={mutationKind != null} onClick={onRequestDelete} type="button">删除{entry.isDirectory ? "文件夹" : "文件"}</button>
     </div>
   );
+}
+
+function CreateEntrySheet({
+  kind,
+  name,
+  parentPath,
+  mutationKind,
+  onKindChange,
+  onNameChange,
+  onCancel,
+  onSubmit,
+}: {
+  kind: "file" | "directory";
+  name: string;
+  parentPath: string;
+  mutationKind: "save" | "create" | "delete" | null;
+  onKindChange(kind: "file" | "directory"): void;
+  onNameChange(name: string): void;
+  onCancel(): void;
+  onSubmit(): void;
+}) {
+  return (
+    <div className="project-entry-sheet-backdrop">
+      <section
+        aria-labelledby="create-project-entry-title"
+        aria-modal="true"
+        className="project-entry-sheet"
+        onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }}
+        role="dialog"
+      >
+        <span className="project-entry-sheet__icon" aria-hidden="true">＋</span>
+        <h2 id="create-project-entry-title">新建项目内容</h2>
+        <p>将在 <code>{displayProjectPath(parentPath)}</code> 中创建，路径由本机 Host 安全校验。</p>
+        <div aria-label="创建类型" className="project-entry-kind-picker" role="group">
+          <button aria-pressed={kind === "file"} className={kind === "file" ? "is-selected" : ""} onClick={() => onKindChange("file")} type="button">文件</button>
+          <button aria-pressed={kind === "directory"} className={kind === "directory" ? "is-selected" : ""} onClick={() => onKindChange("directory")} type="button">文件夹</button>
+        </div>
+        <label className="project-entry-name-field">
+          <span>{kind === "file" ? "文件名称" : "文件夹名称"}</span>
+          <input
+            autoFocus
+            disabled={mutationKind != null}
+            maxLength={1_024}
+            onChange={(event) => onNameChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onSubmit();
+              if (event.key === "Escape") onCancel();
+            }}
+            placeholder={kind === "file" ? "例如 README.md" : "例如 Sources"}
+            value={name}
+          />
+        </label>
+        <footer>
+          <button disabled={mutationKind != null} onClick={onCancel} type="button">取消</button>
+          <button className="primary-button" disabled={!name.trim() || mutationKind != null} onClick={onSubmit} type="button">创建</button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function DeleteEntryDialog({
+  entry,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  entry: ProjectFileEntry;
+  pending: boolean;
+  onCancel(): void;
+  onConfirm(): void;
+}) {
+  return (
+    <div className="project-entry-sheet-backdrop">
+      <section
+        aria-labelledby="delete-project-entry-title"
+        aria-modal="true"
+        className="project-entry-dialog"
+        onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }}
+        role="alertdialog"
+      >
+        <span className="project-entry-dialog__icon" aria-hidden="true">!</span>
+        <h2 id="delete-project-entry-title">删除“{entry.name}”？</h2>
+        <p>{entry.isDirectory ? "文件夹及其中全部内容将被删除。" : "文件将从本机项目目录中删除。"}此操作无法撤销。</p>
+        <div>
+          <button autoFocus disabled={pending} onClick={onCancel} type="button">取消</button>
+          <button className="danger-button" disabled={pending} onClick={onConfirm} type="button">{pending ? "删除中…" : "删除"}</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function creationParentPath(entry: ProjectFileEntry | null) {
+  if (!entry) return "";
+  if (entry.isDirectory) return entry.path;
+  const separator = entry.path.lastIndexOf("/");
+  return separator < 0 ? "" : entry.path.slice(0, separator);
 }
 
 function formatBytes(bytes: number) {

@@ -462,6 +462,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，Windows 项目文件原生 mutation 边界）：Tauri 已建立保存、创建文件/目录和递归删除命令，但尚未向 React Port/UI 开放。保存要求读取返回的 SHA-256 revision，写入前重新解析 owner/project grant、逐级拒绝 symlink/reparse point 并复验当前内容；旧 revision 必须冲突失败，不能覆盖外部修改。写入内容最多 2 MiB，先在同目录写入临时文件并同步，再以 Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` 或 Unix rename 原子替换。新建使用 create-new/单层 create-dir，绝不覆盖同名目标；删除文件要求 revision，删除目录拒绝文件 revision且不能删除项目根。副作用提交后的 read/list 失败会返回 committed-without-refresh 投影，不伪装成副作用失败。React 文件内容 schema 已接收 opaque revision，但编辑、新建和删除 UI 仍保持关闭，等待 Port/Store mutation identity 与确认交互完成。
 
+状态补充（2026-10-20，Windows 项目文件 mutation React 闭环）：已按 macOS `ProjectDirectoryViewModel` 与 `ProjectFileEditorView` 将保存、新建文件/目录和删除接入 typed React Port/Adapter、Zustand Store 与 Apple 风格 UI。Store 冻结 owner、project、generation、目标、revision、草稿和创建父目录；同一展示 session 只允许一个 mutation。保存期间切换文件不撤销已开始的副作用，但迟到结果不得覆盖新文件；切项目、刷新和离开页面会淘汰旧 UI 写回。revision 冲突保留草稿与编辑状态；保存已提交但重读失败时展示已提交提示、保留新内容并暂时禁用再次写入；创建/删除已提交但目录刷新失败时保留最后可信树并提示刷新。创建位置遵循 macOS 的“所选目录/所选文件父目录/项目根”规则，二进制和只读文件不开放编辑；删除必须经过苹果主题确认弹框，文件删除携带读取时 revision。当前验收为 Windows Rust 98 项通过、2 项 sidecar 环境测试忽略，React 40 个文件 153 项通过，TypeScript、production build、架构审计与 Clippy 通过。项目目录下一独立切片为 Git 工作面；项目设置仍保持关闭，等待各自的 macOS 分层准入。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
