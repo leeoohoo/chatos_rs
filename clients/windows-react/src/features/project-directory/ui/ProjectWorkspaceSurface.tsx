@@ -2,22 +2,30 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { ProjectDirectoryPort } from "../ports/ProjectDirectoryPort";
 import type { ProjectGitPort } from "../../project-git/ports/ProjectGitPort";
 import { ProjectGitView } from "../../project-git/ui/ProjectGitView";
+import type { ProjectRunPort } from "../../project-run/ports/ProjectRunPort";
+import { ProjectRunSettingsView } from "../../project-run/ui/ProjectRunSettingsView";
 import { ProjectDirectoryView } from "./ProjectDirectoryView";
 
-type ProjectWorkspaceTab = "directory" | "git" | "messages";
+type ProjectWorkspaceTab = "directory" | "git" | "messages" | "settings";
 
 export function ProjectWorkspaceSurface({
   ownerUserId,
   projectId,
+  projectName,
   directoryPort,
   gitPort,
+  runPort,
   messages,
+  onProjectRemoved,
 }: {
   ownerUserId: string;
   projectId: string;
+  projectName: string;
   directoryPort: ProjectDirectoryPort;
   gitPort: ProjectGitPort;
+  runPort: ProjectRunPort;
   messages: ReactNode;
+  onProjectRemoved(projectId: string): void;
 }) {
   const [tab, setTab] = useState<ProjectWorkspaceTab>("messages");
   const [openFileRequest, setOpenFileRequest] = useState<{ id: number; path: string } | null>(null);
@@ -33,7 +41,7 @@ export function ProjectWorkspaceSurface({
         <button className={tab === "directory" ? "is-selected" : ""} onClick={() => setTab("directory")} type="button">项目目录</button>
         <button className={tab === "git" ? "is-selected" : ""} onClick={() => setTab("git")} type="button">Git</button>
         <button className={tab === "messages" ? "is-selected" : ""} onClick={() => setTab("messages")} type="button">用户消息</button>
-        <button aria-disabled="true" disabled title="项目设置尚未通过 React 准入" type="button">项目设置</button>
+        <button className={tab === "settings" ? "is-selected" : ""} onClick={() => setTab("settings")} type="button">项目设置</button>
       </nav>
       <div className="project-workspace-content">
         {tab === "directory" ? (
@@ -53,6 +61,14 @@ export function ProjectWorkspaceSurface({
             ownerUserId={ownerUserId}
             port={gitPort}
             projectId={projectId}
+          />
+        ) : tab === "settings" ? (
+          <ProjectRunSettingsView
+            onProjectRemoved={onProjectRemoved}
+            ownerUserId={ownerUserId}
+            port={runPort}
+            projectId={projectId}
+            projectName={projectName}
           />
         ) : messages}
       </div>

@@ -25,6 +25,7 @@ interface ProjectConversationState {
   entries: Record<string, ProjectConversationEntry>;
   phase(projectId: string): ProjectConversationPhase;
   prepare(port: ProjectConversationPort, input: PrepareProjectConversationInput): Promise<void>;
+  remove(projectId: string): void;
   reset(ownerUserId?: string): void;
 }
 
@@ -79,6 +80,16 @@ export const useProjectConversationStore = create<ProjectConversationState>((set
         phase: { kind: "failed", message: errorMessage(error) },
       });
     }
+  },
+
+  remove(projectInput) {
+    const projectId = projectInput.trim();
+    if (!projectId || !get().entries[projectId]) return;
+    set((state) => {
+      const entries = { ...state.entries };
+      delete entries[projectId];
+      return { entries, requestSequence: state.requestSequence + 1 };
+    });
   },
 
   reset(ownerUserId = "") {

@@ -470,6 +470,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，Windows React 项目 Git 闭环）：已按 macOS `ProjectGitViewModel`、Workbench、Change List、History、Diff 与 branch/remote sheets 接入 Domain schema、typed Port/Tauri Adapter、Zustand lifecycle 和 Apple 风格工作面。load/diff/mutation 使用独立 identity，mutation 淘汰旧 load/diff 且互斥；切项目和离开页面拒绝迟到写回，失败恢复最新 snapshot 但保留原始操作错误，committed-without-refresh 显式提示，提交期间新输入不会被旧提交清空。UI 提供 init、暂存/取消暂存、提交、branch switch/create/merge、remote add/edit/remove、`pull --ff-only`、push、ahead/behind、最多 80 条 history 与最多 8,000 行语义 diff，并能从 diff 按相对路径切回文件。remote URL 的脱敏标记允许仅改名时由 Rust 保留原始 Secret，不会把凭据带回 WebView。当前验收为 Windows Rust 106 项通过、2 项 sidecar 环境测试忽略，React 43 个文件 170 项通过，TypeScript、production build、架构审计与 Clippy 通过。项目 Git 已进入 React；项目设置仍等待独立 macOS 分层准入。
 
+状态补充（2026-10-21，Windows React 项目设置闭环）：已按 macOS `ProjectRunSettingsView`、Instances、Environment 与 `ProjectRunSettingsViewModel` 接入独立 Domain schema、typed Port/Tauri Adapter、Zustand lifecycle 和 Apple 风格项目设置页。React 只提交 opaque target/toolchain ID；运行状态通过最长 30 秒 long-poll 更新，owner/project/generation/request identity 拒绝切项目和离页后的迟到写回，mutation 互斥且失败后读取原生真值并保留原始错误。环境编辑只取得 `key + hasValue`，已有 Secret 默认以 `value: null` 保留，用户明确输入替换值时才将明文交给原生层，保存期间新草稿不会被旧结果覆盖。页面按 macOS 顺序提供宠物快捷访问、预检、目标与启动、实例与日志、工具链、环境变量、配置预览和项目移除；移除成功后同步 Workspace Index、清理该项目 Conversation cache 并返回工作台，本机目录始终保留。React 全量 46 个测试文件、185 项、TypeScript、production build 与架构审计通过，项目设置已进入 React。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

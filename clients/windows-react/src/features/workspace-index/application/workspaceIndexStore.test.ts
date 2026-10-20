@@ -81,6 +81,16 @@ describe("workspace index application state", () => {
       "new-project",
     ]);
   });
+
+  it("removes a committed project only from the matching owner index", async () => {
+    const port = new TestWorkspaceIndexPort();
+    await useWorkspaceIndexStore.getState().load(port, "alice", false);
+
+    useWorkspaceIndexStore.getState().acceptRemovedProject("bob", "local");
+    expect(useWorkspaceIndexStore.getState().snapshot.projects).toHaveLength(1);
+    useWorkspaceIndexStore.getState().acceptRemovedProject("alice", "local");
+    expect(useWorkspaceIndexStore.getState().snapshot.projects).toEqual([]);
+  });
 });
 
 class TestWorkspaceIndexPort implements WorkspaceIndexPort {

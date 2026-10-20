@@ -24,6 +24,7 @@ interface WorkspaceIndexState {
     hostReady: boolean,
   ): Promise<void>;
   acceptCreatedProject(ownerUserId: string, project: LocalProject): void;
+  acceptRemovedProject(ownerUserId: string, projectId: string): void;
   reset(): void;
 }
 
@@ -96,6 +97,19 @@ export const useWorkspaceIndexStore = create<WorkspaceIndexState>((set, get) => 
       ...current.localProjects.filter((candidate) => candidate.id !== project.id),
       project,
     ];
+    set({
+      localProjects,
+      snapshot: resolveWorkspaceIndex(localProjects, current.relations),
+      errorMessage: null,
+    });
+  },
+
+  acceptRemovedProject(ownerInput, projectInput) {
+    const ownerUserId = ownerInput.trim();
+    const projectId = projectInput.trim();
+    const current = get();
+    if (!ownerUserId || !projectId || current.ownerUserId !== ownerUserId) return;
+    const localProjects = current.localProjects.filter((project) => project.id !== projectId);
     set({
       localProjects,
       snapshot: resolveWorkspaceIndex(localProjects, current.relations),

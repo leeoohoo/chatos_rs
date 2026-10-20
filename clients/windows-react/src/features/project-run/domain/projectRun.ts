@@ -178,6 +178,7 @@ export type ProjectRemovalReceipt = z.infer<typeof projectRemovalReceiptSchema>;
 export interface ProjectRunEnvironmentDraft {
   id: string;
   key: string;
+  storedKey: string | null;
   value: string;
   hasStoredValue: boolean;
   valueDirty: boolean;
@@ -187,6 +188,7 @@ export function environmentDrafts(environment: ProjectRunEnvironment): ProjectRu
   return environment.environmentVariables.map((variable, index) => ({
     id: `stored-${index}-${variable.key}`,
     key: variable.key,
+    storedKey: variable.key,
     value: "",
     hasStoredValue: variable.hasValue,
     valueDirty: false,

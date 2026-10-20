@@ -770,6 +770,126 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .inspector-confirm .inspector-danger-button { color: white; background: #ff3b30; }
 .empty-symbol { color: var(--tertiary); font-size: 18px; }
 
+.project-run-scroll { min-width: 0; min-height: 500px; flex: 1; overflow: auto; border: 1px solid rgba(60,60,67,.1); border-radius: 15px; background: rgba(246,246,248,.42); }
+.project-run-page { display: grid; width: min(920px,100%); gap: 15px; margin: 0 auto; padding: 22px; }
+.project-run-page button, .project-run-page input, .project-run-page select { font: inherit; }
+.project-run-page button { cursor: pointer; }
+.project-run-page button:disabled, .project-run-page select:disabled { cursor: default; opacity: .48; }
+.project-run-page button:focus-visible, .project-run-page input:focus-visible, .project-run-page select:focus-visible, .project-run-page summary:focus-visible { outline: 3px solid rgba(10,132,255,.2); outline-offset: 1px; }
+.project-run-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 3px 2px 1px; }
+.project-run-header > div:first-child { display: grid; min-width: 0; gap: 5px; }
+.project-run-header h2 { margin: 0; overflow: hidden; font-size: 21px; letter-spacing: -.025em; text-overflow: ellipsis; white-space: nowrap; }
+.project-run-header p { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--secondary); font-size: 10.5px; }
+.project-run-header p span { color: var(--accent); font-size: 13px; }
+.project-run-header__actions { display: flex; flex: none; gap: 7px; }
+.project-run-header__actions button, .project-run-inline-actions button, .project-run-card-actions > button:not(.primary-button) { min-height: 30px; border: 0; border-radius: 8px; padding: 5px 10px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 10.5px; font-weight: 620; }
+.project-run-badges { display: flex; gap: 6px; margin-top: 3px; }
+.project-run-badge { display: inline-flex; min-height: 20px; align-items: center; border-radius: 999px; padding: 2px 7px; color: var(--secondary); background: rgba(120,120,128,.1); font-size: 9px; font-weight: 650; }
+.project-run-badge--success { color: #21853e; background: rgba(48,209,88,.11); }
+.project-run-badge--warning { color: #ad5900; background: rgba(255,159,10,.12); }
+.project-run-badge--error { color: #c5221f; background: rgba(255,59,48,.1); }
+.project-run-notice { display: grid; grid-template-columns: 24px minmax(0,1fr) 24px; align-items: center; gap: 9px; border-radius: 11px; padding: 9px 10px; font-size: 10.5px; line-height: 1.45; }
+.project-run-notice > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 7px; color: white; font-weight: 750; }
+.project-run-notice p { margin: 0; overflow-wrap: anywhere; }
+.project-run-notice button { border: 0; padding: 0; color: inherit; background: transparent; font-size: 17px; }
+.project-run-notice--error { color: #a84d00; background: rgba(255,159,10,.1); }
+.project-run-notice--error > span { background: #ff9f0a; }
+.project-run-notice--success { color: #24733b; background: rgba(48,209,88,.09); }
+.project-run-notice--success > span { background: #30b954; }
+.project-run-card .settings-card__body { gap: 12px; }
+.project-run-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 22px; }
+.project-run-setting-row > div { display: grid; gap: 4px; }
+.project-run-setting-row strong { font-size: 12px; font-weight: 650; }
+.project-run-setting-row p { margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.5; }
+.apple-switch { position: relative; display: block; width: 38px; height: 22px; flex: none; }
+.apple-switch input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.apple-switch span { position: absolute; inset: 0; border-radius: 999px; background: rgba(120,120,128,.27); box-shadow: inset 0 0 0 .5px rgba(0,0,0,.08); transition: background .16s ease; cursor: pointer; }
+.apple-switch span::after { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.25); transition: transform .16s ease; content: ""; }
+.apple-switch input:checked + span { background: #34c759; }
+.apple-switch input:checked + span::after { transform: translateX(16px); }
+.apple-switch input:focus-visible + span { outline: 3px solid rgba(10,132,255,.22); outline-offset: 2px; }
+.apple-switch input:disabled + span { cursor: default; opacity: .48; }
+.project-run-ready { display: flex; align-items: center; gap: 8px; color: #248a3d; font-size: 11px; }
+.project-run-ready > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; color: white; background: #30b954; font-weight: 750; }
+.project-run-ready strong { font-weight: 620; }
+.project-run-issues { display: grid; gap: 9px; }
+.project-run-issue { display: grid; grid-template-columns: 25px minmax(0,1fr); align-items: start; gap: 9px; border-radius: 10px; padding: 10px; background: rgba(255,59,48,.07); }
+.project-run-issue > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 50%; color: white; background: #ff453a; font-weight: 750; }
+.project-run-issue > div { display: grid; gap: 3px; }
+.project-run-issue strong { color: #c5221f; font-size: 11px; }
+.project-run-issue code, .project-run-issue p { margin: 0; color: var(--secondary); font: 9.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap: anywhere; }
+.project-run-issue--warning { background: rgba(255,159,10,.08); }
+.project-run-issue--warning > span { background: #ff9f0a; }
+.project-run-issue--warning strong { color: #a84d00; }
+.project-run-select-field { display: grid; grid-template-columns: 95px minmax(0,1fr); align-items: center; gap: 12px; color: var(--secondary); font-size: 10.5px; font-weight: 620; }
+.project-run-select-field select, .project-run-toolchain select { height: 32px; border: 1px solid var(--separator); border-radius: 8px; padding: 0 9px; color: inherit; outline: none; background: rgba(255,255,255,.76); font-size: 10.5px; }
+.project-run-definition { display: grid; margin: 0; border-top: 1px solid var(--separator); }
+.project-run-definition > div { display: grid; grid-template-columns: 95px minmax(0,1fr); gap: 12px; border-bottom: 1px solid rgba(60,60,67,.07); padding: 7px 0; font-size: 10.5px; }
+.project-run-definition dt { color: var(--secondary); }
+.project-run-definition dd { min-width: 0; margin: 0; }
+.project-run-definition code { font: 10px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow-wrap: anywhere; user-select: text; }
+.project-run-card-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.project-run-card-actions .primary-button { min-height: 31px; padding: 5px 12px; font-size: 10.5px; }
+.project-run-card-actions--split { justify-content: space-between; }
+.project-run-empty { display: grid; min-height: 105px; place-content: center; justify-items: center; text-align: center; }
+.project-run-empty > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 12px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 20px; }
+.project-run-empty strong { margin-top: 9px; font-size: 12px; }
+.project-run-empty p { max-width: 360px; margin: 4px 0 0; color: var(--secondary); font-size: 10px; line-height: 1.45; }
+.project-run-instances { display: grid; gap: 10px; }
+.project-run-instance { display: grid; gap: 9px; border: 1px solid var(--separator); border-radius: 11px; padding: 12px; background: rgba(255,255,255,.48); }
+.project-run-instance > header { display: grid; grid-template-columns: 32px minmax(0,1fr) auto auto auto; align-items: center; gap: 9px; }
+.project-run-instance__icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--secondary); background: rgba(120,120,128,.1); font: 650 9px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.project-run-instance__icon--success { color: #21853e; background: rgba(48,209,88,.11); }
+.project-run-instance__icon--warning { color: #ad5900; background: rgba(255,159,10,.12); }
+.project-run-instance__icon--error { color: #c5221f; background: rgba(255,59,48,.1); }
+.project-run-instance > header > div { display: grid; min-width: 0; gap: 3px; }
+.project-run-instance > header strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.project-run-instance > header p { display: flex; min-width: 0; gap: 8px; margin: 0; color: var(--secondary); font-size: 9px; }
+.project-run-instance > header code { overflow: hidden; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.project-run-instance > header button { min-height: 27px; border: 0; border-radius: 7px; padding: 4px 8px; color: var(--accent); background: rgba(10,132,255,.08); font-size: 9.5px; font-weight: 620; }
+.project-run-instance > header .project-run-danger-link, .project-run-danger-button { color: #d52b1e; background: rgba(255,59,48,.08); }
+.project-run-log-toggle { justify-self: start; border: 0; padding: 3px 1px; color: var(--accent); background: transparent; font-size: 10px; font-weight: 620; }
+.project-run-log { display: grid; min-width: 0; gap: 6px; }
+.project-run-log > header { display: flex; justify-content: space-between; color: var(--secondary); font-size: 9px; }
+.project-run-log pre { min-height: 150px; max-height: 310px; margin: 0; overflow: auto; border: 1px solid var(--separator); border-radius: 9px; padding: 11px; color: #d7f7dd; background: #1d2021; font: 9.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.project-run-log > p { margin: 0; color: #a84d00; font-size: 9px; }
+.project-run-readiness { display: grid; grid-template-columns: 28px minmax(0,1fr); align-items: start; gap: 10px; border-radius: 11px; padding: 11px; }
+.project-run-readiness > span { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: white; font-weight: 750; }
+.project-run-readiness > div { display: grid; gap: 3px; }
+.project-run-readiness strong { font-size: 11.5px; }
+.project-run-readiness p { margin: 0; color: var(--secondary); font-size: 10px; line-height: 1.45; }
+.project-run-readiness--ready { background: rgba(48,209,88,.08); }
+.project-run-readiness--ready > span { background: #30b954; }
+.project-run-readiness--attention { background: rgba(255,159,10,.09); }
+.project-run-readiness--attention > span { background: #ff9f0a; }
+.project-run-toolchains { display: grid; gap: 8px; }
+.project-run-toolchain { display: grid; grid-template-columns: 24px minmax(0,1fr) minmax(170px,230px); align-items: center; gap: 9px; border: 1px solid var(--separator); border-radius: 10px; padding: 10px; background: rgba(255,255,255,.44); }
+.project-run-toolchain > span { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 50%; color: white; font-size: 11px; font-weight: 750; }
+.project-run-toolchain > .is-ready { background: #30b954; }
+.project-run-toolchain > .is-missing { background: #ff453a; }
+.project-run-toolchain > div { display: grid; min-width: 0; gap: 3px; }
+.project-run-toolchain strong { font-size: 11px; }
+.project-run-toolchain small { overflow: hidden; color: var(--secondary); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.project-run-inline-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.project-run-inline-actions p, .project-run-environment-editor > p, .project-run-empty-copy { margin: 0; color: var(--secondary); font-size: 10px; line-height: 1.5; }
+.project-run-disclosure { border-top: 1px solid var(--separator); padding-top: 10px; }
+.project-run-disclosure > button { display: grid; width: 100%; grid-template-columns: 18px minmax(0,1fr); gap: 1px 6px; border: 0; padding: 3px 0; color: inherit; background: transparent; text-align: left; }
+.project-run-disclosure > button > span { grid-row: 1 / 3; color: var(--secondary); font-size: 15px; }
+.project-run-disclosure > button strong { font-size: 11px; }
+.project-run-disclosure > button small { color: var(--secondary); font-size: 9.5px; }
+.project-run-environment-editor { display: grid; gap: 9px; padding-top: 12px; }
+.project-run-environment-row { display: grid; grid-template-columns: minmax(150px,.7fr) minmax(210px,1.3fr) 28px; gap: 7px; }
+.project-run-environment-row input { min-width: 0; height: 32px; border: 1px solid var(--separator); border-radius: 8px; padding: 0 9px; color: inherit; outline: none; background: rgba(255,255,255,.76); font: 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.project-run-environment-row button { border: 0; border-radius: 8px; color: #d52b1e; background: rgba(255,59,48,.08); font-size: 15px; }
+.project-run-configurations { display: grid; gap: 7px; }
+.project-run-configurations details { border: 1px solid var(--separator); border-radius: 10px; padding: 9px 10px; background: rgba(255,255,255,.42); }
+.project-run-configurations summary { display: grid; grid-template-columns: minmax(0,1fr) minmax(100px,auto); gap: 10px; cursor: pointer; }
+.project-run-configurations summary strong { font-size: 10.5px; }
+.project-run-configurations summary code { overflow: hidden; color: var(--secondary); font: 9px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-overflow: ellipsis; white-space: nowrap; }
+.project-run-configurations pre { max-height: 280px; margin: 9px 0 0; overflow: auto; border-radius: 8px; padding: 10px; background: rgba(120,120,128,.07); font: 9.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.project-run-configurations details > p { margin: 9px 0 0; color: var(--secondary); font-size: 10px; }
+.project-run-danger-button { min-height: 30px; flex: none; border: 0; border-radius: 8px; padding: 5px 10px; font-size: 10.5px; font-weight: 620; }
+
 .account-button { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 3px; border: 0; border-radius: 10px; padding: 8px 9px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
 .account-button:hover { background: rgba(120,120,128,.1); }
 .account-button:focus-visible { outline: 3px solid rgba(10,132,255,.24); outline-offset: 1px; }
@@ -820,6 +940,12 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .authentication-screen { grid-template-columns: minmax(0, 1fr); }
   .authentication-introduction { display: none; }
   .approval-model-grid { grid-template-columns: minmax(0,1fr); }
+  .project-run-page { padding: 17px; }
+  .project-run-header { flex-direction: column; }
+  .project-run-instance > header { grid-template-columns: 32px minmax(0,1fr) auto; }
+  .project-run-instance > header > button { grid-column: auto; }
+  .project-run-toolchain { grid-template-columns: 24px minmax(0,1fr); }
+  .project-run-toolchain select { grid-column: 2; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -840,6 +966,10 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .project-git-diff__lines { background: rgba(28,28,31,.78); }
   .project-git-sheet { border-color: rgba(255,255,255,.1); background: rgba(42,42,46,.97); }
   .project-git-confirm { background: rgba(42,42,46,.98); }
+  .project-run-scroll { border-color: rgba(235,235,245,.1); background: rgba(31,31,34,.42); }
+  .project-run-select-field select, .project-run-toolchain select, .project-run-environment-row input { border-color: rgba(235,235,245,.14); background: rgba(58,58,62,.76); }
+  .project-run-instance, .project-run-toolchain, .project-run-configurations details { border-color: rgba(235,235,245,.12); background: rgba(52,52,56,.52); }
+  .project-run-configurations pre { background: rgba(18,18,20,.42); }
   .project-entry-sheet, .project-entry-dialog { border-color: rgba(255,255,255,.1); background: rgba(42,42,46,.97); }
   .project-entry-kind-picker button.is-selected { background: rgba(76,76,80,.94); box-shadow: 0 1px 4px rgba(0,0,0,.34); }
   .project-entry-name-field input { border-color: rgba(235,235,245,.16); background: rgba(58,58,62,.78); }

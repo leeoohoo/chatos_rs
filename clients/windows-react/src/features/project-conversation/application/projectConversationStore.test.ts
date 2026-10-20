@@ -66,6 +66,18 @@ describe("project conversation preparation", () => {
     expect(port.prepareProjectConversation).not.toHaveBeenCalled();
     expect(useProjectConversationStore.getState().phase("project-1")).toEqual({ kind: "idle" });
   });
+
+  it("clears a removed project's cached phase and rejects its late preparation", async () => {
+    let resolve!: (value: { projectId: string; conversationId: string }) => void;
+    const pending = new Promise<{ projectId: string; conversationId: string }>((done) => { resolve = done; });
+    const preparation = useProjectConversationStore.getState().prepare(stubPort(pending), input());
+
+    useProjectConversationStore.getState().remove("project-1");
+    resolve({ projectId: "project-1", conversationId: "stale" });
+    await preparation;
+
+    expect(useProjectConversationStore.getState().phase("project-1")).toEqual({ kind: "idle" });
+  });
 });
 
 interface TestInput {

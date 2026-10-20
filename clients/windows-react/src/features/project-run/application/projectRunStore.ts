@@ -214,7 +214,7 @@ export const useProjectRunStore = create<ProjectRunStateStore>((set, get) => ({
 
   setToolchain(kind, toolchainId) {
     const current = get();
-    if (!current.environment || current.activeMutationRequest || !current.environment.toolchainOptions[kind]) return;
+    if (!current.environment || !current.environment.toolchainOptions[kind]) return;
     const selectedToolchains = { ...current.selectedToolchains };
     if (toolchainId) selectedToolchains[kind] = toolchainId;
     else delete selectedToolchains[kind];
@@ -228,6 +228,7 @@ export const useProjectRunStore = create<ProjectRunStateStore>((set, get) => ({
       environmentVariables: [...current.environmentVariables, {
         id: `draft-${current.draftSequence + 1}`,
         key: "",
+        storedKey: null,
         value: "",
         hasStoredValue: false,
         valueDirty: false,
@@ -537,7 +538,9 @@ function validateEnvironmentDrafts(drafts: ProjectRunEnvironmentDraft[]) {
     }
     if (keys.has(key)) return `环境变量 ${key} 重复。`;
     keys.add(key);
-    if (!draft.hasStoredValue && !draft.valueDirty) return `请为环境变量 ${key} 输入安全值。`;
+    if ((!draft.hasStoredValue || draft.storedKey !== key) && !draft.valueDirty) {
+      return `请为环境变量 ${key} 输入安全值。`;
+    }
     if (new TextEncoder().encode(draft.value).byteLength > 64 * 1_024) {
       return `环境变量 ${key} 的值超过安全上限。`;
     }

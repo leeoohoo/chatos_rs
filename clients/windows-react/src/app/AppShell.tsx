@@ -26,6 +26,7 @@ import { CreateProjectSheet } from "../features/project-creation/ui/CreateProjec
 import type { ProjectDirectoryPort } from "../features/project-directory/ports/ProjectDirectoryPort";
 import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
 import type { ProjectGitPort } from "../features/project-git/ports/ProjectGitPort";
+import type { ProjectRunPort } from "../features/project-run/ports/ProjectRunPort";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
@@ -39,6 +40,7 @@ interface AppShellProps {
   projectCreation: ProjectCreationPort;
   projectDirectory: ProjectDirectoryPort;
   projectGit: ProjectGitPort;
+  projectRun: ProjectRunPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
@@ -60,6 +62,7 @@ export function AppShell({
   projectCreation,
   projectDirectory,
   projectGit,
+  projectRun,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
@@ -78,7 +81,9 @@ export function AppShell({
   const retry = useHostLifecycleStore((state) => state.retry);
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const acceptCreatedProject = useWorkspaceIndexStore((state) => state.acceptCreatedProject);
+  const acceptRemovedProject = useWorkspaceIndexStore((state) => state.acceptRemovedProject);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
+  const removeProjectConversation = useProjectConversationStore((state) => state.remove);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
   const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -220,8 +225,15 @@ export function AppShell({
           <ProjectWorkspaceSurface
             directoryPort={projectDirectory}
             gitPort={projectGit}
+            runPort={projectRun}
             ownerUserId={session.user.id}
             projectId={selectedProject.id}
+            projectName={selectedProject.title}
+            onProjectRemoved={(projectId) => {
+              removeProjectConversation(projectId);
+              acceptRemovedProject(session.user.id, projectId);
+              setSelection({ kind: "workbench" });
+            }}
             messages={(
               <ProjectConversationPlaceholder
                 ownerUserId={session.user.id}

@@ -5,6 +5,7 @@ import { useProjectGitStore } from "../../project-git/application/projectGitStor
 import type { ProjectDirectoryListing } from "../domain/projectDirectory";
 import type { ProjectDirectoryPort } from "../ports/ProjectDirectoryPort";
 import { stubProjectGitPort } from "../../../test/projectGitFixture";
+import { stubProjectRunPort } from "../../../test/projectRunFixture";
 import { ProjectDirectoryView } from "./ProjectDirectoryView";
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
 
@@ -110,18 +111,21 @@ describe("ProjectWorkspaceSurface", () => {
   });
   afterEach(cleanup);
 
-  it("defaults to macOS messages and exposes the admitted directory tab", async () => {
+  it("defaults to macOS messages and exposes admitted project tabs", async () => {
     render(
       <ProjectWorkspaceSurface
         directoryPort={stubPort()}
         gitPort={stubProjectGitPort()}
+        runPort={stubProjectRunPort()}
         messages={<div>Conversation surface</div>}
+        onProjectRemoved={vi.fn()}
         ownerUserId="owner-1"
         projectId="project-1"
+        projectName="Project One"
       />,
     );
     expect(screen.getByText("Conversation surface")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "项目设置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "项目设置" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "项目目录" }));
     expect(await screen.findByRole("treeitem", { name: /Sources/ })).toBeInTheDocument();
   });
@@ -132,9 +136,12 @@ describe("ProjectWorkspaceSurface", () => {
       <ProjectWorkspaceSurface
         directoryPort={directoryPort}
         gitPort={stubProjectGitPort()}
+        runPort={stubProjectRunPort()}
         messages={<div>Conversation surface</div>}
+        onProjectRemoved={vi.fn()}
         ownerUserId="owner-1"
         projectId="project-1"
+        projectName="Project One"
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Git" }));
