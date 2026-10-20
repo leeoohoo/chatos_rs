@@ -49,6 +49,12 @@ pub struct HostManager {
     diagnostics: HostDiagnostics,
 }
 
+#[derive(Debug)]
+pub(crate) struct HostExecutionError {
+    pub(crate) code: Option<String>,
+    pub(crate) message: String,
+}
+
 impl HostManager {
     async fn terminate_process(&self) {
         let mut process = self.process.lock().await;
@@ -65,15 +71,30 @@ impl HostManager {
     }
 
     pub(crate) async fn execute(&self, command: HostCommand) -> Result<HostResult, String> {
+        self.execute_detailed(command)
+            .await
+            .map_err(|error| error.message)
+    }
+
+    pub(crate) async fn execute_detailed(
+        &self,
+        command: HostCommand,
+    ) -> Result<HostResult, HostExecutionError> {
         let mut process = self.process.lock().await;
         let Some(host) = process.as_mut() else {
-            return Err("Local Agent Host 尚未就绪。".into());
+            return Err(HostExecutionError {
+                code: Some("host_unavailable".into()),
+                message: "Local Agent Host 尚未就绪。".into(),
+            });
         };
         if command
             .owner_user_id()
             .is_some_and(|owner| owner != host.owner_user_id)
         {
-            return Err("Local Agent Host 当前账号与请求账号不一致。".into());
+            return Err(HostExecutionError {
+                code: Some("owner_mismatch".into()),
+                message: "Local Agent Host 当前账号与请求账号不一致。".into(),
+            });
         }
         match request(host, command).await {
             Ok(result) => Ok(result),
@@ -85,7 +106,10 @@ impl HostManager {
                 self.diagnostics
                     .record("host_request", classify_error(&error.message))
                     .await;
-                Err(error.message)
+                Err(HostExecutionError {
+                    code: error.code,
+                    message: error.message,
+                })
             }
         }
     }

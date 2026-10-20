@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from "react";
 import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
 import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
+import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
 import type { WorkspaceResourceItem } from "../../workspace-index/domain/workspaceIndex";
 import { useProjectConversationStore } from "../application/projectConversationStore";
 import type { ProjectConversationPort } from "../ports/ProjectConversationPort";
@@ -12,6 +13,7 @@ interface ProjectConversationPlaceholderProps {
   defaultContactReady: boolean;
   port: ProjectConversationPort;
   historyPort: ConversationHistoryPort;
+  composerPort: ConversationComposerPort;
 }
 
 export function ProjectConversationPlaceholder({
@@ -21,6 +23,7 @@ export function ProjectConversationPlaceholder({
   defaultContactReady,
   port,
   historyPort,
+  composerPort,
 }: ProjectConversationPlaceholderProps) {
   const phase = useProjectConversationStore((state) => state.phase(project.id));
   const prepare = useProjectConversationStore((state) => state.prepare);
@@ -64,6 +67,7 @@ export function ProjectConversationPlaceholder({
         ownerUserId={ownerUserId}
         conversationId={phase.conversationId}
         port={historyPort}
+        composerPort={composerPort}
       />
     );
   }

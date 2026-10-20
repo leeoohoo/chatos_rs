@@ -18,6 +18,7 @@ const FRAME_LENGTH_MASK: u32 = !FRAME_CONTINUATION_BIT;
 #[derive(Debug)]
 pub(super) struct HostRequestFailure {
     pub(super) message: String,
+    pub(super) code: Option<String>,
     pub(super) fatal: bool,
 }
 
@@ -25,13 +26,15 @@ impl HostRequestFailure {
     fn fatal(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            code: None,
             fatal: true,
         }
     }
 
-    fn rejected(message: impl Into<String>) -> Self {
+    fn rejected(code: Option<String>, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            code,
             fatal: false,
         }
     }
@@ -100,10 +103,12 @@ async fn request_with_timeout(
         ),
         command,
     };
-    request.validate().map_err(HostRequestFailure::rejected)?;
+    request
+        .validate()
+        .map_err(|message| HostRequestFailure::rejected(None, message))?;
     timeout(duration, async {
         let body = serde_json::to_vec(&request)
-            .map_err(|error| HostRequestFailure::rejected(error.to_string()))?;
+            .map_err(|error| HostRequestFailure::rejected(None, error.to_string()))?;
         write_message(&mut host.input, &body)
             .await
             .map_err(HostRequestFailure::fatal)?;
@@ -120,10 +125,11 @@ async fn request_with_timeout(
             ));
         }
         if !response.ok {
+            let error = response.error;
             return Err(HostRequestFailure::rejected(
-                response
-                    .error
-                    .map(|error| error.message)
+                error.as_ref().map(|value| value.code.clone()),
+                error
+                    .map(|value| value.message)
                     .unwrap_or_else(|| "Host request failed.".to_string()),
             ));
         }

@@ -41,8 +41,8 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
-| Conversation 时间线与发送 | History、发送、send/attachment import/runtime settings load/mutation lifecycle、bootstrap/recovery/older-page/viewport/unread/realtime await ownership、刷新合并、realtime 动作、activation session 与 Session composition factory 已提取，其余 UI Task 生命周期待收口 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case、Session factory、ViewModel 测试等 | 禁止；等待完整切片验收 |
-| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Graph/Inspector 请求与 realtime/polling 长期等待均不再强持有对应 ViewModel | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel 与 Connector 测试 | 禁止；等待完整切片验收 |
+| Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History 和 Composer 文本发送生命周期首片已接入 | `ConversationTimelineView.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationClient.swift`、Host conversation commands | Conversation Core policy/use case、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；按 History→Composer→Realtime 子片实施 |
+| Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；三端共享 fixture 已固定关联和最新事件顺序 | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector 与共享 fixture 测试 | `macOS 分层完成，可进入 React`；等待 Conversation Realtime 后实施 |
 | Ask User | 查询/提交/取消、排序投影、操作门禁、表单状态、refresh/per-prompt 异步生命周期与 activation/action recovery/focus refresh await ownership 已提取 | `AskUserPromptCardView.swift`、Conversation 内嵌入口 | `ConversationSessionViewModel+AskUser.swift`、Ask User Application 类型 | `AskUserPromptModels.swift` | `NativeLocalAgentAskUserPromptService.swift`、Host run/conversation commands | Ask User Core、Connector 与 ViewModel 测试 | 禁止；等待完整切片验收 |
 | 工具审批 / 恢复 | Human Approval Port、加载/强类型决策用例、全局队列展示、监控 session、独立页面加载/决定 Task、Host durable/Human 两阶段端口与决定写回恢复 journal 已提取 | `GlobalApprovalOverlayHost`、完整审批页 | `LocalConnectorControlCenterViewModel.swift`、Approval Application 类型 | Local Connector approval models/ports | platform tool worker、approval handler、Local Connector approval service | Core use case/state、worker、approval handler/agent、state store、ViewModel tests | 禁止；等待完整切片验收 |
 | Host lifecycle / Shell | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；v44 health 契约已由 Rust/Swift/TypeScript 共享 fixture 冻结；React/Tauri 首切片已接入 typed Port | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、Windows Tauri lifecycle adapter | Runtime/bootstrap/recovery/launch/configuration/shutdown、共享 fixture、React gate 与 Tauri tests | `macOS 分层完成，可进入 React`；仅放行 lifecycle 与 Shell，不放行业务页面 |
@@ -348,6 +348,15 @@ Windows History 实现（2026-10-20）：
 - latest 与 older loading/error 独立，older 使用 `next_before_ordinal`，消息、Turn 与附件按稳定 ID 合并，消息按 ordinal 展示；
 - owner/Conversation 切换会使旧 request identity 失效，失败保持到显式重试，React StrictMode 重渲染不会重复请求；
 - 当前只读 History 已接入项目会话 available 页面；Composer、Realtime 与 Run Inspector 仍按后续子切片实施，未提前伪造。
+
+Windows Composer 文本发送生命周期首片（2026-10-20）：
+
+- React 已建立独立 Domain/Application/Port/Adapter/UI，UI 不直接调用 Tauri；
+- 发送规划复用 macOS `ConversationSendPlanner`：运行中 Turn 接收普通 guidance，显式能力选择在活动 Turn 上被阻止，否则创建新 Turn；
+- Tauri 在 guidance 前后校验真实 Turn 状态；若竞态中 Turn 已结束，保持同一发送生命周期并回退为新 Turn；
+- 新 Turn 使用 Host 中已持久化的 runtime settings、精确 model revision 和最新 `main_chat` capability revision，不在 React 发明运行配置；
+- 失败恢复已提交草稿但不覆盖用户等待期间的新输入；账号/Conversation 切换使迟到响应失效；
+- 当前首片只放行文本发送。附件 vault/读取 worker、能力目录和模型/推理/远程连接控件必须完成各自 Port 后再接入。
 
 ## 5. Task Graph / Run Inspector：完整调用链
 
@@ -807,6 +816,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 3. [已完成] 用现有测试验证行为未变化，并补齐生命周期与竞态测试；
 4. [已完成] 固定 Conversation history、Message Task Graph、最新 Run events 的 Rust/Swift/TypeScript 共享 fixture；
 5. [已完成] 将项目消息切片状态改为 `macOS 分层完成，可进入 React`；
-6. [进行中] `clients/windows-react` 已完成 History 子切片；下一步按 Composer→Realtime→Run Inspector 顺序创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
+6. [进行中] `clients/windows-react` 已完成 History 与 Composer 文本发送生命周期首片；下一步完成账号 bootstrap、Composer 附件/能力/运行时控件，再按 Realtime→Run Inspector 创建对应 feature，禁止一次性复制整个 SwiftUI 页面。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
