@@ -78,6 +78,15 @@ export function WorkspaceSidebar({
         <span aria-hidden="true" className="nav-symbol">⌘</span>
         本机终端
       </button>
+      <button
+        className={`nav-item ${selection.kind === "applications" || selection.kind === "application" ? "nav-item--active" : ""}`}
+        disabled={!hostReady}
+        onClick={() => onSelectionChange({ kind: "applications" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">▦</span>
+        应用
+      </button>
 
       <SidebarSection title="联系人">
         {isLoading && snapshot.contacts.length === 0 && <LoadingRow title="正在加载联系人…" />}

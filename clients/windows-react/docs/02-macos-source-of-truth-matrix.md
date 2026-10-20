@@ -334,6 +334,11 @@ macOS 插件应用切片（2026-10-21）：
 - 21 项 Plugin 原生测试覆盖 catalog、context/generation、路径/permission、存储隔离、Secret 环境、真实 loopback 健康子进程、复用、失败清理和 reset 回收；Windows Rust 全量 205 项通过、2 项真实 sidecar 环境测试忽略；
 - Windows 原生 bridge 只准入 macOS 当前真实实现的 `host.context.read`；manifest 即使声明 `artifact.*` 也不会提前成为可调用能力。请求上限 256 KiB，并同时绑定 owner、presentation、generation、session、64 位随机 nonce、精确 `http://127.0.0.1:<port>` origin 与当前存活 runtime；discard/reset 后旧 bridge 立即失效，返回 context 仍只有 project ID/name；
 - Plugin 定向 22 项及 Windows Rust 全量 206 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。第 05 页原生准入完成，可以建立 React Domain/Port/Store/UI；React iframe 必须继续验证 `event.source` 和 exact origin、使用 sandbox，并仅把原生返回的 admitted capabilities 写入 ready 消息。
+- Windows React 已建立独立 `plugin-applications` Domain、Application Store、Port、Tauri Adapter 与 UI；原生 DTO 由 strict schema 再次复验，未知安装路径/executable 字段、非 `127.0.0.1` HTTP 地址、release identity 错配和未声明 capability 均在 Adapter 边界失败关闭。`invoke` 仍只存在于 Adapter，且只在 `App.tsx` composition root 构造；
+- 列表保持 macOS 的 loading/error/empty/retry、Apple 风格应用卡片和本地服务标记。侧栏增加“应用”入口；Host 页面保持返回、重新载入、切换上下文、启动失败重试和公共项目语义，项目选择只使用 Workspace Index 的 ID/name，不把根目录带进 React；
+- Store 将 owner、Host availability、account generation、presentation、application、context、launch generation 与 request identity 联合验收。切账号、Host 失联/恢复、切项目、重试、返回列表和页面 teardown 都先淘汰旧结果并向原生层写入 generation tombstone，迟到 launch 不得恢复旧 iframe；
+- `RestrictedPluginFrame` 使用不含 popup/顶层导航权限的 sandbox，只允许精确 loopback frame。消息必须同时匹配 `event.source === iframe.contentWindow`、exact origin、protocol、session、64 位 nonce、唯一有界 request ID 与 launch admitted capability；ready 消息只发布原生返回的 capability，Bridge 仍通过 typed Port 调用原生命令，页面重载/卸载后不再回传旧请求；
+- CSP 仅新增 `frame-src http://127.0.0.1:*`，没有放宽 `connect-src`、远端脚本或 Tauri IPC。React 全量验收为 74 个测试文件、258 项通过，TypeScript、Vite production build 与架构审计通过；至此第 05 页插件应用已完整进入 Windows React。
 
 ### 2.2.10 本机交互式 Terminal 分层
 

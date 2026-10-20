@@ -895,6 +895,64 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .contact-conversation__installer-note > span { display: grid; width: 22px; height: 22px; place-items: center; border-radius: 7px; color: white; background: linear-gradient(145deg,#ffb340,#ff8c00); box-shadow: 0 4px 10px rgba(255,149,0,.2); font-size: 9px; }
 .contact-conversation__installer-note p { margin: 0; }
 
+.plugin-applications { width: min(1040px,100%); margin: 0 auto; }
+.plugin-applications button, .plugin-application-host button { font: inherit; cursor: pointer; }
+.plugin-applications button:focus-visible, .plugin-application-host button:focus-visible { outline: 3px solid rgba(10,132,255,.22); outline-offset: 2px; }
+.plugin-applications button:disabled, .plugin-application-host button:disabled { cursor: default; opacity: .46; }
+.plugin-applications__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
+.plugin-applications__header h2 { margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -.035em; }
+.plugin-applications__header p { margin: 5px 0 0; color: var(--secondary); font-size: 13px; }
+.plugin-applications__header > button { display: flex; min-height: 31px; align-items: center; gap: 6px; border: 1px solid var(--separator); border-radius: 8px; padding: 5px 10px; color: var(--accent); background: rgba(255,255,255,.58); font-size: 11px; font-weight: 620; }
+.plugin-applications__header > button:hover:not(:disabled) { background: rgba(10,132,255,.08); }
+.plugin-applications__warning { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: center; gap: 9px; margin-bottom: 14px; border-radius: 11px; padding: 9px 11px; color: #9b5100; background: rgba(255,159,10,.09); font-size: 10.5px; }
+.plugin-applications__warning > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 7px; color: white; background: #ff9f0a; font-size: 10px; }
+.plugin-applications__warning p { margin: 0; line-height: 1.45; }
+.plugin-applications__warning button { border: 0; padding: 4px 5px; color: var(--accent); background: transparent; font-size: 10.5px; font-weight: 650; }
+.plugin-application-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(210px,280px)); gap: 16px; align-items: stretch; }
+.plugin-application-card { display: flex; min-height: 190px; flex-direction: column; gap: 16px; border: 1px solid rgba(60,60,67,.11); border-radius: 18px; padding: 17px; color: inherit; background: rgba(255,255,255,.58); box-shadow: 0 8px 24px rgba(0,0,0,.045), inset 0 1px rgba(255,255,255,.55); backdrop-filter: blur(22px) saturate(1.2); text-align: left; transition: transform .14s ease, box-shadow .14s ease, background .14s ease; }
+.plugin-application-card:hover { background: rgba(255,255,255,.76); box-shadow: 0 12px 30px rgba(0,0,0,.08), inset 0 1px rgba(255,255,255,.65); transform: translateY(-1px); }
+.plugin-application-card__top { display: flex; align-items: flex-start; justify-content: space-between; }
+.plugin-application-icon { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 14px; color: white; background: linear-gradient(145deg,#54a9ff,#0874e8); box-shadow: 0 5px 14px rgba(0,0,0,.14), inset 0 1px rgba(255,255,255,.28); font-size: 25px; font-weight: 650; }
+.plugin-application-icon--compact { width: 30px; height: 30px; border-radius: 8px; font-size: 14px; }
+.plugin-application-card__open { color: var(--tertiary); font-size: 15px; font-weight: 680; }
+.plugin-application-card__copy { display: grid; min-width: 0; gap: 6px; }
+.plugin-application-card__copy strong { overflow: hidden; font-size: 16px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-application-card__copy small { display: -webkit-box; min-height: 47px; overflow: hidden; color: var(--secondary); font-size: 12px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.plugin-application-card__runtime { display: flex; align-items: center; gap: 6px; margin-top: auto; color: var(--secondary); font-size: 10.5px; font-weight: 590; }
+.plugin-application-card__runtime > span { color: var(--accent); font-size: 13px; }
+.plugin-application-state { display: grid; min-height: 320px; place-content: center; justify-items: center; padding: 36px; text-align: center; }
+.plugin-application-state__icon { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 17px; color: var(--accent); background: rgba(10,132,255,.1); font-size: 25px; }
+.plugin-application-state__icon .mini-spinner { width: 20px; height: 20px; border-width: 2px; }
+.plugin-application-state h2 { margin: 14px 0 6px; font-size: 17px; letter-spacing: -.02em; }
+.plugin-application-state p { max-width: 500px; margin: 0; color: var(--secondary); font-size: 11.5px; line-height: 1.55; }
+.plugin-application-state > button, .plugin-state-actions button { margin-top: 16px; border: 0; border-radius: 8px; padding: 7px 12px; color: white; background: var(--accent); font-size: 11px; font-weight: 650; }
+.plugin-state-actions { display: flex; gap: 8px; }
+.plugin-state-actions button.is-secondary { color: var(--accent); background: rgba(10,132,255,.1); }
+.plugin-application-host { display: flex; width: min(1040px,100%); min-height: 520px; flex: 1; flex-direction: column; align-self: center; overflow: hidden; border: 1px solid rgba(60,60,67,.13); border-radius: 15px; background: rgba(255,255,255,.54); box-shadow: 0 7px 24px rgba(0,0,0,.045); }
+.plugin-application-host__toolbar { display: flex; min-height: 48px; flex: none; align-items: center; gap: 10px; border-bottom: 1px solid var(--separator); padding: 7px 12px; background: rgba(246,246,248,.72); backdrop-filter: blur(24px) saturate(1.3); }
+.plugin-application-host__toolbar > strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-toolbar-button { display: grid; width: 29px; height: 29px; flex: none; place-items: center; border: 0; border-radius: 8px; padding: 0; color: var(--accent); background: transparent; font-size: 21px; line-height: 1; }
+.plugin-toolbar-button:hover { background: rgba(10,132,255,.09); }
+.plugin-application-host__context { max-width: 220px; overflow: hidden; border-radius: 999px; padding: 4px 8px; color: var(--secondary); background: rgba(120,120,128,.1); font-size: 10px; font-weight: 590; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-application-host__switch { border: 0; padding: 4px 2px; color: var(--accent); background: transparent; font-size: 10px; font-weight: 620; }
+.plugin-application-host__spacer { flex: 1; }
+.plugin-application-host__content { display: flex; min-width: 0; min-height: 0; flex: 1; }
+.plugin-application-host__content > * { flex: 1; }
+.plugin-context-picker { display: grid; width: min(680px,100%); max-height: 640px; align-self: center; gap: 18px; margin: auto; padding: 32px; }
+.plugin-context-picker > header h2 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -.035em; }
+.plugin-context-picker > header p { margin: 6px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.5; }
+.plugin-context-picker__list { display: grid; min-height: 0; gap: 10px; overflow-y: auto; }
+.plugin-context-button { display: grid; grid-template-columns: 42px minmax(0,1fr) 18px; align-items: center; gap: 14px; width: 100%; border: 1px solid rgba(60,60,67,.09); border-radius: 14px; padding: 13px; color: inherit; background: rgba(255,255,255,.55); text-align: left; }
+.plugin-context-button:hover { background: rgba(255,255,255,.78); }
+.plugin-context-button__icon { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 11px; color: var(--accent); background: rgba(10,132,255,.11); font-size: 20px; }
+.plugin-context-button > span:nth-child(2) { display: grid; min-width: 0; gap: 3px; }
+.plugin-context-button strong, .plugin-context-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-context-button strong { font-size: 13px; font-weight: 650; }
+.plugin-context-button small { color: var(--secondary); font-size: 10.5px; }
+.plugin-context-button__chevron { color: var(--tertiary); font-size: 20px; }
+.plugin-context-picker__empty { margin: 20px 0; color: var(--secondary); font-size: 11px; text-align: center; }
+.plugin-frame { width: 100%; height: 100%; min-height: 500px; border: 0; background: var(--surface-solid); }
+
 .account-button { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 3px; border: 0; border-radius: 10px; padding: 8px 9px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
 .account-button:hover { background: rgba(120,120,128,.1); }
 .account-button:focus-visible { outline: 3px solid rgba(10,132,255,.24); outline-offset: 1px; }
@@ -951,6 +1009,8 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .project-run-instance > header > button { grid-column: auto; }
   .project-run-toolchain { grid-template-columns: 24px minmax(0,1fr); }
   .project-run-toolchain select { grid-column: 2; }
+  .plugin-application-grid { grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); }
+  .plugin-context-picker { padding: 22px; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -973,6 +1033,10 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .project-git-confirm { background: rgba(42,42,46,.98); }
   .project-run-scroll { border-color: rgba(235,235,245,.1); background: rgba(31,31,34,.42); }
   .contact-conversation { border-color: rgba(235,235,245,.1); background: rgba(42,42,46,.62); }
+  .plugin-applications__header > button, .plugin-application-card, .plugin-context-button { border-color: rgba(235,235,245,.12); background: rgba(52,52,56,.62); box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+  .plugin-application-card:hover, .plugin-context-button:hover { background: rgba(64,64,68,.78); }
+  .plugin-application-host { border-color: rgba(235,235,245,.12); background: rgba(42,42,46,.62); box-shadow: 0 7px 24px rgba(0,0,0,.18); }
+  .plugin-application-host__toolbar { background: rgba(35,35,39,.78); }
   .project-run-select-field select, .project-run-toolchain select, .project-run-environment-row input { border-color: rgba(235,235,245,.14); background: rgba(58,58,62,.76); }
   .project-run-instance, .project-run-toolchain, .project-run-configurations details { border-color: rgba(235,235,245,.12); background: rgba(52,52,56,.52); }
   .project-run-configurations pre { background: rgba(18,18,20,.42); }

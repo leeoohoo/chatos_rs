@@ -20,6 +20,12 @@ import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
 import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
+import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
+import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
+import {
+  PluginApplicationHostView,
+  PluginApplicationsView,
+} from "../features/plugin-applications/ui/PluginApplicationsView";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
 import type { ProjectConversationPort } from "../features/project-conversation/ports/ProjectConversationPort";
 import { ProjectConversationPlaceholder } from "../features/project-conversation/ui/ProjectConversationPlaceholder";
@@ -49,6 +55,7 @@ interface AppShellProps {
   accessControl: AccessControlPort;
   hostLifecycle: HostLifecyclePort;
   localTerminal: LocalTerminalPort;
+  pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
   projectCreation: ProjectCreationPort;
@@ -75,6 +82,7 @@ export function AppShell({
   accessControl,
   hostLifecycle,
   localTerminal,
+  pluginApplication,
   workspaceIndex,
   projectConversation,
   projectCreation,
@@ -111,6 +119,8 @@ export function AppShell({
   const remoteActiveLoadRequest = useRemoteConnectionStore((state) => state.activeLoadRequest);
   const acceptSavedRemoteConnection = useRemoteConnectionStore((state) => state.acceptSaved);
   const acceptDeletedRemoteConnection = useRemoteConnectionStore((state) => state.acceptDeleted);
+  const pluginApplications = usePluginApplicationStore((state) => state.applications);
+  const resetPluginApplications = usePluginApplicationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
   const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions" | "access-control">("workspace");
   const [showCreateProject, setShowCreateProject] = useState(false);
@@ -126,7 +136,8 @@ export function AppShell({
     setShowCreateProject(false);
     setRemoteEditorTarget(null);
     resetProjectConversations(session.user.id);
-  }, [resetProjectConversations, session.user.id]);
+    resetPluginApplications(pluginApplication);
+  }, [pluginApplication, resetPluginApplications, resetProjectConversations, session.user.id]);
 
   useEffect(() => {
     if (selection.kind === "project"
@@ -165,6 +176,12 @@ export function AppShell({
   const selectedRemoteConnection = selection.kind === "remote"
     ? remoteConnections.find((connection) => connection.id === selection.id)
     : undefined;
+  const selectedPluginApplication = selection.kind === "application"
+    ? pluginApplications.find((application) => (
+      application.pluginId === selection.pluginId
+      && application.componentKey === selection.componentKey
+    ))
+    : undefined;
   const editingRemoteConnection = remoteEditorTarget && remoteEditorTarget !== "create"
     ? remoteConnections.find((connection) => connection.id === remoteEditorTarget) ?? null
     : null;
@@ -177,6 +194,10 @@ export function AppShell({
         ? "访问控制"
       : selection.kind === "terminal"
         ? "本机终端"
+      : selection.kind === "applications"
+        ? "应用"
+      : selection.kind === "application"
+        ? selectedPluginApplication?.displayName ?? "应用"
       : selectedProject?.title ?? selectedContact?.title ?? selectedRemoteConnection?.name ?? "工作台";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
@@ -252,6 +273,8 @@ export function AppShell({
                   ? "RUNTIME & PERMISSIONS"
                   : activeSurface === "access-control"
                     ? "ACCESS CONTROL"
+                  : selection.kind === "applications" || selection.kind === "application"
+                    ? "PLUGIN APPLICATIONS"
                   : "LOCAL WORKSPACE"
             }</p>
             <h1>{title}</h1>
@@ -285,6 +308,26 @@ export function AppShell({
               port={localTerminal}
             />
           </Suspense>
+        ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
+          <PluginApplicationsView
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            port={pluginApplication}
+            onOpen={(application) => setSelection({
+              kind: "application",
+              pluginId: application.pluginId,
+              componentKey: application.componentKey,
+            })}
+          />
+        ) : selectedPluginApplication ? (
+          <PluginApplicationHostView
+            application={selectedPluginApplication}
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            port={pluginApplication}
+            projects={workspaceSnapshot.projects}
+            onBack={() => setSelection({ kind: "applications" })}
+          />
         ) : selectedRemoteConnection ? (
           <RemoteConnectionDetailView
             connection={selectedRemoteConnection}

@@ -482,6 +482,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows Plugin 应用原生 bridge 准入）：已按 macOS `RestrictedPluginWebView` 当前真实能力将原生 bridge 收窄为 `host.context.read`，不因 manifest 声明而提前开放 `artifact.*`。launch 产生独立 session 与 64 位随机 nonce，bridge 请求同时复验认证 owner、presentation、generation、session、nonce、精确 `http://127.0.0.1:<port>` origin、存活 runtime 和 256 KiB envelope；discard、账号/Host reset 或进程退出后旧请求失败关闭。返回 context 只有 project ID/name 和已准入 capability，不含项目根、安装路径或 Secret。Plugin 定向 22 项、Rust 全量 206 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。至此第 05 页达到 React 准入；下一片建立 typed Port/Adapter、latest-wins Store、项目 context picker、exact `event.source`/origin 校验和 sandbox iframe Host。
 
+状态补充（2026-10-21，Windows React Plugin 应用闭环）：已按 macOS `PluginApplicationsView`、`PluginApplicationHostViewModel`、`PluginApplicationsLoadState` 与 `PluginApplicationLaunchUseCase` 建立独立 Domain/Port/Tauri Adapter/Zustand Store/UI 切片。侧栏开放“应用”，列表具备 loading/error/empty/retry 和 Apple 风格应用卡片；Host 页面支持返回、重新载入、失败重试、项目/工作区 context picker、公共项目 fallback 与切换上下文。Store 联合绑定 owner、Host availability、account generation、presentation、application、context、launch generation 和 request identity，账号/Host/页面 teardown、重试及连续切项目都会拒绝迟到结果并向原生层写入 generation tombstone。iframe 只加载原生返回的精确 `http://127.0.0.1:<port>`，sandbox 不含 popup/顶层导航权限；bridge 同时校验 `event.source`、exact origin、protocol、session、nonce、唯一有界 request ID 和 admitted capability，页面重载/卸载后拒绝旧响应。CSP 仅增加 loopback `frame-src`，不放宽 `connect-src` 或 Tauri IPC。React 全量 74 个测试文件、258 项通过，TypeScript、production build 与架构审计通过；第 05 页已完整进入 Windows React。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
