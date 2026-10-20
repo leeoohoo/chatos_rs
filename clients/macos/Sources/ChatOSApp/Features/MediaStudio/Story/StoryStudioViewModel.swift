@@ -433,14 +433,13 @@ final class StoryStudioViewModel: ObservableObject {
     }
 
     func optimizeSourceDraft(_ source: String, style: String, target: StoryPlanningTools.OptimizationTarget) {
-        guard let project, project.segments.isEmpty else { return }
+        guard let project, project.segments.isEmpty, let planner else { return }
         optimizationSuggestion = nil; optimizationTarget = nil
-        run(target == .source ? "正在优化完整剧情" : "正在优化画面风格") { _, token in
-            guard let planner = self.planner else { throw StoryError.unavailable }
+        run(target == .source ? "正在优化完整剧情" : "正在优化画面风格") { [weak self, planner] _, token in
             let request = try StoryPlanningTools.optimizationRequest(project, source: source, style: style, target: target)
             let data = try await planner.plan(request)
             let suggestion = try StoryPlanningTools.decodeOptimization(data, target: target)
-            try self.check(token)
+            guard let self, self.session == token, !Task.isCancelled else { return }
             self.optimizationTarget = target
             self.optimizationSuggestion = suggestion
         }
@@ -495,19 +494,25 @@ final class StoryStudioViewModel: ObservableObject {
     func saveSource(_ source: String, style: String, ratio: String) {
         guard var next = project, next.segments.isEmpty else { return }
         next.source = source; next.style = style; next.ratio = ratio
-        run("保存剧情") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("保存剧情", project: next)
     }
 
     func planOutline(userIdeas: String = "") {
         guard let project, project.segments.isEmpty, !project.source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if supportsAgentPlanning { startAgent(stage: .outline, targets: [], userIdeas: userIdeas); return }
-        run("正在分析完整剧情并规划分段") { owner, token in
-            guard let planner = self.planner else { throw StoryError.unavailable }
+        guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
+        let store = store
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        run("正在分析完整剧情并规划分段") { [weak self, planner, store] owner, token in
             let request = try StoryPlanningTools.outlineRequest(project, userIdeas: userIdeas)
             let data = try await planner.plan(request)
             let next = try StoryPlanningTools.applyOutline(data, to: project)
-            try await self.commit(next, owner: owner, token: token)
-            self.selectedSegmentID = next.segments.first?.id
+            let saved = try await Self.saveStoryProject(
+                next, owner: owner, store: store, preservingVideoSegmentIDs: preserving
+            )
+            guard let self, self.session == token else { return }
+            self.publishProject(saved, token: token)
+            self.selectedSegmentID = saved.segments.first?.id
         }
     }
 
@@ -520,24 +525,26 @@ final class StoryStudioViewModel: ObservableObject {
         if supportsAgentPlanning {
             startAgent(stage: .refine, targets: targets, userIdeas: userIdeas); return
         }
-        run("逐段细化镜头计划") { owner, token in
-            guard let planner = self.planner else { throw StoryError.unavailable }
-            for id in targets {
-                try self.check(token)
-                if self.pauseRequested { break }
-                guard var next = self.projects.first(where: { $0.id == project.id }),
-                      let index = next.segments.firstIndex(where: { $0.id == id }), next.segments[index].detail == nil,
-                      next.segments[index].attempt == nil, next.segments[index].video == nil else { continue }
-                self.operation = "细化第 \(index + 1) / \(next.segments.count) 段"
-                let request = try StoryPlanningTools.detailRequest(next, segmentID: id, userIdeas: userIdeas)
-                next.segments[index].detail = try StoryPlanningTools.decodeDetail(
-                    await planner.plan(request), duration: next.segments[index].seconds
-                )
-                next.segments[index].confirmedFrameID = nil
-                next.segments[index].confirmedLastFrameID = nil
-                next.segments[index].useLastFrameForVideo = false
-                try await self.commit(next, owner: owner, token: token)
-            }
+        guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
+        let store = store
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        run("逐段细化镜头计划") { [weak self, planner, store] owner, token in
+            _ = try await Self.performSegmentPlanning(
+                project: project,
+                targets: targets,
+                regenerate: false,
+                userIdeas: userIdeas,
+                owner: owner,
+                planner: planner,
+                store: store,
+                preservingVideoSegmentIDs: preserving,
+                shouldPause: { [weak self] in
+                    guard let self else { return true }
+                    return await self.shouldPauseAgent(token)
+                },
+                progress: { [weak self] value in await self?.setStoryOperation(value, token: token) },
+                publish: { [weak self] value in await self?.publishProject(value, token: token) }
+            )
         }
     }
 
@@ -552,65 +559,136 @@ final class StoryStudioViewModel: ObservableObject {
             startAgent(stage: .refine, targets: targets, userIdeas: userIdeas)
             return
         }
-        run("重新生成分段镜头计划") { owner, token in
-            guard let planner = self.planner else { throw StoryError.unavailable }
-            for id in targets {
-                try self.check(token)
-                if self.pauseRequested { break }
-                guard var next = self.projects.first(where: { $0.id == project.id }),
-                      let index = next.segments.firstIndex(where: { $0.id == id }),
-                      next.segments[index].detail != nil,
-                      next.segments[index].video != nil
-                        || (next.segments[index].attempt == nil && next.segments[index].video == nil) else { continue }
-                self.operation = "重新生成第 \(index + 1) / \(next.segments.count) 段"
+        guard let planner else { errorMessage = StoryError.unavailable.localizedDescription; return }
+        let store = store
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        run("重新生成分段镜头计划") { [weak self, planner, store] owner, token in
+            _ = try await Self.performSegmentPlanning(
+                project: project,
+                targets: targets,
+                regenerate: true,
+                userIdeas: userIdeas,
+                owner: owner,
+                planner: planner,
+                store: store,
+                preservingVideoSegmentIDs: preserving,
+                shouldPause: { [weak self] in
+                    guard let self else { return true }
+                    return await self.shouldPauseAgent(token)
+                },
+                progress: { [weak self] value in await self?.setStoryOperation(value, token: token) },
+                publish: { [weak self] value in await self?.publishProject(value, token: token) }
+            )
+        }
+    }
+
+    nonisolated private static func performSegmentPlanning(
+        project: StoryProject,
+        targets: [String],
+        regenerate: Bool,
+        userIdeas: String,
+        owner: String,
+        planner: any StoryPlanningServicing,
+        store: StoryProjectStore,
+        preservingVideoSegmentIDs: Set<String>,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        progress: @escaping @Sendable (String) async -> Void,
+        publish: @escaping @Sendable (StoryProject) async -> Void
+    ) async throws -> StoryProject {
+        var current = project
+        for id in targets {
+            try Task.checkCancellation()
+            if await shouldPause() { break }
+            guard let index = current.segments.firstIndex(where: { $0.id == id }) else { continue }
+            if regenerate {
+                guard current.segments[index].detail != nil,
+                      current.segments[index].video != nil
+                        || (current.segments[index].attempt == nil
+                            && current.segments[index].video == nil) else { continue }
+            } else {
+                guard current.segments[index].detail == nil,
+                      current.segments[index].attempt == nil,
+                      current.segments[index].video == nil else { continue }
+            }
+            await progress(
+                regenerate
+                    ? "重新生成第 \(index + 1) / \(current.segments.count) 段"
+                    : "细化第 \(index + 1) / \(current.segments.count) 段"
+            )
+            var next = current
+            if regenerate {
                 // This mutation remains local until the new plan succeeds and commits.
                 next.segments[index].archiveCompletedVideoForRegeneration()
-                let request = try StoryPlanningTools.detailRequest(next, segmentID: id, userIdeas: userIdeas)
-                next.segments[index].detail = try StoryPlanningTools.decodeDetail(
-                    await planner.plan(request), duration: next.segments[index].seconds
-                )
-                next.segments[index].confirmedFrameID = nil
-                next.segments[index].confirmedLastFrameID = nil
-                next.segments[index].useLastFrameForVideo = false
-                try await self.commit(next, owner: owner, token: token)
             }
+            let request = try StoryPlanningTools.detailRequest(
+                next,
+                segmentID: id,
+                userIdeas: userIdeas
+            )
+            let data = try await planner.plan(request)
+            try Task.checkCancellation()
+            next.segments[index].detail = try StoryPlanningTools.decodeDetail(
+                data,
+                duration: next.segments[index].seconds
+            )
+            next.segments[index].confirmedFrameID = nil
+            next.segments[index].confirmedLastFrameID = nil
+            next.segments[index].useLastFrameForVideo = false
+            current = try await saveStoryProject(
+                next,
+                owner: owner,
+                store: store,
+                preservingVideoSegmentIDs: preservingVideoSegmentIDs
+            )
+            await publish(current)
         }
+        return current
+    }
+
+    func setStoryOperation(_ value: String, token: UUID) {
+        guard session == token else { return }
+        operation = value
     }
 
     func saveSegment(_ edited: StorySegment, relations: [StorySegmentRelation]) {
         guard var next = project, let index = next.segments.firstIndex(where: { $0.id == edited.id }),
               next.segments[index].attempt == nil, next.segments[index].video == nil else { return }
-        run("保存分段") { owner, token in
+        do {
             if let detail = edited.detail { try detail.validate(duration: edited.seconds) }
-            let original = next.segments[index]
-            let originalRelations = next.relations(for: edited.id)
-            if original.synopsis != edited.synopsis || original.kind != edited.kind || original.seconds != edited.seconds
-                || original.detail?.continuityIn != edited.detail?.continuityIn
-                || original.detail?.continuityOut != edited.detail?.continuityOut
-                || original.characterIDs != edited.characterIDs || original.sceneIDs != edited.sceneIDs
-                || original.propIDs != edited.propIDs || originalRelations != relations {
-                for adjacent in [index - 1, index + 1] where next.segments.indices.contains(adjacent) && next.segments[adjacent].attempt == nil {
-                    next.segments[adjacent].detail = nil
-                    next.segments[adjacent].confirmedFrameID = nil
-                    next.segments[adjacent].confirmedLastFrameID = nil
-                }
-            }
-            next.segments[index].title = edited.title
-            next.segments[index].synopsis = edited.synopsis
-            next.segments[index].kind = edited.kind
-            next.segments[index].seconds = edited.seconds
-            next.segments[index].detail = edited.detail
-            next.segments[index].characterIDs = edited.characterIDs
-            next.segments[index].sceneIDs = edited.sceneIDs
-            next.segments[index].propIDs = edited.propIDs
-            next.segments[index].videoGuidanceMode = edited.videoGuidanceMode
-            next.relations.removeAll { $0.segmentID == edited.id }
-            next.relations.append(contentsOf: relations)
-            next.segments[index].confirmedFrameID = nil
-            next.segments[index].confirmedLastFrameID = nil
-            try next.validate()
-            try await self.commit(next, owner: owner, token: token)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
         }
+        let original = next.segments[index]
+        let originalRelations = next.relations(for: edited.id)
+        if original.synopsis != edited.synopsis || original.kind != edited.kind || original.seconds != edited.seconds
+            || original.detail?.continuityIn != edited.detail?.continuityIn
+            || original.detail?.continuityOut != edited.detail?.continuityOut
+            || original.characterIDs != edited.characterIDs || original.sceneIDs != edited.sceneIDs
+            || original.propIDs != edited.propIDs || originalRelations != relations {
+            for adjacent in [index - 1, index + 1]
+                where next.segments.indices.contains(adjacent) && next.segments[adjacent].attempt == nil {
+                next.segments[adjacent].detail = nil
+                next.segments[adjacent].confirmedFrameID = nil
+                next.segments[adjacent].confirmedLastFrameID = nil
+            }
+        }
+        next.segments[index].title = edited.title
+        next.segments[index].synopsis = edited.synopsis
+        next.segments[index].kind = edited.kind
+        next.segments[index].seconds = edited.seconds
+        next.segments[index].detail = edited.detail
+        next.segments[index].characterIDs = edited.characterIDs
+        next.segments[index].sceneIDs = edited.sceneIDs
+        next.segments[index].propIDs = edited.propIDs
+        next.segments[index].videoGuidanceMode = edited.videoGuidanceMode
+        next.relations.removeAll { $0.segmentID == edited.id }
+        next.relations.append(contentsOf: relations)
+        next.segments[index].confirmedFrameID = nil
+        next.segments[index].confirmedLastFrameID = nil
+        do { try next.validate() }
+        catch { errorMessage = error.localizedDescription; return }
+        runCommit("保存分段", project: next)
     }
 
     func setUseLastFrameForVideo(_ enabled: Bool, segmentID: String) {
@@ -632,9 +710,7 @@ final class StoryStudioViewModel: ObservableObject {
             guard next.segments[index].archivedVideos.last != nil else { return }
         }
         next.segments[index].videoGuidanceMode = mode
-        run("保存视频衔接方式") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-        }
+        runCommit("保存视频衔接方式", project: next)
     }
 
     func adjustSegmentDurationsForVideoModel(_ segmentIDs: Set<String>, model: MediaGenerationModel) {
@@ -665,9 +741,7 @@ final class StoryStudioViewModel: ObservableObject {
         }
         guard changed else { return }
         next.models.supportedVideoDurations = supported
-        run("调整为视频模型支持的时长") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-        }
+        runCommit("调整为视频模型支持的时长", project: next)
     }
 
     func addSegment() {
@@ -677,9 +751,8 @@ final class StoryStudioViewModel: ObservableObject {
         next.segments.append(.init(id: UUID().uuidString, title: "新分段", synopsis: "请编辑本段剧情与镜头计划",
                                    sourceRange: .init(start: max(0, end - 1), end: end)))
         invalidatePlans(&next)
-        run("添加分段") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-            self.selectedSegmentID = next.segments.last?.id
+        runCommit("添加分段", project: next) { viewModel, saved in
+            viewModel.selectedSegmentID = saved.segments.last?.id
         }
     }
 
@@ -688,7 +761,7 @@ final class StoryStudioViewModel: ObservableObject {
               let index = next.segments.firstIndex(where: { $0.id == id }), next.segments.indices.contains(index + offset) else { return }
         next.segments.swapAt(index, index + offset)
         invalidatePlans(&next)
-        run("调整剧情顺序") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("调整剧情顺序", project: next)
     }
 
     func removeSegment(_ id: String) {
@@ -696,10 +769,9 @@ final class StoryStudioViewModel: ObservableObject {
         next.segments.removeAll { $0.id == id }
         next.relations.removeAll { $0.segmentID == id }
         invalidatePlans(&next)
-        run("删除分段") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-            self.selectedSegments.remove(id)
-            self.selectedSegmentID = next.segments.first?.id
+        runCommit("删除分段", project: next) { viewModel, saved in
+            viewModel.selectedSegments.remove(id)
+            viewModel.selectedSegmentID = saved.segments.first?.id
         }
     }
 

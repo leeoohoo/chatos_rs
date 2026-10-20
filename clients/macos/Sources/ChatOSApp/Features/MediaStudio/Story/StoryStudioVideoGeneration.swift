@@ -86,9 +86,7 @@ extension StoryStudioViewModel {
               let index = next.segments.firstIndex(where: { $0.id == segmentID }),
               next.segments[index].video != nil else { return }
         next.segments[index].archiveCompletedVideoForRegeneration()
-        run("保留旧视频并开放重新制作") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-        }
+        runCommit("保留旧视频并开放重新制作", project: next)
     }
 
     /// Regenerates one completed segment only after the user confirms the charge in the UI.
@@ -477,9 +475,7 @@ extension StoryStudioViewModel {
         next.segments[index].previousAttempts.append(attempt)
         next.segments[index].attempt = nil
         next.segments[index].error = nil
-        run("保留旧任务记录并允许手动重试") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-        }
+        runCommit("保留旧任务记录并允许手动重试", project: next)
     }
 
     func mediaAsset(_ image: StoryImage, projectID: UUID) -> GeneratedMediaAsset? {

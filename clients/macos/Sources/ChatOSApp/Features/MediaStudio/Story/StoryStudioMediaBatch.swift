@@ -187,6 +187,45 @@ extension StoryStudioViewModel {
             self.activeProjectID = nil
         }
     }
+    func runCommit(
+        _ label: String,
+        project: StoryProject,
+        completion: @escaping @MainActor (StoryStudioViewModel, StoryProject) -> Void = { _, _ in }
+    ) {
+        let store = store
+        let preservingVideoSegmentIDs = Set(activeVideoGenerations.lazy
+            .filter { $0.projectID == project.id }
+            .map(\.segmentID))
+        run(label) { [weak self, store] owner, token in
+            let saved = try await Self.saveStoryProject(
+                project,
+                owner: owner,
+                store: store,
+                preservingVideoSegmentIDs: preservingVideoSegmentIDs
+            )
+            guard let self, self.session == token else { return }
+            self.publishProject(saved, token: token)
+            completion(self, saved)
+        }
+    }
+    nonisolated static func saveStoryProject(
+        _ project: StoryProject,
+        owner: String,
+        store: StoryProjectStore,
+        preservingVideoSegmentIDs: Set<String>
+    ) async throws -> StoryProject {
+        try Task.checkCancellation()
+        var next = project
+        StoryContinuityContext.reconcileInheritedFirstFrames(&next)
+        next.updatedAt = Date()
+        let saved = try await store.save(
+            next,
+            owner: owner,
+            preservingVideoSegmentIDs: preservingVideoSegmentIDs
+        )
+        try Task.checkCancellation()
+        return saved
+    }
     func clearImageGenerationLockNoticeIfNeeded() {
         guard activeAssetGenerations.isEmpty, activeFrameGenerations.isEmpty,
               errorMessage == Self.imageGenerationLockNotice else { return }

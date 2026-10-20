@@ -115,22 +115,35 @@ extension StoryStudioViewModel {
             next.segments[i].confirmedFrameID = nil
             next.segments[i].confirmedLastFrameID = nil
         }
-        run("保存素材描述") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("保存素材描述", project: next)
     }
 
     func importImage(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?,
                      frameRole: StoryFrameRole = .first, confirmImported: Bool = true) {
         guard let project else { return }
-        run("保存参考图片") { owner, token in
-            try await self.attach(image, assetID: assetID, segmentID: segmentID, frameRole: frameRole,
-                                  projectID: project.id, owner: owner, token: token,
-                                  confirmsImportedImage: confirmImported)
+        let store = store
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        run("保存参考图片") { [weak self, store] owner, token in
+            let saved = try await Self.attach(
+                image,
+                assetID: assetID,
+                segmentID: segmentID,
+                frameRole: frameRole,
+                project: project,
+                owner: owner,
+                store: store,
+                preservingVideoSegmentIDs: preserving,
+                confirmsImportedImage: confirmImported
+            )
+            self?.publishProject(saved, token: token)
         }
     }
 
     func uploadImage(_ url: URL, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
         guard let project else { return }
-        run("导入本机图片") { owner, token in
+        let store = store
+        let preserving = Set(activeVideoGenerations.lazy.filter { $0.projectID == project.id }.map(\.segmentID))
+        run("导入本机图片") { [weak self, store] owner, token in
             let data = try await AppCancellableDetachedWork.run {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
@@ -140,22 +153,46 @@ extension StoryStudioViewModel {
                     maximumBytes: 20 * 1_024 * 1_024
                 )
             }
+            try Task.checkCancellation()
             let image = GeneratedMediaAsset(id: UUID().uuidString, mimeType: "image/png", base64Data: data.base64EncodedString())
-            try await self.attach(image, assetID: assetID, segmentID: segmentID, frameRole: frameRole,
-                                  projectID: project.id, owner: owner, token: token)
+            let saved = try await Self.attach(
+                image,
+                assetID: assetID,
+                segmentID: segmentID,
+                frameRole: frameRole,
+                project: project,
+                owner: owner,
+                store: store,
+                preservingVideoSegmentIDs: preserving
+            )
+            self?.publishProject(saved, token: token)
         }
     }
 
-    func attach(_ image: GeneratedMediaAsset, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first,
-                        projectID: UUID, owner: String, token: UUID,
-                        clearsGenerationAttempt: Bool = false,
-                        confirmsImportedImage: Bool = false) async throws {
+    nonisolated static func attach(
+        _ image: GeneratedMediaAsset,
+        assetID: String?,
+        segmentID: String?,
+        frameRole: StoryFrameRole = .first,
+        project: StoryProject,
+        owner: String,
+        store: StoryProjectStore,
+        preservingVideoSegmentIDs: Set<String>,
+        clearsGenerationAttempt: Bool = false,
+        confirmsImportedImage: Bool = false
+    ) async throws -> StoryProject {
         let data = try await MediaStudioImageLoader.data(for: image)
-        try check(token)
+        try Task.checkCancellation()
         let png = try await MediaStudioImageLoader.normalizedPNGData(from: data)
-        let stored = try await store.saveImage(png, mimeType: "image/png", projectID: projectID, owner: owner)
-        try check(token)
-        guard var next = projects.first(where: { $0.id == projectID }) else { throw StoryError.invalidProject }
+        try Task.checkCancellation()
+        let stored = try await store.saveImage(
+            png,
+            mimeType: "image/png",
+            projectID: project.id,
+            owner: owner
+        )
+        try Task.checkCancellation()
+        var next = project
         if let assetID, var resource = next.resource(id: assetID) {
             resource.media.images.append(stored)
             if clearsGenerationAttempt { resource.media.generationAttemptID = nil }
@@ -188,7 +225,12 @@ extension StoryStudioViewModel {
                 }
             }
         } else { throw StoryError.invalidPlan }
-        try await commit(next, owner: owner, token: token)
+        return try await saveStoryProject(
+            next,
+            owner: owner,
+            store: store,
+            preservingVideoSegmentIDs: preservingVideoSegmentIDs
+        )
     }
 
     func confirmImage(_ image: StoryImage, assetID: String?, segmentID: String?, frameRole: StoryFrameRole = .first) {
@@ -216,7 +258,7 @@ extension StoryStudioViewModel {
                 next.segments[index].confirmedLastFrameID = image.id
             }
         } else { return }
-        run("确认素材版本") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("确认素材版本", project: next)
     }
 
     func clearConfirmedLastFrame(_ segmentID: String) {
@@ -227,9 +269,7 @@ extension StoryStudioViewModel {
                 || next.segments[index].useLastFrameForVideo else { return }
         next.segments[index].confirmedLastFrameID = nil
         next.segments[index].useLastFrameForVideo = false
-        run("取消尾帧") { owner, token in
-            try await self.commit(next, owner: owner, token: token)
-        }
+        runCommit("取消尾帧", project: next)
     }
 
     func confirmLatestAssetImages(_ assetIDs: [String]) {
@@ -259,7 +299,7 @@ extension StoryStudioViewModel {
             changed = true
         }
         guard changed else { return }
-        run("确认已生成素材") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("确认已生成素材", project: next)
     }
 
     /// Promotes already-generated frame versions in one explicit, non-billable action.
@@ -288,7 +328,7 @@ extension StoryStudioViewModel {
             changed = true
         }
         guard changed else { return }
-        run("确认首尾帧") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("确认首尾帧", project: next)
     }
 
     /// Explicit user recovery after checking that an ambiguous image submission did not produce a usable result.
@@ -307,7 +347,7 @@ extension StoryStudioViewModel {
                 next.segments[index].lastFrames.generationAttemptID = nil
             }
         } else { return }
-        run("核对后允许重新生成图片") { owner, token in try await self.commit(next, owner: owner, token: token) }
+        runCommit("核对后允许重新生成图片", project: next)
     }
 
 }
