@@ -129,6 +129,14 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .spinner { width: 22px; height: 22px; border: 2px solid rgba(10,132,255,.18); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.project-state { display: grid; min-height: calc(100vh - 150px); place-items: center; }
+.project-state__card { display: grid; width: min(520px, 100%); justify-items: center; border: 1px solid rgba(255,255,255,.9); border-radius: 22px; padding: 32px; background: rgba(255,255,255,.76); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(1.25); text-align: center; }
+.project-state__icon { display: grid; width: 54px; height: 54px; margin-bottom: 20px; place-items: center; border-radius: 16px; color: var(--accent); background: linear-gradient(145deg, rgba(10,132,255,.16), rgba(10,132,255,.07)); font-size: 23px; font-weight: 650; }
+.project-state__card h2 { margin: 0 0 9px; font-size: 20px; letter-spacing: -.025em; }
+.project-state__card p { max-width: 390px; margin: 0; color: var(--secondary); font-size: 13px; line-height: 1.55; }
+.project-state__actions { margin-top: 22px; }
+.conversation-identity { max-width: 100%; margin-top: 18px; overflow: hidden; border: 1px solid var(--separator); border-radius: 8px; padding: 6px 9px; color: var(--secondary); background: rgba(120,120,128,.07); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
 .account-button { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 3px; border: 0; border-radius: 10px; padding: 8px 9px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
 .account-button:hover { background: rgba(120,120,128,.1); }
 .account-button:focus-visible { outline: 3px solid rgba(10,132,255,.24); outline-offset: 1px; }
@@ -186,7 +194,7 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
   .content-surface { background: rgba(24,24,27,.72); }
   .nav-item { color: #e7e7ec; }
   .nav-item--active { color: #64b5ff; background: rgba(10,132,255,.18); }
-  .protocol-badge, .gate-card { background: rgba(42,42,46,.72); border-color: rgba(255,255,255,.09); }
+  .protocol-badge, .gate-card, .project-state__card { background: rgba(42,42,46,.72); border-color: rgba(255,255,255,.09); }
   .authentication-restoring { background: rgba(24,24,27,.72); }
   .authentication-introduction { background: linear-gradient(145deg, rgba(10,132,255,.14), rgba(255,159,10,.04)); }
   .authentication-form-surface { background: rgba(28,28,31,.84); }

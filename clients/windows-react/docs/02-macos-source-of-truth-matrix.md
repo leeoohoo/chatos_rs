@@ -37,7 +37,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 
 | 切片 | 当前状态 | macOS UI | macOS 状态/用例 | Domain/Port | Connector/Host | 主要测试 | React 准入 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 项目会话准备 | Application 用例、账号绑定 per-project lifecycle、强类型展示阶段与 Conversation Session composition factory 已提取；SwiftUI 不再分别持有 loading/error 容器 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift` | Preparation state/use case、Session factory、Connector 竞态/绑定测试 | `macOS 分层完成，可进入 React`；仅放行项目会话准备，不放行 Conversation 时间线 |
+| 项目会话准备 | Application 用例、账号绑定 per-project lifecycle、强类型展示阶段与 Conversation Session composition factory 已提取；Windows 已按同一四态接入 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift`、Windows Registry + Host adapter | Preparation state/use case、Session factory、Connector 竞态/绑定、React latest-wins 与 Rust Registry 测试 | `macOS 分层完成，可进入 React`；项目会话准备已实现，不放行 Conversation 时间线 |
 | 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
@@ -186,6 +186,13 @@ Windows 平台差异：
 - Conversation 创建/复用仍通过 Rust Host 的 project resource binding，包括并发失败后二次查询；与 macOS 业务语义无差异；
 - Windows 的目录授权与设备/workspace 绑定由 Tauri 平台层提供，不得把绝对路径或平台凭据暴露给 React；
 - 本次 React 准入仅覆盖“选中本地项目→复用/准备 Conversation→显式四态”。Conversation 时间线、发送、项目创建/编辑/删除仍按各自门禁禁止。
+
+Windows 实现（2026-10-20）：
+
+- React 已建立独立 project-conversation Domain/Application/Port/Adapter/UI，以 per-project request identity 和 owner reset 拒绝迟到结果；失败保留到用户显式重试，不会因组件重渲染自动重放；
+- Tauri 每次准备都重新从账号隔离 Registry 读取 active 项目上下文，验证 workspace/relative root/revision；React 只传 owner 和 project ID；
+- Adapter 先分页查询 project binding，未找到才创建；创建失败后再查一次 Host 真值，接受并发胜出会话；
+- 项目点击已驱动 `idle / preparing / failed / available` 苹果主题展示；`available` 仅说明 binding 就绪，不伪造未准入的 Conversation 时间线。
 
 ## 4. Conversation：完整调用链
 

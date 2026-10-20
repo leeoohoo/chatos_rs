@@ -113,7 +113,7 @@ pub async fn refresh_workspace_relations(
     })
 }
 
-async fn list_all_conversations(
+pub(super) async fn list_all_conversations(
     manager: &HostManager,
     owner_user_id: &str,
 ) -> Result<Vec<LocalConversationRecord>, String> {
@@ -183,23 +183,7 @@ fn load_local_projects(
     database_path: &Path,
     owner_user_id: &str,
 ) -> Result<Vec<LocalProjectSummary>, String> {
-    if let Some(parent) = database_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| "无法创建本地项目目录。".to_owned())?;
-    }
-    let connection = Connection::open_with_flags(
-        database_path,
-        OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
-    )
-    .map_err(|_| "无法打开本地项目注册表。".to_owned())?;
-    connection
-        .busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|_| "无法配置本地项目注册表。".to_owned())?;
-    connection
-        .execute_batch(PROJECT_REGISTRY_SCHEMA)
-        .map_err(|_| "本地项目注册表结构无效。".to_owned())?;
-    ensure_project_type_column(&connection)?;
+    let connection = open_project_registry(database_path)?;
     let mut statement = connection
         .prepare(
             "SELECT id, name, revision, project_type_key FROM local_project_records \
@@ -223,6 +207,27 @@ fn load_local_projects(
         validate_project(project)?;
     }
     Ok(projects)
+}
+
+pub(super) fn open_project_registry(database_path: &Path) -> Result<Connection, String> {
+    if let Some(parent) = database_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| "无法创建本地项目目录。".to_owned())?;
+    }
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_FULL_MUTEX,
+    )
+    .map_err(|_| "无法打开本地项目注册表。".to_owned())?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "无法配置本地项目注册表。".to_owned())?;
+    connection
+        .execute_batch(PROJECT_REGISTRY_SCHEMA)
+        .map_err(|_| "本地项目注册表结构无效。".to_owned())?;
+    ensure_project_type_column(&connection)?;
+    Ok(connection)
 }
 
 fn ensure_project_type_column(connection: &Connection) -> Result<(), String> {
@@ -264,7 +269,7 @@ fn validate_project(project: &LocalProjectSummary) -> Result<(), String> {
     Ok(())
 }
 
-const PROJECT_REGISTRY_SCHEMA: &str = "
+pub(super) const PROJECT_REGISTRY_SCHEMA: &str = "
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS local_project_records (
         owner_user_id TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL,

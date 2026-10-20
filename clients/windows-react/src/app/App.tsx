@@ -4,6 +4,7 @@ import { useAuthenticationStore } from "../features/authentication/application/a
 import { AuthenticationGate } from "../features/authentication/ui/AuthenticationGate";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
+import { TauriProjectConversationAdapter } from "../features/project-conversation/adapters/TauriProjectConversationAdapter";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
 import { WindowControls } from "../platform/window/ui/WindowControls";
 import { TauriWorkspaceIndexAdapter } from "../features/workspace-index/adapters/TauriWorkspaceIndexAdapter";
@@ -13,6 +14,7 @@ const authentication = new TauriAuthenticationAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
+const projectConversation = new TauriProjectConversationAdapter();
 
 export function App() {
   return (
@@ -42,6 +44,7 @@ function ApplicationRoot() {
           <AppShell
             hostLifecycle={hostLifecycle}
             workspaceIndex={workspaceIndex}
+            projectConversation={projectConversation}
             session={session}
             onLogout={() => logout(authentication, () => stopHost(hostLifecycle))}
           />

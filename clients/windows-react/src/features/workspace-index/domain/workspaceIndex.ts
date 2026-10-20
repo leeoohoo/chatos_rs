@@ -44,6 +44,11 @@ export interface WorkspaceIndexSnapshot {
   projects: WorkspaceResourceItem[];
 }
 
+export type WorkspaceSelection =
+  | { kind: "workbench" }
+  | { kind: "contact"; id: string }
+  | { kind: "project"; id: string };
+
 export function resolveWorkspaceIndex(
   projects: LocalProject[],
   relations: WorkspaceRelations,

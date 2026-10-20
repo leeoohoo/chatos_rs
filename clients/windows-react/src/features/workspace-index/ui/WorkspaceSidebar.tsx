@@ -1,23 +1,27 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { useWorkspaceIndexStore } from "../application/workspaceIndexStore";
+import type { WorkspaceSelection } from "../domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../ports/WorkspaceIndexPort";
 
 interface WorkspaceSidebarProps {
   ownerUserId: string;
   hostReady: boolean;
   workspaceIndex: WorkspaceIndexPort;
+  selection: WorkspaceSelection;
+  onSelectionChange(selection: WorkspaceSelection): void;
 }
 
 export function WorkspaceSidebar({
   ownerUserId,
   hostReady,
   workspaceIndex,
+  selection,
+  onSelectionChange,
 }: WorkspaceSidebarProps) {
   const snapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const isLoading = useWorkspaceIndexStore((state) => state.isLoading);
   const errorMessage = useWorkspaceIndexStore((state) => state.errorMessage);
   const load = useWorkspaceIndexStore((state) => state.load);
-  const [selection, setSelection] = useState<string>("workbench");
 
   useEffect(() => {
     void load(workspaceIndex, ownerUserId, hostReady);
@@ -26,8 +30,8 @@ export function WorkspaceSidebar({
   return (
     <nav className="workspace-navigation" aria-label="资源导航">
       <button
-        className={`nav-item ${selection === "workbench" ? "nav-item--active" : ""}`}
-        onClick={() => setSelection("workbench")}
+        className={`nav-item ${selection.kind === "workbench" ? "nav-item--active" : ""}`}
+        onClick={() => onSelectionChange({ kind: "workbench" })}
         type="button"
       >
         <span className="nav-symbol">⌂</span>
@@ -39,10 +43,10 @@ export function WorkspaceSidebar({
         {snapshot.contacts.map((contact) => (
           <ResourceButton
             key={contact.id}
-            active={selection === `contact:${contact.id}`}
+            active={selection.kind === "contact" && selection.id === contact.id}
             icon={contact.id === "plugin-installer" ? "◇" : "●"}
             item={contact}
-            onSelect={() => setSelection(`contact:${contact.id}`)}
+            onSelect={() => onSelectionChange({ kind: "contact", id: contact.id })}
           />
         ))}
       </SidebarSection>
@@ -56,10 +60,10 @@ export function WorkspaceSidebar({
           snapshot.projects.map((project) => (
             <ResourceButton
               key={project.id}
-              active={selection === `project:${project.id}`}
+              active={selection.kind === "project" && selection.id === project.id}
               icon="▱"
               item={project}
-              onSelect={() => setSelection(`project:${project.id}`)}
+              onSelect={() => onSelectionChange({ kind: "project", id: project.id })}
             />
           ))
         )}

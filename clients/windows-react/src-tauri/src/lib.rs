@@ -1,5 +1,6 @@
 mod authentication;
 mod host_lifecycle;
+mod project_conversation;
 mod workspace_index;
 
 use authentication::{
@@ -10,6 +11,7 @@ use host_lifecycle::{
     host_diagnostics, host_lifecycle_snapshot, start_local_agent_host, stop_local_agent_host,
     HostManager,
 };
+use project_conversation::prepare_project_conversation;
 use tauri::Manager;
 use workspace_index::{list_local_projects, refresh_workspace_relations};
 
@@ -28,6 +30,7 @@ pub fn run() {
             logout,
             list_local_projects,
             refresh_workspace_relations,
+            prepare_project_conversation,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,
