@@ -66,7 +66,6 @@ final class PetOverlayCoordinator {
 
         store.startExpirationMonitoring()
         store.onDisposition = { [weak self, weak model] activity, disposition in
-            guard activity.inboxID != nil else { return }
             Task {
                 do {
                     try await model?.applyPetActivityDisposition(disposition, to: activity)

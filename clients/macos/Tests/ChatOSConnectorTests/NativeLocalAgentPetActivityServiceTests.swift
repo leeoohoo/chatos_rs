@@ -4,6 +4,78 @@ import Foundation
 import XCTest
 
 final class NativeLocalAgentPetActivityServiceTests: XCTestCase {
+    func testIgnoredLocalRunStaysHiddenAcrossRefreshAndServiceRestart() async throws {
+        let suiteName = "NativeLocalAgentPetActivityServiceTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let host = PetActivityHostStub()
+        let service = NativeLocalAgentPetActivityService(
+            host: host,
+            dismissalDefaultsSuiteName: suiteName
+        )
+        await service.configure(ownerUserID: "user-1")
+        let initialActivities = try await service.fetchOpenActivities()
+        let activity = try XCTUnwrap(
+            initialActivities.first(where: {
+                $0.route.runID == "run-task"
+            })
+        )
+
+        try await service.apply(.ignored, to: activity)
+
+        let refreshedActivities = try await service.fetchOpenActivities()
+        XCTAssertFalse(refreshedActivities.contains(where: {
+            $0.id == activity.id
+        }))
+        let restartedService = NativeLocalAgentPetActivityService(
+            host: host,
+            dismissalDefaultsSuiteName: suiteName
+        )
+        await restartedService.configure(ownerUserID: "user-1")
+        let restartedActivities = try await restartedService.fetchOpenActivities()
+        XCTAssertFalse(restartedActivities.contains(where: {
+            $0.id == activity.id
+        }))
+    }
+
+    func testDismissalIsOwnerAndRunVersionScoped() async throws {
+        let suiteName = "NativeLocalAgentPetActivityServiceTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let originalService = NativeLocalAgentPetActivityService(
+            host: PetActivityHostStub(terminalRunVersion: 4),
+            dismissalDefaultsSuiteName: suiteName
+        )
+        await originalService.configure(ownerUserID: "user-1")
+        let originalActivities = try await originalService.fetchOpenActivities()
+        let original = try XCTUnwrap(
+            originalActivities.first(where: {
+                $0.route.runID == "run-task"
+            })
+        )
+        try await originalService.apply(.ignored, to: original)
+
+        let otherOwnerService = NativeLocalAgentPetActivityService(
+            host: PetActivityHostStub(terminalRunVersion: 4),
+            dismissalDefaultsSuiteName: suiteName
+        )
+        await otherOwnerService.configure(ownerUserID: "user-2")
+        let otherOwnerActivities = try await otherOwnerService.fetchOpenActivities()
+        XCTAssertTrue(otherOwnerActivities.contains(where: {
+            $0.route.runID == "run-task"
+        }))
+
+        let updatedRunService = NativeLocalAgentPetActivityService(
+            host: PetActivityHostStub(terminalRunVersion: 5),
+            dismissalDefaultsSuiteName: suiteName
+        )
+        await updatedRunService.configure(ownerUserID: "user-1")
+        let updatedRunActivities = try await updatedRunService.fetchOpenActivities()
+        XCTAssertTrue(updatedRunActivities.contains(where: {
+            $0.route.runID == "run-task" && $0.activityVersion == "5"
+        }))
+    }
+
     func testInterruptedActivityUsesTheSameLocalizedReasonAsTaskDetails() async throws {
         let host = PetActivityHostStub(interruptedTask: true)
         let service = NativeLocalAgentPetActivityService(host: host)
@@ -108,11 +180,18 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
     private let hasSurvey: Bool
     private let taskSurvey: Bool
     private let interruptedTask: Bool
+    private let terminalRunVersion: Int
 
-    init(hasSurvey: Bool = false, taskSurvey: Bool = false, interruptedTask: Bool = false) {
+    init(
+        hasSurvey: Bool = false,
+        taskSurvey: Bool = false,
+        interruptedTask: Bool = false,
+        terminalRunVersion: Int = 4
+    ) {
         self.hasSurvey = hasSurvey
         self.taskSurvey = taskSurvey
         self.interruptedTask = interruptedTask
+        self.terminalRunVersion = terminalRunVersion
     }
 
     func start(ownerUserID: String) async throws {}
@@ -179,7 +258,7 @@ private actor PetActivityHostStub: LocalAgentHostClientServicing {
                 "capability_policy_revision": "policy-1",
                 "input": [:],
                 "status": interruptedTask ? "needs_review" : "failed",
-                "version": 4,
+                "version": terminalRunVersion,
                 "terminal_outcome": interruptedTask
                     ? ["reason_code": "execution_interrupted", "error": "Execution was interrupted"]
                     : ["error": "build failed"],

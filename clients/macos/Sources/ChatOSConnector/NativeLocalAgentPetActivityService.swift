@@ -5,15 +5,20 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
     private let client: NativeLocalAgentRuntimeClient
     private let eventHub: NativeLocalAgentEventHub
     private let surveyClient: NativeLocalAgentRequirementSurveyClient
+    private let dismissalStore: NativeLocalAgentPetActivityDismissalStore
     private var ownerUserID: String?
 
     public init(
         host: any LocalAgentHostClientServicing,
-        eventHub: NativeLocalAgentEventHub? = nil
+        eventHub: NativeLocalAgentEventHub? = nil,
+        dismissalDefaultsSuiteName: String? = nil
     ) {
         self.client = NativeLocalAgentRuntimeClient(host: host)
         self.surveyClient = NativeLocalAgentRequirementSurveyClient(host: host)
         self.eventHub = eventHub ?? NativeLocalAgentEventHub(host: host)
+        self.dismissalStore = NativeLocalAgentPetActivityDismissalStore(
+            defaultsSuiteName: dismissalDefaultsSuiteName
+        )
     }
 
     public func configure(ownerUserID: String) async {
@@ -51,21 +56,31 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         let surveysByRun = Dictionary(openSurveys.filter {
             $0.ownerUserID == ownerUserID && waitingRunIDs.contains($0.sourceRunID)
         }.map { ($0.sourceRunID, $0) }, uniquingKeysWith: { first, _ in first })
-        return (pages.0.runs + pages.1.runs)
+        let activities = (pages.0.runs + pages.1.runs)
             .filter { run in
                 !Self.isTerminal(run.status)
                     || Self.date(run.updatedAtUnixMs) >= recentCutoff
             }
             .prefix(max(1, limit))
             .map { Self.activity($0, survey: surveysByRun[$0.runID]) }
+        return activities.filter {
+            !dismissalStore.contains(ownerUserID: ownerUserID, activity: $0)
+        }
     }
 
     public func apply(
         _ disposition: PetActivityDisposition,
         to activity: PetActivity
     ) async throws {
-        // Local activities are projections of durable Run state. Dismissal is
-        // intentionally UI-local; it must not mutate or delete execution facts.
+        guard let ownerUserID,
+              Self.isLocalRunActivity(activity) else { return }
+        // Keep dismissal separate from the durable Run. The Run remains available
+        // in execution history while this exact user-visible version stays hidden.
+        try dismissalStore.record(
+            ownerUserID: ownerUserID,
+            activity: activity,
+            disposition: disposition
+        )
     }
 
     public func petActivityEvents() async -> AsyncThrowingStream<PetActivityEvent, Error> {
@@ -181,8 +196,69 @@ public actor NativeLocalAgentPetActivityService: PetActivityStreaming {
         status == "succeeded" || status == "failed" || status == "cancelled"
     }
 
+    private static func isLocalRunActivity(_ activity: PetActivity) -> Bool {
+        guard let runID = activity.route.runID else { return false }
+        return activity.id == "local-run:\(runID)"
+    }
+
     private static func date(_ unixMilliseconds: Int64) -> Date {
         Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000)
+    }
+}
+
+private struct NativeLocalAgentPetActivityDismissalStore: @unchecked Sendable {
+    private struct Entry: Codable {
+        let disposition: PetActivityDisposition
+        let recordedAt: Date
+    }
+
+    private let defaults: UserDefaults
+    private let storageKey = "ChatOS.localAgentPetActivityDismissals.v1"
+    private let maximumEntries = 512
+
+    init(defaultsSuiteName: String?) {
+        self.defaults = defaultsSuiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+    }
+
+    func contains(ownerUserID: String, activity: PetActivity) -> Bool {
+        load()[identity(ownerUserID: ownerUserID, activity: activity)] != nil
+    }
+
+    func record(
+        ownerUserID: String,
+        activity: PetActivity,
+        disposition: PetActivityDisposition
+    ) throws {
+        var entries = load()
+        entries[identity(ownerUserID: ownerUserID, activity: activity)] = Entry(
+            disposition: disposition,
+            recordedAt: Date()
+        )
+        if entries.count > maximumEntries {
+            entries = Dictionary(
+                uniqueKeysWithValues: entries
+                    .sorted { $0.value.recordedAt > $1.value.recordedAt }
+                    .prefix(maximumEntries)
+                    .map { ($0.key, $0.value) }
+            )
+        }
+        defaults.set(try JSONEncoder().encode(entries), forKey: storageKey)
+    }
+
+    private func load() -> [String: Entry] {
+        guard let data = defaults.data(forKey: storageKey),
+              let entries = try? JSONDecoder().decode([String: Entry].self, from: data) else {
+            return [:]
+        }
+        return entries
+    }
+
+    private func identity(ownerUserID: String, activity: PetActivity) -> String {
+        let version = activity.activityVersion
+            ?? activity.eventID
+            ?? activity.route.runID
+            ?? "1"
+        return "\(ownerUserID)|\(activity.id)|\(version)"
     }
 }
 
