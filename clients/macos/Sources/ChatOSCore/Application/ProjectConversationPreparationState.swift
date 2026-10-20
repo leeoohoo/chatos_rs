@@ -2,11 +2,21 @@ import Foundation
 
 public struct ProjectConversationPreparationToken: Sendable, Equatable {
     public let projectID: String
+    public let ownerUserID: String
+    public let accountGeneration: UInt64
     public let generation: UInt64
     public let requestID: UUID
 
-    public init(projectID: String, generation: UInt64, requestID: UUID) {
+    public init(
+        projectID: String,
+        ownerUserID: String,
+        accountGeneration: UInt64,
+        generation: UInt64,
+        requestID: UUID
+    ) {
         self.projectID = projectID
+        self.ownerUserID = ownerUserID
+        self.accountGeneration = accountGeneration
         self.generation = generation
         self.requestID = requestID
     }
@@ -28,11 +38,17 @@ public struct ProjectConversationPreparationState: Sendable, Equatable {
 
     public init() {}
 
-    public mutating func begin(projectID: String) -> ProjectConversationPreparationToken {
+    public mutating func begin(
+        projectID: String,
+        ownerUserID: String,
+        accountGeneration: UInt64
+    ) -> ProjectConversationPreparationToken {
         let generation = (lastGenerations[projectID] ?? 0) &+ 1
         lastGenerations[projectID] = generation
         let token = ProjectConversationPreparationToken(
             projectID: projectID,
+            ownerUserID: ownerUserID,
+            accountGeneration: accountGeneration,
             generation: generation,
             requestID: UUID()
         )
@@ -49,8 +65,14 @@ public struct ProjectConversationPreparationState: Sendable, Equatable {
         activeTokens[projectID] != nil
     }
 
-    public func accepts(_ token: ProjectConversationPreparationToken) -> Bool {
+    public func accepts(
+        _ token: ProjectConversationPreparationToken,
+        ownerUserID: String?,
+        accountGeneration: UInt64
+    ) -> Bool {
         activeTokens[token.projectID] == token
+            && token.ownerUserID == ownerUserID
+            && token.accountGeneration == accountGeneration
     }
 
     @discardableResult
@@ -58,7 +80,7 @@ public struct ProjectConversationPreparationState: Sendable, Equatable {
         _ token: ProjectConversationPreparationToken,
         errorMessage: String? = nil
     ) -> Bool {
-        guard accepts(token) else { return false }
+        guard activeTokens[token.projectID] == token else { return false }
         activeTokens[token.projectID] = nil
         if let errorMessage {
             phases[token.projectID] = .failed(message: errorMessage)

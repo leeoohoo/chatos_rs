@@ -286,8 +286,12 @@ extension AppModel {
               let contact = defaultProjectContact,
               let prepareProjectConversationUseCase else { return }
 
-        let token = projectConversationPreparationState.begin(projectID: projectID)
         let accountGeneration = workspaceAccountGeneration
+        let token = projectConversationPreparationState.begin(
+            projectID: projectID,
+            ownerUserID: ownerUserID,
+            accountGeneration: accountGeneration
+        )
         let existingConversationID = projects.first(where: { $0.id == projectID })?.conversationID
         projectConversationPreparationTasks[projectID] = Task { [weak self] in
             let result: Result<(conversationID: String, shouldApply: Bool), Error>
@@ -308,9 +312,12 @@ extension AppModel {
 
             guard let self,
                   self.authenticatedUserID == ownerUserID,
-                  self.workspaceAccountGeneration == accountGeneration,
                   self.workspaceProject(id: projectID) != nil,
-                  self.projectConversationPreparationState.accepts(token) else { return }
+                  self.projectConversationPreparationState.accepts(
+                      token,
+                      ownerUserID: self.authenticatedUserID,
+                      accountGeneration: self.workspaceAccountGeneration
+                  ) else { return }
             switch result {
             case let .success(prepared):
                 if prepared.shouldApply {
@@ -366,10 +373,19 @@ extension AppModel {
             project: project,
             contact: contact
         )
-        guard owner == authenticatedUserID,
-              accountGeneration == workspaceAccountGeneration,
-              workspaceProject(id: projectID) != nil,
-              preparationToken.map(projectConversationPreparationState.accepts) ?? true else {
+        let acceptsPreparation: Bool
+        if let preparationToken {
+            acceptsPreparation = projectConversationPreparationState.accepts(
+                preparationToken,
+                ownerUserID: authenticatedUserID,
+                accountGeneration: workspaceAccountGeneration
+            )
+        } else {
+            acceptsPreparation = owner == authenticatedUserID
+                && accountGeneration == workspaceAccountGeneration
+        }
+        guard workspaceProject(id: projectID) != nil,
+              acceptsPreparation else {
             throw CancellationError()
         }
         applyPreparedConversation(
