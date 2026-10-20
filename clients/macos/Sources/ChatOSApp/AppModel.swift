@@ -81,7 +81,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let petDefaultFileHandlerPrompt = PetDefaultFileHandlerPromptController()
     let petOverlayStore = PetOverlayStore()
     let globalUtilityPreferences = GlobalUtilityPreferencesStore()
-    let terminalWorkspace = TerminalWorkspaceViewModel()
+    let terminalWorkspace: TerminalWorkspaceViewModel
     private(set) lazy var globalUtilityCoordinator = GlobalUtilityCoordinator(
         model: self,
         preferences: globalUtilityPreferences
@@ -246,6 +246,11 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
 
         self.historyStore = historyStore
         self.apiClient = apiClient
+        self.terminalWorkspace = TerminalWorkspaceViewModel(
+            useCase: LocalTerminalUseCase(
+                provider: NativeLocalTerminalSessionProvider()
+            )
+        )
         self.authentication = AuthenticationViewModel(service: authenticationService)
         self.localConnectorControl = LocalConnectorControlCenterViewModel(
             service: localConnectorService

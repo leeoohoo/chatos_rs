@@ -33,10 +33,10 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
     private var connectTask: Task<Void, Never>?
     private var sessionEventTask: Task<Void, Never>?
 
-    private(set) lazy var terminalView: NativeRemoteTerminalView = {
+    private(set) lazy var terminalView: NativeByteStreamTerminalView = {
         var options = TerminalOptions.default
         options.scrollback = 10_000
-        let view = NativeRemoteTerminalView(
+        let view = NativeByteStreamTerminalView(
             frame: .zero,
             font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
             options: options
@@ -304,20 +304,20 @@ final class NativeRemoteTerminalViewModel: ObservableObject {
 struct NativeRemoteTerminalSurface: NSViewRepresentable {
     @ObservedObject var terminal: NativeRemoteTerminalViewModel
 
-    func makeNSView(context: Context) -> NativeRemoteTerminalView {
+    func makeNSView(context: Context) -> NativeByteStreamTerminalView {
         let view = terminal.terminalView
         terminal.startIfNeeded()
         DispatchQueue.main.async { terminal.focus() }
         return view
     }
 
-    func updateNSView(_ view: NativeRemoteTerminalView, context: Context) {
+    func updateNSView(_ view: NativeByteStreamTerminalView, context: Context) {
         view.nativeForegroundColor = .textColor
         view.nativeBackgroundColor = .textBackgroundColor
     }
 }
 
-final class NativeRemoteTerminalView: TerminalView, @preconcurrency TerminalViewDelegate {
+final class NativeByteStreamTerminalView: TerminalView, @preconcurrency TerminalViewDelegate {
     var inputHandler: ((Data) -> Void)?
     var resizeHandler: ((Int, Int) -> Void)?
     var titleHandler: ((String) -> Void)?

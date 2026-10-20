@@ -1,5 +1,5 @@
 import AppKit
-import Darwin
+import ChatOSCore
 import Foundation
 import SwiftTerm
 import SwiftUI
@@ -17,18 +17,24 @@ final class NativeLocalTerminalViewModel: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var title: String
     @Published private(set) var workingDirectory: String
+    @Published private(set) var shellName = "Shell"
     @Published var searchText = "" {
         didSet { updateSearch() }
     }
 
+    let id: UUID
+
     private let initialWorkingDirectory: String
-    private var observer: NativeTerminalProcessObserver?
+    private let useCase: LocalTerminalUseCase
+    private var lifecycle = LocalTerminalLifecycleState()
+    private var session: (any LocalTerminalSessionPort)?
+    private var eventTask: Task<Void, Never>?
     private var hasStarted = false
 
-    private(set) lazy var terminalView: LocalProcessTerminalView = {
+    private(set) lazy var terminalView: NativeByteStreamTerminalView = {
         var options = TerminalOptions.default
         options.scrollback = 10_000
-        let view = RestrictedLocalProcessTerminalView(
+        let view = NativeByteStreamTerminalView(
             frame: .zero,
             font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
             options: options
@@ -39,18 +45,29 @@ final class NativeLocalTerminalViewModel: ObservableObject {
         view.optionAsMetaKey = true
         view.allowMouseReporting = true
         view.linkReporting = .implicit
-        let observer = NativeTerminalProcessObserver(owner: self)
-        self.observer = observer
-        view.processDelegate = observer
+        view.inputHandler = { [weak self] data in self?.session?.send(data) }
+        view.resizeHandler = { [weak self] columns, rows in
+            self?.session?.resize(columns: columns, rows: rows)
+        }
+        view.titleHandler = { [weak self] title in self?.updateTitle(title) }
+        view.workingDirectoryHandler = { [weak self] directory in
+            self?.updateWorkingDirectory(directory)
+        }
         return view
     }()
 
-    init(workingDirectory: String) {
+    init(
+        id: UUID = UUID(),
+        workingDirectory: String,
+        useCase: LocalTerminalUseCase
+    ) {
+        self.id = id
+        self.useCase = useCase
         let normalized = URL(fileURLWithPath: workingDirectory).standardizedFileURL.path
-        self.initialWorkingDirectory = normalized
+        initialWorkingDirectory = normalized
         self.workingDirectory = normalized
         let directoryName = URL(fileURLWithPath: normalized).lastPathComponent
-        self.title = directoryName.isEmpty ? "终端" : directoryName
+        title = directoryName.isEmpty ? "终端" : directoryName
     }
 
     var statusTitle: String {
@@ -72,25 +89,32 @@ final class NativeLocalTerminalViewModel: ObservableObject {
         }
     }
 
-    var shellName: String {
-        URL(fileURLWithPath: resolvedShellPath()).lastPathComponent
-    }
-
     func startIfNeeded() {
         guard !hasStarted, state == .idle else { return }
         hasStarted = true
-        let shell = resolvedShellPath()
-        let view = terminalView
-        view.startProcess(
-            executable: shell,
-            args: ["-l"],
-            environment: terminalEnvironment(),
-            currentDirectory: initialWorkingDirectory
-        )
-        if view.process?.running == true {
+        let token = lifecycle.begin(terminalID: id)
+        do {
+            let session = try useCase.open(workingDirectory: initialWorkingDirectory)
+            self.session = session
+            shellName = session.shellName
+            observe(session: session, token: token)
+            session.start(
+                columns: max(terminalView.terminal.cols, 1),
+                rows: max(terminalView.terminal.rows, 1)
+            )
+            guard session.isRunning else {
+                eventTask?.cancel()
+                eventTask = nil
+                self.session = nil
+                _ = lifecycle.finish(token)
+                session.close()
+                state = .failed("无法启动登录 Shell：\(session.shellName)")
+                return
+            }
             state = .running
-        } else {
-            state = .failed("无法启动登录 Shell：\(shell)")
+        } catch {
+            _ = lifecycle.finish(token)
+            state = .failed(error.localizedDescription)
         }
     }
 
@@ -100,8 +124,7 @@ final class NativeLocalTerminalViewModel: ObservableObject {
 
     func interrupt() {
         guard state == .running else { return }
-        let interrupt: [UInt8] = [3]
-        terminalView.process?.send(data: interrupt[...])
+        session?.interrupt()
     }
 
     func clear() {
@@ -123,29 +146,51 @@ final class NativeLocalTerminalViewModel: ObservableObject {
 
     func close() {
         guard state != .closed else { return }
-        if let process = terminalView.process,
-           process.running,
-           process.shellPid > 0 {
-            // SwiftTerm creates a new session for the PTY child. Signalling the
-            // process group prevents jobs started by the shell from surviving
-            // an explicit terminal-tab close.
-            _ = Darwin.kill(-process.shellPid, SIGHUP)
-        }
-        terminalView.terminate()
+        eventTask?.cancel()
+        eventTask = nil
+        lifecycle.reset()
+        session?.close()
+        session = nil
         state = .closed
     }
 
-    fileprivate func processTerminated(exitCode: Int32?) {
-        guard state != .closed else { return }
-        state = .exited(exitCode)
+    private func observe(
+        session: any LocalTerminalSessionPort,
+        token: LocalTerminalSessionToken
+    ) {
+        eventTask?.cancel()
+        let events = session.events()
+        eventTask = Task { [weak self] in
+            for await event in events {
+                guard !Task.isCancelled,
+                      let self,
+                      self.lifecycle.accepts(token) else { return }
+                switch event {
+                case let .output(data):
+                    self.terminalView.feed(byteArray: [UInt8](data)[...])
+                case let .terminated(exitCode):
+                    guard self.lifecycle.finish(token) else { return }
+                    self.eventTask = nil
+                    self.session = nil
+                    self.state = .exited(exitCode)
+                    return
+                case let .failed(message):
+                    guard self.lifecycle.finish(token) else { return }
+                    self.eventTask = nil
+                    self.session = nil
+                    self.state = .failed(message)
+                    return
+                }
+            }
+        }
     }
 
-    fileprivate func updateTitle(_ value: String) {
+    private func updateTitle(_ value: String) {
         let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalized.isEmpty { title = normalized }
     }
 
-    fileprivate func updateWorkingDirectory(_ value: String?) {
+    private func updateWorkingDirectory(_ value: String?) {
         guard let value else { return }
         let path: String
         if let url = URL(string: value), url.isFileURL {
@@ -165,75 +210,25 @@ final class NativeLocalTerminalViewModel: ObservableObject {
             terminalView.findNext(query)
         }
     }
-
-    private func resolvedShellPath() -> String {
-        let configured = ProcessInfo.processInfo.environment["SHELL"] ?? ""
-        if configured.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: configured) {
-            return configured
-        }
-        return "/bin/zsh"
-    }
-
-    private func terminalEnvironment() -> [String] {
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
-        return environment
-            .map { "\($0.key)=\($0.value)" }
-            .sorted()
-    }
 }
 
 struct NativeLocalTerminalSurface: NSViewRepresentable {
     @ObservedObject var terminal: NativeLocalTerminalViewModel
 
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
+    func makeNSView(context: Context) -> NativeByteStreamTerminalView {
         let view = terminal.terminalView
         terminal.startIfNeeded()
         DispatchQueue.main.async { terminal.focus() }
         return view
     }
 
-    func updateNSView(_ view: LocalProcessTerminalView, context: Context) {
+    func updateNSView(_ view: NativeByteStreamTerminalView, context: Context) {
         view.nativeForegroundColor = .textColor
         view.nativeBackgroundColor = .textBackgroundColor
     }
 
-    static func dismantleNSView(_ view: LocalProcessTerminalView, coordinator: Void) {
-        // Switching resources only detaches the AppKit view. The owning tab
-        // explicitly closes the PTY through NativeLocalTerminalViewModel.
-    }
-}
-
-private final class NativeTerminalProcessObserver: NSObject, LocalProcessTerminalViewDelegate {
-    private weak var owner: NativeLocalTerminalViewModel?
-
-    init(owner: NativeLocalTerminalViewModel) {
-        self.owner = owner
-    }
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        Task { @MainActor [weak owner] in owner?.updateTitle(title) }
-    }
-
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        Task { @MainActor [weak owner] in owner?.updateWorkingDirectory(directory) }
-    }
-
-    func processTerminated(source: TerminalView, exitCode: Int32?) {
-        Task { @MainActor [weak owner] in owner?.processTerminated(exitCode: exitCode) }
-    }
-}
-
-private final class RestrictedLocalProcessTerminalView: LocalProcessTerminalView {
-    override func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-        guard let url = URL(string: link),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https", "mailto"].contains(scheme) else {
-            return
-        }
-        NSWorkspace.shared.open(url)
+    static func dismantleNSView(_ view: NativeByteStreamTerminalView, coordinator: Void) {
+        // Switching resources only detaches the renderer. The owning tab
+        // explicitly closes its Core session through the feature ViewModel.
     }
 }

@@ -1,3 +1,4 @@
+import ChatOSCore
 import Foundation
 import SwiftUI
 
@@ -15,9 +16,14 @@ final class TerminalWorkspaceViewModel: ObservableObject {
     @Published var selectedSessionID: UUID?
 
     private let workingDirectory: String
+    private let useCase: LocalTerminalUseCase
 
-    init(workingDirectory: String = FileManager.default.currentDirectoryPath) {
+    init(
+        workingDirectory: String = FileManager.default.currentDirectoryPath,
+        useCase: LocalTerminalUseCase
+    ) {
         self.workingDirectory = workingDirectory
+        self.useCase = useCase
         createTerminal()
     }
 
@@ -27,9 +33,14 @@ final class TerminalWorkspaceViewModel: ObservableObject {
     }
 
     func createTerminal() {
+        let id = UUID()
         let session = Session(
-            id: UUID(),
-            terminal: NativeLocalTerminalViewModel(workingDirectory: workingDirectory)
+            id: id,
+            terminal: NativeLocalTerminalViewModel(
+                id: id,
+                workingDirectory: workingDirectory,
+                useCase: useCase
+            )
         )
         sessions.append(session)
         selectedSessionID = session.id

@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ChatOSCore
 @testable import ChatOSApp
 
 @Suite("Native macOS terminal")
@@ -7,7 +8,10 @@ import Testing
 struct NativeTerminalTests {
     @Test("closing a terminal is idempotent")
     func closeIsIdempotent() {
-        let terminal = NativeLocalTerminalViewModel(workingDirectory: "/tmp")
+        let terminal = NativeLocalTerminalViewModel(
+            workingDirectory: "/tmp",
+            useCase: makeUseCase()
+        )
 
         terminal.close()
         terminal.close()
@@ -17,7 +21,10 @@ struct NativeTerminalTests {
 
     @Test("workspace closes the PTY before replacing its last tab")
     func workspaceClosesPTYBeforeReplacingLastTab() {
-        let workspace = TerminalWorkspaceViewModel(workingDirectory: "/tmp")
+        let workspace = TerminalWorkspaceViewModel(
+            workingDirectory: "/tmp",
+            useCase: makeUseCase()
+        )
         let original = workspace.sessions[0]
 
         workspace.closeTerminal(id: original.id)
@@ -29,7 +36,10 @@ struct NativeTerminalTests {
 
     @Test("workspace can release all terminals and lazily create a new tab")
     func workspaceApplicationLifecycle() {
-        let workspace = TerminalWorkspaceViewModel(workingDirectory: "/tmp")
+        let workspace = TerminalWorkspaceViewModel(
+            workingDirectory: "/tmp",
+            useCase: makeUseCase()
+        )
         let original = workspace.sessions[0]
 
         workspace.closeAllTerminals()
@@ -43,22 +53,19 @@ struct NativeTerminalTests {
         #expect(workspace.sessions[0].id != original.id)
     }
 
-    @Test("login shell accepts streaming input through its PTY")
-    func localPTYSmokeTest() async throws {
+    @Test("terminal renders byte-stream output and applies termination")
+    func localTerminalByteStream() async throws {
         let marker = "__CHATOS_NATIVE_PTY_\(UUID().uuidString)__"
-        let terminal = NativeLocalTerminalViewModel(workingDirectory: "/tmp")
+        let session = LocalTerminalSessionStub()
+        let terminal = NativeLocalTerminalViewModel(
+            workingDirectory: "/tmp",
+            useCase: makeUseCase(session: session)
+        )
         defer { terminal.close() }
 
         terminal.startIfNeeded()
         #expect(terminal.state == .running)
-
-        terminal.terminalView.send(txt: "printf '\(marker)|%s|%s\\n' \"$TERM\" \"$COLORTERM\"; exit\n")
-
-        try await waitUntil(timeout: .seconds(5)) {
-            if case .exited = terminal.state { return true }
-            return false
-        }
-        let expectedOutput = "\(marker)|xterm-256color|truecolor"
+        session.emit(.output(Data("\(marker)\n".utf8)))
         try await waitUntil(timeout: .seconds(5)) {
             String(
                 decoding: terminal.terminalView.terminal.getBufferAsData(),
@@ -66,16 +73,18 @@ struct NativeTerminalTests {
             )
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "")
-            .contains(expectedOutput)
+            .contains(marker)
         }
-        let contents = String(
-            decoding: terminal.terminalView.terminal.getBufferAsData(),
-            as: UTF8.self
-        )
-        let unwrappedContents = contents
-            .replacingOccurrences(of: "\r", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-        #expect(unwrappedContents.contains(expectedOutput))
+        session.emit(.terminated(exitCode: 0))
+        try await waitUntil(timeout: .seconds(5)) {
+            terminal.state == .exited(0)
+        }
+    }
+
+    private func makeUseCase(
+        session: LocalTerminalSessionStub = .init()
+    ) -> LocalTerminalUseCase {
+        LocalTerminalUseCase(provider: LocalTerminalProviderStub(session: session))
     }
 
     private func waitUntil(
@@ -90,6 +99,49 @@ struct NativeTerminalTests {
                 return
             }
             try await Task.sleep(for: .milliseconds(20))
+        }
+    }
+}
+
+private struct LocalTerminalProviderStub: LocalTerminalSessionProviding {
+    let session: LocalTerminalSessionStub
+
+    func makeLocalTerminalSession(
+        workingDirectory: String
+    ) throws -> any LocalTerminalSessionPort {
+        session
+    }
+}
+
+private final class LocalTerminalSessionStub: LocalTerminalSessionPort,
+    @unchecked Sendable {
+    let shellName = "test-shell"
+    private(set) var isRunning = false
+    private let stream: AsyncStream<LocalTerminalEvent>
+    private let continuation: AsyncStream<LocalTerminalEvent>.Continuation
+
+    init() {
+        let pair = AsyncStream<LocalTerminalEvent>.makeStream()
+        stream = pair.stream
+        continuation = pair.continuation
+    }
+
+    func events() -> AsyncStream<LocalTerminalEvent> { stream }
+    func start(columns: Int, rows: Int) { isRunning = true }
+    func send(_ data: Data) {}
+    func resize(columns: Int, rows: Int) {}
+    func interrupt() {}
+
+    func close() {
+        isRunning = false
+        continuation.finish()
+    }
+
+    func emit(_ event: LocalTerminalEvent) {
+        continuation.yield(event)
+        if case .terminated = event {
+            isRunning = false
+            continuation.finish()
         }
     }
 }

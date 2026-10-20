@@ -42,6 +42,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | 项目目录与文件操作 | macOS 目录、预览、搜索和 mutation 契约与 Windows workspace grant 边界已映射；Windows 项目工作面、相对路径目录树、文件读写与 lifecycle 已接入 | `ProjectWorkspaceView.swift`、`ProjectDirectoryView.swift`、`ProjectFileEditorView.swift` | `ProjectDirectoryViewModel.swift`、`ProjectDirectoryExpansionStateStore.swift` | `ProjectFilesystemModels.swift`、`ProjectFilesystemMutationUseCase.swift` | `NativeProjectFilesystemService.swift`、`NativeWorkspaceFilesystem.swift`；Windows Registry/workspace resolver + Tauri filesystem adapter | macOS mutation lifecycle、Windows Rust path/revision/mutation 与 React domain/store/UI 测试 | 目录、预览、搜索、编辑、新建、删除、Git 与项目设置均已进入 React |
 | 项目运行设置 | macOS View/Feature/Application/Port 已完整分层；Windows analyzer、typed process、实例状态、偏好/Secret、Removal、Favorite 与 React 项目设置闭环已完成 | `ProjectRunSettingsView.swift`、`ProjectRunInstancesSection.swift`、`ProjectRunEnvironmentSection.swift` | `ProjectRunSettingsViewModel.swift`、`ProjectRunLifecycleState.swift`、`AppModelResources.swift`；Windows `projectRunStore` | Project Run/Removal/Favorite models 与 use cases；Windows `features/project-run` Domain/Port | macOS Run/Registry/Pet adapters；Windows `project_run`、`project_removal`、`project_favorite` + workspace resolver + Tauri Adapter | macOS Run 15、Removal 15、Favorite 8；Windows Rust Project Run 13、Removal 1、Favorite 1；React Domain/Store/UI/跨页测试 | `macOS 分层完成，可进入 React`；Windows 完整纵向切片已实现 |
 | 远程连接资源 | 列表、管理、MFA、SFTP 与交互式 Terminal 均已通过 Application use case、Core byte-stream Port 和 typed lifecycle 分层；导航 latest-wins，mutation single-flight，连接/session generation 隔离迟到结果，凭据与原生进程留在 Connector | `ResourceSidebar.swift`、Remote Connection Editor/Detail/SFTP/Terminal Views | Remote Connection/SFTP/Terminal ViewModels 与三类 lifecycle state | Remote Connection/File models/use cases、`RemoteTerminalSessionPort`/use case | `NativeRemoteConnectionService.swift`、`NativeRemoteFileService.swift`、`NativeRemoteTerminalPortAdapter.swift` | 管理、SFTP、Terminal Core/App/Connector 释放/竞态/MFA/PTY 测试 | `macOS 分层完成，可进入 React`；Windows metadata/Credential Manager、SSH/MFA/host-key、SFTP、ConPTY/OpenSSH typed session 与 xterm.js 工作区均已完成 |
+| 本机终端 | 多标签、搜索、清屏、中断、OSC title/目录与 PTY 生命周期已通过 Core byte-stream Port、Connector session 和 Feature ViewModel 分层；Shell、环境、进程句柄与信号不再进入 UI | `TerminalWorkspaceView.swift`、`TerminalComponents.swift` | `TerminalWorkspaceViewModel.swift`、`NativeLocalTerminalViewModel` | `LocalTerminalUseCase.swift` | `NativeLocalTerminalSession.swift` | Core lifecycle/use case、真实 PTY、输出预算、App renderer/workspace 测试 | `macOS 分层完成`；Windows 等待 owner/presentation-scoped ConPTY session、cwd/环境与进程树安全门禁，不得把 task terminal worker 当成交互页面 |
 | 插件应用列表 | Listing 与 Launch 已分别提取窄 Port/Application Use Case；列表和 Host 页面均使用账号绑定的 typed lifecycle，项目根路径仅在 Core/Connector 间流转，WebView 只接收脱敏 bridge context | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift`、`PluginApplicationHostViewModel.swift` | `LocalConnectorCatalogModels.swift`、`PluginApplicationLaunchUseCase.swift` | `NativeLocalConnectorService+Plugins.swift`、`NativeLocalProjectsService.swift` | Listing/Launch state/use case、Host ViewModel 释放/竞态及 Connector 测试 | `macOS 分层完成`；Windows 仍禁止，等待 plugin runtime、bridge 与 Tauri 安全边界完成原生准入 |
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环、runtime controls 与联系人入口已接入 | `ConversationTimelineView.swift`、`ContactConversationView`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 与 React 联系人组合测试等 | `macOS 分层完成，可进入 React`；Windows 项目与联系人核心发送闭环已实现 |
 | Task Graph / Run Inspector | Graph、realtime、Run、section 刷新、Inspector request identity、Workspace 基础详情→section 顺序加载、内嵌 Inspector Task 复用/section polling 恢复/presentation/retry identity 与 Application use case 路由、polling session 与 Workspace presentation session 已提取；Windows 已接入基础详情、过程、Run、重试、停止、恢复和 polling | `MessageTaskWorkspaceSheet.swift`、`MessageTaskInspectorView.swift`、`TaskProcessTimelineView.swift` | `MessageTaskWorkspaceViewModel*.swift`、Task Graph/Run/Inspector Application 类型 | `MessageTaskRunModels.swift` 及 task graph models | `NativeLocalAgentMessageTaskGraphService.swift`、Host task/run/event commands | Core state/use case、ViewModel、Connector、共享 fixture、React latest-wins 与 Rust projection 测试 | `macOS 分层完成，可进入 React`；Windows 主检查器纵向切片已实现 |
@@ -324,6 +325,19 @@ macOS 插件应用切片（2026-10-21）：
 - `RestrictedPluginWebView` 保留既有 origin/navigation/bridge 限制，只消费 launch 结果和脱敏 bridge context，不接收项目根路径、Connector service 或原生进程状态；
 - Core 6 项、App 3 项及既有 Native Plugin Runtime 定向测试通过；完整 `swift test --package-path clients/macos --no-parallel` 退出码为 0，其中 ChatOSApp XCTest 292 项通过、1 项按环境跳过。macOS 应用页分层已完成；
 - Windows 尚未具备插件 application runtime、受限 bridge 和 Tauri 原生安全边界，因此第 05 页只达到 macOS 分层完成，不允许依据截图或旧 Windows 客户端先造 React 页面。
+
+### 2.2.10 本机交互式 Terminal 分层
+
+macOS 本机 Terminal 切片（2026-10-21）：
+
+- 既有产品语义保持多标签、关闭最后一个标签后立即补建空标签、搜索上下匹配、清屏、Ctrl-C 中断、OSC title/当前目录、10,000 行 scrollback，以及登出/账号替换时关闭全部会话；
+- Core 新增 `LocalTerminalSessionPort`、`LocalTerminalSessionProviding` 与 `LocalTerminalUseCase`，只暴露 byte-stream output/termination/failure、Shell 展示名以及 start/send/resize/interrupt/close；
+- `NativeLocalTerminalSession` 移入 Connector，独占登录 Shell 解析、`TERM/COLORTERM` 环境、SwiftTerm `LocalProcess`、PTY viewport、进程组 SIGHUP 和进程句柄。App/SwiftUI 不再读取 `ProcessInfo`、调用 `Darwin.kill` 或直接持有 `LocalProcessTerminalView`；
+- `NativeLocalTerminalViewModel` 只持有 Core Port、renderer 与 `LocalTerminalLifecycleState`。标签关闭/reset 会先失效 session token，再取消事件 Task 并关闭 Port；旧进程的 output/terminated 不能写回已关闭或替换的标签；
+- 本机与远程终端共用无进程能力的 `NativeByteStreamTerminalView` renderer，输入与 resize 只转发给 typed Port，OSC title/目录、搜索、链接白名单和剪贴板仍由展示层负责；
+- Connector 事件缓冲最多 256 个 chunk。消费者追不上时不静默丢失控制序列，而是发布显式 failure、终止进程组并结束 stream，防止高速输出重新形成无界内存；
+- 定向验收为 Core 2 项、Connector 本机 PTY 3 项、App 4 项通过；既有 Native Terminal Executor 6 项同时通过。完整 macOS 回归仍作为提交门禁；
+- Windows 第 19 页必须另建 owner + presentation + generation 绑定的 ConPTY typed session，并完成 cwd 授权、受限环境、输入/输出预算、resize、进程树回收、账号/Host/页面 teardown 与 React Store identity 后才可进入 UI。现有 task terminal worker 面向 Host durable tool invocation，不是交互式页面 Port，禁止复用其权限来绕过本页准入。
 
 ### 2.3 Authentication：完整调用链
 
@@ -1156,7 +1170,7 @@ Windows React 已完成对应独立切片：
 | 16 | Agent 团队资产 | 未映射 | 禁止 |
 | 17 | Agent 团队运行 | 源码映射中（Run 模型复用关系待确认） | 禁止 |
 | 18 | 需求调研 | 未映射 | 禁止 |
-| 19 | 本地终端 | 未映射 | 禁止 |
+| 19 | 本地终端 | macOS Core byte-stream Port、Connector PTY session、Feature lifecycle 与多标签 renderer 已完成分层 | Windows 禁止；等待 owner/presentation-scoped ConPTY 原生门禁与 React Store identity |
 | 20 | Notebook | 未映射 | 禁止 |
 | 21 | 项目 Git | macOS View/ViewModel/Core Port/Native service/parser、命令边界和异步 lifecycle 已映射并完成准入；Windows owner/project/workspace、Git 进程树、输出/超时、路径成员、Secret 安全投影、typed Port/Store lifecycle 与 Apple 风格工作面已完成 | 已进入 React |
 | 22 | 设置 / 通用 | 未映射 | 禁止 |
@@ -1200,5 +1214,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 22. [已完成] 第 04 页联系人聊天按 macOS 直接复用已准入 Conversation surface；普通联系人、插件安装助手能力隔离提示及无公开会话空态已完成 React 映射，不新增协议或 Host 权限。
 23. [已完成] 远程资源已完成 Windows metadata/Credential Manager、固定 OpenSSH、host-key、jump host/MFA、目录读取/mutation、committed-without-refresh、opaque 本机选择、8 GiB 流式上传/下载与交互式 ConPTY/OpenSSH session；React 连接管理、SFTP 和 xterm Terminal 工作区已按 macOS 事实源接入并通过全量门禁。
 24. [已完成] 第 05 页应用列表与启动已完成 macOS 分层：Listing/Launch 使用独立 Port/Application Use Case，Feature ViewModel 管理 context/launch identity，项目根路径不进入 UI/WebView，迟到启动结果在切换 context、离页与账号替换后均被拒绝；Windows 等待 plugin runtime/bridge/Tauri 原生安全边界准入。
+25. [已完成] 第 19 页本机终端已完成 macOS 分层：SwiftUI 只消费 Core byte-stream Port，登录 Shell、环境、PTY、进程组与输出预算留在 Connector；多标签、OSC、搜索、中断、关闭及账号 teardown 语义保持。Windows 等待独立 ConPTY 交互 session 门禁，不复用 task terminal worker 冒充页面能力。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。
