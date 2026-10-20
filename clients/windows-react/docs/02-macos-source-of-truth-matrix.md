@@ -48,7 +48,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | Host lifecycle | Runtime ready、local-first launch、authenticated bootstrap retry、health/restart、service configuration 与 shutdown orchestration 均已进入 Application state/use cases；进入契约冻结与跨层验收 | `RootView.swift` 与各页面 ready gate | `AppModelAuthentication.swift`、Runtime/Bootstrap/Recovery state、Host launch/bootstrap/configuration/shutdown use cases | `LocalAgentHostLifecycle.swift`、Host launch/bootstrap/configuration/shutdown Ports | Native Host process、App composition adapters、service adapters | Runtime/bootstrap/recovery/launch/configuration/shutdown use case、Host lifecycle 测试 | 禁止；等待跨层验收与共享契约 fixture |
 | Pet 翻译 | 模型、历史、附件与翻译 operation identity 已提取；Host/磁盘等待不再强持有窗口 ViewModel | Pet 翻译浮窗 | `PetTranslationViewModel.swift` | `PetTranslationAgent` 请求/结果、历史记录模型 | Agent model provider、`PetTranslationHistoryStore` | Agent、历史持久化、ViewModel 生命周期测试 | 禁止；等待完整源码映射与 Port 验收 |
 | Media Studio | 账号 session、模型 generation、图片/视频 operation 与输入选择 identity 已固定；历史、生成、保存及导入等待不再强持有 ViewModel | AI 图片、AI 视频、AI 历史 | `MediaStudioViewModel.swift` | Media generation models/service | Media service、`MediaStudioHistoryStore`、HTTP transport | History、image interaction、video canvas、ViewModel 测试 | 禁止；Story 与完整页面映射尚未完成 |
-| Agent Group Chat | Team/Direct change stream 保持弱 UI 订阅；补充卡片与附件 hydration 已冻结 owner/room/project/store，并在全部存储等待结束后才恢复 UI | Agent 私聊、团队聊天与团队工作区 | `AgentDirectChatViewModel.swift`、`AgentGroupChatViewModel.swift` | Agent room/message/proposal/todo/run models | `SQLiteAgentGroupChatStore`、Local Agent scheduler | Codable、迁移、Store、Scheduler、UI presentation/performance tests | 禁止；scheduler 与完整页面状态仍在收口 |
+| Agent Group Chat | Team/Direct change stream 保持弱 UI 订阅；补充卡片、附件 hydration、account/communication scheduler drain 与 Run refresh 均已冻结请求上下文，存储/Agent 等待不再强持有 ViewModel | Agent 私聊、团队聊天与团队工作区 | `AgentDirectChatViewModel.swift`、`AgentGroupChatViewModel.swift` | Agent room/message/proposal/todo/run models | `SQLiteAgentGroupChatStore`、Local Agent scheduler | Codable、迁移、Store、Scheduler、UI presentation/performance tests | 禁止；等待完整页面状态与操作映射 |
 
 以上“React 准入”不是进度建议，而是代码审查门禁。
 
@@ -667,7 +667,9 @@ worker 在配置时立即订阅 Host event，并开启短期 reconciliation；`w
 - Team 与 Direct 的 change stream 在永久等待期间只通过 weak ViewModel 读取当前选择并记录刷新计划，不让不可见页面被事件流保活。
 - Team workspace 的 proposals、todos、assets、dashboard、running Runs、附件数据等补充快照，以及 Direct chat 的 proposals、teams 与附件数据，都在 Task 启动前冻结 owner/room/project/store 和附件计划；SQLite/附件 await 期间不再强持有 ViewModel。
 - 补充快照只有在任务未取消且当前 room identity 仍匹配时才整体写回；旧 room 的迟到结果不能清空或覆盖新 room。消息主体先展示、补充卡片失败仍解除 Direct timeline 首次定位等待的既有语义保持不变。
-- Agent Group Chat 相关 89 项契约、迁移、Store、Scheduler 与 UI 测试通过（2 项显式性能基线按环境变量跳过）。scheduler drain Task 仍需独立收口，因此对应 React 页面继续禁止实现。
+- Team/Direct 的 account drain 与 communication fast lane 在每一轮开始时冻结 scheduler、service、owner 和 room，Agent 执行与 delivery 查询期间只保留 weak UI；返回后按当前 room 再计算 `AgentSchedulerIssue`。全局 drain 仍会发布 room change 通知，不可见页面释放不会中断 durable scheduler 事实。
+- 高频 Run refresh 现在冻结 run/room/owner/store 请求，在 SQLite 查询和 todo presentation 构建结束后一次性按 room identity 写回；同 Run 的新 refresh 会取消旧请求，旧请求不能移除或覆盖新任务。
+- Agent Group Chat 相关 89 项契约、迁移、Store、Scheduler 与 UI 测试通过（2 项显式性能基线按环境变量跳过）。页面加载、发送、提案操作与导航差异仍需完整映射，因此对应 React 页面继续禁止实现。
 
 ## 10. 31 个页面的准入状态
 

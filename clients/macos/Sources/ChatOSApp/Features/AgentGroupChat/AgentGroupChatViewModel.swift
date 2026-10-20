@@ -205,21 +205,31 @@ final class AgentGroupChatViewModel: ObservableObject {
         }
     }
 
-    func reconcileSchedulerResults(
+    func applySchedulerResults(
         _ receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        roomIDByDeliveryID: [String: String],
         roomID: String
-    ) async throws {
-        let store = try await resolveStore()
-        let deliveries = try await store.deliveries(
-            ownerUserID: ownerUserID,
-            deliveryIDs: receipts.map(\.deliveryID)
-        )
+    ) {
+        guard room?.id == roomID else { return }
         schedulerIssue = AgentSchedulerIssueReducer.reconcile(
             current: schedulerIssue,
             receipts: receipts,
-            roomIDByDeliveryID: deliveries.mapValues(\.roomID),
+            roomIDByDeliveryID: roomIDByDeliveryID,
             roomID: roomID
         )
+    }
+
+    nonisolated static func loadSchedulerRoomIDs(
+        receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        ownerUserID: String,
+        service: NativeAgentGroupChatService
+    ) async throws -> [String: String] {
+        guard !receipts.isEmpty else { return [:] }
+        let store = try await service.store()
+        return try await store.deliveries(
+            ownerUserID: ownerUserID,
+            deliveryIDs: receipts.map(\.deliveryID)
+        ).mapValues(\.roomID)
     }
 
     func displayName(senderID: String, kind: ProjectAgentMessageSenderKind) -> String {

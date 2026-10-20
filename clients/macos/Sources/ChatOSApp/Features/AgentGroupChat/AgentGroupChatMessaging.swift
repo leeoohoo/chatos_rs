@@ -231,39 +231,55 @@ extension AgentGroupChatViewModel {
         schedulerNeedsAnotherPass = true
         guard schedulerTask == nil else { return }
         isRunningAgents = true
+        let scheduler = scheduler
+        let service = service
+        let ownerUserID = ownerUserID
         schedulerTask = Task { [weak self] in
-            guard let self else { return }
             repeat {
-                schedulerNeedsAnotherPass = false
+                guard self != nil else { return }
+                self?.schedulerNeedsAnotherPass = false
                 var didProcessDelivery = false
                 do {
                     let results = try await scheduler.drainAccount(ownerUserID: ownerUserID)
                     didProcessDelivery = !results.isEmpty
-                    if let roomID = room?.id {
-                        try await reconcileSchedulerResults(results, roomID: roomID)
+                    if let roomID = self?.room?.id {
+                        let roomIDs = try await Self.loadSchedulerRoomIDs(
+                            receipts: results,
+                            ownerUserID: ownerUserID,
+                            service: service
+                        )
+                        guard !Task.isCancelled else { return }
+                        self?.applySchedulerResults(
+                            results,
+                            roomIDByDeliveryID: roomIDs,
+                            roomID: roomID
+                        )
                     }
                 } catch is CancellationError {
                     // Account draining is process-wide. A competing surface owning the lease is
                     // normal and its durable updates will be observed by this room.
                 } catch {
-                    errorMessage = error.localizedDescription
+                    self?.errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
-            } while schedulerNeedsAnotherPass
-            isRunningAgents = false
-            schedulerTask = nil
+            } while self?.schedulerNeedsAnotherPass == true && !Task.isCancelled
+            self?.isRunningAgents = false
+            self?.schedulerTask = nil
         }
     }
 
     private func startCommunicationScheduler(roomID: String) {
         communicationSchedulerNeedsAnotherPass = true
         guard communicationSchedulerTask == nil else { return }
+        let scheduler = scheduler
+        let service = service
+        let ownerUserID = ownerUserID
         communicationSchedulerTask = Task { [weak self] in
-            guard let self else { return }
             repeat {
-                communicationSchedulerNeedsAnotherPass = false
+                guard self != nil else { return }
+                self?.communicationSchedulerNeedsAnotherPass = false
                 var didProcessDelivery = false
                 do {
                     let results = try await scheduler.drainCommunication(
@@ -271,17 +287,27 @@ extension AgentGroupChatViewModel {
                         roomID: roomID
                     )
                     didProcessDelivery = !results.isEmpty
-                    try await reconcileSchedulerResults(results, roomID: roomID)
+                    let roomIDs = try await Self.loadSchedulerRoomIDs(
+                        receipts: results,
+                        ownerUserID: ownerUserID,
+                        service: service
+                    )
+                    guard !Task.isCancelled else { return }
+                    self?.applySchedulerResults(
+                        results,
+                        roomIDByDeliveryID: roomIDs,
+                        roomID: roomID
+                    )
                 } catch is CancellationError {
                     break
                 } catch {
-                    errorMessage = error.localizedDescription
+                    self?.errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
-            } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
-            communicationSchedulerTask = nil
+            } while self?.communicationSchedulerNeedsAnotherPass == true && !Task.isCancelled
+            self?.communicationSchedulerTask = nil
         }
     }
 }

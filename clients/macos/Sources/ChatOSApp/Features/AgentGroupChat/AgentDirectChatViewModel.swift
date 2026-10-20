@@ -326,20 +326,29 @@ final class AgentDirectChatViewModel: ObservableObject {
         schedulerIssue = nil
     }
 
-    private func reconcileSchedulerResults(
-        _ receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt]
-    ) async throws {
-        let store = try await resolveStore()
-        let deliveries = try await store.deliveries(
-            ownerUserID: ownerUserID,
-            deliveryIDs: receipts.map(\.deliveryID)
-        )
+    private func applySchedulerResults(
+        _ receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        roomIDByDeliveryID: [String: String]
+    ) {
         schedulerIssue = AgentSchedulerIssueReducer.reconcile(
             current: schedulerIssue,
             receipts: receipts,
-            roomIDByDeliveryID: deliveries.mapValues(\.roomID),
+            roomIDByDeliveryID: roomIDByDeliveryID,
             roomID: conversationID
         )
+    }
+
+    nonisolated private static func loadSchedulerRoomIDs(
+        receipts: [LocalAgentGroupChatScheduler.DeliveryAttemptReceipt],
+        ownerUserID: String,
+        service: NativeAgentGroupChatService
+    ) async throws -> [String: String] {
+        guard !receipts.isEmpty else { return [:] }
+        let store = try await service.store()
+        return try await store.deliveries(
+            ownerUserID: ownerUserID,
+            deliveryIDs: receipts.map(\.deliveryID)
+        ).mapValues(\.roomID)
     }
 
     @discardableResult
@@ -580,37 +589,50 @@ final class AgentDirectChatViewModel: ObservableObject {
         schedulerNeedsAnotherPass = true
         guard schedulerTask == nil else { return }
         isRunningAgents = true
+        let scheduler = scheduler
+        let service = service
+        let ownerUserID = ownerUserID
         schedulerTask = Task { [weak self] in
-            guard let self else { return }
             repeat {
-                schedulerNeedsAnotherPass = false
+                guard self != nil else { return }
+                self?.schedulerNeedsAnotherPass = false
                 var didProcessDelivery = false
                 do {
                     let receipts = try await scheduler.drainAccount(ownerUserID: ownerUserID)
                     didProcessDelivery = !receipts.isEmpty
-                    try await reconcileSchedulerResults(receipts)
+                    let roomIDs = try await Self.loadSchedulerRoomIDs(
+                        receipts: receipts,
+                        ownerUserID: ownerUserID,
+                        service: service
+                    )
+                    guard !Task.isCancelled else { return }
+                    self?.applySchedulerResults(receipts, roomIDByDeliveryID: roomIDs)
                 } catch is CancellationError {
                     // Another visible surface may already own the account drain. Its durable
                     // changes will refresh this conversation; cancellation is not a room error.
                 } catch {
-                    errorMessage = error.localizedDescription
+                    self?.errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
-            } while schedulerNeedsAnotherPass
-            isRunningAgents = false
-            schedulerTask = nil
+            } while self?.schedulerNeedsAnotherPass == true && !Task.isCancelled
+            self?.isRunningAgents = false
+            self?.schedulerTask = nil
         }
     }
 
     private func startCommunicationScheduler() {
         communicationSchedulerNeedsAnotherPass = true
         guard communicationSchedulerTask == nil else { return }
+        let scheduler = scheduler
+        let service = service
+        let ownerUserID = ownerUserID
+        let conversationID = conversationID
         communicationSchedulerTask = Task { [weak self] in
-            guard let self else { return }
             repeat {
-                communicationSchedulerNeedsAnotherPass = false
+                guard self != nil else { return }
+                self?.communicationSchedulerNeedsAnotherPass = false
                 var didProcessDelivery = false
                 do {
                     let receipts = try await scheduler.drainCommunication(
@@ -618,17 +640,23 @@ final class AgentDirectChatViewModel: ObservableObject {
                         roomID: conversationID
                     )
                     didProcessDelivery = !receipts.isEmpty
-                    try await reconcileSchedulerResults(receipts)
+                    let roomIDs = try await Self.loadSchedulerRoomIDs(
+                        receipts: receipts,
+                        ownerUserID: ownerUserID,
+                        service: service
+                    )
+                    guard !Task.isCancelled else { return }
+                    self?.applySchedulerResults(receipts, roomIDByDeliveryID: roomIDs)
                 } catch is CancellationError {
                     break
                 } catch {
-                    errorMessage = error.localizedDescription
+                    self?.errorMessage = error.localizedDescription
                 }
                 if didProcessDelivery {
                     NotificationCenter.default.post(name: .agentGroupChatRoomsDidChange, object: nil)
                 }
-            } while communicationSchedulerNeedsAnotherPass && !Task.isCancelled
-            communicationSchedulerTask = nil
+            } while self?.communicationSchedulerNeedsAnotherPass == true && !Task.isCancelled
+            self?.communicationSchedulerTask = nil
         }
     }
 
