@@ -96,11 +96,16 @@ extension AppModel {
 
     func deleteProject(id: String) async throws {
         guard let owner = authenticatedUserID else { throw CancellationError() }
-        let registry = try await localProjectsService.registry()
-        guard let old = try await registry.get(ownerUserID: owner, id: id) else { throw ProjectRegistryError.notFound }
-        guard owner == authenticatedUserID else { throw CancellationError() }
-        try await localProjectsService.remove(ownerUserID: owner, id: id, expectedRevision: old.revision)
-        guard owner == authenticatedUserID else { return }
+        let accountGeneration = workspaceAccountGeneration
+        let request = ProjectRemovalRequest(
+            ownerUserID: owner,
+            accountGeneration: accountGeneration,
+            projectID: id
+        )
+        let receipt = try await ProjectRemovalUseCase(service: localProjectsService).remove(request)
+        guard receipt.request == request,
+              owner == authenticatedUserID,
+              accountGeneration == workspaceAccountGeneration else { return }
 
         // A workspace refresh may already be in flight. Invalidate it so an
         // older response cannot resurrect the project after deletion.

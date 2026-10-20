@@ -7,7 +7,7 @@ public struct PreparedLocalProjectImport: Sendable, Equatable {
 }
 
 /// Host entrypoint for local CRUD. Never creates or updates a remote project.
-public actor NativeLocalProjectsService: ProjectContextLoading {
+public actor NativeLocalProjectsService: ProjectContextLoading, ProjectRemovalServicing {
     private let connector: NativeLocalConnectorService
     private let databaseURL: URL
     private let managedProjectsRootURL: URL
@@ -240,6 +240,25 @@ public actor NativeLocalProjectsService: ProjectContextLoading {
                                       projectTypeKey: old.draft.projectTypeKey)
         _ = try await registry().update(ownerUserID: ownerUserID, id: id, expectedRevision: expectedRevision,
                                        draft: draft, status: old.status)
+    }
+
+    public func projectRecord(
+        ownerUserID: String,
+        projectID: String
+    ) async throws -> LocalProjectRecord? {
+        try await registry().get(ownerUserID: ownerUserID, id: projectID)
+    }
+
+    public func removeProject(
+        ownerUserID: String,
+        projectID: String,
+        expectedRevision: Int64
+    ) async throws {
+        try await remove(
+            ownerUserID: ownerUserID,
+            id: projectID,
+            expectedRevision: expectedRevision
+        )
     }
 
     public func remove(ownerUserID: String, id: String, expectedRevision: Int64) async throws {
