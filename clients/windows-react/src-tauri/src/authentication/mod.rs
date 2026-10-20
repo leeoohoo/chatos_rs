@@ -12,7 +12,10 @@ use tauri::State;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 
-use crate::{host_lifecycle::HostManager, project_run::ProjectRunManager};
+use crate::{
+    host_lifecycle::HostManager, project_run::ProjectRunManager,
+    remote_connection::RemoteConnectionManager,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -285,7 +288,9 @@ fn api_message(error: ApiError) -> String {
 pub async fn restore_authentication_session(
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
+    remote_connections: State<'_, RemoteConnectionManager>,
 ) -> Result<Option<AuthSession>, String> {
+    remote_connections.reset().await;
     let session = manager.restore_session().await?;
     if let Some(session) = &session {
         project_runs.retain_owner(&session.user.id).await;
@@ -301,7 +306,9 @@ pub async fn login(
     password: String,
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
+    remote_connections: State<'_, RemoteConnectionManager>,
 ) -> Result<AuthSession, String> {
+    remote_connections.reset().await;
     let session = manager.login(username, password).await?;
     project_runs.retain_owner(&session.user.id).await;
     Ok(session)
@@ -328,7 +335,9 @@ pub async fn register(
     verification_code: String,
     manager: State<'_, AuthenticationManager>,
     project_runs: State<'_, ProjectRunManager>,
+    remote_connections: State<'_, RemoteConnectionManager>,
 ) -> Result<AuthSession, String> {
+    remote_connections.reset().await;
     let session = manager
         .register(email, password, invite_code, verification_code)
         .await?;
@@ -341,7 +350,9 @@ pub async fn logout(
     manager: State<'_, AuthenticationManager>,
     host_manager: State<'_, HostManager>,
     project_runs: State<'_, ProjectRunManager>,
+    remote_connections: State<'_, RemoteConnectionManager>,
 ) -> Result<(), String> {
+    remote_connections.reset().await;
     project_runs.reset().await;
     let result = manager.logout().await;
     host_manager.reset_approval_sessions();

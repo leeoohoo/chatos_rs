@@ -1,5 +1,6 @@
 mod credentials;
 mod models;
+mod ssh;
 
 use crate::{authentication::AuthenticationManager, connector_state, host_lifecycle::HostManager};
 use chatos_local_agent_protocol::{
@@ -8,8 +9,11 @@ use chatos_local_agent_protocol::{
     LocalRemoteConnectionSpec, UpdateRemoteConnectionCommand,
 };
 use credentials::{PlatformRemoteCredentialVault, RemoteCredentialVault};
-pub use models::{PresentedRemoteConnection, RemoteConnectionInput};
+pub use models::{
+    PresentedRemoteConnection, PresentedRemoteConnectionTestResult, RemoteConnectionInput,
+};
 use models::{RemoteCredentialBundle, RemoteCredentialFlags};
+use ssh::{NativeOpenSshTester, RemoteConnectionTester, SshConnectionMaterial};
 use std::{collections::BTreeSet, future::Future, path::PathBuf, pin::Pin, sync::Arc};
 use tauri::State;
 use tokio::sync::Mutex;
@@ -70,10 +74,12 @@ pub struct RemoteConnectionManager {
     mutation: Mutex<()>,
     credentials: Arc<dyn RemoteCredentialVault>,
     route_provider: Arc<dyn RemoteConnectorRouteProvider>,
+    tester: Arc<dyn RemoteConnectionTester>,
 }
 
 impl RemoteConnectionManager {
     pub fn new(app_data_directory: PathBuf) -> Self {
+        let tester = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         Self {
             mutation: Mutex::new(()),
             credentials: Arc::new(PlatformRemoteCredentialVault::new(
@@ -82,6 +88,7 @@ impl RemoteConnectionManager {
             route_provider: Arc::new(ConnectorStateRouteProvider {
                 data_directory: app_data_directory,
             }),
+            tester,
         }
     }
 
@@ -89,11 +96,13 @@ impl RemoteConnectionManager {
     fn with_dependencies(
         credentials: Arc<dyn RemoteCredentialVault>,
         route_provider: Arc<dyn RemoteConnectorRouteProvider>,
+        tester: Arc<dyn RemoteConnectionTester>,
     ) -> Self {
         Self {
             mutation: Mutex::new(()),
             credentials,
             route_provider,
+            tester,
         }
     }
 
@@ -149,19 +158,19 @@ impl RemoteConnectionManager {
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
+        self.tester.reset().await;
         validate_owner(owner_user_id)?;
-        let (spec, retain_manual_jump_credentials) =
-            self.spec(client, owner_user_id, None, &input).await?;
+        let prepared = self.spec(client, owner_user_id, None, &input).await?;
         let credentials = RemoteCredentialBundle::default().applying(
             &input.credentials,
             input.authentication_type,
-            retain_manual_jump_credentials,
+            prepared.retain_manual_jump_credentials,
         )?;
         let result = client
             .execute(HostCommand::CreateRemoteConnection(
                 CreateRemoteConnectionCommand {
                     owner_user_id: owner_user_id.to_owned(),
-                    spec,
+                    spec: prepared.spec,
                 },
             ))
             .await?;
@@ -209,6 +218,7 @@ impl RemoteConnectionManager {
         input: RemoteConnectionInput,
     ) -> Result<PresentedRemoteConnection, String> {
         let _mutation = self.mutation.lock().await;
+        self.tester.reset().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -219,7 +229,7 @@ impl RemoteConnectionManager {
         if current.version != expected_version {
             return Err("远端连接已被其他操作更新，请刷新后重试。".into());
         }
-        let (spec, retain_manual_jump_credentials) = self
+        let prepared = self
             .spec(client, owner_user_id, Some(connection_id), &input)
             .await?;
         let previous = self
@@ -229,7 +239,7 @@ impl RemoteConnectionManager {
         let next = previous.clone().applying(
             &input.credentials,
             input.authentication_type,
-            retain_manual_jump_credentials,
+            prepared.retain_manual_jump_credentials,
         )?;
         self.credentials.save(owner_user_id, connection_id, &next)?;
         let result = client
@@ -238,7 +248,7 @@ impl RemoteConnectionManager {
                     owner_user_id: owner_user_id.to_owned(),
                     connection_id: connection_id.to_owned(),
                     expected_version,
-                    spec,
+                    spec: prepared.spec,
                 },
             ))
             .await;
@@ -280,6 +290,7 @@ impl RemoteConnectionManager {
         expected_version: u64,
     ) -> Result<String, String> {
         let _mutation = self.mutation.lock().await;
+        self.tester.reset().await;
         validate_identity(owner_user_id, connection_id)?;
         if expected_version == 0 {
             return Err("远端连接版本无效。".into());
@@ -331,13 +342,14 @@ impl RemoteConnectionManager {
         owner_user_id: &str,
         current_connection_id: Option<&str>,
         input: &RemoteConnectionInput,
-    ) -> Result<(LocalRemoteConnectionSpec, bool), String> {
+    ) -> Result<PreparedRemoteSpec, String> {
         let route = self.route_provider.route(owner_user_id)?;
         let mut jump_connection_id = clean(input.jump_connection_id.clone());
         let mut jump_host = clean(input.jump_host.clone());
         let mut jump_port = input.jump_port;
         let mut jump_username = clean(input.jump_username.clone());
         let retain_manual_jump_credentials;
+        let mut referenced_jump = None;
         if !input.jump_enabled {
             jump_connection_id = None;
             jump_host = None;
@@ -351,9 +363,10 @@ impl RemoteConnectionManager {
             let jump = get_record(client, owner_user_id, jump_id)
                 .await?
                 .ok_or_else(|| "所选跳板机连接已不存在。".to_owned())?;
-            jump_host = Some(jump.host);
+            jump_host = Some(jump.host.clone());
             jump_port = Some(jump.port);
-            jump_username = Some(jump.username);
+            jump_username = Some(jump.username.clone());
+            referenced_jump = Some(jump);
             retain_manual_jump_credentials = false;
         } else {
             retain_manual_jump_credentials = true;
@@ -376,7 +389,101 @@ impl RemoteConnectionManager {
         };
         spec.validate()
             .map_err(|_| "远端连接信息无效。".to_owned())?;
-        Ok((spec, retain_manual_jump_credentials))
+        Ok(PreparedRemoteSpec {
+            spec,
+            retain_manual_jump_credentials,
+            referenced_jump,
+        })
+    }
+
+    async fn test_draft(
+        &self,
+        client: &dyn RemoteConnectionMetadataClient,
+        owner_user_id: &str,
+        input: RemoteConnectionInput,
+        verification_code: Option<String>,
+    ) -> Result<PresentedRemoteConnectionTestResult, String> {
+        let _mutation = self.mutation.lock().await;
+        validate_owner(owner_user_id)?;
+        let prepared = self.spec(client, owner_user_id, None, &input).await?;
+        let credentials = RemoteCredentialBundle::default().applying(
+            &input.credentials,
+            input.authentication_type,
+            prepared.retain_manual_jump_credentials,
+        )?;
+        let (jump_authentication_type, jump_credentials) =
+            self.resolved_jump_credentials(owner_user_id, prepared.referenced_jump.as_ref())?;
+        self.tester
+            .test(
+                SshConnectionMaterial {
+                    spec: prepared.spec,
+                    credentials,
+                    jump_authentication_type,
+                    jump_credentials,
+                },
+                verification_code,
+            )
+            .await
+    }
+
+    async fn test_saved(
+        &self,
+        client: &dyn RemoteConnectionMetadataClient,
+        owner_user_id: &str,
+        connection_id: &str,
+        verification_code: Option<String>,
+    ) -> Result<PresentedRemoteConnectionTestResult, String> {
+        let _mutation = self.mutation.lock().await;
+        validate_identity(owner_user_id, connection_id)?;
+        let current = get_record(client, owner_user_id, connection_id)
+            .await?
+            .ok_or_else(|| "远端连接不存在。".to_owned())?;
+        let referenced_jump = match current.jump_connection_id.as_deref() {
+            Some(jump_id) => Some(
+                get_record(client, owner_user_id, jump_id)
+                    .await?
+                    .ok_or_else(|| "所选跳板机连接已不存在。".to_owned())?,
+            ),
+            None => None,
+        };
+        let spec = spec_from_record(current, referenced_jump.as_ref())?;
+        let credentials = self
+            .credentials
+            .load(owner_user_id, connection_id)?
+            .unwrap_or_default();
+        let (jump_authentication_type, jump_credentials) =
+            self.resolved_jump_credentials(owner_user_id, referenced_jump.as_ref())?;
+        self.tester
+            .test(
+                SshConnectionMaterial {
+                    spec,
+                    credentials,
+                    jump_authentication_type,
+                    jump_credentials,
+                },
+                verification_code,
+            )
+            .await
+    }
+
+    fn resolved_jump_credentials(
+        &self,
+        owner_user_id: &str,
+        referenced_jump: Option<&LocalRemoteConnection>,
+    ) -> Result<
+        (
+            Option<chatos_local_agent_protocol::LocalRemoteAuthenticationType>,
+            Option<RemoteCredentialBundle>,
+        ),
+        String,
+    > {
+        let Some(jump) = referenced_jump else {
+            return Ok((None, None));
+        };
+        Ok((
+            Some(jump.authentication_type),
+            self.credentials.load(owner_user_id, &jump.connection_id)?,
+        ))
     }
 
     fn present(
@@ -391,6 +498,16 @@ impl RemoteConnectionManager {
             .unwrap_or_else(RemoteCredentialFlags::default);
         Ok(PresentedRemoteConnection::from_record(record, flags))
     }
+
+    pub(crate) async fn reset(&self) {
+        self.tester.reset().await;
+    }
+}
+
+struct PreparedRemoteSpec {
+    spec: LocalRemoteConnectionSpec,
+    retain_manual_jump_credentials: bool,
+    referenced_jump: Option<LocalRemoteConnection>,
 }
 
 #[tauri::command]
@@ -475,6 +592,44 @@ pub async fn delete_remote_connection(
         .await
 }
 
+#[tauri::command]
+pub async fn test_remote_connection_draft(
+    host: State<'_, HostManager>,
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, RemoteConnectionManager>,
+    owner_user_id: String,
+    input: RemoteConnectionInput,
+    verification_code: Option<String>,
+) -> Result<PresentedRemoteConnectionTestResult, String> {
+    authentication
+        .access_token_for_owner(&owner_user_id)
+        .await?;
+    manager
+        .test_draft(&*host, &owner_user_id, input, verification_code)
+        .await
+}
+
+#[tauri::command]
+pub async fn test_saved_remote_connection(
+    host: State<'_, HostManager>,
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, RemoteConnectionManager>,
+    owner_user_id: String,
+    connection_id: String,
+    verification_code: Option<String>,
+) -> Result<PresentedRemoteConnectionTestResult, String> {
+    authentication
+        .access_token_for_owner(&owner_user_id)
+        .await?;
+    manager
+        .test_saved(&*host, &owner_user_id, &connection_id, verification_code)
+        .await
+}
+
+pub fn run_ssh_askpass_helper_if_requested() -> bool {
+    ssh::run_askpass_helper_if_requested()
+}
+
 async fn get_record(
     client: &dyn RemoteConnectionMetadataClient,
     owner_user_id: &str,
@@ -499,6 +654,40 @@ async fn get_record(
         }
     }
     Ok(connection)
+}
+
+fn spec_from_record(
+    record: LocalRemoteConnection,
+    referenced_jump: Option<&LocalRemoteConnection>,
+) -> Result<LocalRemoteConnectionSpec, String> {
+    let (jump_host, jump_port, jump_username) = referenced_jump
+        .map(|jump| {
+            (
+                Some(jump.host.clone()),
+                Some(jump.port),
+                Some(jump.username.clone()),
+            )
+        })
+        .unwrap_or((record.jump_host, record.jump_port, record.jump_username));
+    let spec = LocalRemoteConnectionSpec {
+        name: Some(record.name),
+        host: record.host,
+        port: record.port,
+        username: record.username,
+        authentication_type: record.authentication_type,
+        default_remote_path: record.default_remote_path,
+        host_key_policy: record.host_key_policy,
+        local_connector_device_id: record.local_connector_device_id,
+        local_connector_workspace_id: record.local_connector_workspace_id,
+        jump_enabled: record.jump_enabled,
+        jump_connection_id: record.jump_connection_id,
+        jump_host,
+        jump_port,
+        jump_username,
+    };
+    spec.validate()
+        .map_err(|_| "远端连接信息无效。".to_owned())?;
+    Ok(spec)
 }
 
 fn validate_owner(owner_user_id: &str) -> Result<(), String> {

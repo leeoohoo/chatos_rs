@@ -196,6 +196,7 @@ fn apply_secret(
             if value.is_empty()
                 || value.len() > maximum_bytes
                 || value.contains('\0')
+                || value.contains(['\r', '\n'])
                 || (reject_control_characters && value.chars().any(char::is_control))
             {
                 return Err(format!("{label}无效。"));
@@ -204,6 +205,35 @@ fn apply_secret(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PresentedRemoteConnectionTestResult {
+    pub success: bool,
+    pub verification_required: bool,
+    pub message: String,
+    pub verification_prompt: Option<String>,
+}
+
+impl PresentedRemoteConnectionTestResult {
+    pub(super) fn success() -> Self {
+        Self {
+            success: true,
+            verification_required: false,
+            message: "连接成功".into(),
+            verification_prompt: None,
+        }
+    }
+
+    pub(super) fn verification(prompt: String) -> Self {
+        Self {
+            success: false,
+            verification_required: true,
+            message: "需要 SSH 二次验证。".into(),
+            verification_prompt: Some(prompt),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]

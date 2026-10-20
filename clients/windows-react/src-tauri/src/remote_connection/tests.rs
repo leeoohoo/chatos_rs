@@ -26,6 +26,46 @@ impl RemoteConnectorRouteProvider for FixedRouteProvider {
     }
 }
 
+struct NeverTester;
+
+impl RemoteConnectionTester for NeverTester {
+    fn test(
+        &self,
+        _connection: SshConnectionMaterial,
+        _verification_code: Option<String>,
+    ) -> ssh::TestFuture<'_> {
+        Box::pin(async { panic!("unexpected SSH test") })
+    }
+
+    fn reset(&self) -> ssh::ResetFuture<'_> {
+        Box::pin(async {})
+    }
+}
+
+struct CapturingTester {
+    calls: StandardMutex<Vec<(SshConnectionMaterial, Option<String>)>>,
+    result: PresentedRemoteConnectionTestResult,
+}
+
+impl RemoteConnectionTester for CapturingTester {
+    fn test(
+        &self,
+        connection: SshConnectionMaterial,
+        verification_code: Option<String>,
+    ) -> ssh::TestFuture<'_> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((connection, verification_code));
+        let result = self.result.clone();
+        Box::pin(async move { Ok(result) })
+    }
+
+    fn reset(&self) -> ssh::ResetFuture<'_> {
+        Box::pin(async {})
+    }
+}
+
 struct ScriptedMetadata {
     results: StandardMutex<VecDeque<Result<HostResult, String>>>,
     commands: StandardMutex<Vec<HostCommand>>,
@@ -110,7 +150,18 @@ fn password_input(password: RemoteSecretMutation) -> RemoteConnectionInput {
 }
 
 fn manager_with_vault(vault: Arc<dyn RemoteCredentialVault>) -> RemoteConnectionManager {
-    RemoteConnectionManager::with_dependencies(vault, Arc::new(FixedRouteProvider))
+    RemoteConnectionManager::with_dependencies(
+        vault,
+        Arc::new(FixedRouteProvider),
+        Arc::new(NeverTester),
+    )
+}
+
+fn manager_with_tester(
+    vault: Arc<dyn RemoteCredentialVault>,
+    tester: Arc<dyn RemoteConnectionTester>,
+) -> RemoteConnectionManager {
+    RemoteConnectionManager::with_dependencies(vault, Arc::new(FixedRouteProvider), tester)
 }
 
 #[tokio::test]
@@ -659,4 +710,109 @@ fn credentials_never_serialize_into_the_presented_record() {
             "unexpected field {forbidden}"
         );
     }
+}
+
+#[tokio::test]
+async fn saved_connection_test_resolves_current_jump_metadata_and_device_local_credentials() {
+    let directory = tempfile::tempdir().unwrap();
+    let vault = Arc::new(memory_vault(directory.path().join("credentials.json")));
+    vault
+        .save(
+            "owner-1",
+            "connection-1",
+            &RemoteCredentialBundle {
+                password: Some("target-secret".into()),
+                ..RemoteCredentialBundle::default()
+            },
+        )
+        .unwrap();
+    vault
+        .save(
+            "owner-1",
+            "jump-1",
+            &RemoteCredentialBundle {
+                private_key_path: Some("C:\\Keys\\jump".into()),
+                ..RemoteCredentialBundle::default()
+            },
+        )
+        .unwrap();
+    let tester = Arc::new(CapturingTester {
+        calls: StandardMutex::new(Vec::new()),
+        result: PresentedRemoteConnectionTestResult::success(),
+    });
+    let manager = manager_with_tester(vault, tester.clone());
+    let mut target = record("connection-1", 3);
+    target.jump_enabled = true;
+    target.jump_connection_id = Some("jump-1".into());
+    target.jump_host = Some("stale.example.com".into());
+    target.jump_port = Some(22);
+    target.jump_username = Some("stale".into());
+    let mut jump = record("jump-1", 2);
+    jump.host = "jump.example.com".into();
+    jump.port = 2202;
+    jump.username = "jumper".into();
+    jump.authentication_type = LocalRemoteAuthenticationType::PrivateKey;
+    let client = ScriptedMetadata::new(vec![
+        Ok(HostResult::RemoteConnection {
+            connection: Some(target),
+        }),
+        Ok(HostResult::RemoteConnection {
+            connection: Some(jump),
+        }),
+    ]);
+
+    let result = manager
+        .test_saved(&client, "owner-1", "connection-1", Some(" 123456 ".into()))
+        .await
+        .unwrap();
+
+    assert!(result.success);
+    let calls = tester.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    let (material, verification_code) = &calls[0];
+    assert_eq!(verification_code.as_deref(), Some(" 123456 "));
+    assert_eq!(material.spec.jump_host.as_deref(), Some("jump.example.com"));
+    assert_eq!(material.spec.jump_port, Some(2202));
+    assert_eq!(material.spec.jump_username.as_deref(), Some("jumper"));
+    assert_eq!(
+        material.credentials.password.as_deref(),
+        Some("target-secret")
+    );
+    assert_eq!(
+        material
+            .jump_credentials
+            .as_ref()
+            .and_then(|credentials| credentials.private_key_path.as_deref()),
+        Some("C:\\Keys\\jump")
+    );
+    assert_eq!(
+        material.jump_authentication_type,
+        Some(LocalRemoteAuthenticationType::PrivateKey)
+    );
+}
+
+#[tokio::test]
+async fn draft_connection_test_never_writes_host_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let vault = Arc::new(memory_vault(directory.path().join("credentials.json")));
+    let tester = Arc::new(CapturingTester {
+        calls: StandardMutex::new(Vec::new()),
+        result: PresentedRemoteConnectionTestResult::verification("OTP code:".into()),
+    });
+    let manager = manager_with_tester(vault, tester);
+    let client = ScriptedMetadata::new(Vec::new());
+
+    let result = manager
+        .test_draft(
+            &client,
+            "owner-1",
+            password_input(RemoteSecretMutation::Replace("secret".into())),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert!(result.verification_required);
+    assert_eq!(result.verification_prompt.as_deref(), Some("OTP code:"));
+    assert!(client.commands().is_empty());
 }

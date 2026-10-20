@@ -74,9 +74,11 @@ use project_run::{
     poll_project_run_changes, set_project_run_default_target, start_project_run, stop_project_run,
     update_project_run_environment, ProjectRunManager, ProjectRunPreferencesStore,
 };
+pub use remote_connection::run_ssh_askpass_helper_if_requested;
 use remote_connection::{
     create_remote_connection, delete_remote_connection, get_remote_connection,
-    list_remote_connections, update_remote_connection, RemoteConnectionManager,
+    list_remote_connections, test_remote_connection_draft, test_saved_remote_connection,
+    update_remote_connection, RemoteConnectionManager,
 };
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -244,6 +246,8 @@ pub fn run() {
             create_remote_connection,
             update_remote_connection,
             delete_remote_connection,
+            test_remote_connection_draft,
+            test_saved_remote_connection,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,
@@ -257,6 +261,7 @@ pub fn run() {
         app_handle.state::<AttachmentToolWorker>().reset().await;
         app_handle.state::<TerminalToolWorker>().reset().await;
         app_handle.state::<ProjectRunManager>().reset().await;
+        app_handle.state::<RemoteConnectionManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });
     if exit_code != 0 {
