@@ -142,6 +142,39 @@ struct PetTranslationHistoryStoreTests {
         #expect(viewModel.historyRecords.first?.attachments.first?.name == "direct-screenshot.png")
     }
 
+    @Test("a delayed model request does not retain the translation window")
+    @MainActor
+    func delayedModelRequestDoesNotRetainViewModel() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PetTranslationHistoryTests-\(UUID().uuidString)", isDirectory: true)
+        let defaultsName = "PetTranslationHistoryTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        let provider = DelayedPetTranslationModelProvider()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: defaultsName)
+        }
+        var viewModel: PetTranslationViewModel? = PetTranslationViewModel(
+            agent: PetTranslationAgent(services: SuccessfulTranslationServices()),
+            historyStore: PetTranslationHistoryStore(
+                fileURL: root.appendingPathComponent("history.json")
+            ),
+            defaults: defaults,
+            modelProvider: { await provider.load() }
+        )
+        weak let weakViewModel = viewModel
+
+        viewModel?.loadModels()
+        try await waitUntil { provider.isPending }
+        viewModel = nil
+
+        #expect(weakViewModel == nil)
+
+        provider.resume(with: [])
+        await Task.yield()
+        #expect(weakViewModel == nil)
+    }
+
     private func record(index: Int) -> PetTranslationHistoryRecord {
         PetTranslationHistoryRecord(
             id: UUID(),
@@ -170,6 +203,24 @@ struct PetTranslationHistoryStoreTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(condition())
+    }
+}
+
+@MainActor
+private final class DelayedPetTranslationModelProvider {
+    private var continuation: CheckedContinuation<[LocalConnectorModelConfig], Never>?
+
+    var isPending: Bool { continuation != nil }
+
+    func load() async -> [LocalConnectorModelConfig] {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func resume(with models: [LocalConnectorModelConfig]) {
+        continuation?.resume(returning: models)
+        continuation = nil
     }
 }
 

@@ -37,7 +37,14 @@ final class PetTranslationViewModel: ObservableObject {
     private let historyStore: PetTranslationHistoryStore
     private let modelProvider: @MainActor () async throws -> [LocalConnectorModelConfig]
     private let defaults: UserDefaults
+    private var modelLoadTask: Task<Void, Never>?
+    private var modelLoadID = UUID()
+    private var historyTask: Task<Void, Never>?
+    private var historyOperationID = UUID()
+    private var attachmentImportTasks: [UUID: Task<Void, Never>] = [:]
+    private var attachmentImportGeneration: UInt64 = 0
     private var translationTask: Task<Void, Never>?
+    private var translationOperationID = UUID()
     private var animationResetTask: Task<Void, Never>?
     private var hasLoadedHistory = false
     private var shouldTranslateAfterLoadingModels = false
@@ -62,6 +69,9 @@ final class PetTranslationViewModel: ObservableObject {
     }
 
     deinit {
+        modelLoadTask?.cancel()
+        historyTask?.cancel()
+        attachmentImportTasks.values.forEach { $0.cancel() }
         translationTask?.cancel()
         animationResetTask?.cancel()
     }
@@ -89,46 +99,73 @@ final class PetTranslationViewModel: ObservableObject {
 
     func loadModels() {
         guard !isLoadingModels else { return }
+        modelLoadID = UUID()
+        let operationID = modelLoadID
+        let modelProvider = modelProvider
         isLoadingModels = true
-        Task {
+        modelLoadTask = Task { [weak self] in
+            let result: Result<[LocalConnectorModelConfig], Error>
             do {
-                let loaded = try await modelProvider()
-                models = loaded.sorted {
+                result = .success(try await modelProvider())
+            } catch {
+                result = .failure(error)
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.modelLoadID == operationID else { return }
+            switch result {
+            case let .success(loaded):
+                self.models = loaded.sorted {
                     $0.name.localizedStandardCompare($1.name) == .orderedAscending
                 }
-                normalizeModelSelection()
-                if models.isEmpty {
-                    errorMessage = "还没有可用的任务模型，请先在设置中配置模型。"
-                } else if containsImages && !models.contains(where: \.supportsImages) {
-                    errorMessage = "当前没有支持图片输入的模型，请先在设置中配置视觉模型。"
+                self.normalizeModelSelection()
+                if self.models.isEmpty {
+                    self.errorMessage = "还没有可用的任务模型，请先在设置中配置模型。"
+                } else if self.containsImages && !self.models.contains(where: \.supportsImages) {
+                    self.errorMessage = "当前没有支持图片输入的模型，请先在设置中配置视觉模型。"
                 } else {
-                    errorMessage = nil
+                    self.errorMessage = nil
                 }
-                if shouldTranslateAfterLoadingModels {
-                    shouldTranslateAfterLoadingModels = false
-                    translate()
+                if self.shouldTranslateAfterLoadingModels {
+                    self.shouldTranslateAfterLoadingModels = false
+                    self.translate()
                 }
-            } catch {
-                shouldTranslateAfterLoadingModels = false
-                errorMessage = error.localizedDescription
+            case let .failure(error):
+                self.shouldTranslateAfterLoadingModels = false
+                self.errorMessage = error.localizedDescription
             }
-            isLoadingModels = false
+            self.isLoadingModels = false
+            self.modelLoadTask = nil
         }
     }
 
     func loadHistory() {
         guard !hasLoadedHistory, !isLoadingHistory else { return }
+        historyOperationID = UUID()
+        let operationID = historyOperationID
+        let historyStore = historyStore
+        historyTask?.cancel()
         isLoadingHistory = true
-        Task { [weak self] in
-            guard let self else { return }
+        historyTask = Task { [weak self] in
+            let result: Result<[PetTranslationHistoryRecord], Error>
             do {
-                historyRecords = try await historyStore.records()
-                hasLoadedHistory = true
-                historyError = nil
+                result = .success(try await historyStore.records())
             } catch {
-                historyError = "读取翻译记录失败：\(error.localizedDescription)"
+                result = .failure(error)
             }
-            isLoadingHistory = false
+            guard !Task.isCancelled,
+                  let self,
+                  self.historyOperationID == operationID else { return }
+            switch result {
+            case let .success(records):
+                self.historyRecords = records
+                self.hasLoadedHistory = true
+                self.historyError = nil
+            case let .failure(error):
+                self.historyError = "读取翻译记录失败：\(error.localizedDescription)"
+            }
+            self.isLoadingHistory = false
+            self.historyTask = nil
         }
     }
 
@@ -137,17 +174,31 @@ final class PetTranslationViewModel: ObservableObject {
     }
 
     func clearHistory() {
-        Task { [weak self] in
-            guard let self else { return }
+        historyOperationID = UUID()
+        let operationID = historyOperationID
+        let historyStore = historyStore
+        historyTask?.cancel()
+        historyTask = Task { [weak self] in
+            let result: Result<Void, Error>
             do {
                 try await historyStore.clear()
-                historyRecords = []
-                selectedHistoryRecord = nil
-                historyError = nil
-                hasLoadedHistory = true
+                result = .success(())
             } catch {
-                historyError = "清空翻译记录失败：\(error.localizedDescription)"
+                result = .failure(error)
             }
+            guard !Task.isCancelled,
+                  let self,
+                  self.historyOperationID == operationID else { return }
+            switch result {
+            case .success:
+                self.historyRecords = []
+                self.selectedHistoryRecord = nil
+                self.historyError = nil
+                self.hasLoadedHistory = true
+            case let .failure(error):
+                self.historyError = "清空翻译记录失败：\(error.localizedDescription)"
+            }
+            self.historyTask = nil
         }
     }
 
@@ -183,18 +234,27 @@ final class PetTranslationViewModel: ObservableObject {
         // composer immediately so a screenshot sent from the capture toolbar
         // behaves like a true one-click submission while translation continues.
         draft = ""
+        attachmentImportGeneration &+= 1
+        attachmentImportTasks.values.forEach { $0.cancel() }
+        attachmentImportTasks.removeAll()
         attachments = []
         attachmentError = nil
+        translationOperationID = UUID()
+        let operationID = translationOperationID
+        let agent = agent
+        let historyStore = historyStore
         translationTask = Task { [weak self] in
-            guard let self else { return }
             do {
                 let completed = try await agent.translate(request) { [weak self] delta in
                     await MainActor.run {
-                        self?.result += delta
+                        self?.appendTranslationDelta(delta, operationID: operationID)
                     }
                 }
-                guard !Task.isCancelled else { return }
-                result = completed.translatedMarkdown
+                guard !Task.isCancelled,
+                      self?.applyTranslationResult(
+                        completed,
+                        operationID: operationID
+                      ) == true else { return }
                 let record = PetTranslationHistoryRecord(
                     id: UUID(),
                     createdAt: Date(),
@@ -213,24 +273,71 @@ final class PetTranslationViewModel: ObservableObject {
                     modelName: model.name,
                     translatedMarkdown: completed.translatedMarkdown
                 )
+                let historyResult: Result<[PetTranslationHistoryRecord], Error>
                 do {
-                    historyRecords = try await historyStore.append(record)
-                    hasLoadedHistory = true
-                    historyError = nil
+                    historyResult = .success(try await historyStore.append(record))
                 } catch {
-                    historyError = "保存翻译记录失败：\(error.localizedDescription)"
+                    historyResult = .failure(error)
                 }
-                setPetAnimation(.succeeded, resetAfter: .seconds(2))
+                guard !Task.isCancelled else { return }
+                self?.finishSuccessfulTranslation(
+                    historyResult,
+                    operationID: operationID
+                )
             } catch is CancellationError {
                 // Submitted input has already left the composer by design.
+                guard !Task.isCancelled else { return }
+                self?.finishTranslation(operationID: operationID)
             } catch {
                 guard !Task.isCancelled else { return }
-                errorMessage = error.localizedDescription
-                setPetAnimation(.failed, resetAfter: .seconds(2))
+                self?.finishFailedTranslation(error, operationID: operationID)
             }
-            isTranslating = false
-            translationTask = nil
         }
+    }
+
+    private func appendTranslationDelta(_ delta: String, operationID: UUID) {
+        guard translationOperationID == operationID, isTranslating else { return }
+        result += delta
+    }
+
+    @discardableResult
+    private func applyTranslationResult(
+        _ completed: PetTranslationResult,
+        operationID: UUID
+    ) -> Bool {
+        guard translationOperationID == operationID, isTranslating else { return false }
+        result = completed.translatedMarkdown
+        return true
+    }
+
+    private func finishSuccessfulTranslation(
+        _ historyResult: Result<[PetTranslationHistoryRecord], Error>,
+        operationID: UUID
+    ) {
+        guard translationOperationID == operationID, isTranslating else { return }
+        switch historyResult {
+        case let .success(records):
+            historyRecords = records
+            hasLoadedHistory = true
+            historyError = nil
+        case let .failure(error):
+            historyError = "保存翻译记录失败：\(error.localizedDescription)"
+        }
+        setPetAnimation(.succeeded, resetAfter: .seconds(2))
+        finishTranslation(operationID: operationID)
+    }
+
+    private func finishFailedTranslation(_ error: Error, operationID: UUID) {
+        guard translationOperationID == operationID, isTranslating else { return }
+        errorMessage = error.localizedDescription
+        setPetAnimation(.failed, resetAfter: .seconds(2))
+        finishTranslation(operationID: operationID)
+    }
+
+    private func finishTranslation(operationID: UUID) {
+        guard translationOperationID == operationID else { return }
+        isTranslating = false
+        translationTask = nil
     }
 
     func translateWhenReady() {
@@ -245,6 +352,7 @@ final class PetTranslationViewModel: ObservableObject {
 
     func cancel() {
         shouldTranslateAfterLoadingModels = false
+        translationOperationID = UUID()
         translationTask?.cancel()
         translationTask = nil
         isTranslating = false
@@ -265,10 +373,14 @@ final class PetTranslationViewModel: ObservableObject {
     func addAttachmentFiles(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
         attachmentError = nil
-        Task {
+        let taskID = UUID()
+        let generation = attachmentImportGeneration
+        attachmentImportTasks[taskID] = Task { [weak self] in
             let loaded = await ConversationSessionViewModel.loadAttachmentFilesOffMain(urls)
-            guard !Task.isCancelled else { return }
-            appendAttachments(loaded.attachments, errors: loaded.errors)
+            guard !Task.isCancelled,
+                  self?.attachmentImportGeneration == generation else { return }
+            self?.appendAttachments(loaded.attachments, errors: loaded.errors)
+            self?.attachmentImportTasks[taskID] = nil
         }
     }
 
