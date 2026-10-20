@@ -256,8 +256,25 @@ jobs:
           cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
           cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml prepared_sidecar_ -- --ignored
 
-      - name: Build Windows Tauri application
-        run: npm --prefix clients/windows-react run tauri -- build --debug --no-bundle
+      - name: Build Windows NSIS installer
+        run: npm --prefix clients/windows-react run tauri -- build --bundles nsis
+
+      - name: Assert Windows installer exists
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem "target-shared/release/bundle/nsis/*.exe" -File
+          if ($installers.Count -lt 1) {
+            throw "Windows NSIS installer was not produced"
+          }
+          $installers | ForEach-Object { Write-Host $_.FullName }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatos-windows-installer-${{ github.sha }}
+          path: target-shared/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 7
 
   browser-plugin:
     name: Browser plugin (Rust)
