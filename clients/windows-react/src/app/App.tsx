@@ -22,6 +22,7 @@ import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/Tau
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { TauriLocalTerminalAdapter } from "../features/local-terminal/adapters/TauriLocalTerminalAdapter";
 import { TauriPluginApplicationAdapter } from "../features/plugin-applications/adapters/TauriPluginApplicationAdapter";
+import { TauriMediaStudioAdapter } from "../features/media-studio/adapters/TauriMediaStudioAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriProjectConversationAdapter } from "../features/project-conversation/adapters/TauriProjectConversationAdapter";
 import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
@@ -35,6 +36,7 @@ const accessControl = new TauriAccessControlAdapter();
 const hostLifecycle = new TauriHostLifecycleAdapter();
 const localTerminal = new TauriLocalTerminalAdapter();
 const pluginApplication = new TauriPluginApplicationAdapter();
+const mediaStudio = new TauriMediaStudioAdapter();
 const windowChrome = new TauriWindowChromeAdapter();
 const workspaceIndex = new TauriWorkspaceIndexAdapter();
 const projectConversation = new TauriProjectConversationAdapter();
@@ -84,6 +86,7 @@ function ApplicationRoot() {
             hostLifecycle={hostLifecycle}
             localTerminal={localTerminal}
             pluginApplication={pluginApplication}
+            mediaStudio={mediaStudio}
             workspaceIndex={workspaceIndex}
             projectConversation={projectConversation}
             projectCreation={projectCreation}

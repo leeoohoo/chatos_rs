@@ -20,6 +20,8 @@ import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
 import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
+import type { MediaStudioPort } from "../features/media-studio/ports/MediaStudioPort";
+import { MediaStudioView } from "../features/media-studio/ui/MediaStudioView";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import {
@@ -55,6 +57,7 @@ interface AppShellProps {
   accessControl: AccessControlPort;
   hostLifecycle: HostLifecyclePort;
   localTerminal: LocalTerminalPort;
+  mediaStudio: MediaStudioPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
@@ -82,6 +85,7 @@ export function AppShell({
   accessControl,
   hostLifecycle,
   localTerminal,
+  mediaStudio,
   pluginApplication,
   workspaceIndex,
   projectConversation,
@@ -194,6 +198,8 @@ export function AppShell({
         ? "访问控制"
       : selection.kind === "terminal"
         ? "本机终端"
+      : selection.kind === "mediaStudio"
+        ? "AI 创作"
       : selection.kind === "applications"
         ? "应用"
       : selection.kind === "application"
@@ -273,6 +279,8 @@ export function AppShell({
                   ? "RUNTIME & PERMISSIONS"
                   : activeSurface === "access-control"
                     ? "ACCESS CONTROL"
+                  : selection.kind === "mediaStudio"
+                    ? "MEDIA STUDIO"
                   : selection.kind === "applications" || selection.kind === "application"
                     ? "PLUGIN APPLICATIONS"
                   : "LOCAL WORKSPACE"
@@ -308,6 +316,8 @@ export function AppShell({
               port={localTerminal}
             />
           </Suspense>
+        ) : selection.kind === "mediaStudio" ? (
+          <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} />
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
           <PluginApplicationsView
             hostReady={snapshot.ready}

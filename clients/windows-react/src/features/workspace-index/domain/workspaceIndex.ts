@@ -46,6 +46,7 @@ export interface WorkspaceIndexSnapshot {
 
 export type WorkspaceSelection =
   | { kind: "workbench" }
+  | { kind: "mediaStudio" }
   | { kind: "terminal" }
   | { kind: "applications" }
   | { kind: "application"; pluginId: string; componentKey: string }

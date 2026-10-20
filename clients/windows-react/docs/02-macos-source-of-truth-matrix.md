@@ -1157,6 +1157,10 @@ Windows React 已完成对应独立切片：
 - 历史首页/分页已收口到 `MediaStudioHistoryLoading`、`MediaStudioHistoryUseCase` 与 `MediaStudioHistoryLoadState`：Core 拥有图片/视频历史 DTO、游标、页面及合并规则，磁盘 Store 不再反向依赖 ViewModel 类型。首屏替换、下一页去重/排序、损坏记录累计、游标推进和 1...200 页大小上限由 Application 层定义；owner/account session/request/page kind 联合拒绝迟到结果。Core 3 项、Store 8 项及 ViewModel 5 项回归通过。
 - 参考图导入已收口到 `MediaStudioImageReferenceImporting`、`MediaStudioImageReferenceUseCase` 与 `MediaStudioImageReferenceState`：Application 层拥有 8 张上限、当前账号历史精确授权、去重合并与 owner/account/request/source lifecycle；macOS Adapter 独占 security-scoped URL、文件类型/20 MB/6400 万像素检查、MIME/base64 转换，以及本机/内联/无凭据 HTTPS 生成图片读取。ViewModel 不再执行文件 I/O、图片解析或编码。Core 4 项、图片交互 11 项、历史引用 8 项及性能策略 31 项回归通过。
 - Windows 原生媒体边界已完成：Tauri 模型目录和生成命令只接受 owner-scoped typed request，模型 Secret 从 Gateway 解析后写入系统凭据库并只在 Rust 内参与 provider Authorization；文生图、多参考图编辑、48 MiB 有界响应、20 MiB 单图、无凭据 HTTPS 远端结果、owner hash 历史目录、相对 manifest、随机 content token 和原子提交均已实现。账号 generation 在网络与落盘边界复验；落盘失败保留 `generatedWithoutPersistence`，序列化结果不含 Secret 或绝对路径。历史首页/分页保持 macOS 默认 10 条、1...200 上限、modified-at + record ID 游标、损坏记录隔离和当前页 manifest 解码；`chatos-media` 预览协议绑定 owner + authentication generation 随机 session，逐次复验 manifest 成员和非链接有界文件。原生 picker 与历史引用统一进入 presentation-scoped 临时 vault，真实内容只接受 PNG/JPEG/WebP，最多 8 张、每张 20 MiB/6400 万像素，逐级拒绝 symlink/reparse 并以 SHA-256 复验；生成 IPC 只接受 opaque reference ID，不接受路径或 base64。页面、账号、应用 lifecycle 和下次启动清理 vault，迟到 picker 由 epoch 拒绝。Rust 全量 222 项通过、2 项 sidecar 环境测试忽略，Clippy 无警告；原生准入完成。
+- Windows React 已建立独立 `media-studio` Domain/Application/Port/Adapter/UI：Zod 严格限制模型、历史页、游标、参考图、生成结果和受控预览 URL，Tauri `invoke` 只存在于 Adapter 并在 `App.tsx` composition root 构造；React 不读取路径、Secret、原始文件字节或系统凭据。
+- Store 分离模型、首屏历史、旧页、参考图和生成 request identity，绑定 owner/account generation/presentation；生成期间冻结模型、提示词、尺寸、数量与参考图请求，账号/页面切换拒绝迟到写回。分页按 ID 去重、newest-first、累计 unreadable count；迟到 picker 返回的 vault 资源会主动 discard，页面 teardown 必定调用 presentation discard。
+- `saved` 结果进入本机历史；`generatedWithoutPersistence` 以 transient canvas item 保留图片并明确显示未落盘警告，不会伪装成历史记录。Apple 主题 UI 保持 macOS 的创作类型 header、左画布、右生成设置、模型刷新、多参考图、本机 picker、当前账号生成记录 picker、提示词建议、尺寸、1...4 数量和历史分页；视频/剧情模式在各自准入前禁用。
+- CSP 仅为受控媒体预览扩展 `img-src` 的 `chatos-media`、Windows 映射 origin 与 HTTPS 图片，不放宽 `connect-src`、脚本或 Tauri IPC。React 全量 78 个测试文件、279 项通过，TypeScript、production build 和架构审计通过；Windows Media Studio 原生定向 15 项通过。第 06 页 AI 图片已完整进入 Windows React。
 - 历史首页/分页、图片生成→本地保存、视频生成→进度→本地保存，以及所有媒体读取任务都先完成 adapter/磁盘工作，再以 weak ViewModel 恢复并联合验收 identity。
 - 图片生成成功但本地保存失败时仍显示生成结果并给出历史错误；视频保存失败继续保留失败画布语义；取消视频必须拒绝服务端迟到完成。这些均为现有 macOS 行为，不得由 Windows 自行修改。
 - Media Studio 25 项相关回归覆盖历史分页/损坏记录隔离、账号切换、图片引用、视频画布取消/重试及延迟生成释放。
@@ -1181,7 +1185,7 @@ Windows React 已完成对应独立切片：
 | 03 | 项目设置 | macOS Application/Port 分层完成；Windows analyzer、typed process、Job Object/process group、bounded log/state long-poll、偏好/系统凭据 Secret、Removal、Favorite 与 Apple 主题 React UI 已完成 | 已进入 React |
 | 04 | 联系人聊天 | macOS 直接复用 Conversation session/timeline、空态与插件安装助手隔离提示已映射；Windows 薄组合层已完成 | 已进入 React；不创建第二套会话协议 |
 | 05 | 应用 | macOS Listing/Launch Use Case、Feature ViewModel、项目上下文安全投影及异步 lifecycle 已完成分层；Windows catalog/runtime/bridge、typed Store/Adapter、Apple 主题 UI 与 sandbox iframe 已完成 | 已进入 React；exact origin/source/session/nonce 与 CSP 门禁已进入测试 |
-| 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览和本机/历史参考图 token vault 已完成 | 允许；下一片建立 React Domain/Port/Store 与 Apple 主题 UI |
+| 06 | AI 图片 | macOS 生成/保存、模型目录、历史分页及参考图已进入 Core 窄 Port/Use Case 与 typed lifecycle；Windows provider/Secret、原子历史/分页、安全预览、参考图 token vault、strict React Domain/Port/Adapter/Store 与 Apple 主题 UI 已完成 | 已进入 React；视频与剧情模式继续按各自行准入门禁禁用 |
 | 07 | AI 视频 | 源码映射中（progress/保存/取消生命周期已收口） | 禁止 |
 | 08 | AI 故事 | 源码映射中（项目/历史/生成/批次/Agent/编辑生命周期已收口） | 禁止；等待完整 Port 与平台差异验收 |
 | 09 | AI 历史 | 源码映射中（本地分页与账号隔离已收口） | 禁止 |
@@ -1250,5 +1254,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 34. [已完成] 第 06 页 Windows 原生模型目录、provider 生成、系统凭据 Secret、账号 generation 复验和 owner-scoped 原子历史写入已完成；生成成功但保存失败保留结果，IPC 不暴露 Secret 或绝对路径。下一片继续原生参考图 token vault、历史分页与安全预览协议，完成前不进入 React。
 35. [已完成] 第 06 页 Windows 图片历史首页/分页、损坏记录隔离、owner/session-scoped content token 预览协议和账号/应用 teardown 已完成；分页 DTO 不含绝对路径或媒体字节，旧登录 session 的 URL 失败关闭。下一片完成原生参考图选择 token vault，完成前不进入 React。
 36. [已完成] 第 06 页 Windows 本机 picker 与当前账号历史引用已统一进入 owner/authentication generation/presentation-scoped token vault；真实图片格式、8 张/20 MiB/6400 万像素、逐级 symlink/reparse、SHA-256、迟到 picker 和 teardown 均进入测试，生成 IPC 只接受 opaque ID。Windows 原生门禁完成，下一片开始 React Domain/Port/Adapter/Store 和 Apple 主题 UI。
+37. [已完成] 第 06 页 Windows React 已完成 strict Domain/Port/Tauri Adapter、独立 request identity Store、生成参数冻结、历史分页/去重、迟到参考图清理、保存失败 transient 结果、页面 teardown 和 Apple 主题图片创作/历史 UI；React 全量 78 个测试文件、279 项通过，production build、类型检查和架构审计通过。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

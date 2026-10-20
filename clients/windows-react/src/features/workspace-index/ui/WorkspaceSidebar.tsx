@@ -79,6 +79,14 @@ export function WorkspaceSidebar({
         本机终端
       </button>
       <button
+        className={`nav-item ${selection.kind === "mediaStudio" ? "nav-item--active" : ""}`}
+        onClick={() => onSelectionChange({ kind: "mediaStudio" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">✦</span>
+        AI 创作
+      </button>
+      <button
         className={`nav-item ${selection.kind === "applications" || selection.kind === "application" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "applications" })}

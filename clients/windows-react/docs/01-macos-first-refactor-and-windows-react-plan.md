@@ -498,6 +498,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 图片原生准入完成）：本机文件选择和当前账号生成历史引用已统一进入 owner + authentication generation + presentation-scoped 临时 vault。原生 picker 逐级拒绝 symlink/reparse，按真实内容识别 PNG/JPEG/WebP，复验普通文件、20 MiB、6400 万像素、读前后元数据和 SHA-256；最多 8 张并按内容去重。React DTO 只包含 opaque reference ID、名称、MIME、大小和 session-scoped 预览 URL，生成 command 明确拒绝 raw `referenceImages`/base64，只在 blocking worker 中把已验证字节交给 multipart provider。页面关闭、账号 lifecycle、应用退出和下次启动都会淘汰或清理 vault；迟到 picker 由 epoch tombstone 拒绝。Windows Rust 全量 222 项通过、2 项真实 sidecar 环境测试忽略，Clippy 无警告。第 06 页 Windows 原生平台差异门禁完成，下一片可以开始 React Domain/Port/Adapter/Store 和 Apple 主题 UI。
 
+状态补充（2026-10-21，Windows React AI 图片闭环）：第 06 页已建立独立 `media-studio` Domain、Port、Tauri Adapter、Zustand Store 与 Apple 主题 UI。React 在 Adapter 边界严格解析模型、历史、生成结果和参考图 DTO，只接受 `chatos-media://localhost` / Windows 映射协议、受控无凭据 HTTPS 或有界内联生成结果；路径、Secret、原始文件字节和通用 provider 请求不进入页面。Store 分离模型、首屏历史、旧页、生成和参考图 request identity，冻结生成参数，按 owner/account generation/presentation 拒绝迟到结果；分页保持 newest-first、ID 去重和损坏记录累计，迟到 picker 结果会主动清理，页面退出必调用 presentation discard。生成成功但保存失败仍作为当前画布 transient item 展示。页面结构逐项复现 macOS 的顶部创作类型、左侧画布、右侧生成设置、多参考图和本机历史；视频/剧情模式继续按准入矩阵禁用。React 全量 78 个测试文件、279 项通过，TypeScript、production build、架构审计通过；Windows Media Studio 原生定向 15 项通过。第 06 页 AI 图片已完整进入 Windows React。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
