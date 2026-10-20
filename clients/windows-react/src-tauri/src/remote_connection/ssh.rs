@@ -32,7 +32,7 @@ const TARGET_ALIAS: &str = "chatos-target";
 const JUMP_ALIAS: &str = "chatos-jump";
 const SUCCESS_MARKER: &str = "__CHATOS_REMOTE_OK__";
 const DEFAULT_TEST_TIMEOUT: Duration = Duration::from_secs(15);
-const INTERACTIVE_SESSION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+pub(super) const INTERACTIVE_SESSION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const TERMINATION_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const MAXIMUM_STDOUT_BYTES: usize = 64 * 1_024;
 const MAXIMUM_DIAGNOSTIC_BYTES: usize = 1_024 * 1_024;
@@ -42,6 +42,12 @@ const MAXIMUM_PRESENTED_PROMPT_CHARACTERS: usize = 1_000;
 pub(super) type TestFuture<'a> =
     Pin<Box<dyn Future<Output = Result<PresentedRemoteConnectionTestResult, String>> + Send + 'a>>;
 pub(super) type ResetFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+#[derive(Debug)]
+pub(super) enum SshProcessProgress {
+    VerificationRequired(String),
+    Completed(ProcessOutcome),
+}
 
 pub(super) trait RemoteConnectionTester: Send + Sync {
     fn test(
@@ -91,38 +97,92 @@ impl NativeOpenSshTester {
         connection: SshConnectionMaterial,
         verification_code: Option<String>,
     ) -> Result<PresentedRemoteConnectionTestResult, String> {
+        let fingerprint = connection_fingerprint(&connection);
+        match self
+            .run_remote_command(
+                format!("connection-test:{fingerprint}"),
+                fingerprint,
+                connection,
+                format!("printf '{SUCCESS_MARKER} '; hostname"),
+                verification_code,
+                self.timeout,
+                INTERACTIVE_SESSION_TIMEOUT,
+                MAXIMUM_STDOUT_BYTES,
+            )
+            .await?
+        {
+            SshProcessProgress::VerificationRequired(prompt) => {
+                Ok(PresentedRemoteConnectionTestResult::verification(prompt))
+            }
+            SshProcessProgress::Completed(outcome) => finish_outcome(outcome),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn run_remote_command(
+        &self,
+        key: String,
+        operation_fingerprint: String,
+        connection: SshConnectionMaterial,
+        remote_command: String,
+        verification_code: Option<String>,
+        request_timeout: Duration,
+        process_lifetime: Duration,
+        maximum_stdout_bytes: usize,
+    ) -> Result<SshProcessProgress, String> {
         validate_material(&connection)?;
         let verification_code = normalize_verification_code(verification_code)?;
-        let fingerprint = connection_fingerprint(&connection);
         let (session, submitted_prompt_count) = if let Some(code) = verification_code.as_deref() {
-            let existing = self.sessions.lock().await.get(&fingerprint).cloned();
+            let existing = self.sessions.lock().await.get(&key).cloned();
+            if existing
+                .as_ref()
+                .is_some_and(|session| session.operation_fingerprint != operation_fingerprint)
+            {
+                self.discard(&key).await;
+                return Err("SSH 二次验证操作已变化，请重新执行当前操作。".into());
+            }
             let session = existing
-                .ok_or_else(|| "SSH 二次验证会话已过期，请重新执行连接测试。".to_owned())?;
+                .ok_or_else(|| "SSH 二次验证会话已过期，请重新执行当前操作。".to_owned())?;
             let prompt_count = verification_prompts(&session.prompts()).len();
             session.write_verification_code(code)?;
             (session, Some(prompt_count))
         } else {
-            self.discard(&fingerprint).await;
-            let session = self.start_session(fingerprint.clone(), connection).await?;
+            self.discard(&key).await;
+            let session = self
+                .start_session(
+                    key.clone(),
+                    operation_fingerprint,
+                    connection,
+                    remote_command,
+                    process_lifetime,
+                    maximum_stdout_bytes,
+                )
+                .await?;
             (session, None)
         };
         let mut cancellation_guard = SessionCancellationGuard::new(session.clone());
         let result = self
-            .wait_for_session(
-                fingerprint,
+            .wait_for_process(
+                key,
                 session,
                 verification_code.is_some(),
                 submitted_prompt_count,
+                request_timeout,
             )
             .await;
         cancellation_guard.disarm();
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn start_session(
         &self,
-        fingerprint: String,
+        key: String,
+        operation_fingerprint: String,
         connection: SshConnectionMaterial,
+        remote_command: String,
+        process_timeout: Duration,
+        maximum_stdout_bytes: usize,
     ) -> Result<Arc<ActiveSshSession>, String> {
         let prepared = Arc::new(PreparedSshSession::create(&self.runtime_root, &connection)?);
         let executable = ssh_executable()?;
@@ -172,10 +232,11 @@ impl NativeOpenSshTester {
             OsString::from("-F"),
             prepared.config.as_os_str().to_owned(),
             OsString::from(TARGET_ALIAS),
-            OsString::from(format!("printf '{SUCCESS_MARKER} '; hostname")),
+            OsString::from(remote_command),
         ];
         let (cancel, cancellation) = watch::channel(false);
         let session = Arc::new(ActiveSshSession {
+            operation_fingerprint,
             connection,
             prepared: prepared.clone(),
             cancel,
@@ -184,13 +245,13 @@ impl NativeOpenSshTester {
         });
         {
             let mut sessions = self.sessions.lock().await;
-            if let Some(previous) = sessions.insert(fingerprint.clone(), session.clone()) {
+            if let Some(previous) = sessions.insert(key.clone(), session.clone()) {
                 previous.cancel();
             }
         }
         let task_session = session.clone();
         let task_sessions = self.sessions.clone();
-        let task_fingerprint = fingerprint;
+        let task_key = key;
         tokio::spawn(async move {
             let result = run_isolated_process(
                 &executable,
@@ -198,57 +259,52 @@ impl NativeOpenSshTester {
                 &environment,
                 &prepared.prompt_log,
                 cancellation,
-                INTERACTIVE_SESSION_TIMEOUT,
+                process_timeout,
+                maximum_stdout_bytes,
             )
             .await;
             *task_session.completion.lock().await = Some(result);
             task_session.changed.notify_waiters();
             let mut sessions = task_sessions.lock().await;
             if sessions
-                .get(&task_fingerprint)
+                .get(&task_key)
                 .is_some_and(|current| Arc::ptr_eq(current, &task_session))
             {
-                sessions.remove(&task_fingerprint);
+                sessions.remove(&task_key);
             }
         });
         Ok(session)
     }
 
-    async fn wait_for_session(
+    async fn wait_for_process(
         &self,
-        fingerprint: String,
+        key: String,
         session: Arc<ActiveSshSession>,
         verification_code_was_submitted: bool,
         submitted_prompt_count: Option<usize>,
-    ) -> Result<PresentedRemoteConnectionTestResult, String> {
-        let deadline = Instant::now() + self.timeout;
+        request_timeout: Duration,
+    ) -> Result<SshProcessProgress, String> {
+        let deadline = Instant::now() + request_timeout;
         let mut prompt_poll = interval(Duration::from_millis(100));
         prompt_poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
         loop {
             if let Some(result) = session.completion.lock().await.take() {
-                self.remove_if_current(&fingerprint, &session).await;
-                let outcome = result?;
-                if !verification_code_was_submitted {
-                    if let Some(prompt) = verification_prompt(&outcome.prompts, &session.connection)
-                    {
-                        return Ok(PresentedRemoteConnectionTestResult::verification(prompt));
-                    }
-                }
-                return finish_outcome(outcome);
+                self.remove_if_current(&key, &session).await;
+                return result.map(SshProcessProgress::Completed);
             }
             let prompts = session.prompts();
             let verification_prompts = verification_prompts(&prompts);
             if !verification_code_was_submitted {
                 if let Some(prompt) = verification_prompts.first() {
-                    self.schedule_expiration(fingerprint.clone(), session.clone());
-                    return Ok(PresentedRemoteConnectionTestResult::verification(
+                    self.schedule_expiration(key.clone(), session.clone());
+                    return Ok(SshProcessProgress::VerificationRequired(
                         sanitize_verification_prompt(prompt, &session.connection),
                     ));
                 }
             } else if let Some(submitted_prompt_count) = submitted_prompt_count {
                 if verification_prompts.len() > submitted_prompt_count {
-                    self.schedule_expiration(fingerprint.clone(), session.clone());
-                    return Ok(PresentedRemoteConnectionTestResult::verification(
+                    self.schedule_expiration(key.clone(), session.clone());
+                    return Ok(SshProcessProgress::VerificationRequired(
                         sanitize_verification_prompt(
                             verification_prompts
                                 .last()
@@ -262,7 +318,7 @@ impl NativeOpenSshTester {
                 _ = session.changed.notified() => {}
                 _ = prompt_poll.tick() => {}
                 _ = tokio::time::sleep_until(deadline) => {
-                    self.remove_if_current(&fingerprint, &session).await;
+                    self.remove_if_current(&key, &session).await;
                     session.cancel();
                     return Err(if prompts.trim().is_empty() {
                         "SSH 连接超时，请检查主机地址、端口和网络。".into()
@@ -336,6 +392,7 @@ impl NativeOpenSshTester {
 }
 
 struct ActiveSshSession {
+    operation_fingerprint: String,
     connection: SshConnectionMaterial,
     prepared: Arc<PreparedSshSession>,
     cancel: watch::Sender<bool>,
@@ -462,13 +519,14 @@ impl Drop for PreparedSshSession {
     }
 }
 
-struct ProcessOutcome {
-    exit_code: i32,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-    prompts: String,
-    timed_out: bool,
-    output_truncated: bool,
+#[derive(Debug)]
+pub(super) struct ProcessOutcome {
+    pub(super) exit_code: i32,
+    pub(super) stdout: Vec<u8>,
+    pub(super) stderr: Vec<u8>,
+    pub(super) prompts: String,
+    pub(super) timed_out: bool,
+    pub(super) output_truncated: bool,
 }
 
 async fn run_isolated_process(
@@ -478,6 +536,7 @@ async fn run_isolated_process(
     prompt_log: &Path,
     mut cancellation: watch::Receiver<bool>,
     duration: Duration,
+    maximum_stdout_bytes: usize,
 ) -> Result<ProcessOutcome, String> {
     let working_directory = prompt_log.parent().ok_or_else(runtime_error)?;
     let mut command = Command::new(executable);
@@ -514,7 +573,7 @@ async fn run_isolated_process(
     let stderr_exceeded = Arc::new(AtomicBool::new(false));
     let stdout_task = tokio::spawn(read_bounded_pipe(
         stdout,
-        MAXIMUM_STDOUT_BYTES,
+        maximum_stdout_bytes,
         stdout_exceeded.clone(),
     ));
     let stderr_task = tokio::spawn(read_bounded_pipe(
@@ -850,7 +909,7 @@ fn normalize_verification_code(value: Option<String>) -> Result<Option<String>, 
         .transpose()
 }
 
-fn connection_fingerprint(material: &SshConnectionMaterial) -> String {
+pub(super) fn connection_fingerprint(material: &SshConnectionMaterial) -> String {
     let mut digest = Sha256::new();
     digest.update(serde_json::to_vec(&material.spec).unwrap_or_default());
     digest.update([0]);
@@ -883,6 +942,7 @@ fn finish_outcome(outcome: ProcessOutcome) -> Result<PresentedRemoteConnectionTe
     Err(user_facing_failure(&outcome.stderr))
 }
 
+#[cfg(test)]
 fn verification_prompt(prompts: &str, material: &SshConnectionMaterial) -> Option<String> {
     let prompt = verification_prompts(prompts).into_iter().next()?;
     Some(sanitize_verification_prompt(prompt, material))
@@ -952,7 +1012,7 @@ fn credential_secrets(credentials: &RemoteCredentialBundle) -> Vec<&str> {
     .collect()
 }
 
-fn user_facing_failure(stderr: &[u8]) -> String {
+pub(super) fn user_facing_failure(stderr: &[u8]) -> String {
     let source = String::from_utf8_lossy(stderr).to_lowercase();
     if source.contains("host key verification failed")
         || source.contains("remote host identification has changed")
@@ -1429,6 +1489,7 @@ mod tests {
         fs::write(&prepared.prompt_log, b"MFA verification code:\n").unwrap();
         let (cancel, _cancellation) = watch::channel(false);
         let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: fingerprint.clone(),
             connection: connection.clone(),
             prepared: prepared.clone(),
             cancel,
@@ -1439,7 +1500,7 @@ mod tests {
             .sessions
             .lock()
             .await
-            .insert(fingerprint, session.clone());
+            .insert(format!("connection-test:{fingerprint}"), session.clone());
         let completion_session = session.clone();
         tokio::spawn(async move {
             loop {
@@ -1483,9 +1544,53 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert_eq!(error, "SSH 二次验证会话已过期，请重新执行连接测试。");
+        assert_eq!(error, "SSH 二次验证会话已过期，请重新执行当前操作。");
         assert!(tester.sessions.lock().await.is_empty());
         assert!(!tester.runtime_root.exists());
+    }
+
+    #[tokio::test]
+    async fn changed_operation_cancels_the_retained_mfa_process() {
+        let directory = tempfile::tempdir().unwrap();
+        let tester = NativeOpenSshTester::with_timeout(
+            directory.path().join("runtime"),
+            Duration::from_secs(1),
+        );
+        let connection = password_material();
+        let prepared =
+            Arc::new(PreparedSshSession::create(&tester.runtime_root, &connection).unwrap());
+        let (cancel, cancellation) = watch::channel(false);
+        let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: "old-operation".into(),
+            connection: connection.clone(),
+            prepared,
+            cancel,
+            completion: Mutex::new(None),
+            changed: Notify::new(),
+        });
+        tester
+            .sessions
+            .lock()
+            .await
+            .insert("remote-file:request".into(), session);
+
+        let error = tester
+            .run_remote_command(
+                "remote-file:request".into(),
+                "new-operation".into(),
+                connection,
+                "true".into(),
+                Some("654321".into()),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                MAXIMUM_STDOUT_BYTES,
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, "SSH 二次验证操作已变化，请重新执行当前操作。");
+        assert!(tester.sessions.lock().await.is_empty());
+        assert!(*cancellation.borrow());
     }
 
     #[tokio::test]
@@ -1501,6 +1606,7 @@ mod tests {
         let session_path = prepared.directory.clone();
         let (cancel, _cancellation) = watch::channel(false);
         let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: "session".into(),
             connection,
             prepared,
             cancel,
@@ -1527,6 +1633,7 @@ mod tests {
             Arc::new(PreparedSshSession::create(&tester.runtime_root, &connection).unwrap());
         let (cancel, cancellation) = watch::channel(false);
         let session = Arc::new(ActiveSshSession {
+            operation_fingerprint: "completed".into(),
             connection,
             prepared,
             cancel,
@@ -1591,6 +1698,7 @@ mod tests {
             &prompt_log,
             cancellation,
             Duration::from_millis(50),
+            MAXIMUM_STDOUT_BYTES,
         )
         .await
         .unwrap();

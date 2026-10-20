@@ -1,4 +1,5 @@
 mod credentials;
+mod files;
 mod models;
 mod ssh;
 
@@ -9,6 +10,12 @@ use chatos_local_agent_protocol::{
     LocalRemoteConnectionSpec, UpdateRemoteConnectionCommand,
 };
 use credentials::{PlatformRemoteCredentialVault, RemoteCredentialVault};
+#[cfg(test)]
+use files::DisabledRemoteFileExecutor;
+use files::RemoteFileExecutor;
+pub use files::{
+    create_remote_directory, delete_remote_entry, list_remote_directory, rename_remote_entry,
+};
 pub use models::{
     PresentedRemoteConnection, PresentedRemoteConnectionTestResult, RemoteConnectionInput,
 };
@@ -75,11 +82,12 @@ pub struct RemoteConnectionManager {
     credentials: Arc<dyn RemoteCredentialVault>,
     route_provider: Arc<dyn RemoteConnectorRouteProvider>,
     tester: Arc<dyn RemoteConnectionTester>,
+    file_executor: Arc<dyn RemoteFileExecutor>,
 }
 
 impl RemoteConnectionManager {
     pub fn new(app_data_directory: PathBuf) -> Self {
-        let tester = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
+        let runtime = Arc::new(NativeOpenSshTester::new(app_data_directory.clone()));
         Self {
             mutation: Mutex::new(()),
             credentials: Arc::new(PlatformRemoteCredentialVault::new(
@@ -88,7 +96,8 @@ impl RemoteConnectionManager {
             route_provider: Arc::new(ConnectorStateRouteProvider {
                 data_directory: app_data_directory,
             }),
-            tester,
+            tester: runtime.clone(),
+            file_executor: runtime,
         }
     }
 
@@ -103,6 +112,7 @@ impl RemoteConnectionManager {
             credentials,
             route_provider,
             tester,
+            file_executor: Arc::new(DisabledRemoteFileExecutor),
         }
     }
 
@@ -434,6 +444,18 @@ impl RemoteConnectionManager {
         verification_code: Option<String>,
     ) -> Result<PresentedRemoteConnectionTestResult, String> {
         let _mutation = self.mutation.lock().await;
+        let material = self
+            .saved_material(client, owner_user_id, connection_id)
+            .await?;
+        self.tester.test(material, verification_code).await
+    }
+
+    async fn saved_material(
+        &self,
+        client: &dyn RemoteConnectionMetadataClient,
+        owner_user_id: &str,
+        connection_id: &str,
+    ) -> Result<SshConnectionMaterial, String> {
         validate_identity(owner_user_id, connection_id)?;
         let current = get_record(client, owner_user_id, connection_id)
             .await?
@@ -453,17 +475,12 @@ impl RemoteConnectionManager {
             .unwrap_or_default();
         let (jump_authentication_type, jump_credentials) =
             self.resolved_jump_credentials(owner_user_id, referenced_jump.as_ref())?;
-        self.tester
-            .test(
-                SshConnectionMaterial {
-                    spec,
-                    credentials,
-                    jump_authentication_type,
-                    jump_credentials,
-                },
-                verification_code,
-            )
-            .await
+        Ok(SshConnectionMaterial {
+            spec,
+            credentials,
+            jump_authentication_type,
+            jump_credentials,
+        })
     }
 
     fn resolved_jump_credentials(
