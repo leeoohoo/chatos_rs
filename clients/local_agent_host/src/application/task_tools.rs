@@ -208,18 +208,18 @@ impl LocalTaskToolExecutor {
                 )?;
                 *phase = "task_graph_validation";
                 command.validate()?;
-                *side_effects_started = true;
                 let graph = if let Some(existing) = existing {
                     if existing.graph_id == command.graph_id {
-                        self.create_graph(&invocation.invocation_id, command)
+                        self.create_graph(&invocation.invocation_id, command, side_effects_started)
                             .await?
                     } else {
                         existing
                     }
                 } else {
-                    self.create_graph(&invocation.invocation_id, command)
+                    self.create_graph(&invocation.invocation_id, command, side_effects_started)
                         .await?
                 };
+                *side_effects_started = true;
                 self.runtime
                     .start_ready_task_runs_for_graph(&parent.owner_user_id, &graph.graph_id)
                     .await
@@ -275,12 +275,15 @@ impl LocalTaskToolExecutor {
                 .await?;
                 *phase = "task_graph_validation";
                 plan.command.validate()?;
-                *side_effects_started = true;
                 let (graph, reused) = if let Some(existing) = existing {
                     if existing.graph_id == plan.command.graph_id {
                         (
-                            self.create_graph(&invocation.invocation_id, plan.command.clone())
-                                .await?,
+                            self.create_graph(
+                                &invocation.invocation_id,
+                                plan.command.clone(),
+                                side_effects_started,
+                            )
+                            .await?,
                             false,
                         )
                     } else {
@@ -288,11 +291,16 @@ impl LocalTaskToolExecutor {
                     }
                 } else {
                     (
-                        self.create_graph(&invocation.invocation_id, plan.command.clone())
-                            .await?,
+                        self.create_graph(
+                            &invocation.invocation_id,
+                            plan.command.clone(),
+                            side_effects_started,
+                        )
+                        .await?,
                         false,
                     )
                 };
+                *side_effects_started = true;
                 let auto_started_runs = self
                     .runtime
                     .start_ready_task_runs_for_graph(&parent.owner_user_id, &graph.graph_id)

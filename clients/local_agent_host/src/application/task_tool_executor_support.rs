@@ -5,11 +5,13 @@ use super::{
     task_tool_support::task_status_for_agent,
     task_tools::{CancelTaskArgs, LocalTaskToolExecutor, RequiredTaskPolicy},
 };
+use chatos_local_agent_ports::ClientStorageError;
 use chatos_local_agent_protocol::{
     CancelTaskCommand, CreateTaskGraphCommand, GetCapabilityPolicySnapshotCommand, HostCommand,
     HostResult, LocalAgentRunRecord, LocalAgentToolInvocationRecord, LocalTaskGraph,
     LocalTaskRecord, LocalTaskStatus,
 };
+use chatos_local_agent_runtime::LocalAgentRuntimeError;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashSet};
 
@@ -60,18 +62,48 @@ impl LocalTaskToolExecutor {
         &self,
         invocation_id: &str,
         command: CreateTaskGraphCommand,
+        side_effects_started: &mut bool,
     ) -> Result<LocalTaskGraph, String> {
-        match self
+        let result = self
             .runtime
             .try_handle(super::task_tools::envelope(
                 format!("task-tool-create-{invocation_id}"),
                 HostCommand::CreateTaskGraph(command),
             ))
-            .await
-            .map_err(|error| error.to_string())?
-        {
-            HostResult::TaskGraph { graph } => Ok(graph),
-            result => Err(format!("unexpected Task Graph response: {result:?}")),
+            .await;
+        Self::classify_task_graph_creation_result(result, side_effects_started)
+    }
+
+    fn classify_task_graph_creation_result(
+        result: Result<HostResult, LocalAgentRuntimeError>,
+        side_effects_started: &mut bool,
+    ) -> Result<LocalTaskGraph, String> {
+        match result {
+            Ok(HostResult::TaskGraph { graph }) => Ok(graph),
+            Ok(result) => {
+                *side_effects_started = true;
+                Err(format!("unexpected Task Graph response: {result:?}"))
+            }
+            Err(error) => {
+                if !Self::task_graph_creation_error_has_known_no_effect(&error) {
+                    *side_effects_started = true;
+                }
+                Err(error.to_string())
+            }
+        }
+    }
+
+    fn task_graph_creation_error_has_known_no_effect(error: &LocalAgentRuntimeError) -> bool {
+        // Task graph storage validates and mutates inside one transaction. Typed rejections
+        // roll that transaction back, so the model can safely correct and retry them. A database
+        // error stays ambiguous because a failed COMMIT acknowledgement cannot prove whether the
+        // commit reached durable storage.
+        match error {
+            LocalAgentRuntimeError::InvalidRequest(_)
+            | LocalAgentRuntimeError::InvalidRunState(_)
+            | LocalAgentRuntimeError::Clock(_) => true,
+            LocalAgentRuntimeError::Storage(ClientStorageError::Database(_)) => false,
+            LocalAgentRuntimeError::Storage(_) => true,
         }
     }
 
@@ -355,6 +387,53 @@ mod policy_tests {
     use super::*;
     use chatos_local_agent_ports::ClientStorageError;
     use chatos_local_agent_runtime::LocalAgentRuntimeError;
+
+    #[test]
+    fn rolled_back_task_graph_rejections_are_known_to_have_no_effect() {
+        for error in [
+            ClientStorageError::Conflict(
+                "publish and confirm the requirement plan before creating Tasks".into(),
+            ),
+            ClientStorageError::InvalidState("invalid graph".into()),
+            ClientStorageError::NotFound("source task".into()),
+            ClientStorageError::CommandMismatch("reused command".into()),
+        ] {
+            assert!(
+                LocalTaskToolExecutor::task_graph_creation_error_has_known_no_effect(
+                    &LocalAgentRuntimeError::Storage(error)
+                )
+            );
+        }
+        assert!(
+            !LocalTaskToolExecutor::task_graph_creation_error_has_known_no_effect(
+                &LocalAgentRuntimeError::Storage(ClientStorageError::Database(
+                    "commit result unavailable".into()
+                ))
+            )
+        );
+
+        let mut side_effects_started = false;
+        let result = LocalTaskToolExecutor::classify_task_graph_creation_result(
+            Err(LocalAgentRuntimeError::Storage(
+                ClientStorageError::Conflict(
+                    "publish a requirement plan with requirement_plan_save and wait for the user's confirmation before creating Tasks".into(),
+                ),
+            )),
+            &mut side_effects_started,
+        );
+        assert!(result.unwrap_err().contains("requirement_plan_save"));
+        assert!(!side_effects_started);
+
+        let result = LocalTaskToolExecutor::classify_task_graph_creation_result(
+            Err(LocalAgentRuntimeError::Storage(
+                ClientStorageError::Database("commit result unavailable".into()),
+            )),
+            &mut side_effects_started,
+        );
+        assert!(result.is_err());
+        assert!(side_effects_started);
+    }
+
     #[test]
     fn only_missing_policy_uses_legacy_defaults() {
         assert!(decode_task_policy(Err(LocalAgentRuntimeError::Storage(
