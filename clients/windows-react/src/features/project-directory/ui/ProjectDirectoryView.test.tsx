@@ -83,6 +83,7 @@ function stubPort(): ProjectDirectoryPort {
       isWritable: true,
       size: 7,
       modifiedAtUnixMs: 1,
+      revision: "a".repeat(64),
       content: "# Hello",
     })),
     searchEntries: vi.fn(async (request) => ({

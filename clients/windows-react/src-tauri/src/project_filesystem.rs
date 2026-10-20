@@ -1,8 +1,9 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File},
-    io::Read,
+    fs::{self, File, OpenOptions},
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant, UNIX_EPOCH},
 };
@@ -75,6 +76,7 @@ pub struct ProjectFileContent {
     is_writable: bool,
     size: u64,
     modified_at_unix_ms: Option<i64>,
+    revision: String,
     content: String,
 }
 
@@ -107,6 +109,23 @@ pub struct ProjectContentSearchResult {
     scanned_files: usize,
     visited_entries: usize,
     is_truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectEntryMutationResult {
+    project_id: String,
+    path: String,
+    parent_path: String,
+    listing: Option<ProjectDirectoryListing>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectFileWriteResult {
+    project_id: String,
+    path: String,
+    file: Option<ProjectFileContent>,
 }
 
 #[tauri::command]
@@ -192,6 +211,92 @@ pub async fn search_project_content(
     })
     .await
     .map_err(|_| "项目文件内容搜索任务异常退出。".to_owned())?
+}
+
+#[tauri::command]
+pub async fn write_project_file(
+    app: AppHandle,
+    owner_user_id: String,
+    project_id: String,
+    path: String,
+    expected_revision: String,
+    content: String,
+) -> Result<ProjectFileWriteResult, String> {
+    validate_owner(&owner_user_id)?;
+    let project_id = required("project_id", project_id)?;
+    let relative_path = normalized_relative_path(&path, false)?;
+    let expected_revision = normalized_revision(&expected_revision)?;
+    if content.len() > MAXIMUM_TEXT_PREVIEW_BYTES as usize {
+        return Err("文件内容超过 2 MiB 写入上限。".into());
+    }
+    let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
+        write_file(
+            &root,
+            &project_id,
+            &relative_path,
+            &expected_revision,
+            &content,
+        )
+    })
+    .await
+    .map_err(|_| "项目文件写入任务异常退出。".to_owned())?
+}
+
+#[tauri::command]
+pub async fn create_project_entry(
+    app: AppHandle,
+    owner_user_id: String,
+    project_id: String,
+    parent_path: String,
+    name: String,
+    kind: String,
+) -> Result<ProjectEntryMutationResult, String> {
+    validate_owner(&owner_user_id)?;
+    let project_id = required("project_id", project_id)?;
+    let parent_path = normalized_relative_path(&parent_path, true)?;
+    let name = normalized_entry_name(name)?;
+    let kind = mutation_kind(&kind)?;
+    let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
+        create_entry(&root, &project_id, &parent_path, &name, kind)
+    })
+    .await
+    .map_err(|_| "项目文件创建任务异常退出。".to_owned())?
+}
+
+#[tauri::command]
+pub async fn delete_project_entry(
+    app: AppHandle,
+    owner_user_id: String,
+    project_id: String,
+    path: String,
+    kind: String,
+    expected_revision: Option<String>,
+) -> Result<ProjectEntryMutationResult, String> {
+    validate_owner(&owner_user_id)?;
+    let project_id = required("project_id", project_id)?;
+    let relative_path = normalized_relative_path(&path, false)?;
+    let kind = mutation_kind(&kind)?;
+    let expected_revision = expected_revision
+        .as_deref()
+        .map(normalized_revision)
+        .transpose()?;
+    let app_data_directory = app.path().app_data_dir().map_err(|_| file_error())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = resolved_project_root(&app_data_directory, &owner_user_id, &project_id)?;
+        delete_entry(
+            &root,
+            &project_id,
+            &relative_path,
+            kind,
+            expected_revision.as_deref(),
+        )
+    })
+    .await
+    .map_err(|_| "项目文件删除任务异常退出。".to_owned())?
 }
 
 fn resolved_project_root(
@@ -304,8 +409,177 @@ fn read_file(
         is_writable: !metadata.permissions().readonly(),
         size: metadata.len(),
         modified_at_unix_ms: metadata.modified().ok().and_then(unix_milliseconds),
+        revision: content_revision(&bytes),
         content,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MutationKind {
+    File,
+    Directory,
+}
+
+fn write_file(
+    project_root: &Path,
+    project_id: &str,
+    relative_path: &str,
+    expected_revision: &str,
+    content: &str,
+) -> Result<ProjectFileWriteResult, String> {
+    let file_path = resolve_existing_path(project_root, relative_path, false)?;
+    let metadata = fs::symlink_metadata(&file_path).map_err(|_| file_error())?;
+    if is_link_or_reparse_point(&metadata)
+        || !metadata.is_file()
+        || metadata.permissions().readonly()
+    {
+        return Err("项目文件不可写。".into());
+    }
+    let maximum = if is_previewable_image(&file_path) {
+        MAXIMUM_IMAGE_PREVIEW_BYTES
+    } else {
+        MAXIMUM_TEXT_PREVIEW_BYTES
+    };
+    let current = read_bounded(&file_path, maximum).map_err(|_| file_error())?;
+    if content_revision(&current) != expected_revision {
+        return Err("文件已被其他程序修改，请重新加载后再保存。".into());
+    }
+    atomic_write(&file_path, content.as_bytes(), metadata.permissions())
+        .map_err(|_| file_error())?;
+    Ok(ProjectFileWriteResult {
+        project_id: project_id.to_owned(),
+        path: relative_path.to_owned(),
+        file: read_file(project_root, project_id, relative_path).ok(),
+    })
+}
+
+fn create_entry(
+    project_root: &Path,
+    project_id: &str,
+    parent_path: &str,
+    name: &str,
+    kind: MutationKind,
+) -> Result<ProjectEntryMutationResult, String> {
+    let parent = resolve_existing_path(project_root, parent_path, true)?;
+    let target = parent.join(name);
+    match kind {
+        MutationKind::File => {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .map_err(|_| "同名文件或目录已存在。".to_owned())?;
+        }
+        MutationKind::Directory => {
+            fs::create_dir(&target).map_err(|_| "同名文件或目录已存在。".to_owned())?;
+        }
+    }
+    Ok(ProjectEntryMutationResult {
+        project_id: project_id.to_owned(),
+        path: child_path(parent_path, name),
+        parent_path: parent_path.to_owned(),
+        listing: list_directory(project_root, project_id, parent_path).ok(),
+    })
+}
+
+fn delete_entry(
+    project_root: &Path,
+    project_id: &str,
+    relative_path: &str,
+    kind: MutationKind,
+    expected_revision: Option<&str>,
+) -> Result<ProjectEntryMutationResult, String> {
+    let target =
+        resolve_existing_path(project_root, relative_path, kind == MutationKind::Directory)?;
+    let metadata = fs::symlink_metadata(&target).map_err(|_| file_error())?;
+    if is_link_or_reparse_point(&metadata) {
+        return Err(invalid_path());
+    }
+    match kind {
+        MutationKind::File => {
+            let expected_revision =
+                expected_revision.ok_or_else(|| "删除文件缺少内容版本。".to_owned())?;
+            let maximum = if is_previewable_image(&target) {
+                MAXIMUM_IMAGE_PREVIEW_BYTES
+            } else {
+                MAXIMUM_TEXT_PREVIEW_BYTES
+            };
+            let current = read_bounded(&target, maximum).map_err(|_| file_error())?;
+            if content_revision(&current) != expected_revision {
+                return Err("文件已被其他程序修改，请重新加载后再删除。".into());
+            }
+            fs::remove_file(&target).map_err(|_| "无法删除项目文件。".to_owned())?;
+        }
+        MutationKind::Directory => {
+            if expected_revision.is_some() {
+                return Err("目录删除不能携带文件内容版本。".into());
+            }
+            fs::remove_dir_all(&target).map_err(|_| "无法删除项目目录。".to_owned())?;
+        }
+    }
+    let parent = parent_path(relative_path).ok_or_else(invalid_path)?;
+    Ok(ProjectEntryMutationResult {
+        project_id: project_id.to_owned(),
+        path: relative_path.to_owned(),
+        parent_path: parent.clone(),
+        listing: list_directory(project_root, project_id, &parent).ok(),
+    })
+}
+
+fn atomic_write(path: &Path, bytes: &[u8], permissions: fs::Permissions) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("missing parent"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.as_file_mut().set_permissions(permissions)?;
+    temporary.as_file_mut().write_all(bytes)?;
+    temporary.as_file_mut().flush()?;
+    temporary.as_file().sync_all()?;
+    let temporary_path = temporary.into_temp_path().keep()?;
+    let result = replace_file(&temporary_path, path);
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary_path);
+    }
+    result
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let succeeded = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if succeeded == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn content_revision(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn search_entries(
@@ -633,6 +907,32 @@ fn normalized_query(input: String) -> Result<String, String> {
     }
 }
 
+fn normalized_revision(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err("文件内容版本无效。".into())
+    }
+}
+
+fn normalized_entry_name(value: String) -> Result<String, String> {
+    let value = value.trim();
+    if valid_component(value) {
+        Ok(value.to_owned())
+    } else {
+        Err("项目文件名称无效。".into())
+    }
+}
+
+fn mutation_kind(value: &str) -> Result<MutationKind, String> {
+    match value {
+        "file" => Ok(MutationKind::File),
+        "directory" => Ok(MutationKind::Directory),
+        _ => Err("项目文件类型无效。".into()),
+    }
+}
+
 fn valid_component(value: &str) -> bool {
     !value.is_empty()
         && value != "."
@@ -847,5 +1147,76 @@ mod tests {
         }
         assert_eq!(normalized_relative_path("", true).unwrap(), "");
         assert!(normalized_relative_path("", false).is_err());
+    }
+
+    #[test]
+    fn mutations_require_revisions_and_never_overwrite_create_targets() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("note.txt"), "first").unwrap();
+        let initial = read_file(root.path(), "project-1", "note.txt").unwrap();
+        let saved = write_file(
+            root.path(),
+            "project-1",
+            "note.txt",
+            &initial.revision,
+            "second",
+        )
+        .unwrap();
+        let saved_file = saved.file.unwrap();
+        assert_eq!(saved_file.content, "second");
+        assert_ne!(saved_file.revision, initial.revision);
+
+        fs::write(root.path().join("note.txt"), "external").unwrap();
+        assert!(write_file(
+            root.path(),
+            "project-1",
+            "note.txt",
+            &saved_file.revision,
+            "stale",
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(root.path().join("note.txt")).unwrap(),
+            "external"
+        );
+
+        create_entry(root.path(), "project-1", "", "new.txt", MutationKind::File).unwrap();
+        assert!(create_entry(root.path(), "project-1", "", "new.txt", MutationKind::File).is_err());
+        create_entry(
+            root.path(),
+            "project-1",
+            "",
+            "Folder",
+            MutationKind::Directory,
+        )
+        .unwrap();
+
+        let external = read_file(root.path(), "project-1", "note.txt").unwrap();
+        assert!(delete_entry(
+            root.path(),
+            "project-1",
+            "note.txt",
+            MutationKind::File,
+            Some(&saved_file.revision),
+        )
+        .is_err());
+        delete_entry(
+            root.path(),
+            "project-1",
+            "note.txt",
+            MutationKind::File,
+            Some(&external.revision),
+        )
+        .unwrap();
+        delete_entry(
+            root.path(),
+            "project-1",
+            "Folder",
+            MutationKind::Directory,
+            None,
+        )
+        .unwrap();
+        assert!(!root.path().join("note.txt").exists());
+        assert!(!root.path().join("Folder").exists());
     }
 }

@@ -991,6 +991,6 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；写操作、Git 与项目设置未提前开放。
 14. [已完成] 项目创建与 Windows 文件夹授权由原生选择器产生 owner/presentation-scoped opaque ticket，通过恢复 journal 收口 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/选择器/保存 lifecycle 中拒绝迟到结果。
 15. [已完成] 按 `ProjectDirectoryViewModel`、`ProjectFilesystemServicing.search/readFile`、`NativeWorkspaceFilesystem` 与 `ProjectFileEditorView` 完成项目文件内容预览和只读搜索；路径、大小、编码、二进制、搜索预算与迟到结果门禁均已进入 Rust/React 测试。
-16. [macOS 已完成，可进入 React] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 Core mutation use case，冻结请求身份并区分副作用失败与“已提交但刷新失败”；下一步实现 Windows canonical path、原子写入、内容 revision 冲突与 React mutation lifecycle。Git 与项目设置继续独立实施。
+16. [Windows 原生边界已完成，React 进行中] `writeFile/createFile/createDirectory/deleteEntry` 已提取到 macOS Core mutation use case；Windows Tauri 已实现 owner/project/canonical path、symlink/reparse 拒绝、原子写入、内容 revision 冲突、create-new 和删除复验，并区分副作用失败与 committed-without-refresh。下一步接入 React Port/Store mutation identity 与 Apple 风格确认交互；Git 与项目设置继续独立实施。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

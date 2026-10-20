@@ -105,7 +105,8 @@ function fileEntry(path: string) {
 function fileContent(path: string, content: string) {
   return {
     projectId: "project-1", path, name: path, contentType: "text/plain", contentEncoding: "utf8" as const,
-    isBinary: false, isImage: false, isWritable: true, size: content.length, modifiedAtUnixMs: 1, content,
+    isBinary: false, isImage: false, isWritable: true, size: content.length, modifiedAtUnixMs: 1,
+    revision: "a".repeat(64), content,
   };
 }
 

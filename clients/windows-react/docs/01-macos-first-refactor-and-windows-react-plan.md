@@ -460,6 +460,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，macOS 项目文件 mutation 准入）：`writeFile/createFile/createDirectory/deleteEntry` 的多步 service orchestration 已从 `ProjectDirectoryViewModel` 提取到 Core `ProjectFilesystemMutationUseCase`。保存会冻结文件路径和草稿，创建/删除会冻结父目录与目标；单个 ViewModel 只允许一个 mutation，刷新、选择新文件或迟到的重读不得覆盖当前展示。写入、创建或删除已经提交但后续 read/list 失败时返回“已提交但刷新失败”的强类型结果，UI 不再把成功的副作用误报为失败。macOS 新增 3 项生命周期测试，覆盖保存期间切换文件、创建/删除后以 mutation 结果刷新父目录，以及创建已提交但刷新失败的恢复语义。该子切片已达到 React 写操作准入；Windows 仍需独立实现 canonical path、原子写入、冲突检测与 mutation identity 后才可开放 UI。
 
+状态补充（2026-10-20，Windows 项目文件原生 mutation 边界）：Tauri 已建立保存、创建文件/目录和递归删除命令，但尚未向 React Port/UI 开放。保存要求读取返回的 SHA-256 revision，写入前重新解析 owner/project grant、逐级拒绝 symlink/reparse point 并复验当前内容；旧 revision 必须冲突失败，不能覆盖外部修改。写入内容最多 2 MiB，先在同目录写入临时文件并同步，再以 Windows `MoveFileExW(REPLACE_EXISTING | WRITE_THROUGH)` 或 Unix rename 原子替换。新建使用 create-new/单层 create-dir，绝不覆盖同名目标；删除文件要求 revision，删除目录拒绝文件 revision且不能删除项目根。副作用提交后的 read/list 失败会返回 committed-without-refresh 投影，不伪装成副作用失败。React 文件内容 schema 已接收 opaque revision，但编辑、新建和删除 UI 仍保持关闭，等待 Port/Store mutation identity 与确认交互完成。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

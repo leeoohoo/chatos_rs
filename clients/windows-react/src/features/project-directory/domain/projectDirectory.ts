@@ -63,6 +63,7 @@ export const projectFileContentSchema = z.object({
   isWritable: z.boolean(),
   size: z.number().int().nonnegative().max(25 * 1_024 * 1_024),
   modifiedAtUnixMs: z.number().int().nonnegative().nullable(),
+  revision: z.string().regex(/^[0-9a-f]{64}$/),
   content: z.string().max(36 * 1_024 * 1_024),
 }).strict().superRefine((file, context) => {
   if (file.isBinary !== (file.contentEncoding === "base64")) {

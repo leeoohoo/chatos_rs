@@ -53,7 +53,8 @@ use project_creation::{
     pick_project_directory, ProjectCreationManager,
 };
 use project_filesystem::{
-    load_project_directory, read_project_file, search_project_content, search_project_entries,
+    create_project_entry, delete_project_entry, load_project_directory, read_project_file,
+    search_project_content, search_project_entries, write_project_file,
 };
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
@@ -153,6 +154,9 @@ pub fn run() {
             read_project_file,
             search_project_entries,
             search_project_content,
+            write_project_file,
+            create_project_entry,
+            delete_project_entry,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,
