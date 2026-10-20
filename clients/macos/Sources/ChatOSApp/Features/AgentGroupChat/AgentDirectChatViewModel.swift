@@ -240,24 +240,28 @@ final class AgentDirectChatViewModel: ObservableObject {
             in: attachmentPlan,
             cachedDataByID: retainedAttachmentData
         )
+        let ownerUserID = ownerUserID
+        let conversationID = conversationID
         supplementaryLoadTask = Task { [weak self] in
-            guard let self else { return }
             do {
-                async let loadedAttachmentData = loadAttachmentData(
+                async let loadedAttachmentData = Self.loadAttachmentData(
                     requests: missingAttachmentRequests,
+                    ownerUserID: ownerUserID,
+                    conversationID: conversationID,
                     store: store
                 )
 
                 guard conversation.conversationKind == .humanAgentDirect else {
                     var nextAttachmentData = retainedAttachmentData
                     nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
-                    guard !Task.isCancelled else { return }
-                    attachmentDataByID = nextAttachmentData
-                    pendingTeamProposals = []
-                    pendingAgentProposals = []
-                    pendingMembershipProposals = []
-                    teams = []
-                    isInitialTimelineReady = true
+                    guard !Task.isCancelled, let self else { return }
+                    self.attachmentDataByID = nextAttachmentData
+                    self.pendingTeamProposals = []
+                    self.pendingAgentProposals = []
+                    self.pendingMembershipProposals = []
+                    self.teams = []
+                    self.isInitialTimelineReady = true
+                    self.supplementaryLoadTask = nil
                     return
                 }
                 async let loadedProposals = store.listTeamProposals(
@@ -285,19 +289,21 @@ final class AgentDirectChatViewModel: ObservableObject {
                 let rooms = try await loadedTeams
                 var nextAttachmentData = retainedAttachmentData
                 nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
-                guard !Task.isCancelled else { return }
-                attachmentDataByID = nextAttachmentData
-                pendingTeamProposals = teamProposals
-                pendingAgentProposals = agentProposals
-                pendingMembershipProposals = membershipProposals
-                teams = rooms
-                isInitialTimelineReady = true
+                guard !Task.isCancelled, let self else { return }
+                self.attachmentDataByID = nextAttachmentData
+                self.pendingTeamProposals = teamProposals
+                self.pendingAgentProposals = agentProposals
+                self.pendingMembershipProposals = membershipProposals
+                self.teams = rooms
+                self.isInitialTimelineReady = true
+                self.supplementaryLoadTask = nil
             } catch {
-                guard !Task.isCancelled else { return }
-                errorMessage = error.localizedDescription
+                guard !Task.isCancelled, let self else { return }
+                self.errorMessage = error.localizedDescription
                 // Messages are already available. A supplementary-card failure must not leave
                 // the transcript waiting forever before it performs its initial positioning.
-                isInitialTimelineReady = true
+                self.isInitialTimelineReady = true
+                self.supplementaryLoadTask = nil
             }
         }
     }
@@ -358,11 +364,13 @@ final class AgentDirectChatViewModel: ObservableObject {
                 attachmentDataByID,
                 for: attachmentPlan
             )
-            let loadedAttachmentData = try await loadAttachmentData(
+            let loadedAttachmentData = try await Self.loadAttachmentData(
                 requests: AgentAttachmentDataCachePolicy.missingRequests(
                     in: attachmentPlan,
                     cachedDataByID: retainedAttachmentData
                 ),
+                ownerUserID: ownerUserID,
+                conversationID: conversationID,
                 store: store
             )
             var nextAttachmentData = retainedAttachmentData
@@ -533,8 +541,10 @@ final class AgentDirectChatViewModel: ObservableObject {
         return store
     }
 
-    private func loadAttachmentData(
+    nonisolated private static func loadAttachmentData(
         requests: [AgentAttachmentDataLoadRequest],
+        ownerUserID: String,
+        conversationID: String,
         store: SQLiteAgentGroupChatStore
     ) async throws -> [String: Data] {
         var result: [String: Data] = [:]

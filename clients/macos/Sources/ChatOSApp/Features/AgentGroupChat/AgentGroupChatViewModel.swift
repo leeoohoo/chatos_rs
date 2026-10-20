@@ -350,13 +350,15 @@ final class AgentGroupChatViewModel: ObservableObject {
             in: attachmentPlan,
             cachedDataByID: retainedAttachmentData
         )
+        let ownerUserID = ownerUserID
+        let projectID = projectID
 
         supplementaryLoadTask = Task { [weak self] in
-            guard let self else { return }
             do {
-                async let loadedAttachmentData = loadAttachmentData(
+                async let loadedAttachmentData = Self.loadAttachmentData(
                     requests: missingAttachmentRequests,
                     roomID: room.id,
+                    ownerUserID: ownerUserID,
                     store: store
                 )
                 let pendingProposals = try await store.listAgentProposals(
@@ -439,44 +441,55 @@ final class AgentGroupChatViewModel: ObservableObject {
                         return ($0.id, delivery)
                     }
                 )
-                guard !Task.isCancelled, self.room?.id == room.id else { return }
                 var nextAttachmentData = retainedAttachmentData
                 nextAttachmentData.merge(try await loadedAttachmentData) { _, new in new }
-                guard !Task.isCancelled, self.room?.id == room.id else { return }
-                publishIfChanged(nextAttachmentData, at: \.attachmentDataByID)
-                publishIfChanged(interruptedRuns, at: \.interruptedRuns)
-                publishIfChanged(pendingProposals, at: \.pendingProposals)
-                publishIfChanged(pendingRemovalProposals, at: \.pendingRemovalProposals)
-                publishIfChanged(pendingTeamProposals, at: \.pendingTeamProposals)
-                publishIfChanged(pendingMembershipProposals, at: \.pendingMembershipProposals)
-                publishIfChanged(teamTodos, at: \.teamTodos)
-                publishIfChanged(teamAssets, at: \.teamAssets)
-                publishIfChanged(projectDashboard, at: \.projectDashboard)
+                guard !Task.isCancelled,
+                      let self,
+                      self.room?.id == room.id else { return }
+                self.publishIfChanged(nextAttachmentData, at: \.attachmentDataByID)
+                self.publishIfChanged(interruptedRuns, at: \.interruptedRuns)
+                self.publishIfChanged(pendingProposals, at: \.pendingProposals)
+                self.publishIfChanged(pendingRemovalProposals, at: \.pendingRemovalProposals)
+                self.publishIfChanged(pendingTeamProposals, at: \.pendingTeamProposals)
+                self.publishIfChanged(pendingMembershipProposals, at: \.pendingMembershipProposals)
+                self.publishIfChanged(teamTodos, at: \.teamTodos)
+                self.publishIfChanged(teamAssets, at: \.teamAssets)
+                self.publishIfChanged(projectDashboard, at: \.projectDashboard)
                 let activeAssetIDs = Set(teamAssets.map(\.id))
-                publishIfChanged(
-                    teamAssetRevisions.filter { activeAssetIDs.contains($0.key) },
+                self.publishIfChanged(
+                    self.teamAssetRevisions.filter { activeAssetIDs.contains($0.key) },
                     at: \.teamAssetRevisions
                 )
-                publishIfChanged(
-                    loadingTeamAssetRevisionIDs.intersection(activeAssetIDs),
+                self.publishIfChanged(
+                    self.loadingTeamAssetRevisionIDs.intersection(activeAssetIDs),
                     at: \.loadingTeamAssetRevisionIDs
                 )
-                if hasLoadedRunHistory {
-                    publishIfChanged(
-                        Self.mergingRuns(recentRuns, with: visibleUnfinishedRuns),
+                if self.hasLoadedRunHistory {
+                    self.publishIfChanged(
+                        Self.mergingRuns(self.recentRuns, with: visibleUnfinishedRuns),
                         at: \.recentRuns
                     )
-                    var deliveries = recentRunDeliveries
+                    var deliveries = self.recentRunDeliveries
                     deliveries.merge(visibleUnfinishedDeliveries) { _, new in new }
-                    publishIfChanged(deliveries, at: \.recentRunDeliveries)
+                    self.publishIfChanged(deliveries, at: \.recentRunDeliveries)
                 } else {
-                    publishIfChanged(visibleUnfinishedRuns, at: \.recentRuns)
-                    publishIfChanged(visibleUnfinishedDeliveries, at: \.recentRunDeliveries)
+                    self.publishIfChanged(visibleUnfinishedRuns, at: \.recentRuns)
+                    self.publishIfChanged(
+                        visibleUnfinishedDeliveries,
+                        at: \.recentRunDeliveries
+                    )
                 }
-                publishIfChanged(todoRunPresentationsByTodoID, at: \.todoRunPresentationsByTodoID)
+                self.publishIfChanged(
+                    todoRunPresentationsByTodoID,
+                    at: \.todoRunPresentationsByTodoID
+                )
+                self.supplementaryLoadTask = nil
             } catch {
-                guard !Task.isCancelled, self.room?.id == room.id else { return }
-                errorMessage = error.localizedDescription
+                guard !Task.isCancelled,
+                      let self,
+                      self.room?.id == room.id else { return }
+                self.errorMessage = error.localizedDescription
+                self.supplementaryLoadTask = nil
             }
         }
     }

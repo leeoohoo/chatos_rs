@@ -59,12 +59,13 @@ extension AgentGroupChatViewModel {
                 attachmentDataByID,
                 for: attachmentPlan
             )
-            let loadedAttachmentData = try await loadAttachmentData(
+            let loadedAttachmentData = try await Self.loadAttachmentData(
                 requests: AgentAttachmentDataCachePolicy.missingRequests(
                     in: attachmentPlan,
                     cachedDataByID: retainedAttachmentData
                 ),
                 roomID: room.id,
+                ownerUserID: ownerUserID,
                 store: store
             )
             var nextAttachmentData = retainedAttachmentData

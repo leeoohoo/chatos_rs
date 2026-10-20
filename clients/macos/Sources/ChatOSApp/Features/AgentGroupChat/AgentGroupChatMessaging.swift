@@ -190,9 +190,10 @@ extension AgentGroupChatViewModel {
         return store
     }
 
-    func loadAttachmentData(
+    nonisolated static func loadAttachmentData(
         requests: [AgentAttachmentDataLoadRequest],
         roomID: String,
+        ownerUserID: String,
         store: SQLiteAgentGroupChatStore
     ) async throws -> [String: Data] {
         var result: [String: Data] = [:]
