@@ -5,7 +5,11 @@ import Foundation
 
 /// Each completed creation has its own atomic manifest and local media files.
 /// Relative filenames keep records valid across app reinstalls and directory moves.
-actor MediaStudioHistoryStore: MediaStudioHistoryLoading, MediaStudioImageHistoryPersisting {
+actor MediaStudioHistoryStore:
+    MediaStudioHistoryLoading,
+    MediaStudioImageHistoryPersisting,
+    MediaStudioVideoHistoryPersisting
+{
     private static let maximumManifestBytes = 2 * 1_024 * 1_024
     nonisolated static let defaultPageSize = MediaStudioHistoryUseCase.defaultPageSize
 
@@ -168,7 +172,11 @@ actor MediaStudioHistoryStore: MediaStudioHistoryLoading, MediaStudioImageHistor
         return imageItem(entry, folder: folder)
     }
 
-    func saveVideo(_ result: VideoGenerationResult, prompt: String, owner: String) throws -> MediaStudioVideoHistoryItem {
+    func saveVideo(
+        _ result: VideoGenerationResult,
+        prompt: String,
+        owner: String
+    ) async throws -> MediaStudioVideoHistoryItem {
         guard !result.videoData.isEmpty else { throw HistoryError.invalidRecord }
         let folder = try newFolder(owner: owner)
         let filename = "video.\(result.mimeType == "video/quicktime" ? "mov" : "mp4")"

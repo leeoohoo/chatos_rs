@@ -6,11 +6,6 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
-    private enum VideoGenerationCompletion {
-        case success(VideoHistoryItem)
-        case failure(String)
-    }
-
     enum Section: String, CaseIterable, Identifiable {
         case image
         case video
@@ -71,6 +66,7 @@ final class MediaStudioViewModel: ObservableObject {
 
     private let service: any MediaGenerationServicing
     private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
+    private let videoGenerationUseCase: MediaStudioVideoGenerationUseCase
     private let modelCatalogUseCase: MediaStudioModelCatalogUseCase
     private let historyUseCase: MediaStudioHistoryUseCase
     private let imageReferenceUseCase: MediaStudioImageReferenceUseCase
@@ -85,11 +81,10 @@ final class MediaStudioViewModel: ObservableObject {
     private var historyLoadState = MediaStudioHistoryLoadState()
     private var modelsLoadTask: Task<Void, Never>?
     private var modelCatalogState = MediaStudioModelCatalogState()
-    private let historyStore: MediaStudioHistoryStore
     private var ownerID: String?
     private var sessionID = UUID()
     private var imageGenerationState = MediaStudioImageGenerationState()
-    private var videoOperationID = UUID()
+    private var videoGenerationState = MediaStudioVideoGenerationState()
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
     private var videoAudioSelectionID = UUID()
@@ -103,6 +98,10 @@ final class MediaStudioViewModel: ObservableObject {
             generator: service,
             history: historyStore
         )
+        self.videoGenerationUseCase = MediaStudioVideoGenerationUseCase(
+            generator: service,
+            history: historyStore
+        )
         self.modelCatalogUseCase = MediaStudioModelCatalogUseCase(provider: service)
         self.historyUseCase = MediaStudioHistoryUseCase(history: historyStore)
         let imageReferenceImporter = MediaStudioImageReferenceImporter(transport: imageTransport)
@@ -111,7 +110,6 @@ final class MediaStudioViewModel: ObservableObject {
             importer: imageReferenceImporter
         )
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
-        self.historyStore = historyStore
     }
 
     deinit {
@@ -350,9 +348,10 @@ final class MediaStudioViewModel: ObservableObject {
 
     func generateVideo() {
         guard canGenerateVideo, let selectedVideoModelID, let ownerID else { return }
-        let session = sessionID
-        videoOperationID = UUID()
-        let operation = videoOperationID
+        let token = videoGenerationState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        )
         let submittedPrompt = videoPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = VideoGenerationRequest(
             modelConfigID: selectedVideoModelID, prompt: submittedPrompt,
@@ -362,85 +361,86 @@ final class MediaStudioViewModel: ObservableObject {
         isGeneratingVideo = true
         videoProgress = .init(status: "submitting")
         errorMessage = nil
-        let service = service
-        let historyStore = historyStore
+        let useCase = videoGenerationUseCase
         videoGenerationTask?.cancel()
         videoGenerationTask = Task { [weak self] in
-            var isSaving = false
+            let outcome: Result<MediaStudioVideoGenerationOutcome, Error>
             do {
-                let result = try await service.generateVideo(request) { [weak self] progress in
+                outcome = .success(try await useCase.generate(
+                    request: request,
+                    owner: ownerID
+                ) { [weak self] progress in
                     await MainActor.run {
-                        guard self?.sessionID == session, self?.videoOperationID == operation else { return }
-                        self?.videoProgress = progress
+                        self?.applyVideoProgress(progress, token: token)
                     }
-                }
-                guard !Task.isCancelled,
-                      self?.beginSavingVideo(session: session, operation: operation) == true else {
-                    return
-                }
-                isSaving = true
-                let item = try await historyStore.saveVideo(result, prompt: submittedPrompt, owner: ownerID)
-                guard !Task.isCancelled else { return }
-                self?.finishVideoGeneration(
-                    .success(item),
-                    session: session,
-                    operation: operation,
-                    failedWhileSaving: false
-                )
+                })
             } catch is CancellationError {
                 guard !Task.isCancelled else { return }
-                self?.finishCancelledVideoGeneration(session: session, operation: operation)
+                self?.finishCancelledVideoGeneration(token: token)
+                return
             } catch {
-                guard !Task.isCancelled else { return }
-                self?.finishVideoGeneration(
-                    .failure(error.localizedDescription),
-                    session: session,
-                    operation: operation,
-                    failedWhileSaving: isSaving
-                )
+                outcome = .failure(error)
             }
+            guard !Task.isCancelled else { return }
+            self?.finishVideoGeneration(outcome, token: token)
         }
     }
 
-    private func beginSavingVideo(session: UUID, operation: UUID) -> Bool {
-        guard sessionID == session, videoOperationID == operation else { return false }
-        videoProgress = .init(status: "saving")
-        return true
+    private func applyVideoProgress(
+        _ progress: VideoGenerationProgress,
+        token: MediaStudioVideoGenerationToken
+    ) {
+        guard videoGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        videoProgress = progress
     }
 
     private func finishVideoGeneration(
-        _ result: VideoGenerationCompletion,
-        session: UUID,
-        operation: UUID,
-        failedWhileSaving: Bool
+        _ result: Result<MediaStudioVideoGenerationOutcome, Error>,
+        token: MediaStudioVideoGenerationToken
     ) {
-        guard sessionID == session, videoOperationID == operation else { return }
+        guard videoGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
         switch result {
-        case let .success(item):
-            videoHistory.insert(item, at: 0)
-            videoProgress = .init(status: "completed", percent: 100)
-        case let .failure(message):
-            if failedWhileSaving {
+        case let .success(outcome):
+            switch outcome {
+            case let .saved(item):
+                videoHistory.insert(item, at: 0)
+                videoProgress = .init(status: "completed", percent: 100)
+            case let .generatedWithoutPersistence(message):
                 historyErrorMessage = "视频已生成，但未能保存到本机：\(message)"
                 errorMessage = historyErrorMessage
-            } else {
-                errorMessage = message
+                videoProgress = .init(status: "failed")
             }
+        case let .failure(error):
+            errorMessage = error.localizedDescription
             videoProgress = .init(status: "failed")
         }
+        guard videoGenerationState.finish(token) else { return }
         isGeneratingVideo = false
         videoGenerationTask = nil
     }
 
-    private func finishCancelledVideoGeneration(session: UUID, operation: UUID) {
-        guard sessionID == session, videoOperationID == operation else { return }
+    private func finishCancelledVideoGeneration(token: MediaStudioVideoGenerationToken) {
+        guard videoGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        guard videoGenerationState.finish(token) else { return }
         videoProgress = nil
         isGeneratingVideo = false
         videoGenerationTask = nil
     }
 
     func cancelVideoGeneration() {
-        videoOperationID = UUID()
+        videoGenerationState.reset()
         videoGenerationTask?.cancel()
         videoGenerationTask = nil
         isGeneratingVideo = false
@@ -663,6 +663,7 @@ final class MediaStudioViewModel: ObservableObject {
         stories.reset()
         sessionID = UUID()
         imageGenerationState.reset()
+        videoGenerationState.reset()
         ownerID = nil
         imageGenerationTask?.cancel()
         imageGenerationTask = nil
