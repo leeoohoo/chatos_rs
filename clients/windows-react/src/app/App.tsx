@@ -9,6 +9,7 @@ import { TauriConversationAttachmentAdapter } from "../features/conversation-att
 import { TauriConversationRealtimeAdapter } from "../features/conversation-realtime/adapters/TauriConversationRealtimeAdapter";
 import { TauriConversationRuntimeSettingsAdapter } from "../features/conversation-runtime-settings/adapters/TauriConversationRuntimeSettingsAdapter";
 import { TauriRunInspectorAdapter } from "../features/run-inspector/adapters/TauriRunInspectorAdapter";
+import { TauriSystemPermissionsAdapter } from "../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter";
 import { TauriToolApprovalAdapter } from "../features/tool-approval/adapters/TauriToolApprovalAdapter";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
@@ -30,6 +31,7 @@ const conversationAttachments = new TauriConversationAttachmentAdapter();
 const conversationRealtime = new TauriConversationRealtimeAdapter();
 const conversationRuntimeSettings = new TauriConversationRuntimeSettingsAdapter();
 const runInspector = new TauriRunInspectorAdapter();
+const systemPermissions = new TauriSystemPermissionsAdapter();
 const toolApproval = new TauriToolApprovalAdapter();
 
 export function App() {
@@ -67,6 +69,7 @@ function ApplicationRoot() {
             conversationRealtime={conversationRealtime}
             conversationRuntimeSettings={conversationRuntimeSettings}
             runInspector={runInspector}
+            systemPermissions={systemPermissions}
             askUser={askUser}
             toolApproval={toolApproval}
             session={session}

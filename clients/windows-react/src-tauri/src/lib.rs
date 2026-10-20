@@ -12,6 +12,7 @@ mod host_lifecycle;
 mod platform_execution_context;
 mod project_conversation;
 mod run_inspector;
+mod system_permissions;
 mod terminal_runtime;
 mod terminal_tool_worker;
 mod tool_approval;
@@ -47,6 +48,7 @@ use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
 };
+use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
 use terminal_tool_worker::TerminalToolWorker;
 use tool_approval::journal::ApprovalDecisionJournal;
@@ -146,6 +148,8 @@ pub fn run() {
             load_tool_approval_settings,
             update_tool_approval_mode,
             update_tool_approval_model,
+            load_system_permissions,
+            request_system_permission,
             poll_conversation_realtime,
             send_conversation_draft,
             activate_conversation_attachment_scope,

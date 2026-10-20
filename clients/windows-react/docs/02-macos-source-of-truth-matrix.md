@@ -807,6 +807,25 @@ Windows 已完成 Host durable queue/decision、全局 Human 浮层、terminal s
 - Windows 定向验收为 Rust 80 项通过、2 项 sidecar 环境测试忽略，React 28 个文件 103 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过；
 - 该阶段已证明 Human durable decision、session/policy 复用、设置持久化、审计恢复与真实 terminal 执行结果写回形成闭环。运行时权限和项目创建/授权 UI 仍是后续独立切片，不能伪造成已完成。
 
+### 8.6 运行与系统权限的 Windows 平台映射
+
+macOS 事实源：
+
+- `LocalConnectorRuntimePermissionsView.swift` 只展示系统权限，不编辑 `LocalConnectorSandboxView.swift` 中的访问控制策略；
+- `LocalConnectorSystemPermission(s)` 固定平台、权限项、状态、是否可请求、说明和最近错误的传输结构；
+- `NativeSystemPermissions.swift` 由原生层检测并请求权限，SwiftUI 不自行判断系统状态；
+- ready 语义包含 `ready / not_applicable / on_demand`，`needs_attention / missing_dependency / action_required` 使用注意状态。
+
+Windows React 已完成对应独立切片：
+
+- Rust/Tauri 发布有界、强类型的 `windows` 原生能力快照，命令要求当前 owner 的 Host session 就绪；React 只解析安全 DTO，不读取系统或 Host 内部状态；
+- `terminal` 对应已经准入的 Rust/Tauri PowerShell worker，状态为 `ready`，但明确保留账号、工作区、审批和进程树约束；
+- Windows 没有 macOS“完全磁盘访问”的等价总开关；`filesystem` 状态为 `on_demand`，准确说明当前账号 ACL、Registry 与 workspace grant 的联合边界；
+- Computer Use/UI Automation 与屏幕采集 worker 尚未准入，状态为 `missing_dependency` 且 `canRequest = false`。这代表产品能力缺失，不得伪装成用户尚未授权；
+- 当前快照没有应用内可请求项；request command 对未知或不可请求 ID 失败关闭。将来只有原生层发布 `canRequest` 后，React 才显示授权动作；
+- React Store 绑定 owner 与 Host availability，refresh/action 使用独立 request identity；短暂刷新失败保留最后可信快照，账号替换或 Host suspension 拒绝迟到结果；
+- Windows 定向验收为 Rust 82 项通过、2 项 sidecar 环境测试忽略，React 31 个文件 114 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
 ## 9. 次级模块生命周期审计
 
 ### 9.1 Pet 翻译
@@ -867,7 +886,7 @@ Windows 已完成 Host durable queue/decision、全局 Human 浮层、terminal s
 | 27 | 设置 / 设备网关 | 未映射 | 禁止 |
 | 28 | 设置 / 插件与 Skills | 未映射 | 禁止 |
 | 29 | 设置 / 命令审批 | macOS 分层与干净快照准入验收已完成；Windows durable queue/decision、全局浮层、writeback journal、execution context/cwd、terminal platform worker、进程内 session allowlist、三态策略/模型设置与审计历史页已完成 | 已进入 React；审批 Agent runtime 未准入时明确降级 Human |
-| 30 | 设置 / 运行时权限 | 源码映射中 | 禁止 |
+| 30 | 设置 / 运行时权限 | macOS 系统权限契约与 Windows 平台差异已映射；Windows 原生能力快照、Host/owner lifecycle、刷新与 Apple 主题页面已完成 | 已进入 React；未准入 worker 明确显示为能力缺失 |
 | 31 | 设置 / 访问控制 | 未映射 | 禁止 |
 
 Run Inspector 是项目消息中的业务弹层，不对应单独的一级截图；它已在第 5 节完成 macOS 分层，并已进入 Windows React 纵向实现。
@@ -886,6 +905,7 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 8. [已完成] Windows 已按 macOS 边界完成 execution context/cwd、账号 Connector state、批准前置复验和 terminal platform worker；真实命令/进程、Host sidecar、claim/lease/approval/recovery 与资源回收测试通过后，`task_execution` 才发布附件及六项 terminal 能力。
 9. [已完成] 实现 account/device/workspace/exact-request 绑定的 terminal session allowlist，扩展 Human 决定为 `acceptForSession`，并在应用/Host session 结束时清空；journal 恢复不重建进程内授权。
 10. [已完成] 按 macOS 契约实现命令审批三态策略、模型/推理设置、风险确认、pending 决定和审计历史页；未准入的 Windows 审批 Agent 明确降级 Human。
-11. [进行中] 映射并实现运行时权限设置页；仍须先完成 macOS settings 契约与平台权限差异验收，再进入 React。
+11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
+12. [进行中] 映射第 31 页访问控制/沙箱策略，先验证 Windows 真实执行边界与 Host policy 写入链路，再决定可编辑字段。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

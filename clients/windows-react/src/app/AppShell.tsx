@@ -7,6 +7,8 @@ import type { ConversationAttachmentPort } from "../features/conversation-attach
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../features/conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
+import type { SystemPermissionsPort } from "../features/runtime-permissions/ports/SystemPermissionsPort";
+import { SystemPermissionsView } from "../features/runtime-permissions/ui/SystemPermissionsView";
 import type { ToolApprovalPort } from "../features/tool-approval/ports/ToolApprovalPort";
 import type { ToolApprovalSettingsPort } from "../features/tool-approval/ports/ToolApprovalSettingsPort";
 import { GlobalToolApprovalOverlay } from "../features/tool-approval/ui/GlobalToolApprovalOverlay";
@@ -32,6 +34,7 @@ interface AppShellProps {
   conversationRealtime: ConversationRealtimePort;
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
+  systemPermissions: SystemPermissionsPort;
   askUser: AskUserPort;
   toolApproval: ToolApprovalPort & ToolApprovalSettingsPort;
   session: AuthSession;
@@ -48,6 +51,7 @@ export function AppShell({
   conversationRealtime,
   conversationRuntimeSettings,
   runInspector,
+  systemPermissions,
   askUser,
   toolApproval,
   session,
@@ -60,7 +64,7 @@ export function AppShell({
   const workspaceSnapshot = useWorkspaceIndexStore((state) => state.snapshot);
   const resetProjectConversations = useProjectConversationStore((state) => state.reset);
   const [selection, setSelection] = useState<WorkspaceSelection>({ kind: "workbench" });
-  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval">("workspace");
+  const [activeSurface, setActiveSurface] = useState<"workspace" | "tool-approval" | "runtime-permissions">("workspace");
 
   useEffect(() => {
     void start(hostLifecycle, session.user.id);
@@ -92,7 +96,9 @@ export function AppShell({
   const defaultContactReady = workspaceSnapshot.contacts.some((contact) => contact.id === "jiguli");
   const title = activeSurface === "tool-approval"
     ? "命令审批"
-    : selectedProject?.title ?? selectedContact?.title ?? "工作台";
+    : activeSurface === "runtime-permissions"
+      ? "运行与权限"
+      : selectedProject?.title ?? selectedContact?.title ?? "工作台";
   const selectWorkspace = (nextSelection: WorkspaceSelection) => {
     setSelection(nextSelection);
     setActiveSurface("workspace");
@@ -112,15 +118,27 @@ export function AppShell({
           selection={selection}
           onSelectionChange={selectWorkspace}
         />
-        <button
-          aria-current={activeSurface === "tool-approval" ? "page" : undefined}
-          className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
-          onClick={() => setActiveSurface("tool-approval")}
-          type="button"
-        >
-          <span aria-hidden="true">⚙︎</span>
-          <span><strong>命令审批</strong><small>本机安全策略</small></span>
-        </button>
+        <div className="sidebar-settings-group">
+          <p>设置</p>
+          <button
+            aria-current={activeSurface === "tool-approval" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "tool-approval" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("tool-approval")}
+            type="button"
+          >
+            <span aria-hidden="true">✓</span>
+            <span><strong>命令审批</strong><small>本机安全策略</small></span>
+          </button>
+          <button
+            aria-current={activeSurface === "runtime-permissions" ? "page" : undefined}
+            className={`sidebar-settings-button ${activeSurface === "runtime-permissions" ? "sidebar-settings-button--active" : ""}`}
+            onClick={() => setActiveSurface("runtime-permissions")}
+            type="button"
+          >
+            <span aria-hidden="true">⌁</span>
+            <span><strong>运行与权限</strong><small>Windows 系统能力</small></span>
+          </button>
+        </div>
         <div className="sidebar-status">
           <span className={`status-light status-light--${snapshot.phase}`} />
           <span>{snapshot.label}</span>
@@ -136,7 +154,13 @@ export function AppShell({
       <section className="content-surface">
         <header className="workspace-header">
           <div>
-            <p className="eyebrow">{activeSurface === "tool-approval" ? "LOCAL SECURITY" : "LOCAL WORKSPACE"}</p>
+            <p className="eyebrow">{
+              activeSurface === "tool-approval"
+                ? "LOCAL SECURITY"
+                : activeSurface === "runtime-permissions"
+                  ? "RUNTIME & PERMISSIONS"
+                  : "LOCAL WORKSPACE"
+            }</p>
             <h1>{title}</h1>
           </div>
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
@@ -147,6 +171,12 @@ export function AppShell({
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
             settingsPort={toolApproval}
+          />
+        ) : activeSurface === "runtime-permissions" ? (
+          <SystemPermissionsView
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            port={systemPermissions}
           />
         ) : selectedProject ? (
           <ProjectConversationPlaceholder
