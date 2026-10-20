@@ -5,7 +5,8 @@ pub(crate) mod transport;
 use crate::{
     attachment_tool_worker::AttachmentToolWorker, authentication::AuthenticationManager,
     connector_state, control_plane, local_terminal::LocalTerminalRegistry,
-    terminal_tool_worker::TerminalToolWorker, tool_approval::session::ApprovalSessionAllowlist,
+    plugin_application::PluginApplicationManager, terminal_tool_worker::TerminalToolWorker,
+    tool_approval::session::ApprovalSessionAllowlist,
 };
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
@@ -179,9 +180,11 @@ pub async fn host_lifecycle_snapshot(
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<HostLifecycleSnapshot, String> {
     let mut process = manager.process.lock().await;
     let Some(host) = process.as_mut() else {
+        plugin_applications.reset().await;
         local_terminals.reset().await;
         return Ok(HostLifecycleSnapshot::stopped(
             "登录账号确定后才能启动本地服务。",
@@ -199,6 +202,7 @@ pub async fn host_lifecycle_snapshot(
         manager.approval_sessions.reset();
         attachment_worker.reset().await;
         terminal_worker.reset().await;
+        plugin_applications.reset().await;
         local_terminals.reset().await;
         manager
             .diagnostics
@@ -218,6 +222,7 @@ pub async fn host_lifecycle_snapshot(
             manager.approval_sessions.reset();
             attachment_worker.reset().await;
             terminal_worker.reset().await;
+            plugin_applications.reset().await;
             local_terminals.reset().await;
             manager
                 .diagnostics
@@ -241,6 +246,7 @@ pub async fn start_local_agent_host(
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
     authentication: State<'_, AuthenticationManager>,
     owner_user_id: String,
 ) -> Result<HostLifecycleSnapshot, String> {
@@ -284,6 +290,7 @@ pub async fn start_local_agent_host(
             .record("host_replace", "previous_stopped")
             .await;
     }
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     manager.approval_sessions.reset();
     *manager.model_catalog.lock().await = None;
@@ -428,10 +435,12 @@ pub async fn stop_local_agent_host(
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<HostLifecycleSnapshot, String> {
     manager.diagnostics.record("host_stop", "requested").await;
     attachment_worker.reset().await;
     terminal_worker.reset().await;
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     manager.terminate_process().await;
     manager.diagnostics.record("host_stop", "stopped").await;

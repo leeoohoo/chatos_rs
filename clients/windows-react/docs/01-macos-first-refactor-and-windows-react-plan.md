@@ -478,6 +478,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows Plugin 应用原生 catalog）：已按 macOS `NativeLocalConnectorService.fetchPluginApplications` 与 Host 当前账号安装记录建立 Tauri catalog 前置切片。原生层分页读取并交叉复验 installation summary/record，只接受 enabled、schema v3、Windows platform、workbench surface 和组件级必需 `process.spawn`；executable、manifest、UI source 必须 canonicalize 到 `<appData>/NativeConnector/Plugins` 下同一安装根。manifest、参数、health path、timeout 和 bridge capability 均有界，React DTO 不包含 executable、安装目录、source 路径或 Secret。11 项定向测试及 Windows Rust 全量 195 项通过、2 项真实 sidecar 环境测试忽略。该切片只完成 catalog，不代表第 05 页进入 React；下一步仍是 local HTTP runtime、进程树回收、受限 bridge 与 launch lifecycle。
 
+状态补充（2026-10-21，Windows Plugin 应用 local HTTP runtime）：已按 macOS `NativePluginApplicationRuntime`、`NativePluginRuntimeContextResolver` 与 `PluginApplicationLaunchUseCase` 建立 launch 前置切片。每次启动重新读取 Host 安装真值；package bin、manifest source 和 executable 均锁定安装根且拒绝 symlink/reparse。原生层解析 Node/参数，构造不含应用 Secret 的 allowlist 环境，按 user/plugin/project/workspace/device 生成 SHA-256 隔离 data/cache，只向 UI 返回 project ID/name。服务使用 `127.0.0.1` 随机端口、有界 health timeout、无 redirect/proxy 客户端和固定缓冲输出 drain；相同 release/digest/version 才复用。owner/presentation/generation/context 与 runtime epoch 拒绝 teardown 后迟到启动；每账号最多 8 个进程，Windows Job Object/Unix process group 在失败、账号、Host 和应用退出时回收。Windows 当前只具备受限环境与进程生命周期边界，不伪装成 macOS Seatbelt 文件/网络沙箱。Plugin 定向 21 项及 Rust 全量 205 项通过、2 项真实 sidecar 环境测试忽略，Clippy 通过。第 05 页仍等待 origin/navigation/session 绑定的受限 bridge，完成前不创建 React UI。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

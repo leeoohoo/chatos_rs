@@ -14,7 +14,8 @@ use tokio::task::JoinSet;
 
 use crate::{
     host_lifecycle::HostManager, local_terminal::LocalTerminalRegistry,
-    project_run::ProjectRunManager, remote_connection::RemoteConnectionManager,
+    plugin_application::PluginApplicationManager, project_run::ProjectRunManager,
+    remote_connection::RemoteConnectionManager,
 };
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -290,7 +291,9 @@ pub async fn restore_authentication_session(
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<Option<AuthSession>, String> {
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager.restore_session().await?;
@@ -310,7 +313,9 @@ pub async fn login(
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<AuthSession, String> {
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager.login(username, password).await?;
@@ -341,7 +346,9 @@ pub async fn register(
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<AuthSession, String> {
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
     let session = manager
@@ -358,7 +365,9 @@ pub async fn logout(
     project_runs: State<'_, ProjectRunManager>,
     remote_connections: State<'_, RemoteConnectionManager>,
     local_terminals: State<'_, LocalTerminalRegistry>,
+    plugin_applications: State<'_, PluginApplicationManager>,
 ) -> Result<(), String> {
+    plugin_applications.reset().await;
     local_terminals.reset().await;
     remote_connections.reset().await;
     project_runs.reset().await;

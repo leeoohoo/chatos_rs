@@ -59,7 +59,10 @@ use local_terminal::{
     poll_local_terminal, resize_local_terminal, send_local_terminal_input, start_local_terminal,
     LocalTerminalRegistry,
 };
-use plugin_application::{list_plugin_applications, PluginApplicationManager};
+use plugin_application::{
+    discard_plugin_application_presentation, launch_plugin_application, list_plugin_applications,
+    PluginApplicationManager,
+};
 use project_conversation::prepare_project_conversation;
 use project_creation::{
     create_local_project, discard_project_directory_selection, list_project_types,
@@ -290,6 +293,8 @@ pub fn run() {
             close_local_terminal,
             discard_local_terminal_presentation,
             list_plugin_applications,
+            launch_plugin_application,
+            discard_plugin_application_presentation,
             host_diagnostics,
             host_lifecycle_snapshot,
             start_local_agent_host,
@@ -305,6 +310,7 @@ pub fn run() {
         app_handle.state::<ProjectRunManager>().reset().await;
         app_handle.state::<RemoteConnectionManager>().reset().await;
         app_handle.state::<LocalTerminalRegistry>().reset().await;
+        app_handle.state::<PluginApplicationManager>().reset().await;
         app_handle.state::<HostManager>().shutdown().await;
     });
     if exit_code != 0 {

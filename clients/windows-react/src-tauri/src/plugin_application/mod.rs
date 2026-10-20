@@ -13,6 +13,11 @@ use std::{
 };
 use tauri::State;
 
+mod runtime;
+use runtime::{
+    PluginApplicationLaunchRequest, PluginApplicationRuntime, PresentedPluginApplicationLaunch,
+};
+
 const MAXIMUM_INSTALLATIONS: usize = 1_000;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
@@ -33,13 +38,23 @@ impl PluginInstallationMetadataClient for crate::host_lifecycle::HostManager {
 #[derive(Clone)]
 pub(crate) struct PluginApplicationManager {
     plugin_root: PathBuf,
+    runtime: PluginApplicationRuntime,
 }
 
 impl PluginApplicationManager {
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
         Self {
             plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
+            runtime: PluginApplicationRuntime::new(
+                app_data_directory
+                    .join("NativeConnector")
+                    .join("PluginRuntime"),
+            ),
         }
+    }
+
+    pub(crate) async fn reset(&self) {
+        self.runtime.reset().await;
     }
 
     async fn list(
@@ -84,6 +99,70 @@ impl PluginApplicationManager {
         });
         Ok(applications)
     }
+
+    async fn resolve(
+        &self,
+        client: &dyn PluginInstallationMetadataClient,
+        owner_user_id: &str,
+        plugin_id: &str,
+        component_key: &str,
+    ) -> Result<ResolvedPluginApplication, String> {
+        crate::host_lifecycle::validate_owner(owner_user_id)?;
+        validate_text(plugin_id, 1_024)?;
+        validate_text(component_key, 1_024)?;
+        let summaries = list_installation_summaries(client, owner_user_id).await?;
+        let summary = summaries
+            .into_iter()
+            .filter(|summary| summary.enabled && summary.plugin_id == plugin_id)
+            .map(|summary| {
+                validate_summary(&summary, owner_user_id)?;
+                Ok(summary)
+            })
+            .collect::<Result<Vec<_>, String>>()?
+            .into_iter()
+            .max_by(|left, right| {
+                left.updated_at_unix_ms
+                    .cmp(&right.updated_at_unix_ms)
+                    .then_with(|| left.installation_id.cmp(&right.installation_id))
+            })
+            .ok_or_else(plugin_unavailable)?;
+        let record = get_installation(client, owner_user_id, &summary.installation_id).await?;
+        validate_record(&record, &summary, owner_user_id)?;
+        let plugin_root = confined_plugin_root(&self.plugin_root)?;
+        let (installation_root, manifest) = load_manifest(&plugin_root, &record)?;
+        let contribution = manifest
+            .ui
+            .iter()
+            .find(|contribution| {
+                contribution.surface.as_deref() == Some("workbench")
+                    && contribution.component_key == component_key
+            })
+            .cloned()
+            .ok_or_else(plugin_unavailable)?;
+        let application = project_application(
+            &plugin_root,
+            &installation_root,
+            &record,
+            &manifest,
+            &contribution,
+        )?;
+        Ok(ResolvedPluginApplication {
+            record,
+            installation_root,
+            manifest,
+            contribution,
+            application,
+        })
+    }
+}
+
+#[derive(Clone)]
+struct ResolvedPluginApplication {
+    record: LocalPluginInstallationRecord,
+    installation_root: PathBuf,
+    manifest: PluginManifest,
+    contribution: PluginUiContribution,
+    application: PresentedPluginApplication,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -108,7 +187,7 @@ impl PresentedPluginApplication {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginManifest {
     schema_version: u32,
@@ -125,7 +204,7 @@ struct PluginManifest {
     dependencies: Option<PluginDependencies>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginUiContribution {
     component_key: String,
@@ -139,7 +218,7 @@ struct PluginUiContribution {
     runtime: Option<PluginUiRuntime>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginUiRuntime {
     #[serde(rename = "type")]
@@ -151,7 +230,7 @@ struct PluginUiRuntime {
     launch_timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 enum PathReference {
     Text(String),
@@ -166,14 +245,14 @@ impl PathReference {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginInterface {
     display_name: Option<String>,
     brand_color: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct PluginPermission {
     permission: String,
     #[serde(default)]
@@ -182,7 +261,7 @@ struct PluginPermission {
     components: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginRuntimeContext {
     scope: String,
@@ -198,7 +277,7 @@ struct PluginRuntimeContext {
     missing_context: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PluginDependencies {
     #[serde(default)]
@@ -216,6 +295,45 @@ pub async fn list_plugin_applications(
         .access_token_for_owner(&owner_user_id)
         .await?;
     manager.list(&*host, &owner_user_id).await
+}
+
+#[tauri::command]
+pub async fn launch_plugin_application(
+    authentication: State<'_, crate::authentication::AuthenticationManager>,
+    host: State<'_, crate::host_lifecycle::HostManager>,
+    manager: State<'_, PluginApplicationManager>,
+    request: PluginApplicationLaunchRequest,
+) -> Result<PresentedPluginApplicationLaunch, String> {
+    let epoch = manager.runtime.epoch();
+    authentication
+        .access_token_for_owner(&request.owner_user_id)
+        .await?;
+    let resolved = manager
+        .resolve(
+            &*host,
+            &request.owner_user_id,
+            &request.plugin_id,
+            &request.component_key,
+        )
+        .await?;
+    manager.runtime.launch(epoch, request, resolved).await
+}
+
+#[tauri::command]
+pub async fn discard_plugin_application_presentation(
+    authentication: State<'_, crate::authentication::AuthenticationManager>,
+    manager: State<'_, PluginApplicationManager>,
+    owner_user_id: String,
+    presentation_id: String,
+    generation: u64,
+) -> Result<(), String> {
+    authentication
+        .access_token_for_owner(&owner_user_id)
+        .await?;
+    manager
+        .runtime
+        .discard_presentation(&owner_user_id, &presentation_id, generation)
+        .await
 }
 
 async fn list_installation_summaries(
@@ -672,6 +790,10 @@ fn metadata_response_error() -> String {
 
 fn plugin_catalog_error() -> String {
     "已安装 Plugin 的应用清单未通过 Windows 安全校验。".into()
+}
+
+fn plugin_unavailable() -> String {
+    "Plugin 应用不可用，请刷新后重试。".into()
 }
 
 #[cfg(test)]
