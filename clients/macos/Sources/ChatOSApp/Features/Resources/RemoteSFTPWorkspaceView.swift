@@ -31,7 +31,7 @@ struct RemoteSFTPWorkspaceView: View {
         .background(AppPalette.canvas)
         .task {
             viewModel.interfaceLanguage = model.interfaceLanguage
-            await viewModel.loadIfNeeded()
+            viewModel.loadIfNeeded()
         }
         .onChange(of: model.interfaceLanguage) { _, language in
             viewModel.interfaceLanguage = language
@@ -44,7 +44,7 @@ struct RemoteSFTPWorkspaceView: View {
             Button("取消", role: .cancel) {}
             Button("创建") {
                 let name = newDirectoryName
-                Task { await viewModel.createRemoteDirectory(name: name) }
+                viewModel.createRemoteDirectory(name: name)
             }
         }
         .alert("重命名", isPresented: $showingRename) {
@@ -52,7 +52,7 @@ struct RemoteSFTPWorkspaceView: View {
             Button("取消", role: .cancel) {}
             Button("保存") {
                 let name = renamedEntryName
-                Task { await viewModel.renameSelectedRemote(to: name) }
+                viewModel.renameSelectedRemote(to: name)
             }
         }
         .confirmationDialog(
@@ -64,7 +64,7 @@ struct RemoteSFTPWorkspaceView: View {
             Button("覆盖", role: .destructive) {
                 let action = overwriteAction
                 overwriteAction = nil
-                Task { await performOverwrite(action) }
+                performOverwrite(action)
             }
             Button("取消", role: .cancel) { overwriteAction = nil }
         } message: {
@@ -76,7 +76,7 @@ struct RemoteSFTPWorkspaceView: View {
             titleVisibility: .visible
         ) {
             Button("删除", role: .destructive) {
-                Task { await viewModel.deleteSelectedRemote() }
+                viewModel.deleteSelectedRemote()
             }
             Button("取消", role: .cancel) {}
         } message: {
@@ -113,7 +113,7 @@ struct RemoteSFTPWorkspaceView: View {
                     viewModel.cancelVerification()
                 }
                 Button(model.localized("验证", english: "Verify")) {
-                    Task { await viewModel.submitVerification() }
+                    viewModel.submitVerification()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isLoadingRemote)
@@ -160,6 +160,13 @@ struct RemoteSFTPWorkspaceView: View {
             if let notice = viewModel.notice {
                 notificationRow(notice, icon: "checkmark.circle.fill", color: .green)
             }
+            if let refreshWarning = viewModel.refreshWarning {
+                notificationRow(
+                    refreshWarning,
+                    icon: "arrow.clockwise.circle.fill",
+                    color: .orange
+                )
+            }
             if viewModel.isLocalListingTruncated {
                 notificationRow(
                     model.localized(
@@ -189,8 +196,7 @@ struct RemoteSFTPWorkspaceView: View {
             Spacer()
             if isDismissible {
                 Button("关闭", systemImage: "xmark") {
-                    viewModel.notice = nil
-                    viewModel.errorMessage = nil
+                    viewModel.dismissFeedback()
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
@@ -209,8 +215,8 @@ struct RemoteSFTPWorkspaceView: View {
                 canGoUp: viewModel.localPath.path != "/",
                 isLoading: viewModel.isLoadingLocal,
                 onChooseLocation: chooseLocalDirectory,
-                onGoUp: { Task { await viewModel.goToLocalParent() } },
-                onRefresh: { Task { await viewModel.reloadLocal() } },
+                onGoUp: viewModel.goToLocalParent,
+                onRefresh: viewModel.reloadLocal,
                 trailingActions: nil
             )
             Divider()
@@ -228,7 +234,7 @@ struct RemoteSFTPWorkspaceView: View {
                                 size: entry.size,
                                 modifiedAt: entry.modifiedAt,
                                 isSelected: viewModel.selectedLocalPath == entry.id,
-                                onOpen: { Task { await viewModel.openLocal(entry) } },
+                                onOpen: { viewModel.openLocal(entry) },
                                 onSelect: { viewModel.selectedLocalPath = entry.id }
                             )
                             Divider().padding(.leading, 38)
@@ -249,8 +255,8 @@ struct RemoteSFTPWorkspaceView: View {
                 canGoUp: viewModel.remoteParentPath != nil,
                 isLoading: viewModel.isLoadingRemote,
                 onChooseLocation: nil,
-                onGoUp: { Task { await viewModel.goToRemoteParent() } },
-                onRefresh: { Task { await viewModel.reloadRemote() } },
+                onGoUp: viewModel.goToRemoteParent,
+                onRefresh: viewModel.reloadRemote,
                 trailingActions: AnyView(remoteActions)
             )
             Divider()
@@ -268,7 +274,7 @@ struct RemoteSFTPWorkspaceView: View {
                                 size: entry.size,
                                 modifiedAt: entry.modifiedAt,
                                 isSelected: viewModel.selectedRemotePath == entry.path,
-                                onOpen: { Task { await viewModel.openRemote(entry) } },
+                                onOpen: { viewModel.openRemote(entry) },
                                 onSelect: { viewModel.selectedRemotePath = entry.path }
                             )
                             .contextMenu { remoteContextMenu(entry) }
@@ -290,13 +296,14 @@ struct RemoteSFTPWorkspaceView: View {
             }
             .labelStyle(.iconOnly)
             .help("新建远端目录")
+            .disabled(viewModel.isTransferring)
             Menu {
                 Button("重命名", systemImage: "pencil") { beginRename() }
-                    .disabled(viewModel.selectedRemoteEntry == nil)
+                    .disabled(viewModel.selectedRemoteEntry == nil || viewModel.isTransferring)
                 Button("删除", systemImage: "trash", role: .destructive) {
                     showingDeleteConfirmation = true
                 }
-                .disabled(viewModel.selectedRemoteEntry == nil)
+                .disabled(viewModel.selectedRemoteEntry == nil || viewModel.isTransferring)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -354,14 +361,14 @@ struct RemoteSFTPWorkspaceView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task { await viewModel.setLocalDirectory(url) }
+        viewModel.setLocalDirectory(url)
     }
 
     private func beginUpload() {
         if let action = viewModel.overwriteActionForUpload() {
             overwriteAction = action
         } else {
-            Task { await viewModel.uploadSelected(overwrite: false) }
+            viewModel.uploadSelected(overwrite: false)
         }
     }
 
@@ -369,7 +376,7 @@ struct RemoteSFTPWorkspaceView: View {
         if let action = viewModel.overwriteActionForDownload() {
             overwriteAction = action
         } else {
-            Task { await viewModel.downloadSelected(overwrite: false) }
+            viewModel.downloadSelected(overwrite: false)
         }
     }
 
@@ -379,10 +386,10 @@ struct RemoteSFTPWorkspaceView: View {
         showingRename = true
     }
 
-    private func performOverwrite(_ action: RemoteSFTPOverwriteAction?) async {
+    private func performOverwrite(_ action: RemoteSFTPOverwriteAction?) {
         switch action {
-        case .upload: await viewModel.uploadSelected(overwrite: true)
-        case .download: await viewModel.downloadSelected(overwrite: true)
+        case .upload: viewModel.uploadSelected(overwrite: true)
+        case .download: viewModel.downloadSelected(overwrite: true)
         case nil: break
         }
     }

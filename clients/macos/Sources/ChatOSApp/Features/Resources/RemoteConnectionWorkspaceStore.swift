@@ -44,11 +44,12 @@ final class RemoteConnectionWorkspaceStore {
 
     func removeWorkspace(for connectionID: String) {
         terminalWorkspaces.removeValue(forKey: connectionID)?.disconnect()
-        fileWorkspaces.removeValue(forKey: connectionID)
+        fileWorkspaces.removeValue(forKey: connectionID)?.deactivate()
     }
 
     func removeAllWorkspaces() {
         terminalWorkspaces.values.forEach { $0.disconnect() }
+        fileWorkspaces.values.forEach { $0.deactivate() }
         terminalWorkspaces.removeAll()
         fileWorkspaces.removeAll()
     }
