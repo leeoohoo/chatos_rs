@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
+import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
 import type { ConversationAttachmentPort } from "../features/conversation-attachments/ports/ConversationAttachmentPort";
@@ -27,6 +28,7 @@ interface AppShellProps {
   conversationRealtime: ConversationRealtimePort;
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
+  askUser: AskUserPort;
   session: AuthSession;
   onLogout(): Promise<void>;
 }
@@ -41,6 +43,7 @@ export function AppShell({
   conversationRealtime,
   conversationRuntimeSettings,
   runInspector,
+  askUser,
   session,
   onLogout,
 }: AppShellProps) {
@@ -128,6 +131,7 @@ export function AppShell({
             realtimePort={conversationRealtime}
             runtimeSettingsPort={conversationRuntimeSettings}
             runInspectorPort={runInspector}
+            askUserPort={askUser}
           />
         ) : selectedContact ? (
           <div className="project-state">

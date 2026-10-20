@@ -1,3 +1,4 @@
+mod ask_user;
 mod attachment_tool_worker;
 mod authentication;
 mod control_plane;
@@ -11,6 +12,7 @@ mod project_conversation;
 mod run_inspector;
 mod workspace_index;
 
+use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
 use authentication::{
     login, logout, register, restore_authentication_session, send_registration_code,
@@ -110,6 +112,9 @@ pub fn run() {
             cancel_task_inspector,
             restart_task_inspector,
             load_conversation_history,
+            load_ask_user_prompts,
+            submit_ask_user_prompt,
+            cancel_ask_user_prompt,
             poll_conversation_realtime,
             send_conversation_draft,
             activate_conversation_attachment_scope,

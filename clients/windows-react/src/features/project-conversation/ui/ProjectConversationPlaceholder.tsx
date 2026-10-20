@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from "react";
+import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
 import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
 import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
 import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
@@ -22,6 +23,7 @@ interface ProjectConversationPlaceholderProps {
   realtimePort: ConversationRealtimePort;
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
+  askUserPort: AskUserPort;
 }
 
 export function ProjectConversationPlaceholder({
@@ -36,6 +38,7 @@ export function ProjectConversationPlaceholder({
   realtimePort,
   runtimeSettingsPort,
   runInspectorPort,
+  askUserPort,
 }: ProjectConversationPlaceholderProps) {
   const phase = useProjectConversationStore((state) => state.phase(project.id));
   const prepare = useProjectConversationStore((state) => state.prepare);
@@ -84,6 +87,7 @@ export function ProjectConversationPlaceholder({
         realtimePort={realtimePort}
         runtimeSettingsPort={runtimeSettingsPort}
         runInspectorPort={runInspectorPort}
+        askUserPort={askUserPort}
       />
     );
   }

@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
+import { useAskUserStore } from "../../ask-user/application/askUserStore";
+import {
+  promptsForTurn,
+  unattachedPendingPrompts,
+  type AskUserPrompt,
+} from "../../ask-user/domain/askUser";
+import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
+import { AskUserPromptCard } from "../../ask-user/ui/AskUserPromptCard";
 import {
   formatAttachmentSize,
   type ConversationAttachmentDraft,
@@ -29,6 +37,7 @@ export function ConversationHistoryView({
   realtimePort,
   runtimeSettingsPort,
   runInspectorPort,
+  askUserPort,
 }: {
   ownerUserId: string;
   conversationId: string;
@@ -38,6 +47,7 @@ export function ConversationHistoryView({
   realtimePort: ConversationRealtimePort;
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
+  askUserPort: AskUserPort;
 }) {
   const phase = useConversationHistoryStore((state) => state.phase);
   const load = useConversationHistoryStore((state) => state.load);
@@ -45,6 +55,13 @@ export function ConversationHistoryView({
   const refreshLatest = useConversationHistoryStore((state) => state.refreshLatest);
   const resetComposer = useConversationComposerStore((state) => state.reset);
   const resetInspector = useRunInspectorStore((state) => state.reset);
+  const askUserOwner = useAskUserStore((state) => state.ownerUserId);
+  const askUserConversation = useAskUserStore((state) => state.conversationId);
+  const askUserPrompts = useAskUserStore((state) => state.prompts);
+  const askUserLoading = useAskUserStore((state) => state.isLoading);
+  const askUserError = useAskUserStore((state) => state.loadError);
+  const activateAskUser = useAskUserStore((state) => state.activate);
+  const refreshAskUser = useAskUserStore((state) => state.refresh);
 
   useEffect(() => {
     void load(port, ownerUserId, conversationId);
@@ -54,6 +71,10 @@ export function ConversationHistoryView({
     resetComposer(ownerUserId, conversationId, attachmentPort);
     resetInspector(ownerUserId);
   }, [attachmentPort, conversationId, ownerUserId, resetComposer, resetInspector]);
+
+  useEffect(() => {
+    void activateAskUser(askUserPort, ownerUserId, conversationId);
+  }, [activateAskUser, askUserPort, conversationId, ownerUserId]);
 
   useEffect(() => () => {
     const composer = useConversationComposerStore.getState();
@@ -67,9 +88,10 @@ export function ConversationHistoryView({
       await Promise.all([
         refreshLatest(port),
         useRunInspectorStore.getState().refresh(runInspectorPort),
+        refreshAskUser(askUserPort),
       ]);
     },
-    [port, refreshLatest, runInspectorPort],
+    [askUserPort, port, refreshAskUser, refreshLatest, runInspectorPort],
   );
 
   if (phase.kind === "idle" || phase.kind === "loading") {
@@ -84,6 +106,14 @@ export function ConversationHistoryView({
       </div>
     );
   }
+
+  const scopedPrompts = askUserOwner === ownerUserId && askUserConversation === conversationId
+    ? askUserPrompts
+    : [];
+  const lastMessageByTurn = new Map<string, string>();
+  for (const message of phase.snapshot.messages) lastMessageByTurn.set(message.turn_id, message.message_id);
+  const loadedTurnIds = new Set(phase.snapshot.turns.map((turn) => turn.turn_id));
+  const unattached = unattachedPendingPrompts(scopedPrompts, loadedTurnIds);
 
   return (
     <section className="conversation-screen">
@@ -127,9 +157,24 @@ export function ConversationHistoryView({
                   port={runInspectorPort}
                 />
               )}
+              {lastMessageByTurn.get(message.turn_id) === message.message_id && (
+                <AskUserPromptList
+                  prompts={promptsForTurn(scopedPrompts, message.turn_id)}
+                  port={askUserPort}
+                  onResolved={reconcile}
+                />
+              )}
             </div>
           ))}
         </div>
+        {unattached.length > 0 && (
+          <section className="ask-user-unattached" aria-label="等待回复的任务">
+            <header><strong>等待你的回复</strong><small>对应消息尚未加载，仍可直接处理</small></header>
+            <AskUserPromptList prompts={unattached} port={askUserPort} onResolved={reconcile} />
+          </section>
+        )}
+        {askUserLoading && <span className="ask-user-loading"><span className="mini-spinner" />正在检查交互请求…</span>}
+        {askUserError && <p className="history-error">交互请求刷新失败：{askUserError}</p>}
         {phase.snapshot.messages.length === 0 && <p className="conversation-empty">还没有消息</p>}
       </div>
       <ConversationComposer
@@ -143,6 +188,30 @@ export function ConversationHistoryView({
       />
       <RunInspectorSheet port={runInspectorPort} />
     </section>
+  );
+}
+
+function AskUserPromptList({
+  prompts,
+  port,
+  onResolved,
+}: {
+  prompts: AskUserPrompt[];
+  port: AskUserPort;
+  onResolved(): Promise<void>;
+}) {
+  if (prompts.length === 0) return null;
+  return (
+    <div className="ask-user-prompt-list">
+      {prompts.map((prompt) => (
+        <AskUserPromptCard
+          key={`${prompt.sessionId}:${prompt.id}`}
+          prompt={prompt}
+          port={port}
+          onResolved={onResolved}
+        />
+      ))}
+    </div>
   );
 }
 
