@@ -2,8 +2,11 @@ import { useEffect } from "react";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import { TauriHostLifecycleAdapter } from "../features/host-lifecycle/adapters/TauriHostLifecycleAdapter";
+import { TauriWindowChromeAdapter } from "../platform/window/adapters/TauriWindowChromeAdapter";
+import { WindowControls } from "../platform/window/ui/WindowControls";
 
 const hostLifecycle = new TauriHostLifecycleAdapter();
+const windowChrome = new TauriWindowChromeAdapter();
 
 export function AppShell() {
   const snapshot = useHostLifecycleStore((state) => state.snapshot);
@@ -17,12 +20,16 @@ export function AppShell() {
 
   return (
     <main className="app-window">
+      <header
+        className="app-titlebar"
+        data-tauri-drag-region
+        onDoubleClick={() => void windowChrome.toggleMaximize()}
+      >
+        <WindowControls windowChrome={windowChrome} />
+        <span className="app-titlebar__title" data-tauri-drag-region>ChatOS</span>
+        <span className="app-titlebar__spacer" data-tauri-drag-region />
+      </header>
       <aside className="sidebar" aria-label="主导航">
-        <div className="window-controls" aria-hidden="true">
-          <span className="window-dot window-dot--close" />
-          <span className="window-dot window-dot--minimize" />
-          <span className="window-dot window-dot--zoom" />
-        </div>
         <div className="brand">
           <span className="brand-mark">C</span>
           <span>ChatOS</span>
@@ -39,7 +46,7 @@ export function AppShell() {
         </div>
       </aside>
       <section className="content-surface">
-        <header className="titlebar">
+        <header className="workspace-header">
           <div>
             <p className="eyebrow">LOCAL WORKSPACE</p>
             <h1>工作台</h1>
