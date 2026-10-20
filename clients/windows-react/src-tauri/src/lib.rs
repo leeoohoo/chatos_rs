@@ -15,6 +15,7 @@ mod project_conversation;
 mod project_creation;
 mod project_filesystem;
 mod project_git;
+mod project_run;
 mod run_inspector;
 mod system_permissions;
 mod terminal_runtime;
@@ -63,6 +64,7 @@ use project_git::{
     push_project_git, remove_project_git_remote, save_project_git_remote, stage_project_git_paths,
     switch_project_git_branch, unstage_project_git_paths,
 };
+use project_run::analyze_project_run;
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -177,6 +179,7 @@ pub fn run() {
             remove_project_git_remote,
             pull_project_git,
             push_project_git,
+            analyze_project_run,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,
