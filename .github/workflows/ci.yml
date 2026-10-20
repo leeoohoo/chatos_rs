@@ -234,11 +234,6 @@ jobs:
           npm --prefix clients/windows-react test
           npm --prefix clients/windows-react run build
 
-      - name: Verify Tauri Rust layer
-        run: |
-          cargo fmt --manifest-path clients/windows-react/src-tauri/Cargo.toml -- --check
-          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
-
       - name: Prepare Windows Local Agent Host resource
         env:
           TAURI_ENV_DEBUG: "true"
@@ -251,6 +246,14 @@ jobs:
           if (-not (Test-Path $sidecar -PathType Leaf)) {
             throw "Missing Windows Local Agent Host resource: $sidecar"
           }
+
+      - name: Verify Tauri Rust layer and real Host handshake
+        env:
+          CHATOS_LOCAL_AGENT_HOST_TEST_PATH: ${{ github.workspace }}\clients\windows-react\src-tauri\resources\chatos_local_agent_host.exe
+        run: |
+          cargo fmt --manifest-path clients/windows-react/src-tauri/Cargo.toml -- --check
+          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
+          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml prepared_sidecar_completes_real_health_handshake -- --ignored
 
       - name: Build Windows Tauri application
         run: npm --prefix clients/windows-react run tauri -- build --debug --no-bundle

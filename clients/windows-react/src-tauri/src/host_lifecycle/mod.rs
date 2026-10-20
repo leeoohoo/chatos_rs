@@ -1,12 +1,14 @@
 mod diagnostics;
+mod process;
 mod transport;
 
 use chatos_local_agent_protocol::LOCAL_AGENT_PROTOCOL_VERSION;
 use diagnostics::{classify_error, HostDiagnostics, HostDiagnosticsSnapshot};
+use process::spawn;
 use serde::Serialize;
-use std::{path::PathBuf, process::Stdio};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
-use tokio::{process::Command, sync::Mutex};
+use tokio::sync::Mutex;
 use transport::{health_check, terminate, ManagedHost};
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,19 +169,8 @@ pub async fn start_local_agent_host(
     if let Some(parent) = database.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = Command::new(executable);
-    command
-        .arg("--database")
-        .arg(database)
-        .arg("--owner-user-id")
-        .arg(&owner_user_id)
-        .arg("--stdio")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
+    let mut host = match spawn(&executable, &database, owner_user_id).await {
+        Ok(host) => host,
         Err(error) => {
             manager
                 .diagnostics
@@ -188,27 +179,6 @@ pub async fn start_local_agent_host(
             return Err(error.to_string());
         }
     };
-    let input = match child.stdin.take() {
-        Some(input) => input,
-        None => {
-            manager
-                .diagnostics
-                .record("host_transport", "stdin_unavailable")
-                .await;
-            return Err("Host stdin is unavailable".to_string());
-        }
-    };
-    let output = match child.stdout.take() {
-        Some(output) => output,
-        None => {
-            manager
-                .diagnostics
-                .record("host_transport", "stdout_unavailable")
-                .await;
-            return Err("Host stdout is unavailable".to_string());
-        }
-    };
-    let mut host = ManagedHost::new(child, input, output, owner_user_id);
     if let Err(error) = health_check(&mut host).await {
         terminate(&mut host).await;
         manager
