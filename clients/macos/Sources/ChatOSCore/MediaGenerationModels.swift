@@ -390,11 +390,23 @@ public struct VideoGenerationResult: Sendable, Equatable {
     }
 }
 
-public protocol MediaGenerationServicing: Sendable {
+public protocol MediaGenerationModelCatalogProviding: Sendable {
     func fetchModels() async throws -> [MediaGenerationModel]
+}
+
+public protocol MediaImageGenerating: Sendable {
     func generateImage(_ request: ImageGenerationRequest) async throws -> ImageGenerationResult
+}
+
+public protocol MediaVideoGenerating: Sendable {
     func generateVideo(
         _ request: VideoGenerationRequest,
         progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
     ) async throws -> VideoGenerationResult
 }
+
+public protocol MediaGenerationServicing:
+    MediaGenerationModelCatalogProviding,
+    MediaImageGenerating,
+    MediaVideoGenerating,
+    Sendable {}

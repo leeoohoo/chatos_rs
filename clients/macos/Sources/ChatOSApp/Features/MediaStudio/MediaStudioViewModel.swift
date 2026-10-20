@@ -13,12 +13,6 @@ enum MediaStudioInputImagePolicy {
 
 @MainActor
 final class MediaStudioViewModel: ObservableObject {
-    private enum ImageGenerationOutcome {
-        case saved(HistoryItem)
-        case unsaved(ImageGenerationResult, String)
-        case failed(String)
-    }
-
     private enum VideoGenerationCompletion {
         case success(VideoHistoryItem)
         case failure(String)
@@ -33,13 +27,7 @@ final class MediaStudioViewModel: ObservableObject {
         var id: Self { self }
     }
 
-    struct HistoryItem: Identifiable, Equatable, Sendable {
-        var id: String
-        var prompt: String
-        var modelName: String
-        var createdAt: Date
-        var images: [GeneratedMediaAsset]
-    }
+    typealias HistoryItem = MediaStudioImageHistoryItem
 
     struct VideoHistoryItem: Identifiable, Equatable, Sendable {
         var id: String
@@ -96,6 +84,7 @@ final class MediaStudioViewModel: ObservableObject {
     @Published private(set) var isLoadingInputImages = false
 
     private let service: any MediaGenerationServicing
+    private let imageGenerationUseCase: MediaStudioImageGenerationUseCase
     let stories: StoryStudioViewModel
     private var hasLoaded = false
     private var videoGenerationTask: Task<Void, Never>?
@@ -108,7 +97,7 @@ final class MediaStudioViewModel: ObservableObject {
     private let historyStore: MediaStudioHistoryStore
     private var ownerID: String?
     private var sessionID = UUID()
-    private var imageOperationID = UUID()
+    private var imageGenerationState = MediaStudioImageGenerationState()
     private var videoOperationID = UUID()
     private var videoInputSelectionID = UUID()
     private var videoInputTask: Task<Void, Never>?
@@ -120,6 +109,10 @@ final class MediaStudioViewModel: ObservableObject {
 
     init(service: any MediaGenerationServicing, historyStore: MediaStudioHistoryStore = MediaStudioHistoryStore(), imageTransport: any HTTPTransport = URLSessionHTTPTransport(), storyPlanner: (any StoryPlanningServicing)? = nil) {
         self.service = service
+        self.imageGenerationUseCase = MediaStudioImageGenerationUseCase(
+            generator: service,
+            history: historyStore
+        )
         self.stories = StoryStudioViewModel(media: service, planner: storyPlanner)
         self.historyStore = historyStore
         self.imageTransport = imageTransport
@@ -264,8 +257,10 @@ final class MediaStudioViewModel: ObservableObject {
     func generate() {
         guard canGenerate, let selectedModelID, let ownerID else { return }
         let session = sessionID
-        imageOperationID = UUID()
-        let operation = imageOperationID
+        let token = imageGenerationState.begin(
+            ownerUserID: ownerID,
+            accountSessionID: session
+        )
         let submittedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = ImageGenerationRequest(
             modelConfigID: selectedModelID, prompt: submittedPrompt,
@@ -274,62 +269,58 @@ final class MediaStudioViewModel: ObservableObject {
         )
         isGenerating = true
         errorMessage = nil
-        let service = service
-        let historyStore = historyStore
+        let useCase = imageGenerationUseCase
         imageGenerationTask?.cancel()
         imageGenerationTask = Task { [weak self] in
-            let outcome: ImageGenerationOutcome
+            let outcome: Result<MediaStudioImageGenerationOutcome, Error>
             do {
-                let result = try await service.generateImage(request)
-                do {
-                    outcome = .saved(try await historyStore.saveImage(
-                        result,
-                        prompt: submittedPrompt,
-                        owner: ownerID
-                    ))
-                } catch {
-                    outcome = .unsaved(result, error.localizedDescription)
-                }
+                outcome = .success(try await useCase.generate(request: request, owner: ownerID))
             } catch {
-                outcome = .failed(error.localizedDescription)
+                outcome = .failure(error)
             }
             guard !Task.isCancelled else { return }
             self?.finishImageGeneration(
                 outcome,
                 prompt: submittedPrompt,
-                session: session,
-                operation: operation
+                token: token
             )
         }
     }
 
     private func finishImageGeneration(
-        _ outcome: ImageGenerationOutcome,
+        _ result: Result<MediaStudioImageGenerationOutcome, Error>,
         prompt: String,
-        session: UUID,
-        operation: UUID
+        token: MediaStudioImageGenerationToken
     ) {
-        guard sessionID == session, imageOperationID == operation else { return }
-        switch outcome {
-        case let .saved(item):
-            history.insert(item, at: 0)
-        case let .unsaved(result, message):
-            // Keep the generated result visible even when the disk/download fails.
-            history.insert(
-                HistoryItem(
-                    id: result.id,
-                    prompt: prompt,
-                    modelName: result.modelName,
-                    createdAt: ISO8601DateFormatter().date(from: result.createdAt) ?? Date(),
-                    images: result.images
-                ),
-                at: 0
-            )
-            historyErrorMessage = "图片已生成，但未能保存到本机：\(message)"
-            errorMessage = historyErrorMessage
-        case let .failed(message):
-            errorMessage = message
+        guard imageGenerationState.accepts(
+            token,
+            ownerUserID: ownerID,
+            accountSessionID: sessionID
+        ) else { return }
+        switch result {
+        case let .success(outcome):
+            switch outcome {
+            case let .saved(item):
+                history.insert(item, at: 0)
+            case let .generatedWithoutPersistence(result, message):
+                // Keep the generated result visible even when the disk/download fails.
+                history.insert(
+                    HistoryItem(
+                        id: result.id,
+                        prompt: prompt,
+                        modelName: result.modelName,
+                        createdAt: ISO8601DateFormatter().date(from: result.createdAt) ?? Date(),
+                        images: result.images
+                    ),
+                    at: 0
+                )
+                historyErrorMessage = "图片已生成，但未能保存到本机：\(message)"
+                errorMessage = historyErrorMessage
+            }
+        case let .failure(error):
+            errorMessage = error.localizedDescription
         }
+        guard imageGenerationState.finish(token) else { return }
         isGenerating = false
         imageGenerationTask = nil
     }
@@ -649,6 +640,7 @@ final class MediaStudioViewModel: ObservableObject {
     func resetForSignedOut() {
         stories.reset()
         sessionID = UUID()
+        imageGenerationState.reset()
         ownerID = nil
         imageGenerationTask?.cancel()
         imageGenerationTask = nil

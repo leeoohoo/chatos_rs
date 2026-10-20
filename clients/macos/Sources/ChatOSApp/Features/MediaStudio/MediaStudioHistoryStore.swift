@@ -5,7 +5,7 @@ import Foundation
 
 /// Each completed creation has its own atomic manifest and local media files.
 /// Relative filenames keep records valid across app reinstalls and directory moves.
-actor MediaStudioHistoryStore {
+actor MediaStudioHistoryStore: MediaStudioImageHistoryPersisting {
     private static let maximumManifestBytes = 2 * 1_024 * 1_024
     nonisolated static let defaultPageSize = 60
 

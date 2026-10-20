@@ -484,6 +484,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows React Plugin 应用闭环）：已按 macOS `PluginApplicationsView`、`PluginApplicationHostViewModel`、`PluginApplicationsLoadState` 与 `PluginApplicationLaunchUseCase` 建立独立 Domain/Port/Tauri Adapter/Zustand Store/UI 切片。侧栏开放“应用”，列表具备 loading/error/empty/retry 和 Apple 风格应用卡片；Host 页面支持返回、重新载入、失败重试、项目/工作区 context picker、公共项目 fallback 与切换上下文。Store 联合绑定 owner、Host availability、account generation、presentation、application、context、launch generation 和 request identity，账号/Host/页面 teardown、重试及连续切项目都会拒绝迟到结果并向原生层写入 generation tombstone。iframe 只加载原生返回的精确 `http://127.0.0.1:<port>`，sandbox 不含 popup/顶层导航权限；bridge 同时校验 `event.source`、exact origin、protocol、session、nonce、唯一有界 request ID 和 admitted capability，页面重载/卸载后拒绝旧响应。CSP 仅增加 loopback `frame-src`，不放宽 `connect-src` 或 Tauri IPC。React 全量 74 个测试文件、258 项通过，TypeScript、production build 与架构审计通过；第 05 页已完整进入 Windows React。
 
+状态补充（2026-10-21，macOS AI 图片 Application 第一段）：第 06 页开始从当前 `MediaStudioViewModel` 真实调用链渐进分层。Core 新增图片生成、历史持久化两个窄 Port，以及统一“provider 生成 → 本地历史保存”的 `MediaStudioImageGenerationUseCase`；保存失败不回滚已生成结果，而以强类型 `generatedWithoutPersistence` 保留画布并显示历史错误。图片操作改用绑定 owner/account session/request 的 typed token，账号切换、登出、取消或页面释放后的迟到结果不能写回，新旧账号之间也不能继续落盘。ViewModel 只构造冻结请求、持有 Task 和消费结果，不再直接编排 service/history store。Core 3 项和既有 Media Studio ViewModel/History/Image Interaction 22 项通过；模型目录、历史分页、参考图导入与 Windows provider/Secret/本地文件边界尚未完整准入，因此第 06 页继续禁止 React 实现。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
