@@ -6,6 +6,7 @@ updates:
   - package-ecosystem: "npm"
     directories:
       - "/admin_console"
+      - "/clients/windows-react"
       - "/official_website_service/frontend"
       - "/plugins/document"
     schedule:
@@ -36,6 +37,7 @@ updates:
 
   - package-ecosystem: "cargo"
     directories:
+      - "/clients/windows-react/src-tauri"
       - "/memory_engine/backend"
       - "/plugins/browser"
       - "/user_service/backend"

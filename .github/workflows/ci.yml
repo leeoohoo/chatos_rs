@@ -200,6 +200,61 @@ jobs:
         if: runner.os == 'macOS'
         run: bash clients/evals/native-document-sandbox-smoke.sh
 
+  windows-react-client:
+    name: Windows React client
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24.15.0"
+          cache: npm
+          cache-dependency-path: clients/windows-react/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt
+
+      - name: Cache Windows client builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target-shared
+
+      - name: Install frontend dependencies
+        run: npm --prefix clients/windows-react ci
+
+      - name: Verify React application
+        run: |
+          npm --prefix clients/windows-react run typecheck
+          npm --prefix clients/windows-react test
+          npm --prefix clients/windows-react run build
+
+      - name: Verify Tauri Rust layer
+        run: |
+          cargo fmt --manifest-path clients/windows-react/src-tauri/Cargo.toml -- --check
+          cargo test --manifest-path clients/windows-react/src-tauri/Cargo.toml
+
+      - name: Prepare Windows Local Agent Host resource
+        env:
+          TAURI_ENV_DEBUG: "true"
+        run: npm --prefix clients/windows-react run prepare:sidecar
+
+      - name: Assert sidecar resource exists
+        shell: pwsh
+        run: |
+          $sidecar = "clients/windows-react/src-tauri/resources/chatos_local_agent_host.exe"
+          if (-not (Test-Path $sidecar -PathType Leaf)) {
+            throw "Missing Windows Local Agent Host resource: $sidecar"
+          }
+
+      - name: Build Windows Tauri application
+        run: npm --prefix clients/windows-react run tauri -- build --debug --no-bundle
+
   browser-plugin:
     name: Browser plugin (Rust)
     runs-on: ubuntu-latest
