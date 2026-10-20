@@ -316,20 +316,27 @@ final class StoryStudioViewModel: ObservableObject {
         reset()
         owner = userID
         let token = session
+        let store = store
         isLoading = true
-        loadTask = Task {
+        loadTask = Task { [weak self, store] in
+            let result: Result<StoryProjectStore.Snapshot, Error>
             do {
-                let snapshot = try await store.load(owner: userID)
-                guard session == token else { return }
+                result = .success(try await store.load(owner: userID))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.session == token, !Task.isCancelled else { return }
+            switch result {
+            case .success(let snapshot):
                 projects = snapshot.projects
                 projectCursor = snapshot.nextCursor
                 hasMoreProjects = snapshot.nextCursor != nil
                 if snapshot.unreadableCount > 0 { errorMessage = "有 \(snapshot.unreadableCount) 个剧情无法读取，原文件已保留。" }
-            } catch {
-                guard session == token else { return }
+            case .failure(let error):
                 errorMessage = error.localizedDescription
             }
             isLoading = false
+            loadTask = nil
         }
     }
 
@@ -337,12 +344,22 @@ final class StoryStudioViewModel: ObservableObject {
         guard let owner, let cursor = projectCursor,
               !isLoading, !isLoadingMoreProjects else { return }
         let token = session
+        let store = store
         isLoadingMoreProjects = true
-        loadTask = Task {
-            defer { if session == token { isLoadingMoreProjects = false } }
+        loadTask = Task { [weak self, store] in
+            let result: Result<StoryProjectStore.Snapshot, Error>
             do {
-                let snapshot = try await store.load(owner: owner, after: cursor)
-                guard session == token, !Task.isCancelled else { return }
+                result = .success(try await store.load(owner: owner, after: cursor))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self, self.session == token, !Task.isCancelled else { return }
+            defer {
+                self.isLoadingMoreProjects = false
+                self.loadTask = nil
+            }
+            switch result {
+            case .success(let snapshot):
                 let existing = Set(projects.map(\.id))
                 projects.append(contentsOf: snapshot.projects.filter { !existing.contains($0.id) })
                 projects.sort { $0.updatedAt > $1.updatedAt }
@@ -351,10 +368,8 @@ final class StoryStudioViewModel: ObservableObject {
                 if snapshot.unreadableCount > 0 {
                     errorMessage = "有 \(snapshot.unreadableCount) 个更早剧情无法读取，原文件已保留。"
                 }
-            } catch is CancellationError {
-                return
-            } catch {
-                if session == token { errorMessage = error.localizedDescription }
+            case .failure(let error):
+                errorMessage = error.localizedDescription
             }
         }
     }

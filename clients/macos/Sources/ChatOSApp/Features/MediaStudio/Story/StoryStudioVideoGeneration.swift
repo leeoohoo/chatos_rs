@@ -423,29 +423,34 @@ extension StoryStudioViewModel {
         let key = VideoGenerationKey(projectID: project.id, segmentID: segmentID)
         guard !activeVideoFrameExtractions.contains(key) else { return }
         let token = session
+        let store = store
+        let filename = video.filename
+        let videoJobID = video.jobID
+        let projectID = project.id
         activeVideoFrameExtractions.insert(key)
         errorMessage = nil
-        videoFrameExtractionTasks[key] = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                if self.session == token {
-                    self.activeVideoFrameExtractions.remove(key)
-                    self.videoFrameExtractionTasks[key] = nil
-                }
-            }
+        videoFrameExtractionTasks[key] = Task { [weak self, store] in
+            let result: Result<StoryProject, Error>
             do {
-                let url = try self.store.fileURL(video.filename, projectID: project.id, owner: owner)
+                let url = try store.fileURL(filename, projectID: projectID, owner: owner)
                 let png = try await StoryVideoFrameExtractor.lastFramePNG(from: url)
-                try self.check(token)
-                let applied = try await self.store.applyActualVideoLastFrame(
-                    png, projectID: project.id, segmentID: segmentID,
-                    videoJobID: video.jobID, owner: owner, forceNew: true
+                try Task.checkCancellation()
+                let applied = try await store.applyActualVideoLastFrame(
+                    png, projectID: projectID, segmentID: segmentID,
+                    videoJobID: videoJobID, owner: owner, forceNew: true
                 )
-                try self.check(token)
-                self.publishProject(applied.0, token: token)
-            } catch is CancellationError {
+                result = .success(applied.0)
             } catch {
-                guard self.session == token else { return }
+                result = .failure(error)
+            }
+            guard let self, self.session == token, !Task.isCancelled else { return }
+            self.activeVideoFrameExtractions.remove(key)
+            self.videoFrameExtractionTasks[key] = nil
+            switch result {
+            case .success(let project):
+                self.publishProject(project, token: token)
+            case .failure(let error):
+                if error is CancellationError { return }
                 self.errorMessage = "无法从当前视频提取末帧：\(error.localizedDescription)"
             }
         }
