@@ -154,6 +154,20 @@ h1 { margin: 0; font-size: 28px; letter-spacing: -.035em; }
 .conversation-screen { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .conversation-history { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 18px; }
 .conversation-composer { display: grid; width: min(820px, 100%); margin: 0 auto; gap: 7px; padding-top: 10px; }
+.composer-entry { position: relative; }
+.capability-chip { display: flex; width: fit-content; align-items: center; gap: 6px; margin: 0 4px; border: 1px solid rgba(10,132,255,.18); border-radius: 999px; padding: 4px 4px 4px 9px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 11px; font-weight: 620; }
+.capability-chip__icon { display: grid; width: 15px; height: 15px; place-items: center; border-radius: 4px; color: white; background: var(--accent); font-size: 9px; }
+.capability-chip button { display: grid; width: 19px; height: 19px; place-items: center; border: 0; border-radius: 50%; padding: 0; color: var(--secondary); background: rgba(120,120,128,.12); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.capability-chip button:hover { color: inherit; background: rgba(120,120,128,.20); }
+.capability-suggestions { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 8px); left: 0; display: grid; gap: 2px; border: 1px solid var(--separator); border-radius: 11px; padding: 6px; background: var(--surface-solid); box-shadow: 0 12px 34px rgba(0,0,0,.16); backdrop-filter: blur(24px) saturate(1.3); }
+.capability-option { display: grid; grid-template-columns: 25px minmax(0,1fr) auto; align-items: center; gap: 9px; border: 0; border-radius: 8px; padding: 7px 10px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.capability-option:hover, .capability-option--highlighted { background: rgba(10,132,255,.11); }
+.capability-option__icon { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 7px; color: white; background: linear-gradient(145deg, #70b7ff, #0a84ff); font-size: 11px; font-weight: 700; }
+.capability-option__copy { display: grid; min-width: 0; gap: 2px; }
+.capability-option__copy strong { font-size: 12px; font-weight: 610; }
+.capability-option__copy small { overflow: hidden; color: var(--secondary); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.capability-option kbd { border: 0; color: var(--tertiary); background: transparent; font: inherit; font-size: 11px; }
+.capability-empty { margin: 0; padding: 8px 10px; color: var(--secondary); font-size: 11px; }
 .runtime-controls { display: flex; min-height: 25px; align-items: center; gap: 7px; padding: 0 4px; color: var(--secondary); font-size: 11px; }
 .runtime-controls--loading { opacity: .78; }
 .runtime-controls label { min-width: 0; }

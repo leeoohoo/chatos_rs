@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationHistorySnapshot } from "../../conversation-history/domain/conversationHistory";
-import { planConversationSend, recoverComposerDraft } from "./conversationComposer";
+import {
+  filterCapabilityCandidates,
+  planConversationSend,
+  recoverComposerDraft,
+  removeTrailingCapabilityQuery,
+  REQUIREMENT_SURVEY_CAPABILITY,
+  trailingCapabilityQuery,
+} from "./conversationComposer";
 
 function history(status: "running" | "succeeded" = "succeeded"): ConversationHistorySnapshot {
   return {
@@ -59,5 +66,36 @@ describe("conversation send policy", () => {
   it("does not overwrite text typed while a failed send was pending", () => {
     expect(recoverComposerDraft("new text", "failed text")).toBe("new text");
     expect(recoverComposerDraft("", "failed text")).toBe("failed text");
+  });
+});
+
+describe("composer capability syntax", () => {
+  it("recognizes a bare slash and a trailing query at a natural-language boundary", () => {
+    expect(trailingCapabilityQuery("/")).toEqual({ start: 0, end: 1, value: "" });
+    const query = trailingCapabilityQuery("请帮我处理 /需求");
+    expect(query).toEqual({ start: 6, end: 9, value: "需求" });
+    expect(removeTrailingCapabilityQuery("请帮我处理 /需求", query!)).toBe("请帮我处理 ");
+  });
+
+  it("does not treat paths, URLs, or closed selections as capability queries", () => {
+    expect(trailingCapabilityQuery("/Users/me/file")).toBeNull();
+    expect(trailingCapabilityQuery("/Document 帮我处理")).toBeNull();
+    expect(trailingCapabilityQuery("https://example.com/")).toBeNull();
+    expect(trailingCapabilityQuery(`/${"a".repeat(81)}`)).toBeNull();
+  });
+
+  it("filters the executable catalog by display name and subtitle", () => {
+    const empty = trailingCapabilityQuery("/")!;
+    expect(filterCapabilityCandidates([REQUIREMENT_SURVEY_CAPABILITY], empty)).toEqual([
+      REQUIREMENT_SURVEY_CAPABILITY,
+    ]);
+    expect(filterCapabilityCandidates(
+      [REQUIREMENT_SURVEY_CAPABILITY],
+      trailingCapabilityQuery("/范围")!,
+    )).toEqual([REQUIREMENT_SURVEY_CAPABILITY]);
+    expect(filterCapabilityCandidates(
+      [REQUIREMENT_SURVEY_CAPABILITY],
+      trailingCapabilityQuery("/Document")!,
+    )).toEqual([]);
   });
 });

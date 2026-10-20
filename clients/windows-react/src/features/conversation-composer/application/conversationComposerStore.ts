@@ -1,8 +1,13 @@
 import { create } from "zustand";
 import type { ConversationHistorySnapshot } from "../../conversation-history/domain/conversationHistory";
 import {
+  AVAILABLE_COMPOSER_CAPABILITIES,
+  filterCapabilityCandidates,
   planConversationSend,
   recoverComposerDraft,
+  removeTrailingCapabilityQuery,
+  trailingCapabilityQuery,
+  type ComposerCapabilityCandidate,
   type ExplicitCapabilitySelection,
 } from "../domain/conversationComposer";
 import type { ConversationComposerPort } from "../ports/ConversationComposerPort";
@@ -12,11 +17,23 @@ interface ConversationComposerState {
   conversationId: string | null;
   draft: string;
   explicitCapabilitySelection: ExplicitCapabilitySelection | null;
+  capabilitySuggestionsSuppressed: boolean;
+  highlightedCapabilityId: string | null;
   isSending: boolean;
   error: string | null;
   requestSequence: number;
   requestId: number;
-  setDraft(value: string): void;
+  setDraft(
+    value: string,
+    candidates?: readonly ComposerCapabilityCandidate[],
+  ): void;
+  setExplicitCapabilitySelection(value: ExplicitCapabilitySelection | null): void;
+  dismissCapabilitySuggestions(): void;
+  moveCapabilityHighlight(
+    direction: "up" | "down",
+    candidates: readonly ComposerCapabilityCandidate[],
+  ): void;
+  selectCapability(candidate: ComposerCapabilityCandidate): void;
   clearError(): void;
   send(
     port: ConversationComposerPort,
@@ -33,13 +50,56 @@ export const useConversationComposerStore = create<ConversationComposerState>((s
   conversationId: null,
   draft: "",
   explicitCapabilitySelection: null,
+  capabilitySuggestionsSuppressed: false,
+  highlightedCapabilityId: null,
   isSending: false,
   error: null,
   requestSequence: 0,
   requestId: 0,
 
-  setDraft(value) {
-    set({ draft: value, error: null });
+  setDraft(value, candidates = AVAILABLE_COMPOSER_CAPABILITIES) {
+    const query = trailingCapabilityQuery(value);
+    const visible = query ? filterCapabilityCandidates(candidates, query).slice(0, 8) : [];
+    set({
+      draft: value,
+      error: null,
+      capabilitySuggestionsSuppressed: false,
+      highlightedCapabilityId: visible[0]?.id ?? null,
+    });
+  },
+
+  setExplicitCapabilitySelection(value) {
+    set({ explicitCapabilitySelection: value, error: null });
+  },
+
+  dismissCapabilitySuggestions() {
+    set({ capabilitySuggestionsSuppressed: true, highlightedCapabilityId: null });
+  },
+
+  moveCapabilityHighlight(direction, candidates) {
+    const current = get();
+    if (current.capabilitySuggestionsSuppressed) return;
+    const query = trailingCapabilityQuery(current.draft);
+    if (!query) return;
+    const visible = filterCapabilityCandidates(candidates, query).slice(0, 8);
+    if (visible.length === 0) return;
+    const currentIndex = visible.findIndex(({ id }) => id === current.highlightedCapabilityId);
+    const index = currentIndex < 0 ? 0 : currentIndex;
+    const offset = direction === "down" ? 1 : -1;
+    set({ highlightedCapabilityId: visible[(index + offset + visible.length) % visible.length]!.id });
+  },
+
+  selectCapability(candidate) {
+    const current = get();
+    const query = trailingCapabilityQuery(current.draft);
+    if (!query) return;
+    set({
+      draft: removeTrailingCapabilityQuery(current.draft, query),
+      explicitCapabilitySelection: candidate.selection,
+      capabilitySuggestionsSuppressed: false,
+      highlightedCapabilityId: null,
+      error: null,
+    });
   },
 
   clearError() {
@@ -72,6 +132,8 @@ export const useConversationComposerStore = create<ConversationComposerState>((s
       conversationId,
       draft: "",
       explicitCapabilitySelection: null,
+      capabilitySuggestionsSuppressed: false,
+      highlightedCapabilityId: null,
       isSending: true,
       error: null,
       requestSequence: requestId,
@@ -107,6 +169,8 @@ export const useConversationComposerStore = create<ConversationComposerState>((s
       conversationId: conversationId.trim() || null,
       draft: "",
       explicitCapabilitySelection: null,
+      capabilitySuggestionsSuppressed: false,
+      highlightedCapabilityId: null,
       isSending: false,
       error: null,
       requestSequence: state.requestSequence + 1,

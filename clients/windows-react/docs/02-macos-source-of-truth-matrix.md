@@ -262,6 +262,13 @@ sendDraft
 - runtime unavailable 会立即失效并取消旧发送、恢复 composer，再通过本地 History Store 回滚 optimistic Turn；旧 Host 成功/失败响应不得覆盖恢复后的草稿、时间线或 `isSending`。
 - Conversation feature state 已成为 Turn Process、Task Workspace 与内嵌 Task Inspector 的子功能 composition owner；时间线和桌面宠物 SwiftUI View 只接收已构造的子 ViewModel，不再读取或转发 `TurnProcessServicing`、`MessageTaskGraphServicing`、`ConversationRealtimeStreaming` ports。
 
+Windows React 对齐状态：
+
+- Composer 已按同一语法识别草稿末尾 `/query`；路径、URL、已结束的 `/选择 后续正文` 和超过 80 字符的查询不会打开能力菜单；
+- 已实现过滤、首项高亮、上下键循环、Escape 暂时关闭、Enter/Tab 选择、选中 chip 移除，以及发送失败时恢复显式能力；owner 或 Conversation 切换会淘汰旧选择和旧发送响应；
+- Requirement Survey 作为固定首项并通过既有 `explicit_capability_selection` Host 协议发送；活动 Turn 期间继续执行与 macOS 相同的冲突阻止规则；
+- Windows platform plugin worker 尚未实现，因此当前只展示可真实执行的 Requirement Survey。已安装插件不能仅凭目录记录进入候选列表；待执行 worker、capability snapshot 与 plugin release binding 全部打通后再开放。
+
 ### 4.3 Host ready、刷新与 realtime
 
 源码事实：`ConversationSessionViewModel.swift`
