@@ -21,6 +21,8 @@ import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLif
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
 import type { ProjectConversationPort } from "../features/project-conversation/ports/ProjectConversationPort";
 import { ProjectConversationPlaceholder } from "../features/project-conversation/ui/ProjectConversationPlaceholder";
+import type { ProjectDirectoryPort } from "../features/project-directory/ports/ProjectDirectoryPort";
+import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
@@ -31,6 +33,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
+  projectDirectory: ProjectDirectoryPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
@@ -49,6 +52,7 @@ export function AppShell({
   hostLifecycle,
   workspaceIndex,
   projectConversation,
+  projectDirectory,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
@@ -202,19 +206,26 @@ export function AppShell({
             port={accessControl}
           />
         ) : selectedProject ? (
-          <ProjectConversationPlaceholder
+          <ProjectWorkspaceSurface
+            directoryPort={projectDirectory}
             ownerUserId={session.user.id}
-            project={selectedProject}
-            hostReady={snapshot.ready}
-            defaultContactReady={defaultContactReady}
-            port={projectConversation}
-            historyPort={conversationHistory}
-            composerPort={conversationComposer}
-            attachmentPort={conversationAttachments}
-            realtimePort={conversationRealtime}
-            runtimeSettingsPort={conversationRuntimeSettings}
-            runInspectorPort={runInspector}
-            askUserPort={askUser}
+            projectId={selectedProject.id}
+            messages={(
+              <ProjectConversationPlaceholder
+                ownerUserId={session.user.id}
+                project={selectedProject}
+                hostReady={snapshot.ready}
+                defaultContactReady={defaultContactReady}
+                port={projectConversation}
+                historyPort={conversationHistory}
+                composerPort={conversationComposer}
+                attachmentPort={conversationAttachments}
+                realtimePort={conversationRealtime}
+                runtimeSettingsPort={conversationRuntimeSettings}
+                runInspectorPort={runInspector}
+                askUserPort={askUser}
+              />
+            )}
           />
         ) : selectedContact ? (
           <div className="project-state">

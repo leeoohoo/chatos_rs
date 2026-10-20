@@ -39,6 +39,7 @@ Windows React 的业务逻辑只能从 macOS 当前源码、测试及其调用�
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 项目会话准备 | Application 用例、账号绑定 per-project lifecycle、强类型展示阶段与 Conversation Session composition factory 已提取；Windows 已按同一四态接入 | `ProjectMessagesView.swift` | `AppModelResources.swift`、`PrepareProjectConversationUseCase.swift`、`ProjectConversationPreparationState.swift`、`ConversationSessionFactory.swift` | `ProjectConversationModels.swift` | `NativeLocalAgentWorkspaceService.swift`、Windows Registry + Host adapter | Preparation state/use case、Session factory、Connector 竞态/绑定、React latest-wins 与 Rust Registry 测试 | `macOS 分层完成，可进入 React`；项目会话准备已实现，不放行 Conversation 时间线 |
 | 项目工作区列表 | 本地优先两阶段 loader、账号绑定 latest-wins lifecycle 与 await ownership 已提取；Windows 只读索引已按同一顺序接入 | `ResourceSidebar.swift` | `AppModelWorkspace.swift`、`ClientOwnedWorkspaceLoader.swift`、`WorkspaceLoadState.swift` | `ProjectRegistry.swift`、workspace models | `NativeLocalProjectsService.swift`、`NativeLocalAgentWorkspaceService.swift`、`NativeProjectRunService.swift`；Windows SQLite Registry + Host relation adapter | Load state、两阶段 loader、React state/projection 与真实 Host 请求测试 | `macOS 分层完成，可进入 React`；只读索引已实现，创建/编辑仍禁止 |
+| 项目目录只读树 | macOS 目录列表/展开/刷新契约与 Windows workspace grant 边界已映射；Windows 项目工作面、相对路径目录树和 lifecycle 已接入 | `ProjectWorkspaceView.swift`、`ProjectDirectoryView.swift` | `ProjectDirectoryViewModel.swift`、`ProjectDirectoryExpansionStateStore.swift` | `ProjectFilesystemModels.swift` | `NativeProjectFilesystemService.swift`、`NativeWorkspaceFilesystem.swift`；Windows Registry/workspace resolver + Tauri filesystem adapter | macOS ViewModel/性能策略、Windows Rust path/listing 与 React domain/store/UI 测试 | 只读目录树已进入 React；预览/搜索/写操作、Git、项目设置仍禁止 |
 | 远程连接列表 | 列表查询/排序用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `ResourceSidebar.swift` | `AppModelResources.swift`、`RemoteConnectionsLoadState.swift` | `RemoteConnectionModels.swift` | `NativeRemoteConnectionService.swift` | Load state/use case 及 Connector 测试 | 禁止；等待远程资源完整切片 |
 | 插件应用列表 | 窄 listing Port、列表用例、账号绑定 latest-wins lifecycle 与 await ownership 已提取 | `PluginApplicationsView.swift`、`ResourceSidebar.swift` | `AppModelWorkspace.swift`、`PluginApplicationsLoadState.swift` | `LocalConnectorCatalogModels.swift` | `NativeLocalConnectorService+Plugins.swift` | Load state/use case 及 Connector 测试 | 禁止；等待插件应用完整切片 |
 | Conversation 时间线与发送 | macOS 分层与三端共享 fixture 已完成；Windows History、Composer、显式能力、附件闭环和 runtime controls 已接入 | `ConversationTimelineView.swift`、`ComposerView.swift`、`ReasoningLevelControl.swift` | `ConversationSessionViewModel*.swift`、`ConversationSessionFactory.swift`、Conversation Application 类型 | `ConversationModels.swift`、`ConversationRuntimeSettings.swift`、Conversation ports | `NativeLocalAgentConversationService.swift`、`NativeLocalAgentConversationRuntimeSettingsService.swift`、Host conversation/attachment commands | Conversation Core policy/use case、附件导入、runtime settings load/mutation state、Session factory、ViewModel 测试等 | `macOS 分层完成，可进入 React`；Windows 核心发送闭环已实现 |
@@ -70,7 +71,27 @@ Windows 只读索引实现（2026-10-20）：
 - Host 业务请求统一使用有界 framed transport。协议、IO、EOF 或超时会终止假健康进程；普通业务拒绝不会误杀健康 Host；
 - 当前只放行侧栏只读索引。项目创建、导入、重命名、删除、目录授权与 project context 在各自完整切片通过前仍禁止进入 React。
 
-### 2.2 Authentication：完整调用链
+### 2.2 项目目录只读树
+
+macOS 事实源：
+
+- `ProjectWorkspaceView` 默认项目 tab 为“用户消息”，并在“项目目录 / 用户消息 / 项目设置”之间切换；新建项目成功后才主动切到目录；
+- `ProjectDirectoryViewModel` 持有目录缓存、展开路径、选中项、搜索与文件内容；根目录加载、子树展开、折叠淘汰和 connector retry 是独立生命周期；
+- `ProjectFilesystemServicing` 固定 list/search/read/write/create/delete/open 端口；首个 Windows 子切片只采用 `listEntries`，不能因接口存在就提前开放其他操作；
+- `NativeWorkspaceFilesystem.list` 单目录最多 5,000 项、文件夹优先、忽略符号链接、返回相对路径与 truncated 标记；
+- expansion store 只保存展示偏好，不是文件授权；workspace grant 与每次路径 canonicalization 才是权限事实。
+
+Windows React 已完成只读目录树：
+
+- Tauri 通过账号隔离 `Projects.sqlite3` 解析项目的 workspace/relative root，再与当前 owner 的 Connector grant、device identity 和 canonical root 联合验收；
+- 调用只接受规范化便携相对路径，拒绝绝对路径、盘符、反斜杠、控制字符、`.`/`..` 和越界 canonical path；绝对根目录从不发送给 React；
+- 目录列表与 macOS 一致最多 5,000 项、文件夹优先排序并跳过符号链接，只投影名称、相对路径、类型、可写位、大小和修改时间；
+- React Store 以 owner/project generation 和 per-path request identity 管理根目录、展开与刷新；折叠目录会使其子树的迟到请求失效，切换项目或离开页面清空展示状态；
+- 项目工作面默认显示用户消息；目录 tab 已开放，项目设置保持禁用并明确等待对应页面准入；
+- 当前只显示目录树和文件元数据。内容预览、搜索、编辑、创建/删除、Git 与项目创建/授权均继续禁止；
+- Windows 定向验收为 Rust 88 项通过、2 项 sidecar 环境测试忽略，React 37 个文件 132 项通过；TypeScript、Vite production build、架构审计和 `clippy -D warnings` 通过。
+
+### 2.3 Authentication：完整调用链
 
 入口和分层：
 
@@ -883,7 +904,7 @@ Windows React 已完成对应独立切片：
 
 | # | 页面 / 截图 | 状态 | React 准入 |
 | --- | --- | --- | --- |
-| 01 | 项目目录 | 源码映射中 | 禁止 |
+| 01 | 项目目录 | macOS 工作面、目录 list/expand/refresh 与 Windows workspace 路径边界已映射；Windows 只读目录树和生命周期已完成，创建/授权、预览、搜索、写操作仍待独立切片 | 只读目录树已进入 React；其余操作禁止 |
 | 02 | 项目消息 | macOS 分层与三端 fixture 已完成 | 允许；按 History→Composer→Realtime→Run Inspector 分片实施 |
 | 03 | 项目设置 | 未映射 | 禁止 |
 | 04 | 联系人聊天 | 源码映射中（复用 Conversation，入口差异待完成） | 禁止 |
@@ -933,6 +954,7 @@ Host lifecycle / Shell 已完成第一轮跨层验收并进入 React。其余业
 10. [已完成] 按 macOS 契约实现命令审批三态策略、模型/推理设置、风险确认、pending 决定和审计历史页；未准入的 Windows 审批 Agent 明确降级 Human。
 11. [已完成] 按 macOS 系统权限契约实现 Windows 原生能力快照、刷新/lifecycle 与运行权限页；没有把未准入 worker 伪装成系统授权问题。
 12. [已完成] 映射第 31 页访问控制/沙箱策略；Windows 当前仅进程树控制得到执行链路证明，因此策略只读，文件/网络隔离明确显示缺失，审批复用第 29 页唯一真值。
-13. [进行中] 回到第 01 页项目目录，先完成项目创建、工作区授权、目录树和错误恢复的 macOS 源码映射，再按准入门禁实现 React 垂直切片。
+13. [部分完成] 第 01 页项目工作面与只读目录树已按 workspace grant、规范化相对路径、5,000 项上限和展开 lifecycle 进入 React；预览、搜索、写操作、Git 与项目设置未提前开放。
+14. [进行中] 实现项目创建与 Windows 文件夹授权：必须由原生文件夹选择器产生显式 grant，原子写入 owner-scoped Connector state 与 Project Registry，并在账号/弹窗/保存 lifecycle 中拒绝迟到结果。
 
 任何新的平台差异必须在本文件新增“差异原因、macOS 原行为、Windows 适配方式、测试与批准记录”后才能实现。

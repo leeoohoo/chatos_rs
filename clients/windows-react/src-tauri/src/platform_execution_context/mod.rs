@@ -8,8 +8,8 @@ use authorization::TaskToolAuthorization;
 use chatos_local_agent_protocol::{
     GetConversationCommand, GetRunCommand, HostCommand, HostResult, LocalConversationResourceKind,
 };
-pub(crate) use filesystem::resolve_execution_directory;
-use filesystem::{resolve_contact_root, resolve_project_root};
+use filesystem::resolve_contact_root;
+pub(crate) use filesystem::{resolve_execution_directory, resolve_project_root};
 use serde_json::Value;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};

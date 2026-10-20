@@ -452,6 +452,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-20，访问控制）：已按 macOS `LocalConnectorSandboxView` 的“默认任务权限 + 运行后端”信息结构建立独立 Domain/Port/Tauri/UI 切片，并按 Windows 当前真实执行边界收窄为只读状态。PowerShell worker 具备 owner/project context、workspace grant、规范化 cwd、审批门禁与 Windows Job Object 进程树回收，但尚未具备操作系统级文件或网络隔离，因此后端明确显示 `limited`，文件权限显示 Windows 账号 ACL，网络显示跟随本机，不发布无效开关或下拉框。审批摘要直接投影既有 `approvalMode`，没有创建第二套策略真值。Host/owner refresh 使用 request identity 拒绝迟到结果。当前验收为 Windows Rust 85 项通过、2 项 sidecar 环境测试忽略，React 34 个文件 123 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步回到第 01 页项目目录，完成项目创建、授权和目录展示的 macOS 源码映射。
 
+状态补充（2026-10-20，项目目录只读树）：已按 macOS `ProjectWorkspaceView`、`ProjectDirectoryViewModel`、`ProjectFilesystemServicing` 与 `NativeWorkspaceFilesystem` 建立项目工作面和只读目录树垂直切片。Windows 默认仍打开用户消息；项目目录从 owner-scoped Registry/workspace grant 解析真实根目录，React 只接收规范化相对路径。单目录最多 5,000 项，文件夹优先排序，符号链接和非便携路径失败关闭；展开/折叠、刷新、项目切换与页面离开均用 identity 拒绝迟到结果。当前只显示文件元数据，不提前开放尚未验收的内容预览、搜索、编辑、删除、Git 或项目设置。当前验收为 Windows Rust 88 项通过、2 项 sidecar 环境测试忽略，React 37 个文件 132 项通过，TypeScript、production build、架构审计与 Clippy 通过。下一步是项目创建与 Windows 文件夹授权切片。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

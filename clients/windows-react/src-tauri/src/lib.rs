@@ -12,6 +12,7 @@ mod conversation_runtime_settings;
 mod host_lifecycle;
 mod platform_execution_context;
 mod project_conversation;
+mod project_filesystem;
 mod run_inspector;
 mod system_permissions;
 mod terminal_runtime;
@@ -46,6 +47,7 @@ use host_lifecycle::{
     HostManager,
 };
 use project_conversation::prepare_project_conversation;
+use project_filesystem::load_project_directory;
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -135,6 +137,7 @@ pub fn run() {
             list_local_projects,
             refresh_workspace_relations,
             prepare_project_conversation,
+            load_project_directory,
             load_message_task_graph,
             load_task_inspector,
             load_run_inspector,
