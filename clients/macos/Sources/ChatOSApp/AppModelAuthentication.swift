@@ -31,8 +31,6 @@ extension AppModel {
                 deactivateAllConversations()
                 projectConversation = nil
                 contactConversation = nil
-                preparingProjectConversationIDs = []
-                projectConversationPreparationErrors = [:]
             }
             authenticatedUserID = session.user.id
             // Authentication and Local Connector pairing can be restored in either order.
@@ -97,8 +95,6 @@ extension AppModel {
             deactivateAllConversations()
             projectConversation = nil
             contactConversation = nil
-            preparingProjectConversationIDs = []
-            projectConversationPreparationErrors = [:]
         case .restoring, .authenticating:
             break
         }
@@ -338,7 +334,6 @@ extension AppModel {
         projectConversationPreparationState.reset()
         projectConversationPreparationTasks.values.forEach { $0.cancel() }
         projectConversationPreparationTasks.removeAll()
-        preparingProjectConversationIDs = []
         localAgentHostRecoveryState.cancelHealthCheck()
         localAgentHostHealthCheckTask?.cancel()
         localAgentHostHealthCheckTask = nil

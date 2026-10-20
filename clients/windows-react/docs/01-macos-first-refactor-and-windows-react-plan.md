@@ -397,7 +397,7 @@ Workspace Inspector 的详情、模型输出、Run 与事件分页 Task 已冻�
 
 Conversation 执行过程读取已使用 Host `process` 事件载荷投影：SQLite 查询阶段只保留映射 UI 所需的 tool call identity、状态、原因与错误摘要，移除附件内容和工具参数；macOS 以每页 25 条、最多 400 页的既有 10,000 事件上限读取以控制内存与解码成本，超过 4 MiB 的逻辑消息由 IPC 自动分片，同时仍完整合并工具生命周期。
 
-项目 Conversation 准备现已由 Core `ProjectConversationPort`、per-project token state 与 AppModel 持有的具体 Task 共同管理；项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。准备 Task 会在进入 Application use case 前冻结 owner、project、contact、account generation 与 port；Context/Host await 期间不再强持有 AppModel，返回后仍须联合验收账号、项目存在性和 per-project token。
+项目 Conversation 准备现已由 Core `ProjectConversationPort`、per-project token state 与 AppModel 持有的具体 Task 共同管理；`idle / preparing / failed` 强类型展示阶段也已并入同一 Application state，SwiftUI 不再通过独立 loading Set 和 error Dictionary 推导状态。项目删除只取消对应准备，账号切换、登出和应用退出取消全部准备，迟到结果不能恢复旧 loading 或错误。准备 Task 会在进入 Application use case 前冻结 owner、project、contact、account generation 与 port；Context/Host await 期间不再强持有 AppModel，返回后仍须联合验收账号、项目存在性和 per-project token。
 
 项目 Workspace 刷新已用 Core `WorkspaceLoadState` 取代裸 generation，并把 registry、本地快照、设备配对、根目录修复、远端关系与 Run project 映射保持为既有的两阶段加载顺序。刷新 Task 在开始时冻结账号、account generation 与服务依赖，各段 IO 期间不再强持有 AppModel；每次快照准备、展示写回、错误和 loading 收尾都必须通过同一个 typed token，项目删除、账号切换、登出或新刷新会同时淘汰旧请求。
 

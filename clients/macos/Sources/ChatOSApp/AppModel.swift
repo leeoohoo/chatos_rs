@@ -67,8 +67,7 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     @Published var remoteConnectionsError: String?
     @Published var isWorkspaceLoading = false
     @Published var workspaceError: String?
-    @Published var preparingProjectConversationIDs: Set<String> = []
-    @Published var projectConversationPreparationErrors: [String: String] = [:]
+    @Published var projectConversationPreparationState = ProjectConversationPreparationState()
     @Published var localAgentHostError: String?
     @Published var localAgentRuntimeState = LocalAgentRuntimeState()
 
@@ -146,7 +145,6 @@ final class AppModel: ObservableObject, LocalConnectorCompanionRuntimeProviding 
     let userLanguagePreferencesService: LocalUserLanguagePreferencesService
     var conversationCache: [String: ConversationSessionViewModel] = [:]
     var conversationCacheRecency = ConversationCacheRecency(capacity: 8)
-    var projectConversationPreparationState = ProjectConversationPreparationState()
     var projectConversationPreparationTasks: [String: Task<Void, Never>] = [:]
     var workspaceLoadState = WorkspaceLoadState()
     var workspaceLoadTask: Task<Void, Never>?

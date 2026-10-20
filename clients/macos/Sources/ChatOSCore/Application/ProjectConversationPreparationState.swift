@@ -12,11 +12,18 @@ public struct ProjectConversationPreparationToken: Sendable, Equatable {
     }
 }
 
+public enum ProjectConversationPreparationPhase: Sendable, Equatable {
+    case idle
+    case preparing
+    case failed(message: String)
+}
+
 /// Per-project latest-wins identity for preparing the durable project
 /// Conversation. Different projects may prepare concurrently; replacing,
 /// deleting, or signing out invalidates only the appropriate work.
 public struct ProjectConversationPreparationState: Sendable, Equatable {
     public private(set) var activeTokens: [String: ProjectConversationPreparationToken] = [:]
+    public private(set) var phases: [String: ProjectConversationPreparationPhase] = [:]
     private var lastGenerations: [String: UInt64] = [:]
 
     public init() {}
@@ -30,7 +37,16 @@ public struct ProjectConversationPreparationState: Sendable, Equatable {
             requestID: UUID()
         )
         activeTokens[projectID] = token
+        phases[projectID] = .preparing
         return token
+    }
+
+    public func phase(for projectID: String) -> ProjectConversationPreparationPhase {
+        phases[projectID] ?? .idle
+    }
+
+    public func isPreparing(projectID: String) -> Bool {
+        activeTokens[projectID] != nil
     }
 
     public func accepts(_ token: ProjectConversationPreparationToken) -> Bool {
@@ -38,17 +54,32 @@ public struct ProjectConversationPreparationState: Sendable, Equatable {
     }
 
     @discardableResult
-    public mutating func finish(_ token: ProjectConversationPreparationToken) -> Bool {
+    public mutating func finish(
+        _ token: ProjectConversationPreparationToken,
+        errorMessage: String? = nil
+    ) -> Bool {
         guard accepts(token) else { return false }
         activeTokens[token.projectID] = nil
+        if let errorMessage {
+            phases[token.projectID] = .failed(message: errorMessage)
+        } else {
+            phases[token.projectID] = nil
+        }
         return true
+    }
+
+    public mutating func clearFailure(projectID: String) {
+        guard case .failed = phase(for: projectID) else { return }
+        phases[projectID] = nil
     }
 
     public mutating func cancel(projectID: String) {
         activeTokens[projectID] = nil
+        phases[projectID] = nil
     }
 
     public mutating func reset() {
         activeTokens.removeAll()
+        phases.removeAll()
     }
 }

@@ -10,6 +10,7 @@ struct ProjectMessagesView: View {
         let projectName = resource?.title ?? projectID
         let contactName = resource?.contactName
             ?? model.localized("项目联系人", english: "Project Contact")
+        let preparationPhase = model.projectConversationPreparationPhase(projectID: projectID)
 
         Group {
             if let conversation = model.projectConversation {
@@ -26,7 +27,7 @@ struct ProjectMessagesView: View {
                         Label(model.localized("需求调研", english: "Requirement Surveys"), systemImage: "list.clipboard.fill")
                     }
                 }
-            } else if model.isPreparingProjectConversation(projectID: projectID) {
+            } else if preparationPhase == .preparing {
                 VStack(spacing: 12) {
                     ProgressView()
                         .controlSize(.large)
@@ -39,7 +40,7 @@ struct ProjectMessagesView: View {
                         .appFont(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-            } else if let error = model.projectConversationPreparationError(projectID: projectID) {
+            } else if case let .failed(error) = preparationPhase {
                 ContentUnavailableView {
                     Label(
                         model.localized("会话准备失败", english: "Conversation setup failed"),

@@ -117,7 +117,6 @@ extension AppModel {
         workspaceProjects.removeAll { $0.id == id }
         projects.removeAll { $0.id == id }
         cancelProjectConversationPreparation(projectID: id, ownerUserID: owner)
-        projectConversationPreparationErrors.removeValue(forKey: id)
         petPreferences.setFavorite(false, projectID: id)
         for conversationID in conversationIDs {
             conversationCache.removeValue(forKey: conversationID)?.deactivate()
@@ -132,16 +131,14 @@ extension AppModel {
         reconcileSelection()
     }
 
-    func isPreparingProjectConversation(projectID: String) -> Bool {
-        preparingProjectConversationIDs.contains(projectID)
-    }
-
-    func projectConversationPreparationError(projectID: String) -> String? {
-        projectConversationPreparationErrors[projectID]
+    func projectConversationPreparationPhase(
+        projectID: String
+    ) -> ProjectConversationPreparationPhase {
+        projectConversationPreparationState.phase(for: projectID)
     }
 
     func retryProjectConversationPreparation(projectID: String) {
-        projectConversationPreparationErrors[projectID] = nil
+        projectConversationPreparationState.clearFailure(projectID: projectID)
         prepareProjectConversationIfNeeded(projectID: projectID, force: true)
     }
 
@@ -280,8 +277,11 @@ extension AppModel {
     func prepareProjectConversationIfNeeded(projectID: String, force: Bool = false) {
         guard let ownerUserID = authenticatedUserID,
               localAgentWorkspaceOwnerUserID == ownerUserID else { return }
-        guard !preparingProjectConversationIDs.contains(projectID) else { return }
-        guard force || projectConversationPreparationErrors[projectID] == nil else { return }
+        guard !projectConversationPreparationState.isPreparing(projectID: projectID) else { return }
+        if !force,
+           case .failed = projectConversationPreparationState.phase(for: projectID) {
+            return
+        }
         guard let project = workspaceProject(id: projectID),
               let contact = defaultProjectContact,
               let prepareProjectConversationUseCase else { return }
@@ -289,8 +289,6 @@ extension AppModel {
         let token = projectConversationPreparationState.begin(projectID: projectID)
         let accountGeneration = workspaceAccountGeneration
         let existingConversationID = projects.first(where: { $0.id == projectID })?.conversationID
-        preparingProjectConversationIDs.insert(projectID)
-        projectConversationPreparationErrors[projectID] = nil
         projectConversationPreparationTasks[projectID] = Task { [weak self] in
             let result: Result<(conversationID: String, shouldApply: Bool), Error>
             do {
@@ -322,13 +320,14 @@ extension AppModel {
                         contactName: contact.name
                     )
                 }
+                guard self.projectConversationPreparationState.finish(token) else { return }
             case let .failure(error):
-                if !(error is CancellationError) {
-                    self.projectConversationPreparationErrors[projectID] = error.localizedDescription
-                }
+                let errorMessage = error is CancellationError ? nil : error.localizedDescription
+                guard self.projectConversationPreparationState.finish(
+                    token,
+                    errorMessage: errorMessage
+                ) else { return }
             }
-            guard self.projectConversationPreparationState.finish(token) else { return }
-            self.preparingProjectConversationIDs.remove(projectID)
             self.projectConversationPreparationTasks[projectID] = nil
         }
     }
@@ -346,7 +345,6 @@ extension AppModel {
         projectConversationPreparationState.cancel(projectID: projectID)
         projectConversationPreparationTasks[projectID]?.cancel()
         projectConversationPreparationTasks[projectID] = nil
-        preparingProjectConversationIDs.remove(projectID)
     }
 
     func ensureProjectConversation(
@@ -400,7 +398,7 @@ extension AppModel {
                 contactName: contactName
             )
         }
-        projectConversationPreparationErrors[projectID] = nil
+        projectConversationPreparationState.clearFailure(projectID: projectID)
         if selection == .project(projectID) {
             let conversation = conversation(for: conversationID)
             conversation.activate()
