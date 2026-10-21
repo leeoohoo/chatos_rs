@@ -590,3 +590,24 @@ actor StoryProjectStore {
         accountDirectory(owner).appendingPathComponent(projectID.uuidString, isDirectory: true)
     }
 }
+
+extension StoryProjectStore: StoryProjectCatalogLoading {
+    func loadStoryProjects(
+        ownerUserID: String,
+        after cursor: StoryProjectCatalogCursor?,
+        limit: Int
+    ) async throws -> StoryProjectCatalogPage {
+        let snapshot = try load(
+            owner: ownerUserID,
+            after: cursor.map { .init(modifiedAt: $0.modifiedAt, filename: $0.recordID) },
+            limit: limit
+        )
+        return StoryProjectCatalogPage(
+            projects: snapshot.projects,
+            unreadableCount: snapshot.unreadableCount,
+            nextCursor: snapshot.nextCursor.map {
+                .init(modifiedAt: $0.modifiedAt, recordID: $0.filename)
+            }
+        )
+    }
+}

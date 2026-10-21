@@ -53,6 +53,47 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.selectedProjectID, "Entering the tab should start at the list")
     }
 
+    func testLateProjectCatalogPageCannotReplaceTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioCatalogTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let catalog = DeferredStoryProjectCatalog()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            projectCatalog: catalog
+        )
+        var alice = makeProject()
+        alice.title = "Alice Story"
+        var bob = makeProject()
+        bob.title = "Bob Story"
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where await !catalog.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        vm.activate(userID: "bob")
+        for _ in 0..<100 where await !catalog.hasRequest(ownerUserID: "bob") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        await catalog.complete(ownerUserID: "alice", projects: [alice])
+        await catalog.complete(ownerUserID: "bob", projects: [bob])
+        for _ in 0..<100 where vm.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertEqual(vm.projects.map(\.title), ["Bob Story"])
+        XCTAssertFalse(vm.isLoading)
+    }
+
     func testProjectsLoadInBoundedPagesWithoutDroppingOlderProjects() async throws {
         let (_, store, _) = try await fixture()
         var ids: Set<UUID> = []
@@ -647,5 +688,31 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertFalse(vm.isBusy); XCTAssertFalse(vm.isLoading)
         XCTAssertFalse(vm.hasActiveAssetGenerations); XCTAssertFalse(vm.hasActiveFrameGenerations)
         XCTAssertFalse(vm.hasActiveVideoGenerations)
+    }
+}
+
+private actor DeferredStoryProjectCatalog: StoryProjectCatalogLoading {
+    private var requests: Set<String> = []
+    private var continuations: [String: CheckedContinuation<StoryProjectCatalogPage, Error>] = [:]
+
+    func loadStoryProjects(
+        ownerUserID: String,
+        after cursor: StoryProjectCatalogCursor?,
+        limit: Int
+    ) async throws -> StoryProjectCatalogPage {
+        requests.insert(ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[ownerUserID] = continuation
+        }
+    }
+
+    func hasRequest(ownerUserID: String) -> Bool {
+        requests.contains(ownerUserID)
+    }
+
+    func complete(ownerUserID: String, projects: [StoryProject]) {
+        continuations.removeValue(forKey: ownerUserID)?.resume(
+            returning: .init(projects: projects)
+        )
     }
 }

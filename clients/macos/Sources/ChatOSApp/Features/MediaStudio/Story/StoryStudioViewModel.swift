@@ -103,6 +103,7 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var videoGenerationProgress: [VideoGenerationKey: VideoGenerationProgress] = [:]
     @Published var activeVideoFrameExtractions: Set<VideoGenerationKey> = []
     let store: StoryProjectStore
+    let projectCatalog: StoryProjectCatalogUseCase
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     let agentServices: (any AgentServiceProviding)?
@@ -114,7 +115,8 @@ final class StoryStudioViewModel: ObservableObject {
     var historyTask: Task<Void, Never>?
     var agentRunPageTask: Task<Void, Never>?
     var mediaBatchPageTask: Task<Void, Never>?
-    var projectCursor: StoryProjectStore.PageCursor?
+    var projectCursor: StoryProjectCatalogCursor?
+    var projectCatalogLoadState = StoryProjectCatalogLoadState()
     var agentRunCursor: StoryProjectStore.PageCursor?
     var mediaBatchCursor: StoryProjectStore.PageCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
@@ -125,9 +127,12 @@ final class StoryStudioViewModel: ObservableObject {
     var sourceDrafts: [UUID: SourceDraft] = [:]
 
     init(media: any MediaGenerationServicing, planner: (any StoryPlanningServicing)? = nil,
-         store: StoryProjectStore = StoryProjectStore(), agentServices: (any AgentServiceProviding)? = nil,
+         store: StoryProjectStore = StoryProjectStore(),
+         projectCatalog: (any StoryProjectCatalogLoading)? = nil,
+         agentServices: (any AgentServiceProviding)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
+        self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
         self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)
         self.agentSettings = agentSettings
     }
@@ -315,23 +320,36 @@ final class StoryStudioViewModel: ObservableObject {
         guard owner != userID else { return }
         reset()
         owner = userID
-        let token = session
-        let store = store
+        let accountSessionID = session
+        let request = projectCatalogLoadState.begin(
+            ownerUserID: userID,
+            accountSessionID: accountSessionID,
+            kind: .initial
+        )
+        let projectCatalog = projectCatalog
         isLoading = true
-        loadTask = Task { [weak self, store] in
-            let result: Result<StoryProjectStore.Snapshot, Error>
+        loadTask = Task { [weak self, projectCatalog] in
+            let result: Result<StoryProjectCatalogPage, Error>
             do {
-                result = .success(try await store.load(owner: userID))
+                result = .success(try await projectCatalog.loadInitial(ownerUserID: userID))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token, !Task.isCancelled else { return }
+            guard let self,
+                  self.projectCatalogLoadState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: self.session
+                  ),
+                  !Task.isCancelled else { return }
+            _ = self.projectCatalogLoadState.finish(request)
             switch result {
             case .success(let snapshot):
-                projects = snapshot.projects
-                projectCursor = snapshot.nextCursor
-                hasMoreProjects = snapshot.nextCursor != nil
-                if snapshot.unreadableCount > 0 { errorMessage = "有 \(snapshot.unreadableCount) 个剧情无法读取，原文件已保留。" }
+                let collection = projectCatalog.replacing(with: snapshot)
+                projects = collection.projects
+                projectCursor = collection.nextCursor
+                hasMoreProjects = collection.nextCursor != nil
+                if collection.unreadableCount > 0 { errorMessage = "有 \(collection.unreadableCount) 个剧情无法读取，原文件已保留。" }
             case .failure(let error):
                 errorMessage = error.localizedDescription
             }
@@ -343,28 +361,45 @@ final class StoryStudioViewModel: ObservableObject {
     func loadMoreProjects() {
         guard let owner, let cursor = projectCursor,
               !isLoading, !isLoadingMoreProjects else { return }
-        let token = session
-        let store = store
+        let accountSessionID = session
+        let request = projectCatalogLoadState.begin(
+            ownerUserID: owner,
+            accountSessionID: accountSessionID,
+            kind: .next(cursor)
+        )
+        let projectCatalog = projectCatalog
         isLoadingMoreProjects = true
-        loadTask = Task { [weak self, store] in
-            let result: Result<StoryProjectStore.Snapshot, Error>
+        loadTask = Task { [weak self, projectCatalog] in
+            let result: Result<StoryProjectCatalogPage, Error>
             do {
-                result = .success(try await store.load(owner: owner, after: cursor))
+                result = .success(try await projectCatalog.loadNext(
+                    ownerUserID: owner,
+                    after: cursor
+                ))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token, !Task.isCancelled else { return }
+            guard let self,
+                  self.projectCatalogLoadState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: self.session
+                  ),
+                  !Task.isCancelled else { return }
             defer {
+                _ = self.projectCatalogLoadState.finish(request)
                 self.isLoadingMoreProjects = false
                 self.loadTask = nil
             }
             switch result {
             case .success(let snapshot):
-                let existing = Set(projects.map(\.id))
-                projects.append(contentsOf: snapshot.projects.filter { !existing.contains($0.id) })
-                projects.sort { $0.updatedAt > $1.updatedAt }
-                projectCursor = snapshot.nextCursor
-                hasMoreProjects = snapshot.nextCursor != nil
+                let collection = projectCatalog.merging(
+                    snapshot,
+                    into: .init(projects: projects, nextCursor: projectCursor)
+                )
+                projects = collection.projects
+                projectCursor = collection.nextCursor
+                hasMoreProjects = collection.nextCursor != nil
                 if snapshot.unreadableCount > 0 {
                     errorMessage = "有 \(snapshot.unreadableCount) 个更早剧情无法读取，原文件已保留。"
                 }
@@ -376,6 +411,7 @@ final class StoryStudioViewModel: ObservableObject {
 
     func reset() {
         session = UUID(); owner = nil
+        projectCatalogLoadState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]
