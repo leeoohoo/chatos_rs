@@ -8,7 +8,7 @@ import type {
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 
 type Language = "zh" | "en";
-type Disclosure = "overview" | "instructions";
+type Disclosure = "overview" | "instructions" | "references";
 type ContentMode = "preview" | "edit" | "split";
 
 export function AgentSkillManagementSheet({
@@ -35,6 +35,7 @@ export function AgentSkillManagementSheet({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [disclosure, setDisclosure] = useState<Disclosure>("overview");
   const [contentMode, setContentMode] = useState<ContentMode>("preview");
+  const [selectedResourcePath, setSelectedResourcePath] = useState("references/workflow.md");
   const [draft, setDraft] = useState<AgentSkillMutationInput | null>(null);
 
   useEffect(() => {
@@ -163,13 +164,13 @@ export function AgentSkillManagementSheet({
                 <label>说明<textarea maxLength={4_000} onChange={(event) => updateLocalizedDraft(draft, setDraft, language, "description", event.target.value)} rows={3} value={language === "en" ? draft.descriptionEn : draft.description} /></label>
                 <Segmented<Disclosure>
                   label="渐进披露层级"
-                  options={[["overview", "概要"], ["instructions", "完整说明"]]}
+                  options={[["overview", "概要"], ["instructions", "完整说明"], ["references", "参考资料"]]}
                   value={disclosure}
                   onChange={setDisclosure}
                 />
                 {disclosure === "overview" ? (
                   <SkillOverview item={selected} language={language} />
-                ) : (
+                ) : disclosure === "instructions" ? (
                   <section className="agent-skill-content">
                     <header>
                       <span>{kind === "profession" ? "Skill 正文" : "项目规则正文"}</span>
@@ -192,7 +193,7 @@ export function AgentSkillManagementSheet({
                       {contentMode !== "edit" && <MarkdownPreview markdown={language === "en" ? draft.markdownEn : draft.markdown} />}
                     </div>
                   </section>
-                )}
+                ) : <SkillReferences item={selected} language={language} selectedPath={selectedResourcePath} onSelect={setSelectedResourcePath} />}
               </>
             )}
           </main>
@@ -212,6 +213,8 @@ export function AgentSkillManagementSheet({
 function SkillOverview({ item, language }: { item: AgentSkillDefinition; language: Language }) {
   const label = language === "en" ? item.labelEn : item.label;
   const description = language === "en" ? item.descriptionEn : item.description;
+  const skillRef = language === "en" ? item.skillRefEn : item.skillRef;
+  const instructionsSha256 = language === "en" ? item.instructionsSha256En : item.instructionsSha256;
   return (
     <section className="agent-skill-overview">
       <h3>渐进披露结构</h3>
@@ -222,9 +225,50 @@ function SkillOverview({ item, language }: { item: AgentSkillDefinition; languag
       </div>
       <article>
         <small>运行时 Router 预览</small>
-        <p><code>{item.kind}:{item.key}</code> · <strong>{label}</strong>：{description}</p>
+        <p><code>{skillRef}</code> · <strong>{label}</strong>：{description}</p>
+        <small>正文 SHA-256：<code>{instructionsSha256}</code></small>
       </article>
       <p>自定义内容仅影响之后创建的 Run；已经启动的 Run 保持原有快照，权限仍由任务和原生能力边界决定。</p>
+    </section>
+  );
+}
+
+function SkillReferences({
+  item,
+  language,
+  selectedPath,
+  onSelect,
+}: {
+  item: AgentSkillDefinition;
+  language: Language;
+  selectedPath: string;
+  onSelect(path: string): void;
+}) {
+  const resources = language === "en" ? item.resourcesEn : item.resources;
+  const selected = resources.find((resource) => resource.relativePath === selectedPath) ?? resources[0];
+  if (!selected) return null;
+  return (
+    <section className="agent-skill-references">
+      <div role="listbox" aria-label="Skill 参考资料">
+        {resources.map((resource) => (
+          <button
+            aria-selected={resource.relativePath === selected.relativePath}
+            className={resource.relativePath === selected.relativePath ? "is-selected" : ""}
+            key={resource.relativePath}
+            onClick={() => onSelect(resource.relativePath)}
+            role="option"
+            type="button"
+          >
+            <strong>{resource.title}</strong>
+            <span>{resource.summary}</span>
+            <code>{resource.relativePath}</code>
+          </button>
+        ))}
+      </div>
+      <article>
+        <header><h3>{selected.title}</h3><code>{selected.sizeBytes} bytes</code></header>
+        <MarkdownPreview markdown={selected.markdown} />
+      </article>
     </section>
   );
 }

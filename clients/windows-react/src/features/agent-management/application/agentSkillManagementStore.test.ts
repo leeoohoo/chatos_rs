@@ -71,6 +71,21 @@ function skill(): AgentSkillDefinition {
     markdown: "# 项目经理",
     markdownEn: "# Project Manager",
     customized: false,
+    ...projection("profession", "project_manager"),
+  };
+}
+
+function projection(kind: "profession" | "projectType", key: string) {
+  const resources = ["workflow", "deliverables", "quality", "collaboration"].map((name) => ({
+    relativePath: `references/${name}.md`, title: name, summary: `${name} summary`, markdown: "body", sizeBytes: 4,
+  }));
+  return {
+    skillRef: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-aaaaaaaaaaaa`,
+    skillRefEn: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-bbbbbbbbbbbb`,
+    instructionsSha256: "a".repeat(64),
+    instructionsSha256En: "b".repeat(64),
+    resources,
+    resourcesEn: resources,
   };
 }
 

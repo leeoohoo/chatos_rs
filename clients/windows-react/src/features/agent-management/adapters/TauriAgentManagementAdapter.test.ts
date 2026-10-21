@@ -94,12 +94,13 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       markdown: "# 正文",
       markdownEn: "# Body",
       customized: false,
+      ...skillProjection("profession", "skill-0"),
     };
-    vi.mocked(invoke).mockResolvedValueOnce(Array.from({ length: 60 }, (_, index) => ({
-      ...item,
-      kind: index < 33 ? "profession" : "projectType",
-      key: `skill-${index}`,
-    })));
+    vi.mocked(invoke).mockResolvedValueOnce(Array.from({ length: 60 }, (_, index) => {
+      const kind = index < 33 ? "profession" as const : "projectType" as const;
+      const key = `skill-${index}`;
+      return { ...item, kind, key, ...skillProjection(kind, key) };
+    }));
     const adapter = new TauriAgentManagementAdapter();
     await adapter.loadSkillCatalog("owner-1");
     expect(invoke).toHaveBeenLastCalledWith("load_agent_skill_catalog", { ownerUserId: "owner-1" });
@@ -125,3 +126,17 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
     });
   });
 });
+
+function skillProjection(kind: "profession" | "projectType", key: string) {
+  const resources = ["workflow", "deliverables", "quality", "collaboration"].map((name) => ({
+    relativePath: `references/${name}.md`, title: name, summary: `${name} summary`, markdown: "body", sizeBytes: 4,
+  }));
+  return {
+    skillRef: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-aaaaaaaaaaaa`,
+    skillRefEn: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-bbbbbbbbbbbb`,
+    instructionsSha256: "a".repeat(64),
+    instructionsSha256En: "b".repeat(64),
+    resources,
+    resourcesEn: resources,
+  };
+}

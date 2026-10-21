@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
@@ -124,6 +125,22 @@ pub(crate) struct AgentSkillDefinition {
     markdown: String,
     markdown_en: String,
     customized: bool,
+    skill_ref: String,
+    skill_ref_en: String,
+    instructions_sha256: String,
+    instructions_sha256_en: String,
+    resources: Vec<AgentSkillResource>,
+    resources_en: Vec<AgentSkillResource>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AgentSkillResource {
+    relative_path: String,
+    title: String,
+    summary: String,
+    markdown: String,
+    size_bytes: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -384,7 +401,7 @@ fn apply_profession_override(
         }
         base.customized = true;
     }
-    base
+    base.with_progressive_projection()
 }
 
 fn apply_project_type_override(
@@ -406,7 +423,33 @@ fn apply_project_type_override(
         }
         base.customized = true;
     }
-    base
+    base.with_progressive_projection()
+}
+
+impl AgentSkillDefinition {
+    fn with_progressive_projection(mut self) -> Self {
+        self.instructions_sha256 = sha256(self.markdown.trim());
+        self.instructions_sha256_en = sha256(self.markdown_en.trim());
+        let kind = match self.kind {
+            AgentSkillKind::Profession => "profession",
+            AgentSkillKind::ProjectType => "project_type",
+        };
+        self.skill_ref = format!("AS-{kind}-{}-{}", self.key, &self.instructions_sha256[..12]);
+        self.skill_ref_en = format!(
+            "AS-{kind}-{}-{}",
+            self.key,
+            &self.instructions_sha256_en[..12]
+        );
+        self.resources =
+            progressive_resources(&self.label, &self.description, &self.category_label, false);
+        self.resources_en = progressive_resources(
+            &self.label_en,
+            &self.description_en,
+            &self.category_label_en,
+            true,
+        );
+        self
+    }
 }
 
 impl From<CatalogProfession> for AgentSkillDefinition {
@@ -424,7 +467,14 @@ impl From<CatalogProfession> for AgentSkillDefinition {
             markdown: value.skill_markdown,
             markdown_en: value.skill_markdown_en,
             customized: false,
+            skill_ref: String::new(),
+            skill_ref_en: String::new(),
+            instructions_sha256: String::new(),
+            instructions_sha256_en: String::new(),
+            resources: Vec::new(),
+            resources_en: Vec::new(),
         }
+        .with_progressive_projection()
     }
 }
 
@@ -443,8 +493,226 @@ impl From<CatalogProjectType> for AgentSkillDefinition {
             markdown: value.rule_markdown,
             markdown_en: value.rule_markdown_en,
             customized: false,
+            skill_ref: String::new(),
+            skill_ref_en: String::new(),
+            instructions_sha256: String::new(),
+            instructions_sha256_en: String::new(),
+            resources: Vec::new(),
+            resources_en: Vec::new(),
         }
+        .with_progressive_projection()
     }
+}
+
+fn progressive_resources(
+    label: &str,
+    description: &str,
+    category: &str,
+    english: bool,
+) -> Vec<AgentSkillResource> {
+    let values = if english {
+        english_resources(label, description, category)
+    } else {
+        chinese_resources(label, description, category)
+    };
+    values
+        .into_iter()
+        .map(|(relative_path, title, summary, markdown)| {
+            let markdown = markdown.trim().to_owned();
+            AgentSkillResource {
+                relative_path: relative_path.to_owned(),
+                title: title.to_owned(),
+                summary: summary.to_owned(),
+                size_bytes: markdown.len(),
+                markdown,
+            }
+        })
+        .collect()
+}
+
+fn chinese_resources(
+    label: &str,
+    description: &str,
+    category: &str,
+) -> Vec<(&'static str, &'static str, &'static str, String)> {
+    vec![
+        (
+            "references/workflow.md",
+            "工作流与决策路径",
+            "从接收目标、澄清事实、拆分工作到验证与交接的详细步骤。",
+            format!(
+                r#"# {label}：工作流与决策路径
+
+## 适用目标
+
+本 Skill 绑定为“{label}”（分类：{category}）。核心职责是：{description}。使用本页时先确认当前请求确实落在这一职责内；若涉及另一职业的独立判断，只陈述接口、依赖和所需证据，不假装拥有另一身份或权限。
+
+## 开始前
+
+1. 从 Human 消息、当前 Todo、团队目标和已读取资产中提取目标、范围、约束、截止条件与明确排除项。
+2. 将事实、假设、未知项分开。事实必须能追溯到消息、代码、数据、工具输出或已确认决策；假设必须标注验证办法。
+3. 确认执行权限和工具能力。Skill 只提供方法，不授予写入、发布、创建任务、访问私密数据或代表 Human 决策的权限。
+4. 为交付物写出可观察的验收条件，包含正常路径、关键边界、失败与恢复路径。
+
+## 执行循环
+
+- 建立最小可验证计划，每一步说明输入、动作、产物、验证与失败处理。
+- 优先读取真实现状，再做设计或修改；避免用模板覆盖已有约定。
+- 重要发现区分“已做”“已观察”“待确认”和“下一步”。
+- 发现范围扩大、不可逆影响、权限不足、证据冲突或外部依赖时暂停相关动作并升级。
+- 完成前回到原始目标逐条核验，不能用“代码已写”或“文档已生成”代替结果已经生效。
+
+## 交接
+
+交接至少包含结论、变更范围、证据位置、验证方法、残余风险、未解决问题和下一责任人。项目类型 Skill 同时存在时，还要读取它的工作流资料；两者冲突时以真实权限、Human 指令和更严格的验收门槛为准。"#
+            ),
+        ),
+        (
+            "references/deliverables-and-evidence.md",
+            "交付物与证据",
+            "定义什么可以交付、如何引用证据以及何时才允许声称完成。",
+            format!(
+                r#"# {label}：交付物与证据
+
+围绕“{description}”选择最小但完整的交付集合。每项交付物必须写清受众、用途、存放位置、版本或时间点、所有者和验收方式；没有验证上下文的摘要不算交付物。
+
+## 证据等级
+
+1. **直接证据**：测试输出、工具返回、可复现命令、查询结果、截图、运行日志、评审记录或 Human 明确确认。
+2. **可追溯证据**：代码或文档路径、版本、输入数据范围、环境与时间，足以让下一位执行者复核。
+3. **推断**：基于事实但尚未通过真实环境或负责人确认的分析。必须标为推断，不能混入完成结论。
+
+## 完成声明检查
+
+- 原始目标与验收条件逐条对应到当前证据。
+- 关键失败路径、边界条件、权限和数据影响已经验证。
+- 明确未测试范围、环境差异、样本偏差和仍需 Human 决策的事项。
+- 若部署、发布、审批、迁移或运营接管仍未完成，只能写“已准备”或“待上线”。
+- 摘要按“结论 → 已完成范围 → 关键证据 → 风险/限制 → 下一步与负责人”组织。"#
+            ),
+        ),
+        (
+            "references/quality-gates-and-risks.md",
+            "质量门禁与风险",
+            "给出适用于当前 Skill 的验证门禁、常见失败模式和风险处理。",
+            format!(
+                r#"# {label}：质量门禁与风险
+
+## 必过门禁
+
+- **正确性**：产物满足已确认目标，并有正向、边界和失败场景证据。
+- **一致性**：术语、接口、数据、状态和决策与项目现状一致，不制造第二套真相。
+- **可复核性**：另一位成员能依据记录重现关键判断与验证结果。
+- **安全与权限**：敏感信息、写入范围、外部通信和不可逆动作均在授权边界内。
+- **可运营性**：明确监控、回滚或恢复、维护责任和遗留风险。
+
+对“{description}”尤其要防止：只复述需求而未核实现状；为了显得完整而虚构事实；只验证顺利路径；遗漏上下游；将建议写成已执行；以篇幅替代验收；发现证据冲突后仍继续推进。
+
+低风险事项可在当前范围修正并记录；影响多个成员、接口、数据或时间的中风险事项需要同步负责人；可能造成数据丢失、安全合规问题、生产中断、对外承诺或不可逆成本的高风险事项必须停止并请求 Human 决策。"#
+            ),
+        ),
+        (
+            "references/collaboration-and-escalation.md",
+            "协作、边界与升级",
+            "明确与项目经理、其他职业 Agent 和 Human 的协作接口。",
+            format!(
+                r#"# {label}：协作、边界与升级
+
+当前身份负责：{description}。职业 Skill 不会扩大客户端提供的工具与数据权限，也不会赋予项目经理身份。只有明确绑定的项目经理维护团队任务结构和项目看板；普通成员通过消息与任务进度提供事实、建议、风险和交付证据。
+
+## 协作请求应包含
+
+- 背景、问题、期望输出、验收条件、截止或优先级、输入位置和已知约束。
+- 已完成的调查、证据与失败尝试，避免对方重复劳动。
+- 需要对方做出的明确决定，以及没有回复时受影响的范围。
+
+目标或验收矛盾、需要越权或不可逆操作、关键输入缺失且假设会改变方案、安全隐私合规或生产稳定性风险、跨团队依赖没有负责人、范围成本显著变化、真实结果与看板不一致时必须升级。日常同步按“结论、证据、影响、下一步”组织；需要 Human 决策时列出选项、取舍、推荐项和最晚决策点。"#
+            ),
+        ),
+    ]
+}
+
+fn english_resources(
+    label: &str,
+    description: &str,
+    category: &str,
+) -> Vec<(&'static str, &'static str, &'static str, String)> {
+    vec![
+        (
+            "references/workflow.md",
+            "Workflow and decision path",
+            "Detailed path from intake and fact finding through execution, validation, and handoff.",
+            format!(
+                r#"# {label}: workflow and decision path
+
+This Skill is bound as **{label}** in **{category}**. Its purpose is: {description}. Confirm that the request belongs to this responsibility. For another profession's independent judgment, describe the interface, dependency, and evidence without claiming that identity or authority.
+
+## Before work
+
+1. Extract objective, scope, constraints, deadline, and exclusions from Human messages, the current Todo, team goals, and assets already read.
+2. Separate facts, assumptions, and unknowns. Facts must trace to current evidence and every assumption needs a validation path.
+3. Confirm authority and available tools. A Skill supplies method, never permission to write, publish, create tasks, access private data, or decide for a Human.
+4. Define observable acceptance for normal, boundary, failure, and recovery paths.
+
+Use the smallest verifiable plan. Read the real state before editing, report material discoveries accurately, and stop on scope growth, irreversible impact, missing authority, conflicting evidence, or unmanaged dependencies. Before completion, map every objective to current evidence.
+
+Handoff includes conclusion, changed scope, evidence locations, validation steps, residual risk, open questions, and next owner. Real authority, Human direction, and the stricter acceptance gate always win."#
+            ),
+        ),
+        (
+            "references/deliverables-and-evidence.md",
+            "Deliverables and evidence",
+            "Defines acceptable outputs, evidence traceability, and completion claims.",
+            format!(
+                r#"# {label}: deliverables and evidence
+
+Build the smallest complete deliverable set for “{description}.” For every output state its audience, purpose, location, version or time boundary, owner, and acceptance method. An unverified summary is not a deliverable.
+
+## Evidence ladder
+
+1. **Direct evidence:** tests, tool results, reproducible commands, queries, screenshots, logs, reviews, or explicit Human confirmation.
+2. **Traceable evidence:** paths, versions, input ranges, environment, and time sufficient for another person to verify.
+3. **Inference:** reasoned interpretation not yet validated in the real environment; label it and keep it out of completion claims.
+
+Map every acceptance criterion to evidence; cover boundaries, failure paths, permissions, and data impact; disclose untested scope and environment differences. If deployment, approval, migration, publication, or operational takeover is pending, say “prepared” or “awaiting approval,” not “complete.”"#
+            ),
+        ),
+        (
+            "references/quality-gates-and-risks.md",
+            "Quality gates and risks",
+            "Verification gates, common failure modes, and risk handling for this Skill.",
+            format!(
+                r#"# {label}: quality gates and risks
+
+Required gates are correctness against confirmed objectives; consistency with project terminology, interfaces, data, states, and decisions; reproducibility by another contributor; authorization for sensitive data, external communication, and irreversible actions; and operability through monitoring, recovery, ownership, and residual risk.
+
+For “{description},” prevent restating the request without inspecting reality, inventing facts, testing only the happy path, missing downstream consumers, describing a recommendation as executed, substituting length for acceptance, or continuing after evidence conflicts.
+
+Treat reversible local issues as low risk. Multi-owner, interface, data, or schedule impact is medium risk and needs coordination. Potential data loss, security or compliance exposure, production interruption, external commitments, or irreversible cost is high risk: stop and request Human direction."#
+            ),
+        ),
+        (
+            "references/collaboration-and-escalation.md",
+            "Collaboration and escalation",
+            "Interfaces with the Project Manager, other professions, and the Human.",
+            format!(
+                r#"# {label}: collaboration and escalation
+
+This identity owns: {description}. The Skill does not expand tool or data authority and does not confer Project Manager status. Only the explicitly bound Project Manager maintains team task structure and the project dashboard.
+
+A useful collaboration request includes context and problem, expected output and acceptance, priority or deadline, input locations, constraints, prior investigation, failed attempts, the exact decision needed, and the consequence of delay.
+
+Escalate contradictory goals, unauthorized or irreversible actions, assumption-sensitive missing inputs, security/privacy/compliance/production risk, ownerless cross-team dependencies, material scope or cost change, and disagreement between evidence and dashboard state. Keep updates concise: conclusion, evidence, impact, and next step. For a Human decision, present options, trade-offs, a recommendation, and the latest decision point."#
+            ),
+        ),
+    ]
+}
+
+fn sha256(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn validate_field(raw: &str, field: &str, maximum_length: usize) -> Result<String, String> {
@@ -567,7 +835,13 @@ mod tests {
         assert_eq!(store.catalog("bob").unwrap()[0].label, "项目经理");
 
         let reopened = AgentSkillStore::new(file).unwrap();
-        assert_eq!(reopened.catalog("alice").unwrap()[0].label, "自定义职业");
+        let reopened_item = &reopened.catalog("alice").unwrap()[0];
+        assert_eq!(reopened_item.label, "自定义职业");
+        assert_eq!(reopened_item.resources.len(), 4);
+        assert_eq!(reopened_item.resources_en.len(), 4);
+        assert!(reopened_item
+            .skill_ref
+            .ends_with(&reopened_item.instructions_sha256[..12]));
         assert_eq!(reopened.catalog("bob").unwrap()[0].label, "项目经理");
 
         let persisted = fs::read_to_string(reopened.file.as_path()).unwrap();

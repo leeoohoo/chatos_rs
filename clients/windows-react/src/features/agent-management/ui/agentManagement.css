@@ -124,6 +124,7 @@
 .agent-skill-overview > article { display: grid; gap: 7px; border-radius: 11px; padding: 13px; background: rgba(120,120,128,.07); }
 .agent-skill-overview > article small { color: var(--secondary); font-size: 9px; font-weight: 620; }
 .agent-skill-overview > article p { color: var(--primary); font-size: 10.5px; }
+.agent-skill-overview > article > small:last-child { overflow-wrap: anywhere; color: var(--tertiary); font: 8.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .agent-skill-content { display: grid; min-height: 460px; gap: 8px; }
 .agent-skill-content > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--secondary); font-size: 9.5px; font-weight: 620; }
 .agent-skill-content__preview, .agent-skill-content__edit, .agent-skill-content__split { display: grid; min-height: 440px; overflow: hidden; border: 1px solid rgba(60,60,67,.13); border-radius: 10px; background: rgba(255,255,255,.78); }
@@ -136,6 +137,18 @@
 .agent-skill-markdown p, .agent-skill-markdown li { color: var(--primary); font-size: 10px; line-height: 1.65; }
 .agent-skill-markdown p { margin: 7px 0; }
 .agent-skill-markdown ul { margin: 7px 0; padding-left: 20px; }
+.agent-skill-references { display: grid; min-height: 500px; grid-template-columns: minmax(250px,310px) minmax(0,1fr); overflow: hidden; border: 1px solid rgba(60,60,67,.13); border-radius: 10px; background: rgba(255,255,255,.72); }
+.agent-skill-references > div { min-height: 0; overflow: auto; border-right: 1px solid var(--separator); padding: 7px; background: rgba(120,120,128,.04); }
+.agent-skill-references > div button { display: grid; width: 100%; gap: 4px; border-radius: 8px; padding: 9px; color: var(--primary); background: transparent; text-align: left; }
+.agent-skill-references > div button:hover { background: rgba(120,120,128,.08); }
+.agent-skill-references > div button.is-selected { background: rgba(10,132,255,.11); }
+.agent-skill-references > div strong { font-size: 10px; }
+.agent-skill-references > div span { color: var(--secondary); font-size: 9px; line-height: 1.45; }
+.agent-skill-references > div code { color: var(--tertiary); font-size: 8px; }
+.agent-skill-references > article { min-width: 0; min-height: 0; overflow: auto; }
+.agent-skill-references > article > header { position: sticky; z-index: 1; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--separator); padding: 10px 14px; background: rgba(255,255,255,.9); backdrop-filter: blur(14px); }
+.agent-skill-references > article h3 { margin: 0; font-size: 11px; }
+.agent-skill-references > article header code { color: var(--tertiary); font-size: 8.5px; }
 .agent-skill-sheet > footer { display: flex; min-height: 53px; flex: none; align-items: center; gap: 8px; border-top: 1px solid var(--separator); padding: 10px 15px; background: rgba(255,255,255,.5); }
 .agent-skill-sheet > footer > span { flex: 1; }
 .agent-skill-sheet > footer button { min-height: 29px; border-radius: 8px; padding: 5px 12px; background: rgba(120,120,128,.1); }
@@ -143,4 +156,4 @@
 .agent-skill-sheet > footer .destructive-button { color: #ff3b30; background: transparent; }
 @media (max-width: 900px) { .agent-management__toolbar { align-items: flex-start; flex-direction: column; } .agent-management__actions { width: 100%; flex-wrap: wrap; } }
 @media (max-width: 900px) { .agent-skill-sheet__header { align-items: flex-start; flex-wrap: wrap; } .agent-skill-sheet__header > div:first-child { width: calc(100% - 44px); } .agent-skill-sheet__workspace { grid-template-columns: 250px minmax(0,1fr); } }
-@media (max-width: 640px) { .agent-editor-backdrop { align-items: end; padding: 0; } .agent-editor { max-height: 92vh; border-radius: 18px 18px 0 0; } .agent-skill-sheet { height: 96vh; border-radius: 18px 18px 0 0; } .agent-skill-sheet__workspace { grid-template-columns: 1fr; } .agent-skill-catalog { max-height: 230px; border-right: 0; border-bottom: 1px solid var(--separator); } .agent-skill-overview > div { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .agent-editor-backdrop { align-items: end; padding: 0; } .agent-editor { max-height: 92vh; border-radius: 18px 18px 0 0; } .agent-skill-sheet { height: 96vh; border-radius: 18px 18px 0 0; } .agent-skill-sheet__workspace { grid-template-columns: 1fr; } .agent-skill-catalog { max-height: 230px; border-right: 0; border-bottom: 1px solid var(--separator); } .agent-skill-overview > div { grid-template-columns: 1fr; } .agent-skill-references { grid-template-columns: 1fr; } .agent-skill-references > div { max-height: 190px; border-right: 0; border-bottom: 1px solid var(--separator); } }

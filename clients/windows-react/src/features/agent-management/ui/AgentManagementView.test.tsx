@@ -175,6 +175,7 @@ describe("AgentManagementView", () => {
       markdown: "# 项目经理",
       markdownEn: "# Project Manager",
       customized: false,
+      ...skillProjection("profession", "project_manager"),
     };
     const port = stubPort({
       loadSkillCatalog: vi.fn(async () => [item]),
@@ -186,6 +187,9 @@ describe("AgentManagementView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Skill 管理" }));
     expect(await screen.findByRole("dialog", { name: "Skill 管理" })).toBeVisible();
     expect(screen.getByLabelText("名称")).toHaveValue("项目经理");
+    fireEvent.click(screen.getByRole("button", { name: "参考资料" }));
+    expect(screen.getByRole("listbox", { name: "Skill 参考资料" })).toBeVisible();
+    expect(screen.getByText("4 bytes")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "English" }));
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "Delivery Lead" } });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
@@ -201,6 +205,20 @@ describe("AgentManagementView", () => {
 
 function renderView(port = stubPort()) {
   return render(<AgentManagementView ownerUserId="owner-1" port={port} />);
+}
+
+function skillProjection(kind: "profession" | "projectType", key: string) {
+  const resources = ["workflow", "deliverables", "quality", "collaboration"].map((name) => ({
+    relativePath: `references/${name}.md`, title: name, summary: `${name} summary`, markdown: "body", sizeBytes: 4,
+  }));
+  return {
+    skillRef: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-aaaaaaaaaaaa`,
+    skillRefEn: `AS-${kind === "projectType" ? "project_type" : "profession"}-${key}-bbbbbbbbbbbb`,
+    instructionsSha256: "a".repeat(64),
+    instructionsSha256En: "b".repeat(64),
+    resources,
+    resourcesEn: resources,
+  };
 }
 
 function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagementPort {
