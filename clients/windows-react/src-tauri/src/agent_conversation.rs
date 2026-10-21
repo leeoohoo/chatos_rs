@@ -2495,6 +2495,19 @@ impl AgentConversationStore {
                 ],
             )
             .map_err(|_| team_store_error())?;
+        if pending.trigger_kind == "todo" {
+            let todo_id = pending.todo_id.as_deref().ok_or_else(team_store_error)?;
+            team_todo::insert_todo_progress(
+                &transaction,
+                owner_user_id,
+                todo_id,
+                run_id,
+                "started",
+                "started",
+                "Todo 执行线程已启动，并完成团队、项目和能力计划绑定。",
+                now_unix_ms,
+            )?;
+        }
         transaction.commit().map_err(|_| team_store_error())
     }
 
@@ -6026,7 +6039,9 @@ mod tests {
             .todo_planning_progress("alice", "run-manager", &todo_reference, 100)
             .unwrap();
         assert_eq!(progress["title"], "实现任务执行");
-        assert_eq!(progress["progress"], serde_json::json!([]));
+        assert_eq!(progress["progress"].as_array().unwrap().len(), 1);
+        assert_eq!(progress["progress"][0]["kind"], "started");
+        assert_eq!(progress["progress"][0]["run_id"], "run-executor");
         assert!(store
             .todo_planning_progress("alice", "run-manager", "todo_ref_stale", 100)
             .is_err());
@@ -6092,8 +6107,9 @@ mod tests {
         let visible_progress = store
             .list_project_team_todo_progress("alice", &team.id, &second.id, 100)
             .unwrap();
-        assert_eq!(visible_progress.len(), 1);
-        assert_eq!(visible_progress[0]["detail"], "已完成事务写入，准备核对。");
+        assert_eq!(visible_progress.len(), 2);
+        assert_eq!(visible_progress[0]["kind"], "started");
+        assert_eq!(visible_progress[1]["detail"], "已完成事务写入，准备核对。");
         assert!(store
             .list_project_team_todo_progress("bob", &team.id, &second.id, 100)
             .is_err());

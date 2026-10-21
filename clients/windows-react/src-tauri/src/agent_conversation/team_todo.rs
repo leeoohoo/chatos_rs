@@ -2851,7 +2851,7 @@ fn require_running_todo_tool_binding(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_todo_progress(
+pub(super) fn insert_todo_progress(
     connection: &Connection,
     owner_user_id: &str,
     todo_id: &str,
