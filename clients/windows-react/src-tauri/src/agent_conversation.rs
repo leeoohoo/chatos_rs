@@ -344,6 +344,8 @@ struct PendingTeamDelivery {
     delivery_id: String,
     message_id: String,
     content: String,
+    trigger_kind: String,
+    todo_id: Option<String>,
     binding: TeamExecutionBinding,
 }
 
@@ -2039,6 +2041,7 @@ impl AgentConversationStore {
             .query_row(
                 r#"
                 SELECT delivery.id, delivery.message_id, message.content,
+                       delivery.trigger_kind, todo.id,
                        room.id, profile.id, profile.name, profile.role_prompt,
                        profile.model_config_id, profile.thinking_level,
                        profile.profession_key, profile.default_plugin_ids_json,
@@ -2052,6 +2055,12 @@ impl AgentConversationStore {
                 JOIN project_agent_rooms room
                   ON room.owner_user_id = delivery.owner_user_id
                  AND room.id = delivery.room_id
+                LEFT JOIN local_agent_todos todo
+                  ON todo.owner_user_id = delivery.owner_user_id
+                 AND todo.agent_id = delivery.target_agent_id
+                 AND delivery.trigger_kind = 'todo'
+                 AND (delivery.deduplication_key = 'todo:' || todo.id
+                      OR delivery.deduplication_key LIKE 'todo:' || todo.id || ':attempt:%')
                 JOIN project_agent_room_members member
                   ON member.owner_user_id = delivery.owner_user_id
                  AND member.room_id = delivery.room_id
@@ -2063,11 +2072,15 @@ impl AgentConversationStore {
                   AND delivery.status = 'pending' AND room.status = 'active'
                   AND room.conversation_kind = 'project_team'
                   AND member.status = 'active' AND profile.status = 'active'
+                  AND (delivery.trigger_kind != 'todo' OR todo.status = 'in_progress')
                   AND NOT EXISTS (
                     SELECT 1 FROM project_agent_deliveries active
                     WHERE active.owner_user_id = delivery.owner_user_id
                       AND active.target_agent_id = delivery.target_agent_id
-                      AND active.status = 'running' AND active.trigger_kind != 'todo'
+                      AND active.status = 'running' AND active.id != delivery.id
+                      AND ((delivery.trigger_kind = 'todo' AND active.trigger_kind = 'todo')
+                           OR (delivery.trigger_kind != 'todo'
+                               AND active.trigger_kind != 'todo'))
                   )
                 ORDER BY delivery.created_at_unix_ms, delivery.id
                 LIMIT 1
@@ -2078,30 +2091,32 @@ impl AgentConversationStore {
                         delivery_id: row.get(0)?,
                         message_id: row.get(1)?,
                         content: row.get(2)?,
+                        trigger_kind: row.get(3)?,
+                        todo_id: row.get(4)?,
                         binding: TeamExecutionBinding {
                             agent: AgentExecutionBinding {
-                                room_id: row.get(3)?,
-                                agent_id: row.get(4)?,
-                                name: row.get(5)?,
-                                role_prompt: row.get(6)?,
-                                model_config_id: row.get(7)?,
-                                thinking_level: row.get(8)?,
-                                profession_key: row.get(9)?,
+                                room_id: row.get(5)?,
+                                agent_id: row.get(6)?,
+                                name: row.get(7)?,
+                                role_prompt: row.get(8)?,
+                                model_config_id: row.get(9)?,
+                                thinking_level: row.get(10)?,
+                                profession_key: row.get(11)?,
                                 default_plugin_ids: parse_identifier_array(
-                                    &row.get::<_, String>(10)?,
+                                    &row.get::<_, String>(12)?,
                                 )
                                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
                                 default_skill_ids: parse_identifier_array(
-                                    &row.get::<_, String>(11)?,
+                                    &row.get::<_, String>(13)?,
                                 )
                                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
                             },
-                            project_id: row.get(12)?,
-                            team_name: row.get(13)?,
-                            team_goal: row.get(14)?,
-                            team_role: row.get(15)?,
-                            team_responsibility: row.get(16)?,
-                            is_project_manager: row.get::<_, i64>(17)? == 1,
+                            project_id: row.get(14)?,
+                            team_name: row.get(15)?,
+                            team_goal: row.get(16)?,
+                            team_role: row.get(17)?,
+                            team_responsibility: row.get(18)?,
+                            is_project_manager: row.get::<_, i64>(19)? == 1,
                         },
                     })
                 },
@@ -2113,6 +2128,19 @@ impl AgentConversationStore {
         };
         validate_identifier(&pending.delivery_id).map_err(|_| team_store_error())?;
         validate_identifier(&pending.message_id).map_err(|_| team_store_error())?;
+        if !matches!(
+            pending.trigger_kind.as_str(),
+            "mention" | "default_agent" | "agent_mention" | "heartbeat" | "todo" | "todo_status"
+        ) {
+            return Err(team_store_error());
+        }
+        match (&pending.trigger_kind[..], pending.todo_id.as_deref()) {
+            ("todo", Some(todo_id)) => {
+                validate_identifier(todo_id).map_err(|_| team_store_error())?;
+            }
+            ("todo", None) | (_, Some(_)) => return Err(team_store_error()),
+            _ => {}
+        }
         validate_team_execution_binding(&pending.binding)?;
         validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
         Ok(Some(pending))
@@ -2201,7 +2229,10 @@ impl AgentConversationStore {
                  AND NOT EXISTS (SELECT 1 FROM project_agent_deliveries active \
                    WHERE active.owner_user_id = ?2 AND active.target_agent_id = ?5 \
                      AND active.status = 'running' AND active.id != ?3 \
-                     AND active.trigger_kind != 'todo')",
+                     AND ((project_agent_deliveries.trigger_kind = 'todo' \
+                           AND active.trigger_kind = 'todo') \
+                          OR (project_agent_deliveries.trigger_kind != 'todo' \
+                              AND active.trigger_kind != 'todo'))) ",
                 params![
                     now_unix_ms,
                     owner_user_id,
@@ -2241,8 +2272,11 @@ impl AgentConversationStore {
         let message: String = failure.chars().take(2_000).collect();
         let now = chrono::Utc::now().timestamp_millis().max(0);
         reject_link_or_non_file(&self.database)?;
-        let connection = open_database(&self.database, false)?;
-        connection
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        transaction
             .execute(
                 "UPDATE project_agent_deliveries SET status = 'failed', last_error = ?1, \
                  completed_at_unix_ms = ?2 WHERE owner_user_id = ?3 AND id = ?4 \
@@ -2250,14 +2284,37 @@ impl AgentConversationStore {
                 params![message, now, owner_user_id, delivery_id],
             )
             .map_err(|_| team_store_error())?;
-        connection
+        transaction
             .execute(
                 "UPDATE windows_agent_delivery_runs SET status = 'failed', updated_at_unix_ms = ?1 \
                  WHERE owner_user_id = ?2 AND delivery_id = ?3 AND status IN ('ready', 'running')",
                 params![now, owner_user_id, delivery_id],
             )
             .map_err(|_| team_store_error())?;
-        Ok(())
+        transaction
+            .execute(
+                r#"
+                UPDATE local_agent_todos
+                SET status = 'blocked', blocked_reason = ?1,
+                    updated_at_unix_ms = CASE
+                      WHEN updated_at_unix_ms >= ?2 THEN updated_at_unix_ms + 1
+                      ELSE ?2
+                    END
+                WHERE owner_user_id = ?3 AND status = 'in_progress'
+                  AND EXISTS (
+                    SELECT 1 FROM project_agent_deliveries delivery
+                    WHERE delivery.owner_user_id = local_agent_todos.owner_user_id
+                      AND delivery.id = ?4 AND delivery.trigger_kind = 'todo'
+                      AND delivery.target_agent_id = local_agent_todos.agent_id
+                      AND (delivery.deduplication_key = 'todo:' || local_agent_todos.id
+                           OR delivery.deduplication_key LIKE
+                              'todo:' || local_agent_todos.id || ':attempt:%')
+                  )
+                "#,
+                params![message, now, owner_user_id, delivery_id],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())
     }
 
     fn record_direct_delivery(
@@ -3282,6 +3339,15 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     let generation = authentication
         .session_generation_for_owner(&owner_user_id)
         .await?;
+    let enqueue_store = conversations.inner().clone();
+    let enqueue_owner = owner_user_id.clone();
+    let enqueue_team = team_id.clone();
+    let enqueue_now = chrono::Utc::now().timestamp_millis().max(0);
+    tauri::async_runtime::spawn_blocking(move || {
+        enqueue_store.enqueue_ready_project_team_todos(&enqueue_owner, &enqueue_team, enqueue_now)
+    })
+    .await
+    .map_err(|_| "团队 Todo 调度任务异常退出。".to_owned())??;
     let store = conversations.inner().clone();
     let pending_owner = owner_user_id.clone();
     let pending_team = team_id.clone();
@@ -3304,10 +3370,14 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
     })
     .await
     .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;
-    let conversation_id = format!(
-        "agent-team-{}-{}",
-        pending.binding.agent.room_id, pending.binding.agent.agent_id
-    );
+    let conversation_id = if pending.trigger_kind == "todo" {
+        format!("agent-team-executor-{}", pending.delivery_id)
+    } else {
+        format!(
+            "agent-team-{}-{}",
+            pending.binding.agent.room_id, pending.binding.agent.agent_id
+        )
+    };
     ensure_agent_host_conversation(
         &manager,
         &owner_user_id,
@@ -3348,7 +3418,11 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         message_id: host_message_id.clone(),
         run_id: run_id.clone(),
         message: pending.content.clone(),
-        message_metadata: team_agent_execution_metadata(&pending.binding, &profession),
+        message_metadata: team_agent_execution_metadata(
+            &pending.binding,
+            &profession,
+            &pending.trigger_kind,
+        ),
         attachments: vec![],
         model_config_ref: settings.selected_model_config_ref,
         model_config_revision: settings.selected_model_config_revision,
@@ -3831,7 +3905,13 @@ fn agent_execution_metadata(
 fn team_agent_execution_metadata(
     binding: &TeamExecutionBinding,
     profession: &AgentProfessionRuntimeSnapshot,
+    trigger_kind: &str,
 ) -> serde_json::Value {
+    let lane = if trigger_kind == "todo" {
+        "executor"
+    } else {
+        "manager"
+    };
     json!({
         "source": "native_agent_team",
         "agent_execution_context": {
@@ -3853,6 +3933,8 @@ fn team_agent_execution_metadata(
             "team_role": binding.team_role,
             "team_responsibility": binding.team_responsibility,
             "is_project_manager": binding.is_project_manager,
+            "delivery_lane": lane,
+            "trigger_kind": trigger_kind,
         }
     })
 }
@@ -4934,6 +5016,106 @@ mod tests {
             Some("host unavailable")
         );
         assert!(store.load_project_team_runs("bob", &created.id).is_err());
+    }
+
+    #[test]
+    fn ready_todo_uses_an_independent_executor_lane_and_blocks_on_host_failure() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "agent-1")
+            .unwrap();
+        let manager_message = store
+            .queue_project_team_message("alice", &team.id, "经理通道消息", &[])
+            .unwrap();
+        let manager = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            manager.delivery_id,
+            manager_message.deliveries[0].delivery_id
+        );
+        store
+            .claim_project_team_delivery("alice", &manager, "turn-manager", "run-manager", 100)
+            .unwrap();
+
+        let first = store
+            .create_project_team_todo(
+                "alice",
+                &team.id,
+                "agent-1",
+                "实现任务执行",
+                "连接 executor lane",
+                90,
+                &[],
+                None,
+                101,
+            )
+            .unwrap();
+        store
+            .create_project_team_todo(
+                "alice",
+                &team.id,
+                "agent-1",
+                "后续任务",
+                "等待第一个任务结束",
+                80,
+                &[],
+                None,
+                102,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .enqueue_ready_project_team_todos("alice", &team.id, 103)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .enqueue_ready_project_team_todos("alice", &team.id, 104)
+                .unwrap(),
+            0
+        );
+        let executor = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(executor.trigger_kind, "todo");
+        assert_eq!(executor.todo_id.as_deref(), Some(first.id.as_str()));
+        assert!(executor.content.contains("独立 Todo"));
+        assert!(executor.content.contains("实现任务执行"));
+        store
+            .claim_project_team_delivery("alice", &executor, "turn-executor", "run-executor", 105)
+            .unwrap();
+
+        let connection = Connection::open(store.database()).unwrap();
+        let running_lanes: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_deliveries WHERE owner_user_id = 'alice' \
+                 AND target_agent_id = 'agent-1' AND status = 'running'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(running_lanes, 2);
+        drop(connection);
+
+        store
+            .fail_project_team_delivery("alice", &executor.delivery_id, "host unavailable")
+            .unwrap();
+        let failed_todo = store
+            .list_project_team_todos("alice", &team.id, true)
+            .unwrap()
+            .into_iter()
+            .find(|todo| todo.id == first.id)
+            .unwrap();
+        assert_eq!(failed_todo.status, "blocked");
+        assert_eq!(failed_todo.blocked_reason, "host unavailable");
     }
 
     #[test]

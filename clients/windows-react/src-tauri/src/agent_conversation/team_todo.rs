@@ -51,7 +51,7 @@ pub(crate) struct AgentTeamTodo {
     pub(super) priority: i64,
     sort_order: i64,
     pub(super) status: String,
-    blocked_reason: String,
+    pub(super) blocked_reason: String,
     result: String,
     pub(super) execution_contract: AgentTodoExecutionContract,
     pub(super) execution_plan: AgentTodoExecutionPlan,
@@ -124,6 +124,14 @@ struct StoredTeamTodo {
     execution_plan_json: String,
     created_at_unix_ms: i64,
     updated_at_unix_ms: i64,
+}
+
+struct ReadyTeamTodo {
+    id: String,
+    agent_id: String,
+    title: String,
+    detail: String,
+    execution_contract_json: String,
 }
 
 impl AgentConversationStore {
@@ -574,6 +582,180 @@ impl AgentConversationStore {
             .find(|todo| todo.id == todo_id)
             .ok_or_else(|| "团队任务不存在。".into())
     }
+
+    pub(super) fn enqueue_ready_project_team_todos(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<usize, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_todo_input())?;
+        if now_unix_ms < 0 {
+            return Err(invalid_team_todo_input());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_todo_store_error())?;
+        require_active_project_team(&transaction, owner_user_id, team_id)?;
+        let candidates = {
+            let mut statement = transaction
+                .prepare(
+                    r#"
+                    SELECT todo.id, todo.agent_id, todo.title, todo.detail,
+                           todo.execution_contract_json
+                    FROM local_agent_todos todo
+                    JOIN project_agent_room_members member
+                      ON member.owner_user_id = todo.owner_user_id
+                     AND member.room_id = todo.team_room_id
+                     AND member.agent_id = todo.agent_id
+                    JOIN local_agent_profiles profile
+                      ON profile.owner_user_id = member.owner_user_id
+                     AND profile.id = member.agent_id
+                    WHERE todo.owner_user_id = ?1 AND todo.team_room_id = ?2
+                      AND todo.status = 'pending' AND member.status = 'active'
+                      AND profile.status = 'active'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM local_agent_todos running
+                        WHERE running.owner_user_id = todo.owner_user_id
+                          AND running.agent_id = todo.agent_id
+                          AND running.status = 'in_progress'
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM local_agent_todo_dependencies dependency
+                        JOIN local_agent_todos prerequisite
+                          ON prerequisite.owner_user_id = dependency.owner_user_id
+                         AND prerequisite.id = dependency.prerequisite_todo_id
+                        WHERE dependency.owner_user_id = todo.owner_user_id
+                          AND dependency.todo_id = todo.id
+                          AND prerequisite.status != 'completed'
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM project_agent_deliveries delivery
+                        WHERE delivery.owner_user_id = todo.owner_user_id
+                          AND delivery.trigger_kind = 'todo'
+                          AND (delivery.deduplication_key = 'todo:' || todo.id
+                               OR delivery.deduplication_key LIKE
+                                  'todo:' || todo.id || ':attempt:%')
+                          AND delivery.status IN ('pending', 'running')
+                      )
+                    ORDER BY todo.priority DESC, todo.sort_order,
+                             todo.created_at_unix_ms, todo.id
+                    LIMIT 128
+                    "#,
+                )
+                .map_err(|_| team_todo_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, team_id], |row| {
+                    Ok(ReadyTeamTodo {
+                        id: row.get(0)?,
+                        agent_id: row.get(1)?,
+                        title: row.get(2)?,
+                        detail: row.get(3)?,
+                        execution_contract_json: row.get(4)?,
+                    })
+                })
+                .map_err(|_| team_todo_store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_todo_store_error())?
+        };
+        let mut scheduled_agents = HashSet::new();
+        let mut scheduled = 0;
+        for todo in candidates {
+            if !scheduled_agents.insert(todo.agent_id.clone()) {
+                continue;
+            }
+            let contract: AgentTodoExecutionContract =
+                serde_json::from_str(&todo.execution_contract_json)
+                    .map_err(|_| team_todo_store_error())?;
+            validate_execution_contract(&contract)?;
+            let content = executor_todo_message(&todo.title, &todo.detail, &contract);
+            validate_text(&content, 1_000_000, false).map_err(|_| team_todo_store_error())?;
+            let message_id = identifier("message");
+            let delivery_id = identifier("delivery");
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO project_agent_messages (
+                        owner_user_id, id, room_id, sender_kind, sender_id, content,
+                        reply_to_message_id, source_run_id, causation_id, root_message_id,
+                        hop_count, created_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, 'system', 'system', ?4, NULL, NULL,
+                              'todo', ?2, 0, ?5)
+                    "#,
+                    params![owner_user_id, message_id, team_id, content, now_unix_ms],
+                )
+                .map_err(|_| team_todo_store_error())?;
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO project_agent_deliveries (
+                        owner_user_id, id, room_id, message_id, root_message_id,
+                        target_agent_id, trigger_kind, status, attempt, hop_count,
+                        deduplication_key, response_message_id, last_error,
+                        claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?4, ?5, 'todo', 'pending', 0, 0,
+                              ?6, NULL, NULL, NULL, NULL, ?7)
+                    "#,
+                    params![
+                        owner_user_id,
+                        delivery_id,
+                        team_id,
+                        message_id,
+                        todo.agent_id,
+                        format!("todo:{}", todo.id),
+                        now_unix_ms,
+                    ],
+                )
+                .map_err(|_| team_todo_store_error())?;
+            let changed = transaction
+                .execute(
+                    "UPDATE local_agent_todos SET status = 'in_progress', \
+                     updated_at_unix_ms = CASE WHEN updated_at_unix_ms >= ?1 \
+                       THEN updated_at_unix_ms + 1 ELSE ?1 END \
+                     WHERE owner_user_id = ?2 AND team_room_id = ?3 AND id = ?4 \
+                       AND agent_id = ?5 AND status = 'pending'",
+                    params![now_unix_ms, owner_user_id, team_id, todo.id, todo.agent_id,],
+                )
+                .map_err(|_| team_todo_store_error())?;
+            if changed != 1 {
+                return Err(team_todo_conflict());
+            }
+            scheduled += 1;
+        }
+        transaction.commit().map_err(|_| team_todo_store_error())?;
+        Ok(scheduled)
+    }
+}
+
+fn executor_todo_message(
+    title: &str,
+    detail: &str,
+    contract: &AgentTodoExecutionContract,
+) -> String {
+    fn list(values: &[String]) -> String {
+        values
+            .iter()
+            .map(|value| format!("- {value}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    format!(
+        "你正在执行项目经理分配的独立 Todo。只处理以下工作契约，不要把团队聊天当作任务范围。\n\n\
+         # {title}\n\n{detail}\n\n## 目标\n{}\n\n## 范围\n{}\n\n\
+         ## 预期产出\n{}\n\n## 验收标准\n{}\n\n## 约束\n{}",
+        contract.objective,
+        contract.scope,
+        list(&contract.expected_outputs),
+        list(&contract.acceptance_criteria),
+        if contract.constraints.is_empty() {
+            "- 无额外约束".into()
+        } else {
+            list(&contract.constraints)
+        },
+    )
 }
 
 fn load_dependencies(
