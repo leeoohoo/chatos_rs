@@ -107,6 +107,21 @@ pub(super) fn task_scoped_tools(tools: Vec<Value>, input: &Value) -> Result<Vec<
             if name == "local_attachment_read" {
                 return has_attachments.then_some(tool);
             }
+            if matches!(name.as_str(), "team_asset_list" | "team_asset_get") {
+                let is_team_executor = input
+                    .get("agent_execution_context")
+                    .and_then(|context| context.get("schema_version"))
+                    .and_then(Value::as_u64)
+                    == Some(2)
+                    && input.get("team_executor_context").is_some();
+                return is_team_executor.then_some(tool);
+            }
+            if matches!(
+                name.as_str(),
+                "team_asset_create" | "team_asset_update" | "team_asset_archive"
+            ) {
+                return None;
+            }
             if name.starts_with("notepad_") {
                 let notepad_enabled = enabled.contains("Notepad");
                 let is_write =

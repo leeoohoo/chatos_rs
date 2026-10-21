@@ -106,8 +106,14 @@ fn agent_direct_instructions(input: &Value) -> Result<Option<String>, String> {
 
 fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> {
     let Some(context) = input.get("agent_execution_context") else {
+        tools.retain(|tool| tool_name(tool).is_none_or(|name| !name.starts_with("team_asset_")));
         return tools;
     };
+    let is_team_agent = context.get("schema_version").and_then(Value::as_u64) == Some(2);
+    let is_project_manager = context
+        .get("is_project_manager")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let permissions = context
         .get("default_skill_ids")
         .and_then(Value::as_array)
@@ -120,6 +126,20 @@ fn scope_agent_direct_tools(mut tools: Vec<Value>, input: &Value) -> Vec<Value> 
     if !can_access_projects {
         tools.retain(|tool| tool_name(tool).is_none_or(|name| !AGENT_TASK_TOOLS.contains(&name)));
     }
+    tools.retain(|tool| {
+        tool_name(tool).is_none_or(|name| {
+            if matches!(name, "team_asset_list" | "team_asset_get") {
+                is_team_agent
+            } else if matches!(
+                name,
+                "team_asset_create" | "team_asset_update" | "team_asset_archive"
+            ) {
+                is_team_agent && is_project_manager
+            } else {
+                true
+            }
+        })
+    });
     tools
 }
 

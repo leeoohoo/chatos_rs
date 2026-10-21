@@ -614,6 +614,23 @@ pub(crate) struct AgentTeamAssetRevision {
     created_at_unix_ms: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentAssetToolBinding {
+    pub(crate) team_id: String,
+    pub(crate) agent_id: String,
+    pub(crate) todo_id: Option<String>,
+    pub(crate) is_project_manager: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentAssetToolRecord {
+    pub(crate) asset_id: String,
+    pub(crate) category: String,
+    pub(crate) title: String,
+    pub(crate) markdown: String,
+    pub(crate) revision: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveAgentTeamAssetInput {
@@ -1754,6 +1771,67 @@ impl AgentConversationStore {
             validate_team_asset(asset)?;
         }
         Ok(assets)
+    }
+
+    pub(crate) fn load_agent_asset_tool_records(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<(AgentAssetToolBinding, Vec<AgentAssetToolRecord>), String> {
+        validate_identifier(run_id).map_err(|_| team_store_error())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        let records = if let Some(todo_id) = binding.todo_id.as_deref() {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT asset_id, category, title, markdown, revision
+                    FROM local_agent_todo_asset_snapshots
+                    WHERE owner_user_id = ?1 AND todo_id = ?2 AND team_room_id = ?3
+                    ORDER BY category, title, asset_id
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, todo_id, binding.team_id], |row| {
+                    Ok(AgentAssetToolRecord {
+                        asset_id: row.get(0)?,
+                        category: row.get(1)?,
+                        title: row.get(2)?,
+                        markdown: row.get(3)?,
+                        revision: row.get(4)?,
+                    })
+                })
+                .map_err(|_| team_store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_store_error())?
+        } else {
+            let mut statement = connection
+                .prepare(
+                    r#"
+                    SELECT id, category, title, markdown, revision
+                    FROM local_agent_team_assets
+                    WHERE owner_user_id = ?1 AND team_room_id = ?2 AND status = 'active'
+                    ORDER BY category, title, id
+                    "#,
+                )
+                .map_err(|_| team_store_error())?;
+            let rows = statement
+                .query_map(params![owner_user_id, binding.team_id], |row| {
+                    Ok(AgentAssetToolRecord {
+                        asset_id: row.get(0)?,
+                        category: row.get(1)?,
+                        title: row.get(2)?,
+                        markdown: row.get(3)?,
+                        revision: row.get(4)?,
+                    })
+                })
+                .map_err(|_| team_store_error())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|_| team_store_error())?
+        };
+        Ok((binding, records))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4347,6 +4425,67 @@ fn map_team_asset(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTeamAsset> {
     })
 }
 
+fn load_agent_asset_tool_binding(
+    connection: &Connection,
+    owner_user_id: &str,
+    run_id: &str,
+) -> Result<AgentAssetToolBinding, String> {
+    let binding = connection
+        .query_row(
+            r#"
+            SELECT delivery.room_id, delivery.target_agent_id, todo.id,
+                   CASE WHEN room.project_manager_agent_id = delivery.target_agent_id
+                        THEN 1 ELSE 0 END,
+                   delivery.trigger_kind
+            FROM windows_agent_delivery_runs run
+            JOIN project_agent_deliveries delivery
+              ON delivery.owner_user_id = run.owner_user_id
+             AND delivery.id = run.delivery_id
+            JOIN project_agent_rooms room
+              ON room.owner_user_id = delivery.owner_user_id
+             AND room.id = delivery.room_id
+            JOIN project_agent_room_members member
+              ON member.owner_user_id = delivery.owner_user_id
+             AND member.room_id = delivery.room_id
+             AND member.agent_id = delivery.target_agent_id
+            LEFT JOIN local_agent_todos todo
+              ON todo.owner_user_id = delivery.owner_user_id
+             AND todo.team_room_id = delivery.room_id
+             AND todo.agent_id = delivery.target_agent_id
+             AND delivery.trigger_kind = 'todo'
+             AND (delivery.deduplication_key = 'todo:' || todo.id
+                  OR delivery.deduplication_key LIKE 'todo:' || todo.id || ':attempt:%')
+            WHERE run.owner_user_id = ?1 AND run.run_id = ?2
+              AND run.status IN ('ready', 'running')
+              AND delivery.status = 'running'
+              AND room.status = 'active' AND room.conversation_kind = 'project_team'
+              AND member.status = 'active'
+            LIMIT 1
+            "#,
+            params![owner_user_id, run_id],
+            |row| {
+                Ok((
+                    AgentAssetToolBinding {
+                        team_id: row.get(0)?,
+                        agent_id: row.get(1)?,
+                        todo_id: row.get(2)?,
+                        is_project_manager: row.get::<_, i64>(3)? == 1,
+                    },
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| team_store_error())?
+        .ok_or_else(|| "The Agent team asset Run binding is unavailable.".to_owned())?;
+    match (binding.1.as_str(), binding.0.todo_id.is_some()) {
+        ("todo", true) => {}
+        ("todo", false) | (_, true) => return Err(team_store_error()),
+        _ => {}
+    }
+    Ok(binding.0)
+}
+
 fn require_active_project_team(
     connection: &Connection,
     owner_user_id: &str,
@@ -5255,6 +5394,18 @@ mod tests {
         store
             .claim_project_team_delivery("alice", &manager, "turn-manager", "run-manager", 100)
             .unwrap();
+        let shared_asset = store
+            .save_project_team_asset(
+                "alice",
+                &team.id,
+                None,
+                "overview",
+                "项目说明",
+                "启动时版本",
+                None,
+                100,
+            )
+            .unwrap();
 
         let first = store
             .create_project_team_todo(
@@ -5312,6 +5463,34 @@ mod tests {
         store
             .claim_project_team_delivery("alice", &executor, "turn-executor", "run-executor", 105)
             .unwrap();
+        let (executor_binding, executor_assets) = store
+            .load_agent_asset_tool_records("alice", "run-executor")
+            .unwrap();
+        assert_eq!(executor_binding.todo_id.as_deref(), Some(first.id.as_str()));
+        assert_eq!(executor_assets.len(), 1);
+        assert_eq!(executor_assets[0].markdown, "启动时版本");
+        store
+            .save_project_team_asset(
+                "alice",
+                &team.id,
+                Some(&shared_asset.id),
+                "overview",
+                "项目说明",
+                "任务启动后的版本",
+                Some(1),
+                106,
+            )
+            .unwrap();
+        let (_, frozen_assets) = store
+            .load_agent_asset_tool_records("alice", "run-executor")
+            .unwrap();
+        assert_eq!(frozen_assets[0].revision, 1);
+        assert_eq!(frozen_assets[0].markdown, "启动时版本");
+        let (manager_binding, manager_assets) = store
+            .load_agent_asset_tool_records("alice", "run-manager")
+            .unwrap();
+        assert!(manager_binding.todo_id.is_none());
+        assert_eq!(manager_assets[0].revision, 2);
 
         let connection = Connection::open(store.database()).unwrap();
         let running_lanes: i64 = connection

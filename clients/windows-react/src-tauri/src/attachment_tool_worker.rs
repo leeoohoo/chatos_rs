@@ -9,6 +9,7 @@ use image::{
     ImageReader,
 };
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use std::{
     io::Cursor,
     sync::{
@@ -23,9 +24,14 @@ use tokio::{
     time::{sleep, Duration},
 };
 
-use crate::{conversation_attachments::AttachmentManager, host_lifecycle::HostManager};
+use crate::{
+    agent_conversation::{AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore},
+    conversation_attachments::AttachmentManager,
+    host_lifecycle::HostManager,
+};
 
 pub const ATTACHMENT_READ_TOOL_NAME: &str = "local_attachment_read";
+const TEAM_ASSET_READ_TOOL_NAMES: [&str; 2] = ["team_asset_list", "team_asset_get"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
 const MAXIMUM_CONTENT_READ_BYTES: usize = 2 * 1_024;
@@ -104,7 +110,12 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             owner_user_id: owner_user_id.to_owned(),
             worker_id: WORKER_ID.into(),
             lease_duration_ms: LEASE_DURATION_MILLISECONDS,
-            include_tool_names: Some(vec![ATTACHMENT_READ_TOOL_NAME.into()]),
+            include_tool_names: Some(
+                std::iter::once(ATTACHMENT_READ_TOOL_NAME)
+                    .chain(TEAM_ASSET_READ_TOOL_NAMES)
+                    .map(str::to_owned)
+                    .collect(),
+            ),
             exclude_tool_names: vec![],
             execution_route: None,
         }))
@@ -115,15 +126,20 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     let Some(claim) = claim else { return Ok(false) };
     let outcome = match claim.preflight_outcome.clone() {
         Some(outcome) => outcome,
-        None => execute_attachment_read(app, owner_user_id, &claim)
-            .await
-            .unwrap_or_else(|error| LocalAgentToolOutcome::Failed {
+        None => {
+            let executed = if claim.invocation.tool_name == ATTACHMENT_READ_TOOL_NAME {
+                execute_attachment_read(app, owner_user_id, &claim).await
+            } else {
+                execute_team_asset_read(app, owner_user_id, &claim).await
+            };
+            executed.unwrap_or_else(|error| LocalAgentToolOutcome::Failed {
                 error: safe_error(error),
                 detail: json!({
                     "tool_name": claim.invocation.tool_name,
-                    "phase": "windows_attachment_execution"
+                    "phase": "windows_local_read_execution"
                 }),
-            }),
+            })
+        }
     };
     let result = host
         .execute(HostCommand::CommitTool(CommitToolCommand {
@@ -139,6 +155,143 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     } else {
         Err("Local Agent Host returned an unexpected tool commit result".into())
     }
+}
+
+async fn execute_team_asset_read(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if !TEAM_ASSET_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+        return Err("The requested team asset tool is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The team asset arguments are invalid.".to_owned())?;
+    let host = app.state::<HostManager>();
+    let result = host
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The team asset Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The team asset Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let (binding, records) = tauri::async_runtime::spawn_blocking(move || {
+        store.load_agent_asset_tool_records(&owner, &run_id)
+    })
+    .await
+    .map_err(|_| "The team asset lookup task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    let output = match claim.invocation.tool_name.as_str() {
+        "team_asset_list" => {
+            let category = arguments
+                .get("category")
+                .map(|value| value.as_str().ok_or_else(invalid_asset_arguments))
+                .transpose()?
+                .filter(|value| !value.is_empty());
+            let assets = records
+                .iter()
+                .filter(|record| category.is_none_or(|value| record.category == value))
+                .map(|record| asset_summary(owner_user_id, &run.run_id, record))
+                .collect::<Vec<_>>();
+            json!({"assets": assets, "snapshot": binding.todo_id.is_some()})
+        }
+        "team_asset_get" => {
+            let asset_ref = arguments
+                .get("asset_ref")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 160)
+                .ok_or_else(invalid_asset_arguments)?;
+            let record = records
+                .iter()
+                .find(|record| asset_reference(owner_user_id, &run.run_id, record) == asset_ref)
+                .ok_or_else(|| {
+                    "The team asset reference is unavailable for this Run.".to_owned()
+                })?;
+            json!({
+                "asset_ref": asset_ref,
+                "category": record.category,
+                "title": record.title,
+                "markdown": record.markdown,
+                "revision": record.revision,
+                "snapshot": binding.todo_id.is_some(),
+            })
+        }
+        _ => return Err("The requested team asset tool is unavailable.".into()),
+    };
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+fn validate_asset_run_context(
+    profile_key: &str,
+    input: &Value,
+    binding: &AgentAssetToolBinding,
+) -> Result<(), String> {
+    let identity = input
+        .get("agent_execution_context")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "The team asset Run context is invalid.".to_owned())?;
+    if identity.get("schema_version").and_then(Value::as_u64) != Some(2)
+        || identity.get("room_id").and_then(Value::as_str) != Some(&binding.team_id)
+        || identity.get("agent_id").and_then(Value::as_str) != Some(&binding.agent_id)
+        || identity.get("is_project_manager").and_then(Value::as_bool)
+            != Some(binding.is_project_manager)
+    {
+        return Err("The team asset Run context is invalid.".into());
+    }
+    match binding.todo_id.as_deref() {
+        Some(todo_id) => {
+            let executor = input
+                .get("team_executor_context")
+                .and_then(Value::as_object)
+                .ok_or_else(|| "The team asset executor context is invalid.".to_owned())?;
+            if profile_key != "task_execution"
+                || executor.get("delivery_lane").and_then(Value::as_str) != Some("executor")
+                || executor.get("todo_id").and_then(Value::as_str) != Some(todo_id)
+                || executor.get("team_id").and_then(Value::as_str) != Some(&binding.team_id)
+                || executor.get("agent_id").and_then(Value::as_str) != Some(&binding.agent_id)
+            {
+                return Err("The team asset executor context is invalid.".into());
+            }
+        }
+        None if profile_key == "main_chat" && input.get("team_executor_context").is_none() => {}
+        None => return Err("The team asset manager context is invalid.".into()),
+    }
+    Ok(())
+}
+
+fn asset_summary(owner_user_id: &str, run_id: &str, record: &AgentAssetToolRecord) -> Value {
+    json!({
+        "asset_ref": asset_reference(owner_user_id, run_id, record),
+        "category": record.category,
+        "title": record.title,
+        "revision": record.revision,
+    })
+}
+
+fn asset_reference(owner_user_id: &str, run_id: &str, record: &AgentAssetToolRecord) -> String {
+    let digest = Sha256::digest(
+        format!(
+            "chatos-team-asset-ref-v1\n{owner_user_id}\n{run_id}\n{}\n{}",
+            record.asset_id, record.revision
+        )
+        .as_bytes(),
+    );
+    format!("asset_ref_{digest:x}")
+}
+
+fn invalid_asset_arguments() -> String {
+    "The team asset arguments are invalid.".into()
 }
 
 async fn execute_attachment_read(
@@ -410,6 +563,40 @@ pub fn attachment_read_tool_schema() -> Value {
     })
 }
 
+pub fn team_asset_read_tool_schemas() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": "team_asset_list",
+            "description": "列出当前团队共享资产。asset_ref 仅对当前 Run 有效，必须原样传给 team_asset_get。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["overview", "current_progress", "tech_stack", "architecture", "conventions", "decision", "reference"]
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "team_asset_get",
+            "description": "读取 team_asset_list 返回的当前 Run 共享资产引用。不要猜测或复用其他 Run 的 asset_ref。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "asset_ref": {"type": "string", "minLength": 1, "maxLength": 160}
+                },
+                "required": ["asset_ref"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +609,68 @@ mod tests {
             schema["parameters"]["properties"]["delivery"]["enum"],
             json!(["model", "content"])
         );
+    }
+
+    #[test]
+    fn team_asset_read_schema_exposes_only_opaque_refs() {
+        let schemas = team_asset_read_tool_schemas();
+        assert_eq!(schemas.len(), 2);
+        assert!(schemas.iter().all(|schema| {
+            schema.to_string().contains("asset_ref") && !schema.to_string().contains("asset_id")
+        }));
+    }
+
+    #[test]
+    fn team_asset_refs_are_run_scoped_and_context_is_lane_bound() {
+        let record = AgentAssetToolRecord {
+            asset_id: "real-asset-id".into(),
+            category: "overview".into(),
+            title: "概览".into(),
+            markdown: "secret body".into(),
+            revision: 3,
+        };
+        let first = asset_reference("owner-1", "run-1", &record);
+        let second = asset_reference("owner-1", "run-2", &record);
+        assert_ne!(first, second);
+        assert!(!first.contains(&record.asset_id));
+
+        let manager = AgentAssetToolBinding {
+            team_id: "team-1".into(),
+            agent_id: "agent-1".into(),
+            todo_id: None,
+            is_project_manager: true,
+        };
+        let manager_input = json!({
+            "agent_execution_context": {
+                "schema_version": 2,
+                "room_id": "team-1",
+                "agent_id": "agent-1",
+                "is_project_manager": true
+            }
+        });
+        assert!(validate_asset_run_context("main_chat", &manager_input, &manager).is_ok());
+        assert!(validate_asset_run_context("task_execution", &manager_input, &manager).is_err());
+
+        let executor = AgentAssetToolBinding {
+            todo_id: Some("todo-1".into()),
+            is_project_manager: false,
+            ..manager
+        };
+        let executor_input = json!({
+            "agent_execution_context": {
+                "schema_version": 2,
+                "room_id": "team-1",
+                "agent_id": "agent-1",
+                "is_project_manager": false
+            },
+            "team_executor_context": {
+                "delivery_lane": "executor",
+                "todo_id": "todo-1",
+                "team_id": "team-1",
+                "agent_id": "agent-1"
+            }
+        });
+        assert!(validate_asset_run_context("task_execution", &executor_input, &executor).is_ok());
     }
 
     #[test]

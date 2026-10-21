@@ -688,6 +688,21 @@ impl AgentConversationStore {
                 serde_json::from_str(&todo.execution_contract_json)
                     .map_err(|_| team_todo_store_error())?;
             validate_execution_contract(&contract)?;
+            transaction
+                .execute(
+                    r#"
+                    INSERT OR IGNORE INTO local_agent_todo_asset_snapshots (
+                        owner_user_id, todo_id, asset_id, team_room_id, category,
+                        title, markdown, revision, captured_at_unix_ms
+                    )
+                    SELECT owner_user_id, ?1, id, team_room_id, category,
+                           title, markdown, revision, ?2
+                    FROM local_agent_team_assets
+                    WHERE owner_user_id = ?3 AND team_room_id = ?4 AND status = 'active'
+                    "#,
+                    params![todo.id, now_unix_ms, owner_user_id, team_id],
+                )
+                .map_err(|_| team_todo_store_error())?;
             let content = executor_todo_message(&todo.title, &todo.detail, &contract);
             validate_text(&content, 1_000_000, false).map_err(|_| team_todo_store_error())?;
             let message_id = identifier("message");
