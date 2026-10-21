@@ -109,6 +109,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyHistory: StoryHistoryUseCase
     let storyMediaBatch: StoryMediaBatchUseCase
     let storyAssetImageGeneration: StoryAssetImageGenerationUseCase
+    let storyFrameImageGeneration: StoryFrameImageGenerationUseCase
     let storyDirectVideoQueue = StoryDirectVideoQueueUseCase()
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
@@ -126,6 +127,7 @@ final class StoryStudioViewModel: ObservableObject {
     var storyHistoryLoadState = StoryHistoryLoadState()
     var storyMediaBatchExecutionState = StoryMediaBatchExecutionState()
     var storyAssetImageGenerationState = StoryAssetImageGenerationState()
+    var storyFrameImageGenerationState = StoryFrameImageGenerationState()
     var storyDirectVideoQueueState = StoryDirectVideoQueueState()
     var agentRunCursor: StoryHistoryCursor?
     var mediaBatchCursor: StoryHistoryCursor?
@@ -145,6 +147,7 @@ final class StoryStudioViewModel: ObservableObject {
          storyHistory: (any StoryHistoryLoading)? = nil,
          storyMediaBatch: (any StoryMediaBatchExecuting)? = nil,
          storyAssetImageGeneration: (any StoryAssetImageGenerating)? = nil,
+         storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
@@ -162,6 +165,12 @@ final class StoryStudioViewModel: ObservableObject {
         )
         self.storyAssetImageGeneration = StoryAssetImageGenerationUseCase(
             generator: storyAssetImageGeneration ?? StoryAssetImageGenerationAdapter(
+                store: store,
+                media: media
+            )
+        )
+        self.storyFrameImageGeneration = StoryFrameImageGenerationUseCase(
+            generator: storyFrameImageGeneration ?? StoryFrameImageGenerationAdapter(
                 store: store,
                 media: media
             )
@@ -471,6 +480,7 @@ final class StoryStudioViewModel: ObservableObject {
         storyHistoryLoadState.reset()
         storyMediaBatchExecutionState.reset()
         storyAssetImageGenerationState.reset()
+        storyFrameImageGenerationState.reset()
         storyDirectVideoQueueState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }

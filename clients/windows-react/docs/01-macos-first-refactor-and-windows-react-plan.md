@@ -518,6 +518,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事素材图片生成边界）：Core 新增 `StoryAssetImageGenerating` Port、`StoryAssetImageGenerationUseCase`、安全 command/event/outcome 与按 project/resource 隔离的 typed lifecycle。Use Case 冻结 attempt identity、限制补充想法为 2,000 字，并过滤不属于当前项目/素材/attempt 的 intent 与最终图片；不同素材继续并发，同一素材保持 single-flight，旧 token 不能清除替换后的新任务。macOS `StoryAssetImageGenerationAdapter` 独占 Store durable intent、session-bound provider、prompt 组装、provider request/result identity、媒体字节读取/PNG 归一化及完成持久化，ViewModel 只发布通过 owner/account session/request 验收的安全项目结果。provider 提交后结果不明确时仍保留 durable attempt，必须由用户核对后解锁，不改变既有计费与恢复语义。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过，包含 Alice 的迟到素材结果不能进入 Bob 当前账号；下一片继续首帧/尾帧生成 Port，剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事首帧/尾帧生成边界）：Core 新增 `StoryFrameImageGenerating` Port、`StoryFrameImageGenerationUseCase`、冻结 project/segment/role/reference order/attempt 的安全 command，以及 event/outcome 和 typed lifecycle。Use Case 统一分段、已确认素材引用、role attempt、2,000 字补充想法与最终图片 identity 校验；继续保持 macOS 原有“全局只运行一个首尾帧任务”的语义。macOS Adapter 独占 security-scoped 本机文件解析、参考图媒体字节、session-bound provider、prompt 与 reference index、Store durable intent、PNG 归一化和完成持久化；上一段实际/已确认尾帧仍只追加到下一段首帧，当前段已确认首帧仍只追加到本段尾帧，素材引用顺序不变。ambiguous submission 继续保留对应 role 的 attempt 并要求用户核对后解锁。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过；下一片继续单段视频生成/恢复 Port，剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
