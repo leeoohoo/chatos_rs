@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   canGenerateMediaStudioImage,
   canGenerateMediaStudioVideo,
@@ -18,8 +18,12 @@ import type {
 } from "../domain/mediaStudio";
 import type { MediaStudioPort } from "../ports/MediaStudioPort";
 import type { StoryStudioPort } from "../../story-studio/ports/StoryStudioPort";
-import { StoryStudioView } from "../../story-studio/ui/StoryStudioView";
 import "./mediaStudio.css";
+
+const StoryStudioView = lazy(async () => {
+  const module = await import("../../story-studio/ui/StoryStudioView");
+  return { default: module.StoryStudioView };
+});
 
 interface MediaStudioViewProps {
   ownerUserId: string;
@@ -52,7 +56,11 @@ export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioVie
       ) : section === "video" ? (
         <VideoWorkspace onChooseHistory={() => setHistoryPicker("video")} port={port} />
       ) : section === "story" ? (
-        storyPort ? <StoryStudioView mediaPort={port} ownerUserId={ownerUserId} port={storyPort} /> : null
+        storyPort ? (
+          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入剧情创作…</div>}>
+            <StoryStudioView mediaPort={port} ownerUserId={ownerUserId} port={storyPort} />
+          </Suspense>
+        ) : null
       ) : (
         <HistoryWorkspace
           onPreview={(url, alt) => setPreview({ url, alt })}

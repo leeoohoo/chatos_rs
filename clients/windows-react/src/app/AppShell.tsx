@@ -21,7 +21,6 @@ import { useHostLifecycleStore } from "../features/host-lifecycle/application/ho
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
 import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
 import type { MediaStudioPort } from "../features/media-studio/ports/MediaStudioPort";
-import { MediaStudioView } from "../features/media-studio/ui/MediaStudioView";
 import type { StoryStudioPort } from "../features/story-studio/ports/StoryStudioPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
@@ -52,6 +51,11 @@ import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSideba
 const LocalTerminalWorkspace = lazy(async () => {
   const module = await import("../features/local-terminal/ui/LocalTerminalWorkspace");
   return { default: module.LocalTerminalWorkspace };
+});
+
+const MediaStudioView = lazy(async () => {
+  const module = await import("../features/media-studio/ui/MediaStudioView");
+  return { default: module.MediaStudioView };
 });
 
 interface AppShellProps {
@@ -320,7 +324,9 @@ export function AppShell({
             />
           </Suspense>
         ) : selection.kind === "mediaStudio" ? (
-          <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} storyPort={storyStudio} />
+          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入 AI 创作…</div>}>
+            <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} storyPort={storyStudio} />
+          </Suspense>
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
           <PluginApplicationsView
             hostReady={snapshot.ready}
