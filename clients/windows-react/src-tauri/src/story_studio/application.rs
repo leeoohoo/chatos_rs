@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::authentication::GatewayModelConfig;
 
 use super::{
-    domain::{StoryModelSelection, StoryProject, STORY_SCHEMA_VERSION},
+    domain::{update_resource_prompt, StoryModelSelection, StoryProject, STORY_SCHEMA_VERSION},
     planning::project_fingerprint,
 };
 
@@ -48,6 +48,15 @@ pub(crate) struct StoryProjectSourceInput {
     pub source: String,
     pub style: String,
     pub ratio: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryResourcePromptInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub resource_id: String,
+    pub prompt: String,
 }
 
 pub(super) fn make_story_project(
@@ -122,6 +131,23 @@ pub(super) fn apply_story_project_source(
     project.ratio = input.ratio;
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
+}
+
+pub(super) fn apply_story_resource_prompt(
+    project: &mut StoryProject,
+    input: StoryResourcePromptInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if input.project_id != project.id
+        || input.base_fingerprint.is_empty()
+        || project_fingerprint(project)? != input.base_fingerprint
+    {
+        return Err("剧情项目已被修改，请重新打开后再保存。".into());
+    }
+    let mut next = update_resource_prompt(project, &input.resource_id, input.prompt)?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
 }
 
 fn validated_model_selection(

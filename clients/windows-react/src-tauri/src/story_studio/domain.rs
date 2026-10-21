@@ -573,7 +573,9 @@ impl StoryProject {
             if id.is_empty()
                 || id.len() > 128
                 || name.trim().is_empty()
+                || name.chars().count() > 120
                 || prompt.trim().is_empty()
+                || prompt.chars().count() > 4_000
                 || !ids.insert(id.as_str())
             {
                 return Err(invalid_story());
@@ -593,6 +595,50 @@ impl StoryProject {
         }
         Ok(ids)
     }
+}
+
+pub(super) fn update_resource_prompt(
+    project: &StoryProject,
+    resource_id: &str,
+    prompt: String,
+) -> Result<StoryProject, String> {
+    let mut next = project.clone();
+    if next.has_unresolved_dependent_video(resource_id) {
+        return Err("存在尚未核对的服务商提交，暂时不能修改素材描述。".into());
+    }
+    let updated = if let Some(resource) = next
+        .characters
+        .iter_mut()
+        .find(|resource| resource.id == resource_id)
+    {
+        resource.image_prompt = prompt;
+        resource.media.confirmed_image_id = None;
+        true
+    } else if let Some(resource) = next
+        .scenes
+        .iter_mut()
+        .find(|resource| resource.id == resource_id)
+    {
+        resource.image_prompt = prompt;
+        resource.media.confirmed_image_id = None;
+        true
+    } else if let Some(resource) = next
+        .props
+        .iter_mut()
+        .find(|resource| resource.id == resource_id)
+    {
+        resource.image_prompt = prompt;
+        resource.media.confirmed_image_id = None;
+        true
+    } else {
+        false
+    };
+    if !updated {
+        return Err(invalid_target());
+    }
+    next.invalidate_dependent_frames(resource_id);
+    next.validate()?;
+    Ok(next)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

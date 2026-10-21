@@ -556,6 +556,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事原文编辑第九段）：新增 `update_story_project_source` typed command，只接收 owner、presentation、project、`baseFingerprint` 与 source/style/ratio 三个可编辑字段。实时项目安全快照由 Rust 发布 fingerprint；Store 在同一 mutation lock 内重读最新 canonical manifest、拒绝过期 fingerprint，并对齐 macOS `saveSource` 规则，只允许尚无分段的项目修改原文、风格与画面比例。React 无法回传完整 `StoryProject`，因此 schema/version、模型、资源、媒体文件名、provider result/asset/job identity、attempt/video 与创建时间均由原生层原样保留。编辑前要求当前 authentication generation 下已打开的 presentation，页面/账号 teardown 后的迟到提交失败关闭；成功结果重新投影当前 generation 的 opaque media token。Story Rust 定向测试增至 28 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片实现素材 prompt typed edit 及其未决视频/依赖帧失效规则。
 
+状态补充（2026-10-21，Windows AI 故事素材描述编辑第十段）：新增 `update_story_resource_prompt` typed command，只接受 project/fingerprint/resource/prompt intent，并在 canonical mutation lock 内定位人物、场景或道具；不存在目标、过期基线与未知输入字段均失败关闭。规则与 macOS `StoryMediaConfirmationUseCase.updatingResourcePrompt` 一致：存在依赖该素材且尚未核对的 video attempt 时禁止修改；成功修改后保留全部图片、原生 filename、provider identity 与 generation attempt，只取消该素材确认并清除依赖分段的首尾帧确认，显式用户首帧 identity 不被伪造重写。补齐素材 name 120、prompt 4,000 字符的 schema v2 校验。Story Rust 定向测试增至 30 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片实现分段文本/detail/relations typed edit 与相邻连续性失效。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

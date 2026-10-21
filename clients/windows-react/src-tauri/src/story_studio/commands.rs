@@ -6,7 +6,10 @@ use tauri::{AppHandle, Emitter, State};
 use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
 
 use super::{
-    application::{StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput},
+    application::{
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryResourcePromptInput,
+    },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
@@ -53,6 +56,14 @@ pub(crate) struct StoryProjectSourceCommandInput {
     owner_user_id: String,
     presentation_id: String,
     edit: StoryProjectSourceInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryResourcePromptCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    edit: StoryResourcePromptInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -264,6 +275,30 @@ pub(crate) async fn update_story_project_source(
     })
     .await
     .map_err(|_| "剧情原文保存任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    saved
+}
+
+#[tauri::command]
+pub(crate) async fn update_story_resource_prompt(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryResourcePromptCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let save_owner = owner.clone();
+    let presentation_id = input.presentation_id;
+    let edit = input.edit;
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        work.update_resource_prompt(&save_owner, generation, &presentation_id, edit)
+    })
+    .await
+    .map_err(|_| "剧情素材描述保存任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     saved
 }

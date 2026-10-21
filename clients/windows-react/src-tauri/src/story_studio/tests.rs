@@ -3,7 +3,7 @@ use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryModelSelectionInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -618,6 +618,109 @@ fn source_edit_rejects_existing_outline_and_retired_presentation_generation() {
             .unwrap()
             .source,
         canonical.source
+    );
+}
+
+#[test]
+fn resource_prompt_edit_matches_macos_confirmation_and_invalidation_rules() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    let mut resource_image = StoryImage::test_image("private-resource.png");
+    resource_image.provider_result_id = Some("private-provider-result".into());
+    canonical.props[0].media.images.push(resource_image.clone());
+    canonical.props[0].media.confirmed_image_id = Some(resource_image.id.clone());
+    let first = StoryImage::test_image("private-first.png");
+    let last = StoryImage::test_image("private-last.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(first.clone());
+    canonical.segments[0].first_frames.confirmed_image_id = Some(first.id.clone());
+    canonical.segments[0].user_selected_first_frame_id = Some(first.id.clone());
+    canonical.segments[0].last_frames.images.push(last.clone());
+    canonical.segments[0].last_frames.confirmed_image_id = Some(last.id.clone());
+    store.save("alice", &canonical).unwrap();
+
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    let initial = serde_json::to_value(
+        manager
+            .present_project("alice", 9, &presentation, &canonical.id)
+            .unwrap(),
+    )
+    .unwrap();
+    let base_fingerprint = initial["baseFingerprint"].as_str().unwrap().to_owned();
+    let saved = manager
+        .update_resource_prompt(
+            "alice",
+            9,
+            &presentation,
+            StoryResourcePromptInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint,
+                resource_id: "key".into(),
+                prompt: "A newly polished brass key".into(),
+            },
+        )
+        .unwrap();
+    let safe = serde_json::to_value(saved).unwrap();
+    assert_eq!(
+        safe["props"][0]["imagePrompt"],
+        "A newly polished brass key"
+    );
+    assert!(safe["props"][0]["media"]["confirmedImageId"].is_null());
+    assert!(safe["segments"][0]["firstFrames"]["confirmedImageId"].is_null());
+    assert!(safe["segments"][0]["lastFrames"]["confirmedImageId"].is_null());
+
+    let persisted = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(persisted.props[0].media.images[0], resource_image);
+    assert_eq!(persisted.segments[0].first_frames.images[0], first);
+    assert_eq!(persisted.segments[0].last_frames.images[0], last);
+    assert_eq!(
+        persisted.segments[0].user_selected_first_frame_id,
+        canonical.segments[0].user_selected_first_frame_id
+    );
+}
+
+#[test]
+fn resource_prompt_edit_rejects_unresolved_dependent_video_and_unsafe_input_shape() {
+    let mut canonical = project();
+    canonical.segments[0].attempt = Some(StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: None,
+        status: "submitting".into(),
+        created_at_unix_ms: 1,
+    });
+    let original = canonical.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    let result = super::application::apply_story_resource_prompt(
+        &mut canonical,
+        StoryResourcePromptInput {
+            project_id: original.id.clone(),
+            base_fingerprint: fingerprint,
+            resource_id: "key".into(),
+            prompt: "must not replace".into(),
+        },
+        2,
+    );
+    assert!(result.is_err());
+    assert_eq!(canonical, original);
+
+    assert!(
+        serde_json::from_value::<StoryResourcePromptInput>(serde_json::json!({
+            "projectId": original.id,
+            "baseFingerprint": "fingerprint",
+            "resourceId": "key",
+            "prompt": "prompt",
+            "media": {"confirmedImageId": null}
+        }))
+        .is_err()
     );
 }
 
