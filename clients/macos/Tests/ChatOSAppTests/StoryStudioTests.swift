@@ -247,6 +247,75 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertNil(vm.errorMessage)
     }
 
+    func testLateVideoTailExtractionCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioTailExtractionTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        var alice = makeProject()
+        alice.title = "Alice Story"
+        var segment = StorySegment(
+            id: "segment-1",
+            title: "Segment",
+            synopsis: "Segment",
+            sourceRange: .init(start: 0, end: alice.source.count)
+        )
+        segment.video = .init(
+            filename: "video.mp4",
+            jobID: "job-1",
+            modelName: "video-model"
+        )
+        alice.segments = [segment]
+        var bob = makeProject()
+        bob.title = "Bob Story"
+        try await store.save(alice, owner: "alice")
+        try await store.save(bob, owner: "bob")
+        let extractor = DeferredStoryVideoTailExtractor()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyVideoTailExtraction: extractor
+        )
+
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        vm.open(alice.id)
+        vm.reextractVideoLastFrame("segment-1")
+        for _ in 0..<100 where await !extractor.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        var extractedAlice = alice
+        let tail = StoryImage(
+            filename: "tail.png",
+            mimeType: "image/png",
+            derivedFromVideoJobID: "job-1"
+        )
+        extractedAlice.segments[0].lastFrames.images.append(tail)
+        extractedAlice.segments[0].actualVideoLastFrameID = tail.id
+        await extractor.complete(ownerUserID: "alice", project: extractedAlice)
+        for _ in 0..<100 where vm.isLoading {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertEqual(vm.projects.map(\.title), ["Bob Story"])
+        XCTAssertNil(vm.selectedProjectID)
+        XCTAssertTrue(vm.activeVideoFrameExtractions.isEmpty)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func testLateStoryHistoryCannotPublishIntoTheCurrentAccount() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "StoryStudioHistoryTests-\(UUID().uuidString)",
@@ -1113,6 +1182,28 @@ private actor DeferredStoryImageImporter: StoryImageImporting {
     }
 
     private func request(_ command: StoryImageImportCommand) async throws -> StoryProject {
+        requests.insert(command.ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[command.ownerUserID] = continuation
+        }
+    }
+
+    func hasRequest(ownerUserID: String) -> Bool {
+        requests.contains(ownerUserID)
+    }
+
+    func complete(ownerUserID: String, project: StoryProject) {
+        continuations.removeValue(forKey: ownerUserID)?.resume(returning: project)
+    }
+}
+
+private actor DeferredStoryVideoTailExtractor: StoryVideoTailExtracting {
+    private var requests: Set<String> = []
+    private var continuations: [String: CheckedContinuation<StoryProject, Error>] = [:]
+
+    func extractStoryVideoTail(
+        command: StoryVideoTailExtractionCommand
+    ) async throws -> StoryProject {
         requests.insert(command.ownerUserID)
         return try await withCheckedThrowingContinuation { continuation in
             continuations[command.ownerUserID] = continuation

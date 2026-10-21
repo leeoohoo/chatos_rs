@@ -112,6 +112,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyAssetImageGeneration: StoryAssetImageGenerationUseCase
     let storyFrameImageGeneration: StoryFrameImageGenerationUseCase
     let storyVideoGeneration: StoryVideoGenerationUseCase
+    let storyVideoTailExtraction: StoryVideoTailExtractionUseCase
     let storyDirectVideoQueue = StoryDirectVideoQueueUseCase()
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
@@ -132,6 +133,7 @@ final class StoryStudioViewModel: ObservableObject {
     var storyAssetImageGenerationState = StoryAssetImageGenerationState()
     var storyFrameImageGenerationState = StoryFrameImageGenerationState()
     var storyVideoGenerationState = StoryVideoGenerationState()
+    var storyVideoTailExtractionState = StoryVideoTailExtractionState()
     var storyDirectVideoQueueState = StoryDirectVideoQueueState()
     var agentRunCursor: StoryHistoryCursor?
     var mediaBatchCursor: StoryHistoryCursor?
@@ -154,6 +156,7 @@ final class StoryStudioViewModel: ObservableObject {
          storyAssetImageGeneration: (any StoryAssetImageGenerating)? = nil,
          storyFrameImageGeneration: (any StoryFrameImageGenerating)? = nil,
          storyVideoGeneration: (any StoryVideoGenerating)? = nil,
+         storyVideoTailExtraction: (any StoryVideoTailExtracting)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
@@ -189,6 +192,9 @@ final class StoryStudioViewModel: ObservableObject {
                 store: store,
                 media: media
             )
+        )
+        self.storyVideoTailExtraction = StoryVideoTailExtractionUseCase(
+            extractor: storyVideoTailExtraction ?? StoryVideoTailExtractionAdapter(store: store)
         )
         let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
         if let storyPlanning {
@@ -498,6 +504,7 @@ final class StoryStudioViewModel: ObservableObject {
         storyAssetImageGenerationState.reset()
         storyFrameImageGenerationState.reset()
         storyVideoGenerationState.reset()
+        storyVideoTailExtractionState.reset()
         storyDirectVideoQueueState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }

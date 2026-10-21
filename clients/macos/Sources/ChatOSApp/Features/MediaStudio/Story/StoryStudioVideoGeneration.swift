@@ -371,33 +371,45 @@ extension StoryStudioViewModel {
         return try? store.fileURL(video.filename, projectID: projectID, owner: owner)
     }
     func reextractVideoLastFrame(_ segmentID: String) {
-        guard let owner, let project,
-              let segment = project.segments.first(where: { $0.id == segmentID }),
-              let video = segment.video else { return }
-        let key = VideoGenerationKey(projectID: project.id, segmentID: segmentID)
+        guard let owner, let project else { return }
+        let command: StoryVideoTailExtractionCommand
+        do {
+            command = try storyVideoTailExtraction.prepare(
+                ownerUserID: owner,
+                project: project,
+                segmentID: segmentID
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+        let key = VideoGenerationKey(
+            projectID: command.projectID,
+            segmentID: command.segmentID
+        )
         guard !activeVideoFrameExtractions.contains(key) else { return }
         let token = session
-        let store = store
-        let filename = video.filename
-        let videoJobID = video.jobID
-        let projectID = project.id
+        guard let request = storyVideoTailExtractionState.begin(
+            command: command,
+            accountSessionID: token
+        ) else { return }
+        let storyVideoTailExtraction = storyVideoTailExtraction
         activeVideoFrameExtractions.insert(key)
         errorMessage = nil
-        videoFrameExtractionTasks[key] = Task { [weak self, store] in
+        videoFrameExtractionTasks[key] = Task { [weak self, storyVideoTailExtraction] in
             let result: Result<StoryProject, Error>
             do {
-                let url = try store.fileURL(filename, projectID: projectID, owner: owner)
-                let png = try await StoryVideoFrameExtractor.lastFramePNG(from: url)
-                try Task.checkCancellation()
-                let applied = try await store.applyActualVideoLastFrame(
-                    png, projectID: projectID, segmentID: segmentID,
-                    videoJobID: videoJobID, owner: owner, forceNew: true
-                )
-                result = .success(applied.0)
+                result = .success(try await storyVideoTailExtraction.extract(command))
             } catch {
                 result = .failure(error)
             }
-            guard let self, self.session == token, !Task.isCancelled else { return }
+            guard let self,
+                  self.storyVideoTailExtractionState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: token
+                  ),
+                  self.storyVideoTailExtractionState.finish(request) else { return }
             self.activeVideoFrameExtractions.remove(key)
             self.videoFrameExtractionTasks[key] = nil
             switch result {

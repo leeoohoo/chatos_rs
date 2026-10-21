@@ -526,6 +526,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事图片导入边界）：Core 新增 `StoryImageImporting`、`StoryImageImportUseCase`、冻结 owner/project/target/确认策略/活动视频保留集合的 command，以及 source-aware typed lifecycle。Use Case 只允许准确的 resource 或 segment/first-last target，并验证 Adapter 结果只向冻结目标追加一个图片版本。macOS `StoryImageImportAdapter` 独占 generated asset/local security-scoped file 读取、20 MiB 输入边界、图片解码与 PNG 归一化、Store 文件写入、resource/frame attachment、自动确认、首帧用户选择标记和连续性失效规则。ViewModel 不再读取图片字节或直连 Store；账号/项目切换后的迟到导入结果不能进入 UI。Core 5 项、Story Studio 65 项、Story Agent 21 项通过。下一片提取视频实际末帧重新提取与剩余 archive/display Store 边界；剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事视频实际末帧重提取边界）：Core 新增 `StoryVideoTailExtracting`、`StoryVideoTailExtractionUseCase`、冻结 owner/project/segment/video job/file identity 的 command 与按分段隔离的 typed lifecycle。Use Case 只接受当前完成视频，并验证结果仍属于同一 project/segment/job 且 actual tail 的 `derivedFromVideoJobID` 精确匹配。macOS Adapter 独占本机视频路径解析、AVFoundation 末帧解码、PNG 和 Store apply；ViewModel 不再直接访问文件或 Store。不同分段可并发，同分段 single-flight，账号切换后的迟到结果被拒绝。Core 5 项、Story Studio 66 项、Story Agent 21 项通过。下一片收口完成视频重新生成前的 archive 持久化和 UI 媒体 URL 投影，再做 macOS Story 最终准入审计；剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
