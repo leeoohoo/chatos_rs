@@ -10,4 +10,9 @@ describe("SafeMarkdownPreview", () => {
     expect(screen.getByText("<script>alert(1)</script>")).toBeInTheDocument();
     expect(document.querySelector("script")).toBeNull();
   });
+
+  it("renders only bounded supported image data URLs", () => {
+    render(<SafeMarkdownPreview markdown="![screen](<data:image/png;base64,iVBORw==>)" />);
+    expect(screen.getByRole("img", { name: "screen" })).toHaveAttribute("src", "data:image/png;base64,iVBORw==");
+  });
 });

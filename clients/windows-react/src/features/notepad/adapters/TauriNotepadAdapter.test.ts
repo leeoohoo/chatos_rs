@@ -36,6 +36,18 @@ describe("TauriNotepadAdapter", () => {
     });
     await expect(adapter.load("owner-1", null)).rejects.toThrow();
   });
+
+  it("imports images through native picker without sending browser bytes", async () => {
+    const adapter = new TauriNotepadAdapter();
+    vi.mocked(invoke).mockResolvedValueOnce({
+      noteId: "note-1", expectedVersion: 3, name: "screen.png", mimeType: "image/png",
+      size: 4, sha256: "a".repeat(64), markdown: "![screen](<data:image/png;base64,iVBORw==>)",
+    });
+    await adapter.importImage("owner-1", "note-1", 3, "picker");
+    expect(invoke).toHaveBeenLastCalledWith("import_notepad_image", {
+      input: { ownerUserId: "owner-1", noteId: "note-1", expectedVersion: 3, source: "picker" },
+    });
+  });
 });
 
 function note(overrides: Record<string, unknown> = {}) {

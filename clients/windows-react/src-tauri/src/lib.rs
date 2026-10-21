@@ -104,7 +104,8 @@ use media_studio::{
 };
 use notepad::{
     create_notepad_folder, create_notepad_note, delete_notepad_folder, delete_notepad_note,
-    get_notepad_note, load_notepad, rename_notepad_folder, update_notepad_note,
+    get_notepad_note, import_notepad_image, load_notepad, rename_notepad_folder,
+    update_notepad_note,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -391,6 +392,7 @@ pub fn run() {
             get_notepad_note,
             update_notepad_note,
             delete_notepad_note,
+            import_notepad_image,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,

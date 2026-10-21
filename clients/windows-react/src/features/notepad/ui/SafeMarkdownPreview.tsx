@@ -24,6 +24,10 @@ function MarkdownBlock({ block }: { block: string }) {
     if (level === 3) return <h3>{heading[2]}</h3>;
     return <h4>{heading[2]}</h4>;
   }
+  const image = /^!\[(.*)\]\(<(data:image\/(?:png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+)>\)$/u.exec(value);
+  if (image && image[2].length <= 700_000) {
+    return <figure><img alt={image[1].replaceAll("\\[", "[").replaceAll("\\]", "]")} src={image[2]} /></figure>;
+  }
   if (/^```/u.test(value) && /```$/u.test(value)) {
     const code = value.replace(/^```[^\n]*\n?/u, "").replace(/\n?```$/u, "");
     return <pre><code>{code}</code></pre>;

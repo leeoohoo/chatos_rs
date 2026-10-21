@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { z } from "zod";
 import {
   notepadFolderMutationSchema,
+  notepadImageInsertionSchema,
   notepadNoteDetailSchema,
   notepadSnapshotSchema,
 } from "../domain/notepad";
@@ -57,6 +58,12 @@ export class TauriNotepadAdapter implements NotepadPort {
   async deleteNote(ownerUserId: string, noteId: string, expectedVersion: number) {
     return z.string().parse(await invoke("delete_notepad_note", {
       input: { ownerUserId, noteId, expectedVersion },
+    }));
+  }
+
+  async importImage(ownerUserId: string, noteId: string, expectedVersion: number, source: "picker" | "clipboard") {
+    return notepadImageInsertionSchema.nullable().parse(await invoke("import_notepad_image", {
+      input: { ownerUserId, noteId, expectedVersion, source },
     }));
   }
 }

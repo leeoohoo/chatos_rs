@@ -74,6 +74,24 @@ describe("notepad store", () => {
     expect(useNotepadStore.getState().selectedFolder).toBe("");
     expect(useNotepadStore.getState().selectedNoteId).toBeNull();
   });
+
+  it("inserts a native-imported image at the editor selection and version-saves it", async () => {
+    const updateNote = vi.fn(async (_owner, draft) => detail(draft.noteId, draft.expectedVersion + 1, draft.content));
+    const port = stubPort({
+      importImage: vi.fn(async (_owner: string, noteId: string, expectedVersion: number) => ({
+        noteId, expectedVersion, name: "screen.png", mimeType: "image/png" as const, size: 4,
+        sha256: "a".repeat(64), markdown: "![screen](<data:image/png;base64,iVBORw==>)",
+      })),
+      updateNote,
+    });
+    await useNotepadStore.getState().activate(port, "owner-1");
+    const current = useNotepadStore.getState().draft.content;
+
+    await expect(useNotepadStore.getState().insertImage(port, "picker", current.length)).resolves.toBe(true);
+    expect(updateNote).toHaveBeenCalledTimes(1);
+    expect(useNotepadStore.getState().draft.content).toContain("data:image/png;base64,iVBORw==");
+    expect(useNotepadStore.getState().error).toBeNull();
+  });
 });
 
 function stubPort(overrides: Partial<NotepadPort> = {}): NotepadPort {
@@ -86,6 +104,7 @@ function stubPort(overrides: Partial<NotepadPort> = {}): NotepadPort {
     getNote: vi.fn(async (_owner, id) => detail(id)),
     updateNote: vi.fn(async (_owner, draft) => detail(draft.noteId, draft.expectedVersion + 1, draft.content)),
     deleteNote: vi.fn(async (_owner, noteId) => noteId),
+    importImage: vi.fn(async () => null),
   };
   return { ...defaults, ...overrides };
 }

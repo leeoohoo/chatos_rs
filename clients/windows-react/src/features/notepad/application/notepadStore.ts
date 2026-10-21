@@ -4,6 +4,7 @@ import {
   normalizeNotepadFolder,
   type NotepadDraft,
   type NotepadEditorMode,
+  type NotepadImageSource,
   type NotepadNote,
   type NotepadNoteDetail,
 } from "../domain/notepad";
@@ -45,6 +46,7 @@ interface NotepadState {
   deleteFolder(port: NotepadPort, folder: string): Promise<boolean>;
   createNote(port: NotepadPort, title: string, folder?: string): Promise<boolean>;
   deleteSelectedNote(port: NotepadPort): Promise<boolean>;
+  insertImage(port: NotepadPort, source: NotepadImageSource, offset?: number): Promise<boolean>;
   clearError(): void;
   reset(): void;
 }
@@ -324,6 +326,53 @@ export const useNotepadStore = create<NotepadState>((set, get) => ({
       set({ ...clearedSelection(latest.selectedFolder), isMutating: false });
       await get().refresh(port, false);
       return true;
+    } catch (failure) {
+      if (accepts(get(), ownerUserId, epoch)) {
+        const message = errorMessage(failure);
+        set({ isMutating: false, error: message });
+        await get().refresh(port, false, message);
+      }
+      return false;
+    }
+  },
+
+  async insertImage(port, source, offsetInput) {
+    let current = get();
+    if (!current.ownerUserId || !current.selectedNoteId || current.isMutating) return false;
+    if (isDirty(current) && !(await current.save(port))) return false;
+    current = get();
+    const note = current.notes.find((candidate) => candidate.noteId === current.selectedNoteId);
+    if (!current.ownerUserId || !current.selectedNoteId || !note || current.isMutating) return false;
+    const ownerUserId = current.ownerUserId;
+    const noteId = current.selectedNoteId;
+    const epoch = current.epoch;
+    set({ isMutating: true, error: null });
+    try {
+      const image = await port.importImage(ownerUserId, noteId, note.version, source);
+      const latest = get();
+      if (!accepts(latest, ownerUserId, epoch) || latest.selectedNoteId !== noteId) return false;
+      if (image == null) {
+        set({ isMutating: false });
+        return false;
+      }
+      if (image.noteId !== noteId || image.expectedVersion !== note.version) {
+        throw new Error("Local Agent Host 返回了不匹配的笔记图片结果。");
+      }
+      const offset = Math.max(0, Math.min(offsetInput ?? latest.draft.content.length, latest.draft.content.length));
+      const before = latest.draft.content.slice(0, offset);
+      const after = latest.draft.content.slice(offset);
+      const prefix = before.length > 0 && !before.endsWith("\n") ? "\n\n" : "";
+      const suffix = after.length > 0 && !after.startsWith("\n") ? "\n\n" : "";
+      const content = `${before}${prefix}${image.markdown}${suffix}${after}`;
+      if (new TextEncoder().encode(content).byteLength > 512 * 1_024) {
+        throw new Error("图片插入后会超过 512 KiB 的笔记正文限制。");
+      }
+      set({
+        draft: { ...latest.draft, content },
+        draftRevision: latest.draftRevision + 1,
+        isMutating: false,
+      });
+      return await get().save(port);
     } catch (failure) {
       if (accepts(get(), ownerUserId, epoch)) {
         const message = errorMessage(failure);

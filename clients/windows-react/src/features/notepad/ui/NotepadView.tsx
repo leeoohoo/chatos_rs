@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildNotepadTree,
   parseNotepadTags,
@@ -20,10 +20,11 @@ export function NotepadView({ hostReady, ownerUserId, port }: NotepadViewProps) 
   const state = useNotepadStore();
   const {
     activate, clearError, createFolder, createNote, deleteFolder, deleteSelectedNote,
-    refresh, renameFolder, reset, save, selectFolder, selectNote, setEditorMode,
+    insertImage, refresh, renameFolder, reset, save, selectFolder, selectNote, setEditorMode,
     setSearchQuery, syncExternalChanges, updateDraft,
   } = state;
   const [tagsText, setTagsText] = useState("");
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const tree = useMemo(() => buildNotepadTree(state.folders, state.notes), [state.folders, state.notes]);
   const dirty = isNotepadDirty(state);
   const busy = state.isLoading || state.isLoadingNote || state.isSaving || state.isMutating;
@@ -135,6 +136,7 @@ export function NotepadView({ hostReady, ownerUserId, port }: NotepadViewProps) 
               <div className="notepad-editor-toolbar">
                 <div><strong>{dirty ? "尚未保存" : "已保存"}</strong><small>版本 {state.notes.find((note) => note.noteId === state.selectedNoteId)?.version ?? "—"}</small></div>
                 <ModePicker mode={state.editorMode} onChange={setEditorMode} />
+                <button className="notepad-image" disabled={busy} onClick={() => void insertImage(port, "picker", editorRef.current?.selectionStart)} type="button">插入图片</button>
                 <button className="notepad-save" disabled={!dirty || busy} onClick={() => void save(port)} type="button">{state.isSaving ? "保存中…" : "保存"}</button>
                 <button className="notepad-delete" disabled={busy} onClick={confirmDeleteNote} type="button">删除</button>
               </div>
@@ -144,7 +146,11 @@ export function NotepadView({ hostReady, ownerUserId, port }: NotepadViewProps) 
                 <input aria-label="笔记标签" disabled={busy} maxLength={8_256} onBlur={() => updateDraft({ tags: parseNotepadTags(tagsText) })} onChange={(event) => setTagsText(event.target.value)} placeholder="标签，以逗号分隔" value={tagsText} />
               </div>
               <div className={`notepad-document is-${state.editorMode}`}>
-                {(state.editorMode === "edit" || state.editorMode === "split") && <textarea aria-label="Markdown 正文" disabled={state.isLoadingNote || state.isMutating} maxLength={512 * 1_024} onChange={(event) => updateDraft({ content: event.target.value })} placeholder="# 开始记录…" spellCheck value={state.draft.content} />}
+                {(state.editorMode === "edit" || state.editorMode === "split") && <textarea aria-label="Markdown 正文" disabled={state.isLoadingNote || state.isMutating} maxLength={512 * 1_024} onChange={(event) => updateDraft({ content: event.target.value })} onPaste={(event) => {
+                  if (![...event.clipboardData.items].some((item) => item.type.startsWith("image/"))) return;
+                  event.preventDefault();
+                  void insertImage(port, "clipboard", event.currentTarget.selectionStart);
+                }} placeholder="# 开始记录…" ref={editorRef} spellCheck value={state.draft.content} />}
                 {(state.editorMode === "preview" || state.editorMode === "split") && <SafeMarkdownPreview markdown={state.draft.content} />}
                 {state.isLoadingNote && <div className="notepad-loading"><span className="mini-spinner" />正在读取笔记…</div>}
               </div>

@@ -1,5 +1,7 @@
 import type {
   NotepadFolderMutation,
+  NotepadImageInsertion,
+  NotepadImageSource,
   NotepadNoteDetail,
   NotepadSnapshot,
 } from "../domain/notepad";
@@ -25,4 +27,10 @@ export interface NotepadPort {
   getNote(ownerUserId: string, noteId: string): Promise<NotepadNoteDetail>;
   updateNote(ownerUserId: string, draft: UpdateNotepadNoteDraft): Promise<NotepadNoteDetail>;
   deleteNote(ownerUserId: string, noteId: string, expectedVersion: number): Promise<string>;
+  importImage(
+    ownerUserId: string,
+    noteId: string,
+    expectedVersion: number,
+    source: NotepadImageSource,
+  ): Promise<NotepadImageInsertion | null>;
 }

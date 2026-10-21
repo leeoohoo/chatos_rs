@@ -44,10 +44,27 @@ export const notepadFolderMutationSchema = z.object({
   affectedNotes: z.number().int().nonnegative(),
 }).strict();
 
+export const notepadImageInsertionSchema = z.object({
+  noteId: z.string().trim().min(1).max(1_024),
+  expectedVersion: z.number().int().positive(),
+  name: z.string().trim().min(1).max(512),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  size: z.number().int().positive().max(512 * 1_024),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  markdown: z.string().min(1).max(512 * 1_024),
+}).strict().superRefine((image, context) => {
+  const prefix = `data:${image.mimeType};base64,`;
+  if (!image.markdown.includes(prefix)) {
+    context.addIssue({ code: "custom", message: "笔记图片正文与媒体类型不一致。", path: ["markdown"] });
+  }
+});
+
 export type NotepadNote = z.infer<typeof notepadNoteSchema>;
 export type NotepadNoteDetail = z.infer<typeof notepadNoteDetailSchema>;
 export type NotepadSnapshot = z.infer<typeof notepadSnapshotSchema>;
 export type NotepadFolderMutation = z.infer<typeof notepadFolderMutationSchema>;
+export type NotepadImageInsertion = z.infer<typeof notepadImageInsertionSchema>;
+export type NotepadImageSource = "picker" | "clipboard";
 export type NotepadEditorMode = "edit" | "preview" | "split";
 
 export interface NotepadDraft {
