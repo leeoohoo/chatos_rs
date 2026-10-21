@@ -50,6 +50,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
               <span><strong>{item.title}</strong><small>{projectStage(item)}</small></span>
             </button>
           ))}
+          {state.projectNextCursor && <button className="story-studio__load-more" disabled={state.loading} onClick={() => void state.loadMoreProjects(port)} type="button">{state.loading ? "正在读取…" : "加载更早剧情"}</button>}
         </div>
         {state.unreadableCount > 0 && <p className="story-studio__warning">{state.unreadableCount} 个损坏项目已隔离</p>}
       </aside>

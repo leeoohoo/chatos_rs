@@ -191,6 +191,31 @@ describe("StoryStudioView", () => {
     expect(await screen.findByRole("heading", { name: "钥匙进入画面" })).toBeVisible();
   });
 
+  it("loads earlier story projects with the native stable cursor", async () => {
+    const latest = project();
+    const earlier = {
+      ...project(),
+      id: "22222222-2222-4222-8222-222222222222",
+      title: "更早的剧情",
+      createdAtUnixMs: 0,
+      updatedAtUnixMs: 0,
+    };
+    const cursor = { modifiedAtUnixMs: 1, recordId: latest.id };
+    const loadProjects = vi.fn(async (request: Parameters<StoryStudioPort["loadProjects"]>[0]) => request.after
+      ? { items: [earlier], nextCursor: null, unreadableCount: 1 }
+      : { items: [latest], nextCursor: cursor, unreadableCount: 0 });
+    const storyPort = port({ loadProjects });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "加载更早剧情" }));
+    await waitFor(() => expect(loadProjects).toHaveBeenLastCalledWith(expect.objectContaining({
+      after: cursor,
+      limit: 80,
+    })));
+    expect(await screen.findByRole("button", { name: /更早的剧情/u })).toBeVisible();
+    expect(screen.getByText("1 个损坏项目已隔离")).toBeVisible();
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;

@@ -10,6 +10,7 @@
 .story-studio__project-list > button { display:grid; width:100%; grid-template-columns:20px minmax(0,1fr); align-items:center; gap:7px; border:0; border-radius:9px; padding:8px; color:inherit; background:transparent; text-align:left; cursor:pointer; }
 .story-studio__project-list > button:hover { background:rgba(120,120,128,.08); }
 .story-studio__project-list > button.is-selected { color:#0068d6; background:rgba(10,132,255,.13); }
+.story-studio__project-list > button.story-studio__load-more { display:flex; justify-content:center; margin-top:5px; color:var(--accent); background:rgba(10,132,255,.07); font-size:8.5px; font-weight:620; text-align:center; }.story-studio__project-list > button.story-studio__load-more:disabled { cursor:default; opacity:.45; }
 .story-studio__project-list > button > span:first-child { font-size:15px; text-align:center; }
 .story-studio__project-list > button > span:last-child { display:grid; min-width:0; gap:2px; }
 .story-studio__project-list strong,.story-studio__project-list small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

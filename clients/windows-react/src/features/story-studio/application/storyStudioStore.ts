@@ -23,6 +23,7 @@ interface StoryStudioState {
   ownerUserId: string | null;
   presentationId: string | null;
   projects: StoryProject[];
+  projectNextCursor: StoryProjectCursor | null;
   selectedProjectId: string | null;
   models: MediaStudioModel[];
   storyImageHistory: MediaStudioHistoryItem[];
@@ -43,6 +44,7 @@ interface StoryStudioState {
   activate(storyPort: StoryStudioPort, mediaPort: MediaStudioPort, ownerUserId: string): Promise<void>;
   deactivate(storyPort: StoryStudioPort): void;
   selectProject(storyPort: StoryStudioPort, projectId: string): Promise<void>;
+  loadMoreProjects(storyPort: StoryStudioPort): Promise<void>;
   createProject(storyPort: StoryStudioPort, input: {
     title: string;
     description: string;
@@ -109,6 +111,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   ownerUserId: null,
   presentationId: null,
   projects: [],
+  projectNextCursor: null,
   selectedProjectId: null,
   models: [],
   storyImageHistory: [],
@@ -138,6 +141,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       ownerUserId,
       presentationId,
       projects: [],
+      projectNextCursor: null,
       selectedProjectId: null,
       models: [],
       storyImageHistory: [],
@@ -167,6 +171,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       if (!isActive(get(), sequence, ownerUserId, presentationId)) return;
       set({
         projects: page.items,
+        projectNextCursor: page.nextCursor,
         selectedProjectId: page.items[0]?.id ?? null,
         models,
         loading: false,
@@ -193,6 +198,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       ownerUserId: null,
       presentationId: null,
       projects: [],
+      projectNextCursor: null,
       selectedProjectId: null,
       models: [],
       storyImageHistory: [],
@@ -229,6 +235,26 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ loading: false, error: errorMessage(error, "剧情项目暂时无法打开。") });
+    }
+  },
+
+  async loadMoreProjects(storyPort) {
+    const scope = activeScope(get());
+    const cursor = get().projectNextCursor;
+    if (!scope || !cursor || get().loading) return;
+    set({ loading: true, error: null });
+    try {
+      const page = await storyPort.loadProjects({ ...scope, after: cursor, limit: 80 });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: mergeProjects(state.projects, page.items),
+        projectNextCursor: page.nextCursor,
+        unreadableCount: state.unreadableCount + page.unreadableCount,
+        loading: false,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ loading: false, error: errorMessage(error, "更早的剧情项目暂时无法读取。") });
     }
   },
 
@@ -1166,6 +1192,12 @@ function isActive(
 
 function replaceProject(projects: StoryProject[], project: StoryProject) {
   return projects.map((value) => value.id === project.id ? project : value);
+}
+
+function mergeProjects(current: StoryProject[], incoming: StoryProject[]) {
+  const byId = new Map(current.map((project) => [project.id, project]));
+  for (const project of incoming) byId.set(project.id, project);
+  return [...byId.values()];
 }
 
 function replacePlanningRun(runs: StoryPlanningRun[], run: StoryPlanningRun) {
