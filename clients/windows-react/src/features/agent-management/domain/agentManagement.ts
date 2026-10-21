@@ -350,6 +350,51 @@ export const agentProfileActivitySnapshotSchema = z.object({
 
 export type AgentProfileActivitySnapshot = z.infer<typeof agentProfileActivitySnapshotSchema>;
 
+export const agentTeamSummarySchema = z.object({
+  id: z.string().uuid(),
+  projectId: z.string().trim().min(1).max(512),
+  name: z.string().trim().min(1).max(160),
+  goal: z.string().trim().max(8_000),
+  defaultAgentId: z.string().trim().min(1).max(512).nullable(),
+  projectManagerAgentId: z.string().trim().min(1).max(512).nullable(),
+  memberCount: z.number().int().min(0).max(10_000),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((team, context) => {
+  if (team.updatedAtUnixMs < team.createdAtUnixMs) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 团队更新时间不能早于创建时间。",
+      path: ["updatedAtUnixMs"],
+    });
+  }
+});
+
+export const agentTeamListSchema = z.array(agentTeamSummarySchema).max(1_000)
+  .superRefine((teams, context) => {
+    const teamIds = new Set<string>();
+    const projectIds = new Set<string>();
+    teams.forEach((team, index) => {
+      if (teamIds.has(team.id) || projectIds.has(team.projectId)) {
+        context.addIssue({
+          code: "custom",
+          message: "同一项目只能有一个活动 Agent 团队。",
+          path: [index],
+        });
+      }
+      teamIds.add(team.id);
+      projectIds.add(team.projectId);
+    });
+  });
+
+export interface CreateAgentTeamInput {
+  projectId: string;
+  name: string;
+  goal: string;
+}
+
+export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
+
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",
   product_manager: "产品经理",

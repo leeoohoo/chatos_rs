@@ -8,6 +8,7 @@ import type { ConversationRealtimePort } from "../../conversation-realtime/ports
 import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { useAgentManagementStore } from "../application/agentManagementStore";
+import { useAgentTeamStore } from "../application/agentTeamStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -19,6 +20,8 @@ import {
   type AgentAvatarHistoryAsset,
   type AgentConversationActivitySnapshot,
   type AgentProfileActivitySnapshot,
+  type AgentTeamSummary,
+  type CreateAgentTeamInput,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -34,6 +37,7 @@ export function AgentManagementView({
   runtimeSettingsPort,
   runInspectorPort,
   askUserPort,
+  projects = [],
 }: {
   ownerUserId: string;
   port: AgentManagementPort;
@@ -43,6 +47,7 @@ export function AgentManagementView({
   runtimeSettingsPort?: ConversationRuntimeSettingsPort;
   runInspectorPort?: RunInspectorPort;
   askUserPort?: AskUserPort;
+  projects?: Array<{ id: string; title: string }>;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
   const editorCatalog = useAgentManagementStore((state) => state.editorCatalog);
@@ -57,6 +62,15 @@ export function AgentManagementView({
   const loadProfileEditor = useAgentManagementStore((state) => state.loadProfileEditor);
   const saveProfile = useAgentManagementStore((state) => state.saveProfile);
   const reset = useAgentManagementStore((state) => state.reset);
+  const teams = useAgentTeamStore((state) => state.teams);
+  const isLoadingTeams = useAgentTeamStore((state) => state.isLoading);
+  const isCreatingTeam = useAgentTeamStore((state) => state.isCreating);
+  const teamError = useAgentTeamStore((state) => state.error);
+  const activateTeams = useAgentTeamStore((state) => state.activate);
+  const refreshTeams = useAgentTeamStore((state) => state.refresh);
+  const createTeam = useAgentTeamStore((state) => state.createTeam);
+  const resetTeams = useAgentTeamStore((state) => state.reset);
+  const [surface, setSurface] = useState<"agents" | "teams">("agents");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [preparingId, setPreparingId] = useState<string | null>(null);
@@ -66,6 +80,7 @@ export function AgentManagementView({
   const [activityRefreshSequence, setActivityRefreshSequence] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
+  const [showsTeamCreator, setShowsTeamCreator] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
@@ -98,9 +113,15 @@ export function AgentManagementView({
     setDirectError(null);
     setActivityRefreshSequence(0);
     setSelectedAgentId(null);
+    setShowsSkillManagement(false);
+    setShowsTeamCreator(false);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
-    return reset;
-  }, [activate, loadEditorCatalog, ownerUserId, port, reset]);
+    if (port.listTeams && port.createTeam) void activateTeams(port, ownerUserId);
+    return () => {
+      reset();
+      resetTeams();
+    };
+  }, [activate, activateTeams, loadEditorCatalog, ownerUserId, port, reset, resetTeams]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount - 1));
@@ -217,45 +238,73 @@ export function AgentManagementView({
         <header className="agent-management__toolbar">
           <div>
             <h2>Agent 管理</h2>
-            <p>管理 Agent、模型和权限。</p>
+            <p>{surface === "agents" ? "管理 Agent、模型和权限。" : "按项目组织 Agent 团队。"}</p>
           </div>
           <div className="agent-management__actions">
-            <span>{isSaving ? "正在保存" : "本机资料"}</span>
-            <button
-              disabled={!port.loadSkillCatalog || !port.saveSkillOverride || !port.resetSkillOverride}
-              onClick={() => setShowsSkillManagement(true)}
-              type="button"
-            >Skill 管理</button>
-            <button
-              className="primary-button"
-              disabled={isCatalogLoading || isEditorLoading || preparingId === "new-agent"}
-              onClick={() => void openEditor(null)}
-              type="button"
-            >{preparingId === "new-agent" ? "准备中…" : "＋ 创建 Agent"}</button>
-            <button
-              aria-label="刷新 Agent"
-              disabled={isLoading}
-              onClick={() => void refresh(port)}
-              type="button"
-            >↻</button>
+            <div className="agent-management__segmented" aria-label="Agent 管理视图">
+              <button aria-pressed={surface === "agents"} onClick={() => setSurface("agents")} type="button">Agent</button>
+              <button aria-pressed={surface === "teams"} onClick={() => setSurface("teams")} type="button">团队</button>
+            </div>
+            {surface === "agents" ? <>
+              <span>{isSaving ? "正在保存" : "本机资料"}</span>
+              <button
+                disabled={!port.loadSkillCatalog || !port.saveSkillOverride || !port.resetSkillOverride}
+                onClick={() => setShowsSkillManagement(true)}
+                type="button"
+              >Skill 管理</button>
+              <button
+                className="primary-button"
+                disabled={isCatalogLoading || isEditorLoading || preparingId === "new-agent"}
+                onClick={() => void openEditor(null)}
+                type="button"
+              >{preparingId === "new-agent" ? "准备中…" : "＋ 创建 Agent"}</button>
+              <button
+                aria-label="刷新 Agent"
+                disabled={isLoading}
+                onClick={() => void refresh(port)}
+                type="button"
+              >↻</button>
+            </> : <>
+              <button
+                className="primary-button"
+                disabled={!port.createTeam || projects.length === 0 || isCreatingTeam}
+                onClick={() => setShowsTeamCreator(true)}
+                type="button"
+              >＋ 创建团队</button>
+              <button
+                aria-label="刷新 Agent 团队"
+                disabled={isLoadingTeams || !port.listTeams}
+                onClick={() => void refreshTeams(port)}
+                type="button"
+              >↻</button>
+            </>}
           </div>
         </header>
 
-        {error && !editor && (
+        {surface === "agents" && error && !editor && (
           <div className="agent-management__error" role="alert">
             <span>{error}</span>
             <button onClick={() => void refresh(port)} type="button">重试</button>
           </div>
         )}
 
-        {directError && (
+        {surface === "agents" && directError && (
           <div className="agent-management__error" role="alert">
             <span>{directError}</span>
             <button onClick={() => setDirectError(null)} type="button">关闭</button>
           </div>
         )}
 
-        {isLoading && profiles.length === 0 ? (
+        {surface === "teams" ? (
+          <AgentTeamCatalog
+            error={teamError}
+            isLoading={isLoadingTeams}
+            projects={projects}
+            teams={teams}
+            onCreate={() => setShowsTeamCreator(true)}
+            onRetry={() => void refreshTeams(port)}
+          />
+        ) : isLoading && profiles.length === 0 ? (
           <div className="agent-management__state"><span className="mini-spinner" />正在读取 Agent…</div>
         ) : profiles.length === 0 ? (
           <div className="agent-management__empty">
@@ -329,6 +378,156 @@ export function AgentManagementView({
           onClose={() => setShowsSkillManagement(false)}
         />
       )}
+      {showsTeamCreator && (
+        <CreateAgentTeamSheet
+          error={teamError}
+          existingTeams={teams}
+          isCreating={isCreatingTeam}
+          projects={projects}
+          onCancel={() => setShowsTeamCreator(false)}
+          onCreate={async (input) => {
+            if (await createTeam(port, input)) setShowsTeamCreator(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function AgentTeamCatalog({
+  error,
+  isLoading,
+  projects,
+  teams,
+  onCreate,
+  onRetry,
+}: {
+  error: string | null;
+  isLoading: boolean;
+  projects: Array<{ id: string; title: string }>;
+  teams: AgentTeamSummary[];
+  onCreate(): void;
+  onRetry(): void;
+}) {
+  const projectNames = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.title])),
+    [projects],
+  );
+  return (
+    <div className="agent-team-catalog">
+      {error && (
+        <div className="agent-management__error" role="alert">
+          <span>{error}</span>
+          <button onClick={onRetry} type="button">重试</button>
+        </div>
+      )}
+      {isLoading && teams.length === 0 ? (
+        <div className="agent-management__state"><span className="mini-spinner" />正在读取 Agent 团队…</div>
+      ) : teams.length === 0 ? (
+        <div className="agent-management__empty">
+          <span aria-hidden="true">◉</span>
+          <h2>还没有项目团队</h2>
+          <p>{projects.length > 0
+            ? "选择一个已有项目，为它建立独立的 Agent 团队空间。"
+            : "请先创建项目，再为项目建立 Agent 团队。"}</p>
+          <button className="primary-button" disabled={projects.length === 0} onClick={onCreate} type="button">
+            创建 Agent 团队
+          </button>
+        </div>
+      ) : (
+        <div className="agent-team-grid" aria-label="项目 Agent 团队">
+          {teams.map((team) => (
+            <article className="agent-team-card" key={team.id}>
+              <header>
+                <span aria-hidden="true">◉</span>
+                <div>
+                  <h3>{team.name}</h3>
+                  <p>{projectNames.get(team.projectId) ?? team.projectId}</p>
+                </div>
+              </header>
+              <p>{team.goal || "尚未设置团队目标"}</p>
+              <dl>
+                <Row label="成员" value={`${team.memberCount} 位 Agent`} />
+                <Row label="项目经理" value={team.projectManagerAgentId ? "已指定" : "未指定"} />
+                <Row label="默认 Agent" value={team.defaultAgentId ? "已指定" : "未指定"} />
+              </dl>
+              <footer>团队成员、聊天和任务板将继续按 macOS 契约接入。</footer>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateAgentTeamSheet({
+  error,
+  existingTeams,
+  isCreating,
+  projects,
+  onCancel,
+  onCreate,
+}: {
+  error: string | null;
+  existingTeams: AgentTeamSummary[];
+  isCreating: boolean;
+  projects: Array<{ id: string; title: string }>;
+  onCancel(): void;
+  onCreate(input: CreateAgentTeamInput): Promise<void>;
+}) {
+  const availableProjects = useMemo(() => {
+    const boundProjects = new Set(existingTeams.map((team) => team.projectId));
+    return projects.filter((project) => !boundProjects.has(project.id));
+  }, [existingTeams, projects]);
+  const [projectId, setProjectId] = useState(availableProjects[0]?.id ?? "");
+  const [name, setName] = useState("");
+  const [goal, setGoal] = useState("");
+
+  useEffect(() => {
+    if (!availableProjects.some((project) => project.id === projectId)) {
+      setProjectId(availableProjects[0]?.id ?? "");
+    }
+  }, [availableProjects, projectId]);
+
+  const projectName = availableProjects.find((project) => project.id === projectId)?.title ?? "项目";
+  const resolvedName = name.trim() || `${projectName} Agent 团队`;
+  return (
+    <div className="agent-editor-backdrop" role="presentation">
+      <section aria-label="创建 Agent 团队" aria-modal="true" className="agent-editor agent-team-creator" role="dialog">
+        <header>
+          <h2>创建 Agent 团队</h2>
+          <button aria-label="关闭创建 Agent 团队" disabled={isCreating} onClick={onCancel} type="button">×</button>
+        </header>
+        <div className="agent-editor__body">
+          <p className="agent-team-creator__intro">选择一个项目。只有主动创建团队的项目才会进入 Agent 团队空间。</p>
+          {error && <div className="agent-editor__error" role="alert">{error}</div>}
+          {availableProjects.length === 0 ? (
+            <div className="agent-team-creator__empty">所有现有项目都已经建立团队，或当前还没有项目。</div>
+          ) : <>
+            <label>绑定项目
+              <select aria-label="绑定项目" onChange={(event) => setProjectId(event.target.value)} value={projectId}>
+                {availableProjects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}
+              </select>
+            </label>
+            <label>团队名称
+              <input aria-label="团队名称" maxLength={160} onChange={(event) => setName(event.target.value)} placeholder={resolvedName} value={name} />
+            </label>
+            <label>团队目标（可选）
+              <textarea aria-label="团队目标（可选）" maxLength={8_000} onChange={(event) => setGoal(event.target.value)} rows={4} value={goal} />
+            </label>
+            <small>团队创建后，再按 macOS 规则邀请 Agent、指定项目经理和配置团队职责。</small>
+          </>}
+        </div>
+        <footer>
+          <button disabled={isCreating} onClick={onCancel} type="button">取消</button>
+          <button
+            className="primary-button"
+            disabled={isCreating || !projectId}
+            onClick={() => void onCreate({ projectId, name: resolvedName, goal: goal.trim() })}
+            type="button"
+          >{isCreating ? "正在创建…" : "创建团队"}</button>
+        </footer>
+      </section>
     </div>
   );
 }

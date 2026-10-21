@@ -7,8 +7,11 @@ import {
   agentAvatarDraftSchema,
   agentConversationActivitySnapshotSchema,
   agentProfileActivitySnapshotSchema,
+  agentTeamListSchema,
+  agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
+  type CreateAgentTeamInput,
 } from "../domain/agentManagement";
 import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -106,6 +109,18 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async loadProfileActivity(ownerUserId: string, agentId: string) {
     return agentProfileActivitySnapshotSchema.parse(
       await invoke("load_agent_profile_activity", { ownerUserId, agentId }),
+    );
+  }
+
+  async listTeams(ownerUserId: string) {
+    return agentTeamListSchema.parse(
+      await invoke("list_agent_teams", { ownerUserId }),
+    );
+  }
+
+  async createTeam(ownerUserId: string, input: CreateAgentTeamInput) {
+    return agentTeamSummarySchema.parse(
+      await invoke("create_agent_team", { input: { ownerUserId, ...input } }),
     );
   }
 

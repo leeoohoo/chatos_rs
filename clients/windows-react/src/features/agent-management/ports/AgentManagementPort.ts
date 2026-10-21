@@ -7,6 +7,8 @@ import type {
   AgentAvatarHistoryAsset,
   AgentConversationActivitySnapshot,
   AgentProfileActivitySnapshot,
+  AgentTeamSummary,
+  CreateAgentTeamInput,
   PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
@@ -37,6 +39,8 @@ export interface AgentManagementPort {
     ownerUserId: string,
     agentId: string,
   ): Promise<AgentProfileActivitySnapshot>;
+  listTeams?(ownerUserId: string): Promise<AgentTeamSummary[]>;
+  createTeam?(ownerUserId: string, input: CreateAgentTeamInput): Promise<AgentTeamSummary>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

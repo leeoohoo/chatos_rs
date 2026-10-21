@@ -4,6 +4,7 @@ import {
   agentConversationActivitySnapshotSchema,
   agentProfileActivitySnapshotSchema,
   agentProfileListSchema,
+  agentTeamListSchema,
   heartbeatIntervalLabel,
   preparedAgentConversationSchema,
 } from "./agentManagement";
@@ -126,6 +127,26 @@ describe("agent management domain", () => {
       ...snapshot,
       items: [item, { ...item, roomId: "22222222-2222-4222-8222-222222222222" }],
     })).toThrow("Agent 运行动态标识不能重复");
+  });
+
+  it("accepts one safe active team projection per project", () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "交付 Alpha",
+      defaultAgentId: null,
+      projectManagerAgentId: null,
+      memberCount: 0,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    };
+    expect(agentTeamListSchema.parse([team])).toEqual([team]);
+    expect(() => agentTeamListSchema.parse([team, {
+      ...team,
+      id: "22222222-2222-4222-8222-222222222222",
+    }])).toThrow("同一项目只能有一个活动 Agent 团队");
+    expect(() => agentTeamListSchema.parse([{ ...team, rolePrompt: "private" }])).toThrow();
   });
 });
 

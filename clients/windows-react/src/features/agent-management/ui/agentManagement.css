@@ -5,9 +5,12 @@
 .agent-management__toolbar h2 { font-size: 15px; font-weight: 660; letter-spacing: -.02em; }
 .agent-management__toolbar p { margin-top: 3px; color: var(--secondary); font-size: 10.5px; }
 .agent-management__actions { display: flex; align-items: center; gap: 7px; }
+.agent-management__segmented { display: flex; border-radius: 8px; padding: 2px; background: rgba(120,120,128,.12); }
+.agent-management__actions .agent-management__segmented button { min-height: 25px; border-radius: 6px; padding: 4px 10px; color: var(--secondary); background: transparent; }
+.agent-management__actions .agent-management__segmented button[aria-pressed="true"] { color: var(--primary); background: rgba(255,255,255,.92); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 .agent-management__actions > span { border-radius: 999px; padding: 4px 8px; color: #9b5100; background: rgba(255,159,10,.10); font-size: 9.5px; font-weight: 650; }
 .agent-management__actions button { min-height: 29px; border: 0; border-radius: 8px; padding: 5px 10px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 10.5px; font-weight: 620; cursor: pointer; }
-.agent-management__actions button:last-child { width: 29px; padding: 0; font-size: 16px; }
+.agent-management__actions > button:last-child { width: 29px; padding: 0; font-size: 16px; }
 .agent-management__actions button:disabled, .agent-card__actions button:disabled { cursor: default; opacity: .43; }
 .agent-management__actions .primary-button { color: white; background: var(--accent); }
 .agent-management__error { display: flex; align-items: center; gap: 10px; margin: 12px 18px 0; border-radius: 9px; padding: 9px 11px; color: #9b5100; background: rgba(255,159,10,.10); font-size: 10.5px; }
@@ -19,6 +22,23 @@
 .agent-management__empty h2 { margin: 14px 0 5px; font-size: 16px; }
 .agent-management__empty p { max-width: 440px; margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.55; }
 .agent-management__empty button { margin-top: 14px; border: 0; border-radius: 8px; padding: 7px 13px; color: white; background: var(--accent); font-size: 10.5px; font-weight: 650; cursor: pointer; }
+.agent-management__empty button:disabled { cursor: default; opacity: .45; }
+.agent-team-catalog { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.agent-team-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: repeat(auto-fill,minmax(300px,1fr)); align-content: start; gap: 14px; overflow: auto; padding: 18px; }
+.agent-team-card { display: grid; align-content: start; gap: 11px; border: 1px solid rgba(60,60,67,.10); border-radius: 12px; padding: 14px; background: rgba(255,255,255,.78); box-shadow: 0 4px 16px rgba(0,0,0,.035); }
+.agent-team-card > header { display: flex; align-items: center; gap: 10px; }
+.agent-team-card > header > span { display: grid; width: 42px; height: 42px; flex: none; place-items: center; border-radius: 13px; color: var(--accent); background: rgba(10,132,255,.10); font-size: 18px; }
+.agent-team-card h3, .agent-team-card p { margin: 0; }
+.agent-team-card h3 { font-size: 12.5px; font-weight: 660; }
+.agent-team-card > header p { margin-top: 3px; color: var(--secondary); font-size: 9.5px; }
+.agent-team-card > p { min-height: 30px; color: var(--secondary); font-size: 10.5px; line-height: 1.45; }
+.agent-team-card dl { display: grid; margin: 0; border-top: 1px solid var(--separator); }
+.agent-team-card dl > div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; border-bottom: 1px solid rgba(60,60,67,.08); padding: 6px 0; font-size: 9.5px; }
+.agent-team-card dt { color: var(--secondary); }
+.agent-team-card dd { margin: 0; font-weight: 570; text-align: right; }
+.agent-team-card > footer { color: var(--tertiary); font-size: 9px; line-height: 1.45; }
+.agent-team-creator__intro { margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.5; }
+.agent-team-creator__empty { border-radius: 10px; padding: 22px; color: var(--secondary); background: rgba(120,120,128,.07); font-size: 10.5px; text-align: center; }
 .agent-management__grid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); align-content: start; gap: 14px; overflow: auto; padding: 18px; }
 .agent-card { display: flex; min-width: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(60,60,67,.10); border-radius: 12px; padding: 14px; background: rgba(255,255,255,.78); box-shadow: 0 4px 16px rgba(0,0,0,.035); cursor: pointer; transition: border-color .16s ease,box-shadow .16s ease,transform .16s ease; }
 .agent-card:hover { border-color: rgba(10,132,255,.24); box-shadow: 0 7px 20px rgba(0,0,0,.055); transform: translateY(-1px); }

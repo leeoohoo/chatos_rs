@@ -454,6 +454,7 @@ export function AppShell({
             attachmentPort={conversationAttachments}
             historyPort={conversationHistory}
             ownerUserId={session.user.id}
+            projects={workspaceSnapshot.projects}
             realtimePort={conversationRealtime}
             runInspectorPort={runInspector}
             runtimeSettingsPort={conversationRuntimeSettings}

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import { useAgentSkillManagementStore } from "../application/agentSkillManagementStore";
+import { useAgentTeamStore } from "../application/agentTeamStore";
 import {
   agentProfessionLabels,
   type AgentProfileEditorCatalog,
@@ -20,6 +21,7 @@ vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
 describe("AgentManagementView", () => {
   beforeEach(() => useAgentManagementStore.getState().reset());
   beforeEach(() => useAgentSkillManagementStore.getState().reset());
+  beforeEach(() => useAgentTeamStore.getState().reset());
   afterEach(cleanup);
 
   it("renders macOS profile card facts and enables profile editing", async () => {
@@ -166,6 +168,46 @@ describe("AgentManagementView", () => {
     renderView(stubPort({ listProfiles: vi.fn(async () => []) }));
     expect(await screen.findByText("还没有 Agent")).toBeVisible();
     expect(screen.getByText(/创建一个 Agent/)).toBeVisible();
+  });
+
+  it("creates one project-bound Agent team with the macOS default name", async () => {
+    const createdTeam = {
+      id: "11111111-1111-4111-8111-111111111111",
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "",
+      defaultAgentId: null,
+      projectManagerAgentId: null,
+      memberCount: 0,
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 10,
+    };
+    const port = stubPort({
+      listTeams: vi.fn(async () => []),
+      createTeam: vi.fn(async () => createdTeam),
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    expect(await screen.findByText("还没有项目团队")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "＋ 创建团队" }));
+    expect(await screen.findByRole("dialog", { name: "创建 Agent 团队" })).toBeVisible();
+    expect(screen.getByLabelText("绑定项目")).toHaveValue("project-1");
+    fireEvent.click(screen.getByRole("button", { name: "创建团队" }));
+
+    await waitFor(() => expect(port.createTeam).toHaveBeenCalledWith("owner-1", {
+      projectId: "project-1",
+      name: "Alpha Agent 团队",
+      goal: "",
+    }));
+    expect(await screen.findByText("Alpha Agent 团队")).toBeVisible();
+    expect(screen.getByText("0 位 Agent")).toBeVisible();
   });
 
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
