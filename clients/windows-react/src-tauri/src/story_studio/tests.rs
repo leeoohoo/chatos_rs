@@ -1,8 +1,9 @@
 use super::domain::*;
 use super::{
     application::{
-        apply_story_project_settings, default_story_style, make_story_project,
-        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        apply_story_project_settings, apply_story_project_source, default_story_style,
+        make_story_project, StoryModelSelectionInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -482,6 +483,142 @@ fn settings_rebuild_from_canonical_project_and_freeze_unresolved_model_identity(
     );
     assert!(result.is_err());
     assert_eq!(current.models.image_model_id, "image");
+}
+
+#[test]
+fn source_edit_is_fingerprint_guarded_and_preserves_native_only_state() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments.clear();
+    let mut image = StoryImage::test_image("private-image.png");
+    image.provider_result_id = Some("provider-result-secret".into());
+    image.provider_asset_id = Some("provider-asset-secret".into());
+    canonical.props[0].media.images.push(image.clone());
+    store.save("alice", &canonical).unwrap();
+
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    let initial = manager
+        .present_project("alice", 7, &presentation, &canonical.id)
+        .unwrap();
+    let initial_json = serde_json::to_value(initial).unwrap();
+    let base_fingerprint = initial_json["baseFingerprint"]
+        .as_str()
+        .expect("live project fingerprint")
+        .to_owned();
+
+    let saved = manager
+        .update_project_source(
+            "alice",
+            7,
+            &presentation,
+            StoryProjectSourceInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: base_fingerprint.clone(),
+                source: "replacement source".into(),
+                style: "replacement style".into(),
+                ratio: "9:16".into(),
+            },
+        )
+        .unwrap();
+    let saved_json = serde_json::to_value(saved).unwrap();
+    assert_eq!(saved_json["source"], "replacement source");
+    assert_eq!(saved_json["style"], "replacement style");
+    assert_eq!(saved_json["ratio"], "9:16");
+    assert_ne!(saved_json["baseFingerprint"], base_fingerprint);
+
+    let persisted = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(persisted.props[0].media.images[0], image);
+    assert_eq!(persisted.title, canonical.title);
+    assert_eq!(persisted.models, canonical.models);
+    assert_eq!(persisted.created_at_unix_ms, canonical.created_at_unix_ms);
+
+    let stale = manager.update_project_source(
+        "alice",
+        7,
+        &presentation,
+        StoryProjectSourceInput {
+            project_id: canonical.id.clone(),
+            base_fingerprint,
+            source: "must not win".into(),
+            style: "must not win".into(),
+            ratio: "1:1".into(),
+        },
+    );
+    assert!(stale.is_err());
+    assert_eq!(
+        store
+            .load_native_project("alice", &canonical.id)
+            .unwrap()
+            .source,
+        "replacement source"
+    );
+
+    assert!(
+        serde_json::from_value::<StoryProjectSourceInput>(serde_json::json!({
+            "projectId": canonical.id,
+            "baseFingerprint": saved_json["baseFingerprint"],
+            "source": "source",
+            "style": "style",
+            "ratio": "16:9",
+            "characters": [],
+            "providerResultId": "React must not submit native state"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn source_edit_rejects_existing_outline_and_retired_presentation_generation() {
+    let mut outlined = project();
+    let fingerprint = project_fingerprint(&outlined).unwrap();
+    let outlined_id = outlined.id.clone();
+    let result = apply_story_project_source(
+        &mut outlined,
+        StoryProjectSourceInput {
+            project_id: outlined_id,
+            base_fingerprint: fingerprint,
+            source: "must not replace segment ranges".into(),
+            style: "style".into(),
+            ratio: "16:9".into(),
+        },
+        2,
+    );
+    assert!(result.is_err());
+    assert_eq!(outlined.source, "x");
+
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments.clear();
+    store.save("alice", &canonical).unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 7, &presentation, &canonical.id)
+        .unwrap();
+    manager.reset_session_if_matches("alice", 7);
+    let result = manager.update_project_source(
+        "alice",
+        7,
+        &presentation,
+        StoryProjectSourceInput {
+            project_id: canonical.id.clone(),
+            base_fingerprint: project_fingerprint(&canonical).unwrap(),
+            source: "must not survive stale generation".into(),
+            style: canonical.style.clone(),
+            ratio: canonical.ratio.clone(),
+        },
+    );
+    assert!(result.is_err());
+    assert_eq!(
+        store
+            .load_native_project("alice", &canonical.id)
+            .unwrap()
+            .source,
+        canonical.source
+    );
 }
 
 #[test]

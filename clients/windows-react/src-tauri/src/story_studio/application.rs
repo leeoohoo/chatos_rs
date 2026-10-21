@@ -5,7 +5,10 @@ use uuid::Uuid;
 
 use crate::authentication::GatewayModelConfig;
 
-use super::domain::{StoryModelSelection, StoryProject, STORY_SCHEMA_VERSION};
+use super::{
+    domain::{StoryModelSelection, StoryProject, STORY_SCHEMA_VERSION},
+    planning::project_fingerprint,
+};
 
 const DEFAULT_STORY_STYLE: &str = "自然光，电影感，保持角色外观、服装与场景一致";
 const DEFAULT_STORY_RATIO: &str = "16:9";
@@ -33,6 +36,18 @@ pub(crate) struct StoryProjectSettingsInput {
     pub title: String,
     pub description: String,
     pub models: StoryModelSelectionInput,
+}
+
+/// Narrow source-editor intent. React never submits a persisted StoryProject, so native-only
+/// media/provider identities and schema metadata remain owned by the canonical Rust project.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryProjectSourceInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub source: String,
+    pub style: String,
+    pub ratio: String,
 }
 
 pub(super) fn make_story_project(
@@ -82,6 +97,29 @@ pub(super) fn apply_story_project_settings(
     project.title = input.title.trim().to_owned();
     project.description = input.description;
     project.models = models;
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn apply_story_project_source(
+    project: &mut StoryProject,
+    input: StoryProjectSourceInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if input.project_id != project.id
+        || input.base_fingerprint.is_empty()
+        || project_fingerprint(project)? != input.base_fingerprint
+    {
+        return Err("剧情项目已被修改，请重新打开后再保存。".into());
+    }
+    // Matches macOS StoryStudioViewModel.saveSource: source metadata is frozen once an outline
+    // exists, because changing character offsets would invalidate every segment source range.
+    if !project.segments.is_empty() {
+        return Err("剧情已经生成分段，不能再修改原文、风格或画面比例。".into());
+    }
+    project.source = input.source;
+    project.style = input.style;
+    project.ratio = input.ratio;
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
 }

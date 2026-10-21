@@ -13,11 +13,12 @@ use crate::authentication::GatewayModelConfig;
 
 use super::{
     application::{
-        apply_story_project_settings, make_story_project, StoryProjectCreationInput,
-        StoryProjectSettingsInput,
+        apply_story_project_settings, apply_story_project_source, make_story_project,
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
     },
     domain::{StoryImageCollection, StoryProject},
     execution::StoryPlanningExecutionRegistry,
+    planning::project_fingerprint,
     projection::{StoryMediaPresentation, StoryProjectSnapshot},
     store::{
         StoryProjectCursor, StoryProjectPage, StoryProjectStore, MAXIMUM_STORY_IMAGE_BYTES,
@@ -47,6 +48,7 @@ struct StoryMediaEntry {
 #[derive(Default)]
 struct StoryMediaState {
     entries: HashMap<String, StoryMediaEntry>,
+    open_presentations: HashSet<StoryMediaScope>,
     closed_presentations: HashSet<StoryMediaScope>,
 }
 
@@ -77,6 +79,7 @@ impl StoryMediaVault {
         if state.closed_presentations.contains(&scope) {
             return Err("剧情创作页面已关闭，请重新打开后再试。".into());
         }
+        state.open_presentations.insert(scope.clone());
         state.entries.retain(|_, entry| {
             entry.scope != scope
                 || entry.project_id != project.id
@@ -151,6 +154,7 @@ impl StoryMediaVault {
         let scope = story_media_scope(owner_user_id, authentication_generation, presentation_id)?;
         let mut state = self.state.lock().map_err(|_| media_error())?;
         state.entries.retain(|_, entry| entry.scope != scope);
+        state.open_presentations.remove(&scope);
         state.closed_presentations.insert(scope.clone());
         if state.closed_presentations.len() > MAXIMUM_CLOSED_PRESENTATIONS {
             state.closed_presentations.clear();
@@ -159,9 +163,26 @@ impl StoryMediaVault {
         Ok(())
     }
 
+    fn require_open_presentation(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+    ) -> Result<(), String> {
+        let scope = story_media_scope(owner_user_id, authentication_generation, presentation_id)?;
+        let state = self.state.lock().map_err(|_| media_error())?;
+        if state.open_presentations.contains(&scope) && !state.closed_presentations.contains(&scope)
+        {
+            Ok(())
+        } else {
+            Err("剧情创作页面已经变化，请重新打开后再试。".into())
+        }
+    }
+
     fn reset(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.entries.clear();
+            state.open_presentations.clear();
             state.closed_presentations.clear();
         }
     }
@@ -297,6 +318,35 @@ impl StoryStudioManager {
         )
     }
 
+    pub(super) fn update_project_source(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        input: StoryProjectSourceInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner_user_id, authentication_generation)?;
+        self.media.require_open_presentation(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+        )?;
+        let project_id = input.project_id.clone();
+        let now = current_unix_milliseconds();
+        let project = self
+            .store
+            .mutate_project(owner_user_id, &project_id, |project| {
+                apply_story_project_source(project, input, now)
+            })?;
+        self.project_snapshot(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &session,
+            &project,
+        )
+    }
+
     pub(super) fn discard_presentation(
         &self,
         owner_user_id: &str,
@@ -360,6 +410,7 @@ impl StoryStudioManager {
         )?;
         Ok(StoryProjectSnapshot::from_project_with_media(
             project,
+            Some(project_fingerprint(project)?),
             |filename| presented.get(filename).cloned(),
         ))
     }

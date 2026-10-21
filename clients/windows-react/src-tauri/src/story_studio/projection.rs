@@ -14,6 +14,8 @@ use super::domain::{
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoryProjectSnapshot {
     id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    base_fingerprint: Option<String>,
     version: u32,
     title: String,
     description: String,
@@ -39,15 +41,17 @@ pub(super) struct StoryMediaPresentation {
 
 impl StoryProjectSnapshot {
     pub(super) fn from_project(project: &StoryProject) -> Self {
-        Self::from_project_with_media(project, |_| None)
+        Self::from_project_with_media(project, None, |_| None)
     }
 
     pub(super) fn from_project_with_media(
         project: &StoryProject,
+        base_fingerprint: Option<String>,
         media: impl Fn(&str) -> Option<StoryMediaPresentation>,
     ) -> Self {
         Self {
             id: project.id.clone(),
+            base_fingerprint,
             version: project.version,
             title: project.title.clone(),
             description: project.description.clone(),

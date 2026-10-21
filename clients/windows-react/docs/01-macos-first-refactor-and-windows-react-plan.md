@@ -554,6 +554,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事 Planning 历史分页第八段）：新增 `load_story_planning_history` typed command；读取前先用当前 presentation 投影项目并绑定 owner/authentication generation/project，读取后再次复验 generation。原生 Store 按 macOS 默认 20、上限 200，以 run 文件修改时间 + UUID 做稳定 newest-first 游标，64 MiB 严格解码，损坏记录只累计 `unreadableCount`，不删除或替换；输出继续使用不含 prompt、messages、tool payload、Memory checkpoint 和 Secret 的 safe run snapshot。首页按 macOS `StoryHistoryAdapter` 语义尝试恢复“业务已完整但终态应用被中断”的候选，必须通过本地完成校验及 canonical/draft fingerprint，旧页保持只读；恢复后的项目重新经过当前 presentation 媒体 token 投影。Story Rust 定向 26 项与 `clippy -D warnings` 通过。Media batch 历史仍等待其原生持久化模型，React 剧情入口继续关闭；下一片进入 canonical Story 编辑 command。
 
+状态补充（2026-10-21，Windows AI 故事原文编辑第九段）：新增 `update_story_project_source` typed command，只接收 owner、presentation、project、`baseFingerprint` 与 source/style/ratio 三个可编辑字段。实时项目安全快照由 Rust 发布 fingerprint；Store 在同一 mutation lock 内重读最新 canonical manifest、拒绝过期 fingerprint，并对齐 macOS `saveSource` 规则，只允许尚无分段的项目修改原文、风格与画面比例。React 无法回传完整 `StoryProject`，因此 schema/version、模型、资源、媒体文件名、provider result/asset/job identity、attempt/video 与创建时间均由原生层原样保留。编辑前要求当前 authentication generation 下已打开的 presentation，页面/账号 teardown 后的迟到提交失败关闭；成功结果重新投影当前 generation 的 opaque media token。Story Rust 定向测试增至 28 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片实现素材 prompt typed edit 及其未决视频/依赖帧失效规则。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
