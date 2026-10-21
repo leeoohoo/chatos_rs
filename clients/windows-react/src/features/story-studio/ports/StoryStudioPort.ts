@@ -15,6 +15,7 @@ import type {
   StoryDirectVideoQueueOutcome,
   StoryVideoGenerationOutcome,
   StoryVideoGenerationEvent,
+  StorySegment,
 } from "../domain/storyStudio";
 
 export interface StoryPresentationScope {
@@ -25,6 +26,30 @@ export interface StoryPresentationScope {
 export type StoryImageImportTarget =
   | { kind: "resource"; resourceId: string }
   | { kind: "frame"; segmentId: string; frameRole: "first" | "last" };
+
+export interface StorySegmentRelationEdit {
+  id: string;
+  characterId: string;
+  sceneId: string;
+  action: string;
+  position: string;
+  startSecond: number;
+  endSecond: number;
+}
+
+export interface StorySegmentEditDraft {
+  segmentId: string;
+  title: string;
+  synopsis: string;
+  kind: StorySegment["kind"];
+  seconds: number;
+  detail: StorySegment["detail"];
+  characterIds: string[];
+  sceneIds: string[];
+  propIds: string[];
+  videoGuidanceMode: StorySegment["videoGuidanceMode"];
+  relations: StorySegmentRelationEdit[];
+}
 
 export interface StoryStudioPort {
   watchVideoGeneration(
@@ -136,6 +161,11 @@ export interface StoryStudioPort {
     baseFingerprint: string;
     segmentId: string;
     seconds: number;
+  }): Promise<StoryProject>;
+  updateSegment(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segment: StorySegmentEditDraft;
   }): Promise<StoryProject>;
   updateSegmentStructure(request: StoryPresentationScope & {
     projectId: string;

@@ -2,7 +2,7 @@ import { create, type StoreApi } from "zustand";
 import type { MediaStudioHistoryItem, MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject, StoryProjectCursor, StoryVideoGenerationEvent } from "../domain/storyStudio";
-import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
+import type { StoryImageImportTarget, StorySegmentEditDraft, StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
   status: string;
@@ -77,6 +77,7 @@ interface StoryStudioState {
   loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
   importHistoryImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, recordId: string, contentToken: string): Promise<void>;
   updateSegmentDuration(storyPort: StoryStudioPort, segmentId: string, seconds: number): Promise<void>;
+  updateSegment(storyPort: StoryStudioPort, segment: StorySegmentEditDraft): Promise<boolean>;
   updateSegmentStructure(storyPort: StoryStudioPort, input: {
     operation: "add" | "delete" | "move";
     segmentId?: string | null;
@@ -697,6 +698,28 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "分段时长保存失败。") });
+    }
+  },
+
+  async updateSegment(storyPort, segment) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return false;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.updateSegment({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segment,
+      });
+      if (!sameScope(get(), scope)) return false;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+      return true;
+    } catch (error) {
+      if (!sameScope(get(), scope)) return false;
+      set({ busy: false, error: errorMessage(error, "剧情分段保存失败。") });
+      return false;
     }
   },
 

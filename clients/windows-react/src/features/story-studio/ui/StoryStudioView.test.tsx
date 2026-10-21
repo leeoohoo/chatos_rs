@@ -156,6 +156,41 @@ describe("StoryStudioView", () => {
     expect(await screen.findByText("一把带雨滴的黄铜旧钥匙")).toBeVisible();
   });
 
+  it("edits only the authorized segment fields through the native command", async () => {
+    const canonical = plannedProject();
+    const updated = {
+      ...canonical,
+      baseFingerprint: "b".repeat(64),
+      segments: canonical.segments.map((value) => ({ ...value, title: "钥匙进入画面" })),
+    };
+    const updateSegment = vi.fn(async () => updated);
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      updateSegment,
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑分段" }));
+    fireEvent.change(screen.getByLabelText("分段标题"), {
+      target: { value: "钥匙进入画面" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存分段" }));
+
+    await waitFor(() => expect(updateSegment).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      segment: expect.objectContaining({
+        segmentId: "segment-a",
+        title: "钥匙进入画面",
+        synopsis: canonical.segments[0]!.synopsis,
+        detail: canonical.segments[0]!.detail,
+        propIds: ["prop-a"],
+        relations: [],
+      }),
+    })));
+    expect(await screen.findByRole("heading", { name: "钥匙进入画面" })).toBeVisible();
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
@@ -525,6 +560,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     importLocalImage: vi.fn(async () => project()),
     importHistoryImage: vi.fn(async () => project()),
     updateSegmentDuration: vi.fn(async () => project()),
+    updateSegment: vi.fn(async () => project()),
     updateSegmentStructure: vi.fn(async () => project()),
     allowImageRetry: vi.fn(async () => project()),
     allowVideoRetry: vi.fn(async () => project()),

@@ -9,6 +9,7 @@ import {
   storyPlanningHistoryPageSchema,
   storyPlanningOutcomeSchema,
   storyPlanningRunSchema,
+  storySegmentSchema,
   storyMediaBatchKindSchema,
   storyMediaBatchPreviewResultSchema,
   storyMediaBatchHistoryPageSchema,
@@ -326,6 +327,40 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
       },
     };
     return storyProjectSchema.parse(await invoke("update_story_segment_duration", { input }));
+  }
+
+  async updateSegment(request: Parameters<StoryStudioPort["updateSegment"]>[0]) {
+    const relationSchema = z.object({
+      id: identifierSchema,
+      characterId: identifierSchema,
+      sceneId: identifierSchema,
+      action: safeText(400),
+      position: safeText(400),
+      startSecond: z.number().int().min(0).max(15),
+      endSecond: z.number().int().min(1).max(15),
+    }).strict();
+    const segmentSchema = z.object({
+      segmentId: identifierSchema,
+      title: safeText(120).trim().min(1),
+      synopsis: safeText(2_000),
+      kind: z.enum(["story", "transition"]),
+      seconds: z.number().int().min(2).max(15),
+      detail: storySegmentSchema.shape.detail,
+      characterIds: z.array(identifierSchema).max(8),
+      sceneIds: z.array(identifierSchema).max(8),
+      propIds: z.array(identifierSchema).max(8),
+      videoGuidanceMode: storySegmentSchema.shape.videoGuidanceMode,
+      relations: z.array(relationSchema).max(8),
+    }).strict();
+    const input = {
+      ...scope(request),
+      edit: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segment: segmentSchema.parse(request.segment),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("update_story_segment", { input }));
   }
 
   async updateSegmentStructure(

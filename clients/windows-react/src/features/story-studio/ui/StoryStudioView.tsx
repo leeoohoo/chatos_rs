@@ -4,7 +4,7 @@ import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio"
 import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
 import type { StoryPlanningProgress } from "../application/storyStudioStore";
-import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
+import type { StoryImageImportTarget, StorySegmentEditDraft, StorySegmentRelationEdit, StoryStudioPort } from "../ports/StoryStudioPort";
 import "./storyStudio.css";
 
 interface StoryStudioViewProps {
@@ -482,9 +482,10 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryIm
   const [userIdeas, setUserIdeas] = useState("");
   const [size, setSize] = useState<"768P" | "2K">("768P");
   const [showVideoRetry, setShowVideoRetry] = useState(false);
+  const [showEditor, setShowEditor] = useState(false);
   return (
     <article className="story-segment-inspector">
-      <header><div><span>{segment.kind === "transition" ? "转场片段" : "剧情片段"}</span><h3>{segment.title}</h3><p>{segment.synopsis}</p></div><strong>{segment.seconds}s</strong></header>
+      <header><div><span>{segment.kind === "transition" ? "转场片段" : "剧情片段"}</span><h3>{segment.title}</h3><p>{segment.synopsis}</p></div><div className="story-segment-inspector__heading-actions"><strong>{segment.seconds}s</strong><button disabled={state.busy || segment.attempt != null || segment.video != null} onClick={() => setShowEditor(true)} type="button">编辑分段</button></div></header>
       <div className="story-frame-pair">
         <FrameCard title={hasUnconfirmedFirst ? "首帧 · 待确认" : "首帧"} image={(hasUnconfirmedFirst ? latestFirst : first)?.previewUrl ?? null} empty="等待确认首帧" />
         <span aria-hidden="true">→</span>
@@ -513,8 +514,92 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryIm
         {segment.attempt && !segment.video ? segment.attempt.resumable ? <button className="story-primary-button" disabled={Boolean(progress)} onClick={() => void state.resumeVideo(port, segment.id)} type="button">{progress ? progressLabel(progress.status, progress.percent) : "查询原任务 / 恢复下载"}</button> : <button className="story-video-review-button" disabled={state.busy} onClick={() => setShowVideoRetry(true)} type="button">核对后允许重试…</button> : <button className="story-primary-button" disabled={!isStorySegmentReady(segment) || Boolean(progress)} onClick={() => void state.startVideo(port, segment.id, size, userIdeas)} type="button">{progress ? progressLabel(progress.status, progress.percent) : segment.video ? "已完成" : "生成视频"}</button>}
       </footer>
       {showVideoRetry && <StoryVideoRetrySheet onClose={() => setShowVideoRetry(false)} port={port} segmentId={segment.id} />}
+      {showEditor && <StorySegmentEditorSheet onClose={() => setShowEditor(false)} port={port} projectId={project.id} segmentId={segment.id} />}
     </article>
   );
+}
+
+function StorySegmentEditorSheet({ port, projectId, segmentId, onClose }: { port: StoryStudioPort; projectId: string; segmentId: string; onClose(): void }) {
+  const state = useStoryStudioStore();
+  const project = state.projects.find((value) => value.id === projectId)!;
+  const original = project.segments.find((value) => value.id === segmentId)!;
+  const [draft, setDraft] = useState<StorySegmentEditDraft>(() => ({
+    segmentId: original.id,
+    title: original.title,
+    synopsis: original.synopsis,
+    kind: original.kind,
+    seconds: original.seconds,
+    detail: original.detail == null ? null : structuredClone(original.detail),
+    characterIds: [...original.characterIds],
+    sceneIds: [...original.sceneIds],
+    propIds: [...original.propIds],
+    videoGuidanceMode: original.videoGuidanceMode,
+    relations: project.relations.filter((value) => value.segmentId === original.id).map((value) => ({
+      id: value.id,
+      characterId: value.characterId,
+      sceneId: value.sceneId,
+      action: value.action,
+      position: value.position,
+      startSecond: value.startSecond,
+      endSecond: value.endSecond,
+    })),
+  }));
+  const resources = [
+    ...project.characters.map((value) => ({ id: value.id, name: value.name, kind: "character" as const })),
+    ...project.scenes.map((value) => ({ id: value.id, name: value.name, kind: "scene" as const })),
+    ...project.props.map((value) => ({ id: value.id, name: value.name, kind: "prop" as const })),
+  ];
+  const valid = draft.title.trim().length > 0
+    && draft.title.length <= 120
+    && draft.synopsis.length <= 2_000
+    && draft.characterIds.length + draft.sceneIds.length + draft.propIds.length <= 8
+    && (draft.detail == null || (draft.detail.firstFramePrompt.trim().length > 0
+      && draft.detail.shots.length > 0
+      && draft.detail.shots.every((shot) => shot.prompt.trim() && shot.start >= 0 && shot.end <= draft.seconds && shot.end > shot.start)))
+    && draft.relations.every((relation) => relation.startSecond >= 0
+      && relation.endSecond <= draft.seconds
+      && relation.endSecond > relation.startSecond
+      && draft.characterIds.includes(relation.characterId)
+      && draft.sceneIds.includes(relation.sceneId));
+  const setResource = (kind: "character" | "scene" | "prop", id: string, enabled: boolean) => {
+    const key = kind === "character" ? "characterIds" : kind === "scene" ? "sceneIds" : "propIds";
+    setDraft((current) => {
+      const ids = enabled ? [...new Set([...current[key], id])] : current[key].filter((value) => value !== id);
+      const relations = enabled || kind === "prop"
+        ? current.relations
+        : current.relations.filter((value) => kind === "character" ? value.characterId !== id : value.sceneId !== id);
+      return { ...current, [key]: ids, relations };
+    });
+  };
+  const changeDuration = (seconds: number) => setDraft((current) => ({
+    ...current,
+    seconds,
+    detail: null,
+    relations: current.relations.map((relation) => {
+      const startSecond = Math.min(relation.startSecond, Math.max(0, seconds - 1));
+      return { ...relation, startSecond, endSecond: Math.max(startSecond + 1, Math.min(relation.endSecond, seconds)) };
+    }),
+  }));
+  const addRelation = () => {
+    const characterId = draft.characterIds[0];
+    const sceneId = draft.sceneIds[0];
+    if (!characterId || !sceneId || draft.relations.length >= 8) return;
+    setDraft((current) => ({ ...current, relations: [...current.relations, {
+      id: crypto.randomUUID(), characterId, sceneId, action: "", position: "", startSecond: 0, endSecond: current.seconds,
+    }] }));
+  };
+  const updateRelation = (index: number, change: Partial<StorySegmentRelationEdit>) => setDraft((current) => ({
+    ...current,
+    relations: current.relations.map((value, relationIndex) => relationIndex === index ? { ...value, ...change } : value),
+  }));
+  const updateDetail = (change: Partial<NonNullable<StorySegmentEditDraft["detail"]>>) => setDraft((current) => ({
+    ...current,
+    detail: current.detail ? { ...current.detail, ...change } : null,
+  }));
+  const save = async () => {
+    if (await state.updateSegment(port, draft)) onClose();
+  };
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !state.busy) onClose(); }}><section aria-modal="true" className="story-sheet story-segment-editor" role="dialog"><header><div><span>✎</span><div><h2>编辑分段</h2><p>关系是生成上下文的事实源；保存后需要重新确认受影响的首尾帧。</p></div></div><button aria-label="关闭" disabled={state.busy} onClick={onClose} type="button">×</button></header><div className="story-segment-editor__body"><label>分段标题<input maxLength={120} onChange={(event) => setDraft((value) => ({ ...value, title: event.target.value }))} value={draft.title} /></label><div className="story-segment-editor__row"><label>分段类型<select onChange={(event) => setDraft((value) => ({ ...value, kind: event.target.value as "story" | "transition" }))} value={draft.kind}><option value="story">剧情</option><option value="transition">转场</option></select></label><label>时长<select onChange={(event) => changeDuration(Number(event.target.value))} value={draft.seconds}>{Array.from(new Set([...(project.models.supportedVideoDurations ?? Array.from({ length: 14 }, (_, index) => index + 2)), draft.seconds])).sort((left, right) => left - right).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select></label></div><label>本段剧情<textarea maxLength={2_000} onChange={(event) => setDraft((value) => ({ ...value, synopsis: event.target.value }))} rows={4} value={draft.synopsis} /></label><fieldset><legend>分段外键（人物 / 场景 / 道具，合计最多 8 个）</legend>{resources.map((resource) => { const ids = resource.kind === "character" ? draft.characterIds : resource.kind === "scene" ? draft.sceneIds : draft.propIds; return <label key={resource.id}><input checked={ids.includes(resource.id)} disabled={!ids.includes(resource.id) && draft.characterIds.length + draft.sceneIds.length + draft.propIds.length >= 8} onChange={(event) => setResource(resource.kind, resource.id, event.target.checked)} type="checkbox" />{resource.name} · {resource.kind === "character" ? "人物" : resource.kind === "scene" ? "场景" : "道具"}</label>; })}</fieldset><section className="story-relation-editor"><header><div><strong>人物—场景关联表</strong><small>动作、空间位置和有效时间会进入生成上下文。</small></div><button disabled={draft.characterIds.length === 0 || draft.sceneIds.length === 0 || draft.relations.length >= 8} onClick={addRelation} type="button">添加关系</button></header>{draft.relations.map((relation, index) => <article key={relation.id}><div className="story-segment-editor__row"><label>人物<select onChange={(event) => updateRelation(index, { characterId: event.target.value })} value={relation.characterId}>{project.characters.filter((value) => draft.characterIds.includes(value.id)).map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label><label>场景<select onChange={(event) => updateRelation(index, { sceneId: event.target.value })} value={relation.sceneId}>{project.scenes.filter((value) => draft.sceneIds.includes(value.id)).map((value) => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label></div><label>动作与互动<input maxLength={400} onChange={(event) => updateRelation(index, { action: event.target.value })} value={relation.action} /></label><label>空间位置<input maxLength={400} onChange={(event) => updateRelation(index, { position: event.target.value })} value={relation.position} /></label><div className="story-segment-editor__row"><label>开始秒<input max={draft.seconds - 1} min={0} onChange={(event) => updateRelation(index, { startSecond: Number(event.target.value) })} type="number" value={relation.startSecond} /></label><label>结束秒<input max={draft.seconds} min={1} onChange={(event) => updateRelation(index, { endSecond: Number(event.target.value) })} type="number" value={relation.endSecond} /></label></div><button className="is-destructive" onClick={() => setDraft((current) => ({ ...current, relations: current.relations.filter((_, relationIndex) => relationIndex !== index) }))} type="button">移除关系</button></article>)}</section>{draft.detail ? <section className="story-detail-editor"><header><strong>镜头计划</strong><button onClick={() => setDraft((value) => ({ ...value, detail: null }))} type="button">清除计划</button></header><label>首帧提示词<textarea maxLength={3_000} onChange={(event) => updateDetail({ firstFramePrompt: event.target.value })} rows={3} value={draft.detail.firstFramePrompt} /></label><label>尾帧提示词<textarea maxLength={3_000} onChange={(event) => updateDetail({ lastFramePrompt: event.target.value || null })} rows={3} value={draft.detail.lastFramePrompt ?? ""} /></label>{draft.detail.shots.map((shot, index) => <label key={`${shot.start}-${shot.end}-${index}`}>镜头 {shot.start}–{shot.end} 秒<textarea maxLength={2_000} onChange={(event) => updateDetail({ shots: draft.detail!.shots.map((value, shotIndex) => shotIndex === index ? { ...value, prompt: event.target.value } : value) })} rows={3} value={shot.prompt} /></label>)}<label>入镜衔接<input maxLength={1_000} onChange={(event) => updateDetail({ continuityIn: event.target.value })} value={draft.detail.continuityIn} /></label><label>出镜衔接<input maxLength={1_000} onChange={(event) => updateDetail({ continuityOut: event.target.value })} value={draft.detail.continuityOut} /></label><label>声音<input maxLength={1_000} onChange={(event) => updateDetail({ audio: event.target.value })} value={draft.detail.audio} /></label><label>一致性约束<textarea maxLength={2_000} onChange={(event) => updateDetail({ constraints: event.target.value })} rows={3} value={draft.detail.constraints} /></label></section> : <button className="story-secondary-button" onClick={() => setDraft((value) => ({ ...value, detail: { firstFramePrompt: "", lastFramePrompt: null, shots: [{ start: 0, end: value.seconds, prompt: "" }], continuityIn: "", continuityOut: "", audio: "", constraints: "" } }))} type="button">手动编写镜头计划</button>}</div><footer><small>保存不会覆盖媒体文件、生成任务或历史记录。</small><div><button disabled={state.busy} onClick={onClose} type="button">取消</button><button className="story-primary-button" disabled={state.busy || !valid} onClick={() => void save()} type="button">{state.busy ? "正在保存…" : "保存分段"}</button></div></footer></section></div>;
 }
 
 function FrameCard({ title, image, empty }: { title: string; image: string | null; empty: string }) {
