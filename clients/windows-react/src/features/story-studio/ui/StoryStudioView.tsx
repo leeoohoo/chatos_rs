@@ -163,6 +163,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
   const [deleteSegmentId, setDeleteSegmentId] = useState<string | null>(null);
   const [editingResourceId, setEditingResourceId] = useState<string | null>(null);
   const [versionTarget, setVersionTarget] = useState<StoryImageImportTarget | null>(null);
+  const [showPlaylist, setShowPlaylist] = useState(false);
   const hasUnresolvedJobs = resources.some((value) => value.media.generationAttemptId != null)
     || project.segments.some((value) => value.attempt != null
       || value.firstFrames.generationAttemptId != null
@@ -190,7 +191,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
       {planning && <PlanningStatus progress={planning} />}
       <StoryMediaBatchPanel port={port} projectId={project.id} />
       <section className="story-resource-strip">
-        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><div className="story-resource-strip__actions"><button disabled={state.busy} onClick={() => setShowBatchPreview(true)} type="button">批量制作</button><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></div></header>
+        <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><div className="story-resource-strip__actions">{project.segments.some((value) => value.video != null) && <button onClick={() => setShowPlaylist(true)} type="button">连续播放</button>}<button disabled={state.busy} onClick={() => setShowBatchPreview(true)} type="button">批量制作</button><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">{isRefining ? planningActionLabel(planning) : "细化全部镜头"}</button></div></header>
         <div>{resources.map((resource) => {
           const image = storyConfirmedImage(resource.media);
           const latest = resource.media.images.at(-1) ?? null;
@@ -214,6 +215,7 @@ function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: Medi
       {showBatchPreview && <StoryMediaBatchPreviewSheet onClose={() => setShowBatchPreview(false)} port={port} project={project} />}
       {editingResourceId && <StoryResourcePromptSheet onClose={() => setEditingResourceId(null)} port={port} projectId={project.id} resourceId={editingResourceId} />}
       {versionTarget && <StoryImageVersionsSheet onClose={() => setVersionTarget(null)} port={port} projectId={project.id} target={versionTarget} />}
+      {showPlaylist && <StoryPlaylistSheet onClose={() => setShowPlaylist(false)} project={project} />}
       {deleteSegmentId && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDeleteSegmentId(null); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>删除这个分段？</h2><p>删除后会重新检查全剧衔接。</p></div></div><button aria-label="关闭" onClick={() => setDeleteSegmentId(null)} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">其他分段的详细镜头计划需要重新细化；已有素材文件仍会保留。</p></div><footer><button onClick={() => setDeleteSegmentId(null)} type="button">取消</button><button className="story-retry-confirm" disabled={state.busy} onClick={() => { const id = deleteSegmentId; setDeleteSegmentId(null); void mutateStructure("delete", id); }} type="button">删除分段</button></footer></section></div>}
     </div>
   );
@@ -530,6 +532,7 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onPickVer
       {(hasUnconfirmedFirst || hasUnconfirmedLast) && <button className="story-confirm-frames" disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestFrames(port, segment.id, latestLast != null)} type="button">确认使用最新首尾帧</button>}
       {segment.detail && <section className="story-shot-list"><h4>镜头时间线</h4>{segment.detail.shots.map((shot) => <div key={`${shot.start}-${shot.end}`}><span>{shot.start}–{shot.end}s</span><p>{shot.prompt}</p></div>)}</section>}
       {segment.video?.previewUrl && <video className="story-video-preview" controls preload="metadata" src={segment.video.previewUrl} />}
+      {segment.archivedVideos.length > 0 && <details className="story-archived-videos"><summary>历史成片（{segment.archivedVideos.length}）</summary><div>{segment.archivedVideos.map((video, index) => <article key={`${video.contentToken ?? video.previewUrl ?? video.modelName}:${index}`}><strong>版本 {index + 1}</strong><small>{video.modelName}</small>{video.previewUrl ? <video controls preload="metadata" src={video.previewUrl} /> : <p>这个历史版本暂时无法预览。</p>}</article>)}</div></details>}
       {segment.video && <div className="story-video-redo"><p>重做会先把当前成片保留到创作历史，不会覆盖本机文件。</p><div><button disabled={state.busy} onClick={() => void state.archiveCompletedVideo(port, segment.id, false)} type="button">从首尾帧重做</button><button disabled={state.busy} onClick={() => void state.archiveCompletedVideo(port, segment.id, true)} type="button">按原视频修改</button></div></div>}
       {segment.error && <p className="story-segment-error">{segment.error}</p>}
       <footer>
@@ -543,6 +546,19 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onPickVer
       {showEditor && <StorySegmentEditorSheet onClose={() => setShowEditor(false)} port={port} projectId={project.id} segmentId={segment.id} />}
     </article>
   );
+}
+
+function StoryPlaylistSheet({ project, onClose }: { project: StoryProject; onClose(): void }) {
+  const playable = project.segments.flatMap((segment, index) => segment.video?.previewUrl ? [{
+    segmentId: segment.id,
+    title: segment.title,
+    index,
+    url: segment.video.previewUrl,
+  }] : []);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const current = playable[currentIndex];
+  if (!current) return null;
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet story-playlist-sheet" role="dialog"><header><div><span>▶</span><div><h2>连续播放剧情</h2><p>按项目分段顺序播放已完成视频；尚未完成的分段会跳过。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-playlist-player"><video autoPlay controls key={current.segmentId} onEnded={() => { if (currentIndex + 1 < playable.length) setCurrentIndex(currentIndex + 1); }} preload="auto" src={current.url} /><div><strong>{String(current.index + 1).padStart(2, "0")} · {current.title}</strong><span>{currentIndex + 1} / {playable.length} 个已完成分段</span></div></div><ol>{playable.map((item, index) => <li className={index === currentIndex ? "is-playing" : ""} key={item.segmentId}><button onClick={() => setCurrentIndex(index)} type="button"><span>{String(item.index + 1).padStart(2, "0")}</span><strong>{item.title}</strong>{index === currentIndex && <small>正在播放</small>}</button></li>)}</ol><footer><button disabled={currentIndex === 0} onClick={() => setCurrentIndex((value) => value - 1)} type="button">上一段</button><button disabled={currentIndex + 1 >= playable.length} onClick={() => setCurrentIndex((value) => value + 1)} type="button">下一段</button><button onClick={onClose} type="button">完成</button></footer></section></div>;
 }
 
 function StorySegmentEditorSheet({ port, projectId, segmentId, onClose }: { port: StoryStudioPort; projectId: string; segmentId: string; onClose(): void }) {

@@ -259,6 +259,45 @@ describe("StoryStudioView", () => {
     })));
   });
 
+  it("shows archived videos and plays completed segments in story order", async () => {
+    const canonical = plannedProject();
+    const video = {
+      modelName: "MiniMax-H3",
+      contentToken: "a".repeat(32),
+      previewUrl: "chatos-story://localhost/media/video-a",
+    };
+    canonical.segments[0]!.video = video;
+    canonical.segments[0]!.archivedVideos = [{
+      ...video,
+      contentToken: "b".repeat(32),
+      previewUrl: "chatos-story://localhost/media/video-old",
+    }];
+    const second = {
+      ...canonical.segments[0]!,
+      id: "segment-b",
+      title: "门缓缓打开",
+      video: {
+        ...video,
+        contentToken: "c".repeat(32),
+        previewUrl: "chatos-story://localhost/media/video-b",
+      },
+      archivedVideos: [],
+    };
+    canonical.segments.push(second);
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    expect(await screen.findByText("历史成片（1）")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "连续播放" }));
+    expect(screen.getByRole("heading", { name: "连续播放剧情" })).toBeVisible();
+    expect(screen.getByText("1 / 2 个已完成分段")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "下一段" }));
+    expect(screen.getByText("02 · 门缓缓打开")).toBeVisible();
+    expect(screen.getByText("2 / 2 个已完成分段")).toBeVisible();
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
