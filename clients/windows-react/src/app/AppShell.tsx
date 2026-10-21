@@ -1,86 +1,209 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ComponentProps } from "react";
 import type { AuthSession } from "../features/authentication/domain/authentication";
 import type { AskUserPort } from "../features/ask-user/ports/AskUserPort";
-import type { AccessControlPort } from "../features/access-control/ports/AccessControlPort";
-import { AccessControlView } from "../features/access-control/ui/AccessControlView";
 import type { ConversationHistoryPort } from "../features/conversation-history/ports/ConversationHistoryPort";
-import { ContactConversationView } from "../features/contact-conversation/ui/ContactConversationView";
 import type { ConversationComposerPort } from "../features/conversation-composer/ports/ConversationComposerPort";
 import type { ConversationAttachmentPort } from "../features/conversation-attachments/ports/ConversationAttachmentPort";
 import type { ConversationRealtimePort } from "../features/conversation-realtime/ports/ConversationRealtimePort";
 import type { ConversationRuntimeSettingsPort } from "../features/conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
 import type { RunInspectorPort } from "../features/run-inspector/ports/RunInspectorPort";
-import type { SystemPermissionsPort } from "../features/runtime-permissions/ports/SystemPermissionsPort";
-import { SystemPermissionsView } from "../features/runtime-permissions/ui/SystemPermissionsView";
 import type { ToolApprovalPort } from "../features/tool-approval/ports/ToolApprovalPort";
 import type { ToolApprovalSettingsPort } from "../features/tool-approval/ports/ToolApprovalSettingsPort";
 import { GlobalToolApprovalOverlay } from "../features/tool-approval/ui/GlobalToolApprovalOverlay";
-import { ToolApprovalSettingsView } from "../features/tool-approval/ui/ToolApprovalSettingsView";
 import { HostReadyGate } from "../features/host-lifecycle/ui/HostReadyGate";
 import { useHostLifecycleStore } from "../features/host-lifecycle/application/hostLifecycleStore";
 import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLifecyclePort";
-import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
-import type { MediaStudioPort } from "../features/media-studio/ports/MediaStudioPort";
-import type { StoryStudioPort } from "../features/story-studio/ports/StoryStudioPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
-import {
-  PluginApplicationHostView,
-  PluginApplicationsView,
-} from "../features/plugin-applications/ui/PluginApplicationsView";
 import { useProjectConversationStore } from "../features/project-conversation/application/projectConversationStore";
-import type { ProjectConversationPort } from "../features/project-conversation/ports/ProjectConversationPort";
-import { ProjectConversationPlaceholder } from "../features/project-conversation/ui/ProjectConversationPlaceholder";
-import type { ProjectCreationPort } from "../features/project-creation/ports/ProjectCreationPort";
-import { CreateProjectSheet } from "../features/project-creation/ui/CreateProjectSheet";
-import type { ProjectDirectoryPort } from "../features/project-directory/ports/ProjectDirectoryPort";
-import { ProjectWorkspaceSurface } from "../features/project-directory/ui/ProjectWorkspaceSurface";
-import type { ProjectGitPort } from "../features/project-git/ports/ProjectGitPort";
-import type { ProjectRunPort } from "../features/project-run/ports/ProjectRunPort";
 import { useRemoteConnectionStore } from "../features/remote-connection/application/remoteConnectionStore";
 import type { RemoteConnectionPort } from "../features/remote-connection/ports/RemoteConnectionPort";
-import { RemoteConnectionDetailView } from "../features/remote-connection/ui/RemoteConnectionDetailView";
-import { RemoteConnectionEditorSheet } from "../features/remote-connection/ui/RemoteConnectionEditorSheet";
-import type { RemoteFilePort } from "../features/remote-files/ports/RemoteFilePort";
-import type { RemoteTerminalPort } from "../features/remote-terminal/ports/RemoteTerminalPort";
 import { useWorkspaceIndexStore } from "../features/workspace-index/application/workspaceIndexStore";
 import type { WorkspaceSelection } from "../features/workspace-index/domain/workspaceIndex";
 import type { WorkspaceIndexPort } from "../features/workspace-index/ports/WorkspaceIndexPort";
 import { WorkspaceSidebar } from "../features/workspace-index/ui/WorkspaceSidebar";
 
 const LocalTerminalWorkspace = lazy(async () => {
-  const module = await import("../features/local-terminal/ui/LocalTerminalWorkspace");
-  return { default: module.LocalTerminalWorkspace };
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/local-terminal/adapters/TauriLocalTerminalAdapter"),
+    import("../features/local-terminal/ui/LocalTerminalWorkspace"),
+  ]);
+  const port = new adapterModule.TauriLocalTerminalAdapter();
+  return {
+    default: ({ hostReady, ownerUserId }: { hostReady: boolean; ownerUserId: string }) => (
+      <viewModule.LocalTerminalWorkspace
+        hostReady={hostReady}
+        ownerUserId={ownerUserId}
+        port={port}
+      />
+    ),
+  };
 });
 
-const MediaStudioView = lazy(async () => {
-  const module = await import("../features/media-studio/ui/MediaStudioView");
-  return { default: module.MediaStudioView };
+const MediaStudioWorkspace = lazy(async () => {
+  const [mediaAdapterModule, storyAdapterModule, viewModule] = await Promise.all([
+    import("../features/media-studio/adapters/TauriMediaStudioAdapter"),
+    import("../features/story-studio/adapters/TauriStoryStudioAdapter"),
+    import("../features/media-studio/ui/MediaStudioView"),
+  ]);
+  const mediaPort = new mediaAdapterModule.TauriMediaStudioAdapter();
+  const storyPort = new storyAdapterModule.TauriStoryStudioAdapter();
+  return {
+    default: ({ ownerUserId }: { ownerUserId: string }) => (
+      <viewModule.MediaStudioView
+        ownerUserId={ownerUserId}
+        port={mediaPort}
+        storyPort={storyPort}
+      />
+    ),
+  };
+});
+
+const AccessControlWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/access-control/adapters/TauriAccessControlAdapter"),
+    import("../features/access-control/ui/AccessControlView"),
+  ]);
+  const port = new adapterModule.TauriAccessControlAdapter();
+  return {
+    default: ({ hostReady, ownerUserId }: { hostReady: boolean; ownerUserId: string }) => (
+      <viewModule.AccessControlView
+        hostReady={hostReady}
+        ownerUserId={ownerUserId}
+        port={port}
+      />
+    ),
+  };
+});
+
+const SystemPermissionsWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/runtime-permissions/adapters/TauriSystemPermissionsAdapter"),
+    import("../features/runtime-permissions/ui/SystemPermissionsView"),
+  ]);
+  const port = new adapterModule.TauriSystemPermissionsAdapter();
+  return {
+    default: ({ hostReady, ownerUserId }: { hostReady: boolean; ownerUserId: string }) => (
+      <viewModule.SystemPermissionsView
+        hostReady={hostReady}
+        ownerUserId={ownerUserId}
+        port={port}
+      />
+    ),
+  };
+});
+
+const ToolApprovalSettingsView = lazy(async () => {
+  const module = await import("../features/tool-approval/ui/ToolApprovalSettingsView");
+  return { default: module.ToolApprovalSettingsView };
+});
+
+const PluginApplicationsView = lazy(async () => {
+  const module = await import("../features/plugin-applications/ui/PluginApplicationsView");
+  return { default: module.PluginApplicationsView };
+});
+
+const PluginApplicationHostView = lazy(async () => {
+  const module = await import("../features/plugin-applications/ui/PluginApplicationsView");
+  return { default: module.PluginApplicationHostView };
+});
+
+const RemoteConnectionDetailWorkspace = lazy(async () => {
+  const [fileAdapterModule, terminalAdapterModule, viewModule] = await Promise.all([
+    import("../features/remote-files/adapters/TauriRemoteFileAdapter"),
+    import("../features/remote-terminal/adapters/TauriRemoteTerminalAdapter"),
+    import("../features/remote-connection/ui/RemoteConnectionDetailView"),
+  ]);
+  const remoteFilePort = new fileAdapterModule.TauriRemoteFileAdapter();
+  const remoteTerminalPort = new terminalAdapterModule.TauriRemoteTerminalAdapter();
+  type Props = Omit<
+    ComponentProps<typeof viewModule.RemoteConnectionDetailView>,
+    "remoteFilePort" | "remoteTerminalPort"
+  >;
+  return {
+    default: (props: Props) => (
+      <viewModule.RemoteConnectionDetailView
+        {...props}
+        remoteFilePort={remoteFilePort}
+        remoteTerminalPort={remoteTerminalPort}
+      />
+    ),
+  };
+});
+
+const ProjectWorkspaceSurface = lazy(async () => {
+  const [directoryAdapterModule, gitAdapterModule, runAdapterModule, viewModule] = await Promise.all([
+    import("../features/project-directory/adapters/TauriProjectDirectoryAdapter"),
+    import("../features/project-git/adapters/TauriProjectGitAdapter"),
+    import("../features/project-run/adapters/TauriProjectRunAdapter"),
+    import("../features/project-directory/ui/ProjectWorkspaceSurface"),
+  ]);
+  const directoryPort = new directoryAdapterModule.TauriProjectDirectoryAdapter();
+  const gitPort = new gitAdapterModule.TauriProjectGitAdapter();
+  const runPort = new runAdapterModule.TauriProjectRunAdapter();
+  type Props = Omit<
+    ComponentProps<typeof viewModule.ProjectWorkspaceSurface>,
+    "directoryPort" | "gitPort" | "runPort"
+  >;
+  return {
+    default: (props: Props) => (
+      <viewModule.ProjectWorkspaceSurface
+        {...props}
+        directoryPort={directoryPort}
+        gitPort={gitPort}
+        runPort={runPort}
+      />
+    ),
+  };
+});
+
+const ProjectConversationPlaceholder = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/project-conversation/adapters/TauriProjectConversationAdapter"),
+    import("../features/project-conversation/ui/ProjectConversationPlaceholder"),
+  ]);
+  const port = new adapterModule.TauriProjectConversationAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.ProjectConversationPlaceholder>, "port">;
+  return {
+    default: (props: Props) => (
+      <viewModule.ProjectConversationPlaceholder {...props} port={port} />
+    ),
+  };
+});
+
+const ContactConversationView = lazy(async () => {
+  const module = await import("../features/contact-conversation/ui/ContactConversationView");
+  return { default: module.ContactConversationView };
+});
+
+const CreateProjectSheet = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/project-creation/adapters/TauriProjectCreationAdapter"),
+    import("../features/project-creation/ui/CreateProjectSheet"),
+  ]);
+  const port = new adapterModule.TauriProjectCreationAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.CreateProjectSheet>, "port">;
+  return {
+    default: (props: Props) => <viewModule.CreateProjectSheet {...props} port={port} />,
+  };
+});
+
+const RemoteConnectionEditorSheet = lazy(async () => {
+  const module = await import("../features/remote-connection/ui/RemoteConnectionEditorSheet");
+  return { default: module.RemoteConnectionEditorSheet };
 });
 
 interface AppShellProps {
-  accessControl: AccessControlPort;
   hostLifecycle: HostLifecyclePort;
-  localTerminal: LocalTerminalPort;
-  mediaStudio: MediaStudioPort;
-  storyStudio: StoryStudioPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
-  projectConversation: ProjectConversationPort;
-  projectCreation: ProjectCreationPort;
-  projectDirectory: ProjectDirectoryPort;
-  projectGit: ProjectGitPort;
-  projectRun: ProjectRunPort;
   remoteConnection: RemoteConnectionPort;
-  remoteFile: RemoteFilePort;
-  remoteTerminal: RemoteTerminalPort;
   conversationHistory: ConversationHistoryPort;
   conversationComposer: ConversationComposerPort;
   conversationAttachments: ConversationAttachmentPort;
   conversationRealtime: ConversationRealtimePort;
   conversationRuntimeSettings: ConversationRuntimeSettingsPort;
   runInspector: RunInspectorPort;
-  systemPermissions: SystemPermissionsPort;
   askUser: AskUserPort;
   toolApproval: ToolApprovalPort & ToolApprovalSettingsPort;
   session: AuthSession;
@@ -88,28 +211,16 @@ interface AppShellProps {
 }
 
 export function AppShell({
-  accessControl,
   hostLifecycle,
-  localTerminal,
-  mediaStudio,
-  storyStudio,
   pluginApplication,
   workspaceIndex,
-  projectConversation,
-  projectCreation,
-  projectDirectory,
-  projectGit,
-  projectRun,
   remoteConnection,
-  remoteFile,
-  remoteTerminal,
   conversationHistory,
   conversationComposer,
   conversationAttachments,
   conversationRealtime,
   conversationRuntimeSettings,
   runInspector,
-  systemPermissions,
   askUser,
   toolApproval,
   session,
@@ -296,7 +407,8 @@ export function AppShell({
           </div>
           <span className="protocol-badge">Host v{snapshot.protocolVersion}</span>
         </header>
-        {activeSurface === "tool-approval" ? (
+        <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入工作区…</div>}>
+          {activeSurface === "tool-approval" ? (
           <ToolApprovalSettingsView
             approvalPort={toolApproval}
             hostReady={snapshot.ready}
@@ -304,29 +416,22 @@ export function AppShell({
             settingsPort={toolApproval}
           />
         ) : activeSurface === "runtime-permissions" ? (
-          <SystemPermissionsView
+          <SystemPermissionsWorkspace
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
-            port={systemPermissions}
           />
         ) : activeSurface === "access-control" ? (
-          <AccessControlView
+          <AccessControlWorkspace
             hostReady={snapshot.ready}
             ownerUserId={session.user.id}
-            port={accessControl}
           />
         ) : selection.kind === "terminal" ? (
-          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入本机终端…</div>}>
-            <LocalTerminalWorkspace
-              hostReady={snapshot.ready}
-              ownerUserId={session.user.id}
-              port={localTerminal}
-            />
-          </Suspense>
+          <LocalTerminalWorkspace
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+          />
         ) : selection.kind === "mediaStudio" ? (
-          <Suspense fallback={<div className="workspace-loading"><span className="mini-spinner" />正在载入 AI 创作…</div>}>
-            <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} storyPort={storyStudio} />
-          </Suspense>
+          <MediaStudioWorkspace ownerUserId={session.user.id} />
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
           <PluginApplicationsView
             hostReady={snapshot.ready}
@@ -348,13 +453,11 @@ export function AppShell({
             onBack={() => setSelection({ kind: "applications" })}
           />
         ) : selectedRemoteConnection ? (
-          <RemoteConnectionDetailView
+          <RemoteConnectionDetailWorkspace
             connection={selectedRemoteConnection}
             connections={remoteConnections}
             ownerUserId={session.user.id}
             port={remoteConnection}
-            remoteFilePort={remoteFile}
-            remoteTerminalPort={remoteTerminal}
             onDeleted={(connectionId) => {
               acceptDeletedRemoteConnection(session.user.id, connectionId);
               setRemoteEditorTarget(null);
@@ -364,9 +467,6 @@ export function AppShell({
           />
         ) : selectedProject ? (
           <ProjectWorkspaceSurface
-            directoryPort={projectDirectory}
-            gitPort={projectGit}
-            runPort={projectRun}
             ownerUserId={session.user.id}
             projectId={selectedProject.id}
             projectName={selectedProject.title}
@@ -381,7 +481,6 @@ export function AppShell({
                 project={selectedProject}
                 hostReady={snapshot.ready}
                 defaultContactReady={defaultContactReady}
-                port={projectConversation}
                 historyPort={conversationHistory}
                 composerPort={conversationComposer}
                 attachmentPort={conversationAttachments}
@@ -410,7 +509,8 @@ export function AppShell({
             diagnostics={diagnostics}
             onRetry={() => void retry(hostLifecycle)}
           />
-        )}
+          )}
+        </Suspense>
       </section>
       <GlobalToolApprovalOverlay
         hostReady={snapshot.ready}
@@ -418,29 +518,32 @@ export function AppShell({
         port={toolApproval}
       />
       {showCreateProject && (
-        <CreateProjectSheet
-          ownerUserId={session.user.id}
-          port={projectCreation}
-          onDismiss={() => setShowCreateProject(false)}
-          onCreated={(project) => {
-            acceptCreatedProject(session.user.id, project);
-            selectWorkspace({ kind: "project", id: project.id });
-          }}
-        />
+        <Suspense fallback={null}>
+          <CreateProjectSheet
+            ownerUserId={session.user.id}
+            onDismiss={() => setShowCreateProject(false)}
+            onCreated={(project) => {
+              acceptCreatedProject(session.user.id, project);
+              selectWorkspace({ kind: "project", id: project.id });
+            }}
+          />
+        </Suspense>
       )}
       {remoteEditorTarget && (
-        <RemoteConnectionEditorSheet
-          connections={remoteConnections}
-          editingConnection={editingRemoteConnection}
-          key={remoteEditorTarget}
-          ownerUserId={session.user.id}
-          port={remoteConnection}
-          onDismiss={() => setRemoteEditorTarget(null)}
-          onSaved={(connection) => {
-            acceptSavedRemoteConnection(session.user.id, connection);
-            selectWorkspace({ kind: "remote", id: connection.id });
-          }}
-        />
+        <Suspense fallback={null}>
+          <RemoteConnectionEditorSheet
+            connections={remoteConnections}
+            editingConnection={editingRemoteConnection}
+            key={remoteEditorTarget}
+            ownerUserId={session.user.id}
+            port={remoteConnection}
+            onDismiss={() => setRemoteEditorTarget(null)}
+            onSaved={(connection) => {
+              acceptSavedRemoteConnection(session.user.id, connection);
+              selectWorkspace({ kind: "remote", id: connection.id });
+            }}
+          />
+        </Suspense>
       )}
     </>
   );
