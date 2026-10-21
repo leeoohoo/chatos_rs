@@ -7,9 +7,10 @@ use crate::authentication::GatewayModelConfig;
 
 use super::{
     domain::{
-        apply_segment_edit, clear_confirmed_last_frame, confirm_image, update_resource_prompt,
-        StoryFrameRole, StoryImageCollection, StoryImageTarget, StoryModelSelection, StoryProject,
-        StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange, StoryVideoGuidanceMode,
+        apply_segment_edit, clear_confirmed_last_frame, confirm_image, confirm_latest_frames,
+        confirm_latest_resource_images, update_resource_prompt, StoryFrameRole,
+        StoryImageCollection, StoryImageTarget, StoryModelSelection, StoryProject, StorySegment,
+        StorySegmentEdit, StorySegmentKind, StorySourceRange, StoryVideoGuidanceMode,
         STORY_SCHEMA_VERSION,
     },
     planning::project_fingerprint,
@@ -120,6 +121,23 @@ pub(crate) struct StoryLastFrameClearInput {
     pub project_id: String,
     pub base_fingerprint: String,
     pub segment_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLatestResourceImagesInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub resource_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLatestFramesInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub use_confirmed_last_frame_for_video: bool,
 }
 
 pub(super) fn make_story_project(
@@ -395,6 +413,36 @@ fn require_story_fingerprint(
     } else {
         Ok(())
     }
+}
+
+pub(super) fn apply_story_latest_resource_images(
+    project: &mut StoryProject,
+    input: StoryLatestResourceImagesInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let mut next = confirm_latest_resource_images(project, &input.resource_ids)?
+        .ok_or_else(|| "剧情素材确认状态没有变化。".to_owned())?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
+}
+
+pub(super) fn apply_story_latest_frames(
+    project: &mut StoryProject,
+    input: StoryLatestFramesInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let mut next = confirm_latest_frames(
+        project,
+        &input.segment_id,
+        input.use_confirmed_last_frame_for_video,
+    )?
+    .ok_or_else(|| "剧情帧确认状态没有变化。".to_owned())?;
+    next.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    *project = next;
+    Ok(())
 }
 
 fn validated_model_selection(

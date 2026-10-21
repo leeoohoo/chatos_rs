@@ -15,9 +15,9 @@ use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
         apply_story_segment_edit, make_story_project, StoryImageConfirmationInput,
-        StoryLastFrameClearInput, StoryProjectCreationInput, StoryProjectSettingsInput,
-        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
-        StorySegmentStructureInput,
+        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
     },
     domain::{StoryImageCollection, StoryProject},
     execution::StoryPlanningExecutionRegistry,
@@ -471,6 +471,48 @@ impl StoryStudioManager {
         let project_id = input.project_id.clone();
         let project = self.store.mutate_project(owner, &project_id, |project| {
             super::application::apply_story_last_frame_clear(
+                project,
+                input,
+                current_unix_milliseconds(),
+            )
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn confirm_latest_story_resource_images(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryLatestResourceImagesInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            super::application::apply_story_latest_resource_images(
+                project,
+                input,
+                current_unix_milliseconds(),
+            )
+        })?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn confirm_latest_story_frames(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryLatestFramesInput,
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            super::application::apply_story_latest_frames(
                 project,
                 input,
                 current_unix_milliseconds(),

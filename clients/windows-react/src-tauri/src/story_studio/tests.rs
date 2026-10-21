@@ -3,10 +3,10 @@ use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
         make_story_project, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryLastFrameClearInput, StoryModelSelectionInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
-        StorySegmentStructureOperation,
+        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
+        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
+        StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1046,6 +1046,63 @@ fn typed_image_confirmation_and_last_frame_clear_match_macos_rules() {
     };
     assert!(
         super::application::apply_story_image_confirmation(&mut canonical, invalid, 4).is_err()
+    );
+}
+
+#[test]
+fn latest_resource_and_frame_confirmation_matches_macos_batch_rules() {
+    let mut canonical = project();
+    let older = StoryImage::test_image("older-resource.png");
+    let latest = StoryImage::test_image("latest-resource.png");
+    canonical.props[0].media.images = vec![older, latest.clone()];
+    let first = StoryImage::test_image("latest-first.png");
+    let last = StoryImage::test_image("latest-last.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(first.clone());
+    canonical.segments[0].last_frames.images.push(last.clone());
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_latest_resource_images(
+        &mut canonical,
+        StoryLatestResourceImagesInput {
+            project_id: project_id.clone(),
+            base_fingerprint: fingerprint,
+            resource_ids: vec!["key".into(), "key".into(), "missing".into()],
+        },
+        2,
+    )
+    .unwrap();
+    assert_eq!(canonical.props[0].media.confirmed_image_id, Some(latest.id));
+
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+    super::application::apply_story_latest_frames(
+        &mut canonical,
+        StoryLatestFramesInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment_id: "s1".into(),
+            use_confirmed_last_frame_for_video: true,
+        },
+        3,
+    )
+    .unwrap();
+    assert_eq!(
+        canonical.segments[0].first_frames.confirmed_image_id,
+        Some(first.id.clone())
+    );
+    assert_eq!(
+        canonical.segments[0].user_selected_first_frame_id,
+        Some(first.id)
+    );
+    assert_eq!(
+        canonical.segments[0].last_frames.confirmed_image_id,
+        Some(last.id)
+    );
+    assert_eq!(
+        canonical.segments[0].video_guidance_mode,
+        StoryVideoGuidanceMode::FirstAndLastFrames
     );
 }
 

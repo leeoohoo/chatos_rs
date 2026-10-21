@@ -564,6 +564,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事图片确认第十三段）：新增 `confirm_story_image` 与 `clear_story_last_frame` typed commands，均绑定 canonical fingerprint、当前 presentation 和 authentication generation。resource 确认会拒绝未决依赖视频并失效依赖分段首尾帧；first-frame 确认记录显式用户选择并清除继承来源；last-frame 确认只改变尾帧选择；取消尾帧时按 macOS 规则把 first+last guidance 降回 first-frame，其他 guidance 不被误改。组合错误的 resource/segment/frameRole 目标失败关闭，React 仍不能提交媒体对象或 filename。Story Rust 定向测试增至 35 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片补批量 latest resource/frame 确认与图片导入边界。
 
+状态补充（2026-10-21，Windows AI 故事批量确认第十四段）：新增 `confirm_latest_story_resource_images` 与 `confirm_latest_story_frames`。素材批量确认按请求 ID 集合选择各资源最新图片，忽略不存在/无图片/已是最新的目标，遇到未决依赖视频失败关闭，并对实际变化资源逐一失效依赖帧。分段批量确认只作用于无 attempt、无完成视频的目标，分别补齐尚未确认的最新首尾帧；首帧同步记录显式用户选择并清除继承来源，可选把已确认尾帧启用为 first+last guidance。无实际变化不写盘。Story Rust 定向测试增至 36 项，`cargo clippy --lib -- -D warnings` 通过。React 剧情入口继续关闭；下一片进入图片导入 token/文件落盘边界。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

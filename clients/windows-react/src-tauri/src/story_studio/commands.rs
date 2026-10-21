@@ -7,9 +7,10 @@ use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owne
 
 use super::{
     application::{
-        StoryImageConfirmationInput, StoryLastFrameClearInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput,
+        StoryImageConfirmationInput, StoryLastFrameClearInput, StoryLatestFramesInput,
+        StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
+        StorySegmentStructureInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -97,6 +98,22 @@ pub(crate) struct StoryLastFrameClearCommandInput {
     owner_user_id: String,
     presentation_id: String,
     change: StoryLastFrameClearInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLatestResourceImagesCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    confirmation: StoryLatestResourceImagesInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryLatestFramesCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    confirmation: StoryLatestFramesInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -434,6 +451,60 @@ pub(crate) async fn clear_story_last_frame(
     })
     .await
     .map_err(|_| "剧情尾帧取消任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    result
+}
+
+#[tauri::command]
+pub(crate) async fn confirm_latest_story_resource_images(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryLatestResourceImagesCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        work.confirm_latest_story_resource_images(
+            &saved_owner,
+            generation,
+            &input.presentation_id,
+            input.confirmation,
+        )
+    })
+    .await
+    .map_err(|_| "剧情素材批量确认任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    result
+}
+
+#[tauri::command]
+pub(crate) async fn confirm_latest_story_frames(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryLatestFramesCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        work.confirm_latest_story_frames(
+            &saved_owner,
+            generation,
+            &input.presentation_id,
+            input.confirmation,
+        )
+    })
+    .await
+    .map_err(|_| "剧情帧批量确认任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     result
 }

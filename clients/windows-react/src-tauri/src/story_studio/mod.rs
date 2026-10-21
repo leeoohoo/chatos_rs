@@ -11,7 +11,8 @@ mod store;
 mod tools;
 
 pub(crate) use commands::{
-    abandon_story_planning, clear_story_last_frame, confirm_story_image, create_story_project,
+    abandon_story_planning, clear_story_last_frame, confirm_latest_story_frames,
+    confirm_latest_story_resource_images, confirm_story_image, create_story_project,
     discard_story_studio_presentation, load_story_planning_history, load_story_project,
     load_story_projects, resume_story_planning, start_story_planning,
     update_story_project_settings, update_story_project_source, update_story_resource_prompt,

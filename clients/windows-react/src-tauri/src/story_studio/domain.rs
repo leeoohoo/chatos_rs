@@ -901,6 +901,97 @@ pub(super) fn clear_confirmed_last_frame(
     Ok(Some(next))
 }
 
+pub(super) fn confirm_latest_resource_images(
+    project: &StoryProject,
+    resource_ids: &[String],
+) -> Result<Option<StoryProject>, String> {
+    let requested = resource_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    if requested.is_empty() {
+        return Ok(None);
+    }
+    let mut next = project.clone();
+    let known_ids = next
+        .characters
+        .iter()
+        .map(|value| value.id.clone())
+        .chain(next.scenes.iter().map(|value| value.id.clone()))
+        .chain(next.props.iter().map(|value| value.id.clone()))
+        .filter(|id| requested.contains(id.as_str()))
+        .collect::<Vec<_>>();
+    let mut changed = false;
+    for resource_id in known_ids {
+        let latest_id = next
+            .resource_media(&resource_id)
+            .and_then(|media| media.images.last())
+            .map(|image| image.id.clone());
+        let Some(latest_id) = latest_id else { continue };
+        if next
+            .resource_media(&resource_id)
+            .is_some_and(|media| media.confirmed_image_id.as_deref() == Some(&latest_id))
+        {
+            continue;
+        }
+        if next.has_unresolved_dependent_video(&resource_id) {
+            return Err("存在尚未核对的服务商提交，暂时不能切换素材版本。".into());
+        }
+        next.resource_media_mut(&resource_id)
+            .ok_or_else(invalid_target)?
+            .confirmed_image_id = Some(latest_id);
+        next.invalidate_dependent_frames(&resource_id);
+        changed = true;
+    }
+    if !changed {
+        return Ok(None);
+    }
+    next.validate()?;
+    Ok(Some(next))
+}
+
+pub(super) fn confirm_latest_frames(
+    project: &StoryProject,
+    segment_id: &str,
+    use_confirmed_last_frame_for_video: bool,
+) -> Result<Option<StoryProject>, String> {
+    let mut next = project.clone();
+    let segment = next
+        .segments
+        .iter_mut()
+        .find(|segment| {
+            segment.id == segment_id && segment.attempt.is_none() && segment.video.is_none()
+        })
+        .ok_or_else(invalid_target)?;
+    let mut changed = false;
+    if segment.first_frames.confirmed_image_id.is_none() {
+        if let Some(latest) = segment.first_frames.images.last() {
+            segment.first_frames.confirmed_image_id = Some(latest.id.clone());
+            segment.user_selected_first_frame_id = Some(latest.id.clone());
+            segment.inherited_first_frame_source_segment_id = None;
+            changed = true;
+        }
+    }
+    if segment.last_frames.confirmed_image_id.is_none() {
+        if let Some(latest) = segment.last_frames.images.last() {
+            segment.last_frames.confirmed_image_id = Some(latest.id.clone());
+            changed = true;
+        }
+    }
+    if use_confirmed_last_frame_for_video
+        && segment.last_frames.confirmed_image_id.is_some()
+        && segment.video_guidance_mode != StoryVideoGuidanceMode::FirstAndLastFrames
+    {
+        segment.video_guidance_mode = StoryVideoGuidanceMode::FirstAndLastFrames;
+        changed = true;
+    }
+    if !changed {
+        return Ok(None);
+    }
+    next.validate()?;
+    Ok(Some(next))
+}
+
 fn all_unique<'a, T: Eq + std::hash::Hash + 'a>(mut values: impl Iterator<Item = &'a T>) -> bool {
     let mut seen = HashSet::new();
     values.all(|value| seen.insert(value))
