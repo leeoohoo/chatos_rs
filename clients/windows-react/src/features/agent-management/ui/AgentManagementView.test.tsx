@@ -17,6 +17,7 @@ describe("AgentManagementView", () => {
     renderView();
     expect(await screen.findByText("界面设计师")).toBeVisible();
     expect(screen.getByText("UI 设计师")).toBeVisible();
+    expect(await screen.findByText("主要模型")).toBeVisible();
     expect(screen.getByText("每 15 分钟")).toBeVisible();
     expect(screen.getByText("项目与团队")).toBeVisible();
     expect(screen.getByRole("button", { name: /创建 Agent/ })).toBeEnabled();
@@ -39,7 +40,7 @@ describe("AgentManagementView", () => {
   it("opens creation with macOS defaults", async () => {
     renderView();
     await screen.findByText("界面设计师");
-    fireEvent.click(screen.getByRole("button", { name: /创建 Agent/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /创建 Agent/ })[0]!);
     expect(await screen.findByRole("dialog", { name: "创建 Agent" })).toBeVisible();
     expect(screen.getByLabelText("角色 Prompt")).toHaveValue("默认角色 Prompt");
     expect(screen.getByLabelText("模型")).toHaveValue("model-1");
@@ -62,7 +63,7 @@ describe("AgentManagementView", () => {
     const port = stubPort({ listProfiles: vi.fn(async () => []) });
     renderView(port);
     await screen.findByText("还没有 Agent");
-    fireEvent.click(screen.getByRole("button", { name: /创建 Agent/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: /创建 Agent/ })[1]!);
     await screen.findByRole("dialog", { name: "创建 Agent" });
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "  新 Agent  " } });
     fireEvent.change(screen.getByLabelText("说明"), { target: { value: "  处理需求  " } });

@@ -60,6 +60,24 @@ describe("agent management store", () => {
     expect(useAgentManagementStore.getState().editorCatalog?.defaultRolePrompt).toBe("owner-b prompt");
   });
 
+  it("reuses the trusted editor catalog within the same account session", async () => {
+    const port = stubPort();
+    await useAgentManagementStore.getState().activate(port, "owner-1");
+    await useAgentManagementStore.getState().loadEditorCatalog(port);
+    await useAgentManagementStore.getState().loadEditorCatalog(port);
+    expect(port.loadEditorCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not replace a profile-list error when the catalog is loaded silently", async () => {
+    const port = stubPort({
+      listProfiles: vi.fn(async () => { throw new Error("profiles unavailable"); }),
+      loadEditorCatalog: vi.fn(async () => { throw new Error("catalog unavailable"); }),
+    });
+    await useAgentManagementStore.getState().activate(port, "owner-1");
+    await useAgentManagementStore.getState().loadEditorCatalog(port, false);
+    expect(useAgentManagementStore.getState().error).toBe("profiles unavailable");
+  });
+
   it("rejects late profile editor results after reset", async () => {
     const late = deferred<AgentProfileEditorData>();
     const port = stubPort({ loadProfileEditor: vi.fn(async () => late.promise) });

@@ -18,6 +18,7 @@
 .agent-management__empty > span { display: grid; width: 56px; height: 56px; place-items: center; border-radius: 17px; color: var(--accent); background: rgba(10,132,255,.09); font-size: 26px; }
 .agent-management__empty h2 { margin: 14px 0 5px; font-size: 16px; }
 .agent-management__empty p { max-width: 440px; margin: 0; color: var(--secondary); font-size: 10.5px; line-height: 1.55; }
+.agent-management__empty button { margin-top: 14px; border: 0; border-radius: 8px; padding: 7px 13px; color: white; background: var(--accent); font-size: 10.5px; font-weight: 650; cursor: pointer; }
 .agent-management__grid { display: grid; flex: 1; min-height: 0; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); align-content: start; gap: 14px; overflow: auto; padding: 18px; }
 .agent-card { display: flex; min-width: 0; flex-direction: column; gap: 10px; border: 1px solid rgba(60,60,67,.10); border-radius: 12px; padding: 14px; background: rgba(255,255,255,.78); box-shadow: 0 4px 16px rgba(0,0,0,.035); }
 .agent-card > header { display: flex; min-width: 0; align-items: flex-start; gap: 10px; }

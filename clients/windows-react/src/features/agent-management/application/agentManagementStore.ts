@@ -24,7 +24,7 @@ interface AgentManagementState {
   mutationRequestId: number;
   activate(port: AgentManagementPort, ownerUserId: string): Promise<void>;
   refresh(port: AgentManagementPort): Promise<void>;
-  loadEditorCatalog(port: AgentManagementPort): Promise<AgentProfileEditorCatalog | null>;
+  loadEditorCatalog(port: AgentManagementPort, reportErrors?: boolean): Promise<AgentProfileEditorCatalog | null>;
   loadProfileEditor(port: AgentManagementPort, agentId: string): Promise<AgentProfileEditorData | null>;
   saveProfile(port: AgentManagementPort, input: AgentProfileMutationInput): Promise<boolean>;
   reset(): void;
@@ -95,9 +95,10 @@ export const useAgentManagementStore = create<AgentManagementState>((set, get) =
     }
   },
 
-  async loadEditorCatalog(port) {
+  async loadEditorCatalog(port, reportErrors = true) {
     const current = get();
     if (!current.ownerUserId) return null;
+    if (current.editorCatalog) return current.editorCatalog;
     if (current.isCatalogLoading) return current.editorCatalog;
     const ownerUserId = current.ownerUserId;
     const requestId = current.requestSequence + 1;
@@ -105,7 +106,7 @@ export const useAgentManagementStore = create<AgentManagementState>((set, get) =
       requestSequence: requestId,
       catalogRequestId: requestId,
       isCatalogLoading: current.editorCatalog == null,
-      error: null,
+      error: reportErrors ? null : current.error,
     });
     try {
       const editorCatalog = await port.loadEditorCatalog(ownerUserId);
@@ -118,7 +119,7 @@ export const useAgentManagementStore = create<AgentManagementState>((set, get) =
       if (state.ownerUserId !== ownerUserId || state.catalogRequestId !== requestId) return null;
       set({
         isCatalogLoading: false,
-        error: errorMessage(error),
+        error: reportErrors ? errorMessage(error) : state.error,
         catalogRequestId: 0,
       });
       return null;

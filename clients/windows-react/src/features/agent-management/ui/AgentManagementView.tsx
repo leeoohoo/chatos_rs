@@ -21,6 +21,7 @@ export function AgentManagementView({
   port: AgentManagementPort;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
+  const editorCatalog = useAgentManagementStore((state) => state.editorCatalog);
   const isLoading = useAgentManagementStore((state) => state.isLoading);
   const isCatalogLoading = useAgentManagementStore((state) => state.isCatalogLoading);
   const isEditorLoading = useAgentManagementStore((state) => state.isEditorLoading);
@@ -48,9 +49,9 @@ export function AgentManagementView({
   useEffect(() => {
     setEditor(null);
     setPreparingId(null);
-    void activate(port, ownerUserId);
+    void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
     return reset;
-  }, [activate, ownerUserId, port, reset]);
+  }, [activate, loadEditorCatalog, ownerUserId, port, reset]);
 
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount - 1));
@@ -107,6 +108,12 @@ export function AgentManagementView({
             <span aria-hidden="true">◎</span>
             <h2>还没有 Agent</h2>
             <p>创建一个 Agent，并为它选择模型、职业、职责和本机权限。</p>
+            <button
+              className="primary-button"
+              disabled={isCatalogLoading || preparingId === "new-agent"}
+              onClick={() => void openEditor(null)}
+              type="button"
+            >{preparingId === "new-agent" ? "准备中…" : "创建 Agent"}</button>
           </div>
         ) : (
           <>
@@ -116,6 +123,10 @@ export function AgentManagementView({
                   key={profile.id}
                   preparing={preparingId === profile.id}
                   profile={profile}
+                  modelLabel={editorCatalog
+                    ? editorCatalog.models.find((model) => model.id === profile.modelConfigId)?.displayName
+                      ?? `${profile.modelConfigId}（不可用）`
+                    : profile.modelConfigId}
                   onEdit={() => void openEditor(profile)}
                 />
               ))}
@@ -151,10 +162,12 @@ export function AgentManagementView({
 
 function AgentCard({
   profile,
+  modelLabel,
   preparing,
   onEdit,
 }: {
   profile: AgentProfileSummary;
+  modelLabel: string;
   preparing: boolean;
   onEdit(): void;
 }) {
@@ -177,7 +190,7 @@ function AgentCard({
         <button disabled={preparing} onClick={onEdit} type="button">{preparing ? "准备中…" : "编辑"}</button>
       </div>
       <dl>
-        <Row label="模型" value={profile.modelConfigId} />
+        <Row label="模型" value={modelLabel} />
         <Row label="思考等级" value={profile.thinkingLevel ?? "跟随模型默认"} />
         <Row label="职业" value={agentProfessionLabels[profile.professionKey]} />
         <Row label="主动巡检" value={profile.heartbeatEnabled ? heartbeatIntervalLabel(profile.heartbeatIntervalSeconds) : "关闭"} />
