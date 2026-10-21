@@ -631,6 +631,7 @@ dependencies = [
  "unicode-normalization",
  "unicode-segmentation",
  "uuid",
+ "windows",
  "windows-sys 0.60.2",
 ]
 

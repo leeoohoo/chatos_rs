@@ -301,27 +301,41 @@ impl StoryMediaBatchRuntime<'_> {
     ) -> Result<(), String> {
         let generation = self.authentication_generation;
         let mut project = self.load_project(&batch.project_id).await?;
-        if let Some(segment) = project
+        let completed_video = project
             .segments
             .iter()
             .find(|segment| segment.id == step.target_id)
-        {
-            if let Some(video) = &segment.video {
-                let known_job = batch.steps[index].provider_job_id.as_deref().or_else(|| {
-                    segment
-                        .attempt
-                        .as_ref()
-                        .and_then(|attempt| attempt.job_id.as_deref())
-                });
-                if known_job == Some(video.job_id.as_str()) {
-                    batch.steps[index].provider_job_id = Some(video.job_id.clone());
-                    batch.steps[index].completed = true;
-                    batch.steps[index].progress_status = Some("completed".into());
-                    push_event(batch, &format!("视频已保存：{}", segment.title));
-                    self.adopt_known_project(batch).await?;
-                    return Ok(());
-                }
-            }
+            .and_then(|segment| {
+                segment.video.as_ref().map(|video| {
+                    let known_job = batch.steps[index].provider_job_id.as_deref().or_else(|| {
+                        segment
+                            .attempt
+                            .as_ref()
+                            .and_then(|attempt| attempt.job_id.as_deref())
+                    });
+                    (
+                        segment.title.clone(),
+                        video.job_id.clone(),
+                        known_job == Some(&video.job_id),
+                    )
+                })
+            });
+        if let Some((title, video_job_id, true)) = completed_video {
+            let manager = self.story_manager.clone();
+            let owner = self.owner_user_id.to_owned();
+            let segment_id = step.target_id.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                manager.recover_actual_video_last_frame(&owner, project, &segment_id)
+            })
+            .await
+            .map_err(|_| "剧情视频尾帧恢复任务异常退出。".to_owned())?;
+            self.require_current().await?;
+            batch.steps[index].provider_job_id = Some(video_job_id);
+            batch.steps[index].completed = true;
+            batch.steps[index].progress_status = Some("completed".into());
+            push_event(batch, &format!("视频已保存：{title}"));
+            self.adopt_known_project(batch).await?;
+            return Ok(());
         }
 
         if batch.steps[index].generation_intent_id.is_none() {

@@ -137,6 +137,77 @@ fn last_frame_attachment_confirms_without_marking_a_user_first_frame() {
 }
 
 #[test]
+fn decoded_video_tail_preserves_guidance_and_becomes_the_next_inherited_first_frame() {
+    let mut canonical = project();
+    canonical.source = "xy".into();
+    canonical.segments[0].video = Some(StoryVideo {
+        filename: "video.mp4".into(),
+        job_id: "provider-job".into(),
+        model_name: "MiniMax-H3".into(),
+    });
+    let guidance = StoryImage::test_image("guidance.png");
+    canonical.segments[0]
+        .last_frames
+        .images
+        .push(guidance.clone());
+    canonical.segments[0].last_frames.confirmed_image_id = Some(guidance.id.clone());
+    let mut second = canonical.segments[0].clone();
+    second.id = "s2".into();
+    second.source_range = StorySourceRange { start: 1, end: 2 };
+    second.first_frames = StoryImageCollection::default();
+    second.last_frames = StoryImageCollection::default();
+    second.video = None;
+    canonical.segments.push(second);
+
+    super::application::apply_actual_video_last_frame(
+        &mut canonical,
+        super::application::StoryActualVideoLastFrame {
+            segment_id: "s1",
+            video_job_id: "provider-job",
+            filename: "actual-tail.png".into(),
+        },
+        2,
+    )
+    .unwrap();
+
+    let actual_id = canonical.segments[0]
+        .actual_video_last_frame_id
+        .clone()
+        .expect("decoded tail identity");
+    assert_eq!(
+        canonical.segments[0].last_frames.confirmed_image_id,
+        Some(guidance.id)
+    );
+    assert_eq!(canonical.segments[0].last_frames.images.len(), 2);
+    assert_eq!(
+        canonical.segments[1].first_frames.confirmed_image_id,
+        Some(actual_id.clone())
+    );
+    assert_eq!(
+        canonical.segments[1]
+            .inherited_first_frame_source_segment_id
+            .as_deref(),
+        Some("s1")
+    );
+
+    super::application::apply_actual_video_last_frame(
+        &mut canonical,
+        super::application::StoryActualVideoLastFrame {
+            segment_id: "s1",
+            video_job_id: "provider-job",
+            filename: "duplicate-must-not-be-used.png".into(),
+        },
+        3,
+    )
+    .unwrap();
+    assert_eq!(canonical.segments[0].last_frames.images.len(), 2);
+    assert_eq!(
+        canonical.segments[0].actual_video_last_frame_id,
+        Some(actual_id)
+    );
+}
+
+#[test]
 fn resource_confirmation_fails_closed_during_an_unresolved_video_submission() {
     let mut project = project();
     let image = StoryImage::test_image("resource.png");

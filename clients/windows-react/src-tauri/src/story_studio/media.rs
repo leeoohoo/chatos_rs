@@ -19,22 +19,23 @@ use crate::media_studio::{
 
 use super::{
     application::{
-        allow_story_image_retry, allow_story_video_retry, apply_story_project_settings,
-        apply_story_project_source, apply_story_resource_prompt, apply_story_segment_duration,
-        apply_story_segment_edit, apply_story_video_guidance, archive_completed_story_video,
-        begin_story_asset_image_generation, begin_story_frame_image_generation,
-        begin_story_video_generation, complete_story_asset_image_generation,
-        complete_story_frame_image_generation, complete_story_video_generation,
-        fail_story_video_generation, make_story_project, story_asset_image_prompt,
-        update_story_video_generation_progress, StoryAssetImageCompletion,
-        StoryAssetImageGenerationInput, StoryCompletedVideoArchiveInput, StoryFrameImageCompletion,
-        StoryFrameImageGenerationInput, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryImageImportInput, StoryImageRetryInput, StoryLastFrameClearInput,
-        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentDurationInput, StorySegmentEditInput, StorySegmentStructureInput,
-        StoryVideoCompletion, StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
-        StoryVideoGuidanceInput, StoryVideoRetryInput,
+        allow_story_image_retry, allow_story_video_retry, apply_actual_video_last_frame,
+        apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
+        apply_story_segment_duration, apply_story_segment_edit, apply_story_video_guidance,
+        archive_completed_story_video, begin_story_asset_image_generation,
+        begin_story_frame_image_generation, begin_story_video_generation,
+        complete_story_asset_image_generation, complete_story_frame_image_generation,
+        complete_story_video_generation, fail_story_video_generation, make_story_project,
+        story_asset_image_prompt, update_story_video_generation_progress,
+        StoryActualVideoLastFrame, StoryAssetImageCompletion, StoryAssetImageGenerationInput,
+        StoryCompletedVideoArchiveInput, StoryFrameImageCompletion, StoryFrameImageGenerationInput,
+        StoryFrameRoleInput, StoryImageConfirmationInput, StoryImageImportInput,
+        StoryImageRetryInput, StoryLastFrameClearInput, StoryLatestFramesInput,
+        StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentDurationInput,
+        StorySegmentEditInput, StorySegmentStructureInput, StoryVideoCompletion,
+        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        StoryVideoRetryInput,
     },
     batch::StoryMediaBatchExecutionRegistry,
     domain::{
@@ -1230,7 +1231,8 @@ impl StoryStudioManager {
             .require_open_presentation(owner, generation, presentation)?;
         let filename = format!("video-{}.mp4", Uuid::new_v4().simple());
         let stored_filename = filename.clone();
-        let project = self.store.mutate_project_with_video(
+        let completed_job_id = job_id.clone();
+        let mut project = self.store.mutate_project_with_video(
             owner,
             project_id,
             &filename,
@@ -1250,7 +1252,108 @@ impl StoryStudioManager {
                 )
             },
         )?;
+        project = self.attach_actual_video_last_frame(
+            owner,
+            project,
+            segment_id,
+            Some((&completed_job_id, bytes)),
+        );
         self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn recover_actual_video_last_frame(
+        &self,
+        owner: &str,
+        project: StoryProject,
+        segment_id: &str,
+    ) -> StoryProject {
+        self.attach_actual_video_last_frame(owner, project, segment_id, None)
+    }
+
+    fn attach_actual_video_last_frame(
+        &self,
+        owner: &str,
+        project: StoryProject,
+        segment_id: &str,
+        completed_result: Option<(&str, &[u8])>,
+    ) -> StoryProject {
+        let Some(segment) = project
+            .segments
+            .iter()
+            .find(|segment| segment.id == segment_id)
+        else {
+            return project;
+        };
+        let Some(video) = segment.video.as_ref() else {
+            return project;
+        };
+        if completed_result.is_some_and(|(job_id, _)| job_id != video.job_id) {
+            return project;
+        }
+        let video_job_id = video.job_id.clone();
+        let video_filename = video.filename.clone();
+        let existing_tail = segment
+            .last_frames
+            .images
+            .iter()
+            .find(|image| image.derived_from_video_job_id.as_deref() == Some(&video_job_id));
+        if existing_tail.is_some_and(|image| {
+            segment.actual_video_last_frame_id.as_deref() == Some(image.id.as_str())
+        }) {
+            return project;
+        }
+        if let Some(existing_tail) = existing_tail {
+            let filename = existing_tail.filename.clone();
+            return self
+                .store
+                .mutate_project(owner, &project.id, |project| {
+                    apply_actual_video_last_frame(
+                        project,
+                        StoryActualVideoLastFrame {
+                            segment_id,
+                            video_job_id: &video_job_id,
+                            filename,
+                        },
+                        current_unix_milliseconds(),
+                    )
+                })
+                .unwrap_or(project);
+        }
+
+        let loaded_bytes;
+        let video_bytes = if let Some((_, bytes)) = completed_result {
+            bytes
+        } else {
+            loaded_bytes = match self
+                .store
+                .read_video_asset(owner, &project.id, &video_filename)
+            {
+                Ok(bytes) => bytes,
+                Err(_) => return project,
+            };
+            loaded_bytes.as_slice()
+        };
+        // Keep the provider-completed video successful even if Windows cannot decode its
+        // container locally. This matches macOS: continuity extraction is best effort and never
+        // turns a billed, saved video into a failed generation.
+        let Ok(png) = super::video_tail::last_frame_png(video_bytes) else {
+            return project;
+        };
+        let frame_filename = format!("image-{}.png", Uuid::new_v4().simple());
+        let stored_frame_filename = frame_filename.clone();
+        self.store
+            .mutate_project_with_image(owner, &project.id, &frame_filename, &png, |project| {
+                apply_actual_video_last_frame(
+                    project,
+                    StoryActualVideoLastFrame {
+                        segment_id,
+                        video_job_id: &video_job_id,
+                        filename: stored_frame_filename,
+                    },
+                    current_unix_milliseconds(),
+                )
+            })
+            .unwrap_or(project)
     }
 
     pub(super) fn update_video_guidance(

@@ -11,6 +11,7 @@ mod projection;
 mod runtime;
 mod store;
 mod tools;
+mod video_tail;
 
 pub(crate) use commands::{
     abandon_story_media_batch, abandon_story_planning, allow_story_image_retry,

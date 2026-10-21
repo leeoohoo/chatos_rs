@@ -1085,6 +1085,57 @@ pub(super) fn complete_story_video_generation(
     project.validate()
 }
 
+pub(super) struct StoryActualVideoLastFrame<'a> {
+    pub segment_id: &'a str,
+    pub video_job_id: &'a str,
+    pub filename: String,
+}
+
+/// Attaches the frame decoded from a completed video without replacing a separately generated
+/// tail frame that the user may have confirmed as provider guidance.
+pub(super) fn apply_actual_video_last_frame(
+    project: &mut StoryProject,
+    frame: StoryActualVideoLastFrame<'_>,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    let index = project
+        .segments
+        .iter()
+        .position(|segment| {
+            segment.id == frame.segment_id
+                && segment
+                    .video
+                    .as_ref()
+                    .is_some_and(|video| video.job_id == frame.video_job_id)
+        })
+        .ok_or_else(|| "剧情视频尾帧与当前成片不匹配。".to_owned())?;
+    if let Some(existing_id) = project.segments[index]
+        .last_frames
+        .images
+        .iter()
+        .find(|image| image.derived_from_video_job_id.as_deref() == Some(frame.video_job_id))
+        .map(|image| image.id.clone())
+    {
+        project.segments[index].actual_video_last_frame_id = Some(existing_id);
+    } else {
+        let image = StoryImage {
+            id: Uuid::new_v4().to_string(),
+            filename: frame.filename,
+            mime_type: "image/png".into(),
+            source_resource_id: Some(frame.segment_id.to_owned()),
+            generation_attempt_id: None,
+            provider_result_id: Some(frame.video_job_id.to_owned()),
+            provider_asset_id: Some("video-last-frame".into()),
+            derived_from_video_job_id: Some(frame.video_job_id.to_owned()),
+        };
+        project.segments[index].actual_video_last_frame_id = Some(image.id.clone());
+        project.segments[index].last_frames.images.push(image);
+    }
+    project.reconcile_inherited_first_frames();
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
 pub(super) fn apply_story_video_guidance(
     project: &mut StoryProject,
     input: StoryVideoGuidanceInput,

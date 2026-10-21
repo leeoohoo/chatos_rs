@@ -360,6 +360,22 @@ impl StoryProjectStore {
         read_private_file(&directory.join(filename), maximum_bytes)
     }
 
+    pub(super) fn read_video_asset(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        filename: &str,
+    ) -> Result<Vec<u8>, String> {
+        let owner = validate_owner(owner_user_id)?;
+        self.read_media_asset(
+            &owner_hash(owner),
+            project_id,
+            filename,
+            "video/mp4",
+            MAXIMUM_STORY_VIDEO_BYTES,
+        )
+    }
+
     pub(super) fn save_planning_run(
         &self,
         owner_user_id: &str,
