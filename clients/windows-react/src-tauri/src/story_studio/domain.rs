@@ -525,6 +525,25 @@ impl StoryProject {
             })
     }
 
+    pub(super) fn resource_image_prompt(&self, id: &str) -> Option<&str> {
+        self.characters
+            .iter()
+            .find(|value| value.id == id)
+            .map(|value| value.image_prompt.as_str())
+            .or_else(|| {
+                self.scenes
+                    .iter()
+                    .find(|value| value.id == id)
+                    .map(|value| value.image_prompt.as_str())
+            })
+            .or_else(|| {
+                self.props
+                    .iter()
+                    .find(|value| value.id == id)
+                    .map(|value| value.image_prompt.as_str())
+            })
+    }
+
     pub(super) fn resource_media_mut(&mut self, id: &str) -> Option<&mut StoryImageCollection> {
         if let Some(index) = self.characters.iter().position(|value| value.id == id) {
             return Some(&mut self.characters[index].media);

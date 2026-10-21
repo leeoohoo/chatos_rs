@@ -16,7 +16,9 @@ use crate::authentication::GatewayModelConfig;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, apply_story_resource_prompt,
-        apply_story_segment_edit, make_story_project, StoryImageConfirmationInput,
+        apply_story_segment_edit, begin_story_asset_image_generation,
+        complete_story_asset_image_generation, make_story_project, story_asset_image_prompt,
+        StoryAssetImageCompletion, StoryAssetImageGenerationInput, StoryImageConfirmationInput,
         StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
         StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
         StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
@@ -33,6 +35,15 @@ use super::{
 };
 
 const MAXIMUM_CLOSED_PRESENTATIONS: usize = 64;
+
+pub(super) struct StoryAssetImageGenerationIntent {
+    pub snapshot: StoryProjectSnapshot,
+    pub project_id: String,
+    pub resource_id: String,
+    pub attempt_id: String,
+    pub model_config_id: String,
+    pub prompt: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct StoryMediaScope {
@@ -581,6 +592,84 @@ impl StoryStudioManager {
                     project,
                     input,
                     stored_filename,
+                    current_unix_milliseconds(),
+                )
+            },
+        )?;
+        self.project_snapshot(owner, generation, presentation, &session, &project)
+    }
+
+    pub(super) fn begin_asset_image_generation(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        input: StoryAssetImageGenerationInput,
+    ) -> Result<StoryAssetImageGenerationIntent, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let project_id = input.project_id.clone();
+        let resource_id = input.resource_id.clone();
+        let user_ideas = input.user_ideas.clone();
+        let attempt_id = Uuid::new_v4().to_string();
+        let saved_attempt_id = attempt_id.clone();
+        let project = self.store.mutate_project(owner, &project_id, |project| {
+            begin_story_asset_image_generation(
+                project,
+                &input,
+                &saved_attempt_id,
+                current_unix_milliseconds(),
+            )
+        })?;
+        let prompt = story_asset_image_prompt(&project, &resource_id, &user_ideas)?;
+        let model_config_id = project.models.image_model_id.clone();
+        let snapshot =
+            self.project_snapshot(owner, generation, presentation, &session, &project)?;
+        Ok(StoryAssetImageGenerationIntent {
+            snapshot,
+            project_id,
+            resource_id,
+            attempt_id,
+            model_config_id,
+            prompt,
+        })
+    }
+
+    pub(super) fn complete_asset_image_generation(
+        &self,
+        owner: &str,
+        generation: u64,
+        presentation: &str,
+        project_id: &str,
+        resource_id: &str,
+        attempt_id: &str,
+        provider_result_id: String,
+        provider_asset_id: String,
+        source: &[u8],
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner, generation)?;
+        self.media
+            .require_open_presentation(owner, generation, presentation)?;
+        let png = normalized_story_png(source)?;
+        let filename = format!("image-{}.png", Uuid::new_v4().simple());
+        let stored_filename = filename.clone();
+        let project = self.store.mutate_project_with_image(
+            owner,
+            project_id,
+            &filename,
+            &png,
+            |project| {
+                complete_story_asset_image_generation(
+                    project,
+                    StoryAssetImageCompletion {
+                        project_id,
+                        resource_id,
+                        attempt_id,
+                        filename: stored_filename,
+                        provider_result_id,
+                        provider_asset_id,
+                    },
                     current_unix_milliseconds(),
                 )
             },

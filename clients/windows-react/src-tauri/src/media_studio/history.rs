@@ -293,7 +293,7 @@ impl MediaStudioHistoryStore {
         Ok(persisted)
     }
 
-    async fn asset_bytes(&self, asset: &GeneratedImageAsset) -> Result<Vec<u8>, String> {
+    pub(super) async fn asset_bytes(&self, asset: &GeneratedImageAsset) -> Result<Vec<u8>, String> {
         let bytes = if let Some(base64_data) = asset.base64_data.as_deref() {
             BASE64.decode(base64_data).map_err(|_| history_error())?
         } else if let Some(url) = asset.url.as_deref() {

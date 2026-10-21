@@ -54,6 +54,12 @@ pub(crate) struct MediaStudioManager {
     video_jobs: MediaStudioVideoJobRegistry,
 }
 
+pub(crate) struct StoryGeneratedImage {
+    pub bytes: Vec<u8>,
+    pub provider_result_id: String,
+    pub provider_asset_id: String,
+}
+
 #[derive(Clone)]
 struct MediaPreviewSession {
     owner_hash: String,
@@ -150,6 +156,86 @@ impl MediaStudioManager {
             )
             .map(|(_, bytes)| bytes)
             .map_err(|_| "所选生成图片不存在或不属于当前账号。".to_owned())
+    }
+
+    /// Narrow provider port used by Story Studio. Model credentials, wire payloads, provider
+    /// URLs and encoded media remain inside the native Media Studio adapter.
+    pub(crate) async fn generate_story_image(
+        &self,
+        authentication: &AuthenticationManager,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        model_config_id: &str,
+        prompt: String,
+        client_request_id: &str,
+    ) -> Result<StoryGeneratedImage, String> {
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        let mut models = authentication
+            .resolved_models_for_owner(owner_user_id, vec![model_config_id.to_owned()])
+            .await
+            .map_err(|error| error.message)?;
+        if models.len() != 1 {
+            return Err("剧情图片模型已不可用。".into());
+        }
+        let runtime = resolve_image_model(owner_user_id, model_config_id, models.remove(0))?;
+        authentication.save_model_credential(
+            owner_user_id,
+            &runtime.model_config_id,
+            &runtime.api_key,
+        )?;
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        let request = ImageGenerationRequest {
+            model_config_id: model_config_id.to_owned(),
+            prompt,
+            size: None,
+            count: 1,
+            reference_images: Vec::new(),
+            client_request_id: client_request_id.to_owned(),
+        };
+        let wire = make_provider_request(&runtime, &request)?;
+        let response = self
+            .provider_client
+            .post(wire.url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, wire.content_type)
+            .bearer_auth(&runtime.api_key)
+            .body(wire.body)
+            .send()
+            .await
+            .map_err(|_| "无法连接剧情图片模型服务。".to_owned())?;
+        let status = response.status();
+        let body = read_provider_response(response).await?;
+        if !status.is_success() {
+            return Err(format!(
+                "剧情图片生成失败（HTTP {}）：{}",
+                status.as_u16(),
+                provider_error_detail(&body, &runtime.api_key)
+            ));
+        }
+        let result = parse_provider_response(&request, &runtime, &body)?;
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        if result.client_request_id != client_request_id {
+            return Err("剧情图片结果与当前生成请求不匹配。".into());
+        }
+        let asset = result
+            .images
+            .first()
+            .ok_or_else(|| "剧情图片模型没有返回图片。".to_owned())?;
+        let bytes = self.history.asset_bytes(asset).await?;
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        Ok(StoryGeneratedImage {
+            bytes,
+            provider_result_id: result.id,
+            provider_asset_id: asset.id.clone(),
+        })
     }
 
     fn present_history_item(

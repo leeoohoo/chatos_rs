@@ -2,12 +2,12 @@ use super::domain::*;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
-        make_story_project, StoryFrameRoleInput, StoryImageConfirmationInput,
-        StoryImageImportInput, StoryLastFrameClearInput, StoryLatestFramesInput,
-        StoryLatestResourceImagesInput, StoryModelSelectionInput, StoryProjectCreationInput,
-        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput, StorySegmentStructureMutation,
-        StorySegmentStructureOperation,
+        make_story_project, StoryAssetImageGenerationInput, StoryFrameRoleInput,
+        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
+        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryModelSelectionInput,
+        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
+        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StorySegmentStructureMutation, StorySegmentStructureOperation,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1234,6 +1234,126 @@ fn generated_story_image_import_normalizes_bytes_and_cleans_up_stale_mutations()
     );
     assert!(stale.is_err());
     assert_eq!(fs::read_dir(directory).unwrap().count(), before);
+}
+
+#[test]
+fn asset_image_generation_uses_durable_attempt_and_merges_provider_result() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    let first = StoryImage::test_image("existing-first.png");
+    let last = StoryImage::test_image("existing-last.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(first.clone());
+    canonical.segments[0].first_frames.confirmed_image_id = Some(first.id);
+    canonical.segments[0].last_frames.images.push(last.clone());
+    canonical.segments[0].last_frames.confirmed_image_id = Some(last.id);
+    store.save("alice", &canonical).unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 12, &presentation, &canonical.id)
+        .unwrap();
+
+    let intent = manager
+        .begin_asset_image_generation(
+            "alice",
+            12,
+            &presentation,
+            StoryAssetImageGenerationInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                resource_id: "key".into(),
+                user_ideas: "  add soft light  ".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(intent.model_config_id, canonical.models.image_model_id);
+    assert!(intent.prompt.contains("add soft light"));
+    assert!(intent.prompt.contains(&canonical.style));
+    assert!(intent.prompt.contains(&canonical.props[0].image_prompt));
+    let pending = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(
+        pending.props[0].media.generation_attempt_id.as_deref(),
+        Some(intent.attempt_id.as_str())
+    );
+    assert!(manager
+        .begin_asset_image_generation(
+            "alice",
+            12,
+            &presentation,
+            StoryAssetImageGenerationInput {
+                project_id: pending.id.clone(),
+                base_fingerprint: project_fingerprint(&pending).unwrap(),
+                resource_id: "key".into(),
+                user_ideas: String::new(),
+            },
+        )
+        .is_err());
+
+    let source = app_data.path().join("provider.jpg");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([90, 80, 70]))
+        .save_with_format(&source, image::ImageFormat::Jpeg)
+        .unwrap();
+    let source = fs::read(source).unwrap();
+    let directory = projects_directory(app_data.path(), "alice").join(&canonical.id);
+    let before = fs::read_dir(&directory).unwrap().count();
+    assert!(manager
+        .complete_asset_image_generation(
+            "alice",
+            12,
+            &presentation,
+            &intent.project_id,
+            &intent.resource_id,
+            &Uuid::new_v4().to_string(),
+            "wrong-result".into(),
+            "wrong-asset".into(),
+            &source,
+        )
+        .is_err());
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), before);
+
+    let snapshot = manager
+        .complete_asset_image_generation(
+            "alice",
+            12,
+            &presentation,
+            &intent.project_id,
+            &intent.resource_id,
+            &intent.attempt_id,
+            "provider-result".into(),
+            "provider-asset".into(),
+            &source,
+        )
+        .unwrap();
+    let encoded = serde_json::to_string(&snapshot).unwrap();
+    assert!(!encoded.contains("provider-result"));
+    assert!(!encoded.contains("provider-asset"));
+    let completed = store.load_native_project("alice", &canonical.id).unwrap();
+    let image = &completed.props[0].media.images[0];
+    assert!(completed.props[0].media.generation_attempt_id.is_none());
+    assert_eq!(
+        completed.props[0].media.confirmed_image_id,
+        Some(image.id.clone())
+    );
+    assert_eq!(image.source_resource_id.as_deref(), Some("key"));
+    assert_eq!(
+        image.generation_attempt_id.as_deref(),
+        Some(intent.attempt_id.as_str())
+    );
+    assert_eq!(image.provider_result_id.as_deref(), Some("provider-result"));
+    assert_eq!(image.provider_asset_id.as_deref(), Some("provider-asset"));
+    assert!(completed.segments[0]
+        .first_frames
+        .confirmed_image_id
+        .is_none());
+    assert!(completed.segments[0]
+        .last_frames
+        .confirmed_image_id
+        .is_none());
+    assert!(!encoded.contains(&image.filename));
 }
 
 #[test]

@@ -570,6 +570,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事生成历史图片导入第十六段）：新增 `import_story_history_image` typed command，只接受当前账号下图片历史的 `recordId/contentToken` opaque 授权与 Story target/fingerprint intent。Media Studio Adapter 在私有 history 边界内按 owner 精确读取字节，不把历史目录、文件名或 provider result/asset identity交给 Story/React；Story Adapter 对实际字节重新执行 20 MiB、PNG/JPEG/WebP、6,400 万像素校验并统一转 PNG。文件与 canonical attachment 仍在同一 Store mutation lock 内提交，stale fingerprint 失败会清理孤儿文件，确认与连续性规则复用本机导入路径。Story Rust 定向测试增至 38 项，跨 owner/token 桥接测试通过，`clippy -D warnings` 通过。React 剧情入口继续关闭；下一片进入素材图片生成 Port/commands。
 
+状态补充（2026-10-21，Windows AI 故事素材图片生成第十七段）：新增 `generate_story_asset_image` typed command。Rust 在 fingerprint-guarded canonical mutation 内先持久化 per-resource attempt 并发布安全项目事件，再由 Media Studio 窄 Port 使用当前账号 image model/Secret 调用 provider；prompt 与 macOS `StoryGenerationContext.assetPrompt` 保持“用户补充要求 + style + resource prompt”顺序。成功结果重新下载并校验图片、统一转 PNG，在最新 canonical manifest 上按 project/resource/attempt identity 合并；provider result/asset identity、文件名、媒体字节及 Secret 不进入 React。首张图片自动确认并失效无视频 attempt 的依赖分段首尾帧；失败、取消或身份变化保留 durable attempt 供后续核对，错误 attempt 完成不会留下孤儿文件。Story Rust 定向测试增至 39 项及 Clippy `-D warnings` 通过。React 剧情入口继续关闭；下一片实现首帧/尾帧图片生成 Port/commands。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
