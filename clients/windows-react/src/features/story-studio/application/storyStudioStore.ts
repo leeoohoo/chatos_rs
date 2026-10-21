@@ -20,6 +20,7 @@ interface StoryStudioState {
   error: string | null;
   unreadableCount: number;
   videoProgress: Record<string, StoryVideoProgress>;
+  activeMediaTarget: string | null;
   activate(storyPort: StoryStudioPort, mediaPort: MediaStudioPort, ownerUserId: string): Promise<void>;
   deactivate(storyPort: StoryStudioPort): void;
   selectProject(storyPort: StoryStudioPort, projectId: string): Promise<void>;
@@ -36,6 +37,10 @@ interface StoryStudioState {
     ratio: string;
   }): Promise<void>;
   startPlanning(storyPort: StoryStudioPort, stage: "outline" | "refine", targetIds: string[], userIdeas: string): Promise<void>;
+  generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
+  generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
+  confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
+  confirmLatestFrames(storyPort: StoryStudioPort, segmentId: string, useLastFrame: boolean): Promise<void>;
   startVideo(storyPort: StoryStudioPort, segmentId: string, size: "768P" | "2K", userIdeas: string): Promise<void>;
   resumeVideo(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
   clearError(): void;
@@ -55,6 +60,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   error: null,
   unreadableCount: 0,
   videoProgress: {},
+  activeMediaTarget: null,
 
   async activate(storyPort, mediaPort, ownerUserId) {
     const sequence = ++activationSequence;
@@ -71,6 +77,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       error: null,
       unreadableCount: 0,
       videoProgress: {},
+      activeMediaTarget: null,
     });
     try {
       const [page, models] = await Promise.all([
@@ -106,6 +113,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       error: null,
       unreadableCount: 0,
       videoProgress: {},
+      activeMediaTarget: null,
     });
     if (ownerUserId && presentationId) {
       void storyPort.discardPresentation({ ownerUserId, presentationId }).catch(() => undefined);
@@ -185,6 +193,97 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "剧情规划没有完成。") });
+    }
+  },
+
+  async generateAssetImage(storyPort, resourceId, userIdeas) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    set({ activeMediaTarget: `resource:${resourceId}`, error: null });
+    try {
+      const saved = await storyPort.generateAssetImage({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        resourceId,
+        userIdeas,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: null,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "剧情素材图片生成失败。") });
+    }
+  },
+
+  async generateFrameImage(storyPort, segmentId, frameRole, referenceResourceIds, userIdeas) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    set({ activeMediaTarget: `frame:${segmentId}:${frameRole}`, error: null });
+    try {
+      const saved = await storyPort.generateFrameImage({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+        frameRole,
+        referenceResourceIds,
+        userIdeas,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: null,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "剧情首尾帧生成失败。") });
+    }
+  },
+
+  async confirmLatestResources(storyPort, resourceIds) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    set({ activeMediaTarget: "confirm:resources", error: null });
+    try {
+      const saved = await storyPort.confirmLatestResourceImages({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        resourceIds,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), activeMediaTarget: null }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "素材版本确认失败。") });
+    }
+  },
+
+  async confirmLatestFrames(storyPort, segmentId, useLastFrame) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    set({ activeMediaTarget: `confirm:frames:${segmentId}`, error: null });
+    try {
+      const saved = await storyPort.confirmLatestFrames({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+        useConfirmedLastFrameForVideo: useLastFrame,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), activeMediaTarget: null }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "首尾帧版本确认失败。") });
     }
   },
 

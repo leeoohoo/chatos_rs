@@ -145,7 +145,11 @@ function PlannedStoryWorkspace({ port, projectId }: { port: StoryStudioPort; pro
         <header><div><h3>角色与场景</h3><p>规划生成的素材事实源</p></div><button disabled={state.busy || project.segments.length === 0} onClick={() => void state.startPlanning(port, "refine", project.segments.map((value) => value.id), "")} type="button">细化全部镜头</button></header>
         <div>{resources.map((resource) => {
           const image = storyConfirmedImage(resource.media);
-          return <article key={resource.id}>{image?.previewUrl ? <img alt={resource.name} src={image.previewUrl} /> : <span>◇</span>}<strong>{resource.name}</strong><small>{resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small></article>;
+          const latest = resource.media.images.at(-1) ?? null;
+          const hasUnconfirmedLatest = latest != null && latest.id !== resource.media.confirmedImageId;
+          const target = `resource:${resource.id}`;
+          const displayed = hasUnconfirmedLatest ? latest : image;
+          return <article key={resource.id}>{displayed?.previewUrl ? <img alt={resource.name} src={displayed.previewUrl} /> : <span>◇</span>}<strong>{resource.name}{hasUnconfirmedLatest ? " · 待确认" : ""}</strong><small>{resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small>{hasUnconfirmedLatest && <button disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestResources(port, [resource.id])} type="button">使用最新版本</button>}<button disabled={state.activeMediaTarget != null} onClick={() => void state.generateAssetImage(port, resource.id, "")} type="button">{state.activeMediaTarget === target ? "生成中…" : image ? "再生成" : "生成素材"}</button></article>;
         })}</div>
       </section>
       <div className="story-segment-layout">
@@ -164,17 +168,35 @@ function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPor
   const segment = project.segments.find((value) => value.id === segmentId)!;
   const first = storyConfirmedImage(segment.firstFrames);
   const last = storyConfirmedImage(segment.lastFrames);
+  const latestFirst = segment.firstFrames.images.at(-1) ?? null;
+  const latestLast = segment.lastFrames.images.at(-1) ?? null;
+  const hasUnconfirmedFirst = latestFirst != null && latestFirst.id !== segment.firstFrames.confirmedImageId;
+  const hasUnconfirmedLast = latestLast != null && latestLast.id !== segment.lastFrames.confirmedImageId;
   const progress = state.videoProgress[segment.id];
+  const referenceResourceIds = [
+    ...segment.characterIds,
+    ...segment.sceneIds,
+    ...segment.propIds,
+  ].filter((id) => {
+    const resource = [...project.characters, ...project.scenes, ...project.props]
+      .find((value) => value.id === id);
+    return resource?.media.confirmedImageId != null;
+  });
   const [userIdeas, setUserIdeas] = useState("");
   const [size, setSize] = useState<"768P" | "2K">("768P");
   return (
     <article className="story-segment-inspector">
       <header><div><span>{segment.kind === "transition" ? "转场片段" : "剧情片段"}</span><h3>{segment.title}</h3><p>{segment.synopsis}</p></div><strong>{segment.seconds}s</strong></header>
       <div className="story-frame-pair">
-        <FrameCard title="首帧" image={first?.previewUrl ?? null} empty="等待确认首帧" />
+        <FrameCard title={hasUnconfirmedFirst ? "首帧 · 待确认" : "首帧"} image={(hasUnconfirmedFirst ? latestFirst : first)?.previewUrl ?? null} empty="等待确认首帧" />
         <span aria-hidden="true">→</span>
-        <FrameCard title="尾帧" image={last?.previewUrl ?? null} empty="可选尾帧" />
+        <FrameCard title={hasUnconfirmedLast ? "尾帧 · 待确认" : "尾帧"} image={(hasUnconfirmedLast ? latestLast : last)?.previewUrl ?? null} empty="可选尾帧" />
       </div>
+      <div className="story-frame-actions">
+        <button disabled={!segment.detail || referenceResourceIds.length === 0 || state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.generateFrameImage(port, segment.id, "first", referenceResourceIds, userIdeas)} type="button">{state.activeMediaTarget === `frame:${segment.id}:first` ? "正在生成首帧…" : first ? "重新生成首帧" : "生成首帧"}</button>
+        <button disabled={!segment.detail || referenceResourceIds.length === 0 || state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.generateFrameImage(port, segment.id, "last", referenceResourceIds, userIdeas)} type="button">{state.activeMediaTarget === `frame:${segment.id}:last` ? "正在生成尾帧…" : last ? "重新生成尾帧" : "生成尾帧"}</button>
+      </div>
+      {(hasUnconfirmedFirst || hasUnconfirmedLast) && <button className="story-confirm-frames" disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestFrames(port, segment.id, latestLast != null)} type="button">确认使用最新首尾帧</button>}
       {segment.detail && <section className="story-shot-list"><h4>镜头时间线</h4>{segment.detail.shots.map((shot) => <div key={`${shot.start}-${shot.end}`}><span>{shot.start}–{shot.end}s</span><p>{shot.prompt}</p></div>)}</section>}
       {segment.video?.previewUrl && <video className="story-video-preview" controls preload="metadata" src={segment.video.previewUrl} />}
       {segment.error && <p className="story-segment-error">{segment.error}</p>}

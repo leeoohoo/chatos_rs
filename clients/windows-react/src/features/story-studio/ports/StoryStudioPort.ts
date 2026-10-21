@@ -36,6 +36,31 @@ export interface StoryStudioPort {
     targetIds: string[];
     userIdeas: string;
   }): Promise<StoryProject | null>;
+  generateAssetImage(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    resourceId: string;
+    userIdeas: string;
+  }): Promise<StoryProject>;
+  generateFrameImage(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+    frameRole: "first" | "last";
+    referenceResourceIds: string[];
+    userIdeas: string;
+  }): Promise<StoryProject>;
+  confirmLatestResourceImages(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    resourceIds: string[];
+  }): Promise<StoryProject>;
+  confirmLatestFrames(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+    useConfirmedLastFrameForVideo: boolean;
+  }): Promise<StoryProject>;
   startVideo(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;

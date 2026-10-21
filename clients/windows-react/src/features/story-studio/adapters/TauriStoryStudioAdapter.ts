@@ -78,6 +78,64 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     return value.project;
   }
 
+  async generateAssetImage(request: Parameters<StoryStudioPort["generateAssetImage"]>[0]) {
+    const input = {
+      ...scope(request),
+      request: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        resourceId: identifierSchema.parse(request.resourceId),
+        userIdeas: safeText(1_000).parse(request.userIdeas),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("generate_story_asset_image", { input }));
+  }
+
+  async generateFrameImage(request: Parameters<StoryStudioPort["generateFrameImage"]>[0]) {
+    const input = {
+      ...scope(request),
+      request: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+        frameRole: z.enum(["first", "last"]).parse(request.frameRole),
+        referenceResourceIds: z.array(identifierSchema).min(1).max(8)
+          .parse(request.referenceResourceIds),
+        userIdeas: safeText(1_000).parse(request.userIdeas),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("generate_story_frame_image", { input }));
+  }
+
+  async confirmLatestResourceImages(
+    request: Parameters<StoryStudioPort["confirmLatestResourceImages"]>[0],
+  ) {
+    const input = {
+      ...scope(request),
+      confirmation: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        resourceIds: z.array(identifierSchema).min(1).max(100).parse(request.resourceIds),
+      },
+    };
+    return storyProjectSchema.parse(
+      await invoke("confirm_latest_story_resource_images", { input }),
+    );
+  }
+
+  async confirmLatestFrames(request: Parameters<StoryStudioPort["confirmLatestFrames"]>[0]) {
+    const input = {
+      ...scope(request),
+      confirmation: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+        useConfirmedLastFrameForVideo: z.boolean().parse(request.useConfirmedLastFrameForVideo),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("confirm_latest_story_frames", { input }));
+  }
+
   async startVideo(request: Parameters<StoryStudioPort["startVideo"]>[0]) {
     const input = {
       ...scope(request),
