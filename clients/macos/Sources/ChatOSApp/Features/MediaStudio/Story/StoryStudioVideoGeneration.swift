@@ -228,180 +228,75 @@ extension StoryStudioViewModel {
     func startVideoGeneration(project: StoryProject, segmentID: String,
                                       model: MediaGenerationModel, size: String,
                                       owner: String, token: UUID, userIdeas: String = "") {
-        guard let segment = project.segments.first(where: { $0.id == segmentID }),
-              segment.isReady else { return }
-        let key = VideoGenerationKey(projectID: project.id, segmentID: segmentID)
-        guard !activeVideoGenerations.contains(key) else { return }
-        let prompt: String
-        do { prompt = try StoryGenerationContext.videoPrompt(project, segment: segment, userIdeas: userIdeas) }
-        catch { errorMessage = error.localizedDescription; return }
-        let attempt = StoryVideoAttempt(
-            modelConfigID: project.models.videoModelID,
-            prompt: prompt,
-            size: size,
-            ratio: project.ratio,
-            seconds: segment.seconds
-        )
-        let store = store
-        launchVideoGeneration(key: key, attemptID: attempt.id, owner: owner, token: token) { [weak self, store] service in
-            // The store actor merges this intent into the latest manifest before the billable POST.
-            let intent = try await store.beginVideoGeneration(
-                projectID: project.id, segmentID: segmentID, attempt: attempt, owner: owner
+        do {
+            let command = try storyVideoGeneration.prepareStart(
+                ownerUserID: owner,
+                project: project,
+                segmentID: segmentID,
+                model: model,
+                size: size,
+                userIdeas: userIdeas
             )
-            await self?.publishProject(intent.project, token: token)
-            try Task.checkCancellation()
-
-            var firstFrameInput: ImageGenerationInputImage?
-            var lastFrameInput: ImageGenerationInputImage?
-            var referenceVideoInput: VideoGenerationInputVideo?
-            var referencePurpose: VideoGenerationReferencePurpose = .reference
-            switch intent.segment.videoGuidanceMode {
-            case .firstFrame, .firstAndLastFrames:
-                guard let frame = intent.segment.firstFrame else { throw StoryError.invalidPlan }
-                let firstURL = try store.fileURL(frame.filename, projectID: project.id, owner: owner)
-                let firstData = try await MediaStudioImageLoader.data(for: .init(
-                    id: frame.id.uuidString, mimeType: frame.mimeType, url: firstURL
-                ))
-                try Task.checkCancellation()
-                firstFrameInput = .init(
-                    name: "first-frame.png", mimeType: frame.mimeType,
-                    base64Data: firstData.base64EncodedString()
-                )
-            case .previousVideo, .sourceVideo:
-                guard model.supportsVideoReference,
-                      let index = intent.project.segments.firstIndex(where: { $0.id == segmentID }) else {
-                    throw StoryError.invalidPlan
-                }
-                let referenceVideo: StoryVideo?
-                if intent.segment.videoGuidanceMode == .previousVideo {
-                    referenceVideo = index > 0 ? intent.project.segments[index - 1].video : nil
-                } else {
-                    referenceVideo = intent.segment.archivedVideos.last
-                }
-                guard let referenceVideo else { throw StoryError.invalidPlan }
-                let previousURL = try store.fileURL(
-                    referenceVideo.filename, projectID: project.id, owner: owner
-                )
-                let previousData = try await AppCancellableDetachedWork.run {
-                    try AppBoundedFileReader.read(
-                        previousURL,
-                        maximumBytes: 512 * 1_024 * 1_024
-                    )
-                }
-                try Task.checkCancellation()
-                referenceVideoInput = .init(
-                    name: intent.segment.videoGuidanceMode == .previousVideo
-                        ? "previous-segment.mp4" : "source-video.mp4",
-                    mimeType: "video/mp4",
-                    base64Data: previousData.base64EncodedString()
-                )
-                referencePurpose = intent.segment.videoGuidanceMode == .previousVideo ? .extend : .edit
-            }
-            if model.supportsVideoLastFrame,
-               intent.segment.videoGuidanceMode == .firstAndLastFrames,
-               let lastFrame = intent.segment.lastFrame {
-                let lastURL = try store.fileURL(lastFrame.filename, projectID: project.id, owner: owner)
-                let lastData = try await MediaStudioImageLoader.data(for: .init(
-                    id: lastFrame.id.uuidString, mimeType: lastFrame.mimeType, url: lastURL
-                ))
-                try Task.checkCancellation()
-                lastFrameInput = .init(
-                    name: "last-frame.png", mimeType: lastFrame.mimeType,
-                    base64Data: lastData.base64EncodedString()
-                )
-            }
-            try Task.checkCancellation()
-            let request = VideoGenerationRequest(
-                modelConfigID: attempt.modelConfigID,
-                prompt: attempt.prompt,
-                size: attempt.size,
-                seconds: attempt.seconds,
-                inputImage: firstFrameInput,
-                lastFrameImage: lastFrameInput,
-                referenceVideo: referenceVideoInput,
-                referencePurpose: referencePurpose,
-                ratio: attempt.ratio
-            )
-            await self?.setParallelVideoProgress(
-                .init(status: "submitting"), key: key, token: token
-            )
-            return try await Self.executeParallelVideo(
-                request, jobID: nil, projectID: project.id, segmentID: segmentID,
-                attemptID: attempt.id, owner: owner, store: store, service: service,
-                progress: { [weak self, store] value in
-                    await self?.setParallelVideoProgress(value, key: key, token: token)
-                    let persisted: Result<StoryProject, Error>
-                    do {
-                        persisted = .success(try await store.updateVideoGenerationProgress(
-                            value, projectID: project.id, segmentID: segmentID,
-                            attemptID: attempt.id, owner: owner
-                        ))
-                    } catch {
-                        persisted = .failure(error)
-                    }
-                    await self?.applyParallelVideoProgress(
-                        persisted, value: value, key: key, token: token
-                    )
-                }
-            )
+            launchVideoGeneration(command: command, owner: owner, token: token)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
     func launchVideoGeneration(
-        key: VideoGenerationKey,
-        attemptID: UUID,
+        command: StoryVideoGenerationCommand,
         owner: String,
-        token: UUID,
-        operation: @escaping @Sendable (any MediaGenerationServicing) async throws -> StoryProject
+        token: UUID
     ) {
+        let key = VideoGenerationKey(
+            projectID: command.projectID,
+            segmentID: command.segmentID
+        )
         guard !activeVideoGenerations.contains(key) else { return }
+        guard let request = storyVideoGenerationState.begin(
+            ownerUserID: owner,
+            accountSessionID: token,
+            command: command
+        ) else { return }
         activeVideoGenerations.insert(key)
         videoGenerationProgress[key] = .init(status: "preparing")
-        let store = store
-        let media = media
-        videoGenerationTasks[key] = Task { [weak self, store, media] in
-            let outcome: Result<StoryProject, Error>
+        let storyVideoGeneration = storyVideoGeneration
+        videoGenerationTasks[key] = Task { [weak self, storyVideoGeneration] in
+            let result: Result<StoryVideoGenerationOutcome, Error>
             do {
-                let service: any MediaGenerationServicing
-                if let bindable = media as? any SessionBoundMediaGenerationServicing {
-                    service = try await bindable.boundToCurrentSession()
-                } else {
-                    service = media
-                }
-                try Task.checkCancellation()
-                outcome = .success(try await operation(service))
-            } catch {
-                if error is CancellationError || Task.isCancelled {
-                    outcome = .failure(CancellationError())
-                } else {
-                    do {
-                        let failed: StoryProject
-                        if let failure = error as? any MediaGenerationSubmissionFailure,
-                           !failure.requestMayHaveBeenSubmitted {
-                            failed = try await store.failVideoGenerationBeforeSubmission(
-                                error.localizedDescription, projectID: key.projectID,
-                                segmentID: key.segmentID, attemptID: attemptID, owner: owner
-                            )
-                        } else {
-                            failed = try await store.failVideoGeneration(
-                                error.localizedDescription, projectID: key.projectID,
-                                segmentID: key.segmentID, attemptID: attemptID, owner: owner
-                            )
-                        }
-                        outcome = .success(failed)
-                    } catch {
-                        outcome = .failure(error)
+                result = .success(try await storyVideoGeneration.execute(
+                    ownerUserID: owner,
+                    command: command,
+                    continuationCheck: { [weak self] in
+                        guard let self else { throw CancellationError() }
+                        try await self.checkVideoGeneration(request, session: token)
+                    },
+                    onEvent: { [weak self] event in
+                        await self?.receiveVideoGenerationEvent(
+                            event,
+                            request: request,
+                            key: key,
+                            token: token
+                        )
                     }
-                }
+                ))
+            } catch {
+                result = .failure(error)
             }
-            guard let self, self.session == token else { return }
+            guard let self,
+                  self.storyVideoGenerationState.accepts(
+                    request,
+                    ownerUserID: self.owner,
+                    accountSessionID: token
+                  ),
+                  self.storyVideoGenerationState.finish(request) else { return }
             self.activeVideoGenerations.remove(key)
             self.videoGenerationProgress[key] = nil
             self.videoGenerationTasks[key] = nil
-            switch outcome {
-            case .success(let project):
-                self.publishProject(project, token: token)
-                if project.segments.first(where: { $0.id == key.segmentID })?.video != nil {
+            switch result {
+            case .success(let outcome):
+                self.publishProject(outcome.project, token: token)
+                if outcome.project.segments.first(where: { $0.id == key.segmentID })?.video != nil {
                     self.selectedSegments.remove(key.segmentID)
                 }
             case .failure(let error):
@@ -411,117 +306,49 @@ extension StoryStudioViewModel {
         }
     }
 
-    nonisolated static func executeParallelVideo(
-        _ request: VideoGenerationRequest,
-        jobID: String?,
-        projectID: UUID,
-        segmentID: String,
-        attemptID: UUID,
-        owner: String,
-        store: StoryProjectStore,
-        service: any MediaGenerationServicing,
-        progress: @escaping @Sendable (VideoGenerationProgress) async -> Void
-    ) async throws -> StoryProject {
-        try Task.checkCancellation()
-        let result: VideoGenerationResult
-        if let jobID {
-            guard let resumable = service as? any ResumableVideoGenerationServicing else {
-                throw StoryError.unavailable
-            }
-            result = try await resumable.resumeVideo(request, jobID: jobID, progress: progress)
-        } else {
-            result = try await service.generateVideo(request, progress: progress)
-        }
-        try Task.checkCancellation()
-        let completed = try await store.completeVideoGeneration(
-            result, projectID: projectID, segmentID: segmentID,
-            attemptID: attemptID, owner: owner
+    private func checkVideoGeneration(
+        _ request: StoryVideoGenerationToken,
+        session token: UUID
+    ) throws {
+        try check(token)
+        guard storyVideoGenerationState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token
+        ) else { throw CancellationError() }
+    }
+
+    private func receiveVideoGenerationEvent(
+        _ event: StoryVideoGenerationEvent,
+        request: StoryVideoGenerationToken,
+        key: VideoGenerationKey,
+        token: UUID
+    ) {
+        guard storyVideoGenerationState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token
+        ) else { return }
+        publishProject(event.project, token: token)
+        videoGenerationProgress[key] = .init(
+            status: event.progress.status,
+            percent: event.progress.percent
         )
-        var finalProject = completed.0
-        do {
-            let videoURL = try store.fileURL(completed.1.filename, projectID: projectID, owner: owner)
-            let finalFrame = try await StoryVideoFrameExtractor.lastFramePNG(from: videoURL)
-            try Task.checkCancellation()
-            let applied = try await store.applyActualVideoLastFrame(
-                finalFrame, projectID: projectID, segmentID: segmentID,
-                videoJobID: completed.1.jobID, owner: owner
-            )
-            finalProject = applied.0
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            // The provider video is already complete and remains usable. Frame extraction is
-            // a local continuity enhancement, so a malformed/unsupported file is non-fatal.
-        }
-        try Task.checkCancellation()
-        return finalProject
-    }
-
-    func setParallelVideoProgress(
-        _ value: VideoGenerationProgress,
-        key: VideoGenerationKey,
-        token: UUID
-    ) {
-        guard session == token else { return }
-        videoGenerationProgress[key] = value
-    }
-
-    func applyParallelVideoProgress(
-        _ result: Result<StoryProject, Error>,
-        value: VideoGenerationProgress,
-        key: VideoGenerationKey,
-        token: UUID
-    ) {
-        guard session == token else { return }
-        switch result {
-        case .success(let updated):
-            publishProject(updated, token: token)
-        case .failure(let error):
-            errorMessage = "保存任务 ID 失败，请保留任务 ID \(value.jobID ?? "未知")，勿重复提交：\(error.localizedDescription)"
-            videoGenerationTasks[key]?.cancel()
-        }
+        if let error = event.error { errorMessage = error }
     }
 
     func resumeVideo(_ id: String) {
-        guard !isBusy, !isLoading, let owner, let project,
-              let segment = project.segments.first(where: { $0.id == id }),
-              segment.video == nil, let attempt = segment.attempt else { return }
-        guard let jobID = attempt.jobID else {
-            errorMessage = StoryError.unresolvedSubmission.localizedDescription
-            return
-        }
-        let key = VideoGenerationKey(projectID: project.id, segmentID: id)
-        guard !activeVideoGenerations.contains(key) else { return }
-        errorMessage = nil
-        let token = session
-        let store = store
-        launchVideoGeneration(key: key, attemptID: attempt.id, owner: owner, token: token) { [weak self, store] service in
-            let request = VideoGenerationRequest(
-                modelConfigID: attempt.modelConfigID, prompt: attempt.prompt,
-                size: attempt.size, seconds: attempt.seconds, ratio: attempt.ratio
+        guard !isBusy, !isLoading, let owner, let project else { return }
+        do {
+            let command = try storyVideoGeneration.prepareResume(
+                ownerUserID: owner,
+                project: project,
+                segmentID: id
             )
-            await self?.setParallelVideoProgress(
-                .init(status: "checking", jobID: jobID), key: key, token: token
-            )
-            return try await Self.executeParallelVideo(
-                request, jobID: jobID, projectID: project.id, segmentID: id,
-                attemptID: attempt.id, owner: owner, store: store, service: service,
-                progress: { [weak self, store] value in
-                    await self?.setParallelVideoProgress(value, key: key, token: token)
-                    let persisted: Result<StoryProject, Error>
-                    do {
-                        persisted = .success(try await store.updateVideoGenerationProgress(
-                            value, projectID: project.id, segmentID: id,
-                            attemptID: attempt.id, owner: owner
-                        ))
-                    } catch {
-                        persisted = .failure(error)
-                    }
-                    await self?.applyParallelVideoProgress(
-                        persisted, value: value, key: key, token: token
-                    )
-                }
-            )
+            errorMessage = nil
+            launchVideoGeneration(command: command, owner: owner, token: session)
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

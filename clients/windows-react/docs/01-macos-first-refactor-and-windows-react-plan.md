@@ -520,6 +520,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事首帧/尾帧生成边界）：Core 新增 `StoryFrameImageGenerating` Port、`StoryFrameImageGenerationUseCase`、冻结 project/segment/role/reference order/attempt 的安全 command，以及 event/outcome 和 typed lifecycle。Use Case 统一分段、已确认素材引用、role attempt、2,000 字补充想法与最终图片 identity 校验；继续保持 macOS 原有“全局只运行一个首尾帧任务”的语义。macOS Adapter 独占 security-scoped 本机文件解析、参考图媒体字节、session-bound provider、prompt 与 reference index、Store durable intent、PNG 归一化和完成持久化；上一段实际/已确认尾帧仍只追加到下一段首帧，当前段已确认首帧仍只追加到本段尾帧，素材引用顺序不变。ambiguous submission 继续保留对应 role 的 attempt 并要求用户核对后解锁。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过；下一片继续单段视频生成/恢复 Port，剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事单段视频生成与恢复边界）：Core 新增 `StoryVideoGenerating` Port、`StoryVideoGenerationUseCase`、冻结 project/segment/model/size/prompt/attempt/start-or-resume 的安全 command、安全进度 event、三态 outcome 及按 segment 隔离的 typed lifecycle。macOS Adapter 独占 prompt 组装、Store intent、首尾帧/上一段视频/原视频媒体字节、session-bound provider、job identity、进度持久化、完成视频保存和实际末帧提取。确定发生在 provider POST 前的失败仍清除本地 attempt；可能已经提交的失败仍保留 attempt 和错误，必须恢复或人工核对，恢复只使用原 attempt/job，不重新提交。不同分段仍可并发，仅视频队列仍逐段等待完成并读取最新 canonical project，计费与连续性语义不变。Core 5 项、Story Studio 61 项与 Story Agent 21 项通过；下一片继续 Story 编辑、导入与保存边界，剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
