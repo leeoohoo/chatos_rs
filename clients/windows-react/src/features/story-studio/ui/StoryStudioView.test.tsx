@@ -310,6 +310,42 @@ describe("StoryStudioView", () => {
       preparation: expect.objectContaining({ previewId: "44444444-4444-4444-8444-444444444444" }),
     }));
   });
+
+  it("routes a videos-only preview into the independent sequential queue", async () => {
+    const canonical = plannedProject();
+    const preparation = {
+      previewId: "66666666-6666-4666-8666-666666666666",
+      projectId: canonical.id,
+      projectFingerprint: canonical.baseFingerprint!,
+      kind: "videos" as const,
+      eligibleTargetIds: ["segment-a"],
+      requestedTargetIds: ["segment-a"],
+      steps: [{ id: "videos:segment-a", kind: "videos" as const, targetId: "segment-a" }],
+      executionMode: "directVideos" as const,
+    };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      previewMediaBatch: vi.fn(async (request) => request.kind === "videos"
+        ? { eligibleTargetIds: ["segment-a"], preparation, validationError: null }
+        : { eligibleTargetIds: [], preparation: null, validationError: null }),
+      startDirectVideoQueue: vi.fn(async () => ({
+        project: canonical,
+        completedTargetIds: ["segment-a"],
+      })),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客", level: 2 });
+
+    fireEvent.click(screen.getByRole("button", { name: "批量制作" }));
+    fireEvent.click(screen.getByRole("tab", { name: "分段视频" }));
+
+    expect(await screen.findByText("独立顺序视频队列")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "确认并顺序生成" }));
+    await waitFor(() => expect(storyPort.startDirectVideoQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ preparation }),
+    ));
+    expect(storyPort.startMediaBatch).not.toHaveBeenCalled();
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -319,6 +355,7 @@ function usePresentationId(storyPort: StoryStudioPort) {
 
 function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
   return {
+    watchVideoGeneration: vi.fn(async () => () => undefined),
     watchMediaBatches: vi.fn(async () => () => undefined),
     watchPlanning: vi.fn(async () => () => undefined),
     loadPlanningHistory: vi.fn(async () => ({ runs: [], nextCursor: null, unreadableCount: 0, recoveredProject: null })),
@@ -334,6 +371,10 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
     loadMediaBatchHistory: vi.fn(async () => ({ batches: [], nextCursor: null, unreadableCount: 0 })),
     startMediaBatch: vi.fn(async () => { throw new Error("unused batch start"); }),
+    startDirectVideoQueue: vi.fn(async () => ({
+      project: project(),
+      completedTargetIds: ["segment-a"],
+    })),
     resumeMediaBatch: vi.fn(() => new Promise<never>(() => undefined)),
     abandonMediaBatch: vi.fn(async () => { throw new Error("unused batch abandon"); }),
     createProject: vi.fn(async () => project()),

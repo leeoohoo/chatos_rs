@@ -194,6 +194,10 @@ export const storyVideoGenerationOutcomeSchema = z.object({
   terminal: z.boolean(),
 }).strict();
 
+export const storyVideoGenerationEventSchema = storyVideoGenerationOutcomeSchema.extend({
+  presentationId: uuid,
+}).strict();
+
 export const storyMediaBatchKindSchema = z.enum([
   "assets",
   "frames",
@@ -281,6 +285,11 @@ export const storyMediaBatchEventSchema = storyMediaBatchExecutionOutcomeSchema.
   presentationId: uuid,
 }).strict();
 
+export const storyDirectVideoQueueOutcomeSchema = z.object({
+  project: storyProjectSchema,
+  completedTargetIds: z.array(identifier).min(1).max(500),
+}).strict();
+
 export const storyPlanningRunSchema = z.object({
   id: uuid,
   ownerUserId: safeText(1_024).min(1),
@@ -335,6 +344,8 @@ export type StoryMediaBatchSnapshot = z.infer<typeof storyMediaBatchSnapshotSche
 export type StoryMediaBatchHistoryPage = z.infer<typeof storyMediaBatchHistoryPageSchema>;
 export type StoryMediaBatchExecutionOutcome = z.infer<typeof storyMediaBatchExecutionOutcomeSchema>;
 export type StoryMediaBatchEvent = z.infer<typeof storyMediaBatchEventSchema>;
+export type StoryDirectVideoQueueOutcome = z.infer<typeof storyDirectVideoQueueOutcomeSchema>;
+export type StoryVideoGenerationEvent = z.infer<typeof storyVideoGenerationEventSchema>;
 export type StoryPlanningRun = z.infer<typeof storyPlanningRunSchema>;
 export type StoryPlanningHistoryPage = z.infer<typeof storyPlanningHistoryPageSchema>;
 export type StoryPlanningEvent = z.infer<typeof storyPlanningEventSchema>;

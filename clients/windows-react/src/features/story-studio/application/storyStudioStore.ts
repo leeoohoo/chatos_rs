@@ -1,7 +1,7 @@
 import { create, type StoreApi } from "zustand";
 import type { MediaStudioHistoryItem, MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
+import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject, StoryVideoGenerationEvent } from "../domain/storyStudio";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
@@ -83,6 +83,8 @@ let planningWatchSequence = 0;
 let planningUnlisten: (() => void) | null = null;
 let mediaBatchWatchSequence = 0;
 let mediaBatchUnlisten: (() => void) | null = null;
+let videoGenerationWatchSequence = 0;
+let videoGenerationUnlisten: (() => void) | null = null;
 const pollTimers = new Map<string, number>();
 
 export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
@@ -109,6 +111,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     const sequence = ++activationSequence;
     stopPlanningWatch();
     stopMediaBatchWatch();
+    stopVideoGenerationWatch();
     clearPollTimers();
     const presentationId = crypto.randomUUID();
     set({
@@ -133,6 +136,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     });
     installPlanningWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
     installMediaBatchWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
+    installVideoGenerationWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
     try {
       const [page, models] = await Promise.all([
         storyPort.loadProjects({ ownerUserId, presentationId, limit: 80 }),
@@ -160,6 +164,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     activationSequence += 1;
     stopPlanningWatch();
     stopMediaBatchWatch();
+    stopVideoGenerationWatch();
     clearPollTimers();
     const { ownerUserId, presentationId } = get();
     set({
@@ -377,6 +382,19 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     if (!scope || !project || project.id !== preparation.projectId || get().busy) return false;
     set({ busy: true, error: null });
     try {
+      if (preparation.executionMode === "directVideos") {
+        void storyPort.startDirectVideoQueue({ ...scope, preparation, userIdeas }).then((outcome) => {
+          if (!sameScope(get(), scope)) return;
+          set((state) => ({
+            busy: false,
+            projects: replaceProject(state.projects, outcome.project),
+          }));
+        }).catch((error: unknown) => {
+          if (!sameScope(get(), scope)) return;
+          set({ busy: false, error: errorMessage(error, "顺序视频队列已停止。") });
+        });
+        return true;
+      }
       const batch = await storyPort.startMediaBatch({ ...scope, preparation, userIdeas });
       if (!sameScope(get(), scope)) return false;
       set((state) => ({
@@ -902,6 +920,38 @@ function stopMediaBatchWatch() {
   mediaBatchWatchSequence += 1;
   mediaBatchUnlisten?.();
   mediaBatchUnlisten = null;
+}
+
+function installVideoGenerationWatch(
+  port: StoryStudioPort,
+  scope: { ownerUserId: string; presentationId: string },
+  activation: number,
+  set: StoreApi<StoryStudioState>["setState"],
+  get: StoreApi<StoryStudioState>["getState"],
+) {
+  const watch = ++videoGenerationWatchSequence;
+  void port.watchVideoGeneration(scope, (event: StoryVideoGenerationEvent) => {
+    if (watch !== videoGenerationWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    set((state) => ({ projects: replaceProject(state.projects, event.project) }));
+  }).then((unlisten) => {
+    if (watch !== videoGenerationWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) {
+      unlisten();
+      return;
+    }
+    videoGenerationUnlisten = unlisten;
+  }).catch((error: unknown) => {
+    if (watch !== videoGenerationWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    set({ error: errorMessage(error, "剧情视频进度暂时无法接收。") });
+  });
+}
+
+function stopVideoGenerationWatch() {
+  videoGenerationWatchSequence += 1;
+  videoGenerationUnlisten?.();
+  videoGenerationUnlisten = null;
 }
 
 function selectedProject(state: StoryStudioState) {

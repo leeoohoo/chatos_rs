@@ -15,7 +15,9 @@ import {
   storyMediaBatchEventSchema,
   storyMediaBatchExecutionOutcomeSchema,
   storyMediaBatchSnapshotSchema,
+  storyDirectVideoQueueOutcomeSchema,
   storyVideoGenerationOutcomeSchema,
+  storyVideoGenerationEventSchema,
 } from "../domain/storyStudio";
 import type { StoryPresentationScope, StoryStudioPort } from "../ports/StoryStudioPort";
 
@@ -28,6 +30,18 @@ const safeText = (maximum: number) => z.string().max(maximum).refine(
 );
 
 export class TauriStoryStudioAdapter implements StoryStudioPort {
+  async watchVideoGeneration(
+    request: Parameters<StoryStudioPort["watchVideoGeneration"]>[0],
+    listener: Parameters<StoryStudioPort["watchVideoGeneration"]>[1],
+  ) {
+    const expected = scope(request);
+    return listen<unknown>("story-video-generation", (event) => {
+      const parsed = storyVideoGenerationEventSchema.safeParse(event.payload);
+      if (!parsed.success || parsed.data.presentationId !== expected.presentationId) return;
+      listener(parsed.data);
+    });
+  }
+
   async watchMediaBatches(
     request: Parameters<StoryStudioPort["watchMediaBatches"]>[0],
     listener: Parameters<StoryStudioPort["watchMediaBatches"]>[1],
@@ -115,6 +129,26 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     };
     return storyMediaBatchSnapshotSchema.parse(
       await invoke("start_story_media_batch", { input }),
+    );
+  }
+
+  async startDirectVideoQueue(
+    request: Parameters<StoryStudioPort["startDirectVideoQueue"]>[0],
+  ) {
+    const preparation = request.preparation;
+    const input = {
+      ...scope(request),
+      request: {
+        projectId: uuidSchema.parse(preparation.projectId),
+        baseFingerprint: fingerprintSchema.parse(preparation.projectFingerprint),
+        previewId: uuidSchema.parse(preparation.previewId),
+        kind: z.literal("videos").parse(preparation.kind),
+        targetIds: z.array(identifierSchema).min(1).max(500).parse(preparation.requestedTargetIds),
+        userIdeas: safeText(2_000).parse(request.userIdeas),
+      },
+    };
+    return storyDirectVideoQueueOutcomeSchema.parse(
+      await invoke("start_story_direct_video_queue", { input }),
     );
   }
 

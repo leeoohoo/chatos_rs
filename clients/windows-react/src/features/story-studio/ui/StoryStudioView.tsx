@@ -265,7 +265,7 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
     .filter((step) => step.kind === "videos")
     .reduce((total, step) => total + (project.segments.find((item) => item.id === step.targetId)?.seconds ?? 0), 0) ?? 0;
   const start = async () => {
-    if (!preview || preview.executionMode !== "persistentBatch") return;
+    if (!preview) return;
     if (await startMediaBatch(port, preview, userIdeas)) onClose();
   };
 
@@ -289,7 +289,7 @@ function StoryMediaBatchPreviewSheet({ port, project, onClose }: {
           {preview && <section className="story-batch-summary"><header><strong>原生执行计划已验证</strong><span>{preview.executionMode === "directVideos" ? "独立顺序视频队列" : "可恢复持久化批次"}</span></header><div><span><strong>{preview.requestedTargetIds.length}</strong>目标</span><span><strong>{counts.assets ?? 0}</strong>素材图</span><span><strong>{(counts.frames ?? 0) + (counts.lastFrames ?? 0)}</strong>首尾帧</span><span><strong>{counts.videos ?? 0}</strong>视频</span><span><strong>{videoSeconds}</strong>视频秒数</span></div><ol>{preview.steps.map((step, index) => <li key={step.id}><span>{index + 1}</span>{batchStepLabel(step.kind)} · {batchTargetName(project, step.targetId)}</li>)}</ol></section>}
           {error && <p className="story-batch-error" role="alert">{error}</p>}
         </div>
-        <footer><small>{preview?.executionMode === "directVideos" ? "分段视频必须进入独立顺序队列，不会混入持久化图片批次。" : "创建后会持久化为可恢复队列；本步骤只登记计划，不会伪造完成状态。"}</small><div><button onClick={onClose} type="button">取消</button>{preview?.executionMode === "persistentBatch" && <button className="story-primary-button" disabled={busy || loading} onClick={() => void start()} type="button">{busy ? "正在创建队列…" : "确认并创建队列"}</button>}</div></footer>
+        <footer><small>{preview?.executionMode === "directVideos" ? "分段视频必须进入独立顺序队列，不会混入持久化图片批次。" : "创建后会持久化为可恢复队列；本步骤只登记计划，不会伪造完成状态。"}</small><div><button onClick={onClose} type="button">取消</button>{preview && <button className="story-primary-button" disabled={busy || loading} onClick={() => void start()} type="button">{busy ? (preview.executionMode === "directVideos" ? "正在顺序生成…" : "正在创建队列…") : (preview.executionMode === "directVideos" ? "确认并顺序生成" : "确认并创建队列")}</button>}</div></footer>
       </section>
     </div>
   );
