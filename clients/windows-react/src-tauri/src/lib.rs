@@ -1,4 +1,5 @@
 mod access_control;
+mod agent_conversation;
 mod agent_management;
 mod agent_skill_management;
 mod ask_user;
@@ -33,6 +34,7 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
+use agent_conversation::{prepare_agent_conversation, AgentConversationStore};
 use agent_management::{
     agent_avatar_protocol, list_agent_profiles, load_agent_profile_editor,
     load_agent_profile_editor_catalog, save_agent_profile, AgentProfileStore,
@@ -159,6 +161,8 @@ pub fn run() {
         StoryStudioManager::from_runtime().expect("failed to configure story studio");
     let agent_profile_store =
         AgentProfileStore::from_runtime().expect("failed to configure Agent profile store");
+    let agent_conversation_store = AgentConversationStore::from_runtime()
+        .expect("failed to configure Agent conversation store");
     let agent_skill_store =
         AgentSkillStore::from_runtime().expect("failed to configure Agent Skill store");
     let protocol_attachment_manager = attachment_manager.clone();
@@ -172,6 +176,7 @@ pub fn run() {
         .manage(media_studio_manager)
         .manage(story_studio_manager)
         .manage(agent_profile_store)
+        .manage(agent_conversation_store)
         .manage(agent_skill_store)
         .manage(AttachmentToolWorker::default())
         .manage(TerminalToolWorker::default())
@@ -261,6 +266,7 @@ pub fn run() {
             logout,
             list_local_projects,
             list_agent_profiles,
+            prepare_agent_conversation,
             load_agent_profile_editor_catalog,
             load_agent_profile_editor,
             save_agent_profile,
