@@ -20,8 +20,6 @@ import {
   agentTeamAssetListSchema,
   agentTeamAssetRevisionListSchema,
   agentTeamAssetSchema,
-  projectRequirementSurveyListSchema,
-  projectRequirementSurveySchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   agentStaffingProposalListSchema,
@@ -32,7 +30,6 @@ import {
   type UpdateAgentTeamMemberInput,
   type SaveAgentTeamAssetInput,
   type SaveAgentTeamTodoInput,
-  type ProjectRequirementSurveyAnswers,
 } from "../domain/agentManagement";
 import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -43,6 +40,11 @@ import {
   type AgentSkillKind,
   type AgentSkillMutationInput,
 } from "../domain/agentSkillManagement";
+import {
+  requirementSurveyListSchema,
+  requirementSurveySchema,
+  type RequirementSurveyAnswers,
+} from "../../requirement-surveys/domain/requirementSurvey";
 
 export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listProfiles(ownerUserId: string) {
@@ -343,7 +345,7 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   }
 
   async listProjectRequirementSurveys(ownerUserId: string, projectId: string) {
-    return projectRequirementSurveyListSchema.parse(
+    return requirementSurveyListSchema.parse(
       await invoke("list_project_requirement_surveys", { ownerUserId, projectId }),
     );
   }
@@ -353,9 +355,9 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     projectId: string,
     surveyId: string,
     expectedVersion: number,
-    answers: ProjectRequirementSurveyAnswers,
+    answers: RequirementSurveyAnswers,
   ) {
-    return projectRequirementSurveySchema.parse(
+    return requirementSurveySchema.parse(
       await invoke("resolve_project_requirement_survey", {
         input: { ownerUserId, projectId, surveyId, expectedVersion, answers },
       }),

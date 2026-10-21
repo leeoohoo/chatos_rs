@@ -1,14 +1,15 @@
 import { create } from "zustand";
-import type {
-  ProjectRequirementSurvey,
-  ProjectRequirementSurveyAnswers,
-} from "../domain/agentManagement";
+import {
+  compareRequirementSurveys,
+  type RequirementSurvey,
+  type RequirementSurveyAnswers,
+} from "../../requirement-surveys/domain/requirementSurvey";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 
 interface ProjectRequirementSurveyState {
   ownerUserId: string | null;
   projectId: string | null;
-  surveys: ProjectRequirementSurvey[];
+  surveys: RequirementSurvey[];
   isLoading: boolean;
   submittingSurveyId: string | null;
   error: string | null;
@@ -18,8 +19,8 @@ interface ProjectRequirementSurveyState {
   refresh(port: AgentManagementPort): Promise<void>;
   submit(
     port: AgentManagementPort,
-    survey: ProjectRequirementSurvey,
-    answers: ProjectRequirementSurveyAnswers,
+    survey: RequirementSurvey,
+    answers: RequirementSurveyAnswers,
   ): Promise<boolean>;
   reset(): void;
 }
@@ -72,7 +73,7 @@ export const useProjectRequirementSurveyStore = create<ProjectRequirementSurveyS
       if (surveys.some((survey) => survey.projectId !== projectId)) {
         throw new Error("需求调研项目身份不一致，请刷新后重试。");
       }
-      set({ surveys: [...surveys].sort(compareSurveys), isLoading: false, requestId: 0 });
+      set({ surveys: [...surveys].sort(compareRequirementSurveys), isLoading: false, requestId: 0 });
     } catch (failure) {
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.projectId !== projectId || state.requestId !== requestId) return;
@@ -102,7 +103,7 @@ export const useProjectRequirementSurveyStore = create<ProjectRequirementSurveyS
       }
       set((latest) => ({
         surveys: latest.surveys.map((candidate) => candidate.surveyId === resolved.surveyId
-          ? resolved : candidate).sort(compareSurveys),
+          ? resolved : candidate).sort(compareRequirementSurveys),
         submittingSurveyId: null,
       }));
       return true;
@@ -128,11 +129,6 @@ export const useProjectRequirementSurveyStore = create<ProjectRequirementSurveyS
     }));
   },
 }));
-
-function compareSurveys(left: ProjectRequirementSurvey, right: ProjectRequirementSurvey) {
-  if (left.status !== right.status) return left.status === "open" ? -1 : 1;
-  return right.updatedAtUnixMs - left.updatedAtUnixMs || left.surveyId.localeCompare(right.surveyId);
-}
 
 function errorMessage(error: unknown) {
   if (error instanceof Error && error.message.trim()) return error.message;

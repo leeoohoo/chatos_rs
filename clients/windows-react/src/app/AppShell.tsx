@@ -54,6 +54,20 @@ const AgentManagementWorkspace = lazy(async () => {
   };
 });
 
+const RequirementSurveyWorkspace = lazy(async () => {
+  const [adapterModule, viewModule] = await Promise.all([
+    import("../features/requirement-surveys/adapters/TauriRequirementSurveyAdapter"),
+    import("../features/requirement-surveys/ui/RequirementSurveyCenterView"),
+  ]);
+  const port = new adapterModule.TauriRequirementSurveyAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.RequirementSurveyCenterView>, "port">;
+  return {
+    default: (props: Props) => (
+      <viewModule.RequirementSurveyCenterView {...props} port={port} />
+    ),
+  };
+});
+
 const MediaStudioWorkspace = lazy(async () => {
   const [mediaAdapterModule, storyAdapterModule, viewModule] = await Promise.all([
     import("../features/media-studio/adapters/TauriMediaStudioAdapter"),
@@ -332,6 +346,8 @@ export function AppShell({
         ? "本机终端"
       : selection.kind === "agentManagement"
         ? "Agent 管理"
+      : selection.kind === "requirementSurveys"
+        ? "需求调研"
       : selection.kind === "mediaStudio"
         ? "AI 创作"
       : selection.kind === "applications"
@@ -417,6 +433,8 @@ export function AppShell({
                     ? "MEDIA STUDIO"
                   : selection.kind === "agentManagement"
                     ? "AGENT MANAGEMENT"
+                  : selection.kind === "requirementSurveys"
+                    ? "REQUIREMENT SURVEYS"
                   : selection.kind === "applications" || selection.kind === "application"
                     ? "PLUGIN APPLICATIONS"
                   : "LOCAL WORKSPACE"
@@ -458,6 +476,12 @@ export function AppShell({
             realtimePort={conversationRealtime}
             runInspectorPort={runInspector}
             runtimeSettingsPort={conversationRuntimeSettings}
+          />
+        ) : selection.kind === "requirementSurveys" ? (
+          <RequirementSurveyWorkspace
+            hostReady={snapshot.ready}
+            ownerUserId={session.user.id}
+            projects={workspaceSnapshot.projects}
           />
         ) : selection.kind === "mediaStudio" ? (
           <MediaStudioWorkspace ownerUserId={session.user.id} />

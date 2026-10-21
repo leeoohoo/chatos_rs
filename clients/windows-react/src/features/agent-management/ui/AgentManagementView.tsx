@@ -38,12 +38,16 @@ import {
   type AgentTeamAssetCategory,
   type AgentTeamTodo,
   type AgentTeamTodoProgress,
-  type ProjectRequirementSurvey,
-  type ProjectRequirementSurveyAnswers,
   type CreateAgentTeamInput,
   type PreparedAgentConversation,
   type AgentStaffingProposal,
 } from "../domain/agentManagement";
+import {
+  isRequirementSurveySubmissionValid,
+  toggleRequirementSurveyChoice,
+  type RequirementSurvey,
+  type RequirementSurveyAnswers,
+} from "../../requirement-surveys/domain/requirementSurvey";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { AgentSkillManagementSheet } from "./AgentSkillManagementSheet";
 import "./agentManagement.css";
@@ -1264,20 +1268,13 @@ function ProjectRequirementSurveySheet({
   onClose,
   onSubmit,
 }: {
-  survey: ProjectRequirementSurvey;
+  survey: RequirementSurvey;
   isSubmitting: boolean;
   onClose(): void;
-  onSubmit(answers: ProjectRequirementSurveyAnswers): Promise<void>;
+  onSubmit(answers: RequirementSurveyAnswers): Promise<void>;
 }) {
-  const [answers, setAnswers] = useState<ProjectRequirementSurveyAnswers>(survey.answers ?? {});
-  const canSubmit = survey.status === "open" && survey.questions.every((question) => {
-    const answer = answers[question.questionId];
-    if (answer == null) return !question.required;
-    if (question.responseKind === "text") return typeof answer === "string" && answer.trim().length > 0;
-    if (question.responseKind === "boolean") return typeof answer === "boolean";
-    if (question.responseKind === "single_choice") return typeof answer === "string" && question.options.includes(answer);
-    return Array.isArray(answer) && answer.length > 0 && answer.every((value) => question.options.includes(value));
-  });
+  const [answers, setAnswers] = useState<RequirementSurveyAnswers>(survey.answers ?? {});
+  const canSubmit = isRequirementSurveySubmissionValid(survey, answers);
   return (
     <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
       <section aria-label="需求调研详情" aria-modal="true" className="agent-team-survey-sheet" onMouseDown={(event) => event.stopPropagation()} role="dialog">
@@ -1293,7 +1290,14 @@ function ProjectRequirementSurveySheet({
                 <textarea
                   aria-label={question.prompt}
                   maxLength={16_000}
-                  onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
+                  onChange={(event) => setAnswers((current) => {
+                    if (!question.required && event.target.value.length === 0) {
+                      const next = { ...current };
+                      delete next[question.questionId];
+                      return next;
+                    }
+                    return { ...current, [question.questionId]: event.target.value };
+                  })}
                   value={typeof answers[question.questionId] === "string" ? answers[question.questionId] as string : ""}
                 />
               ) : question.responseKind === "boolean" ? (
@@ -1309,8 +1313,7 @@ function ProjectRequirementSurveySheet({
                       : answers[question.questionId] === option;
                     return <label key={option}><input checked={selected} name={question.questionId} onChange={() => setAnswers((current) => {
                       if (!multiple) return { ...current, [question.questionId]: option };
-                      const values = Array.isArray(current[question.questionId]) ? current[question.questionId] as string[] : [];
-                      return { ...current, [question.questionId]: selected ? values.filter((value) => value !== option) : [...values, option] };
+                      return toggleRequirementSurveyChoice(current, question.questionId, option);
                     })} type={multiple ? "checkbox" : "radio"} />{option}</label>;
                   })}
                 </div>

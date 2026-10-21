@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProjectRequirementSurvey } from "../domain/agentManagement";
+import type { RequirementSurvey } from "../../requirement-surveys/domain/requirementSurvey";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { useProjectRequirementSurveyStore } from "./projectRequirementSurveyStore";
 
@@ -19,8 +19,8 @@ describe("project requirement survey store", () => {
   });
 
   it("rejects a late response from the previous project", async () => {
-    let release!: (value: ProjectRequirementSurvey[]) => void;
-    const late = new Promise<ProjectRequirementSurvey[]>((resolve) => { release = resolve; });
+    let release!: (value: RequirementSurvey[]) => void;
+    const late = new Promise<RequirementSurvey[]>((resolve) => { release = resolve; });
     const port = stubPort({
       listProjectRequirementSurveys: vi.fn(async (_owner, projectId) => (
         projectId === "project-1" ? late : [{ ...survey(), projectId }]
@@ -48,7 +48,7 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
   };
 }
 
-function survey(): ProjectRequirementSurvey {
+function survey(): RequirementSurvey {
   return {
     surveyId: "survey-1", projectId: "project-1", sourceConversationId: "conversation-1",
     sourceRunId: "run-1", sourceTaskId: null, title: "项目目标", description: "请补充目标",

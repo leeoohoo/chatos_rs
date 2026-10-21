@@ -41,6 +41,8 @@ describe("WorkspaceSidebar remote connections", () => {
     expect(onSelectionChange).toHaveBeenCalledWith({ kind: "remote", id: "remote-1" });
     fireEvent.click(screen.getByRole("button", { name: "本机终端" }));
     expect(onSelectionChange).toHaveBeenCalledWith({ kind: "terminal" });
+    fireEvent.click(screen.getByRole("button", { name: "需求调研" }));
+    expect(onSelectionChange).toHaveBeenCalledWith({ kind: "requirementSurveys" });
     fireEvent.click(screen.getByRole("button", { name: "AI 创作" }));
     expect(onSelectionChange).toHaveBeenCalledWith({ kind: "mediaStudio" });
     fireEvent.click(screen.getByRole("button", { name: "应用" }));

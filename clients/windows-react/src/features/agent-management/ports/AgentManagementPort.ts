@@ -20,14 +20,16 @@ import type {
   AgentTeamAssetRevision,
   SaveAgentTeamAssetInput,
   SaveAgentTeamTodoInput,
-  ProjectRequirementSurvey,
-  ProjectRequirementSurveyAnswers,
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
   AgentStaffingProposal,
   AgentStaffingResolution,
 } from "../domain/agentManagement";
+import type {
+  RequirementSurvey,
+  RequirementSurveyAnswers,
+} from "../../requirement-surveys/domain/requirementSurvey";
 import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
 import type {
   AgentSkillDefinition,
@@ -144,14 +146,14 @@ export interface AgentManagementPort {
   listProjectRequirementSurveys?(
     ownerUserId: string,
     projectId: string,
-  ): Promise<ProjectRequirementSurvey[]>;
+  ): Promise<RequirementSurvey[]>;
   resolveProjectRequirementSurvey?(
     ownerUserId: string,
     projectId: string,
     surveyId: string,
     expectedVersion: number,
-    answers: ProjectRequirementSurveyAnswers,
-  ): Promise<ProjectRequirementSurvey>;
+    answers: RequirementSurveyAnswers,
+  ): Promise<RequirementSurvey>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;

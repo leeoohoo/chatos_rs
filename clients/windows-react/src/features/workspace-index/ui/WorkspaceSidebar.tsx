@@ -78,6 +78,15 @@ export function WorkspaceSidebar({
         Agent 管理
       </button>
       <button
+        className={`nav-item ${selection.kind === "requirementSurveys" ? "nav-item--active" : ""}`}
+        disabled={!hostReady}
+        onClick={() => onSelectionChange({ kind: "requirementSurveys" })}
+        type="button"
+      >
+        <span aria-hidden="true" className="nav-symbol">☷</span>
+        需求调研
+      </button>
+      <button
         className={`nav-item ${selection.kind === "terminal" ? "nav-item--active" : ""}`}
         disabled={!hostReady}
         onClick={() => onSelectionChange({ kind: "terminal" })}
