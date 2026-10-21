@@ -319,7 +319,15 @@ async fn finish_next(
     status: LocalAgentRunStatus,
     now: i64,
 ) {
-    finish_next_with_outcome(storage, run_id, status, json!({"status": status}), now).await;
+    finish_next_with_outcome(
+        storage,
+        run_id,
+        status,
+        json!({"status": status}),
+        None,
+        now,
+    )
+    .await;
 }
 
 async fn finish_next_with_outcome(
@@ -327,6 +335,7 @@ async fn finish_next_with_outcome(
     run_id: &str,
     status: LocalAgentRunStatus,
     terminal_outcome: Value,
+    reported_result_status: Option<&str>,
     now: i64,
 ) {
     storage
@@ -347,6 +356,40 @@ async fn finish_next_with_outcome(
         .await
         .expect("claim run")
         .expect("run claim");
+    if let Some(result_status) = reported_result_status {
+        sqlx::query(
+            "INSERT INTO local_agent_tool_invocations(\
+             invocation_id, run_id, batch_id, call_id, tool_name, arguments_json, \
+             side_effecting, requires_approval, approval_status, status, result_json, error_text, \
+             version, created_at_unix_ms, updated_at_unix_ms) \
+             VALUES(?, ?, ?, ?, ?, ?, 0, 0, 'not_required', 'succeeded', ?, NULL, 2, ?, ?)",
+        )
+        .bind(format!("outcome-{run_id}"))
+        .bind(&claim.run.run_id)
+        .bind(format!("batch-{run_id}"))
+        .bind(format!("call-{run_id}"))
+        .bind(TASK_OUTCOME_REPORT_TOOL)
+        .bind(
+            serde_json::to_string(&json!({
+                "result_status": result_status,
+                "reason": "test fixture result gate"
+            }))
+            .expect("serialize outcome arguments"),
+        )
+        .bind(
+            serde_json::to_string(&json!({
+                "reported": true,
+                "result_status": result_status,
+                "reason": "test fixture result gate"
+            }))
+            .expect("serialize outcome result"),
+        )
+        .bind(now + 1)
+        .bind(now + 1)
+        .execute(&storage.pool)
+        .await
+        .expect("store reported outcome");
+    }
     storage
         .apply_transition(
             &command(&format!("finish-{run_id}")),
@@ -1106,6 +1149,7 @@ async fn dependent_task_receives_only_user_visible_prerequisite_results() {
             "task_acceptance":{"status":"succeeded","final_response":"Implemented the data model.","final_response_chars":999,"acceptance_checks":[{"criterion_index":0,"status":"passed","evidence":"Checked result"}]},
             "reasoning": "hidden chain of thought must never be forwarded"
         }),
+        Some("succeeded"),
         2_000,
     )
     .await;
@@ -1197,6 +1241,7 @@ async fn existing_task_ids_preserve_cross_graph_dependency_execution_and_context
         "run-existing-prerequisite",
         LocalAgentRunStatus::Succeeded,
         json!({"content": "Existing prerequisite result"}),
+        None,
         2_000,
     )
     .await;
@@ -1396,11 +1441,12 @@ async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependent
     .execute(&storage.pool)
     .await
     .expect("store reported outcome");
+    let run_id = claim.run.run_id.clone();
     storage
         .apply_transition(
             &command("finish-reported"),
             &RunTransition {
-                run_id: claim.run.run_id,
+                run_id: run_id.clone(),
                 claim_token: claim.claim_token,
                 expected_version: claim.run.version,
                 expected_status: LocalAgentRunStatus::ModelRunning,
@@ -1430,6 +1476,16 @@ async fn blocked_internal_result_keeps_execution_successful_but_blocks_dependent
     assert!(graph.tasks[1..]
         .iter()
         .all(|task| task.status == LocalTaskStatus::Blocked));
+    let events = storage
+        .list_events(0, 100, Some(&run_id))
+        .await
+        .expect("list reconciliation events");
+    let reconciliation = events
+        .iter()
+        .find(|event| event.event_type == "task_state_reconciled")
+        .expect("task reconciliation event");
+    assert_eq!(reconciliation.payload["status"], "succeeded");
+    assert_eq!(reconciliation.payload["result_status"], "blocked");
 }
 
 #[tokio::test]
@@ -1453,6 +1509,7 @@ async fn missing_internal_result_never_unlocks_a_versioned_dependent_task() {
         "run-missing-result",
         LocalAgentRunStatus::Succeeded,
         json!({"content": "Run completed without its required result report"}),
+        None,
         2_000,
     )
     .await;

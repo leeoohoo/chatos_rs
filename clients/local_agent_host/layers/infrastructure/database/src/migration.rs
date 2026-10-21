@@ -112,11 +112,16 @@ async fn apply_schema(
     version: i64,
     statements: &[&str],
 ) -> Result<(), ClientStorageError> {
-    for statement in statements {
-        sqlx::query(sqlx::AssertSqlSafe(*statement))
+    for (statement_index, statement) in statements.iter().enumerate() {
+        if let Err(error) = sqlx::query(sqlx::AssertSqlSafe(*statement))
             .execute(&mut *connection)
             .await
-            .db()?;
+        {
+            return Err(ClientStorageError::database(format!(
+                "schema migration v{version} statement {} failed: {error}; SQL: {statement}",
+                statement_index + 1
+            )));
+        }
     }
     sqlx::query(
         "INSERT INTO client_schema_migrations(version, applied_at_unix_ms) \
