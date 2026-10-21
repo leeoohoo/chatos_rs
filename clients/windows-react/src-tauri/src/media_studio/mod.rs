@@ -128,6 +128,8 @@ impl MediaStudioManager {
             *session = None;
         }
         self.references.reset();
+        self.video_inputs.reset();
+        self.video_jobs.reset();
     }
 
     fn present_history_item(
@@ -1481,5 +1483,61 @@ mod tests {
             manager.protocol_body(&path).unwrap_err(),
             http::StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[test]
+    fn reset_clears_video_inputs_and_active_jobs() {
+        let root = tempdir().unwrap();
+        let manager = MediaStudioManager::new(root.path().to_path_buf()).unwrap();
+        manager.activate_session("alice", 7).unwrap();
+        let presentation_id = Uuid::new_v4().to_string();
+        let (input_epoch, _) = manager
+            .video_inputs
+            .begin_scope("alice", 7, &presentation_id)
+            .unwrap();
+        let snapshot = manager
+            .video_jobs
+            .register(
+                "alice",
+                7,
+                &presentation_id,
+                VideoGenerationRequest {
+                    model_config_id: "video-model".into(),
+                    prompt: "moving clouds".into(),
+                    size: "768P".into(),
+                    seconds: 4,
+                    ratio: "16:9".into(),
+                    input_image: None,
+                    reference_audio: None,
+                    client_request_id: "request-1".into(),
+                },
+                video_provider::ResolvedVideoModel {
+                    model_config_id: "video-model".into(),
+                    model_name: "MiniMax-H3".into(),
+                    base_url: reqwest::Url::parse("https://api.example.com/v1/").unwrap(),
+                    api_key: "must-never-cross".into(),
+                },
+                video_provider::ProviderVideoJob {
+                    id: "provider-job".into(),
+                    status: "queued".into(),
+                    progress: None,
+                    model_name: Some("MiniMax-H3".into()),
+                    error_message: None,
+                    content_url: None,
+                },
+            )
+            .unwrap();
+
+        manager.reset();
+
+        let (replacement_epoch, _) = manager
+            .video_inputs
+            .begin_scope("alice", 7, &presentation_id)
+            .unwrap();
+        assert_ne!(input_epoch, replacement_epoch);
+        assert!(manager
+            .video_jobs
+            .begin_poll("alice", 7, &presentation_id, &snapshot.job_id)
+            .is_err());
     }
 }

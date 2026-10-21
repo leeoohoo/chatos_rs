@@ -6,6 +6,10 @@ import {
   mediaStudioHistoryPageSchema,
   mediaStudioModelSchema,
   mediaStudioReferenceImportResultSchema,
+  mediaStudioVideoAudioDraftSchema,
+  mediaStudioVideoGenerationRequestSchema,
+  mediaStudioVideoHistoryPageSchema,
+  mediaStudioVideoJobSnapshotSchema,
 } from "./mediaStudio";
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -119,6 +123,54 @@ describe("media studio domain", () => {
       referenceImagePaths: ["C:\\Users\\Alice\\reference.png"],
     })).toThrow();
   });
+
+  it("accepts only exact video history previews and rejects paths or media bytes", () => {
+    const page = videoHistoryPage();
+    expect(mediaStudioVideoHistoryPageSchema.parse(page).items[0]?.id).toBe(RECORD_ID);
+    expect(() => mediaStudioVideoHistoryPageSchema.parse({
+      ...page,
+      items: [{ ...page.items[0], previewUrl: `chatos-media://localhost/${SESSION_ID}/${PRESENTATION_ID}/${CONTENT_TOKEN}` }],
+    })).toThrow();
+    expect(() => mediaStudioVideoHistoryPageSchema.parse({
+      ...page,
+      items: [{ ...page.items[0], absolutePath: "C:\\Users\\Alice\\video.mp4" }],
+    })).toThrow();
+    expect(() => mediaStudioVideoHistoryPageSchema.parse({
+      ...page,
+      items: [{ ...page.items[0], base64Data: "dmlkZW8=" }],
+    })).toThrow();
+  });
+
+  it("keeps video inputs opaque and enforces the MiniMax request envelope", () => {
+    const audio = {
+      id: `video_audio_${"c".repeat(32)}`,
+      name: "reference.m4a",
+      mimeType: "audio/mp4",
+      byteSize: 4_096,
+    };
+    expect(mediaStudioVideoAudioDraftSchema.parse(audio)).toEqual(audio);
+    expect(() => mediaStudioVideoAudioDraftSchema.parse({ ...audio, path: "/tmp/reference.m4a" }))
+      .toThrow();
+
+    const request = videoGenerationRequest();
+    expect(mediaStudioVideoGenerationRequestSchema.parse(request).seconds).toBe(6);
+    expect(() => mediaStudioVideoGenerationRequestSchema.parse({ ...request, seconds: 16 })).toThrow();
+    expect(() => mediaStudioVideoGenerationRequestSchema.parse({ ...request, size: "1080P" })).toThrow();
+    expect(() => mediaStudioVideoGenerationRequestSchema.parse({ ...request, inputImagePath: "C:\\first.png" }))
+      .toThrow();
+  });
+
+  it("parses strict video job snapshots including provider unknown state", () => {
+    const snapshot = videoJobSnapshot();
+    expect(mediaStudioVideoJobSnapshotSchema.parse(snapshot).status).toBe("unknown");
+    expect(() => mediaStudioVideoJobSnapshotSchema.parse({ ...snapshot, apiKey: "secret" })).toThrow();
+    expect(() => mediaStudioVideoJobSnapshotSchema.parse({
+      ...snapshot,
+      status: "failed",
+      terminal: true,
+      errorMessage: null,
+    })).toThrow();
+  });
 });
 
 function historyPage() {
@@ -171,5 +223,49 @@ function generatedWithoutPersistence() {
       clientRequestId: "request-1",
     },
     persistenceErrorMessage: "图片已生成，但未能保存到历史记录。",
+  };
+}
+
+function videoHistoryPage() {
+  return {
+    items: [{
+      id: RECORD_ID,
+      prompt: "A cinematic lake",
+      modelName: "MiniMax-H3",
+      createdAtUnixMs: 1_700_000_000_000,
+      mimeType: "video/mp4",
+      contentToken: CONTENT_TOKEN,
+      previewUrl: `chatos-media://localhost/${SESSION_ID}/${RECORD_ID}/${CONTENT_TOKEN}`,
+    }],
+    nextCursor: null,
+    unreadableCount: 0,
+  };
+}
+
+function videoGenerationRequest() {
+  return {
+    presentationId: PRESENTATION_ID,
+    modelConfigId: "video-model",
+    prompt: "A cinematic lake",
+    size: "768P",
+    seconds: 6,
+    ratio: "16:9",
+    inputImageId: REFERENCE_ID,
+    referenceAudioId: `video_audio_${"c".repeat(32)}`,
+    clientRequestId: "video-request-1",
+  };
+}
+
+function videoJobSnapshot() {
+  return {
+    jobId: "55555555-5555-4555-8555-555555555555",
+    clientRequestId: "video-request-1",
+    status: "unknown",
+    percent: null,
+    providerJobId: "provider-job-1",
+    result: null,
+    errorMessage: null,
+    terminal: false,
+    revision: 1,
   };
 }

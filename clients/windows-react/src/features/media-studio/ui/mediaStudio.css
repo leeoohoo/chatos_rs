@@ -295,6 +295,37 @@
 .media-preview > button { position: absolute; z-index: 1; top: 10px; right: 10px; color: white; background: rgba(0,0,0,.5); }
 .media-preview img { display: block; max-width: 100%; max-height: calc(100vh - 70px); border-radius: 15px; object-fit: contain; box-shadow: 0 24px 70px rgba(0,0,0,.38); }
 
+.media-stop-button { min-height: 30px; border: 1px solid rgba(60,60,67,.13); border-radius: 8px; padding: 5px 10px; color: inherit; background: rgba(255,255,255,.6); font-size: 10px; font-weight: 590; cursor: pointer; }
+.media-video-canvas__body { display: flex; }
+.media-video-canvas__body > * { width: 100%; }
+.media-video-progress { display: flex; min-height: 460px; align-items: center; justify-content: center; flex-direction: column; gap: 15px; padding: 28px; text-align: center; }
+.media-video-progress__icon { display: grid; width: 82px; height: 82px; place-items: center; border-radius: 50%; color: var(--media-purple); background: linear-gradient(145deg,rgba(138,77,232,.16),rgba(233,90,167,.09)); font-size: 31px; }
+.media-video-progress.is-failed .media-video-progress__icon { color: #c66a00; background: rgba(255,159,10,.1); }
+.media-video-progress h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.02em; }
+.media-video-progress progress { width: min(360px,80%); height: 6px; accent-color: var(--media-purple); }
+.media-video-progress__spinner { width: 23px; height: 23px; }
+.media-video-progress p,.media-video-progress small { max-width: 470px; margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.5; }
+.media-video-result { display: grid; width: 100%; gap: 14px; }
+.media-video-result video { display: block; width: 100%; min-height: 420px; max-height: 620px; border-radius: 13px; background: #000; object-fit: contain; box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.media-video-result.is-compact video { min-height: 220px; max-height: 330px; border-radius: 10px; }
+.media-video-result.is-compact .media-result__unavailable { min-height: 220px; }
+.media-video-input-card,.media-video-audio-card { display: grid; min-width: 0; grid-template-columns: 58px minmax(0,1fr) auto auto; align-items: center; gap: 8px; border-radius: 11px; padding: 8px; background: rgba(138,77,232,.055); }
+.media-video-input-card img,.media-video-input-card > span { display: grid; width: 58px; height: 46px; place-items: center; border-radius: 8px; background: rgba(120,120,128,.08); object-fit: cover; }
+.media-video-input-card strong,.media-video-audio-card strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.media-video-input-card button,.media-video-audio-card button { border: 0; padding: 4px; color: var(--media-purple); background: transparent; font-size: 10px; font-weight: 590; cursor: pointer; }
+.media-video-input-card button:last-child,.media-video-audio-card button:last-child { font-size: 16px; }
+.media-video-audio-card { grid-template-columns: 32px minmax(0,1fr) auto auto auto; }
+.media-video-audio-card > span { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 50%; color: var(--media-purple); background: rgba(138,77,232,.12); }
+.media-video-audio-card small { color: var(--secondary); font-size: 9px; }
+.media-video-input-button,.media-video-audio-button { min-height: 78px; }
+.media-history-group { display: grid; gap: 12px; }
+.media-history-group > header,.media-history-group__heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 2px 2px 0; }
+.media-history-group h3,.media-history-group__heading h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.media-history-group p,.media-history-group__heading p { margin: 3px 0 0; color: var(--secondary); font-size: 10px; }
+.media-history-group > header > span,.media-history-group__heading > span { color: var(--secondary); font-size: 9px; }
+.media-video-history-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(340px,1fr)); gap: 14px; }
+.media-video-history-entry .media-video-result { padding: 14px; }
+
 @media (max-width: 1050px) {
   .media-studio__workspace { grid-template-columns: minmax(380px,1fr) 330px; gap: 13px; padding: 14px; }
   .media-studio__identity small { display: none; }

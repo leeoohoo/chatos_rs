@@ -8,6 +8,13 @@ import {
   type MediaStudioHistoryItem,
   type MediaStudioModel,
   type MediaStudioReference,
+  type MediaStudioVideoAudioDraft,
+  type MediaStudioVideoHistoryCursor,
+  type MediaStudioVideoHistoryItem,
+  type MediaStudioVideoJobSnapshot,
+  type MediaStudioVideoJobStatus,
+  type MediaStudioVideoRatio,
+  type MediaStudioVideoSize,
 } from "../domain/mediaStudio";
 import type {
   MediaStudioHistoryReference,
@@ -47,6 +54,8 @@ interface MediaStudioState {
   hasLoadedModels: boolean;
   modelsErrorMessage: string | null;
   activeModelsRequest: number | null;
+  videoModels: MediaStudioModel[];
+  selectedVideoModelId: string | null;
   history: MediaStudioHistoryItem[];
   transientItems: MediaStudioTransientItem[];
   historyCursor: MediaStudioHistoryCursor | null;
@@ -57,6 +66,15 @@ interface MediaStudioState {
   historyErrorMessage: string | null;
   activeHistoryRequest: number | null;
   activeOlderHistoryRequest: number | null;
+  videoHistory: MediaStudioVideoHistoryItem[];
+  videoHistoryCursor: MediaStudioVideoHistoryCursor | null;
+  unreadableVideoHistoryCount: number;
+  isLoadingVideoHistory: boolean;
+  hasLoadedVideoHistory: boolean;
+  isLoadingOlderVideoHistory: boolean;
+  videoHistoryErrorMessage: string | null;
+  activeVideoHistoryRequest: number | null;
+  activeOlderVideoHistoryRequest: number | null;
   prompt: string;
   size: string;
   count: number;
@@ -68,10 +86,29 @@ interface MediaStudioState {
   activeGenerationRequest: number | null;
   generationErrorMessage: string | null;
   persistenceWarning: string | null;
+  videoPrompt: string;
+  videoSize: MediaStudioVideoSize;
+  videoSeconds: number;
+  videoRatio: MediaStudioVideoRatio;
+  videoInputImage: MediaStudioReference | null;
+  videoReferenceAudio: MediaStudioVideoAudioDraft | null;
+  isImportingVideoInput: boolean;
+  isImportingVideoAudio: boolean;
+  videoInputErrorMessage: string | null;
+  activeVideoInputRequest: number | null;
+  activeVideoAudioRequest: number | null;
+  isGeneratingVideo: boolean;
+  videoJob: MediaStudioVideoJobSnapshot | null;
+  videoGenerationErrorMessage: string | null;
+  activeVideoGenerationRequest: number | null;
+  activeVideoPollRequest: number | null;
+  activeVideoClientRequestId: string | null;
   activate(port: MediaStudioPort, ownerUserId: string): Promise<void>;
   refreshModels(port: MediaStudioPort): Promise<void>;
   refreshHistory(port: MediaStudioPort): Promise<void>;
   loadOlderHistory(port: MediaStudioPort): Promise<void>;
+  refreshVideoHistory(port: MediaStudioPort): Promise<void>;
+  loadOlderVideoHistory(port: MediaStudioPort): Promise<void>;
   setSelectedModel(modelId: string): void;
   setPrompt(prompt: string): void;
   setSize(size: string): void;
@@ -86,6 +123,21 @@ interface MediaStudioState {
   dismissGenerationError(): void;
   dismissHistoryFeedback(): void;
   dismissReferenceErrors(): void;
+  setSelectedVideoModel(modelId: string): void;
+  setVideoPrompt(prompt: string): void;
+  setVideoSize(size: MediaStudioVideoSize): void;
+  setVideoSeconds(seconds: number): void;
+  setVideoRatio(ratio: MediaStudioVideoRatio): void;
+  pickVideoInputImage(port: MediaStudioPort): Promise<void>;
+  addHistoryVideoInput(port: MediaStudioPort, asset: MediaStudioHistoryReference): Promise<void>;
+  removeVideoInputImage(port: MediaStudioPort): Promise<void>;
+  pickVideoReferenceAudio(port: MediaStudioPort): Promise<void>;
+  removeVideoReferenceAudio(port: MediaStudioPort): Promise<void>;
+  generateVideo(port: MediaStudioPort): Promise<void>;
+  pollVideo(port: MediaStudioPort): Promise<void>;
+  cancelVideo(port: MediaStudioPort): Promise<void>;
+  dismissVideoError(): void;
+  dismissVideoHistoryFeedback(): void;
   deactivate(port: MediaStudioPort): void;
   reset(port: MediaStudioPort): void;
 }
@@ -99,6 +151,9 @@ type StoreSet = (
 let activationSequence = 0;
 let fallbackUuidSequence = 0;
 let discardBarrier: Promise<void> = Promise.resolve();
+let videoPollTimer: ReturnType<typeof setTimeout> | null = null;
+
+export const mediaStudioVideoPollIntervalMs = 10_000;
 
 export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
   ...emptyState(),
@@ -117,8 +172,12 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
     if (current.ownerUserId === ownerUserId && current.presentationId) {
       if (!current.hasLoadedModels && !current.isLoadingModels) void get().refreshModels(port);
       if (!current.hasLoadedHistory && !current.isLoadingHistory) void get().refreshHistory(port);
+      if (!current.hasLoadedVideoHistory && !current.isLoadingVideoHistory) {
+        void get().refreshVideoHistory(port);
+      }
       return;
     }
+    clearVideoPollTimer();
     queuePresentationDiscard(port, current);
     await discardBarrier;
     if (activation !== activationSequence) return;
@@ -131,7 +190,11 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
       presentationGeneration: latest.presentationGeneration + 1,
       requestSequence: latest.requestSequence + 1,
     });
-    await Promise.all([get().refreshModels(port), get().refreshHistory(port)]);
+    await Promise.all([
+      get().refreshModels(port),
+      get().refreshHistory(port),
+      get().refreshVideoHistory(port),
+    ]);
   },
 
   async refreshModels(port) {
@@ -144,9 +207,15 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
       const selectedModelId = available.some((model) => model.id === get().selectedModelId)
         ? get().selectedModelId
         : available[0]?.id ?? null;
+      const videoModels = available.filter(isSupportedVideoModel);
+      const selectedVideoModelId = videoModels.some(
+        (model) => model.id === get().selectedVideoModelId,
+      ) ? get().selectedVideoModelId : videoModels[0]?.id ?? null;
       set({
         models: available,
         selectedModelId,
+        videoModels,
+        selectedVideoModelId,
         isLoadingModels: false,
         hasLoadedModels: true,
         modelsErrorMessage: null,
@@ -216,6 +285,63 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
         isLoadingOlderHistory: false,
         historyErrorMessage: `读取更多创作记录失败：${errorMessage(error, "未知错误")}`,
         activeOlderHistoryRequest: null,
+      });
+    }
+  },
+
+  async refreshVideoHistory(port) {
+    const identity = beginVideoHistoryRequest(get, set, false);
+    if (!identity) return;
+    try {
+      const page = await port.loadVideoHistory({ ownerUserId: identity.ownerUserId, limit: 10 });
+      if (!acceptsInitialVideoHistory(get(), identity)) return;
+      set({
+        videoHistory: sortedVideoHistory(page.items),
+        videoHistoryCursor: page.nextCursor,
+        unreadableVideoHistoryCount: page.unreadableCount,
+        isLoadingVideoHistory: false,
+        hasLoadedVideoHistory: true,
+        videoHistoryErrorMessage: unreadableVideoHistoryMessage(page.unreadableCount),
+        activeVideoHistoryRequest: null,
+      });
+    } catch (error) {
+      if (!acceptsInitialVideoHistory(get(), identity)) return;
+      set({
+        isLoadingVideoHistory: false,
+        hasLoadedVideoHistory: true,
+        videoHistoryErrorMessage: `读取视频记录失败：${errorMessage(error, "未知错误")}`,
+        activeVideoHistoryRequest: null,
+      });
+    }
+  },
+
+  async loadOlderVideoHistory(port) {
+    const identity = beginVideoHistoryRequest(get, set, true);
+    if (!identity) return;
+    const cursor = get().videoHistoryCursor;
+    if (!cursor) return;
+    try {
+      const page = await port.loadVideoHistory({
+        ownerUserId: identity.ownerUserId,
+        after: cursor,
+        limit: 10,
+      });
+      if (!acceptsOlderVideoHistory(get(), identity)) return;
+      const unreadableVideoHistoryCount = get().unreadableVideoHistoryCount + page.unreadableCount;
+      set({
+        videoHistory: mergeVideoHistory(get().videoHistory, page.items),
+        videoHistoryCursor: page.nextCursor,
+        unreadableVideoHistoryCount,
+        isLoadingOlderVideoHistory: false,
+        videoHistoryErrorMessage: unreadableVideoHistoryMessage(unreadableVideoHistoryCount),
+        activeOlderVideoHistoryRequest: null,
+      });
+    } catch (error) {
+      if (!acceptsOlderVideoHistory(get(), identity)) return;
+      set({
+        isLoadingOlderVideoHistory: false,
+        videoHistoryErrorMessage: `读取更多视频记录失败：${errorMessage(error, "未知错误")}`,
+        activeOlderVideoHistoryRequest: null,
       });
     }
   },
@@ -374,8 +500,287 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
   dismissHistoryFeedback() { set({ historyErrorMessage: null, persistenceWarning: null }); },
   dismissReferenceErrors() { set({ referenceErrorMessages: [] }); },
 
+  setSelectedVideoModel(modelId) {
+    const state = get();
+    if (state.isGeneratingVideo || !state.videoModels.some((model) => model.id === modelId)) return;
+    set({ selectedVideoModelId: modelId, videoGenerationErrorMessage: null });
+  },
+
+  setVideoPrompt(videoPrompt) {
+    if (!get().isGeneratingVideo) set({ videoPrompt, videoGenerationErrorMessage: null });
+  },
+
+  setVideoSize(videoSize) {
+    if (!get().isGeneratingVideo && supportedVideoSizes.includes(videoSize)) {
+      set({ videoSize, videoGenerationErrorMessage: null });
+    }
+  },
+
+  setVideoSeconds(videoSeconds) {
+    if (!get().isGeneratingVideo && Number.isInteger(videoSeconds)
+      && videoSeconds >= 4 && videoSeconds <= 15) {
+      set({ videoSeconds, videoGenerationErrorMessage: null });
+    }
+  },
+
+  setVideoRatio(videoRatio) {
+    if (!get().isGeneratingVideo && supportedVideoRatios.includes(videoRatio)) {
+      set({ videoRatio, videoGenerationErrorMessage: null });
+    }
+  },
+
+  async pickVideoInputImage(port) {
+    const identity = beginVideoInputRequest(get, set, false);
+    if (!identity) return;
+    try {
+      const result = await port.pickReferenceImages(referenceScope(identity));
+      if (!acceptsVideoInput(get(), identity)) {
+        discardLateReferences(port, identity, result.references);
+        return;
+      }
+      const [selected, ...unused] = result.references;
+      if (!selected) {
+        set({
+          isImportingVideoInput: false,
+          activeVideoInputRequest: null,
+          videoInputErrorMessage: result.errors[0] ?? null,
+        });
+        return;
+      }
+      const previous = get().videoInputImage;
+      const discarded = [previous, ...unused].filter(
+        (value): value is MediaStudioReference => value != null && value.id !== selected.id,
+      );
+      set({
+        videoInputImage: selected,
+        isImportingVideoInput: false,
+        activeVideoInputRequest: null,
+        videoInputErrorMessage: result.errors[0] ?? null,
+      });
+      discardLateReferences(port, identity, discarded);
+    } catch (error) {
+      failVideoInputRequest(error, identity, get, set, false);
+    }
+  },
+
+  async addHistoryVideoInput(port, asset) {
+    const state = get();
+    if (state.isGeneratingVideo) return;
+    if (!authorizedHistoryReferences(state.history).has(historyReferenceKey(asset))) {
+      set({ videoInputErrorMessage: "只能使用当前账号图片历史中的资源。" });
+      return;
+    }
+    const identity = beginVideoInputRequest(get, set, false);
+    if (!identity) return;
+    try {
+      const result = await port.stageHistoryReferences({ ...referenceScope(identity), assets: [asset] });
+      if (!acceptsVideoInput(get(), identity)) {
+        discardLateReferences(port, identity, result.references);
+        return;
+      }
+      const selected = result.references[0];
+      if (!selected) {
+        set({
+          isImportingVideoInput: false,
+          activeVideoInputRequest: null,
+          videoInputErrorMessage: result.errors[0] ?? "参考图暂时无法读取。",
+        });
+        return;
+      }
+      const previous = get().videoInputImage;
+      set({
+        videoInputImage: selected,
+        isImportingVideoInput: false,
+        activeVideoInputRequest: null,
+        videoInputErrorMessage: result.errors[0] ?? null,
+      });
+      if (previous && previous.id !== selected.id) discardLateReferences(port, identity, [previous]);
+    } catch (error) {
+      failVideoInputRequest(error, identity, get, set, false);
+    }
+  },
+
+  async removeVideoInputImage(port) {
+    const state = get();
+    if (state.isGeneratingVideo || !state.videoInputImage) return;
+    const identity = beginVideoInputRequest(get, set, false);
+    if (!identity) return;
+    const referenceId = state.videoInputImage.id;
+    try {
+      await port.discardReferenceImages({ ...referenceScope(identity), referenceIds: [referenceId] });
+      if (!acceptsVideoInput(get(), identity)) return;
+      set({
+        videoInputImage: get().videoInputImage?.id === referenceId ? null : get().videoInputImage,
+        isImportingVideoInput: false,
+        activeVideoInputRequest: null,
+        videoInputErrorMessage: null,
+      });
+    } catch (error) {
+      failVideoInputRequest(error, identity, get, set, false);
+    }
+  },
+
+  async pickVideoReferenceAudio(port) {
+    const identity = beginVideoInputRequest(get, set, true);
+    if (!identity) return;
+    try {
+      const audio = await port.pickVideoReferenceAudio(referenceScope(identity));
+      if (!acceptsVideoAudio(get(), identity)) {
+        if (audio) discardLateAudio(port, identity, audio);
+        return;
+      }
+      set({
+        videoReferenceAudio: audio ?? get().videoReferenceAudio,
+        isImportingVideoAudio: false,
+        activeVideoAudioRequest: null,
+        videoInputErrorMessage: null,
+      });
+    } catch (error) {
+      failVideoInputRequest(error, identity, get, set, true);
+    }
+  },
+
+  async removeVideoReferenceAudio(port) {
+    const state = get();
+    if (state.isGeneratingVideo || !state.videoReferenceAudio) return;
+    const identity = beginVideoInputRequest(get, set, true);
+    if (!identity) return;
+    const referenceAudioId = state.videoReferenceAudio.id;
+    try {
+      await port.discardVideoReferenceAudio({ ...referenceScope(identity), referenceAudioId });
+      if (!acceptsVideoAudio(get(), identity)) return;
+      set({
+        videoReferenceAudio: get().videoReferenceAudio?.id === referenceAudioId
+          ? null
+          : get().videoReferenceAudio,
+        isImportingVideoAudio: false,
+        activeVideoAudioRequest: null,
+        videoInputErrorMessage: null,
+      });
+    } catch (error) {
+      failVideoInputRequest(error, identity, get, set, true);
+    }
+  },
+
+  async generateVideo(port) {
+    const identity = beginVideoGeneration(get, set);
+    if (!identity) return;
+    const state = get();
+    const clientRequestId = newUuid();
+    const request = {
+      presentationId: identity.presentationId,
+      modelConfigId: state.selectedVideoModelId!,
+      prompt: state.videoPrompt.trim(),
+      size: state.videoSize,
+      seconds: state.videoSeconds,
+      ratio: state.videoRatio,
+      inputImageId: state.videoInputImage?.id ?? null,
+      referenceAudioId: state.videoReferenceAudio?.id ?? null,
+      clientRequestId,
+    };
+    set({ activeVideoClientRequestId: clientRequestId });
+    try {
+      const snapshot = await port.startVideoGeneration({ ownerUserId: identity.ownerUserId, request });
+      if (!acceptsVideoGeneration(get(), identity, clientRequestId)) {
+        void port.cancelVideoGeneration({
+          ...referenceScope(identity),
+          jobId: snapshot.jobId,
+        }).catch(() => undefined);
+        return;
+      }
+      applyVideoSnapshot(port, snapshot, identity, get, set);
+    } catch (error) {
+      if (!acceptsVideoGeneration(get(), identity, clientRequestId)) return;
+      set({
+        isGeneratingVideo: false,
+        activeVideoGenerationRequest: null,
+        activeVideoClientRequestId: null,
+        videoGenerationErrorMessage: errorMessage(error, "视频任务创建失败。"),
+        videoJob: failedVideoSnapshot(clientRequestId, error),
+      });
+    }
+  },
+
+  async pollVideo(port) {
+    clearVideoPollTimer();
+    const state = get();
+    if (!state.isGeneratingVideo || !state.videoJob || state.videoJob.terminal) return;
+    const identity = operationIdentity(state);
+    if (!identity || state.activeVideoGenerationRequest == null) return;
+    const generationRequestId = state.activeVideoGenerationRequest;
+    const jobId = state.videoJob.jobId;
+    const clientRequestId = state.videoJob.clientRequestId;
+    set({ requestSequence: identity.requestId, activeVideoPollRequest: identity.requestId });
+    try {
+      const snapshot = await port.pollVideoGeneration({
+        ...referenceScope(identity),
+        jobId,
+        clientRequestId,
+      });
+      if (!acceptsVideoPoll(
+        get(), identity, generationRequestId, jobId, clientRequestId,
+      )) return;
+      applyVideoSnapshot(port, snapshot, {
+        ...identity,
+        requestId: generationRequestId,
+      }, get, set);
+    } catch (error) {
+      if (!acceptsVideoPoll(
+        get(), identity, generationRequestId, jobId, clientRequestId,
+      )) return;
+      set({
+        isGeneratingVideo: false,
+        activeVideoGenerationRequest: null,
+        activeVideoPollRequest: null,
+        activeVideoClientRequestId: null,
+        videoGenerationErrorMessage: errorMessage(error, "视频状态查询失败。"),
+        videoJob: {
+          ...state.videoJob,
+          status: "failed",
+          errorMessage: errorMessage(error, "视频状态查询失败。"),
+          terminal: true,
+          revision: state.videoJob.revision + 1,
+        },
+      });
+    }
+  },
+
+  async cancelVideo(port) {
+    const state = get();
+    if (!state.isGeneratingVideo) return;
+    clearVideoPollTimer();
+    set({
+      isGeneratingVideo: false,
+      videoJob: null,
+      activeVideoGenerationRequest: null,
+      activeVideoPollRequest: null,
+      activeVideoClientRequestId: null,
+      videoGenerationErrorMessage: null,
+      requestSequence: state.requestSequence + 1,
+    });
+    if (!state.ownerUserId || !state.presentationId || !state.videoJob) return;
+    try {
+      await port.cancelVideoGeneration({
+        ownerUserId: state.ownerUserId,
+        presentationId: state.presentationId,
+        jobId: state.videoJob.jobId,
+      });
+    } catch (error) {
+      const latest = get();
+      if (latest.ownerUserId === state.ownerUserId
+        && latest.presentationId === state.presentationId
+        && !latest.isGeneratingVideo) {
+        set({ videoGenerationErrorMessage: errorMessage(error, "未能取消视频任务。") });
+      }
+    }
+  },
+
+  dismissVideoError() { set({ videoGenerationErrorMessage: null }); },
+  dismissVideoHistoryFeedback() { set({ videoHistoryErrorMessage: null }); },
+
   deactivate(port) {
     ++activationSequence;
+    clearVideoPollTimer();
     const state = get();
     queuePresentationDiscard(port, state);
     set(resetState(state));
@@ -383,6 +788,7 @@ export const useMediaStudioStore = create<MediaStudioState>((set, get) => ({
 
   reset(port) {
     ++activationSequence;
+    clearVideoPollTimer();
     const state = get();
     queuePresentationDiscard(port, state);
     set(resetState(state));
@@ -398,6 +804,41 @@ export function canGenerateMediaStudioImage(state: MediaStudioState) {
     && state.selectedModelId != null
     && state.models.some((model) => model.id === state.selectedModelId)
     && state.prompt.trim().length > 0;
+}
+
+export function canGenerateMediaStudioVideo(state: MediaStudioState) {
+  return state.ownerUserId != null
+    && state.presentationId != null
+    && !state.isGeneratingVideo
+    && !state.isImportingVideoInput
+    && !state.isImportingVideoAudio
+    && state.selectedVideoModelId != null
+    && state.videoModels.some((model) => model.id === state.selectedVideoModelId)
+    && state.videoPrompt.trim().length > 0;
+}
+
+export type MediaStudioVideoCanvasState =
+  | { kind: "empty" }
+  | { kind: "progress"; status: "submitting" | MediaStudioVideoJobStatus; percent: number | null }
+  | { kind: "failed"; message: string }
+  | { kind: "result"; item: MediaStudioVideoHistoryItem };
+
+export function mediaStudioVideoCanvasState(state: MediaStudioState): MediaStudioVideoCanvasState {
+  if (state.isGeneratingVideo) {
+    return {
+      kind: "progress",
+      status: state.videoJob?.status ?? "submitting",
+      percent: state.videoJob?.percent ?? null,
+    };
+  }
+  if (state.videoJob?.status === "failed") {
+    return {
+      kind: "failed",
+      message: state.videoJob.errorMessage ?? state.videoGenerationErrorMessage ?? "视频生成失败。",
+    };
+  }
+  const item = state.videoJob?.result ?? state.videoHistory[0];
+  return item ? { kind: "result", item } : { kind: "empty" };
 }
 
 export function mediaStudioDisplayItems(state: MediaStudioState): MediaStudioDisplayItem[] {
@@ -418,6 +859,10 @@ export function mediaStudioAssetPreviewUrl(asset: MediaStudioHistoryAsset | Medi
 }
 
 export const supportedImageSizes = ["auto", "1024x1024", "1536x1024", "1024x1536"] as const;
+export const supportedVideoSizes: MediaStudioVideoSize[] = ["768P", "2K"];
+export const supportedVideoRatios: MediaStudioVideoRatio[] = [
+  "16:9", "9:16", "1:1", "4:3", "3:4", "21:9",
+];
 
 function emptyState() {
   return {
@@ -429,6 +874,8 @@ function emptyState() {
     hasLoadedModels: false,
     modelsErrorMessage: null,
     activeModelsRequest: null,
+    videoModels: [] as MediaStudioModel[],
+    selectedVideoModelId: null,
     history: [] as MediaStudioHistoryItem[],
     transientItems: [] as MediaStudioTransientItem[],
     historyCursor: null,
@@ -439,6 +886,15 @@ function emptyState() {
     historyErrorMessage: null,
     activeHistoryRequest: null,
     activeOlderHistoryRequest: null,
+    videoHistory: [] as MediaStudioVideoHistoryItem[],
+    videoHistoryCursor: null,
+    unreadableVideoHistoryCount: 0,
+    isLoadingVideoHistory: false,
+    hasLoadedVideoHistory: false,
+    isLoadingOlderVideoHistory: false,
+    videoHistoryErrorMessage: null,
+    activeVideoHistoryRequest: null,
+    activeOlderVideoHistoryRequest: null,
     prompt: "",
     size: "1024x1024",
     count: 1,
@@ -450,6 +906,23 @@ function emptyState() {
     activeGenerationRequest: null,
     generationErrorMessage: null,
     persistenceWarning: null,
+    videoPrompt: "",
+    videoSize: "768P" as MediaStudioVideoSize,
+    videoSeconds: 6,
+    videoRatio: "16:9" as MediaStudioVideoRatio,
+    videoInputImage: null,
+    videoReferenceAudio: null,
+    isImportingVideoInput: false,
+    isImportingVideoAudio: false,
+    videoInputErrorMessage: null,
+    activeVideoInputRequest: null,
+    activeVideoAudioRequest: null,
+    isGeneratingVideo: false,
+    videoJob: null,
+    videoGenerationErrorMessage: null,
+    activeVideoGenerationRequest: null,
+    activeVideoPollRequest: null,
+    activeVideoClientRequestId: null,
   };
 }
 
@@ -503,6 +976,34 @@ function beginHistoryRequest(
   return identity;
 }
 
+function beginVideoHistoryRequest(
+  get: StoreGet,
+  set: StoreSet,
+  older: boolean,
+): OperationIdentity | null {
+  const state = get();
+  if (state.isLoadingOlderVideoHistory || (older && state.isLoadingVideoHistory)) return null;
+  if (older && !state.videoHistoryCursor) return null;
+  const identity = operationIdentity(state);
+  if (!identity) return null;
+  if (older) {
+    set({
+      requestSequence: identity.requestId,
+      activeOlderVideoHistoryRequest: identity.requestId,
+      isLoadingOlderVideoHistory: true,
+      videoHistoryErrorMessage: unreadableVideoHistoryMessage(state.unreadableVideoHistoryCount),
+    });
+  } else {
+    set({
+      requestSequence: identity.requestId,
+      activeVideoHistoryRequest: identity.requestId,
+      isLoadingVideoHistory: true,
+      videoHistoryErrorMessage: null,
+    });
+  }
+  return identity;
+}
+
 function beginReferenceRequest(get: StoreGet, set: StoreSet): OperationIdentity | null {
   const state = get();
   if (state.isGenerating) return null;
@@ -528,6 +1029,49 @@ function beginGeneration(get: StoreGet, set: StoreSet): OperationIdentity | null
     isGenerating: true,
     generationErrorMessage: null,
     persistenceWarning: null,
+  });
+  return identity;
+}
+
+function beginVideoInputRequest(
+  get: StoreGet,
+  set: StoreSet,
+  audio: boolean,
+): OperationIdentity | null {
+  const state = get();
+  if (state.isGeneratingVideo || state.isImportingVideoInput || state.isImportingVideoAudio) {
+    return null;
+  }
+  const identity = operationIdentity(state);
+  if (!identity) return null;
+  set(audio ? {
+    requestSequence: identity.requestId,
+    activeVideoAudioRequest: identity.requestId,
+    isImportingVideoAudio: true,
+    videoInputErrorMessage: null,
+  } : {
+    requestSequence: identity.requestId,
+    activeVideoInputRequest: identity.requestId,
+    isImportingVideoInput: true,
+    videoInputErrorMessage: null,
+  });
+  return identity;
+}
+
+function beginVideoGeneration(get: StoreGet, set: StoreSet): OperationIdentity | null {
+  const state = get();
+  if (!canGenerateMediaStudioVideo(state)) return null;
+  const identity = operationIdentity(state);
+  if (!identity) return null;
+  clearVideoPollTimer();
+  set({
+    requestSequence: identity.requestId,
+    activeVideoGenerationRequest: identity.requestId,
+    activeVideoPollRequest: null,
+    activeVideoClientRequestId: null,
+    isGeneratingVideo: true,
+    videoJob: null,
+    videoGenerationErrorMessage: null,
   });
   return identity;
 }
@@ -562,12 +1106,53 @@ function acceptsOlderHistory(state: MediaStudioState, identity: OperationIdentit
   return acceptsBase(state, identity) && state.activeOlderHistoryRequest === identity.requestId;
 }
 
+function acceptsInitialVideoHistory(state: MediaStudioState, identity: OperationIdentity) {
+  return acceptsBase(state, identity) && state.activeVideoHistoryRequest === identity.requestId;
+}
+
+function acceptsOlderVideoHistory(state: MediaStudioState, identity: OperationIdentity) {
+  return acceptsBase(state, identity) && state.activeOlderVideoHistoryRequest === identity.requestId;
+}
+
 function acceptsReferences(state: MediaStudioState, identity: OperationIdentity) {
   return acceptsBase(state, identity) && state.activeReferenceRequest === identity.requestId;
 }
 
 function acceptsGeneration(state: MediaStudioState, identity: OperationIdentity) {
   return acceptsBase(state, identity) && state.activeGenerationRequest === identity.requestId;
+}
+
+function acceptsVideoInput(state: MediaStudioState, identity: OperationIdentity) {
+  return acceptsBase(state, identity) && state.activeVideoInputRequest === identity.requestId;
+}
+
+function acceptsVideoAudio(state: MediaStudioState, identity: OperationIdentity) {
+  return acceptsBase(state, identity) && state.activeVideoAudioRequest === identity.requestId;
+}
+
+function acceptsVideoGeneration(
+  state: MediaStudioState,
+  identity: OperationIdentity,
+  clientRequestId: string,
+) {
+  return acceptsBase(state, identity)
+    && state.activeVideoGenerationRequest === identity.requestId
+    && state.activeVideoClientRequestId === clientRequestId;
+}
+
+function acceptsVideoPoll(
+  state: MediaStudioState,
+  identity: OperationIdentity,
+  generationRequestId: number,
+  jobId: string,
+  clientRequestId: string,
+) {
+  return acceptsBase(state, identity)
+    && state.activeVideoGenerationRequest === generationRequestId
+    && state.activeVideoPollRequest === identity.requestId
+    && state.activeVideoClientRequestId === clientRequestId
+    && state.videoJob?.jobId === jobId
+    && state.videoJob.clientRequestId === clientRequestId;
 }
 
 function referenceScope(identity: OperationIdentity) {
@@ -604,6 +1189,26 @@ function failReferenceRequest(
   });
 }
 
+function failVideoInputRequest(
+  error: unknown,
+  identity: OperationIdentity,
+  get: StoreGet,
+  set: StoreSet,
+  audio: boolean,
+) {
+  const accepts = audio ? acceptsVideoAudio(get(), identity) : acceptsVideoInput(get(), identity);
+  if (!accepts) return;
+  set(audio ? {
+    isImportingVideoAudio: false,
+    activeVideoAudioRequest: null,
+    videoInputErrorMessage: errorMessage(error, "参考音频暂时无法读取。"),
+  } : {
+    isImportingVideoInput: false,
+    activeVideoInputRequest: null,
+    videoInputErrorMessage: errorMessage(error, "视频首帧暂时无法读取。"),
+  });
+}
+
 function discardLateReferences(
   port: MediaStudioPort,
   identity: OperationIdentity,
@@ -614,6 +1219,126 @@ function discardLateReferences(
     ...referenceScope(identity),
     referenceIds: references.map((reference) => reference.id),
   }).catch(() => undefined);
+}
+
+function discardLateAudio(
+  port: MediaStudioPort,
+  identity: OperationIdentity,
+  audio: MediaStudioVideoAudioDraft,
+) {
+  void port.discardVideoReferenceAudio({
+    ...referenceScope(identity),
+    referenceAudioId: audio.id,
+  }).catch(() => undefined);
+}
+
+function applyVideoSnapshot(
+  port: MediaStudioPort,
+  snapshot: MediaStudioVideoJobSnapshot,
+  generationIdentity: OperationIdentity,
+  get: StoreGet,
+  set: StoreSet,
+) {
+  const state = get();
+  if (snapshot.clientRequestId !== state.activeVideoClientRequestId
+    || (state.videoJob != null && snapshot.jobId !== state.videoJob.jobId)
+    || (state.videoJob != null && snapshot.revision < state.videoJob.revision)) {
+    set({
+      isGeneratingVideo: false,
+      activeVideoGenerationRequest: null,
+      activeVideoPollRequest: null,
+      activeVideoClientRequestId: null,
+      videoGenerationErrorMessage: "视频任务返回了不匹配的状态。",
+      videoJob: failedVideoSnapshot(snapshot.clientRequestId, "视频任务返回了不匹配的状态。"),
+    });
+    return;
+  }
+  if (snapshot.status === "cancelled") {
+    set({
+      isGeneratingVideo: false,
+      videoJob: null,
+      activeVideoGenerationRequest: null,
+      activeVideoPollRequest: null,
+      activeVideoClientRequestId: null,
+      videoGenerationErrorMessage: null,
+    });
+    return;
+  }
+  if (snapshot.status === "failed") {
+    set({
+      isGeneratingVideo: false,
+      videoJob: snapshot,
+      activeVideoGenerationRequest: null,
+      activeVideoPollRequest: null,
+      activeVideoClientRequestId: null,
+      videoGenerationErrorMessage: snapshot.errorMessage ?? "视频生成失败。",
+    });
+    return;
+  }
+  if (snapshot.terminal) {
+    if (snapshot.status === "completed" && snapshot.result) {
+      set({
+        isGeneratingVideo: false,
+        videoJob: snapshot,
+        videoHistory: mergeVideoHistory([snapshot.result], state.videoHistory),
+        activeVideoGenerationRequest: null,
+        activeVideoPollRequest: null,
+        activeVideoClientRequestId: null,
+        videoGenerationErrorMessage: null,
+      });
+    } else {
+      const message = snapshot.errorMessage ?? "视频任务结束，但没有返回可播放的本机结果。";
+      set({
+        isGeneratingVideo: false,
+        videoJob: { ...snapshot, status: "failed", errorMessage: message, terminal: true },
+        activeVideoGenerationRequest: null,
+        activeVideoPollRequest: null,
+        activeVideoClientRequestId: null,
+        videoGenerationErrorMessage: message,
+      });
+    }
+    return;
+  }
+  set({
+    isGeneratingVideo: true,
+    videoJob: snapshot,
+    activeVideoPollRequest: null,
+    videoGenerationErrorMessage: null,
+  });
+  scheduleVideoPoll(port, generationIdentity);
+}
+
+function scheduleVideoPoll(port: MediaStudioPort, identity: OperationIdentity) {
+  clearVideoPollTimer();
+  videoPollTimer = setTimeout(() => {
+    const state = useMediaStudioStore.getState();
+    if (!acceptsBase(state, identity)
+      || state.activeVideoGenerationRequest !== identity.requestId
+      || !state.isGeneratingVideo) return;
+    void state.pollVideo(port);
+  }, mediaStudioVideoPollIntervalMs);
+}
+
+function clearVideoPollTimer() {
+  if (videoPollTimer != null) clearTimeout(videoPollTimer);
+  videoPollTimer = null;
+}
+
+function failedVideoSnapshot(
+  clientRequestId: string,
+  error: unknown,
+): MediaStudioVideoJobSnapshot {
+  return {
+    jobId: newUuid(),
+    clientRequestId,
+    status: "failed",
+    percent: null,
+    providerJobId: null,
+    result: null,
+    errorMessage: errorMessage(error, "视频生成失败。"),
+    terminal: true,
+    revision: 1,
+  };
 }
 
 function mergeReferences(current: MediaStudioReference[], incoming: MediaStudioReference[]) {
@@ -637,6 +1362,23 @@ function mergeHistory(current: MediaStudioHistoryItem[], incoming: MediaStudioHi
 }
 
 function sortedHistory(items: MediaStudioHistoryItem[]) {
+  return [...items].sort(
+    (left, right) => right.createdAtUnixMs - left.createdAtUnixMs || right.id.localeCompare(left.id),
+  );
+}
+
+function mergeVideoHistory(
+  current: MediaStudioVideoHistoryItem[],
+  incoming: MediaStudioVideoHistoryItem[],
+) {
+  const values = new Map<string, MediaStudioVideoHistoryItem>();
+  for (const item of [...current, ...incoming]) {
+    if (!values.has(item.id)) values.set(item.id, item);
+  }
+  return sortedVideoHistory([...values.values()]);
+}
+
+function sortedVideoHistory(items: MediaStudioVideoHistoryItem[]) {
   return [...items].sort(
     (left, right) => right.createdAtUnixMs - left.createdAtUnixMs || right.id.localeCompare(left.id),
   );
@@ -670,6 +1412,14 @@ function historyReferenceKey(asset: MediaStudioHistoryReference) {
 
 function unreadableHistoryMessage(count: number) {
   return count > 0 ? `有 ${count} 条记录无法读取，原文件已保留。` : null;
+}
+
+function unreadableVideoHistoryMessage(count: number) {
+  return count > 0 ? `有 ${count} 条视频记录无法读取，原文件已保留。` : null;
+}
+
+function isSupportedVideoModel(model: MediaStudioModel) {
+  return model.modelName.toLocaleLowerCase("en-US") === "minimax-h3";
 }
 
 function queuePresentationDiscard(port: MediaStudioPort, state: MediaStudioState) {

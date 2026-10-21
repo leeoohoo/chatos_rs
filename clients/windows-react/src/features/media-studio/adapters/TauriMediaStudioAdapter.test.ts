@@ -43,6 +43,16 @@ describe("TauriMediaStudioAdapter", () => {
     });
   });
 
+  it("loads video history through the dedicated native command", async () => {
+    vi.mocked(invoke).mockResolvedValue(videoHistoryPage());
+    await new TauriMediaStudioAdapter().loadVideoHistory({ ownerUserId: OWNER_ID, limit: 10 });
+    expect(invoke).toHaveBeenCalledWith("load_media_studio_video_history", {
+      ownerUserId: OWNER_ID,
+      after: null,
+      limit: 10,
+    });
+  });
+
   it("passes only opaque history identities into the reference vault", async () => {
     vi.mocked(invoke).mockResolvedValue(referenceImport());
     const request = {
@@ -104,6 +114,67 @@ describe("TauriMediaStudioAdapter", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "discard_media_studio_presentation", {
       input: { ownerUserId: OWNER_ID, presentationId: PRESENTATION_ID },
     });
+  });
+
+  it("maps opaque video audio and job commands without exposing native paths", async () => {
+    const adapter = new TauriMediaStudioAdapter();
+    const audio = {
+      id: `video_audio_${"c".repeat(32)}`,
+      name: "reference.wav",
+      mimeType: "audio/wav",
+      byteSize: 2_048,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(audio);
+    await expect(adapter.pickVideoReferenceAudio({
+      ownerUserId: OWNER_ID,
+      presentationId: PRESENTATION_ID,
+    })).resolves.toEqual(audio);
+    expect(invoke).toHaveBeenLastCalledWith("pick_media_studio_video_reference_audio", {
+      input: { ownerUserId: OWNER_ID, presentationId: PRESENTATION_ID },
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce(videoJobSnapshot());
+    const request = videoGenerationRequest();
+    await adapter.startVideoGeneration({ ownerUserId: OWNER_ID, request });
+    expect(invoke).toHaveBeenLastCalledWith("start_media_studio_video_generation", {
+      ownerUserId: OWNER_ID,
+      request,
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce(videoJobSnapshot());
+    await adapter.pollVideoGeneration({
+      ownerUserId: OWNER_ID,
+      presentationId: PRESENTATION_ID,
+      jobId: videoJobSnapshot().jobId,
+      clientRequestId: "video-request-1",
+    });
+    expect(invoke).toHaveBeenLastCalledWith("poll_media_studio_video_generation", {
+      input: {
+        ownerUserId: OWNER_ID,
+        presentationId: PRESENTATION_ID,
+        jobId: videoJobSnapshot().jobId,
+      },
+    });
+  });
+
+  it("rejects mismatched video request and job identities", async () => {
+    const adapter = new TauriMediaStudioAdapter();
+    vi.mocked(invoke).mockResolvedValueOnce({ ...videoJobSnapshot(), clientRequestId: "other" });
+    await expect(adapter.startVideoGeneration({
+      ownerUserId: OWNER_ID,
+      request: videoGenerationRequest(),
+    })).rejects.toThrow("当前请求不匹配");
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      ...videoJobSnapshot(),
+      jobId: "66666666-6666-4666-8666-666666666666",
+    });
+    await expect(adapter.pollVideoGeneration({
+      ownerUserId: OWNER_ID,
+      presentationId: PRESENTATION_ID,
+      jobId: videoJobSnapshot().jobId,
+      clientRequestId: "video-request-1",
+    })).rejects.toThrow("当前任务不匹配");
   });
 });
 
@@ -170,5 +241,49 @@ function generatedWithoutPersistence() {
       clientRequestId: "request-1",
     },
     persistenceErrorMessage: "图片已生成，但未能保存到历史记录。",
+  };
+}
+
+function videoHistoryPage() {
+  return {
+    items: [{
+      id: RECORD_ID,
+      prompt: "A cinematic lake",
+      modelName: "MiniMax-H3",
+      createdAtUnixMs: 1_700_000_000_000,
+      mimeType: "video/mp4",
+      contentToken: CONTENT_TOKEN,
+      previewUrl: `http://chatos-media.localhost/${SESSION_ID}/${RECORD_ID}/${CONTENT_TOKEN}`,
+    }],
+    nextCursor: null,
+    unreadableCount: 0,
+  };
+}
+
+function videoGenerationRequest() {
+  return {
+    presentationId: PRESENTATION_ID,
+    modelConfigId: "video-model",
+    prompt: "A cinematic lake",
+    size: "768P" as const,
+    seconds: 6,
+    ratio: "16:9" as const,
+    inputImageId: REFERENCE_ID,
+    referenceAudioId: `video_audio_${"c".repeat(32)}`,
+    clientRequestId: "video-request-1",
+  };
+}
+
+function videoJobSnapshot() {
+  return {
+    jobId: "55555555-5555-4555-8555-555555555555",
+    clientRequestId: "video-request-1",
+    status: "queued",
+    percent: null,
+    providerJobId: "provider-job-1",
+    result: null,
+    errorMessage: null,
+    terminal: false,
+    revision: 1,
   };
 }

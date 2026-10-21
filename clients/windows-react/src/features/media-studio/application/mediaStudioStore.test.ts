@@ -6,10 +6,12 @@ import type {
   MediaStudioModel,
   MediaStudioReference,
   MediaStudioReferenceImportResult,
+  MediaStudioVideoJobSnapshot,
 } from "../domain/mediaStudio";
 import type { MediaStudioPort } from "../ports/MediaStudioPort";
 import {
   mediaStudioDisplayItems,
+  mediaStudioVideoCanvasState,
   useMediaStudioStore,
 } from "./mediaStudioStore";
 
@@ -228,20 +230,172 @@ describe("media studio store", () => {
       presentationId,
     }));
   });
+
+  it("freezes video settings, polls the native job, and prepends the completed video", async () => {
+    const started = deferred<MediaStudioVideoJobSnapshot>();
+    let clientRequestId = "";
+    const completed = videoItem("55555555-5555-4555-8555-555555555555", 300);
+    const adapter = port({
+      listModels: vi.fn(async () => [model("image-model"), videoModel()]),
+      loadVideoHistory: vi.fn(async () => ({
+        items: [videoItem("44444444-4444-4444-8444-444444444444", 100)],
+        nextCursor: null,
+        unreadableCount: 0,
+      })),
+      startVideoGeneration: vi.fn(({ request }) => {
+        clientRequestId = request.clientRequestId;
+        return started.promise;
+      }),
+      pollVideoGeneration: vi.fn(async () => videoSnapshot(clientRequestId, {
+        status: "completed",
+        percent: 100,
+        result: completed,
+        terminal: true,
+        revision: 2,
+      })),
+    });
+    await useMediaStudioStore.getState().activate(adapter, "alice");
+    const state = useMediaStudioStore.getState();
+    state.setVideoPrompt("  Crane shot over a quiet lake  ");
+    state.setVideoSize("2K");
+    state.setVideoSeconds(12);
+    state.setVideoRatio("21:9");
+
+    const generation = useMediaStudioStore.getState().generateVideo(adapter);
+    expect(adapter.startVideoGeneration).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      request: expect.objectContaining({
+        modelConfigId: "video-model",
+        prompt: "Crane shot over a quiet lake",
+        size: "2K",
+        seconds: 12,
+        ratio: "21:9",
+        inputImageId: null,
+        referenceAudioId: null,
+      }),
+    });
+    useMediaStudioStore.getState().setVideoPrompt("late edit");
+    useMediaStudioStore.getState().setVideoSeconds(4);
+    expect(useMediaStudioStore.getState().videoPrompt).toContain("Crane shot");
+    expect(useMediaStudioStore.getState().videoSeconds).toBe(12);
+
+    started.resolve(videoSnapshot(clientRequestId));
+    await generation;
+    expect(mediaStudioVideoCanvasState(useMediaStudioStore.getState()).kind).toBe("progress");
+    await useMediaStudioStore.getState().pollVideo(adapter);
+
+    const finished = useMediaStudioStore.getState();
+    expect(finished.videoHistory.map((item) => item.id)).toEqual([
+      completed.id,
+      "44444444-4444-4444-8444-444444444444",
+    ]);
+    expect(mediaStudioVideoCanvasState(finished)).toEqual({ kind: "result", item: completed });
+  });
+
+  it("restores the previous video immediately when the user stops waiting", async () => {
+    const previous = videoItem("44444444-4444-4444-8444-444444444444", 100);
+    const adapter = port({
+      listModels: vi.fn(async () => [model("image-model"), videoModel()]),
+      loadVideoHistory: vi.fn(async () => ({ items: [previous], nextCursor: null, unreadableCount: 0 })),
+    });
+    await useMediaStudioStore.getState().activate(adapter, "alice");
+    useMediaStudioStore.getState().setVideoPrompt("Moving clouds");
+    await useMediaStudioStore.getState().generateVideo(adapter);
+    expect(mediaStudioVideoCanvasState(useMediaStudioStore.getState()).kind).toBe("progress");
+
+    await useMediaStudioStore.getState().cancelVideo(adapter);
+    expect(adapter.cancelVideoGeneration).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      jobId: "44444444-4444-4444-8444-444444444444",
+    });
+    expect(mediaStudioVideoCanvasState(useMediaStudioStore.getState()))
+      .toEqual({ kind: "result", item: previous });
+  });
+
+  it("keeps a failed video canvas and cancels a start result that arrives after account switch", async () => {
+    const delayed = deferred<MediaStudioVideoJobSnapshot>();
+    let clientRequestId = "";
+    const previous = videoItem("77777777-7777-4777-8777-777777777777", 100);
+    const adapter = port({
+      listModels: vi.fn(async () => [model("image-model"), videoModel()]),
+      loadVideoHistory: vi.fn(async () => ({ items: [previous], nextCursor: null, unreadableCount: 0 })),
+      startVideoGeneration: vi.fn(({ request }) => {
+        clientRequestId = request.clientRequestId;
+        return delayed.promise;
+      }),
+    });
+    await useMediaStudioStore.getState().activate(adapter, "alice");
+    useMediaStudioStore.getState().setVideoPrompt("Moving clouds");
+    const generation = useMediaStudioStore.getState().generateVideo(adapter);
+    const switched = useMediaStudioStore.getState().activate(adapter, "bob");
+    await switched;
+    delayed.resolve(videoSnapshot(clientRequestId, {
+      status: "failed",
+      errorMessage: "provider rejected",
+      terminal: true,
+    }));
+    await generation;
+    expect(useMediaStudioStore.getState().ownerUserId).toBe("bob");
+    await vi.waitFor(() => expect(adapter.cancelVideoGeneration).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      presentationId: expect.any(String),
+      jobId: "44444444-4444-4444-8444-444444444444",
+    }));
+
+    useMediaStudioStore.getState().setVideoPrompt("Retry");
+    vi.mocked(adapter.startVideoGeneration).mockImplementationOnce(async ({ request }) => (
+      videoSnapshot(request.clientRequestId, {
+        status: "failed",
+        errorMessage: "disk full",
+        terminal: true,
+      })
+    ));
+    await useMediaStudioStore.getState().generateVideo(adapter);
+    expect(mediaStudioVideoCanvasState(useMediaStudioStore.getState()))
+      .toEqual({ kind: "failed", message: "disk full" });
+    expect(useMediaStudioStore.getState().videoHistory).toEqual([previous]);
+  });
 });
 
 function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
   return {
     listModels: vi.fn(async () => [model("image-model")]),
     loadImageHistory: vi.fn(async () => page([])),
+    loadVideoHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     pickReferenceImages: vi.fn(async () => ({ references: [], errors: [] })),
     stageHistoryReferences: vi.fn(async () => ({ references: [], errors: [] })),
     discardReferenceImages: vi.fn(async () => undefined),
+    pickVideoReferenceAudio: vi.fn(async () => null),
+    discardVideoReferenceAudio: vi.fn(async () => undefined),
     discardPresentation: vi.fn(async () => undefined),
     generateImage: vi.fn(async () => ({
       status: "saved" as const,
       item: historyItem(RECORD_NEW, 100),
     })),
+    startVideoGeneration: vi.fn(async ({ request }) => ({
+      jobId: "44444444-4444-4444-8444-444444444444",
+      clientRequestId: request.clientRequestId,
+      status: "queued" as const,
+      percent: null,
+      providerJobId: "provider-job",
+      result: null,
+      errorMessage: null,
+      terminal: false,
+      revision: 1,
+    })),
+    pollVideoGeneration: vi.fn(async () => ({
+      jobId: "44444444-4444-4444-8444-444444444444",
+      clientRequestId: "request",
+      status: "queued" as const,
+      percent: null,
+      providerJobId: "provider-job",
+      result: null,
+      errorMessage: null,
+      terminal: false,
+      revision: 2,
+    })),
+    cancelVideoGeneration: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -254,6 +408,18 @@ function model(id: string): MediaStudioModel {
     modelName: "gpt-image-1",
     enabled: true,
     taskEnabled: true,
+    hasApiKey: true,
+  };
+}
+
+function videoModel(): MediaStudioModel {
+  return {
+    id: "video-model",
+    name: "MiniMax Video",
+    provider: "openai-compatible",
+    modelName: "MiniMax-H3",
+    enabled: true,
+    taskEnabled: false,
     hasApiKey: true,
   };
 }
@@ -289,6 +455,36 @@ function reference(id: string): MediaStudioReference {
     mimeType: "image/png",
     byteSize: 1_024,
     previewUrl: null,
+  };
+}
+
+function videoItem(id: string, createdAtUnixMs: number) {
+  return {
+    id,
+    prompt: `video-${id}`,
+    modelName: "MiniMax-H3",
+    createdAtUnixMs,
+    mimeType: "video/mp4" as const,
+    contentToken: "d".repeat(32),
+    previewUrl: null,
+  };
+}
+
+function videoSnapshot(
+  clientRequestId: string,
+  overrides: Partial<MediaStudioVideoJobSnapshot> = {},
+): MediaStudioVideoJobSnapshot {
+  return {
+    jobId: "44444444-4444-4444-8444-444444444444",
+    clientRequestId,
+    status: "queued",
+    percent: null,
+    providerJobId: "provider-job",
+    result: null,
+    errorMessage: null,
+    terminal: false,
+    revision: 1,
+    ...overrides,
   };
 }
 

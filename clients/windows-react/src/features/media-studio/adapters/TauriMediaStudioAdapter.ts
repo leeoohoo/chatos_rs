@@ -10,6 +10,11 @@ import {
   mediaStudioReferenceIdSchema,
   mediaStudioReferenceImportResultSchema,
   mediaStudioUuidSchema,
+  mediaStudioVideoAudioDraftSchema,
+  mediaStudioVideoGenerationRequestSchema,
+  mediaStudioVideoHistoryCursorSchema,
+  mediaStudioVideoHistoryPageSchema,
+  mediaStudioVideoJobSnapshotSchema,
 } from "../domain/mediaStudio";
 import type {
   MediaStudioHistoryReference,
@@ -45,6 +50,19 @@ export class TauriMediaStudioAdapter implements MediaStudioPort {
     );
   }
 
+  async loadVideoHistory(request: Parameters<MediaStudioPort["loadVideoHistory"]>[0]) {
+    const ownerUserId = ownerUserIdSchema.parse(request.ownerUserId);
+    const after = request.after == null
+      ? null
+      : mediaStudioVideoHistoryCursorSchema.parse(request.after);
+    const limit = request.limit == null
+      ? null
+      : z.number().int().min(1).max(200).parse(request.limit);
+    return mediaStudioVideoHistoryPageSchema.parse(
+      await invoke("load_media_studio_video_history", { ownerUserId, after, limit }),
+    );
+  }
+
   async pickReferenceImages(request: MediaStudioPresentationScope) {
     const input = presentationScope(request);
     return parseReferenceImport(
@@ -76,6 +94,22 @@ export class TauriMediaStudioAdapter implements MediaStudioPort {
     await invoke("discard_media_studio_reference_images", { input });
   }
 
+  async pickVideoReferenceAudio(request: MediaStudioPresentationScope) {
+    const input = presentationScope(request);
+    const value = await invoke("pick_media_studio_video_reference_audio", { input });
+    return value == null ? null : mediaStudioVideoAudioDraftSchema.parse(value);
+  }
+
+  async discardVideoReferenceAudio(
+    request: Parameters<MediaStudioPort["discardVideoReferenceAudio"]>[0],
+  ) {
+    const input = {
+      ...presentationScope(request),
+      referenceAudioId: mediaStudioVideoAudioDraftSchema.shape.id.parse(request.referenceAudioId),
+    };
+    await invoke("discard_media_studio_video_reference_audio", { input });
+  }
+
   async discardPresentation(request: MediaStudioPresentationScope) {
     await invoke("discard_media_studio_presentation", { input: presentationScope(request) });
   }
@@ -93,6 +127,34 @@ export class TauriMediaStudioAdapter implements MediaStudioPort {
     }
     return outcome;
   }
+
+  async startVideoGeneration(request: Parameters<MediaStudioPort["startVideoGeneration"]>[0]) {
+    const ownerUserId = ownerUserIdSchema.parse(request.ownerUserId);
+    const input = mediaStudioVideoGenerationRequestSchema.parse(request.request);
+    const snapshot = mediaStudioVideoJobSnapshotSchema.parse(
+      await invoke("start_media_studio_video_generation", { ownerUserId, request: input }),
+    );
+    if (snapshot.clientRequestId !== input.clientRequestId) {
+      throw new Error("视频生成任务与当前请求不匹配。");
+    }
+    return snapshot;
+  }
+
+  async pollVideoGeneration(request: Parameters<MediaStudioPort["pollVideoGeneration"]>[0]) {
+    const input = videoJobInput(request);
+    const clientRequestId = z.string().trim().min(1).max(1_024).parse(request.clientRequestId);
+    const snapshot = mediaStudioVideoJobSnapshotSchema.parse(
+      await invoke("poll_media_studio_video_generation", { input }),
+    );
+    if (snapshot.jobId !== input.jobId || snapshot.clientRequestId !== clientRequestId) {
+      throw new Error("视频生成状态与当前任务不匹配。");
+    }
+    return snapshot;
+  }
+
+  async cancelVideoGeneration(request: Parameters<MediaStudioPort["cancelVideoGeneration"]>[0]) {
+    await invoke("cancel_media_studio_video_generation", { input: videoJobInput(request) });
+  }
 }
 
 function presentationScope(request: MediaStudioPresentationScope) {
@@ -104,6 +166,13 @@ function presentationScope(request: MediaStudioPresentationScope) {
 
 function exactHistoryReference(reference: MediaStudioHistoryReference) {
   return { recordId: reference.recordId, contentToken: reference.contentToken };
+}
+
+function videoJobInput(request: MediaStudioPresentationScope & { jobId: string }) {
+  return {
+    ...presentationScope(request),
+    jobId: mediaStudioUuidSchema.parse(request.jobId),
+  };
 }
 
 function parseReferenceImport(value: unknown, presentationId: string) {

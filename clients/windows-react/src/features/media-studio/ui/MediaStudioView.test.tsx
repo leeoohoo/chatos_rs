@@ -30,7 +30,7 @@ describe("MediaStudioView", () => {
 
     expect(await screen.findByRole("heading", { name: "创作画布" })).toBeVisible();
     expect(screen.getByText("独立于聊天的图片与视频工作台")).toBeVisible();
-    expect(screen.getByRole("button", { name: "视频" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "视频" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "产品海报" }));
     expect(screen.getByRole("textbox", { name: "提示词" }))
       .toHaveValue("极简产品广告海报，干净背景，工作室灯光，高级材质与留白");
@@ -118,20 +118,105 @@ describe("MediaStudioView", () => {
       presentationId,
     }));
   });
+
+  it("recreates the macOS video workspace and submits only frozen typed inputs", async () => {
+    const video = videoHistoryItem();
+    const adapter = port({
+      listModels: vi.fn(async () => [model(), videoModel()]),
+      pickVideoReferenceAudio: vi.fn(async () => ({
+        id: `video_audio_${"c".repeat(32)}`,
+        name: "reference.m4a",
+        mimeType: "audio/mp4" as const,
+        byteSize: 4_096,
+      })),
+      startVideoGeneration: vi.fn(async ({ request }) => ({
+        jobId: "44444444-4444-4444-8444-444444444444",
+        clientRequestId: request.clientRequestId,
+        status: "completed" as const,
+        percent: 100,
+        providerJobId: "provider-job",
+        result: video,
+        errorMessage: null,
+        terminal: true,
+        revision: 2,
+      })),
+    });
+    render(<MediaStudioView ownerUserId="alice" port={adapter} />);
+
+    const videoTab = await screen.findByRole("button", { name: "视频" });
+    fireEvent.click(videoTab);
+    expect(screen.getByRole("heading", { name: "视频画布" })).toBeVisible();
+    expect(screen.getByRole("complementary", { name: "视频设置" })).toHaveClass("media-studio-card", "media-settings");
+    expect(screen.getByRole("button", { name: "剧情模式" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /添加参考音频/ }));
+    expect(await screen.findByText("reference.m4a")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "视频提示词" }), {
+      target: { value: "Cinematic clouds moving over a lake" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "视频分辨率" }), {
+      target: { value: "2K" },
+    });
+    fireEvent.change(screen.getByRole("combobox", { name: "视频时长" }), {
+      target: { value: "8" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成视频" }));
+
+    await waitFor(() => expect(adapter.startVideoGeneration).toHaveBeenCalledWith({
+      ownerUserId: "alice",
+      request: expect.objectContaining({
+        modelConfigId: "video-model",
+        prompt: "Cinematic clouds moving over a lake",
+        size: "2K",
+        seconds: 8,
+        ratio: "16:9",
+        inputImageId: null,
+        referenceAudioId: `video_audio_${"c".repeat(32)}`,
+      }),
+    }));
+    expect(await screen.findByText("MiniMax-H3 · 已保存到本机")).toBeVisible();
+    expect(document.querySelector("video")).toHaveAttribute("src", video.previewUrl);
+  });
 });
 
 function port(overrides: Partial<MediaStudioPort> = {}): MediaStudioPort {
   return {
     listModels: vi.fn(async () => [model()]),
     loadImageHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
+    loadVideoHistory: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     pickReferenceImages: vi.fn(async () => ({ references: [], errors: [] })),
     stageHistoryReferences: vi.fn(async () => ({ references: [], errors: [] })),
     discardReferenceImages: vi.fn(async () => undefined),
+    pickVideoReferenceAudio: vi.fn(async () => null),
+    discardVideoReferenceAudio: vi.fn(async () => undefined),
     discardPresentation: vi.fn(async () => undefined),
     generateImage: vi.fn(async () => ({
       status: "saved" as const,
       item: historyItem(GENERATED_ID, "generated"),
     })),
+    startVideoGeneration: vi.fn(async ({ request }) => ({
+      jobId: "44444444-4444-4444-8444-444444444444",
+      clientRequestId: request.clientRequestId,
+      status: "queued" as const,
+      percent: null,
+      providerJobId: "provider-job",
+      result: null,
+      errorMessage: null,
+      terminal: false,
+      revision: 1,
+    })),
+    pollVideoGeneration: vi.fn(async () => ({
+      jobId: "44444444-4444-4444-8444-444444444444",
+      clientRequestId: "request",
+      status: "queued" as const,
+      percent: null,
+      providerJobId: "provider-job",
+      result: null,
+      errorMessage: null,
+      terminal: false,
+      revision: 2,
+    })),
+    cancelVideoGeneration: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -144,6 +229,18 @@ function model(): MediaStudioModel {
     modelName: "gpt-image-1",
     enabled: true,
     taskEnabled: true,
+    hasApiKey: true,
+  };
+}
+
+function videoModel(): MediaStudioModel {
+  return {
+    id: "video-model",
+    name: "MiniMax Video",
+    provider: "openai-compatible",
+    modelName: "MiniMax-H3",
+    enabled: true,
+    taskEnabled: false,
     hasApiKey: true,
   };
 }
@@ -161,5 +258,17 @@ function historyItem(id: string, prompt: string): MediaStudioHistoryItem {
       revisedPrompt: null,
       previewUrl: `http://chatos-media.localhost/${SESSION_ID}/${id}/${CONTENT_TOKEN}`,
     }],
+  };
+}
+
+function videoHistoryItem() {
+  return {
+    id: "55555555-5555-4555-8555-555555555555",
+    prompt: "Cinematic clouds moving over a lake",
+    modelName: "MiniMax-H3",
+    createdAtUnixMs: 300,
+    mimeType: "video/mp4" as const,
+    contentToken: "d".repeat(32),
+    previewUrl: `http://chatos-media.localhost/${SESSION_ID}/55555555-5555-4555-8555-555555555555/${"d".repeat(32)}`,
   };
 }
