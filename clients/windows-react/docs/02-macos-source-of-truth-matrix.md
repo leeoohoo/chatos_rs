@@ -1206,7 +1206,11 @@ Windows React 已完成对应独立切片：
 - 补充快照只有在任务未取消且当前 room identity 仍匹配时才整体写回；旧 room 的迟到结果不能清空或覆盖新 room。消息主体先展示、补充卡片失败仍解除 Direct timeline 首次定位等待的既有语义保持不变。
 - Team/Direct 的 account drain 与 communication fast lane 在每一轮开始时冻结 scheduler、service、owner 和 room，Agent 执行与 delivery 查询期间只保留 weak UI；返回后按当前 room 再计算 `AgentSchedulerIssue`。全局 drain 仍会发布 room change 通知，不可见页面释放不会中断 durable scheduler 事实。
 - 高频 Run refresh 现在冻结 run/room/owner/store 请求，在 SQLite 查询和 todo presentation 构建结束后一次性按 room identity 写回；同 Run 的新 refresh 会取消旧请求，旧请求不能移除或覆盖新任务。
-- Agent Group Chat 相关 89 项契约、迁移、Store、Scheduler 与 UI 测试通过（2 项显式性能基线按环境变量跳过）。页面加载、发送、提案操作与导航差异仍需完整映射，因此对应 React 页面继续禁止实现。
+- Agent Group Chat 相关 89 项契约、迁移、Store、Scheduler 与 UI 测试通过（2 项显式性能基线按环境变量跳过），继续作为 Windows 行为事实源。
+- Windows 已按这条调用链完成 Agent 档案、头像、Skills、私聊、团队创建/成员、概览、Human 团队消息、需求调研、共享资产、Todo、Run 历史与运行详情的 Domain → Store → Port → Tauri Adapter → React 垂直切片；React 不读取团队 SQLite、Host payload、项目绝对路径或模型 Secret。
+- Todo 使用独立 executor Conversation 和 Run；执行能力由创建时固化的计划决定，团队资产按启动 revision 冻结。`started/progress/completed/blocked` 都是持久化回执；Host 成功但缺少终态工具回执，或 `project_write` 缺少提交后读取证据时，任务必须转为 blocked，禁止用模型文本伪装完成。
+- Windows 不暴露 macOS 的 `todo_schedule_state`、`todo_start_next` 和 `agent_cycle_complete` 给模型：同等调度语义由账号/团队去重的原生 drain 承担，并在 Agent 工具 mutation、Human mutation、Todo 终态和应用恢复时唤醒。原生事务原子选择每个 Agent 的最高优先级 ready Todo，依赖与单 executor lane 由 SQLite 复验；再开放模型调度入口会形成第二写入者和竞态。
+- 当前明确差异：Windows 尚未接入可信 Plugin executor，因此 Todo Plugin 计划保持不可选；主动 Agent-to-Agent 通讯、成员提案与 heartbeat/cycle 工具仍需按 macOS 通讯协议补齐。现有 Human→团队→Agent Delivery 和任务执行页面可使用，但不得把这些剩余能力标记为完成。
 
 ## 10. 31 个页面的准入状态
 
@@ -1221,14 +1225,14 @@ Windows React 已完成对应独立切片：
 | 07 | AI 视频 | macOS Core Port/Use Case/typed lifecycle 与 Windows provider/job/progress/history/首帧及音频 token vault、strict React Domain/Port/Adapter/Store、轮询/取消语义及 Apple 主题视频工作面均已完成 | 已进入 React；剧情模式仍保持禁用 |
 | 08 | AI 故事 | macOS 全部 Story 页面准入完成；Windows 已完成 schema v2 Domain、owner-scoped 原子 Store、opaque 媒体预览、目录/创建/设置、Planning checkpoint/runtime/Memory/历史分页、fingerprint-guarded 编辑/确认及本机图片导入 | Windows 原生实施中；React 入口仍禁止，等待 generated/history 导入、media batch 历史及 media provider 门禁 |
 | 09 | AI 历史 | macOS 图片/视频历史分页与账号隔离已收口并完成 Windows 原生/React 映射；剧情作品历史等待第 08 页 | 图片与视频历史已进入 React；剧情历史继续禁用 |
-| 10 | Agent 管理 | 未映射 | 禁止 |
+| 10 | Agent 管理 | macOS 档案/模型/职业/职责/头像/Skills 与私聊来源已映射；Windows typed 原生层和 Apple 主题 React 管理页已完成 | 已进入 React；Plugin executor 仍保持关闭 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
-| 12 | Agent 团队概览 | 源码映射中（补充快照生命周期已收口） | 禁止 |
-| 13 | Agent 团队聊天 | 源码映射中（change stream/附件 hydration 已收口） | 禁止 |
-| 14 | Agent 团队任务 | 未映射 | 禁止 |
-| 15 | Agent 团队调研 | 未映射 | 禁止 |
-| 16 | Agent 团队资产 | 未映射 | 禁止 |
-| 17 | Agent 团队运行 | 源码映射中（Run 模型复用关系待确认） | 禁止 |
+| 12 | Agent 团队概览 | macOS 团队/成员/默认 Agent/项目经理语义已映射；Windows 创建、邀请、职责与负责人管理已完成 | 已进入 React |
+| 13 | Agent 团队聊天 | macOS Delivery/Run 主链已映射；Windows Human 消息、@成员、默认 Agent、真实 Host Turn、响应持久化与轮询对账已完成 | 基础链路已进入 React；主动 Agent 通讯、提案和 heartbeat 继续实施 |
+| 14 | Agent 团队任务 | macOS Todo 工作契约、依赖、独立 executor、资产快照、工具回执与调度约束已映射；Windows 持久任务板、manager/executor 工具、原生 drain、停止/重试与实时进度已完成 | 已进入 React；Plugin 任务在可信 worker 完成前失败关闭 |
+| 15 | Agent 团队调研 | macOS Ask User/Requirement Survey 恢复语义已映射；Windows 真实 Host Survey 查询、回答、取消与 Run 恢复已接入团队页 | 已进入 React |
+| 16 | Agent 团队资产 | macOS 项目经理权限、版本、归档与 executor 冻结读取已映射；Windows manager 工具、Human 编辑、历史与 opaque Run 引用已完成 | 已进入 React |
+| 17 | Agent 团队运行 | macOS Delivery/Turn/Run 关系已映射；Windows manager/executor lane、终态对账、最新事件详情、Human 停止与 needs-review 重试已完成 | 已进入 React |
 | 18 | 需求调研 | 未映射 | 禁止 |
 | 19 | 本地终端 | macOS Core byte-stream Port、Connector PTY session、Feature lifecycle 与多标签 renderer 已完成分层 | 已进入 React；Windows 使用独立 owner/presentation-scoped ConPTY、typed Port/Store 和 Apple 主题 UI |
 | 20 | Notebook | 未映射 | 禁止 |
