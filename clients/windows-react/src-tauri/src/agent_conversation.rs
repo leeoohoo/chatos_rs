@@ -265,6 +265,30 @@ pub(crate) struct CreateAgentTeamInput {
     goal: String,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamMemberSummary {
+    agent_id: String,
+    role: String,
+    responsibility: String,
+    joined_at_unix_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentTeamDetail {
+    team: AgentTeamSummary,
+    members: Vec<AgentTeamMemberSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct InviteAgentToTeamInput {
+    owner_user_id: String,
+    team_id: String,
+    agent_id: String,
+}
+
 impl AgentConversationStore {
     pub(crate) fn new(app_data_directory: PathBuf) -> Result<Self, String> {
         let connector = confined_connector_directory(&app_data_directory)?;
@@ -598,6 +622,181 @@ impl AgentConversationStore {
         };
         validate_team_summary(&team)?;
         Ok(team)
+    }
+
+    fn load_project_team(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let team = connection
+            .query_row(
+                r#"
+                SELECT room.id, room.project_id, room.name, room.goal,
+                       room.default_agent_id, room.project_manager_agent_id,
+                       (SELECT count(*) FROM project_agent_room_members member
+                        WHERE member.owner_user_id = room.owner_user_id
+                          AND member.room_id = room.id AND member.status = 'active'),
+                       room.created_at_unix_ms, room.updated_at_unix_ms
+                FROM project_agent_rooms room
+                WHERE room.owner_user_id = ?1 AND room.id = ?2
+                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                "#,
+                params![owner_user_id, team_id],
+                |row| {
+                    Ok(AgentTeamSummary {
+                        id: row.get(0)?,
+                        project_id: row.get(1)?,
+                        name: row.get(2)?,
+                        goal: row.get(3)?,
+                        default_agent_id: row.get(4)?,
+                        project_manager_agent_id: row.get(5)?,
+                        member_count: row.get(6)?,
+                        created_at_unix_ms: row.get(7)?,
+                        updated_at_unix_ms: row.get(8)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(|| "Agent 团队不存在或已停用。".to_owned())?;
+        validate_team_summary(&team)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT member.agent_id, member.role, member.responsibility,
+                       member.joined_at_unix_ms
+                FROM project_agent_room_members member
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id
+                 AND profile.id = member.agent_id
+                WHERE member.owner_user_id = ?1 AND member.room_id = ?2
+                  AND member.status = 'active' AND profile.status = 'active'
+                ORDER BY member.joined_at_unix_ms, member.agent_id
+                LIMIT 1000
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, team_id], |row| {
+                Ok(AgentTeamMemberSummary {
+                    agent_id: row.get(0)?,
+                    role: row.get(1)?,
+                    responsibility: row.get(2)?,
+                    joined_at_unix_ms: row.get(3)?,
+                })
+            })
+            .map_err(|_| team_store_error())?;
+        let members = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        for member in &members {
+            validate_team_member(member)?;
+        }
+        if members.len() as i64 != team.member_count {
+            return Err(team_store_error());
+        }
+        Ok(AgentTeamDetail { team, members })
+    }
+
+    fn invite_agent_to_project_team(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentTeamDetail, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        validate_agent_identifier(agent_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let team_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM project_agent_rooms \
+                 WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active' \
+                   AND conversation_kind = 'project_team')",
+                params![owner_user_id, team_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        if !team_exists {
+            return Err("Agent 团队不存在或已停用。".into());
+        }
+        let profile = transaction
+            .query_row(
+                "SELECT name, description FROM local_agent_profiles \
+                 WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active'",
+                params![owner_user_id, agent_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|_| team_store_error())?
+            .ok_or_else(|| "Agent 不存在或已停用。".to_owned())?;
+        validate_text(&profile.0, 160, false).map_err(|_| team_store_error())?;
+        validate_text(&profile.1, 8_000, true).map_err(|_| team_store_error())?;
+        let existing_status = transaction
+            .query_row(
+                "SELECT status FROM project_agent_room_members \
+                 WHERE owner_user_id = ?1 AND room_id = ?2 AND agent_id = ?3",
+                params![owner_user_id, team_id, agent_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|_| team_store_error())?;
+        if existing_status.as_deref() == Some("active") {
+            return Err("这个 Agent 已经在当前团队中。".into());
+        }
+        let member_count: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM project_agent_room_members \
+                 WHERE owner_user_id = ?1 AND room_id = ?2 AND status = 'active'",
+                params![owner_user_id, team_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_store_error())?;
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        if existing_status.as_deref() == Some("removed") {
+            transaction
+                .execute(
+                    "UPDATE project_agent_room_members \
+                     SET role = ?1, responsibility = ?2, plugin_allowlist_json = '[]', \
+                         status = 'active', joined_at_unix_ms = ?3 \
+                     WHERE owner_user_id = ?4 AND room_id = ?5 AND agent_id = ?6 \
+                       AND status = 'removed'",
+                    params![profile.0, profile.1, now, owner_user_id, team_id, agent_id],
+                )
+                .map_err(|_| team_store_error())?;
+        } else if existing_status.is_none() {
+            transaction
+                .execute(
+                    r#"
+                    INSERT INTO project_agent_room_members (
+                        owner_user_id, room_id, agent_id, role, responsibility,
+                        plugin_allowlist_json, status, joined_at_unix_ms
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, '[]', 'active', ?6)
+                    "#,
+                    params![owner_user_id, team_id, agent_id, profile.0, profile.1, now],
+                )
+                .map_err(|_| team_store_error())?;
+        } else {
+            return Err(team_store_error());
+        }
+        transaction
+            .execute(
+                "UPDATE project_agent_rooms \
+                 SET default_agent_id = CASE WHEN ?1 = 0 THEN ?2 ELSE default_agent_id END, \
+                     updated_at_unix_ms = ?3 \
+                 WHERE owner_user_id = ?4 AND id = ?5 AND status = 'active'",
+                params![member_count, agent_id, now, owner_user_id, team_id],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())?;
+        self.load_project_team(owner_user_id, team_id)
     }
 
     fn record_direct_delivery(
@@ -1157,6 +1356,59 @@ pub(crate) async fn create_agent_team(
 }
 
 #[tauri::command]
+pub(crate) async fn load_agent_team(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = owner_user_id.clone();
+    let selected_team = team_id.clone();
+    let detail = tauri::async_runtime::spawn_blocking(move || {
+        store.load_project_team(&owner, &selected_team)
+    })
+    .await
+    .map_err(|_| "Agent 团队成员读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(detail)
+}
+
+#[tauri::command]
+pub(crate) async fn invite_agent_to_team(
+    input: InviteAgentToTeamInput,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+) -> Result<AgentTeamDetail, String> {
+    validate_owner(&input.owner_user_id)?;
+    validate_identifier(&input.team_id).map_err(|_| invalid_team_input())?;
+    validate_agent_identifier(&input.agent_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let owner = input.owner_user_id.clone();
+    let team = input.team_id.clone();
+    let agent = input.agent_id.clone();
+    let detail = tauri::async_runtime::spawn_blocking(move || {
+        store.invite_agent_to_project_team(&owner, &team, &agent)
+    })
+    .await
+    .map_err(|_| "Agent 团队邀请任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    Ok(detail)
+}
+
+#[tauri::command]
 pub(crate) async fn send_agent_conversation_draft(
     input: SendAgentConversationDraftInput,
     authentication: State<'_, AuthenticationManager>,
@@ -1671,6 +1923,16 @@ fn validate_team_summary(team: &AgentTeamSummary) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_team_member(member: &AgentTeamMemberSummary) -> Result<(), String> {
+    validate_agent_identifier(&member.agent_id).map_err(|_| team_store_error())?;
+    validate_text(&member.role, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&member.responsibility, 8_000, true).map_err(|_| team_store_error())?;
+    if member.joined_at_unix_ms < 0 {
+        return Err(team_store_error());
+    }
+    Ok(())
+}
+
 fn require_active_project(
     database: &Path,
     owner_user_id: &str,
@@ -1824,12 +2086,36 @@ mod tests {
     #[test]
     fn project_teams_are_account_scoped_and_unique_per_active_project() {
         let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        insert_agent(&store, "bob", "agent-2", "active");
         let created = store
             .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
             .unwrap();
         assert_eq!(created.project_id, "project-1");
         assert_eq!(created.member_count, 0);
-        assert_eq!(store.list_project_teams("alice").unwrap(), vec![created]);
+        assert_eq!(
+            store.list_project_teams("alice").unwrap(),
+            vec![created.clone()]
+        );
+        assert!(store
+            .load_project_team("alice", &created.id)
+            .unwrap()
+            .members
+            .is_empty());
+        let invited = store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        assert_eq!(invited.team.member_count, 1);
+        assert_eq!(invited.team.default_agent_id.as_deref(), Some("agent-1"));
+        assert_eq!(invited.members.len(), 1);
+        assert_eq!(invited.members[0].agent_id, "agent-1");
+        assert_eq!(invited.members[0].role, "测试 Agent");
+        assert!(store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .is_err());
+        assert!(store
+            .invite_agent_to_project_team("alice", &created.id, "agent-2")
+            .is_err());
         assert!(store.list_project_teams("bob").unwrap().is_empty());
         assert!(store
             .create_project_team("alice", "project-1", "重复团队", "")
