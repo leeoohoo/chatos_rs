@@ -28,6 +28,7 @@ use crate::{
 };
 
 pub(crate) mod documents;
+pub(crate) mod heartbeat;
 pub(crate) mod team_todo;
 
 const DATABASE_FILENAME: &str = "AgentGroupChat.sqlite3";
@@ -470,6 +471,7 @@ struct PendingAgentCommunicationDelivery {
     message_id: String,
     content: String,
     trigger_kind: String,
+    conversation_kind: String,
     room_name: String,
     binding: AgentExecutionBinding,
 }
@@ -1004,7 +1006,7 @@ impl AgentConversationStore {
             .query_row(
                 r#"
                 SELECT delivery.id, delivery.message_id, message.content,
-                       delivery.trigger_kind, room.name,
+                       delivery.trigger_kind, room.conversation_kind, room.name,
                        room.id, profile.id, profile.name, profile.role_prompt,
                        profile.model_config_id, profile.thinking_level,
                        profile.profession_key, profile.default_plugin_ids_json,
@@ -1027,7 +1029,9 @@ impl AgentConversationStore {
                 WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
                   AND delivery.status = 'pending' AND delivery.trigger_kind != 'todo'
                   AND room.status = 'active'
-                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND (room.conversation_kind = 'agent_agent_direct'
+                       OR (room.conversation_kind = 'human_agent_direct'
+                           AND delivery.trigger_kind = 'heartbeat'))
                   AND member.status = 'active' AND profile.status = 'active'
                   AND NOT EXISTS (
                     SELECT 1 FROM project_agent_deliveries active
@@ -1046,18 +1050,19 @@ impl AgentConversationStore {
                         message_id: row.get(1)?,
                         content: row.get(2)?,
                         trigger_kind: row.get(3)?,
-                        room_name: row.get(4)?,
+                        conversation_kind: row.get(4)?,
+                        room_name: row.get(5)?,
                         binding: AgentExecutionBinding {
-                            room_id: row.get(5)?,
-                            agent_id: row.get(6)?,
-                            name: row.get(7)?,
-                            role_prompt: row.get(8)?,
-                            model_config_id: row.get(9)?,
-                            thinking_level: row.get(10)?,
-                            profession_key: row.get(11)?,
-                            default_plugin_ids: parse_identifier_array(&row.get::<_, String>(12)?)
+                            room_id: row.get(6)?,
+                            agent_id: row.get(7)?,
+                            name: row.get(8)?,
+                            role_prompt: row.get(9)?,
+                            model_config_id: row.get(10)?,
+                            thinking_level: row.get(11)?,
+                            profession_key: row.get(12)?,
+                            default_plugin_ids: parse_identifier_array(&row.get::<_, String>(13)?)
                                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
-                            default_skill_ids: parse_identifier_array(&row.get::<_, String>(13)?)
+                            default_skill_ids: parse_identifier_array(&row.get::<_, String>(14)?)
                                 .map_err(|_| rusqlite::Error::InvalidQuery)?,
                         },
                     })
@@ -1078,11 +1083,19 @@ impl AgentConversationStore {
         }
         if !matches!(
             pending.trigger_kind.as_str(),
-            "default_agent" | "agent_mention"
+            "default_agent" | "agent_mention" | "heartbeat"
         ) {
             return Err(team_store_error());
         }
         validate_agent_execution_binding(&pending.binding)?;
+        if !matches!(
+            pending.conversation_kind.as_str(),
+            "human_agent_direct" | "agent_agent_direct"
+        ) || (pending.trigger_kind == "heartbeat"
+            && pending.conversation_kind != "human_agent_direct")
+        {
+            return Err(team_store_error());
+        }
         validate_text(&pending.room_name, 160, false).map_err(|_| team_store_error())?;
         validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
         Ok(Some(pending))
@@ -1169,7 +1182,9 @@ impl AgentConversationStore {
                  AND room.id = delivery.room_id
                 WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
                   AND room.status = 'active'
-                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND (room.conversation_kind = 'agent_agent_direct'
+                       OR (room.conversation_kind = 'human_agent_direct'
+                           AND delivery.trigger_kind = 'heartbeat'))
                   AND (delivery.status = 'running' OR run.status IN ('ready', 'running'))
                 ORDER BY run.updated_at_unix_ms DESC, delivery.id
                 LIMIT 500
@@ -5012,7 +5027,7 @@ fn agent_communication_execution_metadata(
         "source": "native_agent_communication",
         "agent_execution_context": {
             "schema_version": 3,
-            "conversation_kind": "agent_agent_direct",
+            "conversation_kind": pending.conversation_kind,
             "room_id": pending.binding.room_id,
             "agent_id": pending.binding.agent_id,
             "agent_name": pending.binding.name,
@@ -5335,7 +5350,9 @@ fn load_agent_communication_tool_binding(
               AND run.status IN ('ready', 'running')
               AND delivery.status = 'running' AND delivery.trigger_kind != 'todo'
               AND room.status = 'active'
-              AND room.conversation_kind IN ('project_team', 'agent_agent_direct')
+              AND (room.conversation_kind IN ('project_team', 'agent_agent_direct')
+                   OR (room.conversation_kind = 'human_agent_direct'
+                       AND delivery.trigger_kind = 'heartbeat'))
               AND member.status = 'active'
             LIMIT 1
             "#,
@@ -5568,6 +5585,11 @@ mod tests {
                     profession_key TEXT NOT NULL DEFAULT 'software_engineer',
                     default_plugin_ids_json TEXT NOT NULL DEFAULT '[]',
                     default_skill_ids_json TEXT NOT NULL DEFAULT '["local.project.list"]',
+                    heartbeat_enabled INTEGER NOT NULL DEFAULT 0,
+                    heartbeat_interval_seconds INTEGER NOT NULL DEFAULT 900,
+                    heartbeat_prompt TEXT NOT NULL DEFAULT '',
+                    last_heartbeat_at_unix_ms INTEGER,
+                    next_heartbeat_at_unix_ms INTEGER,
                     status TEXT NOT NULL,
                     PRIMARY KEY(owner_user_id, id)
                 );
@@ -7760,6 +7782,104 @@ mod tests {
     }
 
     #[test]
+    fn due_heartbeats_create_one_durable_cycle_and_advance_the_schedule() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "heartbeat-agent", "active");
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_profiles SET heartbeat_enabled = 1, \
+                 heartbeat_interval_seconds = 60, heartbeat_prompt = '检查全局未读', \
+                 next_heartbeat_at_unix_ms = 10 \
+                 WHERE owner_user_id = 'alice' AND id = 'heartbeat-agent'",
+                [],
+            )
+            .unwrap();
+
+        assert!(store
+            .enqueue_due_agent_heartbeats("alice", 9, 16)
+            .unwrap()
+            .is_empty());
+        let rooms = store.enqueue_due_agent_heartbeats("alice", 10, 16).unwrap();
+        assert_eq!(rooms.len(), 1);
+        assert_eq!(
+            store
+                .communication_rooms_requiring_scheduler("alice")
+                .unwrap(),
+            rooms
+        );
+        let schedule: (Option<i64>, Option<i64>) = Connection::open(store.database())
+            .unwrap()
+            .query_row(
+                "SELECT last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms \
+                 FROM local_agent_profiles WHERE owner_user_id = 'alice' \
+                   AND id = 'heartbeat-agent'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(schedule, (Some(10), Some(60_010)));
+
+        assert!(store
+            .enqueue_due_agent_heartbeats("alice", 60_010, 16)
+            .unwrap()
+            .is_empty());
+        let connection = Connection::open(store.database()).unwrap();
+        let facts: (i64, i64, Option<i64>) = connection
+            .query_row(
+                "SELECT count(*), \
+                        sum(CASE WHEN trigger_kind = 'heartbeat' THEN 1 ELSE 0 END), \
+                        (SELECT next_heartbeat_at_unix_ms FROM local_agent_profiles \
+                         WHERE owner_user_id = 'alice' AND id = 'heartbeat-agent') \
+                 FROM project_agent_deliveries WHERE owner_user_id = 'alice'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(facts, (1, 1, Some(120_010)));
+        drop(connection);
+
+        let pending = store
+            .next_agent_communication_delivery("alice", &rooms[0])
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.trigger_kind, "heartbeat");
+        assert_eq!(pending.conversation_kind, "human_agent_direct");
+        assert_eq!(pending.content, "检查全局未读");
+        store
+            .claim_agent_communication_delivery(
+                "alice",
+                &pending,
+                "turn-heartbeat",
+                "run-heartbeat",
+                60_011,
+            )
+            .unwrap();
+        let (binding, outcome) = store
+            .validate_agent_communication_cycle_completion("alice", "run-heartbeat", true)
+            .unwrap();
+        assert_eq!(binding.conversation_kind, "human_agent_direct");
+        assert_eq!(outcome["status"], "completed");
+        store
+            .reconcile_agent_communication_runs(
+                "alice",
+                &rooms[0],
+                &[AgentCommunicationRunReconciliation {
+                    delivery_id: pending.delivery_id,
+                    turn_id: "turn-heartbeat".into(),
+                    run_id: "run-heartbeat".into(),
+                    status: LocalConversationTurnStatus::Succeeded,
+                    created_at_unix_ms: 60_011,
+                    updated_at_unix_ms: 60_012,
+                }],
+            )
+            .unwrap();
+        assert!(!store
+            .communication_scheduler_has_work("alice", &rooms[0])
+            .unwrap());
+    }
+
+    #[test]
     fn agent_direct_messages_create_two_member_rooms_and_routable_deliveries() {
         let (_directory, store) = store();
         insert_agent(&store, "alice", "sender", "active");
@@ -7898,6 +8018,16 @@ mod tests {
         store
             .claim_agent_communication_delivery("alice", &pending, "turn-target", "run-target", 12)
             .unwrap();
+        assert!(store
+            .validate_agent_communication_cycle_completion("alice", "run-target", true)
+            .is_err());
+        assert_eq!(
+            store
+                .validate_agent_communication_cycle_completion("alice", "run-target", false)
+                .unwrap()
+                .1["status"],
+            "completed"
+        );
         let (binding, unread) = store
             .read_all_unread_team_chat("alice", "run-target", "read-direct", 20, 13)
             .unwrap();
@@ -8214,6 +8344,14 @@ mod tests {
                 100,
             )
             .unwrap();
+        assert!(store
+            .communication_rooms_requiring_scheduler("alice")
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .next_agent_communication_delivery("alice", &room.id)
+            .unwrap()
+            .is_none());
 
         let pending = store.list_direct_activity("alice", &binding).unwrap();
         assert_eq!(pending.len(), 1);

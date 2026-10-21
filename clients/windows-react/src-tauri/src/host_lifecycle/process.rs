@@ -23,7 +23,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 19] = [
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 11] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 13] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
@@ -35,6 +35,8 @@ const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 11] = [
     "todo_reorder",
     "chat_document_create",
     "chat_send_message",
+    "chat_heartbeat_complete",
+    "agent_cycle_complete",
 ];
 
 pub(super) async fn spawn(

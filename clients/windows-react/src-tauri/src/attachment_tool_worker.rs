@@ -66,7 +66,12 @@ const TEAM_CHAT_READ_TOOL_NAMES: [&str; 4] = [
     "chat_read_all_unread",
     "chat_read_attachment",
 ];
-const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 2] = ["chat_document_create", "chat_send_message"];
+const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 4] = [
+    "chat_document_create",
+    "chat_send_message",
+    "chat_heartbeat_complete",
+    "agent_cycle_complete",
+];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
@@ -125,6 +130,7 @@ async fn poll(
     recover_team_todo_drains(&app, &owner_user_id).await;
     let mut idle_delay = Duration::from_millis(250);
     while generation.load(Ordering::SeqCst) == expected_generation {
+        enqueue_due_heartbeats(&app, &owner_user_id).await;
         let claimed = claim_and_execute(&app, &owner_user_id)
             .await
             .unwrap_or(false);
@@ -138,6 +144,21 @@ async fn poll(
                 idle_delay = (idle_delay * 2).min(Duration::from_secs(2));
             }
         }
+    }
+}
+
+async fn enqueue_due_heartbeats(app: &AppHandle, owner_user_id: &str) {
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let rooms = tauri::async_runtime::spawn_blocking(move || {
+        store.enqueue_due_agent_heartbeats(&owner, now_unix_ms(), 16)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+    for room_id in rooms {
+        schedule_agent_communication_drain(app.clone(), owner_user_id.to_owned(), room_id);
     }
 }
 
@@ -225,8 +246,10 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         claim.invocation.tool_name.as_str(),
         "todo_add" | "todo_update" | "todo_complete" | "todo_block"
     ) && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
-    let schedule_team_messages = claim.invocation.tool_name == "chat_send_message"
-        && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
+    let schedule_team_messages = matches!(
+        claim.invocation.tool_name.as_str(),
+        "chat_send_message" | "chat_heartbeat_complete" | "agent_cycle_complete"
+    ) && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
     let team_to_schedule = if schedule_team_todos {
         let store = app.state::<AgentConversationStore>().inner().clone();
         let owner = owner_user_id.to_owned();
@@ -391,6 +414,25 @@ async fn execute_team_chat_write_tool(
         })
         .await
         .map_err(|_| "The Agent document task exited unexpectedly.".to_owned())??;
+        validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
+        return Ok(LocalAgentToolOutcome::Succeeded { output });
+    }
+    if matches!(
+        claim.invocation.tool_name.as_str(),
+        "chat_heartbeat_complete" | "agent_cycle_complete"
+    ) {
+        if !arguments.is_empty() {
+            return Err("The Agent cycle completion arguments are invalid.".into());
+        }
+        let heartbeat_only = claim.invocation.tool_name == "chat_heartbeat_complete";
+        let store = app.state::<AgentConversationStore>().inner().clone();
+        let owner = owner_user_id.to_owned();
+        let run_id = run.run_id.clone();
+        let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
+            store.validate_agent_communication_cycle_completion(&owner, &run_id, heartbeat_only)
+        })
+        .await
+        .map_err(|_| "The Agent cycle completion task exited unexpectedly.".to_owned())??;
         validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
         return Ok(LocalAgentToolOutcome::Succeeded { output });
     }
@@ -1323,6 +1365,11 @@ fn validate_communication_run_context(
                 && identity.get("conversation_kind").and_then(Value::as_str)
                     == Some("agent_agent_direct")
         }
+        "human_agent_direct" => {
+            identity.get("schema_version").and_then(Value::as_u64) == Some(3)
+                && identity.get("conversation_kind").and_then(Value::as_str)
+                    == Some("human_agent_direct")
+        }
         _ => false,
     };
     if profile_key != "main_chat"
@@ -1866,6 +1913,26 @@ pub fn team_chat_write_tool_schemas() -> Vec<Value> {
                 "additionalProperties": false
             }
         }),
+        json!({
+            "type": "function",
+            "name": "chat_heartbeat_complete",
+            "description": "仅用于主动巡检：检查全部会话未读和任务后没有需要汇报或执行的事项时，安静完成本次巡检。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "agent_cycle_complete",
+            "description": "结束本次 Agent 通讯周期。调用前必须完成必要回复和任务调整；不会向聊天记录写入内部状态消息。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
     ]
 }
 
@@ -2075,9 +2142,11 @@ mod tests {
     #[test]
     fn team_chat_write_catalog_accepts_only_run_scoped_mentions() {
         let schemas = team_chat_write_tool_schemas();
-        assert_eq!(schemas.len(), 2);
+        assert_eq!(schemas.len(), 4);
         assert_eq!(schemas[0]["name"], "chat_document_create");
         assert_eq!(schemas[1]["name"], "chat_send_message");
+        assert_eq!(schemas[2]["name"], "chat_heartbeat_complete");
+        assert_eq!(schemas[3]["name"], "agent_cycle_complete");
         let encoded = schemas[1].to_string();
         assert!(encoded.contains("document_refs"));
         assert!(encoded.contains("mention_agent_refs"));
@@ -2209,6 +2278,24 @@ mod tests {
         assert!(
             validate_communication_run_context("main_chat", &direct_input, &direct_binding).is_ok()
         );
+        let heartbeat_binding = AgentCommunicationToolBinding {
+            conversation_kind: "human_agent_direct".into(),
+            ..direct_binding
+        };
+        let heartbeat_input = json!({
+            "agent_execution_context": {
+                "schema_version": 3,
+                "conversation_kind": "human_agent_direct",
+                "room_id": "team-1",
+                "agent_id": "agent-1"
+            }
+        });
+        assert!(validate_communication_run_context(
+            "main_chat",
+            &heartbeat_input,
+            &heartbeat_binding
+        )
+        .is_ok());
     }
 
     #[test]

@@ -1072,7 +1072,9 @@ impl AgentConversationStore {
                   ON run.owner_user_id = delivery.owner_user_id
                  AND run.delivery_id = delivery.id
                 WHERE room.owner_user_id = ?1 AND room.status = 'active'
-                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND (room.conversation_kind = 'agent_agent_direct'
+                       OR (room.conversation_kind = 'human_agent_direct'
+                           AND delivery.trigger_kind = 'heartbeat'))
                   AND (delivery.status IN ('pending', 'running')
                        OR run.status IN ('ready', 'running'))
                 ORDER BY room.id
@@ -1109,7 +1111,9 @@ impl AgentConversationStore {
                      AND run.delivery_id = delivery.id
                     WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
                       AND room.status = 'active'
-                      AND room.conversation_kind = 'agent_agent_direct'
+                      AND (room.conversation_kind = 'agent_agent_direct'
+                           OR (room.conversation_kind = 'human_agent_direct'
+                               AND delivery.trigger_kind = 'heartbeat'))
                       AND (delivery.status IN ('pending', 'running')
                            OR run.status IN ('ready', 'running'))
                 )
