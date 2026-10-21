@@ -34,6 +34,7 @@ interface StoryStudioState {
   planningProgress: Record<string, StoryPlanningProgress>;
   planningRuns: Record<string, StoryPlanningRun[]>;
   planningHistoryUnreadable: Record<string, number>;
+  planningHistoryNextCursor: Record<string, StoryProjectCursor | null>;
   mediaBatches: Record<string, StoryMediaBatchSnapshot[]>;
   mediaBatchHistoryUnreadable: Record<string, number>;
   mediaBatchHistoryNextCursor: Record<string, StoryProjectCursor | null>;
@@ -56,6 +57,7 @@ interface StoryStudioState {
   }): Promise<void>;
   startPlanning(storyPort: StoryStudioPort, stage: "outline" | "refine", targetIds: string[], userIdeas: string): Promise<void>;
   loadPlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
+  loadMorePlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   resumePlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   loadMediaBatchHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
@@ -104,6 +106,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   planningProgress: {},
   planningRuns: {},
   planningHistoryUnreadable: {},
+  planningHistoryNextCursor: {},
   mediaBatches: {},
   mediaBatchHistoryUnreadable: {},
   mediaBatchHistoryNextCursor: {},
@@ -132,6 +135,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       planningProgress: {},
       planningRuns: {},
       planningHistoryUnreadable: {},
+      planningHistoryNextCursor: {},
       mediaBatches: {},
       mediaBatchHistoryUnreadable: {},
       mediaBatchHistoryNextCursor: {},
@@ -186,6 +190,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       planningProgress: {},
       planningRuns: {},
       planningHistoryUnreadable: {},
+      planningHistoryNextCursor: {},
       mediaBatches: {},
       mediaBatchHistoryUnreadable: {},
       mediaBatchHistoryNextCursor: {},
@@ -307,10 +312,49 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
           ...state.planningHistoryUnreadable,
           [projectId]: page.unreadableCount,
         },
+        planningHistoryNextCursor: {
+          ...state.planningHistoryNextCursor,
+          [projectId]: page.nextCursor,
+        },
       }));
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ error: errorMessage(error, "剧情规划历史暂时无法读取。") });
+    }
+  },
+
+  async loadMorePlanningHistory(storyPort, projectId) {
+    const scope = activeScope(get());
+    const cursor = get().planningHistoryNextCursor[projectId];
+    if (!scope || !cursor) return;
+    try {
+      const page = await storyPort.loadPlanningHistory({
+        ...scope,
+        projectId,
+        after: cursor,
+        limit: 20,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: page.recoveredProject
+          ? replaceProject(state.projects, page.recoveredProject)
+          : state.projects,
+        planningRuns: {
+          ...state.planningRuns,
+          [projectId]: mergePlanningRuns(state.planningRuns[projectId] ?? [], page.runs),
+        },
+        planningHistoryUnreadable: {
+          ...state.planningHistoryUnreadable,
+          [projectId]: (state.planningHistoryUnreadable[projectId] ?? 0) + page.unreadableCount,
+        },
+        planningHistoryNextCursor: {
+          ...state.planningHistoryNextCursor,
+          [projectId]: page.nextCursor,
+        },
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ error: errorMessage(error, "更早的剧情规划记录暂时无法读取。") });
     }
   },
 
@@ -1025,6 +1069,10 @@ function replaceProject(projects: StoryProject[], project: StoryProject) {
 function replacePlanningRun(runs: StoryPlanningRun[], run: StoryPlanningRun) {
   return [run, ...runs.filter((value) => value.id !== run.id)]
     .sort((left, right) => right.updatedAtUnixMs - left.updatedAtUnixMs);
+}
+
+function mergePlanningRuns(current: StoryPlanningRun[], incoming: StoryPlanningRun[]) {
+  return incoming.reduce(replacePlanningRun, current);
 }
 
 function replaceMediaBatch(batches: StoryMediaBatchSnapshot[], batch: StoryMediaBatchSnapshot) {

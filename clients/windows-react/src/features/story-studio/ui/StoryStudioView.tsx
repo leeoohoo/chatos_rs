@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio";
-import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryProject } from "../domain/storyStudio";
+import type { StoryMediaBatchKind, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
 import type { StoryPlanningProgress } from "../application/storyStudioStore";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -14,6 +14,7 @@ interface StoryStudioViewProps {
 }
 
 const EMPTY_STORY_BATCHES: StoryMediaBatchSnapshot[] = [];
+const EMPTY_PLANNING_RUNS: StoryPlanningRun[] = [];
 
 export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioViewProps) {
   const state = useStoryStudioStore();
@@ -110,6 +111,7 @@ function ProjectWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStud
           <span><strong>{project.segments.filter((segment) => segment.video).length}</strong>成片</span>
         </div>
       </header>
+      <StoryPlanningHistoryPanel port={port} projectId={project.id} />
       {recoverable && <PlanningRecoveryBanner port={port} run={recoverable} />}
       {project.segments.length === 0 ? (
         <div className="story-source-workspace">
@@ -535,21 +537,103 @@ function StoryVideoRetrySheet({ port, segmentId, onClose }: { port: StoryStudioP
   return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>确认已核对原视频任务？</h2><p>本操作不会立即向服务商重新提交。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">只有确认原任务失败或未创建时才应重试。后续再次生成可能扣费，旧任务记录会保留。</p></div><footer><button onClick={onClose} type="button">取消</button><button className="story-retry-confirm" disabled={state.busy} onClick={() => void confirm()} type="button">已核对，允许重新生成</button></footer></section></div>;
 }
 
+function StoryPlanningHistoryPanel({ port, projectId }: { port: StoryStudioPort; projectId: string }) {
+  const storedRuns = useStoryStudioStore((state) => state.planningRuns[projectId]);
+  const runs = storedRuns ?? EMPTY_PLANNING_RUNS;
+  const unreadable = useStoryStudioStore((state) => state.planningHistoryUnreadable[projectId] ?? 0);
+  const nextCursor = useStoryStudioStore((state) => state.planningHistoryNextCursor[projectId] ?? null);
+  const busy = useStoryStudioStore((state) => state.busy);
+  const resume = useStoryStudioStore((state) => state.resumePlanning);
+  const loadMore = useStoryStudioStore((state) => state.loadMorePlanningHistory);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [confirmResume, setConfirmResume] = useState<StoryPlanningRun | null>(null);
+  const latest = runs[0];
+  if (!latest && unreadable === 0) return null;
+  const requestMore = async () => {
+    setLoadingMore(true);
+    await loadMore(port, projectId);
+    setLoadingMore(false);
+  };
+  const chooseRun = (run: StoryPlanningRun) => {
+    setShowHistory(false);
+    setConfirmResume(run);
+  };
+  return <>
+    <section className="story-planning-history-panel">
+      <span aria-hidden="true">◷</span>
+      <div>
+        <header><strong>规划草稿与运行记录</strong>{latest && <small>{planningRunStatusLabel(latest)}</small>}</header>
+        {latest ? <p>{planningStageLabel(latest.stage)} · {latest.draft.characters.length + latest.draft.scenes.length + latest.draft.props.length} 个素材 · {latest.draft.segments.length} 个分段 · {latest.modelCalls} 次模型调用</p> : <p>没有可读取的规划记录。</p>}
+        {unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}
+      </div>
+      <button onClick={() => setShowHistory(true)} type="button">查看规划历史</button>
+    </section>
+    {showHistory && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHistory(false); }}>
+      <section aria-modal="true" className="story-sheet story-planning-history-sheet" role="dialog">
+        <header><div><span>◷</span><div><h2>规划草稿与运行记录</h2><p>草稿逐步保存在本机；完整校验通过后才会应用，不会覆盖已修改的项目。</p></div></div><button aria-label="关闭" onClick={() => setShowHistory(false)} type="button">×</button></header>
+        <div className="story-planning-history-list">
+          {runs.map((run) => {
+            const canResume = !run.applied && run.abandonedAtUnixMs == null;
+            const duration = run.draft.segments.reduce((total, segment) => total + segment.seconds, 0);
+            return <article key={run.id}>
+              <header><div><strong>{planningStageLabel(run.stage)}</strong><small>{new Date(run.updatedAtUnixMs).toLocaleString()}</small></div><span>{planningRunStatusLabel(run)}</span></header>
+              <div className="story-planning-history-metrics"><span><strong>{run.draft.characters.length + run.draft.scenes.length + run.draft.props.length}</strong>素材</span><span><strong>{run.draft.segments.length}</strong>分段</span><span><strong>{duration}</strong>规划秒数</span><span><strong>{run.modelCalls}</strong>模型调用</span></div>
+              {run.stopReason && <em>{run.stopReason}</em>}
+              <details><summary>人物文字画像（{run.draft.characters.length}）</summary><div className="story-planning-history-details">{run.draft.characters.length === 0 ? <p>本次草稿没有人物。</p> : run.draft.characters.map((character) => <section key={character.id}><strong>{character.name}{character.profile.isProtagonist ? " · 主角" : ""}</strong><PlanningTextRows rows={[["剧情身份", character.profile.roleInStory], ["外貌", character.profile.appearance], ["性格", character.profile.personality], ["动机", character.profile.motivation], ["人物关系", character.profile.relationships], ["服装", character.profile.costume], ["一致性约束", character.profile.consistencyNotes]]} /></section>)}</div></details>
+              <details><summary>场景文字画像（{run.draft.scenes.length}）</summary><div className="story-planning-history-details">{run.draft.scenes.length === 0 ? <p>本次草稿没有场景。</p> : run.draft.scenes.map((scene) => <section key={scene.id}><strong>{scene.name}</strong><PlanningTextRows rows={[["剧情作用", scene.profile.roleInStory], ["场景设定", scene.profile.setting], ["空间布局", scene.profile.spatialLayout], ["光线与色彩", scene.profile.lightingAndPalette], ["关键元素", scene.profile.keyElements], ["氛围", scene.profile.atmosphere], ["一致性约束", scene.profile.consistencyNotes]]} /></section>)}</div></details>
+              <details><summary>道具文字画像（{run.draft.props.length}）</summary><div className="story-planning-history-details">{run.draft.props.length === 0 ? <p>本次草稿没有道具。</p> : run.draft.props.map((prop) => <section key={prop.id}><strong>{prop.name}</strong><PlanningTextRows rows={[["描述", prop.description], ["画面提示", prop.imagePrompt]]} /></section>)}</div></details>
+              <details><summary>分段草稿（{run.draft.segments.length}）</summary><div className="story-planning-history-details">{run.draft.segments.length === 0 ? <p>本次草稿还没有分段。</p> : run.draft.segments.map((segment) => <section key={segment.id}><strong>{segment.title} · {segment.kind === "transition" ? "转场" : "剧情"} · {segment.seconds} 秒</strong><p>{segment.synopsis}</p>{segment.detail && <PlanningTextRows rows={[["首帧", segment.detail.firstFramePrompt], ["尾帧", segment.detail.lastFramePrompt ?? ""], ["衔接进入", segment.detail.continuityIn], ["衔接离开", segment.detail.continuityOut], ["声音", segment.detail.audio], ["约束", segment.detail.constraints]]} />}</section>)}</div></details>
+              <details><summary>最近 {Math.min(run.events.length, 100)} 条动作（完整记录保存在本机）</summary><ol>{run.events.slice(-100).reverse().map((event) => <li key={event.id}><time>{new Date(event.dateUnixMs).toLocaleString()}</time><span>{event.detail}</span></li>)}</ol></details>
+              {canResume && <footer><button disabled={busy} onClick={() => chooseRun(run)} type="button">{run.status === "completed" ? "应用这一条记录" : "恢复这一条记录"}</button></footer>}
+            </article>;
+          })}
+          {unreadable > 0 && <p className="story-planning-history-warning">{unreadable} 条损坏记录已安全隔离，原文件保留且未用于恢复。</p>}
+        </div>
+        <footer><button disabled={!nextCursor || loadingMore} onClick={() => void requestMore()} type="button">{loadingMore ? "正在读取…" : nextCursor ? "加载更早记录" : "没有更早记录"}</button><button onClick={() => setShowHistory(false)} type="button">完成</button></footer>
+      </section>
+    </div>}
+    {confirmResume && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmResume(null); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>◷</span><div><h2>{confirmResume.status === "completed" ? "应用这份规划草稿？" : "继续这次规划？"}</h2><p>已经完成并保存的内容不会重复生成。</p></div></div><button aria-label="关闭" onClick={() => setConfirmResume(null)} type="button">×</button></header><div className="story-sheet__body"><p className="story-planning-confirmation">原生层会先核对项目指纹；项目已被修改时不会覆盖现有内容。规划完整校验通过后才会应用。</p></div><footer><button onClick={() => setConfirmResume(null)} type="button">取消</button><button className="story-primary-button" disabled={busy} onClick={() => { const run = confirmResume; setConfirmResume(null); void resume(port, projectId, run.id); }} type="button">确认继续</button></footer></section></div>}
+  </>;
+}
+
+function PlanningTextRows({ rows }: { rows: [string, string][] }) {
+  const visible = rows.filter(([, value]) => value.trim());
+  if (visible.length === 0) return null;
+  return <dl>{visible.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
+}
+
+function planningStageLabel(stage: StoryPlanningRun["stage"]) {
+  return stage === "outline" ? "剧情拆解" : "镜头细化";
+}
+
+function planningRunStatusLabel(run: StoryPlanningRun) {
+  if (run.applied) return "规划完成 · 已应用";
+  if (run.abandonedAtUnixMs != null) return "中断草稿 · 已放弃";
+  if (run.status === "completed") return "草稿已完成 · 待应用";
+  if (run.status === "running") return "正在分步规划 · 草稿自动保存";
+  if (run.status === "needs_review") return "需要核对后恢复";
+  if (run.status === "limit_reached") return "达到运行限制 · 可恢复";
+  if (run.status === "failed") return "规划失败 · 可查看";
+  return "已暂停 / 中断 · 可恢复";
+}
+
 function PlanningRecoveryBanner({ port, run }: {
   port: StoryStudioPort;
   run: ReturnType<typeof useStoryStudioStore.getState>["planningRuns"][string][number];
 }) {
   const state = useStoryStudioStore();
+  const completed = run.status === "completed";
   return (
     <section className="story-planning-recovery">
       <span aria-hidden="true">◷</span>
       <div>
-        <strong>上次规划已中断，草稿已安全保存</strong>
+        <strong>{completed ? "规划草稿已完成，等待应用" : "上次规划已中断，草稿已安全保存"}</strong>
         <p>{run.stage === "outline" ? "剧情拆解" : "镜头细化"} · {run.draft.characters.length + run.draft.scenes.length + run.draft.props.length} 个素材 · {run.draft.segments.length} 个分段 · 已调用模型 {run.modelCalls} 次</p>
         {run.stopReason && <small>{run.stopReason}</small>}
       </div>
       <button className="is-destructive" disabled={state.busy} onClick={() => void state.abandonPlanning(port, run.projectId, run.id)} type="button">放弃草稿</button>
-      <button disabled={state.busy} onClick={() => void state.resumePlanning(port, run.projectId, run.id)} type="button">继续规划</button>
+      <button disabled={state.busy} onClick={() => void state.resumePlanning(port, run.projectId, run.id)} type="button">{completed ? "应用草稿" : "继续规划"}</button>
     </section>
   );
 }

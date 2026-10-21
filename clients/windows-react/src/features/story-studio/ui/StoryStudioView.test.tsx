@@ -116,6 +116,54 @@ describe("StoryStudioView", () => {
     })));
   });
 
+  it("browses complete paged planning history with native recovery actions", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const latest = {
+      ...planningRun(),
+      draft: { ...plannedProject(), id: canonical.id },
+      events: [{
+        id: "44444444-4444-4444-8444-444444444444",
+        dateUnixMs: 2,
+        kind: "checkpoint",
+        detail: "已保存人物与场景草稿",
+        modelCalls: 2,
+      }],
+      modelCalls: 2,
+      updatedAtUnixMs: 20,
+    };
+    const earlier = {
+      ...planningRun(),
+      id: "33333333-3333-4333-8333-333333333333",
+      draft: { ...canonical, summary: "更早的已应用规划" },
+      status: "completed" as const,
+      applied: true,
+      updatedAtUnixMs: 10,
+    };
+    const cursor = { modifiedAtUnixMs: 20, recordId: latest.id };
+    const loadPlanningHistory = vi.fn(async (request: Parameters<StoryStudioPort["loadPlanningHistory"]>[0]) => request.after
+      ? { runs: [earlier], nextCursor: null, unreadableCount: 1, recoveredProject: null }
+      : { runs: [latest], nextCursor: cursor, unreadableCount: 0, recoveredProject: null });
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      loadPlanningHistory,
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "查看规划历史" }));
+    expect(screen.getByRole("heading", { name: "规划草稿与运行记录" })).toBeVisible();
+    expect(screen.getByText("已保存人物与场景草稿")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "恢复这一条记录" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "加载更早记录" }));
+    await waitFor(() => expect(loadPlanningHistory).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      after: cursor,
+      limit: 20,
+    })));
+    expect(await screen.findByText("规划完成 · 已应用")).toBeVisible();
+    expect(screen.getByText("1 条损坏记录已安全隔离，原文件保留且未用于恢复。")).toBeVisible();
+  });
+
   it("keeps the native picker and imported bytes behind the Story adapter", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     const imported = { ...canonical, updatedAtUnixMs: 3 };
