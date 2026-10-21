@@ -205,6 +205,61 @@ pub(super) struct TeamRunReconciliation {
 }
 
 impl AgentConversationStore {
+    pub(crate) fn team_chat_member_snapshot(
+        &self,
+        owner_user_id: &str,
+        run_id: &str,
+    ) -> Result<(AgentAssetToolBinding, Value), String> {
+        validate_identifier(run_id).map_err(|_| team_todo_store_error())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let binding = load_agent_asset_tool_binding(&connection, owner_user_id, run_id)?;
+        if binding.todo_id.is_some() {
+            return Err("Team communication tools are unavailable in an executor Run.".into());
+        }
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT member.agent_id, profile.name, member.role, member.responsibility,
+                       CASE WHEN room.project_manager_agent_id = member.agent_id
+                            THEN 1 ELSE 0 END
+                FROM project_agent_room_members member
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = member.owner_user_id
+                 AND room.id = member.room_id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id
+                 AND profile.id = member.agent_id
+                WHERE member.owner_user_id = ?1 AND member.room_id = ?2
+                  AND member.status = 'active' AND profile.status = 'active'
+                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                ORDER BY member.joined_at_unix_ms, member.agent_id
+                "#,
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let members = statement
+            .query_map(params![owner_user_id, binding.team_id], |row| {
+                let agent_id = row.get::<_, String>(0)?;
+                Ok(json!({
+                    "agent_ref": todo_planning_reference(
+                        owner_user_id,
+                        run_id,
+                        "agent",
+                        &agent_id,
+                    ),
+                    "name": row.get::<_, String>(1)?,
+                    "role": row.get::<_, String>(2)?,
+                    "responsibility": row.get::<_, String>(3)?,
+                    "is_project_manager": row.get::<_, i64>(4)? == 1,
+                    "is_current_agent": agent_id == binding.agent_id,
+                }))
+            })
+            .map_err(|_| team_todo_store_error())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_todo_store_error())?;
+        Ok((binding, Value::Array(members)))
+    }
+
     pub(crate) fn teams_requiring_todo_scheduler(
         &self,
         owner_user_id: &str,

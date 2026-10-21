@@ -58,6 +58,7 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_list",
     "todo_read_progress",
 ];
+const TEAM_CHAT_READ_TOOL_NAMES: [&str; 1] = ["chat_list_members"];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
@@ -158,6 +159,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                     .chain(TEAM_ASSET_TOOL_NAMES)
                     .chain(TODO_EXECUTION_TOOL_NAMES)
                     .chain(TODO_PLANNING_READ_TOOL_NAMES)
+                    .chain(TEAM_CHAT_READ_TOOL_NAMES)
                     .chain(TODO_PLANNING_WRITE_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
@@ -179,6 +181,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 execute_todo_execution_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_todo_planning_read_tool(app, owner_user_id, &claim).await
+            } else if TEAM_CHAT_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_team_chat_read_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str())
             {
                 execute_todo_planning_write_tool(app, owner_user_id, &claim).await
@@ -228,6 +232,46 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         schedule_team_todo_drain(app.clone(), owner_user_id.to_owned(), team_id);
     }
     Ok(true)
+}
+
+async fn execute_team_chat_read_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if claim.invocation.tool_name != "chat_list_members"
+        || claim
+            .invocation
+            .arguments
+            .as_object()
+            .filter(|arguments| arguments.is_empty())
+            .is_none()
+    {
+        return Err("The team communication arguments are invalid.".into());
+    }
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The team communication Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The team communication Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
+        store.team_chat_member_snapshot(&owner, &run_id)
+    })
+    .await
+    .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    Ok(LocalAgentToolOutcome::Succeeded { output })
 }
 
 pub(crate) fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, team_id: String) {
@@ -1466,6 +1510,20 @@ pub fn todo_planning_read_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub fn team_chat_read_tool_schemas() -> Vec<Value> {
+    vec![json!({
+        "type": "function",
+        "name": "chat_list_members",
+        "description": "列出当前项目团队的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+        }
+    })]
+}
+
 pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
     vec![
         json!({
@@ -1654,6 +1712,14 @@ mod tests {
                 && !encoded.contains("team_id")
                 && !encoded.contains("agent_id")
         }));
+    }
+
+    #[test]
+    fn team_chat_read_catalog_exposes_only_the_member_directory() {
+        let schemas = team_chat_read_tool_schemas();
+        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas[0]["name"], "chat_list_members");
+        assert!(!schemas[0].to_string().contains("agent_id"));
     }
 
     #[test]

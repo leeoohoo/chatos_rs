@@ -5987,6 +5987,9 @@ mod tests {
         store
             .claim_project_team_delivery("alice", &executor, "turn-executor", "run-executor", 105)
             .unwrap();
+        assert!(store
+            .team_chat_member_snapshot("alice", "run-executor")
+            .is_err());
         let (executor_binding, executor_assets) = store
             .load_agent_asset_tool_records("alice", "run-executor")
             .unwrap();
@@ -6187,6 +6190,18 @@ mod tests {
         store
             .claim_project_team_delivery("alice", &delivery, "turn-manager", "run-manager", 10)
             .unwrap();
+        let (member_binding, members) = store
+            .team_chat_member_snapshot("alice", "run-manager")
+            .unwrap();
+        assert_eq!(member_binding.team_id, team.id);
+        assert_eq!(members.as_array().unwrap().len(), 2);
+        assert!(members
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|member| member["name"] == "测试 Agent" && member["is_project_manager"] == true));
+        assert!(!members.to_string().contains("\"manager\""));
+        assert!(!members.to_string().contains("\"worker\""));
         let (_, options) = store
             .todo_planning_tool_snapshot("alice", "run-manager", true)
             .unwrap();

@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 15] = [
+const READ_ONLY_TOOL_NAMES: [&str; 16] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -15,6 +15,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 15] = [
     "todo_dependency_options",
     "todo_list",
     "todo_read_progress",
+    "chat_list_members",
     "process_poll",
     "process_log",
     "process_wait",
