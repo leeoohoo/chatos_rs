@@ -19,13 +19,16 @@ const READ_ONLY_TOOL_NAMES: [&str; 15] = [
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 6] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 9] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
     "todo_progress_append",
     "todo_complete",
     "todo_block",
+    "todo_add",
+    "todo_update",
+    "todo_reorder",
 ];
 
 pub(super) async fn spawn(

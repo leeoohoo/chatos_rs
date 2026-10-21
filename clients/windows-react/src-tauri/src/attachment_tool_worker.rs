@@ -25,7 +25,10 @@ use tokio::{
 };
 
 use crate::{
-    agent_conversation::{AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore},
+    agent_conversation::{
+        team_todo::{AgentTodoExecutionContract, TodoPlanningCreateInput, TodoPlanningUpdateInput},
+        AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore,
+    },
     conversation_attachments::AttachmentManager,
     host_lifecycle::HostManager,
     terminal_tool_worker::TerminalToolWorker,
@@ -51,6 +54,7 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_list",
     "todo_read_progress",
 ];
+const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
 const MAXIMUM_CONTENT_READ_BYTES: usize = 2 * 1_024;
@@ -134,6 +138,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                     .chain(TEAM_ASSET_TOOL_NAMES)
                     .chain(TODO_EXECUTION_TOOL_NAMES)
                     .chain(TODO_PLANNING_READ_TOOL_NAMES)
+                    .chain(TODO_PLANNING_WRITE_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
             ),
@@ -154,6 +159,9 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 execute_todo_execution_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_todo_planning_read_tool(app, owner_user_id, &claim).await
+            } else if TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str())
+            {
+                execute_todo_planning_write_tool(app, owner_user_id, &claim).await
             } else {
                 execute_team_asset_tool(app, owner_user_id, &claim).await
             };
@@ -300,6 +308,241 @@ fn require_todo_planning_manager(binding: &AgentAssetToolBinding) -> Result<(), 
     } else {
         Err("Only the active project manager Agent may plan team Todos.".into())
     }
+}
+
+async fn execute_todo_planning_write_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if !TODO_PLANNING_WRITE_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+        return Err("The requested Todo planning mutation is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())?;
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The Todo planning Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The Todo planning Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let validation_store = store.clone();
+    let validation_owner = owner.clone();
+    let validation_run = run_id.clone();
+    let (expected_binding, _) = tauri::async_runtime::spawn_blocking(move || {
+        validation_store.load_agent_asset_tool_records(&validation_owner, &validation_run)
+    })
+    .await
+    .map_err(|_| "The Todo planning binding task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &expected_binding)?;
+    require_todo_planning_manager(&expected_binding)?;
+    let now = now_unix_ms();
+    let (binding, output) = match claim.invocation.tool_name.as_str() {
+        "todo_add" => {
+            let input = TodoPlanningCreateInput {
+                request_key: claim.invocation.invocation_id.clone(),
+                team_reference: required_bounded_string(arguments, "team_ref", 600)?,
+                assignee_reference: required_bounded_string(arguments, "assignee_ref", 600)?,
+                title: required_bounded_string(arguments, "title", 500)?,
+                detail: optional_planning_text(arguments, "detail", 16_000, true)?
+                    .unwrap_or_default(),
+                priority: optional_planning_integer(arguments, "priority", 0, 100)?.unwrap_or(50),
+                dependency_references: planning_string_array(
+                    arguments,
+                    "depends_on_todo_refs",
+                    0,
+                    64,
+                    600,
+                )?
+                .unwrap_or_default(),
+                execution_contract: AgentTodoExecutionContract {
+                    objective: required_bounded_string(arguments, "objective", 8_000)?,
+                    scope: required_bounded_string(arguments, "scope", 16_000)?,
+                    expected_outputs: planning_string_array(
+                        arguments,
+                        "expected_outputs",
+                        1,
+                        64,
+                        4_000,
+                    )?
+                    .ok_or_else(invalid_todo_planning_arguments)?,
+                    acceptance_criteria: planning_string_array(
+                        arguments,
+                        "acceptance_criteria",
+                        1,
+                        64,
+                        4_000,
+                    )?
+                    .ok_or_else(invalid_todo_planning_arguments)?,
+                    constraints: planning_string_array(arguments, "constraints", 0, 64, 4_000)?
+                        .unwrap_or_default(),
+                },
+                requires_execution: arguments
+                    .get("requires_execution")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(invalid_todo_planning_arguments)?,
+                builtin_capabilities: planning_string_array(
+                    arguments,
+                    "builtin_capabilities",
+                    0,
+                    3,
+                    64,
+                )?
+                .ok_or_else(invalid_todo_planning_arguments)?,
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                store.create_todo_from_planning_tool(&owner, &run_id, input, now)
+            })
+            .await
+            .map_err(|_| "The Todo creation task exited unexpectedly.".to_owned())??
+        }
+        "todo_update" => {
+            let input = TodoPlanningUpdateInput {
+                todo_reference: required_bounded_string(arguments, "todo_ref", 600)?,
+                title: optional_planning_text(arguments, "title", 500, false)?,
+                detail: optional_planning_text(arguments, "detail", 16_000, true)?,
+                priority: optional_planning_integer(arguments, "priority", 0, 100)?,
+                status: optional_planning_text(arguments, "status", 32, false)?,
+                dependency_references: planning_string_array(
+                    arguments,
+                    "depends_on_todo_refs",
+                    0,
+                    64,
+                    600,
+                )?,
+                objective: optional_planning_text(arguments, "objective", 8_000, false)?,
+                scope: optional_planning_text(arguments, "scope", 16_000, false)?,
+                expected_outputs: planning_string_array(
+                    arguments,
+                    "expected_outputs",
+                    1,
+                    64,
+                    4_000,
+                )?,
+                acceptance_criteria: planning_string_array(
+                    arguments,
+                    "acceptance_criteria",
+                    1,
+                    64,
+                    4_000,
+                )?,
+                constraints: planning_string_array(arguments, "constraints", 0, 64, 4_000)?,
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                store.update_todo_from_planning_tool(&owner, &run_id, input, now)
+            })
+            .await
+            .map_err(|_| "The Todo update task exited unexpectedly.".to_owned())??
+        }
+        "todo_reorder" => {
+            let references = planning_string_array(arguments, "todo_refs", 1, 500, 600)?
+                .ok_or_else(invalid_todo_planning_arguments)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                store.reorder_todos_from_planning_tool(&owner, &run_id, &references, now)
+            })
+            .await
+            .map_err(|_| "The Todo reorder task exited unexpectedly.".to_owned())??
+        }
+        _ => return Err("The requested Todo planning mutation is unavailable.".into()),
+    };
+    if binding != expected_binding {
+        return Err("The Todo planning binding changed during the operation.".into());
+    }
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+fn invalid_todo_planning_arguments() -> String {
+    "The Todo planning arguments are invalid.".into()
+}
+
+fn optional_planning_text(
+    arguments: &Map<String, Value>,
+    field: &str,
+    maximum: usize,
+    allow_empty: bool,
+) -> Result<Option<String>, String> {
+    arguments
+        .get(field)
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| {
+                    (allow_empty || !value.is_empty())
+                        && value.trim() == *value
+                        && value.chars().count() <= maximum
+                        && !value.contains('\0')
+                })
+                .map(str::to_owned)
+                .ok_or_else(invalid_todo_planning_arguments)
+        })
+        .transpose()
+}
+
+fn optional_planning_integer(
+    arguments: &Map<String, Value>,
+    field: &str,
+    minimum: i64,
+    maximum: i64,
+) -> Result<Option<i64>, String> {
+    arguments
+        .get(field)
+        .map(|value| {
+            value
+                .as_i64()
+                .filter(|value| (minimum..=maximum).contains(value))
+                .ok_or_else(invalid_todo_planning_arguments)
+        })
+        .transpose()
+}
+
+fn planning_string_array(
+    arguments: &Map<String, Value>,
+    field: &str,
+    minimum_items: usize,
+    maximum_items: usize,
+    maximum_characters: usize,
+) -> Result<Option<Vec<String>>, String> {
+    arguments
+        .get(field)
+        .map(|value| {
+            let values = value
+                .as_array()
+                .filter(|values| (minimum_items..=maximum_items).contains(&values.len()))
+                .ok_or_else(invalid_todo_planning_arguments)?;
+            let mut unique = std::collections::HashSet::new();
+            values
+                .iter()
+                .map(|value| {
+                    let value = value
+                        .as_str()
+                        .filter(|value| {
+                            !value.is_empty()
+                                && value.trim() == *value
+                                && value.chars().count() <= maximum_characters
+                                && !value.contains('\0')
+                        })
+                        .ok_or_else(invalid_todo_planning_arguments)?;
+                    if !unique.insert(value) {
+                        return Err(invalid_todo_planning_arguments());
+                    }
+                    Ok(value.to_owned())
+                })
+                .collect()
+        })
+        .transpose()
 }
 
 async fn execute_todo_execution_tool(
@@ -1127,6 +1370,72 @@ pub fn todo_planning_read_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": "todo_add",
+            "description": "仅供项目经理在当前共享团队任务板创建 Todo。必须先调用 todo_execution_options，并明确目标、范围、交付物、验收条件、负责人、前置任务和可信执行能力。来源消息由客户端绑定为当前 Run 的触发消息，真实 ID 不会暴露。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "detail": {"type": "string", "maxLength": 16000},
+                    "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "scope": {"type": "string", "minLength": 1, "maxLength": 16000},
+                    "expected_outputs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "minItems": 1, "maxItems": 64, "uniqueItems": true},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "minItems": 1, "maxItems": 64, "uniqueItems": true},
+                    "constraints": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "maxItems": 64, "uniqueItems": true},
+                    "priority": {"type": "integer", "minimum": 0, "maximum": 100, "default": 50},
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "assignee_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "depends_on_todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 64, "uniqueItems": true},
+                    "requires_execution": {"type": "boolean", "default": true},
+                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal"]}, "maxItems": 3, "uniqueItems": true}
+                },
+                "required": ["title", "objective", "scope", "expected_outputs", "acceptance_criteria", "team_ref", "assignee_ref", "requires_execution", "builtin_capabilities"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_update",
+            "description": "仅供项目经理更新待处理或普通阻塞 Todo 的内容、优先级、前置任务，或将阻塞任务重开、取消过时任务。completed 和 blocked 执行终态由 executor 工具写入；正在执行的 Todo 必须通过持久化 Run 控制停止后才能编辑。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todo_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "detail": {"type": "string", "maxLength": 16000},
+                    "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+                    "scope": {"type": "string", "minLength": 1, "maxLength": 16000},
+                    "expected_outputs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "minItems": 1, "maxItems": 64, "uniqueItems": true},
+                    "acceptance_criteria": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "minItems": 1, "maxItems": 64, "uniqueItems": true},
+                    "constraints": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 4000}, "maxItems": 64, "uniqueItems": true},
+                    "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+                    "status": {"type": "string", "enum": ["pending", "cancelled"]},
+                    "depends_on_todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 64, "uniqueItems": true}
+                },
+                "required": ["todo_ref"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_reorder",
+            "description": "仅供项目经理显式调整当前团队任务板中未完成 Todo 的优先顺序。数组中靠前的任务优先；未完成前置任务仍不会被调度。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "minItems": 1, "maxItems": 500, "uniqueItems": true}
+                },
+                "required": ["todo_refs"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
 pub fn todo_execution_tool_schemas() -> Vec<Value> {
     vec![
         json!({
@@ -1249,6 +1558,25 @@ mod tests {
                 && !encoded.contains("team_id")
                 && !encoded.contains("agent_id")
         }));
+    }
+
+    #[test]
+    fn todo_planning_write_catalog_never_accepts_native_ids_or_fake_completion() {
+        let schemas = todo_planning_write_tool_schemas();
+        let names = schemas
+            .iter()
+            .map(|schema| schema["name"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from(["todo_add", "todo_reorder", "todo_update"])
+        );
+        let encoded = serde_json::to_string(&schemas).unwrap();
+        assert!(!encoded.contains("todo_id"));
+        assert!(!encoded.contains("team_id"));
+        assert!(!encoded.contains("agent_id"));
+        assert!(!encoded.contains("completed\""));
+        assert!(!encoded.contains("blocked\""));
     }
 
     #[test]

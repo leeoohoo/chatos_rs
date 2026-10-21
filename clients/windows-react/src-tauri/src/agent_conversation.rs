@@ -6124,6 +6124,161 @@ mod tests {
     }
 
     #[test]
+    fn manager_todo_planning_tools_create_update_and_reorder_transactionally() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        insert_agent(&store, "alice", "worker", "active");
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        let team = store
+            .create_project_team("alice", "project-1", "计划团队", "完成可靠交付")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "worker")
+            .unwrap();
+        store
+            .set_project_team_manager("alice", &team.id, "manager")
+            .unwrap();
+        let message = store
+            .queue_project_team_message("alice", &team.id, "请拆分并执行这项工作", &[])
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.delivery_id, message.deliveries[0].delivery_id);
+        store
+            .claim_project_team_delivery("alice", &delivery, "turn-manager", "run-manager", 10)
+            .unwrap();
+        let (_, options) = store
+            .todo_planning_tool_snapshot("alice", "run-manager", true)
+            .unwrap();
+        let team_reference = options["team"]["team_ref"].as_str().unwrap().to_owned();
+        let worker_reference = options["team"]["assignees"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|assignee| {
+                assignee["name"] == "测试 Agent" && !assignee["is_current_agent"].as_bool().unwrap()
+            })
+            .unwrap()["assignee_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let contract = team_todo::AgentTodoExecutionContract {
+            objective: "实现核心功能".into(),
+            scope: "只修改项目内代码".into(),
+            expected_outputs: vec!["可运行实现".into()],
+            acceptance_criteria: vec!["测试通过".into()],
+            constraints: vec!["不得伪造完成".into()],
+        };
+        let (binding, first) = store
+            .create_todo_from_planning_tool(
+                "alice",
+                "run-manager",
+                team_todo::TodoPlanningCreateInput {
+                    request_key: "invocation-create-1".into(),
+                    team_reference: team_reference.clone(),
+                    assignee_reference: worker_reference.clone(),
+                    title: "实现核心".into(),
+                    detail: "按验收条件完成".into(),
+                    priority: 80,
+                    dependency_references: vec![],
+                    execution_contract: contract.clone(),
+                    requires_execution: true,
+                    builtin_capabilities: vec!["project_write".into()],
+                },
+                11,
+            )
+            .unwrap();
+        assert!(binding.is_project_manager);
+        assert_eq!(
+            first["builtin_capabilities"],
+            json!(["project_read", "project_write"])
+        );
+        let first_reference = first["todo_ref"].as_str().unwrap().to_owned();
+        let (_, second) = store
+            .create_todo_from_planning_tool(
+                "alice",
+                "run-manager",
+                team_todo::TodoPlanningCreateInput {
+                    request_key: "invocation-create-2".into(),
+                    team_reference,
+                    assignee_reference: worker_reference,
+                    title: "执行验证".into(),
+                    detail: "验证第一项交付".into(),
+                    priority: 70,
+                    dependency_references: vec![first_reference.clone()],
+                    execution_contract: team_todo::AgentTodoExecutionContract {
+                        objective: "验证交付".into(),
+                        scope: "运行真实测试".into(),
+                        expected_outputs: vec!["测试记录".into()],
+                        acceptance_criteria: vec!["结果可复现".into()],
+                        constraints: vec![],
+                    },
+                    requires_execution: true,
+                    builtin_capabilities: vec!["terminal".into()],
+                },
+                12,
+            )
+            .unwrap();
+        assert_eq!(second["dependencies"][0]["todo_ref"], first_reference);
+        let second_reference = second["todo_ref"].as_str().unwrap().to_owned();
+        let (_, updated) = store
+            .update_todo_from_planning_tool(
+                "alice",
+                "run-manager",
+                team_todo::TodoPlanningUpdateInput {
+                    todo_reference: first_reference.clone(),
+                    title: Some("实现核心并自测".into()),
+                    detail: None,
+                    priority: Some(95),
+                    status: None,
+                    dependency_references: None,
+                    objective: None,
+                    scope: None,
+                    expected_outputs: None,
+                    acceptance_criteria: None,
+                    constraints: None,
+                },
+                13,
+            )
+            .unwrap();
+        assert_eq!(updated["title"], "实现核心并自测");
+        let (_, reordered) = store
+            .reorder_todos_from_planning_tool(
+                "alice",
+                "run-manager",
+                &[second_reference, first_reference],
+                14,
+            )
+            .unwrap();
+        assert_eq!(reordered["todos"][0]["title"], "执行验证");
+        let source_count: i64 = Connection::open(store.database())
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM local_agent_todo_sources source \
+                 JOIN project_agent_messages message \
+                   ON message.owner_user_id = source.owner_user_id \
+                  AND message.id = source.message_id \
+                 WHERE source.owner_user_id = 'alice' AND message.id = ?1",
+                params![message.message_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_count, 3);
+    }
+
+    #[test]
     fn team_creation_requires_an_active_account_scoped_project() {
         let directory = tempfile::tempdir().unwrap();
         let database = directory.path().join("Projects.sqlite3");
