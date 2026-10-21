@@ -1,7 +1,7 @@
 import { create, type StoreApi } from "zustand";
 import type { MediaStudioHistoryItem, MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject, StoryVideoGenerationEvent } from "../domain/storyStudio";
+import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject, StoryProjectCursor, StoryVideoGenerationEvent } from "../domain/storyStudio";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
@@ -36,6 +36,7 @@ interface StoryStudioState {
   planningHistoryUnreadable: Record<string, number>;
   mediaBatches: Record<string, StoryMediaBatchSnapshot[]>;
   mediaBatchHistoryUnreadable: Record<string, number>;
+  mediaBatchHistoryNextCursor: Record<string, StoryProjectCursor | null>;
   videoProgress: Record<string, StoryVideoProgress>;
   activeMediaTarget: string | null;
   activate(storyPort: StoryStudioPort, mediaPort: MediaStudioPort, ownerUserId: string): Promise<void>;
@@ -58,6 +59,7 @@ interface StoryStudioState {
   resumePlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   loadMediaBatchHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
+  loadMoreMediaBatchHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   startMediaBatch(storyPort: StoryStudioPort, preparation: StoryMediaBatchPreparation, userIdeas: string): Promise<boolean>;
   resumeMediaBatch(storyPort: StoryStudioPort, projectId: string, batchId: string): Promise<void>;
   abandonMediaBatch(storyPort: StoryStudioPort, projectId: string, batchId: string): Promise<void>;
@@ -104,6 +106,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   planningHistoryUnreadable: {},
   mediaBatches: {},
   mediaBatchHistoryUnreadable: {},
+  mediaBatchHistoryNextCursor: {},
   videoProgress: {},
   activeMediaTarget: null,
 
@@ -131,6 +134,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       planningHistoryUnreadable: {},
       mediaBatches: {},
       mediaBatchHistoryUnreadable: {},
+      mediaBatchHistoryNextCursor: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
@@ -184,6 +188,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       planningHistoryUnreadable: {},
       mediaBatches: {},
       mediaBatchHistoryUnreadable: {},
+      mediaBatchHistoryNextCursor: {},
       videoProgress: {},
       activeMediaTarget: null,
     });
@@ -369,10 +374,46 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
           ...state.mediaBatchHistoryUnreadable,
           [projectId]: page.unreadableCount,
         },
+        mediaBatchHistoryNextCursor: {
+          ...state.mediaBatchHistoryNextCursor,
+          [projectId]: page.nextCursor,
+        },
       }));
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ error: errorMessage(error, "批量制作历史暂时无法读取。") });
+    }
+  },
+
+  async loadMoreMediaBatchHistory(storyPort, projectId) {
+    const scope = activeScope(get());
+    const cursor = get().mediaBatchHistoryNextCursor[projectId];
+    if (!scope || !cursor) return;
+    try {
+      const page = await storyPort.loadMediaBatchHistory({
+        ...scope,
+        projectId,
+        after: cursor,
+        limit: 20,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        mediaBatches: {
+          ...state.mediaBatches,
+          [projectId]: mergeMediaBatches(state.mediaBatches[projectId] ?? [], page.batches),
+        },
+        mediaBatchHistoryUnreadable: {
+          ...state.mediaBatchHistoryUnreadable,
+          [projectId]: (state.mediaBatchHistoryUnreadable[projectId] ?? 0) + page.unreadableCount,
+        },
+        mediaBatchHistoryNextCursor: {
+          ...state.mediaBatchHistoryNextCursor,
+          [projectId]: page.nextCursor,
+        },
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ error: errorMessage(error, "更早的批量制作记录暂时无法读取。") });
     }
   },
 
@@ -989,6 +1030,13 @@ function replacePlanningRun(runs: StoryPlanningRun[], run: StoryPlanningRun) {
 function replaceMediaBatch(batches: StoryMediaBatchSnapshot[], batch: StoryMediaBatchSnapshot) {
   return [batch, ...batches.filter((value) => value.id !== batch.id)]
     .sort((left, right) => right.updatedAtUnixMs - left.updatedAtUnixMs);
+}
+
+function mergeMediaBatches(
+  current: StoryMediaBatchSnapshot[],
+  incoming: StoryMediaBatchSnapshot[],
+) {
+  return incoming.reduce(replaceMediaBatch, current);
 }
 
 function withoutKey<T>(values: Record<string, T>, key: string) {

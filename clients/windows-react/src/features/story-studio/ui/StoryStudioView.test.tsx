@@ -309,6 +309,9 @@ describe("StoryStudioView", () => {
     expect(storyPort.startMediaBatch).toHaveBeenCalledWith(expect.objectContaining({
       preparation: expect.objectContaining({ previewId: "44444444-4444-4444-8444-444444444444" }),
     }));
+    fireEvent.click(screen.getByRole("button", { name: "查看历史" }));
+    expect(screen.getByRole("heading", { name: "制作历史" })).toBeVisible();
+    expect(screen.getAllByText("用户已确认批量制作计划").length).toBeGreaterThan(0);
   });
 
   it("routes a videos-only preview into the independent sequential queue", async () => {

@@ -299,15 +299,60 @@ function StoryMediaBatchPanel({ port, projectId }: { port: StoryStudioPort; proj
   const storedBatches = useStoryStudioStore((state) => state.mediaBatches[projectId]);
   const batches = storedBatches ?? EMPTY_STORY_BATCHES;
   const unreadable = useStoryStudioStore((state) => state.mediaBatchHistoryUnreadable[projectId] ?? 0);
+  const nextCursor = useStoryStudioStore((state) => state.mediaBatchHistoryNextCursor[projectId] ?? null);
   const busy = useStoryStudioStore((state) => state.busy);
   const abandon = useStoryStudioStore((state) => state.abandonMediaBatch);
   const resume = useStoryStudioStore((state) => state.resumeMediaBatch);
-  const [confirmAbandon, setConfirmAbandon] = useState(false);
+  const loadMore = useStoryStudioStore((state) => state.loadMoreMediaBatchHistory);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [confirmAbandon, setConfirmAbandon] = useState<StoryMediaBatchSnapshot | null>(null);
   const latest = batches[0];
   if (!latest && unreadable === 0) return null;
   const complete = latest?.steps.filter((step) => step.completed).length ?? 0;
   const unfinished = latest && !["completed", "abandoned"].includes(latest.status);
-  return <><section className="story-batch-panel"><span aria-hidden="true">{latest?.status === "completed" ? "✓" : "▦"}</span><div><header><strong>制作队列</strong>{latest && <small>{batchStatusLabel(latest.status)}</small>}</header>{latest ? <><progress max={Math.max(latest.steps.length, 1)} value={complete} /><p>已完成 {complete} / {latest.steps.length} 个步骤 · {batchKindLabel(latest.kind)}</p>{latest.error && <em>{latest.error}</em>}{latest.events.length > 0 && <ol className="story-batch-events">{latest.events.slice(-3).reverse().map((event) => <li key={event.id}>{event.detail}</li>)}</ol>}</> : <p>没有可读取的制作记录。</p>}{unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}</div>{unfinished && <div className="story-batch-actions"><button disabled={busy} onClick={() => void resume(port, projectId, latest.id)} type="button">{busy && latest.status === "running" ? "执行中…" : "恢复批次"}</button><button disabled={busy} onClick={() => setConfirmAbandon(true)} type="button">核对后结束</button></div>}</section>{confirmAbandon && latest && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmAbandon(false); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>已核实原生成任务？</h2><p>结束旧批次前必须核对服务商记录，避免重复提交和重复计费。</p></div></div><button aria-label="关闭" onClick={() => setConfirmAbandon(false)} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">已有图片、视频和任务记录会保留。图片提交结果不明时，请先确认失败或未创建；结束后重新生成可能再次计费。</p></div><footer><button onClick={() => setConfirmAbandon(false)} type="button">取消</button><button className="story-retry-confirm" disabled={busy} onClick={() => { setConfirmAbandon(false); void abandon(port, projectId, latest.id); }} type="button">已核对，结束旧批次</button></footer></section></div>}</>;
+  const requestMore = async () => {
+    setLoadingMore(true);
+    await loadMore(port, projectId);
+    setLoadingMore(false);
+  };
+  return <>
+    <section className="story-batch-panel">
+      <span aria-hidden="true">{latest?.status === "completed" ? "✓" : "▦"}</span>
+      <div>
+        <header><strong>制作队列</strong>{latest && <small>{batchStatusLabel(latest.status)}</small>}</header>
+        {latest ? <><progress max={Math.max(latest.steps.length, 1)} value={complete} /><p>已完成 {complete} / {latest.steps.length} 个步骤 · {batchKindLabel(latest.kind)}</p>{latest.error && <em>{latest.error}</em>}{latest.events.length > 0 && <ol className="story-batch-events">{latest.events.slice(-3).reverse().map((event) => <li key={event.id}>{event.detail}</li>)}</ol>}</> : <p>没有可读取的制作记录。</p>}
+        {unreadable > 0 && <em>{unreadable} 条损坏记录已隔离</em>}
+      </div>
+      <div className="story-batch-actions">
+        <button onClick={() => setShowHistory(true)} type="button">查看历史</button>
+        {unfinished && <button disabled={busy} onClick={() => void resume(port, projectId, latest.id)} type="button">{busy && latest.status === "running" ? "执行中…" : "恢复批次"}</button>}
+        {unfinished && <button className="story-danger-button" disabled={busy} onClick={() => setConfirmAbandon(latest)} type="button">核对后结束</button>}
+      </div>
+    </section>
+    {showHistory && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowHistory(false); }}>
+      <section aria-modal="true" className="story-sheet story-batch-history-sheet" role="dialog">
+        <header><div><span>▦</span><div><h2>制作历史</h2><p>查看每个原生批次的检查点、最近事件与恢复状态。</p></div></div><button aria-label="关闭" onClick={() => setShowHistory(false)} type="button">×</button></header>
+        <div className="story-batch-history-list">
+          {batches.map((batch) => {
+            const completed = batch.steps.filter((step) => step.completed).length;
+            const canContinue = !["completed", "abandoned"].includes(batch.status);
+            return <article key={batch.id}>
+              <header><div><strong>{batchKindLabel(batch.kind)}</strong><small>{new Date(batch.consentAtUnixMs).toLocaleString()}</small></div><span>{batchStatusLabel(batch.status)}</span></header>
+              <progress max={Math.max(batch.steps.length, 1)} value={completed} />
+              <p>已完成 {completed} / {batch.steps.length} 个步骤</p>
+              {batch.error && <em>{batch.error}</em>}
+              <ol>{batch.events.slice(-50).reverse().map((event) => <li key={event.id}><time>{new Date(event.dateUnixMs).toLocaleTimeString()}</time><span>{event.detail}</span></li>)}</ol>
+              {canContinue && <footer><button disabled={busy} onClick={() => void resume(port, projectId, batch.id)} type="button">恢复批次</button><button className="story-danger-button" disabled={busy} onClick={() => setConfirmAbandon(batch)} type="button">核对后结束</button></footer>}
+            </article>;
+          })}
+          {unreadable > 0 && <p className="story-batch-history-warning">{unreadable} 条损坏记录已安全隔离，未用于恢复。</p>}
+        </div>
+        <footer><button disabled={!nextCursor || loadingMore} onClick={() => void requestMore()} type="button">{loadingMore ? "正在读取…" : nextCursor ? "加载更早记录" : "没有更早记录"}</button><button onClick={() => setShowHistory(false)} type="button">完成</button></footer>
+      </section>
+    </div>}
+    {confirmAbandon && <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setConfirmAbandon(null); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>已核实原生成任务？</h2><p>结束旧批次前必须核对服务商记录，避免重复提交和重复计费。</p></div></div><button aria-label="关闭" onClick={() => setConfirmAbandon(null)} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">已有图片、视频和任务记录会保留。图片提交结果不明时，请先确认失败或未创建；结束后重新生成可能再次计费。</p></div><footer><button onClick={() => setConfirmAbandon(null)} type="button">取消</button><button className="story-retry-confirm" disabled={busy} onClick={() => { const batch = confirmAbandon; setConfirmAbandon(null); void abandon(port, projectId, batch.id); }} type="button">已核对，结束旧批次</button></footer></section></div>}
+  </>;
 }
 
 function batchStatusLabel(status: ReturnType<typeof useStoryStudioStore.getState>["mediaBatches"][string][number]["status"]) {
