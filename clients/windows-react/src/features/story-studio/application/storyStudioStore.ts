@@ -62,6 +62,7 @@ interface StoryStudioState {
     style: string;
     ratio: string;
   }): Promise<void>;
+  updateResourcePrompt(storyPort: StoryStudioPort, resourceId: string, prompt: string): Promise<boolean>;
   startPlanning(storyPort: StoryStudioPort, stage: "outline" | "refine", targetIds: string[], userIdeas: string): Promise<void>;
   loadPlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   loadMorePlanningHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
@@ -286,6 +287,29 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "剧情原文保存失败。") });
+    }
+  },
+
+  async updateResourcePrompt(storyPort, resourceId, prompt) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return false;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.updateResourcePrompt({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        resourceId,
+        prompt,
+      });
+      if (!sameScope(get(), scope)) return false;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+      return true;
+    } catch (error) {
+      if (!sameScope(get(), scope)) return false;
+      set({ busy: false, error: errorMessage(error, "素材描述保存失败。") });
+      return false;
     }
   },
 

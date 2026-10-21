@@ -127,6 +127,35 @@ describe("StoryStudioView", () => {
     })));
   });
 
+  it("saves resource prompts through the native confirmation rules", async () => {
+    const canonical = plannedProject();
+    const updated = {
+      ...canonical,
+      baseFingerprint: "b".repeat(64),
+      props: canonical.props.map((value) => ({ ...value, imagePrompt: "一把带雨滴的黄铜旧钥匙" })),
+    };
+    const updateResourcePrompt = vi.fn(async () => updated);
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      updateResourcePrompt,
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "编辑素材描述" }));
+    fireEvent.change(screen.getByLabelText("素材描述"), {
+      target: { value: "一把带雨滴的黄铜旧钥匙" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存素材描述" }));
+
+    await waitFor(() => expect(updateResourcePrompt).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      resourceId: "prop-a",
+      prompt: "一把带雨滴的黄铜旧钥匙",
+    })));
+    expect(await screen.findByText("一把带雨滴的黄铜旧钥匙")).toBeVisible();
+  });
+
   it("shows live planning progress without applying the event draft", async () => {
     const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
     let planningListener: ((event: StoryPlanningEvent) => void) | undefined;
@@ -513,6 +542,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     createProject: vi.fn(async () => project()),
     updateProjectSettings: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
+    updateResourcePrompt: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),
     generateAssetImage: vi.fn(async () => project()),
     generateFrameImage: vi.fn(async () => project()),

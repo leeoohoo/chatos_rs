@@ -94,6 +94,12 @@ export interface StoryStudioPort {
     style: string;
     ratio: string;
   }): Promise<StoryProject>;
+  updateResourcePrompt(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    resourceId: string;
+    prompt: string;
+  }): Promise<StoryProject>;
   startPlanning(request: StoryPresentationScope & {
     projectId: string;
     stage: "outline" | "refine";

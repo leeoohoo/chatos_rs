@@ -72,6 +72,7 @@
 .story-source-settings { display:flex; flex-direction:column; gap:11px; padding:14px; }
 .story-source-settings label,.story-sheet label { display:grid; gap:5px; color:var(--secondary); font-size:9px; font-weight:590; }
 .story-settings-note { margin:0; border-radius:8px; padding:8px 9px; color:#8b4a00; background:rgba(255,159,10,.08); font-size:8.5px; line-height:1.45; }
+.story-field-count { color:var(--secondary); font-size:8px; text-align:right; }
 .story-source-settings textarea,.story-source-settings select,.story-sheet input,.story-sheet textarea,.story-sheet select,.story-segment-inspector footer textarea,.story-segment-inspector footer select { box-sizing:border-box; width:100%; border:1px solid rgba(60,60,67,.17); border-radius:8px; padding:7px 9px; color:var(--text); outline:0; background:rgba(255,255,255,.86); font:10px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
 .story-source-settings textarea { min-height:66px; resize:vertical; }
 .story-secondary-button { min-height:31px; border:0; border-radius:9px; color:var(--accent); background:rgba(10,132,255,.09); font-size:10px; font-weight:620; cursor:pointer; }

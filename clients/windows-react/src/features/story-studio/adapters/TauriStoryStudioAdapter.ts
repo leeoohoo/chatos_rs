@@ -226,6 +226,23 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     return storyProjectSchema.parse(await invoke("update_story_project_source", { input }));
   }
 
+  async updateResourcePrompt(
+    request: Parameters<StoryStudioPort["updateResourcePrompt"]>[0],
+  ) {
+    const input = {
+      ...scope(request),
+      edit: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        resourceId: identifierSchema.parse(request.resourceId),
+        prompt: safeText(4_000).trim().min(1).parse(request.prompt),
+      },
+    };
+    return storyProjectSchema.parse(
+      await invoke("update_story_resource_prompt", { input }),
+    );
+  }
+
   async startPlanning(request: Parameters<StoryStudioPort["startPlanning"]>[0]) {
     const input = {
       ...scope(request),
