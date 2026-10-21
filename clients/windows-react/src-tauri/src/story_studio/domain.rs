@@ -432,13 +432,44 @@ impl StoryProject {
             if let Some(detail) = &segment.detail {
                 detail.validate(segment.seconds)?;
             }
+            if segment
+                .attempt
+                .iter()
+                .chain(segment.previous_attempts.iter())
+                .any(|attempt| {
+                    Uuid::parse_str(&attempt.id).is_err()
+                        || attempt.model_config_id.trim().is_empty()
+                        || attempt.model_config_id.len() > 1_024
+                        || attempt.prompt.trim().is_empty()
+                        || attempt.prompt.chars().count() > 7_000
+                        || !matches!(attempt.size.as_str(), "768P" | "2K")
+                        || attempt.ratio.trim().is_empty()
+                        || attempt.ratio.len() > 32
+                        || !(2..=15).contains(&attempt.seconds)
+                        || attempt
+                            .job_id
+                            .as_ref()
+                            .is_some_and(|value| value.trim().is_empty() || value.len() > 1_024)
+                        || attempt.status.trim().is_empty()
+                        || attempt.status.len() > 128
+                })
+            {
+                return Err(invalid_story());
+            }
             segment.first_frames.validate()?;
             segment.last_frames.validate()?;
             if segment
                 .video
                 .iter()
                 .chain(segment.archived_videos.iter())
-                .any(|video| !valid_storage_filename(&video.filename))
+                .any(|video| {
+                    !valid_storage_filename(&video.filename)
+                        || !video.filename.ends_with(".mp4")
+                        || video.job_id.trim().is_empty()
+                        || video.job_id.len() > 1_024
+                        || video.model_name.trim().is_empty()
+                        || video.model_name.len() > 1_024
+                })
             {
                 return Err(invalid_story());
             }

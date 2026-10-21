@@ -35,7 +35,6 @@ pub(super) struct VideoGenerationRequest {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) enum VideoReferencePurpose {
     #[default]
     Reference,

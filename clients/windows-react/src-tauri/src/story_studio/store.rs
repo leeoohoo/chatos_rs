@@ -151,6 +151,55 @@ impl StoryProjectStore {
         Ok(project)
     }
 
+    pub(super) fn mutate_project_with_video(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        filename: &str,
+        bytes: &[u8],
+        mutation: impl FnOnce(&mut StoryProject) -> Result<(), String>,
+    ) -> Result<StoryProject, String> {
+        if !valid_storage_filename(filename)
+            || !filename.ends_with(".mp4")
+            || bytes.is_empty()
+            || bytes.len() > MAXIMUM_STORY_VIDEO_BYTES
+        {
+            return Err(store_error());
+        }
+        let owner = validate_owner(owner_user_id)?;
+        let project_id = canonical_project_id(project_id)?;
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(store_error)?;
+        let project_directory = projects.join(&project_id);
+        let mut project = load_project_manifest(&project_directory, &project_id)?;
+        let asset = project_directory.join(filename);
+        if fs::symlink_metadata(&asset).is_ok() {
+            return Err(store_error());
+        }
+        write_private_file(&asset, bytes)?;
+        if let Err(error) = mutation(&mut project) {
+            let _ = fs::remove_file(&asset);
+            return Err(error);
+        }
+        if let Err(error) = self.save_locked(owner, &project) {
+            if let Ok(persisted) = load_project_manifest(&project_directory, &project_id) {
+                if project_references_media(
+                    &persisted,
+                    filename,
+                    "video/mp4",
+                    MAXIMUM_STORY_VIDEO_BYTES,
+                ) {
+                    return Ok(persisted);
+                }
+            }
+            let _ = fs::remove_file(&asset);
+            return Err(error);
+        }
+        Ok(project)
+    }
+
     pub(super) fn load_project(
         &self,
         owner_user_id: &str,

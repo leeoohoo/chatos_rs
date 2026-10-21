@@ -11,7 +11,7 @@ use super::{
         confirm_latest_frames, confirm_latest_resource_images, update_resource_prompt,
         StoryFrameRole, StoryImage, StoryImageCollection, StoryImageTarget, StoryModelSelection,
         StoryProject, StorySegment, StorySegmentEdit, StorySegmentKind, StorySourceRange,
-        StoryVideoGuidanceMode, STORY_SCHEMA_VERSION,
+        StoryVideo, StoryVideoAttempt, StoryVideoGuidanceMode, STORY_SCHEMA_VERSION,
     },
     planning::project_fingerprint,
 };
@@ -169,6 +169,23 @@ pub(crate) struct StoryFrameImageGenerationInput {
     pub frame_role: StoryFrameRoleInput,
     pub reference_resource_ids: Vec<String>,
     pub user_ideas: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGenerationStartInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub size: String,
+    pub user_ideas: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGenerationPollInput {
+    pub project_id: String,
+    pub segment_id: String,
 }
 
 pub(super) fn make_story_project(
@@ -703,6 +720,205 @@ pub(super) fn complete_story_frame_image_generation(
         segment.inherited_first_frame_source_segment_id = None;
     }
     project.reconcile_inherited_first_frames();
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn begin_story_video_generation(
+    project: &mut StoryProject,
+    input: &StoryVideoGenerationStartInput,
+    attempt_id: &str,
+    prompt: String,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let attempt_id = Uuid::parse_str(attempt_id)
+        .map(|value| value.to_string())
+        .map_err(|_| "剧情视频生成请求无效。".to_owned())?;
+    let segment_index = project
+        .segments
+        .iter()
+        .position(|segment| segment.id == input.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let segment = &project.segments[segment_index];
+    if segment.detail.is_none()
+        || segment.first_frames.confirmed_image_id.is_none()
+        || segment.attempt.is_some()
+        || segment.video.is_some()
+        || !matches!(input.size.as_str(), "768P" | "2K")
+        || !project
+            .models
+            .supported_video_durations
+            .as_ref()
+            .is_none_or(|values| values.contains(&segment.seconds))
+    {
+        return Err("剧情分段尚未准备好生成视频。".into());
+    }
+    match segment.video_guidance_mode {
+        StoryVideoGuidanceMode::FirstFrame => {}
+        StoryVideoGuidanceMode::FirstAndLastFrames => {
+            if segment.last_frames.confirmed_image_id.is_none() {
+                return Err("当前分段缺少已确认的尾帧。".into());
+            }
+        }
+        StoryVideoGuidanceMode::PreviousVideo => {
+            if segment_index == 0 || project.segments[segment_index - 1].video.is_none() {
+                return Err("当前分段缺少上一段完成视频。".into());
+            }
+        }
+        StoryVideoGuidanceMode::SourceVideo => {
+            if segment.archived_videos.last().is_none() {
+                return Err("当前分段缺少可供修改的原视频。".into());
+            }
+        }
+    }
+    let prompt = prompt.trim().to_owned();
+    if prompt.is_empty() || prompt.chars().count() > 7_000 {
+        return Err("剧情视频提示词无效。".into());
+    }
+    project.segments[segment_index].attempt = Some(StoryVideoAttempt {
+        id: attempt_id,
+        model_config_id: project.models.video_model_id.clone(),
+        prompt,
+        size: input.size.clone(),
+        ratio: project.ratio.clone(),
+        seconds: segment.seconds,
+        job_id: None,
+        status: "submitting".into(),
+        created_at_unix_ms: now_unix_ms,
+    });
+    project.segments[segment_index].error = None;
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn update_story_video_generation_progress(
+    project: &mut StoryProject,
+    input: &StoryVideoGenerationPollInput,
+    attempt_id: &str,
+    job_id: Option<&str>,
+    status: &str,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if project.id != input.project_id {
+        return Err("剧情视频任务与当前项目不匹配。".into());
+    }
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == input.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let attempt = segment
+        .attempt
+        .as_mut()
+        .filter(|attempt| attempt.id == attempt_id)
+        .ok_or_else(|| "剧情视频提交身份已经变化。".to_owned())?;
+    if let Some(job_id) = job_id {
+        let job_id = job_id.trim();
+        if job_id.is_empty()
+            || job_id.len() > 1_024
+            || attempt
+                .job_id
+                .as_ref()
+                .is_some_and(|existing| existing != job_id)
+        {
+            return Err("剧情视频服务商任务身份无效。".into());
+        }
+        attempt.job_id = Some(job_id.to_owned());
+    }
+    let status = status.trim();
+    if status.is_empty() || status.len() > 128 {
+        return Err("剧情视频任务状态无效。".into());
+    }
+    attempt.status = status.to_owned();
+    segment.error = None;
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn fail_story_video_generation(
+    project: &mut StoryProject,
+    input: &StoryVideoGenerationPollInput,
+    attempt_id: &str,
+    error: &str,
+    before_submission: bool,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if project.id != input.project_id {
+        return Err("剧情视频任务与当前项目不匹配。".into());
+    }
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == input.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let attempt = segment
+        .attempt
+        .as_ref()
+        .filter(|attempt| attempt.id == attempt_id)
+        .ok_or_else(|| "剧情视频提交身份已经变化。".to_owned())?;
+    if before_submission {
+        if attempt.job_id.is_some() {
+            return Err("服务商任务已创建，不能按提交前失败清理。".into());
+        }
+        segment.attempt = None;
+    }
+    let bounded = error
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
+        .take(2_000)
+        .collect::<String>();
+    segment.error = Some(if bounded.trim().is_empty() {
+        "剧情视频生成失败。".into()
+    } else {
+        bounded
+    });
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) struct StoryVideoCompletion<'a> {
+    pub project_id: &'a str,
+    pub segment_id: &'a str,
+    pub attempt_id: &'a str,
+    pub filename: String,
+    pub job_id: String,
+    pub model_name: String,
+}
+
+pub(super) fn complete_story_video_generation(
+    project: &mut StoryProject,
+    completion: StoryVideoCompletion<'_>,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if project.id != completion.project_id {
+        return Err("剧情视频结果与当前项目不匹配。".into());
+    }
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == completion.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let attempt = segment
+        .attempt
+        .as_mut()
+        .filter(|attempt| attempt.id == completion.attempt_id)
+        .ok_or_else(|| "剧情视频提交身份已经变化。".to_owned())?;
+    if attempt
+        .job_id
+        .as_ref()
+        .is_some_and(|existing| existing != &completion.job_id)
+    {
+        return Err("剧情视频服务商任务身份已经变化。".into());
+    }
+    attempt.job_id = Some(completion.job_id.clone());
+    attempt.status = "completed".into();
+    segment.video = Some(StoryVideo {
+        filename: completion.filename,
+        job_id: completion.job_id,
+        model_name: completion.model_name,
+    });
+    segment.error = None;
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
 }

@@ -1,11 +1,12 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::{
-    authentication::AuthenticationManager, host_lifecycle::validate_owner,
-    media_studio::MediaStudioManager,
+    authentication::AuthenticationManager,
+    host_lifecycle::validate_owner,
+    media_studio::{MediaStudioManager, StoryVideoPollOutcome},
 };
 
 use super::{
@@ -14,7 +15,8 @@ use super::{
         StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
         StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
         StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
-        StorySegmentEditInput, StorySegmentStructureInput,
+        StorySegmentEditInput, StorySegmentStructureInput, StoryVideoGenerationPollInput,
+        StoryVideoGenerationStartInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -152,6 +154,31 @@ pub(crate) struct StoryFrameImageGenerationCommandInput {
     owner_user_id: String,
     presentation_id: String,
     request: StoryFrameImageGenerationInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGenerationStartCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    request: StoryVideoGenerationStartInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoGenerationPollCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    request: StoryVideoGenerationPollInput,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryVideoGenerationCommandOutcome {
+    project: StoryProjectSnapshot,
+    status: String,
+    percent: Option<f64>,
+    terminal: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -759,6 +786,294 @@ pub(crate) async fn generate_story_frame_image(
     .map_err(|_| "剧情首尾帧图片保存任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &story_manager, &owner, generation).await?;
     result
+}
+
+#[tauri::command]
+pub(crate) async fn start_story_video_generation(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    media_manager: State<'_, MediaStudioManager>,
+    story_manager: State<'_, StoryStudioManager>,
+    input: StoryVideoGenerationStartCommandInput,
+) -> Result<StoryVideoGenerationCommandOutcome, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let owner = input.owner_user_id;
+    let presentation = input.presentation_id;
+    let story = story_manager.inner().clone();
+    let begin_owner = owner.clone();
+    let begin_presentation = presentation.clone();
+    let intent = tauri::async_runtime::spawn_blocking(move || {
+        story.begin_video_generation(&begin_owner, generation, &begin_presentation, input.request)
+    })
+    .await
+    .map_err(|_| "剧情视频生成准备任务异常退出。".to_owned())??;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    emit_story_video_event(
+        &app,
+        &presentation,
+        &intent.snapshot,
+        "submitting",
+        None,
+        false,
+    )?;
+
+    let submitted = media_manager
+        .submit_story_video(&authentication, &owner, generation, intent.provider_request)
+        .await;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    match submitted {
+        Ok(job) => {
+            let story = story_manager.inner().clone();
+            let save_owner = owner.clone();
+            let save_presentation = presentation.clone();
+            let project_id = intent.project_id;
+            let segment_id = intent.segment_id;
+            let attempt_id = intent.attempt_id;
+            let status = job.status;
+            let event_status = status.clone();
+            let job_id = job.job_id;
+            let project = tauri::async_runtime::spawn_blocking(move || {
+                story.record_video_submission(
+                    &save_owner,
+                    generation,
+                    &save_presentation,
+                    StoryVideoGenerationPollInput {
+                        project_id,
+                        segment_id,
+                    },
+                    &attempt_id,
+                    &job_id,
+                    &status,
+                )
+            })
+            .await
+            .map_err(|_| "剧情视频任务身份保存异常退出。".to_owned())??;
+            require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+            emit_story_video_event(
+                &app,
+                &presentation,
+                &project,
+                &event_status,
+                job.percent,
+                false,
+            )?;
+            Ok(StoryVideoGenerationCommandOutcome {
+                project,
+                status: event_status,
+                percent: job.percent,
+                terminal: false,
+            })
+        }
+        Err(error) => {
+            let story = story_manager.inner().clone();
+            let save_owner = owner.clone();
+            let save_presentation = presentation.clone();
+            let project_id = intent.project_id;
+            let segment_id = intent.segment_id;
+            let attempt_id = intent.attempt_id;
+            let message = error.message;
+            let event_message = message.clone();
+            let request_may_have_been_submitted = error.request_may_have_been_submitted;
+            let project = tauri::async_runtime::spawn_blocking(move || {
+                story.record_video_failure(
+                    &save_owner,
+                    generation,
+                    &save_presentation,
+                    &project_id,
+                    &segment_id,
+                    &attempt_id,
+                    &message,
+                    !request_may_have_been_submitted,
+                )
+            })
+            .await
+            .map_err(|_| "剧情视频失败状态保存异常退出。".to_owned())??;
+            emit_story_video_event(
+                &app,
+                &presentation,
+                &project,
+                if request_may_have_been_submitted {
+                    "submission_unknown"
+                } else {
+                    "failed"
+                },
+                None,
+                true,
+            )?;
+            Err(event_message)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn poll_story_video_generation(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    media_manager: State<'_, MediaStudioManager>,
+    story_manager: State<'_, StoryStudioManager>,
+    input: StoryVideoGenerationPollCommandInput,
+) -> Result<StoryVideoGenerationCommandOutcome, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let owner = input.owner_user_id;
+    let presentation = input.presentation_id;
+    let story = story_manager.inner().clone();
+    let prepare_owner = owner.clone();
+    let prepare_presentation = presentation.clone();
+    let intent = tauri::async_runtime::spawn_blocking(move || {
+        story.prepare_video_poll(
+            &prepare_owner,
+            generation,
+            &prepare_presentation,
+            input.request,
+        )
+    })
+    .await
+    .map_err(|_| "剧情视频任务读取异常退出。".to_owned())??;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    emit_story_video_event(
+        &app,
+        &presentation,
+        &intent.snapshot,
+        "checking",
+        None,
+        false,
+    )?;
+    let polled = media_manager
+        .poll_story_video(
+            &authentication,
+            &owner,
+            generation,
+            &intent.attempt.model_config_id,
+            &intent.attempt.prompt,
+            &intent.attempt.size,
+            intent.attempt.seconds,
+            &intent.attempt.ratio,
+            &intent.attempt.id,
+            &intent.provider_job_id,
+        )
+        .await;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    let story = story_manager.inner().clone();
+    let save_owner = owner.clone();
+    let save_presentation = presentation.clone();
+    let project_id = intent.project_id;
+    let segment_id = intent.segment_id;
+    let attempt_id = intent.attempt.id;
+    match polled {
+        Ok(StoryVideoPollOutcome::Waiting {
+            job_id,
+            status,
+            percent,
+        }) => {
+            let event_status = status.clone();
+            let project = tauri::async_runtime::spawn_blocking(move || {
+                story.record_video_waiting(
+                    &save_owner,
+                    generation,
+                    &save_presentation,
+                    &project_id,
+                    &segment_id,
+                    &attempt_id,
+                    &job_id,
+                    &status,
+                )
+            })
+            .await
+            .map_err(|_| "剧情视频进度保存异常退出。".to_owned())??;
+            emit_story_video_event(&app, &presentation, &project, &event_status, percent, false)?;
+            Ok(StoryVideoGenerationCommandOutcome {
+                project,
+                status: event_status,
+                percent,
+                terminal: false,
+            })
+        }
+        Ok(StoryVideoPollOutcome::Completed {
+            job_id,
+            model_name,
+            bytes,
+        }) => {
+            let project = tauri::async_runtime::spawn_blocking(move || {
+                story.complete_video_generation(
+                    &save_owner,
+                    generation,
+                    &save_presentation,
+                    &project_id,
+                    &segment_id,
+                    &attempt_id,
+                    job_id,
+                    model_name,
+                    &bytes,
+                )
+            })
+            .await
+            .map_err(|_| "剧情视频保存任务异常退出。".to_owned())??;
+            emit_story_video_event(
+                &app,
+                &presentation,
+                &project,
+                "completed",
+                Some(100.0),
+                true,
+            )?;
+            Ok(StoryVideoGenerationCommandOutcome {
+                project,
+                status: "completed".into(),
+                percent: Some(100.0),
+                terminal: true,
+            })
+        }
+        Ok(StoryVideoPollOutcome::Failed { message }) | Err(message) => {
+            let project = tauri::async_runtime::spawn_blocking(move || {
+                story.record_video_failure(
+                    &save_owner,
+                    generation,
+                    &save_presentation,
+                    &project_id,
+                    &segment_id,
+                    &attempt_id,
+                    &message,
+                    false,
+                )
+            })
+            .await
+            .map_err(|_| "剧情视频失败状态保存异常退出。".to_owned())??;
+            emit_story_video_event(&app, &presentation, &project, "failed", None, true)?;
+            Ok(StoryVideoGenerationCommandOutcome {
+                project,
+                status: "failed".into(),
+                percent: None,
+                terminal: true,
+            })
+        }
+    }
+}
+
+fn emit_story_video_event(
+    app: &AppHandle,
+    presentation_id: &str,
+    project: &StoryProjectSnapshot,
+    status: &str,
+    percent: Option<f64>,
+    terminal: bool,
+) -> Result<(), String> {
+    app.emit(
+        "story-video-generation",
+        serde_json::json!({
+            "presentationId": presentation_id,
+            "project": project,
+            "status": status,
+            "percent": percent,
+            "terminal": terminal
+        }),
+    )
+    .map_err(|_| "剧情视频生成状态发布失败。".to_owned())
 }
 
 #[tauri::command]

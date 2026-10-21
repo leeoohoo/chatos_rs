@@ -37,7 +37,7 @@ use video_job::{
 use video_provider::{
     make_video_create_request, make_video_result, parse_video_job, resolve_video_model,
     video_content_endpoint, video_job_endpoint, VideoGenerationRequest, VideoInput,
-    MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+    VideoReferencePurpose, MAXIMUM_VIDEO_BYTES, MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
 };
 
 const MAXIMUM_PROVIDER_RESPONSE_BYTES: usize = 48 * 1_024 * 1_024;
@@ -64,6 +64,58 @@ pub(crate) struct StoryImageReference {
     pub name: String,
     pub mime_type: String,
     pub bytes: Vec<u8>,
+}
+
+pub(crate) struct StoryVideoMediaInput {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum StoryVideoReferencePurpose {
+    Reference,
+    Edit,
+    Extend,
+}
+
+pub(crate) struct StoryVideoProviderRequest {
+    pub model_config_id: String,
+    pub prompt: String,
+    pub size: String,
+    pub seconds: u8,
+    pub ratio: String,
+    pub first_frame: Option<StoryVideoMediaInput>,
+    pub last_frame: Option<StoryVideoMediaInput>,
+    pub reference_video: Option<StoryVideoMediaInput>,
+    pub reference_purpose: StoryVideoReferencePurpose,
+    pub attempt_id: String,
+}
+
+pub(crate) struct StorySubmittedVideoJob {
+    pub job_id: String,
+    pub status: String,
+    pub percent: Option<f64>,
+}
+
+pub(crate) enum StoryVideoPollOutcome {
+    Waiting {
+        job_id: String,
+        status: String,
+        percent: Option<f64>,
+    },
+    Completed {
+        job_id: String,
+        model_name: String,
+        bytes: Vec<u8>,
+    },
+    Failed {
+        message: String,
+    },
+}
+
+pub(crate) struct StoryVideoProviderError {
+    pub message: String,
+    pub request_may_have_been_submitted: bool,
 }
 
 #[derive(Clone)]
@@ -250,6 +302,294 @@ impl MediaStudioManager {
             provider_result_id: result.id,
             provider_asset_id: asset.id.clone(),
         })
+    }
+
+    /// Starts one Story video provider job. Story owns the durable attempt while Media Studio
+    /// owns credentials, provider wire data and the provider-specific response contract.
+    pub(crate) async fn submit_story_video(
+        &self,
+        authentication: &AuthenticationManager,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        request: StoryVideoProviderRequest,
+    ) -> Result<StorySubmittedVideoJob, StoryVideoProviderError> {
+        let runtime = self
+            .resolve_story_video_runtime(
+                authentication,
+                owner_user_id,
+                authentication_generation,
+                &request.model_config_id,
+            )
+            .await
+            .map_err(|message| StoryVideoProviderError {
+                message,
+                request_may_have_been_submitted: false,
+            })?;
+        let provider_request = VideoGenerationRequest {
+            model_config_id: request.model_config_id,
+            prompt: request.prompt,
+            size: request.size,
+            seconds: request.seconds,
+            ratio: request.ratio,
+            input_image: request.first_frame.map(story_video_input),
+            last_frame_image: request.last_frame.map(story_video_input),
+            reference_video: request.reference_video.map(story_video_input),
+            reference_audio: None,
+            reference_purpose: match request.reference_purpose {
+                StoryVideoReferencePurpose::Reference => VideoReferencePurpose::Reference,
+                StoryVideoReferencePurpose::Edit => VideoReferencePurpose::Edit,
+                StoryVideoReferencePurpose::Extend => VideoReferencePurpose::Extend,
+            },
+            client_request_id: request.attempt_id,
+        };
+        let wire = make_video_create_request(&runtime, &provider_request).map_err(|message| {
+            StoryVideoProviderError {
+                message,
+                request_may_have_been_submitted: false,
+            }
+        })?;
+        let response = self
+            .provider_client
+            .post(wire.url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .bearer_auth(&runtime.api_key)
+            .body(wire.body)
+            .send()
+            .await
+            .map_err(|_| StoryVideoProviderError {
+                message: "无法连接剧情视频模型服务。".into(),
+                request_may_have_been_submitted: true,
+            })?;
+        let status = response.status();
+        let body = read_bounded_response(
+            response,
+            MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+            "无法读取剧情视频模型响应。",
+            "模型返回的剧情视频任务数据过大。",
+        )
+        .await
+        .map_err(|message| StoryVideoProviderError {
+            message,
+            request_may_have_been_submitted: status.is_success(),
+        })?;
+        if !status.is_success() {
+            return Err(StoryVideoProviderError {
+                message: format!(
+                    "创建剧情视频任务失败（HTTP {}）：{}",
+                    status.as_u16(),
+                    provider_error_detail(&body, &runtime.api_key)
+                ),
+                request_may_have_been_submitted: false,
+            });
+        }
+        let job = parse_video_job(&body, &runtime.api_key).map_err(|message| {
+            StoryVideoProviderError {
+                message,
+                request_may_have_been_submitted: true,
+            }
+        })?;
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await
+            .map_err(|message| StoryVideoProviderError {
+                message,
+                request_may_have_been_submitted: true,
+            })?;
+        if job.is_failed() {
+            return Err(StoryVideoProviderError {
+                message: format!(
+                    "剧情视频生成失败：{}",
+                    job.error_message
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or("模型未提供失败原因")
+                ),
+                request_may_have_been_submitted: true,
+            });
+        }
+        Ok(StorySubmittedVideoJob {
+            job_id: job.id,
+            status: job.status,
+            percent: job.progress,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn poll_story_video(
+        &self,
+        authentication: &AuthenticationManager,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        model_config_id: &str,
+        prompt: &str,
+        size: &str,
+        seconds: u8,
+        ratio: &str,
+        attempt_id: &str,
+        provider_job_id: &str,
+    ) -> Result<StoryVideoPollOutcome, String> {
+        let runtime = self
+            .resolve_story_video_runtime(
+                authentication,
+                owner_user_id,
+                authentication_generation,
+                model_config_id,
+            )
+            .await?;
+        let url = video_job_endpoint(&runtime, provider_job_id)?;
+        let response = self
+            .provider_client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .bearer_auth(&runtime.api_key)
+            .send()
+            .await
+            .map_err(|_| "无法查询剧情视频生成任务。".to_owned())?;
+        let status = response.status();
+        let body = read_bounded_response(
+            response,
+            MAXIMUM_VIDEO_JOB_RESPONSE_BYTES,
+            "无法读取剧情视频任务响应。",
+            "模型返回的剧情视频任务数据过大。",
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(format!(
+                "查询剧情视频任务失败（HTTP {}）：{}",
+                status.as_u16(),
+                provider_error_detail(&body, &runtime.api_key)
+            ));
+        }
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        let job = parse_video_job(&body, &runtime.api_key)?;
+        if job.id != provider_job_id {
+            return Err("剧情视频服务商任务身份不匹配。".into());
+        }
+        if job.is_failed() {
+            return Ok(StoryVideoPollOutcome::Failed {
+                message: format!(
+                    "剧情视频生成失败：{}",
+                    job.error_message
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or("模型未提供失败原因")
+                ),
+            });
+        }
+        if job.should_poll() {
+            return Ok(StoryVideoPollOutcome::Waiting {
+                job_id: job.id,
+                status: job.status,
+                percent: job.progress,
+            });
+        }
+        let (response, forwards_credential) = if let Some(url) = job.content_url.clone() {
+            (
+                self.provider_client
+                    .get(url)
+                    .header(reqwest::header::ACCEPT, "video/mp4")
+                    .send()
+                    .await,
+                false,
+            )
+        } else {
+            let url = video_content_endpoint(&runtime, &job.id)?;
+            (
+                self.provider_client
+                    .get(url)
+                    .header(reqwest::header::ACCEPT, "video/mp4")
+                    .bearer_auth(&runtime.api_key)
+                    .send()
+                    .await,
+                true,
+            )
+        };
+        let response = response.map_err(|_| "无法下载生成的剧情视频。".to_owned())?;
+        if !forwards_credential && response.url().scheme() != "https" {
+            return Err("模型返回的剧情视频下载地址无效。".into());
+        }
+        let status = response.status();
+        let mime_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("video/mp4")
+            .to_owned();
+        let body = read_bounded_response(
+            response,
+            MAXIMUM_VIDEO_BYTES,
+            "无法读取生成的剧情视频。",
+            "模型返回的剧情视频文件过大。",
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(format!(
+                "下载剧情视频失败（HTTP {}）：{}",
+                status.as_u16(),
+                provider_error_detail(
+                    &body,
+                    if forwards_credential {
+                        &runtime.api_key
+                    } else {
+                        ""
+                    }
+                )
+            ));
+        }
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        let request = VideoGenerationRequest {
+            model_config_id: model_config_id.to_owned(),
+            prompt: prompt.to_owned(),
+            size: size.to_owned(),
+            seconds,
+            ratio: ratio.to_owned(),
+            input_image: None,
+            last_frame_image: None,
+            reference_video: None,
+            reference_audio: None,
+            reference_purpose: VideoReferencePurpose::Reference,
+            client_request_id: attempt_id.to_owned(),
+        };
+        let result = make_video_result(&request, &runtime, &job, &mime_type, body)?;
+        Ok(StoryVideoPollOutcome::Completed {
+            job_id: result.id,
+            model_name: result.model_name,
+            bytes: result.video_data,
+        })
+    }
+
+    async fn resolve_story_video_runtime(
+        &self,
+        authentication: &AuthenticationManager,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        model_config_id: &str,
+    ) -> Result<video_provider::ResolvedVideoModel, String> {
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        let mut models = authentication
+            .resolved_models_for_owner(owner_user_id, vec![model_config_id.to_owned()])
+            .await
+            .map_err(|error| error.message)?;
+        if models.len() != 1 {
+            return Err("剧情视频模型已不可用。".into());
+        }
+        let runtime = resolve_video_model(owner_user_id, model_config_id, models.remove(0))?;
+        authentication.save_model_credential(
+            owner_user_id,
+            &runtime.model_config_id,
+            &runtime.api_key,
+        )?;
+        authentication
+            .require_session_generation(owner_user_id, authentication_generation)
+            .await?;
+        Ok(runtime)
     }
 
     fn present_history_item(
@@ -1245,6 +1585,13 @@ pub(crate) fn media_studio_protocol(
     request: http::Request<Vec<u8>>,
 ) -> http::Response<Vec<u8>> {
     manager.protocol_response(request)
+}
+
+fn story_video_input(input: StoryVideoMediaInput) -> VideoInput {
+    VideoInput {
+        mime_type: input.mime_type,
+        bytes: input.bytes,
+    }
 }
 
 fn media_preview_url(session_token: &str, record_id: &str, content_token: &str) -> String {

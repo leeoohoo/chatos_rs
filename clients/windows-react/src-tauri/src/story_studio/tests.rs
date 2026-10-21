@@ -8,6 +8,7 @@ use super::{
         StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
         StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
         StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
+        StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1504,6 +1505,208 @@ fn frame_image_generation_uses_ordered_native_references_and_role_scoped_attempt
 }
 
 #[test]
+fn video_generation_persists_provider_identity_and_commits_mp4_atomically() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    store.save("alice", &canonical).unwrap();
+    let image_path = app_data.path().join("first.png");
+    image::RgbImage::from_pixel(256, 256, image::Rgb([10, 20, 30]))
+        .save_with_format(&image_path, image::ImageFormat::Png)
+        .unwrap();
+    let image_bytes = fs::read(image_path).unwrap();
+    let first = StoryImage {
+        id: Uuid::new_v4().to_string(),
+        filename: "video-first.png".into(),
+        mime_type: "image/png".into(),
+        source_resource_id: Some("s1".into()),
+        generation_attempt_id: None,
+        provider_result_id: None,
+        provider_asset_id: None,
+        derived_from_video_job_id: None,
+    };
+    let first_id = first.id.clone();
+    canonical = store
+        .mutate_project_with_image(
+            "alice",
+            &canonical.id,
+            &first.filename.clone(),
+            &image_bytes,
+            |project| {
+                project.segments[0].first_frames.images.push(first);
+                project.segments[0].first_frames.confirmed_image_id = Some(first_id);
+                Ok(())
+            },
+        )
+        .unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 31, &presentation, &canonical.id)
+        .unwrap();
+
+    let intent = manager
+        .begin_video_generation(
+            "alice",
+            31,
+            &presentation,
+            StoryVideoGenerationStartInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                segment_id: "s1".into(),
+                size: "768P".into(),
+                user_ideas: "keep the slow camera move".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        intent.provider_request.first_frame.unwrap().bytes,
+        image_bytes
+    );
+    assert!(intent
+        .provider_request
+        .prompt
+        .contains("keep the slow camera move"));
+    assert!(intent.provider_request.prompt.contains("镜头时间线"));
+    assert!(intent.provider_request.prompt.chars().count() <= 6_800);
+    let pending = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(
+        pending.segments[0]
+            .attempt
+            .as_ref()
+            .map(|value| value.id.as_str()),
+        Some(intent.attempt_id.as_str())
+    );
+
+    let submitted = manager
+        .record_video_submission(
+            "alice",
+            31,
+            &presentation,
+            StoryVideoGenerationPollInput {
+                project_id: canonical.id.clone(),
+                segment_id: "s1".into(),
+            },
+            &intent.attempt_id,
+            "provider-job-1",
+            "queued",
+        )
+        .unwrap();
+    assert!(!serde_json::to_string(&submitted)
+        .unwrap()
+        .contains("provider-job-1"));
+    let resume = manager
+        .prepare_video_poll(
+            "alice",
+            31,
+            &presentation,
+            StoryVideoGenerationPollInput {
+                project_id: canonical.id.clone(),
+                segment_id: "s1".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(resume.provider_job_id, "provider-job-1");
+    assert_eq!(resume.attempt.id, intent.attempt_id);
+
+    let directory = projects_directory(app_data.path(), "alice").join(&canonical.id);
+    let before = fs::read_dir(&directory).unwrap().count();
+    assert!(manager
+        .complete_video_generation(
+            "alice",
+            31,
+            &presentation,
+            &canonical.id,
+            "s1",
+            &Uuid::new_v4().to_string(),
+            "provider-job-1".into(),
+            "MiniMax-H3".into(),
+            b"video-bytes",
+        )
+        .is_err());
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), before);
+
+    let completed = manager
+        .complete_video_generation(
+            "alice",
+            31,
+            &presentation,
+            &canonical.id,
+            "s1",
+            &intent.attempt_id,
+            "provider-job-1".into(),
+            "MiniMax-H3".into(),
+            b"video-bytes",
+        )
+        .unwrap();
+    let encoded = serde_json::to_string(&completed).unwrap();
+    assert!(!encoded.contains("provider-job-1"));
+    assert!(!encoded.contains("video-"));
+    let saved = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(
+        saved.segments[0].attempt.as_ref().unwrap().status,
+        "completed"
+    );
+    assert_eq!(
+        saved.segments[0].video.as_ref().unwrap().job_id,
+        "provider-job-1"
+    );
+    let stored_bytes = store
+        .read_media_asset(
+            &owner_hash_for_test("alice"),
+            &canonical.id,
+            &saved.segments[0].video.as_ref().unwrap().filename,
+            "video/mp4",
+            super::store::MAXIMUM_STORY_VIDEO_BYTES,
+        )
+        .unwrap();
+    assert_eq!(stored_bytes, b"video-bytes");
+}
+
+#[test]
+fn video_failure_only_clears_attempt_when_submission_is_definitely_absent() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    let first = StoryImage::test_image("first.png");
+    canonical.segments[0]
+        .first_frames
+        .images
+        .push(first.clone());
+    canonical.segments[0].first_frames.confirmed_image_id = Some(first.id);
+    store.save("alice", &canonical).unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 44, &presentation, &canonical.id)
+        .unwrap();
+
+    // A missing local file fails before begin_video_generation persists an attempt.
+    assert!(manager
+        .begin_video_generation(
+            "alice",
+            44,
+            &presentation,
+            StoryVideoGenerationStartInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                segment_id: "s1".into(),
+                size: "768P".into(),
+                user_ideas: String::new(),
+            },
+        )
+        .is_err());
+    assert!(store
+        .load_native_project("alice", &canonical.id)
+        .unwrap()
+        .segments[0]
+        .attempt
+        .is_none());
+}
+
+#[test]
 fn model_admission_requires_current_owner_enabled_model_and_credential_status() {
     let input = StoryProjectCreationInput {
         title: "Story".into(),
@@ -2188,12 +2391,16 @@ fn execute_story_tool(
 }
 
 fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {
-    let owner_hash = format!("{:x}", Sha256::digest(owner.as_bytes()));
+    let owner_hash = owner_hash_for_test(owner);
     app_data
         .join("StoryStudio")
         .join("Accounts")
         .join(owner_hash)
         .join("Projects")
+}
+
+fn owner_hash_for_test(owner: &str) -> String {
+    format!("{:x}", Sha256::digest(owner.as_bytes()))
 }
 
 fn story_models() -> Vec<GatewayModelConfig> {
