@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 10] = [
+const READ_ONLY_TOOL_NAMES: [&str; 11] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -10,14 +10,18 @@ const READ_ONLY_TOOL_NAMES: [&str; 10] = [
     "search_text",
     "read_file",
     "search_files",
+    "todo_get_context",
     "process_poll",
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 3] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 6] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
+    "todo_progress_append",
+    "todo_complete",
+    "todo_block",
 ];
 
 pub(super) async fn spawn(

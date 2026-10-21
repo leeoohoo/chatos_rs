@@ -28,6 +28,7 @@ use crate::{
     agent_conversation::{AgentAssetToolBinding, AgentAssetToolRecord, AgentConversationStore},
     conversation_attachments::AttachmentManager,
     host_lifecycle::HostManager,
+    terminal_tool_worker::TerminalToolWorker,
 };
 
 pub const ATTACHMENT_READ_TOOL_NAME: &str = "local_attachment_read";
@@ -37,6 +38,12 @@ const TEAM_ASSET_TOOL_NAMES: [&str; 5] = [
     "team_asset_create",
     "team_asset_update",
     "team_asset_archive",
+];
+const TODO_EXECUTION_TOOL_NAMES: [&str; 4] = [
+    "todo_get_context",
+    "todo_progress_append",
+    "todo_complete",
+    "todo_block",
 ];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
@@ -119,6 +126,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
             include_tool_names: Some(
                 std::iter::once(ATTACHMENT_READ_TOOL_NAME)
                     .chain(TEAM_ASSET_TOOL_NAMES)
+                    .chain(TODO_EXECUTION_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
             ),
@@ -135,6 +143,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         None => {
             let executed = if claim.invocation.tool_name == ATTACHMENT_READ_TOOL_NAME {
                 execute_attachment_read(app, owner_user_id, &claim).await
+            } else if TODO_EXECUTION_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_todo_execution_tool(app, owner_user_id, &claim).await
             } else {
                 execute_team_asset_tool(app, owner_user_id, &claim).await
             };
@@ -161,6 +171,119 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     } else {
         Err("Local Agent Host returned an unexpected tool commit result".into())
     }
+}
+
+async fn execute_todo_execution_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if !TODO_EXECUTION_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+        return Err("The requested Todo execution tool is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The Todo execution arguments are invalid.".to_owned())?;
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The Todo execution Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The Todo execution Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let now = now_unix_ms();
+    let validation_store = store.clone();
+    let validation_owner = owner.clone();
+    let validation_run = run_id.clone();
+    let (expected_binding, _) = tauri::async_runtime::spawn_blocking(move || {
+        validation_store.load_agent_asset_tool_records(&validation_owner, &validation_run)
+    })
+    .await
+    .map_err(|_| "The Todo execution binding task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &expected_binding)?;
+    if expected_binding.todo_id.is_none() {
+        return Err("The Todo execution Run context is invalid.".into());
+    }
+    let (binding, output) = match claim.invocation.tool_name.as_str() {
+        "todo_get_context" => tauri::async_runtime::spawn_blocking(move || {
+            store.todo_execution_tool_context(&owner, &run_id)
+        })
+        .await
+        .map_err(|_| "The Todo context task exited unexpectedly.".to_owned())??,
+        "todo_progress_append" => {
+            let stage = optional_bounded_string(arguments, "stage", 240)?.unwrap_or_default();
+            let detail = required_bounded_string(arguments, "detail", 16_000)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                store.append_todo_execution_progress(&owner, &run_id, &stage, &detail, now)
+            })
+            .await
+            .map_err(|_| "The Todo progress task exited unexpectedly.".to_owned())??
+        }
+        "todo_complete" => {
+            let summary = required_bounded_string(arguments, "summary", 16_000)?;
+            let verified = app
+                .state::<TerminalToolWorker>()
+                .project_write_completion_verified(owner_user_id, &run.run_id);
+            tauri::async_runtime::spawn_blocking(move || {
+                store.finish_todo_execution(&owner, &run_id, true, &summary, verified, now)
+            })
+            .await
+            .map_err(|_| "The Todo completion task exited unexpectedly.".to_owned())??
+        }
+        "todo_block" => {
+            let reason = required_bounded_string(arguments, "reason", 8_000)?;
+            tauri::async_runtime::spawn_blocking(move || {
+                store.finish_todo_execution(&owner, &run_id, false, &reason, false, now)
+            })
+            .await
+            .map_err(|_| "The Todo blocking task exited unexpectedly.".to_owned())??
+        }
+        _ => return Err("The requested Todo execution tool is unavailable.".into()),
+    };
+    if binding != expected_binding {
+        return Err("The Todo execution binding changed during the operation.".into());
+    }
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+fn required_bounded_string(
+    arguments: &Map<String, Value>,
+    field: &str,
+    maximum: usize,
+) -> Result<String, String> {
+    arguments
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| {
+            !value.is_empty()
+                && value.trim() == *value
+                && value.chars().count() <= maximum
+                && !value.chars().any(|character| character == '\0')
+        })
+        .map(str::to_owned)
+        .ok_or_else(|| "The Todo execution arguments are invalid.".to_owned())
+}
+
+fn optional_bounded_string(
+    arguments: &Map<String, Value>,
+    field: &str,
+    maximum: usize,
+) -> Result<Option<String>, String> {
+    arguments
+        .get(field)
+        .map(|_| required_bounded_string(arguments, field, maximum))
+        .transpose()
 }
 
 async fn execute_team_asset_tool(
@@ -819,6 +942,62 @@ pub fn team_asset_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub fn todo_execution_tool_schemas() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": "todo_get_context",
+            "description": "仅用于 Todo 执行线程：读取当前 delivery 绑定的任务、可信能力计划、前置任务、团队资产摘要和最近进度，不接受任何 ID 参数。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_progress_append",
+            "description": "仅用于 Todo 执行线程：记录当前负责人的阶段、动作、观察结果和下一步。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "stage": {"type": "string", "maxLength": 240},
+                    "detail": {"type": "string", "minLength": 1, "maxLength": 16000}
+                },
+                "required": ["detail"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_complete",
+            "description": "仅用于 Todo 执行线程：保存当前负责人可核验的完成总结并结束任务。project_write 任务必须先完成事务提交和提交后读取。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 16000}
+                },
+                "required": ["summary"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_block",
+            "description": "仅用于 Todo 执行线程：因缺少必要信息、权限、访问或安全恢复路径而无法继续时，保存精确原因并阻塞任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 8000}
+                },
+                "required": ["reason"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -844,6 +1023,23 @@ mod tests {
             .iter()
             .filter(|schema| schema["name"] != "team_asset_create")
             .all(|schema| schema.to_string().contains("asset_ref")));
+    }
+
+    #[test]
+    fn todo_execution_catalog_requires_program_owned_completion_tools() {
+        let names = todo_execution_tool_schemas()
+            .into_iter()
+            .map(|schema| schema["name"].as_str().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from([
+                "todo_block".to_owned(),
+                "todo_complete".to_owned(),
+                "todo_get_context".to_owned(),
+                "todo_progress_append".to_owned(),
+            ])
+        );
     }
 
     #[test]

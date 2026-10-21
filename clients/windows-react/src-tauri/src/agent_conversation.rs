@@ -6043,6 +6043,34 @@ mod tests {
                 107,
             )
             .unwrap();
+        let (_, execution_context) = store
+            .todo_execution_tool_context("alice", "run-executor-2")
+            .unwrap();
+        assert_eq!(execution_context["title"], "后续任务");
+        let (_, progress) = store
+            .append_todo_execution_progress(
+                "alice",
+                "run-executor-2",
+                "implementation",
+                "已完成事务写入，准备核对。",
+                108,
+            )
+            .unwrap();
+        assert_eq!(progress["kind"], "progress");
+        assert!(store
+            .finish_todo_execution(
+                "alice",
+                "run-executor-2",
+                true,
+                "已完成并核验。",
+                false,
+                109,
+            )
+            .is_err());
+        let (_, completion) = store
+            .finish_todo_execution("alice", "run-executor-2", true, "已完成并核验。", true, 109)
+            .unwrap();
+        assert_eq!(completion["todo_status"], "completed");
         store
             .reconcile_project_team_runs(
                 "alice",
@@ -6053,8 +6081,8 @@ mod tests {
                     run_id: "run-executor-2".into(),
                     status: LocalConversationTurnStatus::Succeeded,
                     created_at_unix_ms: 107,
-                    updated_at_unix_ms: 108,
-                    project_write_evidence_verified: false,
+                    updated_at_unix_ms: 110,
+                    project_write_evidence_verified: true,
                 }],
             )
             .unwrap();
@@ -6064,10 +6092,7 @@ mod tests {
             .into_iter()
             .find(|todo| todo.id == second.id)
             .unwrap();
-        assert_eq!(completed.status, "blocked");
-        assert!(completed
-            .blocked_reason
-            .contains("缺少事务提交后的项目读取回执"));
+        assert_eq!(completed.status, "completed");
     }
 
     #[test]
