@@ -6499,7 +6499,7 @@ mod tests {
             message,
             (
                 "sender".into(),
-                trigger.message_id,
+                trigger.message_id.clone(),
                 "run-chat".into(),
                 "invocation-chat-1".into(),
                 1,
@@ -6515,6 +6515,56 @@ mod tests {
             )
             .unwrap();
         assert_eq!(spawned, (1, "target".into(), "agent_mention".into()));
+        connection
+            .execute(
+                "UPDATE project_agent_messages SET hop_count = 4 \
+                 WHERE owner_user_id = 'alice' AND id = ?1",
+                params![trigger.message_id],
+            )
+            .unwrap();
+        drop(connection);
+        let (_, unread) = store
+            .read_all_unread_team_chat("alice", "run-chat", "read-routing-limit", 20, 14)
+            .unwrap();
+        let trigger_reference = unread["conversations"][0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["content"] == "请协调目标成员")
+            .unwrap()["message_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (_, stopped) = store
+            .send_team_chat_message(
+                "alice",
+                "run-chat",
+                "invocation-routing-limit",
+                "这条回复只持久化，不再继续唤醒。",
+                Some(&trigger_reference),
+                None,
+                std::slice::from_ref(&target_reference),
+                15,
+            )
+            .unwrap();
+        assert_eq!(stopped["spawned_delivery_count"], 0);
+        assert_eq!(
+            stopped["routing_stop_reason"],
+            "本轮 Agent 协作已达到最大唤醒深度。"
+        );
+        let stopped_delivery_count: i64 = Connection::open(store.database())
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM project_agent_deliveries delivery \
+                 JOIN project_agent_messages message \
+                   ON message.owner_user_id = delivery.owner_user_id \
+                  AND message.id = delivery.message_id \
+                 WHERE message.causation_id = 'invocation-routing-limit'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stopped_delivery_count, 0);
     }
 
     #[test]

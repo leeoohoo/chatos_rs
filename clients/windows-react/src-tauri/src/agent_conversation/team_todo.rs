@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 const MAXIMUM_TEAM_TODOS: usize = 1_000;
+const MAXIMUM_TEAM_CHAT_HOP_COUNT: i64 = 4;
+const MAXIMUM_TEAM_CHAT_RUNS_PER_ROOT: i64 = 12;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -773,7 +775,8 @@ impl AgentConversationStore {
         let existing_message_id = transaction
             .query_row(
                 r#"
-                SELECT id, room_id, content, reply_to_message_id
+                SELECT id, room_id, content, reply_to_message_id,
+                       root_message_id, hop_count
                 FROM project_agent_messages
                 WHERE owner_user_id = ?1 AND sender_kind = 'agent'
                   AND sender_id = ?2 AND source_run_id = ?3 AND causation_id = ?4
@@ -786,13 +789,21 @@ impl AgentConversationStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
                     ))
                 },
             )
             .optional()
             .map_err(|_| team_todo_store_error())?;
-        if let Some((message_id, existing_room_id, existing_content, existing_reply_id)) =
-            existing_message_id
+        if let Some((
+            message_id,
+            existing_room_id,
+            existing_content,
+            existing_reply_id,
+            existing_root_message_id,
+            existing_hop_count,
+        )) = existing_message_id
         {
             let existing_mentions = {
                 let mut statement = transaction
@@ -826,6 +837,17 @@ impl AgentConversationStore {
                     |row| row.get(0),
                 )
                 .map_err(|_| team_todo_store_error())?;
+            let routing_stop_reason = if spawned_delivery_count == 0 {
+                team_chat_routing_stop_reason(
+                    &transaction,
+                    owner_user_id,
+                    &existing_root_message_id,
+                    existing_hop_count,
+                    existing_mentions.len(),
+                )?
+            } else {
+                None
+            };
             let message_reference = persist_team_chat_message_reference(
                 &transaction,
                 owner_user_id,
@@ -841,11 +863,20 @@ impl AgentConversationStore {
                     "message_ref": message_reference,
                     "completed": false,
                     "spawned_delivery_count": spawned_delivery_count,
+                    "routing_stop_reason": routing_stop_reason,
                 }),
             ));
         }
         let message_id = identifier("message");
         let root_message_id = inherited_root_message_id.unwrap_or_else(|| message_id.clone());
+        let message_hop_count = hop_count.saturating_add(1);
+        let routing_stop_reason = team_chat_routing_stop_reason(
+            &transaction,
+            owner_user_id,
+            &root_message_id,
+            message_hop_count,
+            mention_agent_ids.len(),
+        )?;
         transaction
             .execute(
                 r#"
@@ -865,7 +896,7 @@ impl AgentConversationStore {
                     run_id,
                     request_key,
                     root_message_id,
-                    hop_count.saturating_add(1).min(64),
+                    message_hop_count,
                     now_unix_ms,
                 ],
             )
@@ -878,10 +909,11 @@ impl AgentConversationStore {
                     params![owner_user_id, message_id, target_agent_id, position as i64],
                 )
                 .map_err(|_| team_todo_store_error())?;
-            let delivery_id = identifier("delivery");
-            transaction
-                .execute(
-                    r#"
+            if routing_stop_reason.is_none() {
+                let delivery_id = identifier("delivery");
+                transaction
+                    .execute(
+                        r#"
                     INSERT INTO project_agent_deliveries (
                         owner_user_id, id, room_id, message_id, root_message_id,
                         target_agent_id, trigger_kind, status, attempt, hop_count,
@@ -890,19 +922,20 @@ impl AgentConversationStore {
                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'agent_mention', 'pending', 0, ?7,
                               ?8, NULL, NULL, NULL, NULL, ?9)
                     "#,
-                    params![
-                        owner_user_id,
-                        delivery_id,
-                        target_room_id,
-                        message_id,
-                        root_message_id,
-                        target_agent_id,
-                        hop_count.saturating_add(1).min(64),
-                        format!("{message_id}:{target_agent_id}"),
-                        now_unix_ms,
-                    ],
-                )
-                .map_err(|_| team_todo_store_error())?;
+                        params![
+                            owner_user_id,
+                            delivery_id,
+                            target_room_id,
+                            message_id,
+                            root_message_id,
+                            target_agent_id,
+                            message_hop_count,
+                            format!("{message_id}:{target_agent_id}"),
+                            now_unix_ms,
+                        ],
+                    )
+                    .map_err(|_| team_todo_store_error())?;
+            }
         }
         let message_reference = persist_team_chat_message_reference(
             &transaction,
@@ -918,7 +951,12 @@ impl AgentConversationStore {
             json!({
                 "message_ref": message_reference,
                 "completed": false,
-                "spawned_delivery_count": mention_agent_ids.len(),
+                "spawned_delivery_count": if routing_stop_reason.is_some() {
+                    0
+                } else {
+                    mention_agent_ids.len()
+                },
+                "routing_stop_reason": routing_stop_reason,
             }),
         ))
     }
@@ -3352,6 +3390,33 @@ fn todo_planning_reference(
             .as_bytes(),
     );
     format!("{kind}_ref_{digest:x}")
+}
+
+fn team_chat_routing_stop_reason(
+    connection: &Connection,
+    owner_user_id: &str,
+    root_message_id: &str,
+    hop_count: i64,
+    target_count: usize,
+) -> Result<Option<String>, String> {
+    if target_count == 0 {
+        return Ok(None);
+    }
+    if hop_count > MAXIMUM_TEAM_CHAT_HOP_COUNT {
+        return Ok(Some("本轮 Agent 协作已达到最大唤醒深度。".into()));
+    }
+    let existing_run_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM project_agent_deliveries \
+             WHERE owner_user_id = ?1 AND root_message_id = ?2",
+            params![owner_user_id, root_message_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| team_todo_store_error())?;
+    if existing_run_count.saturating_add(target_count as i64) > MAXIMUM_TEAM_CHAT_RUNS_PER_ROOT {
+        return Ok(Some("本轮 Agent 协作已达到最大运行次数。".into()));
+    }
+    Ok(None)
 }
 
 fn persist_team_chat_message_reference(
