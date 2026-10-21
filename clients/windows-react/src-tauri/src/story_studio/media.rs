@@ -36,6 +36,7 @@ use super::{
         StoryVideoCompletion, StoryVideoGenerationPollInput, StoryVideoGenerationStartInput,
         StoryVideoGuidanceInput, StoryVideoRetryInput,
     },
+    batch::StoryMediaBatchExecutionRegistry,
     domain::{
         StoryImage, StoryImageCollection, StoryProject, StorySegment, StorySegmentKind,
         StoryVideoAttempt, StoryVideoGuidanceMode,
@@ -266,6 +267,7 @@ pub(crate) struct StoryStudioManager {
     media: StoryMediaVault,
     preview_session: Arc<Mutex<Option<StoryPreviewSession>>>,
     pub(super) planning_executions: StoryPlanningExecutionRegistry,
+    pub(super) batch_executions: StoryMediaBatchExecutionRegistry,
 }
 
 impl StoryStudioManager {
@@ -275,6 +277,7 @@ impl StoryStudioManager {
             media: StoryMediaVault::default(),
             preview_session: Arc::new(Mutex::new(None)),
             planning_executions: StoryPlanningExecutionRegistry::default(),
+            batch_executions: StoryMediaBatchExecutionRegistry::default(),
         })
     }
 
@@ -1319,6 +1322,7 @@ impl StoryStudioManager {
 
     pub(crate) fn reset(&self) {
         self.planning_executions.reset();
+        self.batch_executions.reset();
         if let Ok(mut session) = self.preview_session.lock() {
             *session = None;
         }

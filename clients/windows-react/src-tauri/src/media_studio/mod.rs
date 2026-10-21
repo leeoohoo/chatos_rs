@@ -60,6 +60,7 @@ pub(crate) struct StoryGeneratedImage {
     pub provider_asset_id: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct StoryImageReference {
     pub name: String,
     pub mime_type: String,

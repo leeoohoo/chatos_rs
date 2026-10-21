@@ -24,6 +24,7 @@ use super::{
         StoryMediaBatchPreviewInput, StoryMediaBatchPreviewResult, StoryMediaBatchRecord,
         StoryMediaBatchSnapshot, StoryMediaBatchStartInput,
     },
+    batch_execution::{StoryMediaBatchExecutionOutcome, StoryMediaBatchRuntime},
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
@@ -535,6 +536,39 @@ pub(crate) async fn start_story_media_batch(
     .map_err(|_| "批量制作启动任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     prepared
+}
+
+#[tauri::command]
+pub(crate) async fn resume_story_media_batch(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    media_manager: State<'_, MediaStudioManager>,
+    story_manager: State<'_, StoryStudioManager>,
+    input: StoryMediaBatchIdentityInput,
+) -> Result<StoryMediaBatchExecutionOutcome, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &story_manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    StoryMediaBatchRuntime {
+        authentication: &authentication,
+        media_manager: &media_manager,
+        story_manager: &story_manager,
+        app: &app,
+        owner_user_id: &input.owner_user_id,
+        authentication_generation: generation,
+        presentation_id: &input.presentation_id,
+    }
+    .resume(&input.project_id, &input.batch_id)
+    .await
 }
 
 #[tauri::command]

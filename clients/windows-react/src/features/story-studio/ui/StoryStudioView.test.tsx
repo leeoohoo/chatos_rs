@@ -319,6 +319,7 @@ function usePresentationId(storyPort: StoryStudioPort) {
 
 function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
   return {
+    watchMediaBatches: vi.fn(async () => () => undefined),
     watchPlanning: vi.fn(async () => () => undefined),
     loadPlanningHistory: vi.fn(async () => ({ runs: [], nextCursor: null, unreadableCount: 0, recoveredProject: null })),
     resumePlanning: vi.fn(async () => project()),
@@ -333,6 +334,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
     loadMediaBatchHistory: vi.fn(async () => ({ batches: [], nextCursor: null, unreadableCount: 0 })),
     startMediaBatch: vi.fn(async () => { throw new Error("unused batch start"); }),
+    resumeMediaBatch: vi.fn(() => new Promise<never>(() => undefined)),
     abandonMediaBatch: vi.fn(async () => { throw new Error("unused batch abandon"); }),
     createProject: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),

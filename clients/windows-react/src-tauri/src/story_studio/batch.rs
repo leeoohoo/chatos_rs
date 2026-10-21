@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 use uuid::Uuid;
 
 use crate::authentication::GatewayModelConfig;
@@ -18,6 +21,56 @@ pub(super) const MAXIMUM_MEDIA_BATCH_BYTES: usize = 32 * 1_024 * 1_024;
 const MAXIMUM_BATCH_STEPS: usize = 500;
 const MAXIMUM_USER_IDEAS_CHARACTERS: usize = 2_000;
 const MAXIMUM_BATCH_EVENTS: usize = 20_000;
+
+#[derive(Clone, Default)]
+pub(super) struct StoryMediaBatchExecutionRegistry {
+    active: Arc<Mutex<HashSet<String>>>,
+}
+
+pub(super) struct StoryMediaBatchExecutionLease {
+    active: Arc<Mutex<HashSet<String>>>,
+    key: String,
+}
+
+impl StoryMediaBatchExecutionRegistry {
+    pub(super) fn begin(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        project_id: &str,
+        batch_id: &str,
+    ) -> Result<StoryMediaBatchExecutionLease, String> {
+        let key = format!(
+            "{}:{authentication_generation}:{project_id}:{batch_id}",
+            batch_owner_hash(owner_user_id)?
+        );
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "批量制作执行状态不可用。".to_owned())?;
+        if !active.insert(key.clone()) {
+            return Err("这个制作批次正在执行，请勿重复启动。".into());
+        }
+        Ok(StoryMediaBatchExecutionLease {
+            active: self.active.clone(),
+            key,
+        })
+    }
+
+    pub(super) fn reset(&self) {
+        if let Ok(mut active) = self.active.lock() {
+            active.clear();
+        }
+    }
+}
+
+impl Drop for StoryMediaBatchExecutionLease {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&self.key);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -900,6 +953,18 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("时长"));
+    }
+
+    #[test]
+    fn batch_execution_registry_is_single_flight_and_releases_its_lease() {
+        let registry = StoryMediaBatchExecutionRegistry::default();
+        let project_id = Uuid::new_v4().to_string();
+        let batch_id = Uuid::new_v4().to_string();
+        let lease = registry.begin("alice", 7, &project_id, &batch_id).unwrap();
+        assert!(registry.begin("alice", 7, &project_id, &batch_id).is_err());
+        assert!(registry.begin("alice", 8, &project_id, &batch_id).is_ok());
+        drop(lease);
+        assert!(registry.begin("alice", 7, &project_id, &batch_id).is_ok());
     }
 
     #[test]

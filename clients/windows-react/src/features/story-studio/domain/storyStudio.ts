@@ -272,6 +272,15 @@ export const storyMediaBatchHistoryPageSchema = z.object({
   unreadableCount: z.number().int().nonnegative().safe(),
 }).strict();
 
+export const storyMediaBatchExecutionOutcomeSchema = z.object({
+  batch: storyMediaBatchSnapshotSchema,
+  project: storyProjectSchema,
+}).strict();
+
+export const storyMediaBatchEventSchema = storyMediaBatchExecutionOutcomeSchema.extend({
+  presentationId: uuid,
+}).strict();
+
 export const storyPlanningRunSchema = z.object({
   id: uuid,
   ownerUserId: safeText(1_024).min(1),
@@ -324,6 +333,8 @@ export type StoryMediaBatchPreparation = z.infer<typeof storyMediaBatchPreparati
 export type StoryMediaBatchPreviewResult = z.infer<typeof storyMediaBatchPreviewResultSchema>;
 export type StoryMediaBatchSnapshot = z.infer<typeof storyMediaBatchSnapshotSchema>;
 export type StoryMediaBatchHistoryPage = z.infer<typeof storyMediaBatchHistoryPageSchema>;
+export type StoryMediaBatchExecutionOutcome = z.infer<typeof storyMediaBatchExecutionOutcomeSchema>;
+export type StoryMediaBatchEvent = z.infer<typeof storyMediaBatchEventSchema>;
 export type StoryPlanningRun = z.infer<typeof storyPlanningRunSchema>;
 export type StoryPlanningHistoryPage = z.infer<typeof storyPlanningHistoryPageSchema>;
 export type StoryPlanningEvent = z.infer<typeof storyPlanningEventSchema>;

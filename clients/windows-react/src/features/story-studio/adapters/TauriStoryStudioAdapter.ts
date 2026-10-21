@@ -12,6 +12,8 @@ import {
   storyMediaBatchKindSchema,
   storyMediaBatchPreviewResultSchema,
   storyMediaBatchHistoryPageSchema,
+  storyMediaBatchEventSchema,
+  storyMediaBatchExecutionOutcomeSchema,
   storyMediaBatchSnapshotSchema,
   storyVideoGenerationOutcomeSchema,
 } from "../domain/storyStudio";
@@ -26,6 +28,20 @@ const safeText = (maximum: number) => z.string().max(maximum).refine(
 );
 
 export class TauriStoryStudioAdapter implements StoryStudioPort {
+  async watchMediaBatches(
+    request: Parameters<StoryStudioPort["watchMediaBatches"]>[0],
+    listener: Parameters<StoryStudioPort["watchMediaBatches"]>[1],
+  ) {
+    const expected = scope(request);
+    return listen<unknown>("story-media-batch", (event) => {
+      const parsed = storyMediaBatchEventSchema.safeParse(event.payload);
+      if (!parsed.success
+        || parsed.data.presentationId !== expected.presentationId
+        || parsed.data.batch.ownerUserId !== expected.ownerUserId) return;
+      listener(parsed.data);
+    });
+  }
+
   async watchPlanning(
     request: Parameters<StoryStudioPort["watchPlanning"]>[0],
     listener: Parameters<StoryStudioPort["watchPlanning"]>[1],
@@ -110,6 +126,17 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     };
     return storyMediaBatchSnapshotSchema.parse(
       await invoke("abandon_story_media_batch", { input }),
+    );
+  }
+
+  async resumeMediaBatch(request: Parameters<StoryStudioPort["resumeMediaBatch"]>[0]) {
+    const input = {
+      ...scope(request),
+      projectId: uuidSchema.parse(request.projectId),
+      batchId: uuidSchema.parse(request.batchId),
+    };
+    return storyMediaBatchExecutionOutcomeSchema.parse(
+      await invoke("resume_story_media_batch", { input }),
     );
   }
 

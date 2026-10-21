@@ -6,6 +6,8 @@ import type {
   StoryPlanningHistoryPage,
   StoryPlanningRun,
   StoryMediaBatchKind,
+  StoryMediaBatchEvent,
+  StoryMediaBatchExecutionOutcome,
   StoryMediaBatchPreviewResult,
   StoryMediaBatchHistoryPage,
   StoryMediaBatchPreparation,
@@ -23,6 +25,10 @@ export type StoryImageImportTarget =
   | { kind: "frame"; segmentId: string; frameRole: "first" | "last" };
 
 export interface StoryStudioPort {
+  watchMediaBatches(
+    request: StoryPresentationScope,
+    listener: (event: StoryMediaBatchEvent) => void,
+  ): Promise<() => void>;
   watchPlanning(
     request: StoryPresentationScope,
     listener: (event: StoryPlanningEvent) => void,
@@ -48,6 +54,10 @@ export interface StoryStudioPort {
     preparation: StoryMediaBatchPreparation;
     userIdeas: string;
   }): Promise<StoryMediaBatchSnapshot>;
+  resumeMediaBatch(request: StoryPresentationScope & {
+    projectId: string;
+    batchId: string;
+  }): Promise<StoryMediaBatchExecutionOutcome>;
   abandonMediaBatch(request: StoryPresentationScope & {
     projectId: string;
     batchId: string;

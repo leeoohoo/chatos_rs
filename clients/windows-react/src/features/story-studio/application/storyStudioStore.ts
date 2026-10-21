@@ -1,7 +1,7 @@
 import { create, type StoreApi } from "zustand";
 import type { MediaStudioHistoryItem, MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
-import type { StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
+import type { StoryMediaBatchEvent, StoryMediaBatchPreparation, StoryMediaBatchSnapshot, StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
 
 interface StoryVideoProgress {
@@ -59,6 +59,7 @@ interface StoryStudioState {
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   loadMediaBatchHistory(storyPort: StoryStudioPort, projectId: string): Promise<void>;
   startMediaBatch(storyPort: StoryStudioPort, preparation: StoryMediaBatchPreparation, userIdeas: string): Promise<boolean>;
+  resumeMediaBatch(storyPort: StoryStudioPort, projectId: string, batchId: string): Promise<void>;
   abandonMediaBatch(storyPort: StoryStudioPort, projectId: string, batchId: string): Promise<void>;
   importLocalImage(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
   loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
@@ -80,6 +81,8 @@ interface StoryStudioState {
 let activationSequence = 0;
 let planningWatchSequence = 0;
 let planningUnlisten: (() => void) | null = null;
+let mediaBatchWatchSequence = 0;
+let mediaBatchUnlisten: (() => void) | null = null;
 const pollTimers = new Map<string, number>();
 
 export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
@@ -105,6 +108,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   async activate(storyPort, mediaPort, ownerUserId) {
     const sequence = ++activationSequence;
     stopPlanningWatch();
+    stopMediaBatchWatch();
     clearPollTimers();
     const presentationId = crypto.randomUUID();
     set({
@@ -128,6 +132,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       activeMediaTarget: null,
     });
     installPlanningWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
+    installMediaBatchWatch(storyPort, { ownerUserId, presentationId }, sequence, set, get);
     try {
       const [page, models] = await Promise.all([
         storyPort.loadProjects({ ownerUserId, presentationId, limit: 80 }),
@@ -154,6 +159,7 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   deactivate(storyPort) {
     activationSequence += 1;
     stopPlanningWatch();
+    stopMediaBatchWatch();
     clearPollTimers();
     const { ownerUserId, presentationId } = get();
     set({
@@ -374,10 +380,23 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       const batch = await storyPort.startMediaBatch({ ...scope, preparation, userIdeas });
       if (!sameScope(get(), scope)) return false;
       set((state) => ({
-        busy: false,
         mediaBatches: {
           ...state.mediaBatches,
           [project.id]: replaceMediaBatch(state.mediaBatches[project.id] ?? [], batch),
+        },
+      }));
+      const outcome = await storyPort.resumeMediaBatch({
+        ...scope,
+        projectId: project.id,
+        batchId: batch.id,
+      });
+      if (!sameScope(get(), scope)) return false;
+      set((state) => ({
+        busy: false,
+        projects: replaceProject(state.projects, outcome.project),
+        mediaBatches: {
+          ...state.mediaBatches,
+          [project.id]: replaceMediaBatch(state.mediaBatches[project.id] ?? [], outcome.batch),
         },
       }));
       return true;
@@ -385,6 +404,27 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       if (!sameScope(get(), scope)) return false;
       set({ busy: false, error: errorMessage(error, "批量制作队列创建失败。") });
       return false;
+    }
+  },
+
+  async resumeMediaBatch(storyPort, projectId, batchId) {
+    const scope = activeScope(get());
+    if (!scope || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const outcome = await storyPort.resumeMediaBatch({ ...scope, projectId, batchId });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        busy: false,
+        projects: replaceProject(state.projects, outcome.project),
+        mediaBatches: {
+          ...state.mediaBatches,
+          [projectId]: replaceMediaBatch(state.mediaBatches[projectId] ?? [], outcome.batch),
+        },
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "制作批次无法恢复。") });
     }
   },
 
@@ -821,6 +861,47 @@ function stopPlanningWatch() {
   planningWatchSequence += 1;
   planningUnlisten?.();
   planningUnlisten = null;
+}
+
+function installMediaBatchWatch(
+  port: StoryStudioPort,
+  scope: { ownerUserId: string; presentationId: string },
+  activation: number,
+  set: StoreApi<StoryStudioState>["setState"],
+  get: StoreApi<StoryStudioState>["getState"],
+) {
+  const watch = ++mediaBatchWatchSequence;
+  void port.watchMediaBatches(scope, (event: StoryMediaBatchEvent) => {
+    if (watch !== mediaBatchWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    set((state) => ({
+      projects: replaceProject(state.projects, event.project),
+      mediaBatches: {
+        ...state.mediaBatches,
+        [event.batch.projectId]: replaceMediaBatch(
+          state.mediaBatches[event.batch.projectId] ?? [],
+          event.batch,
+        ),
+      },
+    }));
+  }).then((unlisten) => {
+    if (watch !== mediaBatchWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) {
+      unlisten();
+      return;
+    }
+    mediaBatchUnlisten = unlisten;
+  }).catch((error: unknown) => {
+    if (watch !== mediaBatchWatchSequence
+      || !isActive(get(), activation, scope.ownerUserId, scope.presentationId)) return;
+    set({ error: errorMessage(error, "批量制作进度暂时无法接收。") });
+  });
+}
+
+function stopMediaBatchWatch() {
+  mediaBatchWatchSequence += 1;
+  mediaBatchUnlisten?.();
+  mediaBatchUnlisten = null;
 }
 
 function selectedProject(state: StoryStudioState) {
