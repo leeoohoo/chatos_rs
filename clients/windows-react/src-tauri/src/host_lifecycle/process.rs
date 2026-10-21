@@ -23,7 +23,7 @@ const READ_ONLY_TOOL_NAMES: [&str; 19] = [
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 13] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 16] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
@@ -34,6 +34,9 @@ const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 13] = [
     "todo_update",
     "todo_reorder",
     "chat_document_create",
+    "agent_propose_member",
+    "agent_propose_existing_member",
+    "agent_propose_member_removal",
     "chat_send_message",
     "chat_heartbeat_complete",
     "agent_cycle_complete",

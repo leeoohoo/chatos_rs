@@ -1074,7 +1074,7 @@ impl AgentConversationStore {
                 WHERE room.owner_user_id = ?1 AND room.status = 'active'
                   AND (room.conversation_kind = 'agent_agent_direct'
                        OR (room.conversation_kind = 'human_agent_direct'
-                           AND delivery.trigger_kind = 'heartbeat'))
+                           AND delivery.trigger_kind IN ('heartbeat', 'mention')))
                   AND (delivery.status IN ('pending', 'running')
                        OR run.status IN ('ready', 'running'))
                 ORDER BY room.id
@@ -1113,7 +1113,7 @@ impl AgentConversationStore {
                       AND room.status = 'active'
                       AND (room.conversation_kind = 'agent_agent_direct'
                            OR (room.conversation_kind = 'human_agent_direct'
-                               AND delivery.trigger_kind = 'heartbeat'))
+                               AND delivery.trigger_kind IN ('heartbeat', 'mention')))
                       AND (delivery.status IN ('pending', 'running')
                            OR run.status IN ('ready', 'running'))
                 )
@@ -3662,7 +3662,7 @@ fn resolve_team_message_reference(
         .ok_or_else(|| "The message reference is unavailable for this Run.".to_owned())
 }
 
-fn resolve_team_reference(
+pub(super) fn resolve_team_reference(
     connection: &Connection,
     owner_user_id: &str,
     run_id: &str,
@@ -3701,7 +3701,7 @@ fn resolve_team_reference(
     Err("The team reference is unavailable for this Run.".into())
 }
 
-fn resolve_agent_reference(
+pub(super) fn resolve_agent_reference(
     connection: &Connection,
     owner_user_id: &str,
     run_id: &str,

@@ -25,6 +25,8 @@ import type {
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
+  AgentStaffingProposal,
+  AgentStaffingResolution,
 } from "../domain/agentManagement";
 import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
 import type {
@@ -67,6 +69,14 @@ export interface AgentManagementPort {
   setTeamDefaultAgent?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   setTeamProjectManager?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
   removeAgentFromTeam?(ownerUserId: string, teamId: string, agentId: string): Promise<AgentTeamDetail>;
+  listStaffingProposals?(ownerUserId: string, sourceRoomId: string): Promise<AgentStaffingProposal[]>;
+  resolveStaffingProposal?(
+    ownerUserId: string,
+    sourceRoomId: string,
+    proposalId: string,
+    kind: AgentStaffingProposal["kind"],
+    approved: boolean,
+  ): Promise<AgentStaffingResolution>;
   loadTeamConversation?(ownerUserId: string, teamId: string): Promise<AgentTeamConversationSnapshot>;
   queueTeamMessage?(
     ownerUserId: string,

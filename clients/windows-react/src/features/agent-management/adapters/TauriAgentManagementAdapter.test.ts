@@ -231,6 +231,33 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       });
     }
 
+    const proposal = {
+      id: "proposal-1", kind: "agentRemoval" as const, sourceRoomId: team.id,
+      proposerAgentId: "agent-1", status: "pending" as const,
+      name: null, role: null, responsibility: null, rolePrompt: null,
+      thinkingLevel: null, professionKey: null, rationale: null,
+      targetTeamId: team.id, targetAgentId: "agent-2",
+      reason: "职责调整", handoffPlan: "先完成交接", createdAtUnixMs: 30,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce([proposal]);
+    await expect(adapter.listStaffingProposals("owner-1", team.id)).resolves.toEqual([proposal]);
+    expect(invoke).toHaveBeenLastCalledWith("list_agent_staffing_proposals", {
+      ownerUserId: "owner-1", sourceRoomId: team.id,
+    });
+
+    const resolution = {
+      proposalId: proposal.id, kind: proposal.kind, status: "approved" as const,
+      sourceRoomId: team.id, affectedTeamId: team.id, createdAgentId: null,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(resolution);
+    await expect(adapter.resolveStaffingProposal(
+      "owner-1", team.id, proposal.id, proposal.kind, true,
+    )).resolves.toEqual(resolution);
+    expect(invoke).toHaveBeenLastCalledWith("resolve_agent_staffing_proposal", { input: {
+      ownerUserId: "owner-1", sourceRoomId: team.id,
+      proposalId: proposal.id, kind: proposal.kind, approved: true,
+    } });
+
     vi.mocked(invoke).mockResolvedValueOnce({ teamId: team.id, messages: [], deliveries: [] });
     await adapter.loadTeamConversation("owner-1", team.id);
     expect(invoke).toHaveBeenLastCalledWith("load_agent_team_conversation", {

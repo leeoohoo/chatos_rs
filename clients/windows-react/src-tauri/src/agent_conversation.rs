@@ -29,6 +29,7 @@ use crate::{
 
 pub(crate) mod documents;
 pub(crate) mod heartbeat;
+pub(crate) mod proposals;
 pub(crate) mod team_todo;
 
 const DATABASE_FILENAME: &str = "AgentGroupChat.sqlite3";
@@ -414,6 +415,71 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_pending_windows_agent_run_control
     WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS windows_agent_run_control_pending
     ON windows_agent_run_control_journal(owner_user_id, status, created_at_unix_ms, id);
+CREATE TABLE IF NOT EXISTS local_agent_creation_proposals (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    proposer_agent_id TEXT NOT NULL,
+    source_delivery_id TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    draft_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+    created_agent_id TEXT,
+    created_at_unix_ms INTEGER NOT NULL,
+    resolved_at_unix_ms INTEGER,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, room_id, proposer_agent_id, source_delivery_id, request_key),
+    FOREIGN KEY(owner_user_id, room_id, proposer_agent_id)
+        REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+    FOREIGN KEY(owner_user_id, source_delivery_id)
+        REFERENCES project_agent_deliveries(owner_user_id, id),
+    FOREIGN KEY(owner_user_id, created_agent_id)
+        REFERENCES local_agent_profiles(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_creation_proposals_pending
+    ON local_agent_creation_proposals(owner_user_id, room_id, status, created_at_unix_ms, id);
+CREATE TABLE IF NOT EXISTS local_agent_removal_proposals (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    room_id TEXT NOT NULL,
+    proposer_agent_id TEXT NOT NULL,
+    source_delivery_id TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    draft_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+    created_at_unix_ms INTEGER NOT NULL,
+    resolved_at_unix_ms INTEGER,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, room_id, proposer_agent_id, source_delivery_id, request_key),
+    FOREIGN KEY(owner_user_id, room_id, proposer_agent_id)
+        REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+    FOREIGN KEY(owner_user_id, source_delivery_id)
+        REFERENCES project_agent_deliveries(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_removal_proposals_pending
+    ON local_agent_removal_proposals(owner_user_id, room_id, status, created_at_unix_ms, id);
+CREATE TABLE IF NOT EXISTS local_agent_membership_proposals (
+    owner_user_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    source_room_id TEXT NOT NULL,
+    proposer_agent_id TEXT NOT NULL,
+    source_delivery_id TEXT NOT NULL,
+    request_key TEXT NOT NULL,
+    draft_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')),
+    created_at_unix_ms INTEGER NOT NULL,
+    resolved_at_unix_ms INTEGER,
+    PRIMARY KEY(owner_user_id, id),
+    UNIQUE(owner_user_id, source_room_id, proposer_agent_id, source_delivery_id, request_key),
+    FOREIGN KEY(owner_user_id, source_room_id, proposer_agent_id)
+        REFERENCES project_agent_room_members(owner_user_id, room_id, agent_id),
+    FOREIGN KEY(owner_user_id, source_delivery_id)
+        REFERENCES project_agent_deliveries(owner_user_id, id)
+);
+CREATE INDEX IF NOT EXISTS local_agent_membership_proposals_pending
+    ON local_agent_membership_proposals(
+        owner_user_id, source_room_id, status, created_at_unix_ms, id
+    );
 "#;
 
 #[derive(Clone)]
@@ -1031,7 +1097,7 @@ impl AgentConversationStore {
                   AND room.status = 'active'
                   AND (room.conversation_kind = 'agent_agent_direct'
                        OR (room.conversation_kind = 'human_agent_direct'
-                           AND delivery.trigger_kind = 'heartbeat'))
+                           AND delivery.trigger_kind IN ('heartbeat', 'mention')))
                   AND member.status = 'active' AND profile.status = 'active'
                   AND NOT EXISTS (
                     SELECT 1 FROM project_agent_deliveries active
@@ -1083,7 +1149,7 @@ impl AgentConversationStore {
         }
         if !matches!(
             pending.trigger_kind.as_str(),
-            "default_agent" | "agent_mention" | "heartbeat"
+            "mention" | "default_agent" | "agent_mention" | "heartbeat"
         ) {
             return Err(team_store_error());
         }
@@ -1184,7 +1250,7 @@ impl AgentConversationStore {
                   AND room.status = 'active'
                   AND (room.conversation_kind = 'agent_agent_direct'
                        OR (room.conversation_kind = 'human_agent_direct'
-                           AND delivery.trigger_kind = 'heartbeat'))
+                           AND delivery.trigger_kind IN ('heartbeat', 'mention')))
                   AND (delivery.status = 'running' OR run.status IN ('ready', 'running'))
                 ORDER BY run.updated_at_unix_ms DESC, delivery.id
                 LIMIT 500
@@ -5347,12 +5413,19 @@ fn load_agent_communication_tool_binding(
              AND member.room_id = delivery.room_id
              AND member.agent_id = delivery.target_agent_id
             WHERE run.owner_user_id = ?1 AND run.run_id = ?2
-              AND run.status IN ('ready', 'running')
-              AND delivery.status = 'running' AND delivery.trigger_kind != 'todo'
+              AND delivery.trigger_kind != 'todo'
+              AND (
+                (run.status IN ('ready', 'running') AND delivery.status = 'running')
+                OR (
+                  run.status = 'ready' AND delivery.status = 'pending'
+                  AND delivery.trigger_kind = 'default_agent'
+                  AND room.conversation_kind = 'human_agent_direct'
+                )
+              )
               AND room.status = 'active'
-              AND (room.conversation_kind IN ('project_team', 'agent_agent_direct')
-                   OR (room.conversation_kind = 'human_agent_direct'
-                       AND delivery.trigger_kind = 'heartbeat'))
+              AND room.conversation_kind IN (
+                  'project_team', 'agent_agent_direct', 'human_agent_direct'
+              )
               AND member.status = 'active'
             LIMIT 1
             "#,
@@ -5590,7 +5663,10 @@ mod tests {
                     heartbeat_prompt TEXT NOT NULL DEFAULT '',
                     last_heartbeat_at_unix_ms INTEGER,
                     next_heartbeat_at_unix_ms INTEGER,
+                    avatar_data BLOB,
                     status TEXT NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL DEFAULT 0,
+                    updated_at_unix_ms INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(owner_user_id, id)
                 );
                 "#,
@@ -8344,6 +8420,13 @@ mod tests {
                 100,
             )
             .unwrap();
+        let tool_binding = load_agent_communication_tool_binding(
+            &Connection::open(store.database()).unwrap(),
+            "alice",
+            "run-1",
+        )
+        .unwrap();
+        assert_eq!(tool_binding.conversation_kind, "human_agent_direct");
         assert!(store
             .communication_rooms_requiring_scheduler("alice")
             .unwrap()
@@ -8426,5 +8509,537 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(store.activity_room_ids("bob", "agent-1").is_err());
+    }
+
+    #[test]
+    fn staffing_proposals_require_human_resolution_and_notify_the_proposer() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        insert_agent(&store, "alice", "target", "active");
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET default_skill_ids_json = \
+                 '[\"agent.staff.hire\",\"agent.staff.terminate\"]' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let source = store
+            .create_project_team("alice", "project-1", "来源团队", "管理团队成员")
+            .unwrap();
+        let target_team = store
+            .create_project_team("alice", "project-2", "目标团队", "接收现有 Agent")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &source.id, "manager")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &source.id, "target")
+            .unwrap();
+        let queued = store
+            .queue_project_team_message("alice", &source.id, "请评估团队配置", &["manager".into()])
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &source.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.delivery_id, queued.deliveries[0].delivery_id);
+        store
+            .claim_project_team_delivery("alice", &delivery, "turn-staffing", "run-staffing", 10)
+            .unwrap();
+        let (_, workspace) = store
+            .agent_workspace_snapshot("alice", "run-staffing")
+            .unwrap();
+        let target_agent_reference = workspace["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["is_current_agent"] == false)
+            .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let target_team_reference = workspace["teams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|team| team["name"] == "目标团队")
+            .unwrap()["team_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (_, membership_ack) = store
+            .create_agent_membership_proposal(
+                "alice",
+                "run-staffing",
+                "proposal-membership",
+                &target_team_reference,
+                &target_agent_reference,
+                "测试工程师",
+                "负责验收",
+                11,
+            )
+            .unwrap();
+        assert_eq!(membership_ack["status"], "pending");
+        assert!(store
+            .load_project_team("alice", &target_team.id)
+            .unwrap()
+            .members
+            .is_empty());
+        let membership = store
+            .list_agent_staffing_proposals("alice", &source.id)
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.kind == "existingAgentMembership")
+            .unwrap();
+        let membership_resolution = store
+            .resolve_agent_staffing_proposal(
+                "alice",
+                &source.id,
+                &membership.id,
+                "existingAgentMembership",
+                true,
+                12,
+            )
+            .unwrap();
+        assert_eq!(membership_resolution.status, "approved");
+        assert_eq!(
+            store
+                .load_project_team("alice", &target_team.id)
+                .unwrap()
+                .members[0]
+                .agent_id,
+            "target"
+        );
+
+        let (_, creation_ack) = store
+            .create_agent_creation_proposal(
+                "alice",
+                "run-staffing",
+                "proposal-creation",
+                "新同事",
+                "后端工程师",
+                "实现服务端能力",
+                "严格完成后端任务",
+                None,
+                "backend_engineer",
+                "团队存在长期后端职责缺口",
+                13,
+            )
+            .unwrap();
+        assert_eq!(creation_ack["status"], "pending");
+        let creation = store
+            .list_agent_staffing_proposals("alice", &source.id)
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.kind == "agentCreation")
+            .unwrap();
+        let creation_resolution = store
+            .resolve_agent_staffing_proposal(
+                "alice",
+                &source.id,
+                &creation.id,
+                "agentCreation",
+                true,
+                14,
+            )
+            .unwrap();
+        assert_eq!(creation_resolution.status, "approved");
+        let created_agent_id = creation_resolution.created_agent_id.unwrap();
+        assert!(store
+            .load_project_team("alice", &source.id)
+            .unwrap()
+            .members
+            .iter()
+            .any(|member| member.agent_id == created_agent_id));
+
+        let (_, removal_ack) = store
+            .create_agent_removal_proposal(
+                "alice",
+                "run-staffing",
+                "proposal-removal",
+                &target_agent_reference,
+                "当前团队职责已经调整",
+                "先完成现有验收交接",
+                15,
+            )
+            .unwrap();
+        assert_eq!(removal_ack["status"], "pending");
+        let removal = store
+            .list_agent_staffing_proposals("alice", &source.id)
+            .unwrap()
+            .into_iter()
+            .find(|proposal| proposal.kind == "agentRemoval")
+            .unwrap();
+        store
+            .resolve_agent_staffing_proposal(
+                "alice",
+                &source.id,
+                &removal.id,
+                "agentRemoval",
+                true,
+                16,
+            )
+            .unwrap();
+        assert!(!store
+            .load_project_team("alice", &source.id)
+            .unwrap()
+            .members
+            .iter()
+            .any(|member| member.agent_id == "target"));
+        assert!(store
+            .list_agent_staffing_proposals("alice", &source.id)
+            .unwrap()
+            .is_empty());
+        let connection = Connection::open(store.database()).unwrap();
+        let resolution_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_deliveries WHERE owner_user_id = 'alice' \
+                 AND room_id = ?1 AND trigger_kind = 'mention' \
+                 AND deduplication_key LIKE 'proposal-resolution:%'",
+                params![source.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(resolution_count, 3);
+    }
+
+    #[test]
+    fn direct_staffing_resolution_runs_without_scheduling_the_human_ui_delivery() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_profiles SET default_skill_ids_json = \
+                 '[\"agent.staff.hire\",\"agent.staff.terminate\"]' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        let room = store.open_human_agent_direct("alice", "manager").unwrap();
+        let binding = store.load_execution_binding("alice", &room.id).unwrap();
+        store
+            .record_direct_delivery(
+                "alice",
+                &binding,
+                "delivery-ui",
+                "message-ui",
+                "turn-ui",
+                "run-ui",
+                "请评估是否需要新成员",
+                10,
+            )
+            .unwrap();
+        assert!(store
+            .communication_rooms_requiring_scheduler("alice")
+            .unwrap()
+            .is_empty());
+        store
+            .create_agent_creation_proposal(
+                "alice",
+                "run-ui",
+                "proposal-direct",
+                "候选 Agent",
+                "工程师",
+                "协助交付",
+                "完成受托工作",
+                None,
+                "software_engineer",
+                "存在长期职责缺口",
+                11,
+            )
+            .unwrap();
+        let proposal = store
+            .list_agent_staffing_proposals("alice", &room.id)
+            .unwrap()
+            .remove(0);
+        store
+            .resolve_agent_staffing_proposal(
+                "alice",
+                &room.id,
+                &proposal.id,
+                "agentCreation",
+                false,
+                12,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .communication_rooms_requiring_scheduler("alice")
+                .unwrap(),
+            vec![room.id.clone()]
+        );
+        let pending = store
+            .next_agent_communication_delivery("alice", &room.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.trigger_kind, "mention");
+        assert!(pending.content.contains("Human 已拒绝"));
+    }
+
+    #[test]
+    fn direct_staffing_creation_is_permission_bound_idempotent_and_profile_only() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "manager", "active");
+        let room = store.open_human_agent_direct("alice", "manager").unwrap();
+        let binding = store.load_execution_binding("alice", &room.id).unwrap();
+        store
+            .record_direct_delivery(
+                "alice",
+                &binding,
+                "delivery-staffing-direct",
+                "message-staffing-direct",
+                "turn-staffing-direct",
+                "run-staffing-direct",
+                "请评估人员配置",
+                10,
+            )
+            .unwrap();
+
+        let unauthorized = store.create_agent_creation_proposal(
+            "alice",
+            "run-staffing-direct",
+            "proposal-direct-create",
+            "后端工程师",
+            "后端工程师",
+            "负责服务端交付",
+            "完成服务端任务",
+            None,
+            "backend_engineer",
+            "存在长期职责缺口",
+            11,
+        );
+        assert_eq!(
+            unauthorized.unwrap_err(),
+            "The current Agent does not have staff-management permission."
+        );
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET default_skill_ids_json = \
+                 '[\"agent.staff.hire\",\"agent.staff.terminate\"]' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        for _ in 0..2 {
+            store
+                .create_agent_creation_proposal(
+                    "alice",
+                    "run-staffing-direct",
+                    "proposal-direct-create",
+                    "后端工程师",
+                    "后端工程师",
+                    "负责服务端交付",
+                    "完成服务端任务",
+                    None,
+                    "backend_engineer",
+                    "存在长期职责缺口",
+                    12,
+                )
+                .unwrap();
+        }
+        assert!(store
+            .create_agent_creation_proposal(
+                "alice",
+                "run-staffing-direct",
+                "proposal-direct-create",
+                "不同名称",
+                "后端工程师",
+                "负责服务端交付",
+                "完成服务端任务",
+                None,
+                "backend_engineer",
+                "存在长期职责缺口",
+                12,
+            )
+            .unwrap_err()
+            .contains("reused with different input"));
+        let proposals = store
+            .list_agent_staffing_proposals("alice", &room.id)
+            .unwrap();
+        assert_eq!(proposals.len(), 1);
+        let resolution = store
+            .resolve_agent_staffing_proposal(
+                "alice",
+                &room.id,
+                &proposals[0].id,
+                "agentCreation",
+                true,
+                13,
+            )
+            .unwrap();
+        assert_eq!(resolution.status, "approved");
+        let created_agent_id = resolution.created_agent_id.unwrap();
+        let connection = Connection::open(store.database()).unwrap();
+        let created: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_agent_profiles WHERE owner_user_id = 'alice' \
+                 AND id = ?1 AND status = 'active')",
+                params![created_agent_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let direct_member_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_room_members WHERE owner_user_id = 'alice' \
+                 AND room_id = ?1 AND status = 'active'",
+                params![room.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(created);
+        assert_eq!(direct_member_count, 1);
+    }
+
+    #[test]
+    fn staffing_tools_all_require_permission_and_manager_removal_requires_handoff() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "proposer", "active");
+        insert_agent(&store, "alice", "manager", "active");
+        Connection::open(store.database())
+            .unwrap()
+            .execute(
+                "UPDATE local_agent_profiles SET profession_key = 'project_manager' \
+                 WHERE owner_user_id = 'alice' AND id = 'manager'",
+                [],
+            )
+            .unwrap();
+        let team = store
+            .create_project_team("alice", "project-1", "项目团队", "完成项目")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "proposer")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .set_project_team_manager("alice", &team.id, "manager")
+            .unwrap();
+        store
+            .queue_project_team_message("alice", &team.id, "请评估人员配置", &["proposer".into()])
+            .unwrap();
+        let pending = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        store
+            .claim_project_team_delivery(
+                "alice",
+                &pending,
+                "turn-staffing-permission",
+                "run-staffing-permission",
+                10,
+            )
+            .unwrap();
+        for result in [
+            store
+                .create_agent_creation_proposal(
+                    "alice",
+                    "run-staffing-permission",
+                    "unauthorized-create",
+                    "新成员",
+                    "工程师",
+                    "负责交付",
+                    "完成任务",
+                    None,
+                    "software_engineer",
+                    "补充人力",
+                    11,
+                )
+                .map(|_| ()),
+            store
+                .create_agent_membership_proposal(
+                    "alice",
+                    "run-staffing-permission",
+                    "unauthorized-membership",
+                    "team_ref_not_resolved",
+                    "agent_ref_not_resolved",
+                    "工程师",
+                    "负责交付",
+                    11,
+                )
+                .map(|_| ()),
+            store
+                .create_agent_removal_proposal(
+                    "alice",
+                    "run-staffing-permission",
+                    "unauthorized-removal",
+                    "agent_ref_not_resolved",
+                    "职责调整",
+                    "完成交接",
+                    11,
+                )
+                .map(|_| ()),
+        ] {
+            assert_eq!(
+                result.unwrap_err(),
+                "The current Agent does not have staff-management permission."
+            );
+        }
+
+        let connection = Connection::open(store.database()).unwrap();
+        connection
+            .execute(
+                "UPDATE local_agent_profiles SET default_skill_ids_json = \
+                 '[\"agent.staff.hire\",\"agent.staff.terminate\"]' \
+                 WHERE owner_user_id = 'alice' AND id = 'proposer'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let (_, workspace) = store
+            .agent_workspace_snapshot("alice", "run-staffing-permission")
+            .unwrap();
+        let manager_reference = workspace["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["name"] == "测试 Agent" && agent["is_current_agent"] == false)
+            .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        store
+            .create_agent_removal_proposal(
+                "alice",
+                "run-staffing-permission",
+                "manager-removal",
+                &manager_reference,
+                "职责调整",
+                "先完成负责人交接",
+                12,
+            )
+            .unwrap();
+        let proposal = store
+            .list_agent_staffing_proposals("alice", &team.id)
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            store
+                .resolve_agent_staffing_proposal(
+                    "alice",
+                    &team.id,
+                    &proposal.id,
+                    "agentRemoval",
+                    true,
+                    13,
+                )
+                .unwrap_err(),
+            "请先指定新的项目经理，再批准移出当前项目经理。"
+        );
+        assert!(store
+            .load_project_team("alice", &team.id)
+            .unwrap()
+            .members
+            .iter()
+            .any(|member| member.agent_id == "manager"));
     }
 }

@@ -4,6 +4,8 @@ import {
   agentConversationActivitySnapshotSchema,
   agentProfileActivitySnapshotSchema,
   agentProfileListSchema,
+  agentStaffingProposalListSchema,
+  agentStaffingResolutionSchema,
   agentTeamListSchema,
   agentTeamDetailSchema,
   heartbeatIntervalLabel,
@@ -167,6 +169,58 @@ describe("agent management domain", () => {
       ...detail,
       team: { ...detail.team, projectManagerAgentId: "agent-2" },
     })).toThrow("Agent 团队负责人必须是活动成员");
+  });
+
+  it("accepts only kind-consistent pending staffing proposals", () => {
+    const sourceRoomId = "11111111-1111-4111-8111-111111111111";
+    const creation = {
+      id: "proposal-1",
+      kind: "agentCreation" as const,
+      sourceRoomId,
+      proposerAgentId: "agent-1",
+      status: "pending" as const,
+      name: "后端工程师",
+      role: "后端工程师",
+      responsibility: "负责服务端交付",
+      rolePrompt: "严格按项目目标完成服务端工作",
+      thinkingLevel: "high" as const,
+      professionKey: "backend_engineer" as const,
+      rationale: "团队存在长期后端职责缺口",
+      targetTeamId: null,
+      targetAgentId: null,
+      reason: null,
+      handoffPlan: null,
+      createdAtUnixMs: 10,
+    };
+    expect(agentStaffingProposalListSchema.parse([creation])).toEqual([creation]);
+    expect(() => agentStaffingProposalListSchema.parse([{
+      ...creation,
+      kind: "agentRemoval",
+      targetAgentId: "agent-2",
+      reason: "职责调整",
+    }])).toThrow("Agent 人员提案字段不一致");
+    expect(() => agentStaffingProposalListSchema.parse([creation, creation])).toThrow("Agent 人员提案不能重复");
+  });
+
+  it("requires approved staffing resolutions to describe their real effect", () => {
+    const sourceRoomId = "11111111-1111-4111-8111-111111111111";
+    const approvedCreation = {
+      proposalId: "proposal-1",
+      kind: "agentCreation" as const,
+      status: "approved" as const,
+      sourceRoomId,
+      affectedTeamId: null,
+      createdAgentId: "agent-created",
+    };
+    expect(agentStaffingResolutionSchema.parse(approvedCreation)).toEqual(approvedCreation);
+    expect(() => agentStaffingResolutionSchema.parse({
+      ...approvedCreation,
+      kind: "agentRemoval",
+    })).toThrow("Agent 人员提案审批结果不一致");
+    expect(() => agentStaffingResolutionSchema.parse({
+      ...approvedCreation,
+      status: "rejected",
+    })).toThrow("被拒绝提案不能产生人员变更");
   });
 });
 

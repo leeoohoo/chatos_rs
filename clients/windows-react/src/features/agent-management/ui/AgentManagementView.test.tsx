@@ -783,6 +783,75 @@ describe("AgentManagementView", () => {
     expect(screen.getByText(/Delivery delivery-1/)).toBeVisible();
   });
 
+  it("shows complete staffing facts and sends the Human approval decision", async () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    const proposal = {
+      id: "proposal-1",
+      kind: "agentCreation" as const,
+      sourceRoomId: roomId,
+      proposerAgentId: "agent-1",
+      status: "pending" as const,
+      name: "后端工程师",
+      role: "服务端负责人",
+      responsibility: "负责服务端交付",
+      rolePrompt: "严格参考现有架构完成服务端任务",
+      thinkingLevel: "high" as const,
+      professionKey: "backend_engineer" as const,
+      rationale: "团队存在长期后端职责缺口",
+      targetTeamId: null,
+      targetAgentId: null,
+      reason: null,
+      handoffPlan: null,
+      createdAtUnixMs: 30,
+    };
+    const resolveStaffingProposal = vi.fn(async () => ({
+      proposalId: proposal.id,
+      kind: proposal.kind,
+      status: "approved" as const,
+      sourceRoomId: roomId,
+      affectedTeamId: null,
+      createdAgentId: "agent-created",
+    }));
+    const port = stubPort({
+      prepareConversation: vi.fn(async () => ({
+        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        title: "界面设计师", createdAtUnixMs: 10, updatedAtUnixMs: 20,
+      })),
+      loadConversationActivity: vi.fn(async () => ({
+        roomId, agentId: "agent-1", conversationId: `agent-direct-${roomId}`,
+        conversationVersion: 1, hasActiveDelivery: false, items: [],
+      })),
+      listStaffingProposals: vi.fn(async () => [proposal]),
+      resolveStaffingProposal,
+      sendConversationDraft: vi.fn(),
+    });
+    render(
+      <AgentManagementView
+        askUserPort={{} as never}
+        attachmentPort={{} as never}
+        historyPort={{} as never}
+        ownerUserId="owner-1"
+        port={port}
+        realtimePort={{} as never}
+        runInspectorPort={{} as never}
+        runtimeSettingsPort={{} as never}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "私聊" }));
+    expect(await screen.findByRole("region", { name: "待审批人员提案" })).toBeVisible();
+    expect(await screen.findByText("创建 Agent：后端工程师")).toBeVisible();
+    expect(screen.getByText("负责服务端交付")).toBeVisible();
+    expect(screen.getByText("团队存在长期后端职责缺口")).toBeVisible();
+    fireEvent.click(screen.getByText("查看完整角色提示词"));
+    expect(screen.getByText("严格参考现有架构完成服务端任务")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "批准" }));
+    await waitFor(() => expect(resolveStaffingProposal).toHaveBeenCalledWith(
+      "owner-1", roomId, proposal.id, proposal.kind, true,
+    ));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "待审批人员提案" })).not.toBeInTheDocument());
+  });
+
   it("edits the macOS-compatible bilingual Skill catalog", async () => {
     const item = {
       kind: "profession" as const,

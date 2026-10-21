@@ -24,6 +24,9 @@ import {
   projectRequirementSurveySchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
+  agentStaffingProposalListSchema,
+  agentStaffingResolutionSchema,
+  type AgentStaffingProposal,
   type AgentProfileMutationInput,
   type CreateAgentTeamInput,
   type UpdateAgentTeamMemberInput,
@@ -182,6 +185,26 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async removeAgentFromTeam(ownerUserId: string, teamId: string, agentId: string) {
     return agentTeamDetailSchema.parse(
       await invoke("remove_agent_from_team", { input: { ownerUserId, teamId, agentId } }),
+    );
+  }
+
+  async listStaffingProposals(ownerUserId: string, sourceRoomId: string) {
+    return agentStaffingProposalListSchema.parse(
+      await invoke("list_agent_staffing_proposals", { ownerUserId, sourceRoomId }),
+    );
+  }
+
+  async resolveStaffingProposal(
+    ownerUserId: string,
+    sourceRoomId: string,
+    proposalId: string,
+    kind: AgentStaffingProposal["kind"],
+    approved: boolean,
+  ) {
+    return agentStaffingResolutionSchema.parse(
+      await invoke("resolve_agent_staffing_proposal", {
+        input: { ownerUserId, sourceRoomId, proposalId, kind, approved },
+      }),
     );
   }
 

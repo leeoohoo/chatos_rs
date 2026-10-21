@@ -479,6 +479,75 @@ export const agentTeamDetailSchema = z.object({
   }
 });
 
+export const agentStaffingProposalSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  kind: z.enum(["agentCreation", "existingAgentMembership", "agentRemoval"]),
+  sourceRoomId: z.string().uuid(),
+  proposerAgentId: z.string().trim().min(1).max(512),
+  status: z.literal("pending"),
+  name: z.string().trim().min(1).max(120).nullable(),
+  role: z.string().trim().min(1).max(160).nullable(),
+  responsibility: z.string().trim().max(8_000).nullable(),
+  rolePrompt: z.string().trim().min(1).max(32_000).nullable(),
+  thinkingLevel: agentThinkingLevelSchema.nullable(),
+  professionKey: agentProfessionKeySchema.nullable(),
+  rationale: z.string().trim().max(4_000).nullable(),
+  targetTeamId: z.string().uuid().nullable(),
+  targetAgentId: z.string().trim().min(1).max(512).nullable(),
+  reason: z.string().trim().min(1).max(4_000).nullable(),
+  handoffPlan: z.string().trim().max(8_000).nullable(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((proposal, context) => {
+  const valid = proposal.kind === "agentCreation"
+    ? proposal.name != null && proposal.role != null && proposal.rolePrompt != null
+      && proposal.professionKey != null && proposal.targetTeamId == null
+      && proposal.targetAgentId == null && proposal.reason == null
+    : proposal.kind === "existingAgentMembership"
+      ? proposal.targetTeamId != null && proposal.targetAgentId != null
+        && proposal.role != null && proposal.name == null && proposal.reason == null
+      : proposal.targetTeamId === proposal.sourceRoomId && proposal.targetAgentId != null
+        && proposal.reason != null && proposal.name == null && proposal.role == null;
+  if (!valid) {
+    context.addIssue({ code: "custom", message: "Agent 人员提案字段不一致。" });
+  }
+});
+
+export const agentStaffingProposalListSchema = z.array(agentStaffingProposalSchema).max(3_000)
+  .superRefine((proposals, context) => {
+    const identifiers = new Set<string>();
+    proposals.forEach((proposal, index) => {
+      if (identifiers.has(proposal.id)) {
+        context.addIssue({ code: "custom", message: "Agent 人员提案不能重复。", path: [index, "id"] });
+      }
+      identifiers.add(proposal.id);
+    });
+  });
+
+export const agentStaffingResolutionSchema = z.object({
+  proposalId: z.string().trim().min(1).max(512),
+  kind: z.enum(["agentCreation", "existingAgentMembership", "agentRemoval"]),
+  status: z.enum(["approved", "rejected"]),
+  sourceRoomId: z.string().uuid(),
+  affectedTeamId: z.string().uuid().nullable(),
+  createdAgentId: z.string().trim().min(1).max(512).nullable(),
+}).strict().superRefine((resolution, context) => {
+  if (resolution.status === "rejected"
+    && (resolution.affectedTeamId != null || resolution.createdAgentId != null)) {
+    context.addIssue({ code: "custom", message: "被拒绝提案不能产生人员变更。" });
+    return;
+  }
+  if (resolution.status !== "approved") return;
+  const valid = resolution.kind === "agentCreation"
+    ? resolution.createdAgentId != null
+    : resolution.createdAgentId == null && resolution.affectedTeamId != null;
+  if (!valid) {
+    context.addIssue({ code: "custom", message: "Agent 人员提案审批结果不一致。" });
+  }
+});
+
+export type AgentStaffingProposal = z.infer<typeof agentStaffingProposalSchema>;
+export type AgentStaffingResolution = z.infer<typeof agentStaffingResolutionSchema>;
+
 export const agentTeamMessageSchema = z.object({
   id: z.string().trim().min(1).max(512),
   senderKind: z.enum(["human", "agent", "system"]),

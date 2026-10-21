@@ -35,6 +35,9 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
+use agent_conversation::proposals::{
+    list_agent_staffing_proposals, resolve_agent_staffing_proposal,
+};
 use agent_conversation::team_todo::{
     cancel_agent_team_todo, create_agent_team_todo, list_agent_team_todo_progress,
     list_agent_team_todos, reorder_agent_team_todos, retry_agent_team_run, update_agent_team_todo,
@@ -302,6 +305,8 @@ pub fn run() {
             set_agent_team_default_agent,
             set_agent_team_project_manager,
             remove_agent_from_team,
+            list_agent_staffing_proposals,
+            resolve_agent_staffing_proposal,
             queue_agent_team_message,
             dispatch_next_agent_team_delivery,
             prepare_agent_conversation,

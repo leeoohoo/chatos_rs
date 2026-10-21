@@ -410,6 +410,28 @@
 .agent-activity__status--completed { color: #2467b1; background: rgba(10,132,255,.10); }
 .agent-activity__status--failed { color: #c9342d; background: rgba(255,59,48,.10); }
 @keyframes agent-activity-pulse { 50% { opacity: .45; transform: scale(.86); } }
+.agent-staffing-proposals { display: grid; flex: none; gap: 8px; border-bottom: 1px solid var(--separator); padding: 11px 18px 13px; background: rgba(255,250,238,.78); }
+.agent-staffing-proposals > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-staffing-proposals > header > div { display: grid; gap: 2px; }
+.agent-staffing-proposals > header strong { font-size: 11px; }
+.agent-staffing-proposals > header small { color: var(--secondary); font-size: 9px; line-height: 1.45; }
+.agent-staffing-proposals > article { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; border: 1px solid rgba(255,159,10,.19); border-radius: 12px; padding: 11px 12px; background: rgba(255,255,255,.86); box-shadow: 0 1px 3px rgba(0,0,0,.035); }
+.agent-staffing-proposals__content { display: grid; min-width: 0; gap: 5px; }
+.agent-staffing-proposals__title { display: flex; align-items: center; gap: 9px; }
+.agent-staffing-proposals__title > span { border-radius: 999px; padding: 3px 7px; color: #a85d00; background: rgba(255,159,10,.13); font-size: 8.5px; font-weight: 700; }
+.agent-staffing-proposals__title > div { display: grid; min-width: 0; gap: 2px; }
+.agent-staffing-proposals__title strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-staffing-proposals__title small { color: var(--secondary); font-size: 8.5px; }
+.agent-staffing-proposals__content p { display: grid; grid-template-columns: 72px minmax(0,1fr); gap: 8px; margin: 0; color: var(--secondary); font-size: 9.5px; line-height: 1.5; }
+.agent-staffing-proposals__content p b { color: var(--primary); font-weight: 650; }
+.agent-staffing-proposals details { margin-top: 2px; color: var(--accent); font-size: 9px; }
+.agent-staffing-proposals summary { cursor: pointer; }
+.agent-staffing-proposals pre { max-height: 180px; overflow: auto; margin: 7px 0 0; border-radius: 8px; padding: 9px; color: var(--primary); background: rgba(120,120,128,.07); font: 9px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space: pre-wrap; }
+.agent-staffing-proposals > article > footer { display: flex; align-items: end; gap: 7px; }
+.agent-staffing-proposals > article > footer button { min-height: 28px; border: 0; border-radius: 8px; padding: 5px 11px; color: var(--primary); background: rgba(120,120,128,.10); font-size: 9.5px; font-weight: 650; }
+.agent-staffing-proposals > article > footer .primary-button { color: white; background: var(--accent); }
+.agent-staffing-proposals > article > footer button:disabled { opacity: .45; }
+.agent-staffing-proposals__error { border-radius: 8px; padding: 7px 9px; color: #c9342d; background: rgba(255,59,48,.07); font-size: 9.5px; }
 .agent-profile-activity { display: flex; height: min(340px,40vh); min-height: 210px; flex: none; flex-direction: column; border-top: 1px solid var(--separator); background: rgba(248,248,250,.74); }
 .agent-profile-activity > header { display: flex; min-height: 59px; flex: none; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 18px; background: rgba(255,255,255,.56); }
 .agent-profile-activity > header h3, .agent-profile-activity > header p { margin: 0; }

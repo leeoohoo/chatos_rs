@@ -66,8 +66,11 @@ const TEAM_CHAT_READ_TOOL_NAMES: [&str; 4] = [
     "chat_read_all_unread",
     "chat_read_attachment",
 ];
-const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 4] = [
+const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 7] = [
     "chat_document_create",
+    "agent_propose_member",
+    "agent_propose_existing_member",
+    "agent_propose_member_removal",
     "chat_send_message",
     "chat_heartbeat_complete",
     "agent_cycle_complete",
@@ -419,6 +422,65 @@ async fn execute_team_chat_write_tool(
     }
     if matches!(
         claim.invocation.tool_name.as_str(),
+        "agent_propose_member" | "agent_propose_existing_member" | "agent_propose_member_removal"
+    ) {
+        let store = app.state::<AgentConversationStore>().inner().clone();
+        let owner = owner_user_id.to_owned();
+        let run_id = run.run_id.clone();
+        let request_key = claim.invocation.invocation_id.clone();
+        let tool_name = claim.invocation.tool_name.clone();
+        let arguments = arguments.clone();
+        let (binding, output) =
+            tauri::async_runtime::spawn_blocking(move || match tool_name.as_str() {
+                "agent_propose_member" => store.create_agent_creation_proposal(
+                    &owner,
+                    &run_id,
+                    &request_key,
+                    &required_bounded_string(&arguments, "name", 120)?,
+                    &required_bounded_string(&arguments, "role", 160)?,
+                    optional_bounded_string(&arguments, "responsibility", 8_000)?
+                        .as_deref()
+                        .unwrap_or_default(),
+                    &required_bounded_string(&arguments, "role_prompt", 32_000)?,
+                    optional_bounded_string(&arguments, "thinking_level", 16)?.as_deref(),
+                    &required_bounded_string(&arguments, "profession_key", 120)?,
+                    optional_bounded_string(&arguments, "rationale", 4_000)?
+                        .as_deref()
+                        .unwrap_or_default(),
+                    now_unix_ms(),
+                ),
+                "agent_propose_existing_member" => store.create_agent_membership_proposal(
+                    &owner,
+                    &run_id,
+                    &request_key,
+                    &required_bounded_string(&arguments, "team_ref", 600)?,
+                    &required_bounded_string(&arguments, "target_agent_ref", 600)?,
+                    &required_bounded_string(&arguments, "role", 160)?,
+                    optional_bounded_string(&arguments, "responsibility", 8_000)?
+                        .as_deref()
+                        .unwrap_or_default(),
+                    now_unix_ms(),
+                ),
+                "agent_propose_member_removal" => store.create_agent_removal_proposal(
+                    &owner,
+                    &run_id,
+                    &request_key,
+                    &required_bounded_string(&arguments, "target_agent_ref", 600)?,
+                    &required_bounded_string(&arguments, "reason", 4_000)?,
+                    optional_bounded_string(&arguments, "handoff_plan", 8_000)?
+                        .as_deref()
+                        .unwrap_or_default(),
+                    now_unix_ms(),
+                ),
+                _ => Err("The Agent staffing proposal tool is unavailable.".into()),
+            })
+            .await
+            .map_err(|_| "The Agent staffing proposal task exited unexpectedly.".to_owned())??;
+        validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
+        return Ok(LocalAgentToolOutcome::Succeeded { output });
+    }
+    if matches!(
+        claim.invocation.tool_name.as_str(),
         "chat_heartbeat_complete" | "agent_cycle_complete"
     ) {
         if !arguments.is_empty() {
@@ -539,7 +601,11 @@ pub(crate) fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, te
     });
 }
 
-fn schedule_agent_communication_drain(app: AppHandle, owner_user_id: String, room_id: String) {
+pub(crate) fn schedule_agent_communication_drain(
+    app: AppHandle,
+    owner_user_id: String,
+    room_id: String,
+) {
     tauri::async_runtime::spawn(async move {
         let key = format!("communication\0{owner_user_id}\0{room_id}");
         let active = ACTIVE_TEAM_TODO_DRAINS.get_or_init(|| Mutex::new(HashSet::new()));
@@ -1366,9 +1432,11 @@ fn validate_communication_run_context(
                     == Some("agent_agent_direct")
         }
         "human_agent_direct" => {
-            identity.get("schema_version").and_then(Value::as_u64) == Some(3)
-                && identity.get("conversation_kind").and_then(Value::as_str)
-                    == Some("human_agent_direct")
+            (identity.get("schema_version").and_then(Value::as_u64) == Some(1)
+                && identity.get("conversation_kind").is_none())
+                || (identity.get("schema_version").and_then(Value::as_u64) == Some(3)
+                    && identity.get("conversation_kind").and_then(Value::as_str)
+                        == Some("human_agent_direct"))
         }
         _ => false,
     };
@@ -1887,6 +1955,68 @@ pub fn team_chat_write_tool_schemas() -> Vec<Value> {
         }),
         json!({
             "type": "function",
+            "name": "agent_propose_member",
+            "description": "使用已授予的人员管理权限，向 Human 提交新 Agent 草案。模型配置由客户端继承当前 Agent；该工具只创建待审批提案，绝不会直接创建 Agent。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "role": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "responsibility": {"type": "string", "maxLength": 8000},
+                    "role_prompt": {"type": "string", "minLength": 1, "maxLength": 32000},
+                    "thinking_level": {"type": "string", "enum": ["auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"]},
+                    "profession_key": {"type": "string", "enum": [
+                        "project_manager", "product_manager", "technical_manager",
+                        "solution_architect", "security_engineer", "qa_engineer",
+                        "software_engineer", "fullstack_engineer", "frontend_engineer",
+                        "backend_engineer", "mobile_engineer", "desktop_engineer",
+                        "game_engineer", "embedded_iot_engineer", "database_engineer",
+                        "devops_engineer", "data_engineer", "data_analyst",
+                        "machine_learning_engineer", "research_specialist", "product_designer",
+                        "ui_designer", "ux_designer", "game_designer", "technical_writer",
+                        "business_analyst", "implementation_consultant", "erp_consultant",
+                        "wms_consultant", "domain_expert", "operations_specialist",
+                        "growth_marketing_specialist", "general_member"
+                    ]},
+                    "rationale": {"type": "string", "maxLength": 4000}
+                },
+                "required": ["name", "role", "role_prompt", "profession_key"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "agent_propose_existing_member",
+            "description": "使用人员管理权限，提交把账户中已有 Agent 加入指定项目团队的待审批提案。team_ref 与 target_agent_ref 必须来自当前 Run 的 agent_workspace_snapshot。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "target_agent_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "role": {"type": "string", "minLength": 1, "maxLength": 160},
+                    "responsibility": {"type": "string", "maxLength": 8000}
+                },
+                "required": ["team_ref", "target_agent_ref", "role"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "agent_propose_member_removal",
+            "description": "使用人员管理权限，提交把一个 Agent 移出当前项目团队的待审批提案。不会删除可复用 Agent profile，也不会绕过 Human 确认。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_agent_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+                    "handoff_plan": {"type": "string", "maxLength": 8000}
+                },
+                "required": ["target_agent_ref", "reason"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
             "name": "chat_send_message",
             "description": "向当前会话发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，使用 agent_workspace_snapshot 返回的 target_agent_ref 主动私聊并唤醒另一个 Agent，或用 team_ref 主动发送到另一个项目团队。reply_to_message_ref、target_agent_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标会话的 agent_ref。",
             "parameters": {
@@ -2142,12 +2272,15 @@ mod tests {
     #[test]
     fn team_chat_write_catalog_accepts_only_run_scoped_mentions() {
         let schemas = team_chat_write_tool_schemas();
-        assert_eq!(schemas.len(), 4);
+        assert_eq!(schemas.len(), 7);
         assert_eq!(schemas[0]["name"], "chat_document_create");
-        assert_eq!(schemas[1]["name"], "chat_send_message");
-        assert_eq!(schemas[2]["name"], "chat_heartbeat_complete");
-        assert_eq!(schemas[3]["name"], "agent_cycle_complete");
-        let encoded = schemas[1].to_string();
+        assert_eq!(schemas[1]["name"], "agent_propose_member");
+        assert_eq!(schemas[2]["name"], "agent_propose_existing_member");
+        assert_eq!(schemas[3]["name"], "agent_propose_member_removal");
+        assert_eq!(schemas[4]["name"], "chat_send_message");
+        assert_eq!(schemas[5]["name"], "chat_heartbeat_complete");
+        assert_eq!(schemas[6]["name"], "agent_cycle_complete");
+        let encoded = schemas[4].to_string();
         assert!(encoded.contains("document_refs"));
         assert!(encoded.contains("mention_agent_refs"));
         assert!(encoded.contains("reply_to_message_ref"));
