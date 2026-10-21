@@ -58,7 +58,7 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_list",
     "todo_read_progress",
 ];
-const TEAM_CHAT_READ_TOOL_NAMES: [&str; 1] = ["chat_list_members"];
+const TEAM_CHAT_READ_TOOL_NAMES: [&str; 2] = ["chat_list_members", "chat_read_all_unread"];
 const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 1] = ["chat_send_message"];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
@@ -204,8 +204,10 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     };
     let schedule_team_todos = matches!(
         claim.invocation.tool_name.as_str(),
-        "todo_add" | "todo_update" | "todo_complete" | "todo_block" | "chat_send_message"
+        "todo_add" | "todo_update" | "todo_complete" | "todo_block"
     ) && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
+    let schedule_team_messages = claim.invocation.tool_name == "chat_send_message"
+        && matches!(&outcome, LocalAgentToolOutcome::Succeeded { .. });
     let team_to_schedule = if schedule_team_todos {
         let store = app.state::<AgentConversationStore>().inner().clone();
         let owner = owner_user_id.to_owned();
@@ -235,6 +237,9 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
     if let Some(team_id) = team_to_schedule {
         schedule_team_todo_drain(app.clone(), owner_user_id.to_owned(), team_id);
     }
+    if schedule_team_messages {
+        recover_team_todo_drains(app, owner_user_id).await;
+    }
     Ok(true)
 }
 
@@ -243,16 +248,11 @@ async fn execute_team_chat_read_tool(
     owner_user_id: &str,
     claim: &LocalAgentToolClaim,
 ) -> Result<LocalAgentToolOutcome, String> {
-    if claim.invocation.tool_name != "chat_list_members"
-        || claim
-            .invocation
-            .arguments
-            .as_object()
-            .filter(|arguments| arguments.is_empty())
-            .is_none()
-    {
-        return Err("The team communication arguments are invalid.".into());
-    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
     let result = app
         .state::<HostManager>()
         .execute(HostCommand::GetRun(GetRunCommand {
@@ -269,8 +269,24 @@ async fn execute_team_chat_read_tool(
     let store = app.state::<AgentConversationStore>().inner().clone();
     let owner = owner_user_id.to_owned();
     let run_id = run.run_id.clone();
-    let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
-        store.team_chat_member_snapshot(&owner, &run_id)
+    let request_key = claim.invocation.invocation_id.clone();
+    let tool_name = claim.invocation.tool_name.clone();
+    let limit = match tool_name.as_str() {
+        "chat_list_members" if arguments.is_empty() => None,
+        "chat_read_all_unread" => {
+            Some(optional_planning_integer(arguments, "limit", 1, 500)?.unwrap_or(200))
+        }
+        _ => return Err("The team communication arguments are invalid.".into()),
+    };
+    let (binding, output) = tauri::async_runtime::spawn_blocking(move || match limit {
+        Some(limit) => store.read_all_unread_team_chat(
+            &owner,
+            &run_id,
+            &request_key,
+            limit as usize,
+            now_unix_ms(),
+        ),
+        None => store.team_chat_member_snapshot(&owner, &run_id),
     })
     .await
     .map_err(|_| "The team member lookup task exited unexpectedly.".to_owned())??;
@@ -292,6 +308,7 @@ async fn execute_team_chat_write_tool(
         .as_object()
         .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
     let content = required_bounded_string(arguments, "content", 2_000)?;
+    let reply_reference = optional_bounded_string(arguments, "reply_to_message_ref", 600)?;
     let mention_references =
         planning_string_array(arguments, "mention_agent_refs", 0, 64, 600)?.unwrap_or_default();
     let result = app
@@ -317,6 +334,7 @@ async fn execute_team_chat_write_tool(
             &run_id,
             &request_key,
             &content,
+            reply_reference.as_deref(),
             &mention_references,
             now_unix_ms(),
         )
@@ -1564,28 +1582,44 @@ pub fn todo_planning_read_tool_schemas() -> Vec<Value> {
 }
 
 pub fn team_chat_read_tool_schemas() -> Vec<Value> {
-    vec![json!({
-        "type": "function",
-        "name": "chat_list_members",
-        "description": "列出当前项目团队的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-            "additionalProperties": false
-        }
-    })]
+    vec![
+        json!({
+            "type": "function",
+            "name": "chat_list_members",
+            "description": "列出当前项目团队的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "chat_read_all_unread",
+            "description": "读取当前 Agent 在全部项目团队中的未读消息，并在同一事务推进已返回会话的游标。回复时只把本工具返回的 message_ref 传给 chat_send_message；当前 Windows 调度尚不把 Agent 私聊纳入此工具。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 200}
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+    ]
 }
 
 pub fn team_chat_write_tool_schemas() -> Vec<Value> {
     vec![json!({
         "type": "function",
         "name": "chat_send_message",
-        "description": "向当前项目团队发送消息。需要 @ 其他成员时，只能使用 chat_list_members 在当前 Run 返回的 agent_ref；发送不会结束当前通讯 Run。",
+        "description": "向当前项目团队发送消息，或使用 chat_read_all_unread 返回的 message_ref 回复另一个项目团队中的消息。需要 @ 其他成员时，只能使用当前 Run 返回且属于目标团队的 agent_ref；发送不会结束当前通讯 Run。",
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "reply_to_message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                 "mention_agent_refs": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1, "maxLength": 600},
@@ -1792,9 +1826,12 @@ mod tests {
     #[test]
     fn team_chat_read_catalog_exposes_only_the_member_directory() {
         let schemas = team_chat_read_tool_schemas();
-        assert_eq!(schemas.len(), 1);
+        assert_eq!(schemas.len(), 2);
         assert_eq!(schemas[0]["name"], "chat_list_members");
-        assert!(!schemas[0].to_string().contains("agent_id"));
+        assert_eq!(schemas[1]["name"], "chat_read_all_unread");
+        assert!(schemas
+            .iter()
+            .all(|schema| !schema.to_string().contains("agent_id")));
     }
 
     #[test]
@@ -1804,6 +1841,7 @@ mod tests {
         assert_eq!(schemas[0]["name"], "chat_send_message");
         let encoded = schemas[0].to_string();
         assert!(encoded.contains("mention_agent_refs"));
+        assert!(encoded.contains("reply_to_message_ref"));
         assert!(!encoded.contains("agent_id"));
         assert!(!encoded.contains("team_id"));
         assert!(!encoded.contains("conversation_id"));
