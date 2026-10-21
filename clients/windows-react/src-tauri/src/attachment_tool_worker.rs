@@ -60,12 +60,13 @@ const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
     "todo_list",
     "todo_read_progress",
 ];
-const TEAM_CHAT_READ_TOOL_NAMES: [&str; 3] = [
+const TEAM_CHAT_READ_TOOL_NAMES: [&str; 4] = [
     "agent_workspace_snapshot",
     "chat_list_members",
     "chat_read_all_unread",
+    "chat_read_attachment",
 ];
-const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 1] = ["chat_send_message"];
+const TEAM_CHAT_WRITE_TOOL_NAMES: [&str; 2] = ["chat_document_create", "chat_send_message"];
 const TODO_PLANNING_WRITE_TOOL_NAMES: [&str; 3] = ["todo_add", "todo_update", "todo_reorder"];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
@@ -294,7 +295,25 @@ async fn execute_team_chat_read_tool(
         "chat_read_all_unread" => {
             Some(optional_planning_integer(arguments, "limit", 1, 500)?.unwrap_or(200))
         }
+        "chat_read_attachment" => {
+            Some(optional_planning_integer(arguments, "limit", 1, 12_000)?.unwrap_or(12_000))
+        }
         _ => return Err("The team communication arguments are invalid.".into()),
+    };
+    let message_reference = if tool_name == "chat_read_attachment" {
+        Some(required_bounded_string(arguments, "message_ref", 600)?)
+    } else {
+        None
+    };
+    let attachment_reference = if tool_name == "chat_read_attachment" {
+        Some(required_bounded_string(arguments, "attachment_ref", 600)?)
+    } else {
+        None
+    };
+    let offset = if tool_name == "chat_read_attachment" {
+        optional_planning_integer(arguments, "offset", 0, i64::MAX)?.unwrap_or(0) as usize
+    } else {
+        0
     };
     let (binding, output) =
         tauri::async_runtime::spawn_blocking(move || match tool_name.as_str() {
@@ -306,6 +325,19 @@ async fn execute_team_chat_read_tool(
                 &request_key,
                 limit.ok_or_else(|| "The unread limit is unavailable.".to_owned())? as usize,
                 now_unix_ms(),
+            ),
+            "chat_read_attachment" => store.read_agent_chat_attachment(
+                &owner,
+                &run_id,
+                message_reference
+                    .as_deref()
+                    .ok_or_else(|| "The message reference is unavailable.".to_owned())?,
+                attachment_reference
+                    .as_deref()
+                    .ok_or_else(|| "The attachment reference is unavailable.".to_owned())?,
+                offset,
+                limit.ok_or_else(|| "The attachment read limit is unavailable.".to_owned())?
+                    as usize,
             ),
             _ => Err("The team communication tool is unavailable.".into()),
         })
@@ -320,14 +352,51 @@ async fn execute_team_chat_write_tool(
     owner_user_id: &str,
     claim: &LocalAgentToolClaim,
 ) -> Result<LocalAgentToolOutcome, String> {
-    if claim.invocation.tool_name != "chat_send_message" {
-        return Err("The team communication mutation is unavailable.".into());
-    }
     let arguments = claim
         .invocation
         .arguments
         .as_object()
         .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The team communication Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The team communication Run context is invalid.".into());
+    }
+    if claim.invocation.tool_name == "chat_document_create" {
+        let name = required_bounded_string(arguments, "name", 240)?;
+        let title = required_bounded_string(arguments, "title", 512)?;
+        let markdown = required_bounded_string(arguments, "markdown", 2 * 1_024 * 1_024)?;
+        let store = app.state::<AgentConversationStore>().inner().clone();
+        let owner = owner_user_id.to_owned();
+        let run_id = run.run_id.clone();
+        let request_key = claim.invocation.invocation_id.clone();
+        let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
+            store.create_agent_chat_document(
+                &owner,
+                &run_id,
+                &request_key,
+                &name,
+                &title,
+                &markdown,
+                now_unix_ms(),
+            )
+        })
+        .await
+        .map_err(|_| "The Agent document task exited unexpectedly.".to_owned())??;
+        validate_communication_run_context(&run.profile_key, &run.input, &binding)?;
+        return Ok(LocalAgentToolOutcome::Succeeded { output });
+    }
+    if claim.invocation.tool_name != "chat_send_message" {
+        return Err("The team communication mutation is unavailable.".into());
+    }
     let content = required_bounded_string(arguments, "content", 2_000)?;
     let reply_reference = optional_bounded_string(arguments, "reply_to_message_ref", 600)?;
     let target_agent_reference = optional_bounded_string(arguments, "target_agent_ref", 600)?;
@@ -346,19 +415,8 @@ async fn execute_team_chat_write_tool(
     }
     let mention_references =
         planning_string_array(arguments, "mention_agent_refs", 0, 64, 600)?.unwrap_or_default();
-    let result = app
-        .state::<HostManager>()
-        .execute(HostCommand::GetRun(GetRunCommand {
-            owner_user_id: owner_user_id.to_owned(),
-            run_id: claim.invocation.run_id.clone(),
-        }))
-        .await?;
-    let HostResult::Run { run } = result else {
-        return Err("The team communication Run context is invalid.".into());
-    };
-    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
-        return Err("The team communication Run context is invalid.".into());
-    }
+    let document_references =
+        planning_string_array(arguments, "document_refs", 0, 5, 600)?.unwrap_or_default();
     let store = app.state::<AgentConversationStore>().inner().clone();
     let owner = owner_user_id.to_owned();
     let run_id = run.run_id.clone();
@@ -372,6 +430,7 @@ async fn execute_team_chat_write_tool(
             reply_reference.as_deref(),
             target_agent_reference.as_deref(),
             team_reference.as_deref(),
+            &document_references,
             &mention_references,
             now_unix_ms(),
         )
@@ -1743,32 +1802,71 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
                 "additionalProperties": false
             }
         }),
+        json!({
+            "type": "function",
+            "name": "chat_read_attachment",
+            "description": "读取 chat_read_all_unread 返回的文本附件。message_ref 与 attachment_ref 必须来自同一条当前 Run 已签发的消息；内容按字符分页返回。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "attachment_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "offset": {"type": "integer", "minimum": 0, "maximum": 2097152, "default": 0},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 12000, "default": 12000}
+                },
+                "required": ["message_ref", "attachment_ref"],
+                "additionalProperties": false
+            }
+        }),
     ]
 }
 
 pub fn team_chat_write_tool_schemas() -> Vec<Value> {
-    vec![json!({
-        "type": "function",
-        "name": "chat_send_message",
-        "description": "向当前会话发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，使用 agent_workspace_snapshot 返回的 target_agent_ref 主动私聊并唤醒另一个 Agent，或用 team_ref 主动发送到另一个项目团队。reply_to_message_ref、target_agent_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标会话的 agent_ref。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string", "minLength": 1, "maxLength": 2000},
-                "reply_to_message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
-                "target_agent_ref": {"type": "string", "minLength": 1, "maxLength": 600},
-                "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
-                "mention_agent_refs": {
-                    "type": "array",
-                    "items": {"type": "string", "minLength": 1, "maxLength": 600},
-                    "maxItems": 64,
-                    "uniqueItems": true
-                }
-            },
-            "required": ["content"],
-            "additionalProperties": false
-        }
-    })]
+    vec![
+        json!({
+            "type": "function",
+            "name": "chat_document_create",
+            "description": "创建当前 Run 内的 UTF-8 Markdown 文档草稿。客户端清洗文件名、计算大小和 SHA-256，只返回临时 document_ref；创建后必须在同一 Run 的下一条发送消息中通过 document_refs 附加。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "title": {"type": "string", "minLength": 1, "maxLength": 512},
+                    "markdown": {"type": "string", "minLength": 1, "maxLength": 2097152}
+                },
+                "required": ["name", "title", "markdown"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "chat_send_message",
+            "description": "向当前会话发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，使用 agent_workspace_snapshot 返回的 target_agent_ref 主动私聊并唤醒另一个 Agent，或用 team_ref 主动发送到另一个项目团队。reply_to_message_ref、target_agent_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标会话的 agent_ref。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "reply_to_message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "target_agent_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "document_refs": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1, "maxLength": 600},
+                        "maxItems": 5,
+                        "uniqueItems": true
+                    },
+                    "mention_agent_refs": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1, "maxLength": 600},
+                        "maxItems": 64,
+                        "uniqueItems": true
+                    }
+                },
+                "required": ["content"],
+                "additionalProperties": false
+            }
+        }),
+    ]
 }
 
 pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
@@ -1964,10 +2062,11 @@ mod tests {
     #[test]
     fn team_chat_read_catalog_exposes_only_the_member_directory() {
         let schemas = team_chat_read_tool_schemas();
-        assert_eq!(schemas.len(), 3);
+        assert_eq!(schemas.len(), 4);
         assert_eq!(schemas[0]["name"], "agent_workspace_snapshot");
         assert_eq!(schemas[1]["name"], "chat_list_members");
         assert_eq!(schemas[2]["name"], "chat_read_all_unread");
+        assert_eq!(schemas[3]["name"], "chat_read_attachment");
         assert!(schemas
             .iter()
             .all(|schema| !schema.to_string().contains("agent_id")));
@@ -1976,9 +2075,11 @@ mod tests {
     #[test]
     fn team_chat_write_catalog_accepts_only_run_scoped_mentions() {
         let schemas = team_chat_write_tool_schemas();
-        assert_eq!(schemas.len(), 1);
-        assert_eq!(schemas[0]["name"], "chat_send_message");
-        let encoded = schemas[0].to_string();
+        assert_eq!(schemas.len(), 2);
+        assert_eq!(schemas[0]["name"], "chat_document_create");
+        assert_eq!(schemas[1]["name"], "chat_send_message");
+        let encoded = schemas[1].to_string();
+        assert!(encoded.contains("document_refs"));
         assert!(encoded.contains("mention_agent_refs"));
         assert!(encoded.contains("reply_to_message_ref"));
         assert!(encoded.contains("target_agent_ref"));

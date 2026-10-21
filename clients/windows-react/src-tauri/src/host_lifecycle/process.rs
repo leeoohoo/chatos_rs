@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 18] = [
+const READ_ONLY_TOOL_NAMES: [&str; 19] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -18,11 +18,12 @@ const READ_ONLY_TOOL_NAMES: [&str; 18] = [
     "agent_workspace_snapshot",
     "chat_list_members",
     "chat_read_all_unread",
+    "chat_read_attachment",
     "process_poll",
     "process_log",
     "process_wait",
 ];
-const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 10] = [
+const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 11] = [
     "open_edit_session",
     "stage_edit_batch",
     "abort_edit_session",
@@ -32,6 +33,7 @@ const APPROVAL_EXEMPT_TOOL_NAMES: [&str; 10] = [
     "todo_add",
     "todo_update",
     "todo_reorder",
+    "chat_document_create",
     "chat_send_message",
 ];
 

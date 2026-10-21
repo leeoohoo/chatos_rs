@@ -550,6 +550,17 @@ impl AgentConversationStore {
                 .map_err(|_| team_todo_store_error())?;
             rows
         };
+        let attachment_messages = rows
+            .iter()
+            .map(|row| (row.0.clone(), row.3.clone()))
+            .collect::<Vec<_>>();
+        let mut attachments_by_message = documents::attachment_summaries_for_messages(
+            &transaction,
+            owner_user_id,
+            run_id,
+            &attachment_messages,
+            now_unix_ms,
+        )?;
         let mut conversations: Vec<(String, String, String, Vec<Value>)> = Vec::new();
         let mut cursor_updates: Vec<(String, String, i64)> = Vec::new();
         for (
@@ -577,11 +588,14 @@ impl AgentConversationStore {
                 "agent" => sender_name.unwrap_or_else(|| "Agent".into()),
                 _ => return Err(team_todo_store_error()),
             };
+            let attachments = attachments_by_message
+                .remove(&message_id)
+                .unwrap_or_default();
             let message = json!({
                 "message_ref": message_reference,
                 "sender": sender,
                 "content": content,
-                "attachments": [],
+                "attachments": attachments,
                 "created_at_unix_ms": created_at_unix_ms,
             });
             if let Some(conversation) = conversations
@@ -673,6 +687,7 @@ impl AgentConversationStore {
         reply_reference: Option<&str>,
         target_agent_reference: Option<&str>,
         team_reference: Option<&str>,
+        document_references: &[String],
         mention_references: &[String],
         now_unix_ms: i64,
     ) -> Result<(AgentCommunicationToolBinding, Value), String> {
@@ -704,6 +719,10 @@ impl AgentConversationStore {
             );
         }
         validate_reference_list(mention_references, 64)?;
+        validate_reference_list(
+            document_references,
+            documents::MAXIMUM_DOCUMENTS_PER_MESSAGE,
+        )?;
         if now_unix_ms < 0 {
             return Err(invalid_team_todo_input());
         }
@@ -863,10 +882,13 @@ impl AgentConversationStore {
                 rows.collect::<Result<Vec<_>, _>>()
                     .map_err(|_| team_todo_store_error())?
             };
+            let existing_documents =
+                documents::existing_document_references(&transaction, owner_user_id, &message_id)?;
             if existing_room_id != target_room_id
                 || existing_content != content
                 || existing_reply_id != reply_message_id
                 || existing_mentions != mention_agent_ids
+                || existing_documents != document_references
             {
                 return Err(
                     "The tool invocation ID was reused with different message input.".into(),
@@ -910,6 +932,13 @@ impl AgentConversationStore {
                 }),
             ));
         }
+        let document_drafts = documents::load_document_drafts(
+            &transaction,
+            &self.database,
+            owner_user_id,
+            run_id,
+            document_references,
+        )?;
         let message_id = identifier("message");
         let root_message_id = inherited_root_message_id.unwrap_or_else(|| message_id.clone());
         let message_hop_count = hop_count.saturating_add(1);
@@ -996,7 +1025,20 @@ impl AgentConversationStore {
             &message_id,
             now_unix_ms,
         )?;
-        transaction.commit().map_err(|_| team_todo_store_error())?;
+        let persisted_document_paths = documents::persist_document_attachments(
+            &transaction,
+            &self.database,
+            owner_user_id,
+            run_id,
+            &message_id,
+            &document_drafts,
+            now_unix_ms,
+        )?;
+        if transaction.commit().is_err() {
+            documents::remove_files(&persisted_document_paths);
+            return Err(team_todo_store_error());
+        }
+        documents::remove_consumed_draft_files(&self.database, &document_drafts);
         Ok((
             binding,
             json!({
@@ -3496,7 +3538,7 @@ fn todo_planning_response(
     })
 }
 
-fn todo_planning_reference(
+pub(super) fn todo_planning_reference(
     owner_user_id: &str,
     run_id: &str,
     kind: &str,

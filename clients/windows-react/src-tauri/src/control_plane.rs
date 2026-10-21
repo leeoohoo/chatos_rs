@@ -29,7 +29,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-direct-v15";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-documents-v16";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
