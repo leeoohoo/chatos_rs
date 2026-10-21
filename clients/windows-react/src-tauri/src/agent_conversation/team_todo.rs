@@ -10,10 +10,15 @@ const MAXIMUM_TEAM_CHAT_RUNS_PER_ROOT: i64 = 12;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentTodoPluginSelection {
-    plugin_id: String,
-    component_key: String,
-    display_name: String,
-    reason: String,
+    pub(crate) installation_id: String,
+    pub(crate) plugin_id: String,
+    pub(crate) component_key: String,
+    pub(crate) component_revision: String,
+    pub(crate) release_id: String,
+    pub(crate) release_digest: String,
+    pub(crate) manifest_version: String,
+    pub(crate) display_name: String,
+    pub(crate) reason: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -130,6 +135,7 @@ pub(crate) struct TodoPlanningCreateInput {
     pub(crate) execution_contract: AgentTodoExecutionContract,
     pub(crate) requires_execution: bool,
     pub(crate) builtin_capabilities: Vec<String>,
+    pub(crate) plugins: Vec<AgentTodoPluginSelection>,
 }
 
 #[derive(Debug)]
@@ -1424,8 +1430,8 @@ impl AgentConversationStore {
         let execution_plan = AgentTodoExecutionPlan {
             requires_execution: input.requires_execution,
             builtin_capabilities: capabilities,
-            plugins: Vec::new(),
-            selection_revision: "windows-host-todo-planning-v1".into(),
+            plugins: input.plugins,
+            selection_revision: "windows-host-todo-planning-v2".into(),
             selected_at_unix_ms: now_unix_ms,
         };
         validate_execution_plan(&execution_plan).map_err(|_| invalid_team_todo_input())?;
@@ -3542,7 +3548,7 @@ fn todo_planning_response(
     })
 }
 
-pub(super) fn todo_planning_reference(
+pub(crate) fn todo_planning_reference(
     owner_user_id: &str,
     run_id: &str,
     kind: &str,
@@ -4476,8 +4482,15 @@ fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> 
     }
     let mut plugins = HashSet::new();
     for plugin in &plan.plugins {
+        validate_identifier(&plugin.installation_id).map_err(|_| team_todo_store_error())?;
         validate_identifier(&plugin.plugin_id).map_err(|_| team_todo_store_error())?;
         validate_identifier(&plugin.component_key).map_err(|_| team_todo_store_error())?;
+        validate_identifier(&plugin.component_revision).map_err(|_| team_todo_store_error())?;
+        validate_identifier(&plugin.release_id).map_err(|_| team_todo_store_error())?;
+        if !valid_release_digest(&plugin.release_digest) {
+            return Err(team_todo_store_error());
+        }
+        validate_text(&plugin.manifest_version, 128, false).map_err(|_| team_todo_store_error())?;
         validate_text(&plugin.display_name, 240, false).map_err(|_| team_todo_store_error())?;
         validate_text(&plugin.reason, 1_000, true).map_err(|_| team_todo_store_error())?;
         if !plugins.insert((&plugin.plugin_id, &plugin.component_key)) {
@@ -4485,6 +4498,11 @@ fn validate_execution_plan(plan: &AgentTodoExecutionPlan) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+fn valid_release_digest(value: &str) -> bool {
+    let digest = value.strip_prefix("sha256:").unwrap_or(value);
+    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_todo_mutation(

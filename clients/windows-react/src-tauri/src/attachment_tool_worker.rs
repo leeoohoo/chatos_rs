@@ -29,7 +29,10 @@ use crate::{
     agent_conversation::{
         dispatch_next_agent_communication_delivery, dispatch_next_agent_team_delivery,
         load_agent_team_runs, reconcile_agent_communication_runs,
-        team_todo::{AgentTodoExecutionContract, TodoPlanningCreateInput, TodoPlanningUpdateInput},
+        team_todo::{
+            todo_planning_reference, AgentTodoExecutionContract, AgentTodoPluginSelection,
+            TodoPlanningCreateInput, TodoPlanningUpdateInput,
+        },
         AgentAssetToolBinding, AgentAssetToolRecord, AgentCommunicationToolBinding,
         AgentConversationStore,
     },
@@ -37,6 +40,7 @@ use crate::{
     authentication::AuthenticationManager,
     conversation_attachments::AttachmentManager,
     host_lifecycle::HostManager,
+    plugin_application::{PluginApplicationManager, TrustedAgentPluginOption},
     terminal_tool_worker::TerminalToolWorker,
 };
 
@@ -745,10 +749,29 @@ async fn execute_todo_planning_read_tool(
         match claim.invocation.tool_name.as_str() {
             "todo_execution_options" => {
                 require_todo_planning_manager(&binding)?;
+                let plugin_manager = app.state::<PluginApplicationManager>();
+                let host = app.state::<HostManager>();
+                let plugins = plugin_manager
+                    .list_agent_plugins(host.inner(), owner_user_id)
+                    .await?
+                    .into_iter()
+                    .map(|option| {
+                        json!({
+                            "plugin_ref": todo_planning_reference(
+                                owner_user_id,
+                                &run.run_id,
+                                "plugin",
+                                &option.frozen_identity(),
+                            ),
+                            "name": option.display_name,
+                            "description": option.description,
+                        })
+                    })
+                    .collect::<Vec<_>>();
                 json!({
                     "teams": [snapshot["team"].clone()],
                     "builtin_capabilities": snapshot["builtin_capabilities"].clone(),
-                    "plugins": snapshot["plugins"].clone(),
+                    "plugins": plugins,
                 })
             }
             "todo_dependency_options" => {
@@ -823,6 +846,8 @@ async fn execute_todo_planning_write_tool(
     let now = now_unix_ms();
     let (binding, output) = match claim.invocation.tool_name.as_str() {
         "todo_add" => {
+            let plugins =
+                resolve_todo_plugin_hints(app, owner_user_id, &run.run_id, arguments).await?;
             let input = TodoPlanningCreateInput {
                 request_key: claim.invocation.invocation_id.clone(),
                 team_reference: required_bounded_string(arguments, "team_ref", 600)?,
@@ -873,6 +898,7 @@ async fn execute_todo_planning_write_tool(
                     64,
                 )?
                 .ok_or_else(invalid_todo_planning_arguments)?,
+                plugins,
             };
             tauri::async_runtime::spawn_blocking(move || {
                 store.create_todo_from_planning_tool(&owner, &run_id, input, now)
@@ -933,6 +959,77 @@ async fn execute_todo_planning_write_tool(
         return Err("The Todo planning binding changed during the operation.".into());
     }
     Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+async fn resolve_todo_plugin_hints(
+    app: &AppHandle,
+    owner_user_id: &str,
+    run_id: &str,
+    arguments: &Map<String, Value>,
+) -> Result<Vec<AgentTodoPluginSelection>, String> {
+    let Some(raw_hints) = arguments.get("plugin_hints") else {
+        return Ok(Vec::new());
+    };
+    let hints = raw_hints
+        .as_array()
+        .filter(|hints| hints.len() <= 32)
+        .ok_or_else(invalid_todo_planning_arguments)?;
+    let plugin_manager = app.state::<PluginApplicationManager>();
+    let host = app.state::<HostManager>();
+    let options = plugin_manager
+        .list_agent_plugins(host.inner(), owner_user_id)
+        .await?;
+    let by_reference = options
+        .into_iter()
+        .map(|option| {
+            (
+                todo_planning_reference(owner_user_id, run_id, "plugin", &option.frozen_identity()),
+                option,
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut selected_components = HashSet::new();
+    hints
+        .iter()
+        .map(|hint| {
+            let hint = hint
+                .as_object()
+                .filter(|hint| {
+                    hint.len() <= 2
+                        && hint
+                            .keys()
+                            .all(|key| matches!(key.as_str(), "plugin_ref" | "reason"))
+                })
+                .ok_or_else(invalid_todo_planning_arguments)?;
+            let plugin_reference = required_bounded_string(hint, "plugin_ref", 600)?;
+            let reason = optional_planning_text(hint, "reason", 1_000, true)?.unwrap_or_default();
+            let option = by_reference.get(&plugin_reference).ok_or_else(|| {
+                "Plugin option is unavailable or expired; call todo_execution_options again."
+                    .to_owned()
+            })?;
+            if !selected_components.insert(option.selection_id()) {
+                return Err("The same Plugin component cannot be selected twice.".into());
+            }
+            Ok(todo_plugin_selection(option, reason))
+        })
+        .collect()
+}
+
+fn todo_plugin_selection(
+    option: &TrustedAgentPluginOption,
+    reason: String,
+) -> AgentTodoPluginSelection {
+    AgentTodoPluginSelection {
+        installation_id: option.installation_id.clone(),
+        plugin_id: option.plugin_id.clone(),
+        component_key: option.component_key.clone(),
+        component_revision: option.component_revision.clone(),
+        release_id: option.release_id.clone(),
+        release_digest: option.release_digest.clone(),
+        manifest_version: option.manifest_version.clone(),
+        display_name: option.display_name.clone(),
+        reason,
+    }
 }
 
 fn invalid_todo_planning_arguments() -> String {
@@ -2088,7 +2185,20 @@ pub fn todo_planning_write_tool_schemas() -> Vec<Value> {
                     "assignee_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                     "depends_on_todo_refs": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 600}, "maxItems": 64, "uniqueItems": true},
                     "requires_execution": {"type": "boolean", "default": true},
-                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal"]}, "maxItems": 3, "uniqueItems": true}
+                    "builtin_capabilities": {"type": "array", "items": {"type": "string", "enum": ["project_read", "project_write", "terminal"]}, "maxItems": 3, "uniqueItems": true},
+                    "plugin_hints": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "plugin_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                                "reason": {"type": "string", "maxLength": 1000}
+                            },
+                            "required": ["plugin_ref"],
+                            "additionalProperties": false
+                        },
+                        "maxItems": 32
+                    }
                 },
                 "required": ["title", "objective", "scope", "expected_outputs", "acceptance_criteria", "team_ref", "assignee_ref", "requires_execution", "builtin_capabilities"],
                 "additionalProperties": false
@@ -2304,11 +2414,37 @@ mod tests {
             std::collections::BTreeSet::from(["todo_add", "todo_reorder", "todo_update"])
         );
         let encoded = serde_json::to_string(&schemas).unwrap();
+        assert!(encoded.contains("plugin_hints"));
+        assert!(encoded.contains("plugin_ref"));
         assert!(!encoded.contains("todo_id"));
         assert!(!encoded.contains("team_id"));
         assert!(!encoded.contains("agent_id"));
         assert!(!encoded.contains("completed\""));
         assert!(!encoded.contains("blocked\""));
+    }
+
+    #[test]
+    fn todo_plugin_refs_are_run_scoped_and_hide_frozen_identity() {
+        let option = TrustedAgentPluginOption {
+            installation_id: "installation-1".into(),
+            plugin_id: "document-plugin".into(),
+            component_key: "document-mcp".into(),
+            component_revision: "revision-1".into(),
+            release_id: "release-1".into(),
+            release_digest: format!("sha256:{}", "a".repeat(64)),
+            manifest_version: "1.2.3".into(),
+            display_name: "Document Tools".into(),
+            description: "Create documents".into(),
+        };
+        let first =
+            todo_planning_reference("owner-1", "run-1", "plugin", &option.frozen_identity());
+        let second =
+            todo_planning_reference("owner-1", "run-2", "plugin", &option.frozen_identity());
+
+        assert_ne!(first, second);
+        assert!(!first.contains(&option.plugin_id));
+        assert!(!first.contains(&option.installation_id));
+        assert!(!first.contains(&option.release_id));
     }
 
     #[test]

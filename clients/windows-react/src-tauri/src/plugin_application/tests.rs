@@ -72,6 +72,18 @@ impl CatalogFixture {
             "name": "plugin-package",
             "version": "1.0.0",
             "description": "A safe Windows Plugin application.",
+            "mcpServers": {
+                "server-1": {
+                    "type": "stdio",
+                    "bin": "plugin-host",
+                    "args": ["mcp"],
+                    "env": {},
+                    "agent": {
+                        "displayName": "Plugin Agent Tools",
+                        "description": "Trusted tools for the current project."
+                    }
+                }
+            },
             "ui": [{
                 "componentKey": "plugin-workbench",
                 "source": "./ui/index.html",
@@ -104,7 +116,7 @@ impl CatalogFixture {
             "permissions": [{
                 "permission": "process.spawn",
                 "required": true,
-                "components": ["plugin-workbench"]
+                "components": ["plugin-workbench", "server-1"]
             }]
         })
     }
@@ -208,6 +220,50 @@ async fn catalog_projects_only_valid_owner_scoped_metadata_without_local_paths()
     assert!(!projection.contains("installationPath"));
     assert!(!projection.contains("source"));
     assert_eq!(client.remaining(), 0);
+}
+
+#[tokio::test]
+async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
+    let fixture = CatalogFixture::new();
+    let record = fixture.record();
+    let client = catalog_client(&record);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let plugins = manager
+        .list_agent_plugins(&client, "owner-1")
+        .await
+        .unwrap();
+
+    assert_eq!(plugins.len(), 1);
+    assert_eq!(plugins[0].installation_id, "installation-1");
+    assert_eq!(plugins[0].plugin_id, "plugin-1");
+    assert_eq!(plugins[0].component_key, "server-1");
+    assert_eq!(plugins[0].component_revision, "revision-1");
+    assert_eq!(plugins[0].release_id, "release-1");
+    assert_eq!(plugins[0].manifest_version, "1.0.0");
+    assert_eq!(plugins[0].display_name, "Plugin Agent Tools");
+    assert_eq!(plugins[0].selection_id(), "plugin-1\0server-1");
+    assert!(!plugins[0]
+        .frozen_identity()
+        .contains(&fixture.app_data.to_string_lossy().to_string()));
+    assert_eq!(client.remaining(), 0);
+}
+
+#[tokio::test]
+async fn agent_catalog_rejects_missing_or_non_stdio_manifest_components() {
+    let fixture = CatalogFixture::new();
+    let record = fixture.record();
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+    let mut manifest = CatalogFixture::valid_manifest();
+    manifest["mcpServers"]["server-1"]["type"] = json!("http");
+    fixture.write_manifest(manifest);
+
+    let plugins = manager
+        .list_agent_plugins(&catalog_client(&record), "owner-1")
+        .await
+        .unwrap();
+
+    assert!(plugins.is_empty());
 }
 
 #[tokio::test]

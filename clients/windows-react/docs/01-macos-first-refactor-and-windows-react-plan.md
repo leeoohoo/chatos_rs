@@ -697,3 +697,11 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 - 启动、断线、崩溃、取消、重试、账号切换和升级均有自动测试；
 - 没有无限 loading、假健康 Host、过期执行详情或 UI 直接访问敏感资源；
 - 安装包可在干净 Windows 设备上完成安装、升级、运行和卸载。
+
+## 14. Todo Plugin 执行迁移状态（2026-10-22）
+
+- [已完成] 按 macOS `LocalAgentChatTodoExecutionTools`、`LocalAgentRunReferenceVault` 和 `NativeAgentPluginProviderAssembly` 建立 Windows Todo Plugin 可信计划：只从当前账号已启用、Windows 支持、安装根内通过校验且 manifest 中真实存在的 stdio MCP component 生成候选。
+- [已完成] `todo_execution_options` 只向模型返回当前 Run 有效的 `plugin_ref`、名称和说明；真实 installation、Plugin、component、Release、digest、版本与路径不会进入模型选项。
+- [已完成] `todo_add.plugin_hints` 只能解析本轮可信目录签发的引用；伪造、跨 Run、过期与重复 component 失败关闭。Todo 创建时冻结 installation、component revision、Release digest 与 manifest version，executor Delivery 不再拒绝非空 Plugin 计划。
+- [已完成] Local Agent Host 严格校验冻结计划并只据此生成 `plugin_hints` 与 `plugin_release_snapshots`；消息或模型不能在执行期追加 Plugin 权限。
+- [待完成] Windows capability broker 与 stdio MCP runtime：`capability_search`、`capability_describe`、`capability_invoke`、审批复验、Secret 解析策略、进程树回收及副作用调用 journal。完成前不得宣称 Todo 已能实际调用 Plugin 工具。

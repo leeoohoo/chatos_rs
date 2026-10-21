@@ -2955,13 +2955,10 @@ impl AgentConversationStore {
         match (&pending.trigger_kind[..], pending.todo_id.as_deref()) {
             ("todo", Some(todo_id)) => {
                 validate_identifier(todo_id).map_err(|_| team_store_error())?;
-                let plan = pending
+                pending
                     .execution_plan
                     .as_ref()
                     .ok_or_else(team_store_error)?;
-                if !plan.plugins.is_empty() {
-                    return Err("团队 Todo 当前只能调度已接入的项目与终端能力。".into());
-                }
             }
             ("todo", None) | (_, Some(_)) => return Err(team_store_error()),
             _ => {}
@@ -5237,6 +5234,7 @@ fn team_agent_execution_metadata(
             "execution_plan": {
                 "requires_execution": plan.requires_execution,
                 "builtin_capabilities": plan.builtin_capabilities,
+                "plugins": plan.plugins,
             }
         });
     }
@@ -7234,6 +7232,17 @@ mod tests {
                     execution_contract: contract.clone(),
                     requires_execution: true,
                     builtin_capabilities: vec!["project_write".into()],
+                    plugins: vec![team_todo::AgentTodoPluginSelection {
+                        installation_id: "installation-document".into(),
+                        plugin_id: "document-plugin".into(),
+                        component_key: "document-mcp".into(),
+                        component_revision: "revision-1".into(),
+                        release_id: "release-1".into(),
+                        release_digest: format!("sha256:{}", "a".repeat(64)),
+                        manifest_version: "1.2.3".into(),
+                        display_name: "Document Tools".into(),
+                        reason: "生成验收文档".into(),
+                    }],
                 },
                 11,
             )
@@ -7243,6 +7252,7 @@ mod tests {
             first["builtin_capabilities"],
             json!(["project_read", "project_write"])
         );
+        assert_eq!(first["plugins"], json!(["Document Tools"]));
         let first_reference = first["todo_ref"].as_str().unwrap().to_owned();
         let (_, second) = store
             .create_todo_from_planning_tool(
@@ -7265,6 +7275,7 @@ mod tests {
                     },
                     requires_execution: true,
                     builtin_capabilities: vec!["terminal".into()],
+                    plugins: vec![],
                 },
                 12,
             )
@@ -7341,6 +7352,14 @@ mod tests {
                 .unwrap(),
             1
         );
+        let executor = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        let plan = executor.execution_plan.unwrap();
+        assert_eq!(plan.plugins.len(), 1);
+        assert_eq!(plan.plugins[0].component_key, "document-mcp");
+        assert_eq!(plan.plugins[0].release_id, "release-1");
         assert!(store
             .team_todo_scheduler_has_work("alice", &team.id)
             .unwrap());

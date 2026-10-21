@@ -512,7 +512,7 @@ fn normalized_team_executor_context(
         .get("execution_plan")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| invalid_agent_context("execution_plan must be an object"))?;
-    const PLAN_KEYS: [&str; 2] = ["requires_execution", "builtin_capabilities"];
+    const PLAN_KEYS: [&str; 3] = ["requires_execution", "builtin_capabilities", "plugins"];
     if plan.len() != PLAN_KEYS.len() || plan.keys().any(|key| !PLAN_KEYS.contains(&key.as_str())) {
         return Err(invalid_agent_context(
             "execution_plan fields do not match the schema",
@@ -548,6 +548,82 @@ fn normalized_team_executor_context(
         }
         enabled_builtin_kinds.push(builtin_kind);
     }
+    let plugins = plan
+        .get("plugins")
+        .and_then(serde_json::Value::as_array)
+        .filter(|values| values.len() <= 32)
+        .ok_or_else(|| invalid_agent_context("plugins must be an array"))?;
+    let mut plugin_selection_ids = std::collections::HashSet::new();
+    let mut normalized_plugins = Vec::with_capacity(plugins.len());
+    let mut plugin_hints = Vec::with_capacity(plugins.len());
+    let mut plugin_release_snapshots = Vec::with_capacity(plugins.len());
+    for plugin in plugins {
+        let plugin = plugin
+            .as_object()
+            .ok_or_else(|| invalid_agent_context("plugins must contain objects"))?;
+        const PLUGIN_KEYS: [&str; 9] = [
+            "installationId",
+            "pluginId",
+            "componentKey",
+            "componentRevision",
+            "releaseId",
+            "releaseDigest",
+            "manifestVersion",
+            "displayName",
+            "reason",
+        ];
+        if plugin.len() != PLUGIN_KEYS.len()
+            || plugin
+                .keys()
+                .any(|key| !PLUGIN_KEYS.contains(&key.as_str()))
+        {
+            return Err(invalid_agent_context(
+                "Plugin selection fields do not match the schema",
+            ));
+        }
+        let installation_id = agent_context_string(plugin, "installationId", 1_024, true)?;
+        let plugin_id = agent_context_string(plugin, "pluginId", 1_024, true)?;
+        let component_key = agent_context_string(plugin, "componentKey", 1_024, true)?;
+        let component_revision = agent_context_string(plugin, "componentRevision", 1_024, true)?;
+        let release_id = agent_context_string(plugin, "releaseId", 1_024, true)?;
+        let release_digest = agent_context_string(plugin, "releaseDigest", 512, true)?;
+        let digest = release_digest
+            .strip_prefix("sha256:")
+            .unwrap_or(release_digest);
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(invalid_agent_context("releaseDigest is invalid"));
+        }
+        let manifest_version = agent_context_string(plugin, "manifestVersion", 128, false)?;
+        let display_name = agent_context_string(plugin, "displayName", 240, false)?;
+        let reason = agent_context_optional_text(plugin, "reason", 1_000)?;
+        if !plugin_selection_ids.insert((plugin_id, component_key)) {
+            return Err(invalid_agent_context("Plugin selections must be unique"));
+        }
+        normalized_plugins.push(json!({
+            "installation_id": installation_id,
+            "plugin_id": plugin_id,
+            "component_key": component_key,
+            "component_revision": component_revision,
+            "release_id": release_id,
+            "release_digest": release_digest,
+            "manifest_version": manifest_version,
+            "display_name": display_name,
+            "reason": reason,
+        }));
+        plugin_hints.push(json!({
+            "plugin_key": plugin_id,
+            "component_key": component_key,
+            "reason": reason,
+        }));
+        plugin_release_snapshots.push(json!({
+            "plugin_key": plugin_id,
+            "component_key": component_key,
+            "plugin_id": plugin_id,
+            "release_id": release_id,
+            "version": manifest_version,
+            "artifact_sha256": release_digest,
+        }));
+    }
     Ok(Some(json!({
         "schema_version": 1,
         "delivery_lane": "executor",
@@ -559,12 +635,13 @@ fn normalized_team_executor_context(
         "execution_plan": {
             "requires_execution": requires_execution,
             "builtin_capabilities": capabilities,
+            "plugins": normalized_plugins,
         },
         "tool_options": {
             "requires_execution": requires_execution,
             "enabled_builtin_kinds": enabled_builtin_kinds,
-            "plugin_hints": [],
-            "plugin_release_snapshots": [],
+            "plugin_hints": plugin_hints,
+            "plugin_release_snapshots": plugin_release_snapshots,
             "external_mcp_config_ids": [],
         },
     })))
@@ -846,6 +923,7 @@ mod tests {
             "execution_plan": {
                 "requires_execution": true,
                 "builtin_capabilities": ["project_read", "terminal"],
+                "plugins": [],
             }
         });
         metadata
@@ -961,6 +1039,57 @@ mod tests {
             json!(["project_read", "admin"]);
         assert!(normalized_team_executor_context(
             &escalated,
+            "agent-team-executor-delivery-1",
+            Some(&project_resource()),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn executor_context_projects_only_frozen_plugin_selections() {
+        let mut metadata = team_executor_context();
+        metadata["agent_team_execution"]["execution_plan"]["plugins"] = json!([{
+            "installationId": "installation-1",
+            "pluginId": "document-plugin",
+            "componentKey": "document-mcp",
+            "componentRevision": "revision-1",
+            "releaseId": "release-1",
+            "releaseDigest": format!("sha256:{}", "a".repeat(64)),
+            "manifestVersion": "1.2.3",
+            "displayName": "Document Tools",
+            "reason": "生成验收文档",
+        }]);
+
+        let executor = normalized_team_executor_context(
+            &metadata,
+            "agent-team-executor-delivery-1",
+            Some(&project_resource()),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            executor["tool_options"]["plugin_hints"],
+            json!([{
+                "plugin_key": "document-plugin",
+                "component_key": "document-mcp",
+                "reason": "生成验收文档",
+            }])
+        );
+        assert_eq!(
+            executor["tool_options"]["plugin_release_snapshots"][0]["release_id"],
+            "release-1"
+        );
+        assert_eq!(
+            executor["execution_plan"]["plugins"][0]["installation_id"],
+            "installation-1"
+        );
+
+        let mut forged = metadata;
+        forged["agent_team_execution"]["execution_plan"]["plugins"][0]["path"] =
+            json!("C:\\private\\plugin.exe");
+        assert!(normalized_team_executor_context(
+            &forged,
             "agent-team-executor-delivery-1",
             Some(&project_resource()),
         )

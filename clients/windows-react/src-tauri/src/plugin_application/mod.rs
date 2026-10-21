@@ -23,10 +23,11 @@ const MAXIMUM_INSTALLATIONS: usize = 1_000;
 const MAXIMUM_MANIFEST_BYTES: u64 = 2 * 1_024 * 1_024;
 const MAXIMUM_UI_CONTRIBUTIONS: usize = 64;
 const MAXIMUM_BRIDGE_CAPABILITIES: usize = 64;
+const MAXIMUM_MCP_SERVERS: usize = 64;
 
 type MetadataFuture<'a> = Pin<Box<dyn Future<Output = Result<HostResult, String>> + Send + 'a>>;
 
-trait PluginInstallationMetadataClient: Send + Sync {
+pub(crate) trait PluginInstallationMetadataClient: Send + Sync {
     fn execute(&self, command: HostCommand) -> MetadataFuture<'_>;
 }
 
@@ -56,6 +57,58 @@ impl PluginApplicationManager {
 
     pub(crate) async fn reset(&self) {
         self.runtime.reset().await;
+    }
+
+    pub(crate) async fn list_agent_plugins(
+        &self,
+        client: &dyn PluginInstallationMetadataClient,
+        owner_user_id: &str,
+    ) -> Result<Vec<TrustedAgentPluginOption>, String> {
+        crate::host_lifecycle::validate_owner(owner_user_id)?;
+        let summaries = list_installation_summaries(client, owner_user_id).await?;
+        let mut latest_by_component =
+            BTreeMap::<(String, String), LocalPluginInstallationSummary>::new();
+        for summary in summaries {
+            validate_summary(&summary, owner_user_id)?;
+            if !summary.enabled {
+                continue;
+            }
+            let key = (summary.plugin_id.clone(), summary.server_id.clone());
+            match latest_by_component.get(&key) {
+                Some(existing)
+                    if (
+                        existing.updated_at_unix_ms,
+                        existing.installation_id.as_str(),
+                    ) >= (summary.updated_at_unix_ms, summary.installation_id.as_str()) => {}
+                _ => {
+                    latest_by_component.insert(key, summary);
+                }
+            }
+        }
+
+        let plugin_root = confined_plugin_root(&self.plugin_root)?;
+        let mut options = BTreeMap::new();
+        for summary in latest_by_component.into_values() {
+            let record = get_installation(client, owner_user_id, &summary.installation_id).await?;
+            if validate_record(&record, &summary, owner_user_id).is_err() {
+                continue;
+            }
+            let Ok((_, manifest)) = load_manifest(&plugin_root, &record) else {
+                continue;
+            };
+            let Ok(option) = project_agent_plugin(&record, &manifest) else {
+                continue;
+            };
+            options.insert(option.selection_id(), option);
+        }
+        let mut options = options.into_values().collect::<Vec<_>>();
+        options.sort_by(|left, right| {
+            left.display_name
+                .to_lowercase()
+                .cmp(&right.display_name.to_lowercase())
+                .then_with(|| left.selection_id().cmp(&right.selection_id()))
+        });
+        Ok(options)
     }
 
     async fn list(
@@ -182,6 +235,38 @@ pub struct PresentedPluginApplication {
     release_digest: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TrustedAgentPluginOption {
+    pub(crate) installation_id: String,
+    pub(crate) plugin_id: String,
+    pub(crate) component_key: String,
+    pub(crate) component_revision: String,
+    pub(crate) release_id: String,
+    pub(crate) release_digest: String,
+    pub(crate) manifest_version: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+}
+
+impl TrustedAgentPluginOption {
+    pub(crate) fn selection_id(&self) -> String {
+        format!("{}\0{}", self.plugin_id, self.component_key)
+    }
+
+    pub(crate) fn frozen_identity(&self) -> String {
+        [
+            self.installation_id.as_str(),
+            self.plugin_id.as_str(),
+            self.component_key.as_str(),
+            self.component_revision.as_str(),
+            self.release_id.as_str(),
+            self.release_digest.as_str(),
+            self.manifest_version.as_str(),
+        ]
+        .join("\0")
+    }
+}
+
 impl PresentedPluginApplication {
     fn id(&self) -> String {
         format!("{}:{}", self.plugin_id, self.component_key)
@@ -197,12 +282,34 @@ struct PluginManifest {
     #[serde(default)]
     description: String,
     #[serde(default)]
+    mcp_servers: BTreeMap<String, PluginMcpServer>,
+    #[serde(default)]
     ui: Vec<PluginUiContribution>,
     interface: Option<PluginInterface>,
     #[serde(default)]
     permissions: Vec<PluginPermission>,
     runtime_context: Option<PluginRuntimeContext>,
     dependencies: Option<PluginDependencies>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginMcpServer {
+    #[serde(rename = "type")]
+    kind: String,
+    bin: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    agent: Option<PluginAgentPresentation>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginAgentPresentation {
+    display_name: String,
+    description: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -529,6 +636,7 @@ fn load_manifest(
 fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
     if manifest.schema_version != 3
         || manifest.ui.len() > MAXIMUM_UI_CONTRIBUTIONS
+        || manifest.mcp_servers.len() > MAXIMUM_MCP_SERVERS
         || !valid_text(&manifest.name, 512)
         || !valid_text(&manifest.version, 128)
         || !valid_optional_text(&manifest.description, 16 * 1_024)
@@ -550,6 +658,89 @@ fn validate_manifest(manifest: &PluginManifest) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn project_agent_plugin(
+    record: &LocalPluginInstallationRecord,
+    manifest: &PluginManifest,
+) -> Result<TrustedAgentPluginOption, String> {
+    let component_key = &record.spec.server_id;
+    let server = manifest
+        .mcp_servers
+        .get(component_key)
+        .ok_or_else(plugin_catalog_error)?;
+    if server.kind != "stdio"
+        || !valid_package_executable(&server.bin)
+        || !executable_matches_manifest_bin(&record.spec.executable_path, &server.bin)
+        || server.args.len() > 256
+        || server
+            .args
+            .iter()
+            .any(|argument| !valid_optional_text(argument, 8_192))
+        || server.env.len() > 256
+        || server
+            .env
+            .iter()
+            .any(|(key, value)| !valid_environment_name(key) || !valid_optional_text(value, 8_192))
+    {
+        return Err(plugin_catalog_error());
+    }
+    let has_spawn_permission = manifest.permissions.iter().any(|permission| {
+        permission.permission == "process.spawn"
+            && permission.required
+            && (permission.components.is_empty() || permission.components.contains(component_key))
+    });
+    if !has_spawn_permission {
+        return Err(plugin_catalog_error());
+    }
+    let display_name = server
+        .agent
+        .as_ref()
+        .map(|presentation| presentation.display_name.as_str())
+        .or_else(|| {
+            manifest
+                .interface
+                .as_ref()
+                .and_then(|interface| interface.display_name.as_deref())
+        })
+        .unwrap_or(&manifest.name)
+        .trim()
+        .to_owned();
+    let description = server
+        .agent
+        .as_ref()
+        .map(|presentation| presentation.description.as_str())
+        .unwrap_or(&manifest.description)
+        .trim()
+        .to_owned();
+    validate_text(&display_name, 240)?;
+    if !valid_optional_text(&description, 16 * 1_024) {
+        return Err(plugin_catalog_error());
+    }
+    Ok(TrustedAgentPluginOption {
+        installation_id: record.spec.installation_id.clone(),
+        plugin_id: record.spec.plugin_id.clone(),
+        component_key: component_key.clone(),
+        component_revision: record.spec.component_revision.clone(),
+        release_id: record.spec.release_id.clone(),
+        release_digest: record.spec.release_digest.clone(),
+        manifest_version: manifest.version.clone(),
+        display_name,
+        description,
+    })
+}
+
+fn executable_matches_manifest_bin(executable_path: &str, manifest_bin: &str) -> bool {
+    let Some(file_name) = Path::new(executable_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+    else {
+        return false;
+    };
+    file_name == manifest_bin
+        || file_name
+            .strip_suffix(".exe")
+            .is_some_and(|stem| stem == manifest_bin)
 }
 
 fn project_applications(
@@ -762,6 +953,13 @@ fn valid_capability(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn valid_environment_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && !value.contains('=')
+        && !value.chars().any(char::is_control)
 }
 
 fn valid_brand_color(value: &str) -> bool {
