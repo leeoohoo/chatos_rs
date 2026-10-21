@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "audit:architecture": "node scripts/audit-architecture.mjs",
     "audit:bundle": "node scripts/audit-bundle.mjs",
+    "generate:agent-skill-examples": "node scripts/generate-agent-skill-examples.mjs",
+    "audit:agent-skill-examples": "node scripts/generate-agent-skill-examples.mjs --check",
     "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

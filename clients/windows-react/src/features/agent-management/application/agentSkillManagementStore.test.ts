@@ -76,7 +76,7 @@ function skill(): AgentSkillDefinition {
 }
 
 function projection(kind: "profession" | "projectType", key: string) {
-  const resources = ["workflow", "deliverables", "quality", "collaboration"].map((name) => ({
+  const resources = ["workflow", "deliverables", "quality", "collaboration", "worked-examples-and-counterexamples"].map((name) => ({
     relativePath: `references/${name}.md`, title: name, summary: `${name} summary`, markdown: "body", sizeBytes: 4,
   }));
   return {

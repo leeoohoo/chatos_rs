@@ -31,8 +31,8 @@ export const agentSkillDefinitionSchema = z.object({
   skillRefEn: z.string().regex(/^AS-(?:profession|project_type)-[A-Za-z0-9._-]+-[0-9a-f]{12}$/u),
   instructionsSha256: z.string().regex(/^[0-9a-f]{64}$/u),
   instructionsSha256En: z.string().regex(/^[0-9a-f]{64}$/u),
-  resources: z.array(agentSkillResourceSchema).length(4),
-  resourcesEn: z.array(agentSkillResourceSchema).length(4),
+  resources: z.array(agentSkillResourceSchema).length(5),
+  resourcesEn: z.array(agentSkillResourceSchema).length(5),
 }).strict().superRefine((item, context) => {
   const kind = item.kind === "projectType" ? "project_type" : "profession";
   const expected = `AS-${kind}-${item.key}-${item.instructionsSha256.slice(0, 12)}`;

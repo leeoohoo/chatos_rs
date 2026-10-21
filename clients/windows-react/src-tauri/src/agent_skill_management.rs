@@ -5,7 +5,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 use tauri::State;
 use unicode_segmentation::UnicodeSegmentation;
@@ -14,6 +14,7 @@ use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owne
 
 const SKILL_CATALOG: &str =
     include_str!("../../../macos/Sources/ChatOSCore/AgentSkills/Catalog/ChatOSSkillCatalog.json");
+const SKILL_EXAMPLES: &str = include_str!("../resources/agent-skill-examples.json");
 const MAXIMUM_PAYLOAD_BYTES: u64 = 256 * 1_024 * 1_024;
 
 #[derive(Clone)]
@@ -101,6 +102,28 @@ struct CatalogProjectType {
     category_label_en: String,
     rule_markdown: String,
     rule_markdown_en: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExampleCatalog {
+    professions: HashMap<String, ExampleProfile>,
+    project_types: HashMap<String, ExampleProfile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExampleProfile {
+    situation_zh: String,
+    good_example_zh: String,
+    evidence_zh: String,
+    counterexample_zh: String,
+    correction_zh: String,
+    situation_en: String,
+    good_example_en: String,
+    evidence_en: String,
+    counterexample_en: String,
+    correction_en: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -440,9 +463,17 @@ impl AgentSkillDefinition {
             self.key,
             &self.instructions_sha256_en[..12]
         );
-        self.resources =
-            progressive_resources(&self.label, &self.description, &self.category_label, false);
+        self.resources = progressive_resources(
+            self.kind,
+            &self.key,
+            &self.label,
+            &self.description,
+            &self.category_label,
+            false,
+        );
         self.resources_en = progressive_resources(
+            self.kind,
+            &self.key,
             &self.label_en,
             &self.description_en,
             &self.category_label_en,
@@ -505,6 +536,8 @@ impl From<CatalogProjectType> for AgentSkillDefinition {
 }
 
 fn progressive_resources(
+    kind: AgentSkillKind,
+    key: &str,
     label: &str,
     description: &str,
     category: &str,
@@ -515,7 +548,7 @@ fn progressive_resources(
     } else {
         chinese_resources(label, description, category)
     };
-    values
+    let mut resources: Vec<_> = values
         .into_iter()
         .map(|(relative_path, title, summary, markdown)| {
             let markdown = markdown.trim().to_owned();
@@ -527,7 +560,120 @@ fn progressive_resources(
                 markdown,
             }
         })
-        .collect()
+        .collect();
+    resources.push(worked_example_resource(kind, key, label, english));
+    resources
+}
+
+fn worked_example_resource(
+    kind: AgentSkillKind,
+    key: &str,
+    label: &str,
+    english: bool,
+) -> AgentSkillResource {
+    static EXAMPLES: OnceLock<Result<ExampleCatalog, String>> = OnceLock::new();
+    let profile = EXAMPLES
+        .get_or_init(|| serde_json::from_str(SKILL_EXAMPLES).map_err(|_| storage_error()))
+        .as_ref()
+        .ok()
+        .and_then(|catalog| match kind {
+            AgentSkillKind::Profession => catalog.professions.get(key),
+            AgentSkillKind::ProjectType => catalog.project_types.get(key),
+        });
+    let (title, summary, markdown) = match (profile, english) {
+        (Some(profile), true) => (
+            "Worked example and critical counterexample",
+            "An individually authored end-to-end example with expected evidence, a critical anti-pattern, and its correction.",
+            format!(
+                r#"# {label}: worked example and critical counterexample
+
+## Situation
+
+{}
+
+## Good example
+
+{}
+
+## Expected evidence
+
+{}
+
+## Critical counterexample — do not copy
+
+{}
+
+## Why it fails and how to correct it
+
+{}
+
+## Usage boundary
+
+This example demonstrates a method, not project facts or extra authority. Replace every concrete value with current evidence, preserve the Human's scope, and never report the example outcome as work performed in the current project."#,
+                profile.situation_en,
+                profile.good_example_en,
+                profile.evidence_en,
+                profile.counterexample_en,
+                profile.correction_en,
+            ),
+        ),
+        (Some(profile), false) => (
+            "完整示例与关键反例",
+            "逐项编写的端到端示例，包含应有证据、关键反例及修正方式。",
+            format!(
+                r#"# {label}：完整示例与关键反例
+
+## 场景
+
+{}
+
+## 正确示例
+
+{}
+
+## 应有证据
+
+{}
+
+## 关键反例（不要照做）
+
+{}
+
+## 为什么错，以及如何修正
+
+{}
+
+## 使用边界
+
+示例只演示方法，不代表当前项目事实，也不扩大工具或执行权限。执行时必须把具体值替换为当前证据，保持 Human 给定范围，不得把示例结果当成当前项目已经完成的工作。"#,
+                profile.situation_zh,
+                profile.good_example_zh,
+                profile.evidence_zh,
+                profile.counterexample_zh,
+                profile.correction_zh,
+            ),
+        ),
+        (None, true) => (
+            "Missing worked example",
+            "Catalog validation must reject this Skill.",
+            format!(
+                "# {label}: missing worked example\n\nThis catalog entry is incomplete and must not be released."
+            ),
+        ),
+        (None, false) => (
+            "缺少专属示例",
+            "目录校验必须拒绝此 Skill。",
+            format!("# {label}：缺少专属示例\n\n此目录条目不完整，不得发布。"),
+        ),
+    };
+    let markdown = markdown.trim().to_owned();
+    AgentSkillResource {
+        relative_path: "references/worked-examples-and-counterexamples.md".into(),
+        title: title.into(),
+        summary: summary.into(),
+        size_bytes: markdown.len(),
+        markdown,
+    }
 }
 
 fn chinese_resources(
@@ -835,10 +981,28 @@ mod tests {
         assert_eq!(store.catalog("bob").unwrap()[0].label, "项目经理");
 
         let reopened = AgentSkillStore::new(file).unwrap();
-        let reopened_item = &reopened.catalog("alice").unwrap()[0];
+        let reopened_catalog = reopened.catalog("alice").unwrap();
+        assert_eq!(reopened_catalog.len(), 60);
+        assert!(reopened_catalog.iter().all(|item| {
+            item.resources.len() == 5
+                && item.resources_en.len() == 5
+                && item
+                    .resources
+                    .last()
+                    .is_some_and(|resource| resource.title != "缺少专属示例")
+                && item
+                    .resources_en
+                    .last()
+                    .is_some_and(|resource| resource.title != "Missing worked example")
+        }));
+        let reopened_item = &reopened_catalog[0];
         assert_eq!(reopened_item.label, "自定义职业");
-        assert_eq!(reopened_item.resources.len(), 4);
-        assert_eq!(reopened_item.resources_en.len(), 4);
+        assert_eq!(reopened_item.resources.len(), 5);
+        assert_eq!(reopened_item.resources_en.len(), 5);
+        assert_eq!(
+            reopened_item.resources.last().unwrap().title,
+            "完整示例与关键反例"
+        );
         assert!(reopened_item
             .skill_ref
             .ends_with(&reopened_item.instructions_sha256[..12]));
