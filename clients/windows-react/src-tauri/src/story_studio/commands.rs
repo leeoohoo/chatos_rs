@@ -10,10 +10,11 @@ use crate::{
 
 use super::{
     application::{
-        StoryAssetImageGenerationInput, StoryImageConfirmationInput, StoryImageImportInput,
-        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
-        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
-        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
+        StoryAssetImageGenerationInput, StoryFrameImageGenerationInput,
+        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
+        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryProjectCreationInput,
+        StoryProjectSettingsInput, StoryProjectSourceInput, StoryResourcePromptInput,
+        StorySegmentEditInput, StorySegmentStructureInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -143,6 +144,14 @@ pub(crate) struct StoryAssetImageGenerationCommandInput {
     owner_user_id: String,
     presentation_id: String,
     request: StoryAssetImageGenerationInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryFrameImageGenerationCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    request: StoryFrameImageGenerationInput,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -655,6 +664,7 @@ pub(crate) async fn generate_story_asset_image(
             &intent.model_config_id,
             intent.prompt,
             &intent.attempt_id,
+            Vec::new(),
         )
         .await?;
     require_current_generation(&authentication, &story_manager, &owner, generation).await?;
@@ -676,6 +686,77 @@ pub(crate) async fn generate_story_asset_image(
     })
     .await
     .map_err(|_| "剧情素材图片保存任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    result
+}
+
+#[tauri::command]
+pub(crate) async fn generate_story_frame_image(
+    app: AppHandle,
+    authentication: State<'_, AuthenticationManager>,
+    media_manager: State<'_, MediaStudioManager>,
+    story_manager: State<'_, StoryStudioManager>,
+    input: StoryFrameImageGenerationCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let owner = input.owner_user_id;
+    let presentation = input.presentation_id;
+    let story = story_manager.inner().clone();
+    let begin_owner = owner.clone();
+    let begin_presentation = presentation.clone();
+    let intent = tauri::async_runtime::spawn_blocking(move || {
+        story.begin_frame_image_generation(
+            &begin_owner,
+            generation,
+            &begin_presentation,
+            input.request,
+        )
+    })
+    .await
+    .map_err(|_| "剧情首尾帧生成准备任务异常退出。".to_owned())??;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    app.emit(
+        "story-frame-image-generation",
+        serde_json::json!({
+            "presentationId": presentation,
+            "project": intent.snapshot.clone()
+        }),
+    )
+    .map_err(|_| "剧情首尾帧生成状态发布失败。".to_owned())?;
+    let generated = media_manager
+        .generate_story_image(
+            &authentication,
+            &owner,
+            generation,
+            &intent.model_config_id,
+            intent.prompt,
+            &intent.attempt_id,
+            intent.references,
+        )
+        .await?;
+    require_current_generation(&authentication, &story_manager, &owner, generation).await?;
+    let story = story_manager.inner().clone();
+    let complete_owner = owner.clone();
+    let complete_presentation = presentation.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        story.complete_frame_image_generation(
+            &complete_owner,
+            generation,
+            &complete_presentation,
+            &intent.project_id,
+            &intent.segment_id,
+            intent.frame_role,
+            &intent.attempt_id,
+            generated.provider_result_id,
+            generated.provider_asset_id,
+            &generated.bytes,
+        )
+    })
+    .await
+    .map_err(|_| "剧情首尾帧图片保存任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &story_manager, &owner, generation).await?;
     result
 }

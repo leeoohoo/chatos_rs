@@ -572,6 +572,61 @@ impl StoryProject {
         }
     }
 
+    pub(super) fn reconcile_inherited_first_frames(&mut self) {
+        for index in 1..self.segments.len() {
+            let previous_segment_id = self.segments[index - 1].id.clone();
+            let tail = self.segments[index - 1]
+                .actual_video_last_frame_id
+                .as_ref()
+                .and_then(|id| {
+                    self.segments[index - 1]
+                        .last_frames
+                        .images
+                        .iter()
+                        .find(|image| &image.id == id)
+                })
+                .cloned();
+            let current_is_inherited = self.segments[index]
+                .inherited_first_frame_source_segment_id
+                .is_some();
+            let Some(tail) = tail else {
+                if current_is_inherited {
+                    self.segments[index].first_frames.confirmed_image_id = None;
+                    self.segments[index].inherited_first_frame_source_segment_id = None;
+                }
+                continue;
+            };
+            if !self.segments[index]
+                .first_frames
+                .images
+                .iter()
+                .any(|image| image.id == tail.id)
+            {
+                self.segments[index].first_frames.images.push(tail.clone());
+            }
+            let current = self.segments[index]
+                .first_frames
+                .confirmed_image_id
+                .as_ref()
+                .and_then(|id| {
+                    self.segments[index]
+                        .first_frames
+                        .images
+                        .iter()
+                        .find(|image| &image.id == id)
+                });
+            let current_is_ai_generated = current
+                .is_some_and(|image| image.generation_attempt_id.is_some())
+                && self.segments[index].user_selected_first_frame_id.as_ref()
+                    != current.map(|image| &image.id);
+            if current.is_none() || current_is_inherited || current_is_ai_generated {
+                self.segments[index].first_frames.confirmed_image_id = Some(tail.id);
+                self.segments[index].inherited_first_frame_source_segment_id =
+                    Some(previous_segment_id);
+            }
+        }
+    }
+
     fn resource_id_set(&self) -> Result<HashSet<&str>, String> {
         let mut ids = HashSet::new();
         for (id, name, prompt, media) in self

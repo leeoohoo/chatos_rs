@@ -60,6 +60,12 @@ pub(crate) struct StoryGeneratedImage {
     pub provider_asset_id: String,
 }
 
+pub(crate) struct StoryImageReference {
+    pub name: String,
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
 #[derive(Clone)]
 struct MediaPreviewSession {
     owner_hash: String,
@@ -168,6 +174,7 @@ impl MediaStudioManager {
         model_config_id: &str,
         prompt: String,
         client_request_id: &str,
+        references: Vec<StoryImageReference>,
     ) -> Result<StoryGeneratedImage, String> {
         authentication
             .require_session_generation(owner_user_id, authentication_generation)
@@ -193,7 +200,14 @@ impl MediaStudioManager {
             prompt,
             size: None,
             count: 1,
-            reference_images: Vec::new(),
+            reference_images: references
+                .into_iter()
+                .map(|reference| provider::ImageGenerationInput {
+                    name: reference.name,
+                    mime_type: reference.mime_type,
+                    bytes: reference.bytes,
+                })
+                .collect(),
             client_request_id: client_request_id.to_owned(),
         };
         let wire = make_provider_request(&runtime, &request)?;

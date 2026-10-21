@@ -2,12 +2,12 @@ use super::domain::*;
 use super::{
     application::{
         apply_story_project_settings, apply_story_project_source, default_story_style,
-        make_story_project, StoryAssetImageGenerationInput, StoryFrameRoleInput,
-        StoryImageConfirmationInput, StoryImageImportInput, StoryLastFrameClearInput,
-        StoryLatestFramesInput, StoryLatestResourceImagesInput, StoryModelSelectionInput,
-        StoryProjectCreationInput, StoryProjectSettingsInput, StoryProjectSourceInput,
-        StoryResourcePromptInput, StorySegmentEditInput, StorySegmentStructureInput,
-        StorySegmentStructureMutation, StorySegmentStructureOperation,
+        make_story_project, StoryAssetImageGenerationInput, StoryFrameImageGenerationInput,
+        StoryFrameRoleInput, StoryImageConfirmationInput, StoryImageImportInput,
+        StoryLastFrameClearInput, StoryLatestFramesInput, StoryLatestResourceImagesInput,
+        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+        StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentEditInput,
+        StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1354,6 +1354,153 @@ fn asset_image_generation_uses_durable_attempt_and_merges_provider_result() {
         .confirmed_image_id
         .is_none());
     assert!(!encoded.contains(&image.filename));
+}
+
+#[test]
+fn frame_image_generation_uses_ordered_native_references_and_role_scoped_attempts() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut canonical = project();
+    canonical.segments[0].detail = Some(test_segment_detail(15));
+    store.save("alice", &canonical).unwrap();
+    let reference_path = app_data.path().join("reference.png");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]))
+        .save_with_format(&reference_path, image::ImageFormat::Png)
+        .unwrap();
+    let reference_bytes = fs::read(reference_path).unwrap();
+    let resource_image = StoryImage {
+        id: Uuid::new_v4().to_string(),
+        filename: "resource.png".into(),
+        mime_type: "image/png".into(),
+        source_resource_id: Some("key".into()),
+        generation_attempt_id: None,
+        provider_result_id: None,
+        provider_asset_id: None,
+        derived_from_video_job_id: None,
+    };
+    let resource_image_id = resource_image.id.clone();
+    let resource_filename = resource_image.filename.clone();
+    canonical = store
+        .mutate_project_with_image(
+            "alice",
+            &canonical.id,
+            &resource_filename,
+            &reference_bytes,
+            |project| {
+                project.props[0].media.images.push(resource_image);
+                project.props[0].media.confirmed_image_id = Some(resource_image_id);
+                Ok(())
+            },
+        )
+        .unwrap();
+    let manager = StoryStudioManager::new(app_data.path().to_path_buf()).unwrap();
+    let presentation = Uuid::new_v4().to_string();
+    manager
+        .present_project("alice", 22, &presentation, &canonical.id)
+        .unwrap();
+
+    let first = manager
+        .begin_frame_image_generation(
+            "alice",
+            22,
+            &presentation,
+            StoryFrameImageGenerationInput {
+                project_id: canonical.id.clone(),
+                base_fingerprint: project_fingerprint(&canonical).unwrap(),
+                segment_id: "s1".into(),
+                frame_role: StoryFrameRoleInput::First,
+                reference_resource_ids: vec!["key".into()],
+                user_ideas: "keep the brass texture".into(),
+            },
+        )
+        .unwrap();
+    assert_eq!(first.references.len(), 1);
+    assert_eq!(first.references[0].bytes, reference_bytes);
+    assert!(first.prompt.contains("keep the brass texture"));
+    assert!(first.prompt.contains("first frame"));
+    assert!(first.prompt.contains("\"referenceIndex\":1"));
+    let pending = store.load_native_project("alice", &canonical.id).unwrap();
+    assert_eq!(
+        pending.segments[0]
+            .first_frames
+            .generation_attempt_id
+            .as_deref(),
+        Some(first.attempt_id.as_str())
+    );
+    let first_snapshot = manager
+        .complete_frame_image_generation(
+            "alice",
+            22,
+            &presentation,
+            &first.project_id,
+            &first.segment_id,
+            first.frame_role,
+            &first.attempt_id,
+            "first-result".into(),
+            "first-asset".into(),
+            &reference_bytes,
+        )
+        .unwrap();
+    assert!(!serde_json::to_string(&first_snapshot)
+        .unwrap()
+        .contains("first-result"));
+    let after_first = store.load_native_project("alice", &canonical.id).unwrap();
+    let first_image = after_first.segments[0].first_frames.images[0].clone();
+    assert_eq!(
+        after_first.segments[0].first_frames.confirmed_image_id,
+        Some(first_image.id.clone())
+    );
+    assert!(after_first.segments[0]
+        .user_selected_first_frame_id
+        .is_none());
+
+    let last = manager
+        .begin_frame_image_generation(
+            "alice",
+            22,
+            &presentation,
+            StoryFrameImageGenerationInput {
+                project_id: after_first.id.clone(),
+                base_fingerprint: project_fingerprint(&after_first).unwrap(),
+                segment_id: "s1".into(),
+                frame_role: StoryFrameRoleInput::Last,
+                reference_resource_ids: vec!["key".into()],
+                user_ideas: String::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(last.references.len(), 2);
+    assert_eq!(last.references[1].name, "current-segment-first-frame.png");
+    assert!(last
+        .prompt
+        .contains("\"currentSegmentFirstFrameReferenceIndex\":2"));
+    manager
+        .complete_frame_image_generation(
+            "alice",
+            22,
+            &presentation,
+            &last.project_id,
+            &last.segment_id,
+            last.frame_role,
+            &last.attempt_id,
+            "last-result".into(),
+            "last-asset".into(),
+            &reference_bytes,
+        )
+        .unwrap();
+    let completed = store.load_native_project("alice", &canonical.id).unwrap();
+    assert!(completed.segments[0]
+        .last_frames
+        .generation_attempt_id
+        .is_none());
+    assert_eq!(
+        completed.segments[0].last_frames.confirmed_image_id,
+        completed.segments[0]
+            .last_frames
+            .images
+            .first()
+            .map(|image| image.id.clone())
+    );
 }
 
 #[test]

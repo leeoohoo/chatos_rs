@@ -160,6 +160,17 @@ pub(crate) struct StoryAssetImageGenerationInput {
     pub user_ideas: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryFrameImageGenerationInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+    pub frame_role: StoryFrameRoleInput,
+    pub reference_resource_ids: Vec<String>,
+    pub user_ideas: String,
+}
+
 pub(super) fn make_story_project(
     input: StoryProjectCreationInput,
     owner_user_id: &str,
@@ -581,6 +592,117 @@ pub(super) fn complete_story_asset_image_generation(
     if automatically_confirmed {
         project.invalidate_dependent_frames(completion.resource_id);
     }
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn begin_story_frame_image_generation(
+    project: &mut StoryProject,
+    input: &StoryFrameImageGenerationInput,
+    attempt_id: &str,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let attempt_id = Uuid::parse_str(attempt_id)
+        .map(|value| value.to_string())
+        .map_err(|_| "剧情首尾帧生成请求无效。".to_owned())?;
+    let segment = project
+        .segments
+        .iter()
+        .find(|segment| segment.id == input.segment_id && segment.attempt.is_none())
+        .filter(|segment| segment.detail.is_some())
+        .ok_or_else(|| "剧情分段已不存在或不再允许生成图片，请刷新后重试。".to_owned())?;
+    let ordered = segment
+        .character_ids
+        .iter()
+        .chain(segment.scene_ids.iter())
+        .chain(segment.prop_ids.iter())
+        .filter(|id| input.reference_resource_ids.contains(id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let requested = input
+        .reference_resource_ids
+        .iter()
+        .collect::<std::collections::HashSet<_>>();
+    if ordered.is_empty()
+        || ordered.iter().collect::<std::collections::HashSet<_>>() != requested
+        || ordered.iter().any(|id| {
+            project
+                .resource_media(id)
+                .and_then(|media| media.confirmed_image_id.as_ref())
+                .is_none()
+        })
+    {
+        return Err("请选择至少一个属于当前分段且已确认图片的素材。".into());
+    }
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == input.segment_id)
+        .expect("validated story segment");
+    let frames = match input.frame_role {
+        StoryFrameRoleInput::First => &mut segment.first_frames,
+        StoryFrameRoleInput::Last => &mut segment.last_frames,
+    };
+    if frames.generation_attempt_id.is_some() {
+        return Err("上次图片提交结果尚未确认，请先核对服务商任务记录。".into());
+    }
+    frames.generation_attempt_id = Some(attempt_id);
+    project.reconcile_inherited_first_frames();
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) struct StoryFrameImageCompletion<'a> {
+    pub project_id: &'a str,
+    pub segment_id: &'a str,
+    pub frame_role: StoryFrameRoleInput,
+    pub attempt_id: &'a str,
+    pub filename: String,
+    pub provider_result_id: String,
+    pub provider_asset_id: String,
+}
+
+pub(super) fn complete_story_frame_image_generation(
+    project: &mut StoryProject,
+    completion: StoryFrameImageCompletion<'_>,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    if project.id != completion.project_id {
+        return Err("剧情首尾帧结果与当前项目不匹配。".into());
+    }
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == completion.segment_id)
+        .ok_or_else(|| "剧情分段已不存在，请刷新后重试。".to_owned())?;
+    let image = StoryImage {
+        id: Uuid::new_v4().to_string(),
+        filename: completion.filename,
+        mime_type: "image/png".into(),
+        source_resource_id: Some(completion.segment_id.to_owned()),
+        generation_attempt_id: Some(completion.attempt_id.to_owned()),
+        provider_result_id: Some(completion.provider_result_id),
+        provider_asset_id: Some(completion.provider_asset_id),
+        derived_from_video_job_id: None,
+    };
+    let frames = match completion.frame_role {
+        StoryFrameRoleInput::First => &mut segment.first_frames,
+        StoryFrameRoleInput::Last => &mut segment.last_frames,
+    };
+    if frames.generation_attempt_id.as_deref() != Some(completion.attempt_id) {
+        return Err("剧情首尾帧提交身份已经变化。".into());
+    }
+    let automatically_confirmed = frames.confirmed_image_id.is_none();
+    if automatically_confirmed {
+        frames.confirmed_image_id = Some(image.id.clone());
+    }
+    frames.images.push(image);
+    frames.generation_attempt_id = None;
+    if automatically_confirmed && completion.frame_role == StoryFrameRoleInput::First {
+        segment.inherited_first_frame_source_segment_id = None;
+    }
+    project.reconcile_inherited_first_frames();
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
 }

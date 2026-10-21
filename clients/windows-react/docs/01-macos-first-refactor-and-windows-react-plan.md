@@ -572,6 +572,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事素材图片生成第十七段）：新增 `generate_story_asset_image` typed command。Rust 在 fingerprint-guarded canonical mutation 内先持久化 per-resource attempt 并发布安全项目事件，再由 Media Studio 窄 Port 使用当前账号 image model/Secret 调用 provider；prompt 与 macOS `StoryGenerationContext.assetPrompt` 保持“用户补充要求 + style + resource prompt”顺序。成功结果重新下载并校验图片、统一转 PNG，在最新 canonical manifest 上按 project/resource/attempt identity 合并；provider result/asset identity、文件名、媒体字节及 Secret 不进入 React。首张图片自动确认并失效无视频 attempt 的依赖分段首尾帧；失败、取消或身份变化保留 durable attempt 供后续核对，错误 attempt 完成不会留下孤儿文件。Story Rust 定向测试增至 39 项及 Clippy `-D warnings` 通过。React 剧情入口继续关闭；下一片实现首帧/尾帧图片生成 Port/commands。
 
+状态补充（2026-10-21，Windows AI 故事首尾帧生成第十八段）：新增 `generate_story_frame_image` typed command。请求只提交 segment/role/reference resource IDs/user ideas 与 canonical fingerprint；Rust 按分段素材顺序重建已确认参考图，首帧可追加上一段确认尾帧，尾帧可追加本段确认首帧，并使用 1-based reference index 生成与 macOS `StoryGenerationContext.framePrompt` 同源的上下文、镜头语言和连续性约束。读取媒体成功后才持久化 role-scoped attempt；provider、Secret、base64、路径与 filename 均留在原生层。完成时按 project/segment/role/attempt 合并最新 manifest、统一 PNG、首张自动确认；AI 首帧不会伪装成用户显式选择，继承首帧按实际视频尾帧规则对账。错误身份不落孤儿文件。Story Rust 定向测试增至 40 项及 Clippy `-D warnings` 通过。React 剧情入口继续关闭；下一片进入单段视频生成、轮询、取消与恢复。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。
