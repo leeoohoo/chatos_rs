@@ -65,6 +65,13 @@ export interface StoryStudioPort {
     baseFingerprint: string;
     target: StoryImageImportTarget;
   }): Promise<StoryProject | null>;
+  importHistoryImage(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    target: StoryImageImportTarget;
+    recordId: string;
+    contentToken: string;
+  }): Promise<StoryProject>;
   generateAssetImage(request: StoryPresentationScope & {
     projectId: string;
     baseFingerprint: string;

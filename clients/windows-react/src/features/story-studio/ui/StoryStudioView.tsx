@@ -3,7 +3,7 @@ import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import { isStorySegmentReady, storyConfirmedImage } from "../domain/storyStudio";
 import { useStoryStudioStore } from "../application/storyStudioStore";
 import type { StoryPlanningProgress } from "../application/storyStudioStore";
-import type { StoryStudioPort } from "../ports/StoryStudioPort";
+import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
 import "./storyStudio.css";
 
 interface StoryStudioViewProps {
@@ -55,7 +55,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
             <button onClick={state.clearError} type="button">关闭</button>
           </div>
         )}
-        {project ? <ProjectWorkspace port={port} projectId={project.id} /> : (
+        {project ? <ProjectWorkspace mediaPort={mediaPort} port={port} projectId={project.id} /> : (
           <div className="story-studio__welcome">
             <span aria-hidden="true">✦</span>
             <h2>把故事变成可控的镜头</h2>
@@ -69,7 +69,7 @@ export function StoryStudioView({ ownerUserId, mediaPort, port }: StoryStudioVie
   );
 }
 
-function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectId: string }) {
+function ProjectWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStudioPort; port: StoryStudioPort; projectId: string }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const [source, setSource] = useState(project.source);
@@ -135,12 +135,12 @@ function ProjectWorkspace({ port, projectId }: { port: StoryStudioPort; projectI
             </button>
           </aside>
         </div>
-      ) : <PlannedStoryWorkspace port={port} projectId={project.id} />}
+      ) : <PlannedStoryWorkspace mediaPort={mediaPort} port={port} projectId={project.id} />}
     </div>
   );
 }
 
-function PlannedStoryWorkspace({ port, projectId }: { port: StoryStudioPort; projectId: string }) {
+function PlannedStoryWorkspace({ mediaPort, port, projectId }: { mediaPort: MediaStudioPort; port: StoryStudioPort; projectId: string }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const [selectedSegment, setSelectedSegment] = useState(project.segments[0]?.id ?? null);
@@ -148,6 +148,7 @@ function PlannedStoryWorkspace({ port, projectId }: { port: StoryStudioPort; pro
   const resources = [...project.characters, ...project.scenes, ...project.props];
   const planning = state.planningProgress[project.id] ?? null;
   const isRefining = state.busy && planning?.stage === "refine" && planningIsActive(planning);
+  const [historyTarget, setHistoryTarget] = useState<StoryImageImportTarget | null>(null);
 
   return (
     <div className="story-plan-workspace">
@@ -161,20 +162,21 @@ function PlannedStoryWorkspace({ port, projectId }: { port: StoryStudioPort; pro
           const target = `resource:${resource.id}`;
           const displayed = hasUnconfirmedLatest ? latest : image;
           const importTarget = `import:resource:${resource.id}`;
-          return <article key={resource.id}>{displayed?.previewUrl ? <img alt={resource.name} src={displayed.previewUrl} /> : <span>◇</span>}<strong>{resource.name}{hasUnconfirmedLatest ? " · 待确认" : ""}</strong><small>{resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small>{hasUnconfirmedLatest && <button disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestResources(port, [resource.id])} type="button">使用最新版本</button>}<button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => void state.importLocalImage(port, { kind: "resource", resourceId: resource.id })} type="button">{state.activeMediaTarget === importTarget ? "正在导入…" : "导入本机图片"}</button><button disabled={state.activeMediaTarget != null} onClick={() => void state.generateAssetImage(port, resource.id, "")} type="button">{state.activeMediaTarget === target ? "生成中…" : image ? "再生成" : "生成素材"}</button></article>;
+          return <article key={resource.id}>{displayed?.previewUrl ? <img alt={resource.name} src={displayed.previewUrl} /> : <span>◇</span>}<strong>{resource.name}{hasUnconfirmedLatest ? " · 待确认" : ""}</strong><small>{resource.imagePrompt || ("description" in resource ? resource.description : "等待素材描述")}</small>{hasUnconfirmedLatest && <button disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestResources(port, [resource.id])} type="button">使用最新版本</button>}<button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => void state.importLocalImage(port, { kind: "resource", resourceId: resource.id })} type="button">{state.activeMediaTarget === importTarget ? "正在导入…" : "导入本机图片"}</button><button disabled={state.activeMediaTarget != null || resource.media.generationAttemptId != null} onClick={() => setHistoryTarget({ kind: "resource", resourceId: resource.id })} type="button">从创作历史选择</button><button disabled={state.activeMediaTarget != null} onClick={() => void state.generateAssetImage(port, resource.id, "")} type="button">{state.activeMediaTarget === target ? "生成中…" : image ? "再生成" : "生成素材"}</button></article>;
         })}</div>
       </section>
       <div className="story-segment-layout">
         <nav aria-label="剧情分段">
           {project.segments.map((item, index) => <button className={item.id === segment?.id ? "is-selected" : ""} key={item.id} onClick={() => setSelectedSegment(item.id)} type="button"><span>{String(index + 1).padStart(2, "0")}</span><span><strong>{item.title}</strong><small>{item.seconds} 秒 · {segmentState(item)}</small></span></button>)}
         </nav>
-        {segment && <SegmentInspector port={port} projectId={project.id} segmentId={segment.id} />}
+        {segment && <SegmentInspector onPickHistory={setHistoryTarget} port={port} projectId={project.id} segmentId={segment.id} />}
       </div>
+      {historyTarget && <StoryImageHistorySheet mediaPort={mediaPort} onClose={() => setHistoryTarget(null)} port={port} target={historyTarget} />}
     </div>
   );
 }
 
-function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPort; projectId: string; segmentId: string }) {
+function SegmentInspector({ port, projectId, segmentId, onPickHistory }: { port: StoryStudioPort; projectId: string; segmentId: string; onPickHistory(target: StoryImageImportTarget): void }) {
   const state = useStoryStudioStore();
   const project = state.projects.find((value) => value.id === projectId)!;
   const segment = project.segments.find((value) => value.id === segmentId)!;
@@ -211,6 +213,8 @@ function SegmentInspector({ port, projectId, segmentId }: { port: StoryStudioPor
         <button disabled={!segment.detail || referenceResourceIds.length === 0 || state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.generateFrameImage(port, segment.id, "last", referenceResourceIds, userIdeas)} type="button">{state.activeMediaTarget === `frame:${segment.id}:last` ? "正在生成尾帧…" : last ? "重新生成尾帧" : "生成尾帧"}</button>
         <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.importLocalImage(port, { kind: "frame", segmentId: segment.id, frameRole: "first" })} type="button">{state.activeMediaTarget === `import:frame:${segment.id}:first` ? "正在导入首帧…" : "导入本机首帧"}</button>
         <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => void state.importLocalImage(port, { kind: "frame", segmentId: segment.id, frameRole: "last" })} type="button">{state.activeMediaTarget === `import:frame:${segment.id}:last` ? "正在导入尾帧…" : "导入本机尾帧"}</button>
+        <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => onPickHistory({ kind: "frame", segmentId: segment.id, frameRole: "first" })} type="button">从历史选择首帧</button>
+        <button disabled={state.activeMediaTarget != null || segment.attempt != null} onClick={() => onPickHistory({ kind: "frame", segmentId: segment.id, frameRole: "last" })} type="button">从历史选择尾帧</button>
       </div>
       {(hasUnconfirmedFirst || hasUnconfirmedLast) && <button className="story-confirm-frames" disabled={state.activeMediaTarget != null} onClick={() => void state.confirmLatestFrames(port, segment.id, latestLast != null)} type="button">确认使用最新首尾帧</button>}
       {segment.detail && <section className="story-shot-list"><h4>镜头时间线</h4>{segment.detail.shots.map((shot) => <div key={`${shot.start}-${shot.end}`}><span>{shot.start}–{shot.end}s</span><p>{shot.prompt}</p></div>)}</section>}
@@ -242,6 +246,32 @@ function PlanningStatus({ progress }: { progress: StoryPlanningProgress }) {
         {progress.stopReason && <p>{progress.stopReason}</p>}
       </div>
     </section>
+  );
+}
+
+function StoryImageHistorySheet({ mediaPort, port, target, onClose }: { mediaPort: MediaStudioPort; port: StoryStudioPort; target: StoryImageImportTarget; onClose(): void }) {
+  const state = useStoryStudioStore();
+  useEffect(() => {
+    void state.loadStoryImageHistory(mediaPort);
+  }, [mediaPort, state.loadStoryImageHistory]);
+  const select = async (recordId: string, contentToken: string) => {
+    await useStoryStudioStore.getState().importHistoryImage(port, target, recordId, contentToken);
+    if (!useStoryStudioStore.getState().error) onClose();
+  };
+  return (
+    <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section aria-modal="true" className="story-sheet story-history-sheet" role="dialog">
+        <header><div><span>▧</span><div><h2>从 AI 创作历史选择</h2><p>图片会复制到当前剧情项目并立即确认使用。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header>
+        <div className="story-history-grid">
+          {state.storyImageHistoryLoading ? <div className="story-studio__loading"><span className="mini-spinner" />正在读取创作历史…</div> : state.storyImageHistory.length === 0 ? <p>还没有可用的图片创作记录。</p> : state.storyImageHistory.flatMap((item) => item.images.map((asset) => (
+            <button disabled={state.activeMediaTarget != null} key={`${item.id}:${asset.id}`} onClick={() => void select(item.id, asset.contentToken)} type="button">
+              {asset.previewUrl ? <img alt={asset.revisedPrompt || item.prompt} src={asset.previewUrl} /> : <span>图片</span>}
+              <small>{asset.revisedPrompt || item.prompt}</small>
+            </button>
+          )))}
+        </div>
+      </section>
+    </div>
   );
 }
 

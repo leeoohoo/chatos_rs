@@ -139,6 +139,50 @@ describe("StoryStudioView", () => {
     }));
     expect(useStoryStudioStore.getState().projects[0]?.updatedAtUnixMs).toBe(3);
   });
+
+  it("imports an authorized image-history reference without exposing provider data", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      importHistoryImage: vi.fn(async () => ({ ...canonical, updatedAtUnixMs: 4 })),
+    });
+    const historyPort = mediaPort();
+    historyPort.loadImageHistory = vi.fn(async () => ({
+      items: [{
+        id: "33333333-3333-4333-8333-333333333333",
+        prompt: "雨夜人物",
+        modelName: "gpt-image-1",
+        createdAtUnixMs: 3,
+        images: [{
+          id: "image-a",
+          mimeType: "image/png" as const,
+          contentToken: "a".repeat(32),
+          revisedPrompt: null,
+          previewUrl: null,
+        }],
+      }],
+      nextCursor: null,
+      unreadableCount: 0,
+    }));
+    render(<StoryStudioView mediaPort={historyPort} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客" });
+
+    await act(async () => useStoryStudioStore.getState().loadStoryImageHistory(historyPort));
+    expect(useStoryStudioStore.getState().storyImageHistory).toHaveLength(1);
+    await act(async () => useStoryStudioStore.getState().importHistoryImage(
+      storyPort,
+      { kind: "frame", segmentId: "segment-a", frameRole: "first" },
+      "33333333-3333-4333-8333-333333333333",
+      "a".repeat(32),
+    ));
+
+    expect(storyPort.importHistoryImage).toHaveBeenCalledWith(expect.objectContaining({
+      ownerUserId: "alice",
+      recordId: "33333333-3333-4333-8333-333333333333",
+      contentToken: "a".repeat(32),
+      target: { kind: "frame", segmentId: "segment-a", frameRole: "first" },
+    }));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -153,6 +197,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     resumePlanning: vi.fn(async () => project()),
     abandonPlanning: vi.fn(async () => planningRun()),
     importLocalImage: vi.fn(async () => project()),
+    importHistoryImage: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),
@@ -191,7 +236,7 @@ function planningRun() {
   };
 }
 
-function mediaPort() {
+function mediaPort(): MediaStudioPort {
   return {
     listModels: vi.fn(async () => [
       model("text-model", "Text", "gpt-5"),

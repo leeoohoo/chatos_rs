@@ -125,28 +125,32 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
   }
 
   async importLocalImage(request: Parameters<StoryStudioPort["importLocalImage"]>[0]) {
-    const target = request.target.kind === "resource"
-      ? {
-          resourceId: identifierSchema.parse(request.target.resourceId),
-          segmentId: null,
-          frameRole: null,
-        }
-      : {
-          resourceId: null,
-          segmentId: identifierSchema.parse(request.target.segmentId),
-          frameRole: z.enum(["first", "last"]).parse(request.target.frameRole),
-        };
     const input = {
       ...scope(request),
       import: {
         projectId: uuidSchema.parse(request.projectId),
         baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
-        ...target,
+        ...imageImportTarget(request.target),
         confirmsImportedImage: true,
       },
     };
     const value = await invoke("import_local_story_image", { input });
     return value == null ? null : storyProjectSchema.parse(value);
+  }
+
+  async importHistoryImage(request: Parameters<StoryStudioPort["importHistoryImage"]>[0]) {
+    const input = {
+      ...scope(request),
+      recordId: uuidSchema.parse(request.recordId),
+      contentToken: z.string().regex(/^[0-9a-f]{32}$/u).parse(request.contentToken),
+      import: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        ...imageImportTarget(request.target),
+        confirmsImportedImage: true,
+      },
+    };
+    return storyProjectSchema.parse(await invoke("import_story_history_image", { input }));
   }
 
   async generateAssetImage(request: Parameters<StoryStudioPort["generateAssetImage"]>[0]) {
@@ -266,6 +270,20 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
   async discardPresentation(request: StoryPresentationScope) {
     await invoke("discard_story_studio_presentation", { input: scope(request) });
   }
+}
+
+function imageImportTarget(target: Parameters<StoryStudioPort["importLocalImage"]>[0]["target"]) {
+  return target.kind === "resource"
+    ? {
+        resourceId: identifierSchema.parse(target.resourceId),
+        segmentId: null,
+        frameRole: null,
+      }
+    : {
+        resourceId: null,
+        segmentId: identifierSchema.parse(target.segmentId),
+        frameRole: z.enum(["first", "last"]).parse(target.frameRole),
+      };
 }
 
 function scope(request: StoryPresentationScope) {

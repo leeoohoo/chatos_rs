@@ -1,5 +1,5 @@
 import { create, type StoreApi } from "zustand";
-import type { MediaStudioModel } from "../../media-studio/domain/mediaStudio";
+import type { MediaStudioHistoryItem, MediaStudioModel } from "../../media-studio/domain/mediaStudio";
 import type { MediaStudioPort } from "../../media-studio/ports/MediaStudioPort";
 import type { StoryPlanningEvent, StoryPlanningRun, StoryProject } from "../domain/storyStudio";
 import type { StoryImageImportTarget, StoryStudioPort } from "../ports/StoryStudioPort";
@@ -25,6 +25,8 @@ interface StoryStudioState {
   projects: StoryProject[];
   selectedProjectId: string | null;
   models: MediaStudioModel[];
+  storyImageHistory: MediaStudioHistoryItem[];
+  storyImageHistoryLoading: boolean;
   loading: boolean;
   busy: boolean;
   error: string | null;
@@ -54,6 +56,8 @@ interface StoryStudioState {
   resumePlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   abandonPlanning(storyPort: StoryStudioPort, projectId: string, runId: string): Promise<void>;
   importLocalImage(storyPort: StoryStudioPort, target: StoryImageImportTarget): Promise<void>;
+  loadStoryImageHistory(mediaPort: MediaStudioPort): Promise<void>;
+  importHistoryImage(storyPort: StoryStudioPort, target: StoryImageImportTarget, recordId: string, contentToken: string): Promise<void>;
   generateAssetImage(storyPort: StoryStudioPort, resourceId: string, userIdeas: string): Promise<void>;
   generateFrameImage(storyPort: StoryStudioPort, segmentId: string, frameRole: "first" | "last", referenceResourceIds: string[], userIdeas: string): Promise<void>;
   confirmLatestResources(storyPort: StoryStudioPort, resourceIds: string[]): Promise<void>;
@@ -76,6 +80,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
   projects: [],
   selectedProjectId: null,
   models: [],
+  storyImageHistory: [],
+  storyImageHistoryLoading: false,
   loading: false,
   busy: false,
   error: null,
@@ -97,6 +103,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       projects: [],
       selectedProjectId: null,
       models: [],
+      storyImageHistory: [],
+      storyImageHistoryLoading: false,
       loading: true,
       busy: false,
       error: null,
@@ -139,6 +147,8 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
       projects: [],
       selectedProjectId: null,
       models: [],
+      storyImageHistory: [],
+      storyImageHistoryLoading: false,
       loading: false,
       busy: false,
       error: null,
@@ -341,6 +351,51 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ activeMediaTarget: null, error: errorMessage(error, "本机剧情图片导入失败。") });
+    }
+  },
+
+  async loadStoryImageHistory(mediaPort) {
+    const scope = activeScope(get());
+    if (!scope || get().storyImageHistoryLoading) return;
+    set({ storyImageHistoryLoading: true, error: null });
+    try {
+      const page = await mediaPort.loadImageHistory({ ownerUserId: scope.ownerUserId, limit: 40 });
+      if (!sameScope(get(), scope)) return;
+      set({ storyImageHistory: page.items, storyImageHistoryLoading: false });
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({
+        storyImageHistoryLoading: false,
+        error: errorMessage(error, "AI 创作图片历史暂时无法读取。"),
+      });
+    }
+  },
+
+  async importHistoryImage(storyPort, target, recordId, contentToken) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().activeMediaTarget) return;
+    const operation = target.kind === "resource"
+      ? `history:resource:${target.resourceId}`
+      : `history:frame:${target.segmentId}:${target.frameRole}`;
+    set({ activeMediaTarget: operation, error: null });
+    try {
+      const saved = await storyPort.importHistoryImage({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        target,
+        recordId,
+        contentToken,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({
+        projects: replaceProject(state.projects, saved),
+        activeMediaTarget: null,
+      }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ activeMediaTarget: null, error: errorMessage(error, "创作历史图片导入失败。") });
     }
   },
 
