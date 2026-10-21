@@ -1210,7 +1210,7 @@ Windows React 已完成对应独立切片：
 - Windows 已按这条调用链完成 Agent 档案、头像、Skills、私聊、团队创建/成员、概览、Human 团队消息、需求调研、共享资产、Todo、Run 历史与运行详情的 Domain → Store → Port → Tauri Adapter → React 垂直切片；React 不读取团队 SQLite、Host payload、项目绝对路径或模型 Secret。
 - Todo 使用独立 executor Conversation 和 Run；执行能力由创建时固化的计划决定，团队资产按启动 revision 冻结。`started/progress/completed/blocked` 都是持久化回执；Host 成功但缺少终态工具回执，或 `project_write` 缺少提交后读取证据时，任务必须转为 blocked，禁止用模型文本伪装完成。
 - Windows 不暴露 macOS 的 `todo_schedule_state`、`todo_start_next` 和 `agent_cycle_complete` 给模型：同等调度语义由账号/团队去重的原生 drain 承担，并在 Agent 工具 mutation、Human mutation、Todo 终态和应用恢复时唤醒。原生事务原子选择每个 Agent 的最高优先级 ready Todo，依赖与单 executor lane 由 SQLite 复验；再开放模型调度入口会形成第二写入者和竞态。
-- 当前明确差异：Windows 尚未接入可信 Plugin executor，因此 Todo Plugin 计划保持不可选；主动 Agent-to-Agent 通讯、成员提案与 heartbeat/cycle 工具仍需按 macOS 通讯协议补齐。现有 Human→团队→Agent Delivery 和任务执行页面可使用，但不得把这些剩余能力标记为完成。
+- 当前团队内的 `chat_list_members` 与 `chat_send_message` 已接入：成员只以当前 Run 的 `agent_ref` 暴露，消息按 invocation 幂等写入并可通过 @ 生成真实 `agent_mention` Delivery。Windows 尚未接入可信 Plugin executor，因此 Todo Plugin 计划保持不可选；跨团队/主动私聊选择器、未读消息回复、Agent 文档附件、成员提案与 heartbeat/cycle 工具仍需按 macOS 通讯协议补齐，不得把这些剩余能力标记为完成。
 
 ## 10. 31 个页面的准入状态
 
@@ -1228,7 +1228,7 @@ Windows React 已完成对应独立切片：
 | 10 | Agent 管理 | macOS 档案/模型/职业/职责/头像/Skills 与私聊来源已映射；Windows typed 原生层和 Apple 主题 React 管理页已完成 | 已进入 React；Plugin executor 仍保持关闭 |
 | 11 | Agent 文档 | 未映射 | 禁止 |
 | 12 | Agent 团队概览 | macOS 团队/成员/默认 Agent/项目经理语义已映射；Windows 创建、邀请、职责与负责人管理已完成 | 已进入 React |
-| 13 | Agent 团队聊天 | macOS Delivery/Run 主链已映射；Windows Human 消息、@成员、默认 Agent、真实 Host Turn、响应持久化与轮询对账已完成 | 基础链路已进入 React；主动 Agent 通讯、提案和 heartbeat 继续实施 |
+| 13 | Agent 团队聊天 | macOS Delivery/Run 主链已映射；Windows Human 消息、@成员、默认 Agent、真实 Host Turn、响应持久化、Run-scoped 成员目录、同团队 Agent 主动消息与轮询对账已完成 | 基础链路已进入 React；跨团队/私聊选择器、文档、提案和 heartbeat 继续实施 |
 | 14 | Agent 团队任务 | macOS Todo 工作契约、依赖、独立 executor、资产快照、工具回执与调度约束已映射；Windows 持久任务板、manager/executor 工具、原生 drain、停止/重试与实时进度已完成 | 已进入 React；Plugin 任务在可信 worker 完成前失败关闭 |
 | 15 | Agent 团队调研 | macOS Ask User/Requirement Survey 恢复语义已映射；Windows 真实 Host Survey 查询、回答、取消与 Run 恢复已接入团队页 | 已进入 React |
 | 16 | Agent 团队资产 | macOS 项目经理权限、版本、归档与 executor 冻结读取已映射；Windows manager 工具、Human 编辑、历史与 opaque Run 引用已完成 | 已进入 React |
