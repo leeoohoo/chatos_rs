@@ -670,11 +670,8 @@ impl AgentConversationStore {
                 SELECT member.agent_id, member.role, member.responsibility,
                        member.joined_at_unix_ms
                 FROM project_agent_room_members member
-                JOIN local_agent_profiles profile
-                  ON profile.owner_user_id = member.owner_user_id
-                 AND profile.id = member.agent_id
                 WHERE member.owner_user_id = ?1 AND member.room_id = ?2
-                  AND member.status = 'active' AND profile.status = 'active'
+                  AND member.status = 'active'
                 ORDER BY member.joined_at_unix_ms, member.agent_id
                 LIMIT 1000
                 "#,
