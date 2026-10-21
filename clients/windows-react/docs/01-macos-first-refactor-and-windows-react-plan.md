@@ -544,6 +544,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事原生媒体门禁第三段）：新增 Story 专用内存 token vault 与 `chatos-story` 受控预览协议。项目投影时才为当前 owner、authentication generation、presentation、project 和 native filename 建立随机 opaque token；DTO 只得到 token 与受控 URL，协议请求会重新读取并严格校验最新 manifest、媒体仍被项目引用、20 MiB 图片/512 MiB 视频上限、普通文件及非 symlink/reparse。换账号或登录代次、页面 discard、登录/注册/恢复/登出和应用退出都会清空 token；旧 URL 分别失败为 unauthorized/not found，响应固定 `nosniff + no-store`。同时收紧图片 MIME 白名单及视频文件名 traversal 校验，CSP 仅放行精确 `chatos-story` scheme/host。Story Rust 定向测试增至 11 项，`cargo clippy --lib -- -D warnings` 通过；仍没有 Story Tauri 业务 command 或 React 入口。下一片建立绑定当前认证 generation 的目录/项目读取以及安全创建/设置 typed commands，React 仍继续关闭。
 
+状态补充（2026-10-21，Windows AI 故事目录与设置 commands 第四段）：新增 `load_story_projects`、`load_story_project`、`create_story_project`、`update_story_project_settings` 与 `discard_story_studio_presentation` 五个白名单 typed commands。所有读写由原生认证状态取得 owner 对应 generation，并在阻塞磁盘任务、模型目录网络请求及持久化返回后重新复验；过期任务不能向新登录发布 DTO/token。创建 IPC 只接受标题、描述和三个模型 ID，Rust 内生成 UUID、schema v2、默认风格/比例、空计划与时间戳，React 不能提交完整持久化模型。创建/设置都使用当前原生模型目录复验 owner、enabled 和 `hasAPIKey`，`taskEnabled=false` 保持 macOS 手动选择语义；视频能力快照按 macOS profile 计算。设置在 Store 原子 mutation lock 内从最新 canonical manifest 重建，只允许标题、描述和模型组合变化，源文、计划、媒体、provider identity 与 schema 元数据不会被过期表单替换；存在未决图片/视频提交时冻结对应模型。Story Rust 定向测试增至 14 项，`cargo clippy --lib -- -D warnings` 通过；React 剧情入口仍关闭。下一片进入 Windows 原生 Story Planning Agent 的 request/runtime/checkpoint 与 safe snapshot，不在 React 重建规划状态机。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

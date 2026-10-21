@@ -111,7 +111,10 @@ use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
 };
-use story_studio::{story_studio_protocol, StoryStudioManager};
+use story_studio::{
+    create_story_project, discard_story_studio_presentation, load_story_project,
+    load_story_projects, story_studio_protocol, update_story_project_settings, StoryStudioManager,
+};
 use system_permissions::{load_system_permissions, request_system_permission};
 use tauri::{DragDropEvent, Emitter, Manager, WebviewEvent};
 use terminal_tool_worker::TerminalToolWorker;
@@ -331,6 +334,11 @@ pub fn run() {
             start_media_studio_video_generation,
             poll_media_studio_video_generation,
             cancel_media_studio_video_generation,
+            load_story_projects,
+            load_story_project,
+            create_story_project,
+            update_story_project_settings,
+            discard_story_studio_presentation,
             launch_plugin_application,
             discard_plugin_application_presentation,
             handle_plugin_application_bridge_request,

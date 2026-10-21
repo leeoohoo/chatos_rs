@@ -9,7 +9,13 @@ use std::{
 use tauri::http;
 use uuid::Uuid;
 
+use crate::authentication::GatewayModelConfig;
+
 use super::{
+    application::{
+        apply_story_project_settings, make_story_project, StoryProjectCreationInput,
+        StoryProjectSettingsInput,
+    },
     domain::{StoryImageCollection, StoryProject},
     projection::{StoryMediaPresentation, StoryProjectSnapshot},
     store::{
@@ -238,6 +244,56 @@ impl StoryStudioManager {
         })
     }
 
+    pub(super) fn create_project(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        input: StoryProjectCreationInput,
+        available_models: &[GatewayModelConfig],
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner_user_id, authentication_generation)?;
+        let project = make_story_project(
+            input,
+            owner_user_id,
+            available_models,
+            current_unix_milliseconds(),
+        )?;
+        self.store.save(owner_user_id, &project)?;
+        self.project_snapshot(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &session,
+            &project,
+        )
+    }
+
+    pub(super) fn update_project_settings(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        input: StoryProjectSettingsInput,
+        available_models: &[GatewayModelConfig],
+    ) -> Result<StoryProjectSnapshot, String> {
+        let session = self.activate_session(owner_user_id, authentication_generation)?;
+        let project_id = input.project_id.clone();
+        let now = current_unix_milliseconds();
+        let project = self
+            .store
+            .mutate_project(owner_user_id, &project_id, |project| {
+                apply_story_project_settings(project, input, owner_user_id, available_models, now)
+            })?;
+        self.project_snapshot(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &session,
+            &project,
+        )
+    }
+
     pub(super) fn discard_presentation(
         &self,
         owner_user_id: &str,
@@ -254,6 +310,26 @@ impl StoryStudioManager {
             *session = None;
         }
         self.media.reset();
+    }
+
+    pub(super) fn reset_session_if_matches(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+    ) {
+        let Ok(owner_hash) = owner_hash(owner_user_id) else {
+            return;
+        };
+        if let Ok(mut session) = self.preview_session.lock() {
+            let matches = session.as_ref().is_some_and(|active| {
+                active.owner_hash == owner_hash
+                    && active.authentication_generation == authentication_generation
+            });
+            if matches {
+                *session = None;
+                self.media.reset();
+            }
+        }
     }
 
     fn project_snapshot(
@@ -520,4 +596,12 @@ fn story_preview_url(session_token: &str, presentation_id: &str, token: &str) ->
 
 fn media_error() -> String {
     "剧情媒体凭据无效或已经过期。".into()
+}
+
+fn current_unix_milliseconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|value| value.as_millis().try_into().ok())
+        .unwrap_or_default()
 }

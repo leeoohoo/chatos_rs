@@ -68,20 +68,26 @@ impl StoryProjectStore {
 
     pub(super) fn save(&self, owner_user_id: &str, project: &StoryProject) -> Result<(), String> {
         let owner = validate_owner(owner_user_id)?;
-        project.validate()?;
-        let project_id = canonical_project_id(&project.id)?;
-        if project.id != project_id {
-            return Err(store_error());
-        }
-        let bytes = serde_json::to_vec(project).map_err(|_| store_error())?;
-        if bytes.is_empty() || bytes.len() > MAXIMUM_PROJECT_BYTES {
-            return Err(store_error());
-        }
-
         let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
-        let projects = self.ensure_projects_directory(owner)?;
-        let project_directory = private_child_directory(&projects, &project_id)?;
-        commit_project_manifest(&project_directory, &bytes)
+        self.save_locked(owner, project)
+    }
+
+    pub(super) fn mutate_project(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        mutation: impl FnOnce(&mut StoryProject) -> Result<(), String>,
+    ) -> Result<StoryProject, String> {
+        let owner = validate_owner(owner_user_id)?;
+        let project_id = canonical_project_id(project_id)?;
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(store_error)?;
+        let mut project = load_project_manifest(&projects.join(&project_id), &project_id)?;
+        mutation(&mut project)?;
+        self.save_locked(owner, &project)?;
+        Ok(project)
     }
 
     pub(super) fn load_project(
@@ -248,6 +254,21 @@ impl StoryProjectStore {
         let accounts = private_child_directory(&self.root, "Accounts")?;
         let account = private_child_directory(&accounts, &owner_hash(owner))?;
         private_child_directory(&account, "Projects")
+    }
+
+    fn save_locked(&self, owner: &str, project: &StoryProject) -> Result<(), String> {
+        project.validate()?;
+        let project_id = canonical_project_id(&project.id)?;
+        if project.id != project_id {
+            return Err(store_error());
+        }
+        let bytes = serde_json::to_vec(project).map_err(|_| store_error())?;
+        if bytes.is_empty() || bytes.len() > MAXIMUM_PROJECT_BYTES {
+            return Err(store_error());
+        }
+        let projects = self.ensure_projects_directory(owner)?;
+        let project_directory = private_child_directory(&projects, &project_id)?;
+        commit_project_manifest(&project_directory, &bytes)
     }
 
     fn existing_projects_directory(&self, owner: &str) -> Result<Option<PathBuf>, String> {

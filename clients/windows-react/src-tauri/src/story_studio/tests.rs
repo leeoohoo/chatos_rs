@@ -1,9 +1,14 @@
 use super::domain::*;
 use super::{
+    application::{
+        apply_story_project_settings, default_story_style, make_story_project,
+        StoryModelSelectionInput, StoryProjectCreationInput, StoryProjectSettingsInput,
+    },
     media::{story_studio_protocol, StoryStudioManager},
     projection::StoryProjectSnapshot,
     store::StoryProjectStore,
 };
+use crate::authentication::GatewayModelConfig;
 use sha2::{Digest, Sha256};
 use std::fs;
 use tempfile::tempdir;
@@ -371,6 +376,129 @@ fn story_media_tokens_are_owner_generation_and_presentation_scoped() {
     assert_eq!(response.status(), tauri::http::StatusCode::UNAUTHORIZED);
 }
 
+#[test]
+fn safe_creation_input_builds_the_canonical_macos_project_without_provider_work() {
+    let input: StoryProjectCreationInput = serde_json::from_value(serde_json::json!({
+        "title": "  New Story  ",
+        "description": "  Description  ",
+        "models": {
+            "textModelId": "text",
+            "imageModelId": "image",
+            "videoModelId": "video"
+        }
+    }))
+    .unwrap();
+    let models = story_models();
+    let value = make_story_project(input, "alice", &models, 42).unwrap();
+
+    assert_eq!(value.title, "New Story");
+    assert_eq!(value.description, "Description");
+    assert_eq!(value.style, default_story_style());
+    assert_eq!(value.ratio, "16:9");
+    assert_eq!(
+        value.models.supported_video_durations,
+        Some((4..=15).collect())
+    );
+    assert!(value.source.is_empty());
+    assert!(value.segments.is_empty());
+    assert_eq!(value.created_at_unix_ms, 42);
+    assert_eq!(value.updated_at_unix_ms, 42);
+
+    let encoded = serde_json::to_string(&StoryProjectSnapshot::from_project(&value)).unwrap();
+    assert!(!encoded.contains("must-not-cross"));
+    assert!(!encoded.contains("apiKey"));
+
+    let unsafe_shape = serde_json::from_value::<StoryProjectCreationInput>(serde_json::json!({
+        "title": "Story",
+        "description": "Description",
+        "source": "React must not submit persisted state",
+        "models": {
+            "textModelId": "text",
+            "imageModelId": "image",
+            "videoModelId": "video"
+        }
+    }));
+    assert!(unsafe_shape.is_err());
+}
+
+#[test]
+fn settings_rebuild_from_canonical_project_and_freeze_unresolved_model_identity() {
+    let models = story_models();
+    let mut current = project();
+    current.source = "canonical source".into();
+    current.style = "canonical style".into();
+    current.summary = "canonical summary".into();
+    let project_id = current.id.clone();
+    apply_story_project_settings(
+        &mut current,
+        StoryProjectSettingsInput {
+            project_id: project_id.clone(),
+            title: "  Updated Story  ".into(),
+            description: "updated description".into(),
+            models: StoryModelSelectionInput {
+                text_model_id: "video".into(),
+                image_model_id: "image".into(),
+                video_model_id: "video".into(),
+            },
+        },
+        "alice",
+        &models,
+        10,
+    )
+    .unwrap();
+    assert_eq!(current.title, "Updated Story");
+    assert_eq!(current.source, "canonical source");
+    assert_eq!(current.style, "canonical style");
+    assert_eq!(current.summary, "canonical summary");
+    assert_eq!(current.id, project_id);
+
+    current.props[0].media.generation_attempt_id = Some(Uuid::new_v4().to_string());
+    let result = apply_story_project_settings(
+        &mut current,
+        StoryProjectSettingsInput {
+            project_id,
+            title: "Updated Story".into(),
+            description: "updated description".into(),
+            models: StoryModelSelectionInput {
+                text_model_id: "text".into(),
+                image_model_id: "text".into(),
+                video_model_id: "video".into(),
+            },
+        },
+        "alice",
+        &models,
+        11,
+    );
+    assert!(result.is_err());
+    assert_eq!(current.models.image_model_id, "image");
+}
+
+#[test]
+fn model_admission_requires_current_owner_enabled_model_and_credential_status() {
+    let input = StoryProjectCreationInput {
+        title: "Story".into(),
+        description: "Description".into(),
+        models: StoryModelSelectionInput {
+            text_model_id: "text".into(),
+            image_model_id: "image".into(),
+            video_model_id: "video".into(),
+        },
+    };
+    let mut models = story_models();
+    models[1].has_api_key = false;
+    assert!(make_story_project(input.clone(), "alice", &models, 1).is_err());
+
+    let mut models = story_models();
+    models[1].enabled = false;
+    assert!(make_story_project(input.clone(), "alice", &models, 1).is_err());
+
+    let models = story_models();
+    assert!(make_story_project(input.clone(), "bob", &models, 1).is_err());
+
+    assert!(models.iter().all(|model| model.task_enabled == Some(false)));
+    assert!(make_story_project(input, "alice", &models, 1).is_ok());
+}
+
 fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {
     let owner_hash = format!("{:x}", Sha256::digest(owner.as_bytes()));
     app_data
@@ -378,6 +506,34 @@ fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::Pat
         .join("Accounts")
         .join(owner_hash)
         .join("Projects")
+}
+
+fn story_models() -> Vec<GatewayModelConfig> {
+    [
+        ("text", "gpt-5"),
+        ("image", "gpt-image-1"),
+        ("video", "MiniMax-H3"),
+    ]
+    .into_iter()
+    .map(|(id, model)| GatewayModelConfig {
+        id: id.into(),
+        owner_user_id: "alice".into(),
+        name: id.into(),
+        provider: "openai".into(),
+        model: model.into(),
+        api_key: Some("must-not-cross".into()),
+        base_url: Some("https://provider.example/v1".into()),
+        task_thinking_level: None,
+        temperature: None,
+        max_output_tokens: None,
+        enabled: true,
+        task_enabled: Some(false),
+        has_api_key: true,
+        supports_images: id == "image",
+        supports_reasoning: false,
+        supports_responses: false,
+    })
+    .collect()
 }
 
 fn project() -> StoryProject {
