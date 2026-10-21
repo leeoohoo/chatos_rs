@@ -1,6 +1,5 @@
 import ChatOSAgentRuntime
 import ChatOSCore
-import CryptoKit
 import Foundation
 
 struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
@@ -75,34 +74,60 @@ struct StoryAgentRun: Codable, Equatable, Identifiable, Sendable {
     }
     var canResume: Bool { !applied && abandonedAt == nil && checkpoint.status != .completed }
     static func digest(_ project: StoryProject) throws -> String {
-        var value = project
-        value.updatedAt = .distantPast
-        // This is a model-catalog capability snapshot, not authored story content.
-        // Excluding it keeps persisted runs resumable when an older project is
-        // reopened after the catalog starts recording duration capabilities.
-        value.models.supportedVideoDurations = nil
-        return try digestValue(value)
+        try StoryProjectFingerprint.current(project)
     }
     /// Digest written by builds that persisted the derived duration-capability snapshot.
     /// Keep this reader for interrupted planning and media batches created by those builds.
     static func legacyDigestIncludingCapabilities(_ project: StoryProject) throws -> String {
-        var value = project
-        value.updatedAt = .distantPast
-        return try digestValue(value)
+        try StoryProjectFingerprint.legacyIncludingCapabilities(project)
     }
     static func matchesPersistedDigest(_ persistedDigest: String, project: StoryProject) throws -> Bool {
-        if persistedDigest == (try digest(project)) { return true }
-        return persistedDigest == (try legacyDigestIncludingCapabilities(project))
-    }
-    private static func digestValue(_ project: StoryProject) throws -> String {
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        return SHA256.hash(data: try encoder.encode(project)).map { String(format: "%02x", $0) }.joined()
+        try StoryProjectFingerprint.matches(persistedDigest, project: project)
     }
     func validate(owner: String, projectID: UUID) throws {
         guard version == 1, self.owner == owner, self.projectID == projectID, draft.id == projectID,
               !(applied && abandonedAt != nil),
               readThrough >= 0, readThrough <= draft.source.count, events.count <= 20_000 else { throw StoryAgentError.invalidRun }
         try draft.validate(); try policy.validate()
+    }
+}
+
+extension StoryAgentRun {
+    var planningSnapshot: StoryPlanningRunSnapshot {
+        let status: StoryPlanningRunStatus = switch checkpoint.status {
+        case .ready: .ready
+        case .running: .running
+        case .paused: .paused
+        case .completed: .completed
+        case .failed: .failed
+        case .needsReview: .needsReview
+        case .limitReached: .limitReached
+        }
+        return StoryPlanningRunSnapshot(
+            id: id,
+            ownerUserID: owner,
+            projectID: projectID,
+            stage: stage == .outline ? .outline : .refine,
+            targetIDs: targetIDs,
+            baseProjectFingerprint: baseDigest,
+            draft: draft,
+            events: events.map {
+                .init(
+                    id: $0.id,
+                    date: $0.date,
+                    kind: $0.kind,
+                    detail: $0.detail,
+                    modelCalls: $0.modelCalls
+                )
+            },
+            status: status,
+            stopReason: checkpoint.stopReason,
+            modelCalls: checkpoint.modelCalls,
+            usesCloudMemory: cloudMemory,
+            applied: applied,
+            abandonedAt: abandonedAt,
+            updatedAt: updatedAt
+        )
     }
 }
 

@@ -84,7 +84,7 @@ final class StoryStudioViewModel: ObservableObject {
     @Published var activeProjectID: UUID?
     @Published var activeAgentRunID: UUID?
     @Published var pauseRequested = false
-    @Published var agentRuns: [StoryAgentRun] = []
+    @Published var agentRuns: [StoryPlanningRunSnapshot] = []
     @Published var isLoadingAgentRuns = false
     @Published var isLoadingMoreAgentRuns = false
     @Published var hasMoreAgentRuns = false
@@ -105,10 +105,9 @@ final class StoryStudioViewModel: ObservableObject {
     let store: StoryProjectStore
     let projectCatalog: StoryProjectCatalogUseCase
     let projectMutation: StoryProjectMutationUseCase
+    let storyPlanning: StoryPlanningUseCase?
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
-    let agentServices: (any AgentServiceProviding)?
-    let agentSettings: AgentSettingsStore
     var owner: String?
     var session = UUID()
     var task: Task<Void, Never>?
@@ -119,6 +118,7 @@ final class StoryStudioViewModel: ObservableObject {
     var projectCursor: StoryProjectCatalogCursor?
     var projectCatalogLoadState = StoryProjectCatalogLoadState()
     var projectMutationState = StoryProjectMutationState()
+    var storyPlanningExecutionState = StoryPlanningExecutionState()
     var agentRunCursor: StoryProjectStore.PageCursor?
     var mediaBatchCursor: StoryProjectStore.PageCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
@@ -133,14 +133,25 @@ final class StoryStudioViewModel: ObservableObject {
          projectCatalog: (any StoryProjectCatalogLoading)? = nil,
          projectMutation: (any StoryProjectMutationPersisting)? = nil,
          agentServices: (any AgentServiceProviding)? = nil,
+         storyPlanning: (any StoryPlanningExecuting)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
         self.projectMutation = StoryProjectMutationUseCase(
             persistence: projectMutation ?? store
         )
-        self.agentServices = agentServices ?? (planner as? any AgentServiceProviding)
-        self.agentSettings = agentSettings
+        let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
+        if let storyPlanning {
+            self.storyPlanning = StoryPlanningUseCase(executor: storyPlanning)
+        } else if let resolvedAgentServices {
+            self.storyPlanning = StoryPlanningUseCase(executor: StoryPlanningAgentAdapter(
+                store: store,
+                services: resolvedAgentServices,
+                settings: agentSettings
+            ))
+        } else {
+            self.storyPlanning = nil
+        }
     }
 
     var project: StoryProject? { projects.first { $0.id == selectedProjectID } }
@@ -149,9 +160,9 @@ final class StoryStudioViewModel: ObservableObject {
         owner != nil && !isLoading && !isBusy
             && activeAssetGenerations.isEmpty && activeFrameGenerations.isEmpty
     }
-    var supportsAgentPlanning: Bool { agentServices != nil }
-    var projectAgentRuns: [StoryAgentRun] { agentRuns.filter { $0.projectID == selectedProjectID } }
-    var latestAgentRun: StoryAgentRun? { projectAgentRuns.first }
+    var supportsAgentPlanning: Bool { storyPlanning != nil }
+    var projectAgentRuns: [StoryPlanningRunSnapshot] { agentRuns.filter { $0.projectID == selectedProjectID } }
+    var latestAgentRun: StoryPlanningRunSnapshot? { projectAgentRuns.first }
     var projectMediaBatches: [StoryMediaBatch] { mediaBatches.filter { $0.draft.id == selectedProjectID } }
     var creationHistoryGroups: [CreationHistoryGroup] {
         projects.compactMap { project in
@@ -280,7 +291,10 @@ final class StoryStudioViewModel: ObservableObject {
     private func isGenerated(_ image: StoryImage) -> Bool {
         image.generationAttemptID != nil || image.providerResultID != nil || image.providerAssetID != nil
     }
-    func effectiveAgentPolicy() throws -> AgentRunPolicy { try agentSettings.load().effective(.story) }
+    func validateStoryPlanningAvailability() throws {
+        guard let storyPlanning else { return }
+        try storyPlanning.validateAvailability()
+    }
 
     /// The canonical project remains unchanged until the agent finishes and the store can apply
     /// the whole run atomically. Only an actively executing run replaces it for live preview;
@@ -297,27 +311,33 @@ final class StoryStudioViewModel: ObservableObject {
     /// A persisted planning draft is recoverable history, not a process-wide lock. After a
     /// logout, crash, or server restart the canonical project remains usable while this run can
     /// be resumed explicitly from the banner.
-    func recoverableAgentRun(projectID: UUID) -> StoryAgentRun? {
+    func recoverableAgentRun(projectID: UUID) -> StoryPlanningRunSnapshot? {
         guard let canonical = projects.first(where: { $0.id == projectID }),
-              let canonicalDigest = try? StoryAgentRun.digest(canonical) else { return nil }
+              let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
         return agentRuns.first { run in
             guard run.projectID == projectID, !run.applied, run.abandonedAt == nil,
-                  (try? StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: canonical)) == true,
-                  let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
+                  (try? StoryProjectFingerprint.matches(
+                    run.baseProjectFingerprint,
+                    project: canonical
+                  )) == true,
+                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
             return draftDigest != canonicalDigest
         }
     }
 
-    private func presentationAgentRun(for canonical: StoryProject) -> StoryAgentRun? {
+    private func presentationAgentRun(for canonical: StoryProject) -> StoryPlanningRunSnapshot? {
         // Only show the mutable draft while its in-memory task is actually running. A saved
         // interrupted draft must never replace the normal workbench after a fresh login.
         guard isBusy, activeProjectID == canonical.id, let activeAgentRunID else { return nil }
-        guard let canonicalDigest = try? StoryAgentRun.digest(canonical) else { return nil }
+        guard let canonicalDigest = try? StoryProjectFingerprint.current(canonical) else { return nil }
         return agentRuns.first { run in
             guard run.id == activeAgentRunID, run.projectID == canonical.id,
                   !run.applied, run.abandonedAt == nil,
-                  (try? StoryAgentRun.matchesPersistedDigest(run.baseDigest, project: canonical)) == true,
-                  let draftDigest = try? StoryAgentRun.digest(run.draft) else { return false }
+                  (try? StoryProjectFingerprint.matches(
+                    run.baseProjectFingerprint,
+                    project: canonical
+                  )) == true,
+                  let draftDigest = try? StoryProjectFingerprint.current(run.draft) else { return false }
             return draftDigest != canonicalDigest
         }
     }
@@ -419,6 +439,7 @@ final class StoryStudioViewModel: ObservableObject {
         session = UUID(); owner = nil
         projectCatalogLoadState.reset()
         projectMutationState.reset()
+        storyPlanningExecutionState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]

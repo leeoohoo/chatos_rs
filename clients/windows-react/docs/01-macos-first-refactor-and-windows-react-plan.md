@@ -508,6 +508,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事创建与设置边界）：Core 新增 `StoryProjectMutationPersisting` 窄 Port、`StoryProjectMutationUseCase`、settings change DTO 和 owner/account session/request/mutation kind lifecycle。创建只校验 schema v2 项目与当前模型目录、冻结视频时长能力并持久化，不接触文本/图片/视频 provider；`taskEnabled=false` 仍遵循原行为允许手动选择，但 disabled、缺少 API Key 或目录缺失的模型失败关闭。设置 mutation 从当前 canonical project 重建，只允许标题、描述和模型组合变化，保留 project ID/version/createdAt、原文、计划、素材、帧、视频及任务身份；未决图片/视频任务继续冻结对应模型，Store Adapter 统一时间戳、连续性修复和活动视频状态合并。ViewModel 不再解释这些规则，只发布通过 typed lifecycle 验收的持久化结果。Core 5 项与 Story Studio 56 项通过，包含 Alice 的迟到创建结果不能进入 Bob 当前账号。规划/Agent、素材/帧/视频批次、历史安全投影与 Windows 平台差异仍未完成，剧情模式继续禁用。
 
+状态补充（2026-10-21，macOS AI 故事规划 Agent 边界）：Core 新增 `StoryPlanningExecuting` Port、start/resume/abandon command、`StoryPlanningUseCase`、typed owner/account session/request/operation lifecycle、当前/旧版 project fingerprint 兼容，以及只含草稿、状态、事件摘要和公开计数的 `StoryPlanningRunSnapshot`。模型消息、tool arguments/receipts、memory checkpoint/runtime scope、usage、配置与凭据不会进入 ViewModel/UI。Use Case 对 owner/project/run identity 同时校验中间事件与最终 outcome，补充想法 trim 后限制 2,000 字；macOS `StoryPlanningAgentAdapter` 独占 AgentRuntime、模型/Memory 服务、checkpoint 恢复、工具幂等、暂停、应用和放弃逻辑。UI 只消费安全 run/stream projection，账号切换继续取消并拒绝迟到结果。Core 5 项、Story Agent 21 项及 Story Studio 56 项通过。Agent 历史分页 Port、制作批次、素材/帧/视频生成和 Windows 平台差异仍未完成，剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

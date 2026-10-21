@@ -32,7 +32,9 @@ struct StoryWorkbenchView: View {
     var selectedReady: [StorySegment] { project.segments.filter { viewModel.selectedSegments.contains($0.id) && $0.isReady } }
     var selectedReadySeconds: Int { selectedReady.reduce(0) { $0 + $1.seconds } }
     var isAgentDraftVisible: Bool { viewModel.isPresentingAgentDraft(projectID: project.id) }
-    var recoverableAgentRun: StoryAgentRun? { viewModel.recoverableAgentRun(projectID: project.id) }
+    var recoverableAgentRun: StoryPlanningRunSnapshot? {
+        viewModel.recoverableAgentRun(projectID: project.id)
+    }
     var editingLocked: Bool {
         viewModel.isBusy || isAgentDraftVisible || viewModel.hasActiveFrameGenerations(projectID: project.id)
     }

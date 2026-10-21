@@ -3,7 +3,7 @@ import ChatOSCore
 import Foundation
 
 enum StoryAgentTools {
-    static let maximumUserIdeasLength = 2_000
+    static let maximumUserIdeasLength = StoryPlanningUseCase.maximumUserIdeasLength
     static var systemPrompt: String { StoryPromptRegistry.render(.agentSystem) }
     static func systemPrompt(for project: StoryProject) -> String {
         let durations = project.models.supportedVideoDurations ?? Array(2...15)

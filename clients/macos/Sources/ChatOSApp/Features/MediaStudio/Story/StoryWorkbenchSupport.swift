@@ -160,7 +160,7 @@ extension StoryWorkbenchView {
     }
     func time(_ seconds: Int) -> String { String(format: "%02d:%02d", seconds / 60, seconds % 60) }
     func rememberDraft() { viewModel.rememberSourceDraft(projectID: project.id, source: source, style: style, ratio: ratio) }
-    func confirmPlanning(_ stage: StoryAgentRun.Stage, targets: [String]) {
+    func confirmPlanning(_ stage: StoryPlanningStage, targets: [String]) {
         planningConfirmation = .init(stage: stage, targets: targets, project: project)
     }
 }

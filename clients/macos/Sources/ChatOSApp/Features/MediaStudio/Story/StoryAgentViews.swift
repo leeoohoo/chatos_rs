@@ -1,4 +1,3 @@
-import ChatOSAgentRuntime
 import ChatOSCore
 import SwiftUI
 
@@ -38,7 +37,7 @@ struct StoryAdditionalIdeasField: View {
 
 struct StoryPlanningConfirmation: Identifiable {
     let id = UUID()
-    let stage: StoryAgentRun.Stage
+    let stage: StoryPlanningStage
     let targets: [String]
     let project: StoryProject
 }
@@ -133,7 +132,7 @@ struct StoryAgentStartView: View {
                 help: confirmation.stage == .outline
                     ? appModel.localized("例如：重点突出某个人物、调整叙事节奏，或注明不能删减的情节。", english: "For example: emphasize a character, adjust the pacing, or note story beats that must be kept.")
                     : appModel.localized("例如：指定画面氛围、景别、运镜，或希望特别保留的细节。", english: "For example: specify the mood, framing, camera movement, or details that must be kept."),
-                maximumLength: StoryAgentTools.maximumUserIdeasLength
+                maximumLength: StoryPlanningUseCase.maximumUserIdeasLength
             )
             if let error { Text(error).font(.caption).foregroundStyle(.orange) }
             HStack {
@@ -144,7 +143,10 @@ struct StoryAgentStartView: View {
                        : appModel.localized("开始生成镜头计划", english: "Create Shot Plan")) {
                     do {
                         guard let project = viewModel.project, project.id == confirmation.project.id,
-                              try StoryAgentRun.digest(project) == StoryAgentRun.digest(confirmation.project) else { throw StoryAgentError.projectChanged }
+                              try StoryProjectFingerprint.current(project)
+                                == StoryProjectFingerprint.current(confirmation.project) else {
+                            throw StoryPlanningError.identityMismatch
+                        }
                         if confirmation.stage == .outline { viewModel.planOutline(userIdeas: additionalIdeas) }
                         else if replacesExistingPlan { viewModel.regenerateSegmentPlans(confirmation.targets, userIdeas: additionalIdeas) }
                         else { viewModel.refineSegments(confirmation.targets, userIdeas: additionalIdeas) }
@@ -159,7 +161,7 @@ struct StoryAgentStartView: View {
                 return
             }
             do {
-                _ = try viewModel.effectiveAgentPolicy()
+                try viewModel.validateStoryPlanningAvailability()
                 isReady = true
             } catch {
                 self.error = appModel.localized("暂时无法开始规划，请稍后再试。", english: "Planning can't start right now. Please try again later.")
@@ -197,12 +199,12 @@ struct StoryAgentRunPanel: View {
                 }
                 Text(appModel.localized("草稿：\(run.draft.resources.count) 个素材 · \(run.draft.segments.count) 段 · \(run.draft.totalSeconds) 秒", english: "Draft: \(run.draft.resources.count) assets · \(run.draft.segments.count) segments · \(run.draft.totalSeconds) seconds"))
                     .font(.caption)
-                if let reason = run.checkpoint.stopReason { Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(3) }
+                if let reason = run.stopReason { Text(reason).font(.caption).foregroundStyle(.orange).lineLimit(3) }
                 HStack {
                     Button(appModel.localized("草稿 / 运行记录", english: "Draft / Run History")) { showsHistory = true }
                     Spacer()
                     if !run.applied && run.abandonedAt == nil {
-                        Button(run.checkpoint.status == .completed ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
+                        Button(run.status == .completed ? appModel.localized("应用草稿", english: "Apply Draft") : appModel.localized("恢复规划", english: "Resume Planning")) { resumeID = run.id }
                             .disabled(viewModel.isBusy || viewModel.isLoadingAgentRuns)
                     }
                 }
@@ -300,10 +302,10 @@ struct StoryAgentRunPanel: View {
             }
         }.padding(24).frame(width: 760, height: 650)
     }
-    private func label(_ run: StoryAgentRun) -> String {
+    private func label(_ run: StoryPlanningRunSnapshot) -> String {
         if run.applied { return appModel.localized("规划完成 · 已应用", english: "Planning Complete · Applied") }
         if run.abandonedAt != nil { return appModel.localized("中断草稿 · 已放弃", english: "Interrupted Draft · Discarded") }
-        if run.checkpoint.status == .completed { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
+        if run.status == .completed { return appModel.localized("草稿已完成 · 待应用", english: "Draft Complete · Awaiting Application") }
         if viewModel.isBusy && viewModel.activeProjectID == run.projectID && viewModel.latestAgentRun?.id == run.id {
             return appModel.localized("正在分步规划 · 草稿自动保存", english: "Planning Step by Step · Draft Autosaved")
         }

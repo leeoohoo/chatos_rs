@@ -400,9 +400,9 @@ final class StoryAgentTests: XCTestCase {
         let created = await vm.create(project, availableModels: models)
         XCTAssertTrue(created); XCTAssertTrue(vm.supportsAgentPlanning)
         vm.planOutline(); try await idle(vm)
-        XCTAssertEqual(vm.latestAgentRun?.checkpoint.status, .limitReached)
-        XCTAssertEqual(vm.latestAgentRun?.cloudMemory, true)
-        XCTAssertEqual(vm.latestAgentRun?.checkpoint.modelCalls, 2)
+        XCTAssertEqual(vm.latestAgentRun?.status, .limitReached)
+        XCTAssertEqual(vm.latestAgentRun?.usesCloudMemory, true)
+        XCTAssertEqual(vm.latestAgentRun?.modelCalls, 2)
         XCTAssertTrue(vm.project?.segments.isEmpty == true, "Unfinished draft must not replace canonical project")
         let id = try XCTUnwrap(vm.latestAgentRun?.id)
         preferences.storyMaximumCalls = 600; try settings.save(preferences)
@@ -424,16 +424,21 @@ final class StoryAgentTests: XCTestCase {
         vm.activate(userID: "alice"); try await idle(vm)
         _ = await vm.create(project, availableModels: models)
         vm.planOutline(); try await idle(vm)
-        var completed = try XCTUnwrap(vm.latestAgentRun)
-        XCTAssertTrue(completed.applied, vm.errorMessage ?? "")
+        let completedSnapshot = try XCTUnwrap(vm.latestAgentRun)
+        XCTAssertTrue(completedSnapshot.applied, vm.errorMessage ?? "")
         let scopes = await service.scopes()
         XCTAssertEqual(scopes.count, 1)
         XCTAssertEqual(scopes.first?.tenantID, "alice")
         XCTAssertEqual(scopes.first?.sourceID, "chatos")
-        XCTAssertEqual(scopes.first?.runID, completed.id)
+        XCTAssertEqual(scopes.first?.runID, completedSnapshot.id)
         XCTAssertTrue(scopes.first?.subjectID.contains(project.id.uuidString) == true)
         let synced = await service.memory.entries
         XCTAssertTrue(synced.contains { $0.message.content.contains("没有生成图片") })
+        var completed = try await store.loadRun(
+            owner: "alice",
+            projectID: project.id,
+            runID: completedSnapshot.id
+        )
         completed.applied = false
         try await store.saveRun(completed, owner: "alice")
         let before = await service.events()

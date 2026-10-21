@@ -1,22 +1,15 @@
 import AppKit
-import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
 private struct StoryHistoryLoadOutcome: Sendable {
-    var runs: [StoryAgentRun]
+    var runs: [StoryPlanningRunSnapshot]
     var batches: [StoryMediaBatch]
     var runCursor: StoryProjectStore.PageCursor?
     var batchCursor: StoryProjectStore.PageCursor?
     var unreadableRuns: Int
     var unreadableBatches: Int
     var recoveredProject: StoryProject?
-}
-
-private struct StoryAgentExecutionOutcome: Sendable {
-    var run: StoryAgentRun
-    var project: StoryProject?
-    var stopReason: String?
 }
 
 @MainActor
@@ -104,7 +97,7 @@ extension StoryStudioViewModel {
             }
         }
         return .init(
-            runs: runs,
+            runs: runs.map(\.planningSnapshot),
             batches: batches,
             runCursor: runPage.nextCursor,
             batchCursor: batchPage.nextCursor,
@@ -121,14 +114,18 @@ extension StoryStudioViewModel {
         let store = store
         isLoadingMoreAgentRuns = true
         agentRunPageTask = Task { [weak self, store] in
-            let result: Result<([StoryAgentRun], Int, StoryProjectStore.PageCursor?), Error>
+            let result: Result<([StoryPlanningRunSnapshot], Int, StoryProjectStore.PageCursor?), Error>
             do {
                 let page = try await store.loadRuns(
                     owner: owner,
                     projectID: projectID,
                     after: cursor
                 )
-                result = .success((page.runs, page.unreadable, page.nextCursor))
+                result = .success((
+                    page.runs.map(\.planningSnapshot),
+                    page.unreadable,
+                    page.nextCursor
+                ))
             } catch {
                 result = .failure(error)
             }
@@ -195,8 +192,8 @@ extension StoryStudioViewModel {
         }
     }
 
-    func publishAgentRun(_ value: StoryAgentRun, token: UUID) {
-        guard session == token, owner == value.owner else { return }
+    func publishAgentRun(_ value: StoryPlanningRunSnapshot, token: UUID) {
+        guard session == token, owner == value.ownerUserID else { return }
         if let index = agentRuns.firstIndex(where: { $0.id == value.id }) {
             if agentRuns[index].updatedAt <= value.updatedAt { agentRuns[index] = value }
         } else { agentRuns.append(value) }
@@ -204,187 +201,146 @@ extension StoryStudioViewModel {
         if isBusy, activeProjectID == value.projectID, let event = value.events.last { operation = event.detail }
     }
 
-    func startAgent(stage: StoryAgentRun.Stage, targets: [String], userIdeas: String = "") {
-        guard let project, let owner, let services = agentServices else { return }
-        let policy: AgentRunPolicy
-        let draft: StoryAgentRun
+    func startAgent(stage: StoryPlanningStage, targets: [String], userIdeas: String = "") {
+        guard let project, let storyPlanning else { return }
         do {
-            policy = try effectiveAgentPolicy()
-            draft = try StoryAgentRun(
-                project: project,
-                owner: owner,
-                stage: stage,
-                targetIDs: targets,
-                policy: policy,
-                userIdeas: userIdeas
-            )
+            try validateStoryPlanningAvailability()
         } catch {
             errorMessage = error.localizedDescription
             return
         }
-        let store = store
-        run("启动分步剧情规划") { [weak self, store, services] owner, token in
-            self?.activeAgentRunID = draft.id
+        run("启动分步剧情规划") { [weak self, storyPlanning] owner, token in
+            guard let self,
+                  let request = self.storyPlanningExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .start(projectID: project.id, stage: stage)
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyPlanningExecutionState.finish(request) }
             do {
-                let outcome = try await Self.executeAgent(
-                    draft,
-                    resume: false,
-                    resumePolicy: policy,
-                    owner: owner,
-                    store: store,
-                    services: services,
-                    check: { [weak self] in
+                let outcome = try await storyPlanning.execute(
+                    ownerUserID: owner,
+                    command: .start(
+                        project: project,
+                        stage: stage,
+                        targetIDs: targets,
+                        userIdeas: userIdeas
+                    ),
+                    continuationCheck: { [weak self] in
                         guard let self else { throw CancellationError() }
-                        try await self.check(token)
+                        try await self.checkStoryPlanning(request, session: token)
                     },
                     shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
-                    publish: { [weak self] snapshot in
-                        await self?.publishAgentRun(snapshot, token: token)
-                    },
-                    stream: { [weak self] event in
-                        await self?.receiveModelStream(event, token: token)
+                    onEvent: { [weak self] event in
+                        await self?.receiveStoryPlanningEvent(
+                            event,
+                            request: request,
+                            token: token
+                        )
                     }
                 )
-                self?.applyAgentExecutionOutcome(outcome, token: token)
+                self.applyAgentExecutionOutcome(
+                    outcome,
+                    request: request,
+                    token: token
+                )
             } catch {
-                self?.clearActiveAgentRun(draft.id, token: token)
+                self.clearActiveAgentRun(token: token)
                 throw error
             }
         }
     }
 
     func resumeAgent(_ runID: UUID) {
-        guard let project, let services = agentServices else { return }
-        let policy: AgentRunPolicy
+        guard let project, let storyPlanning else { return }
         do {
-            policy = try effectiveAgentPolicy()
+            try validateStoryPlanningAvailability()
         } catch {
             errorMessage = error.localizedDescription
             return
         }
-        let store = store
-        run("恢复剧情规划记录") { [weak self, store, services] owner, token in
-            let saved = try await store.loadRun(
-                owner: owner,
-                projectID: project.id,
-                runID: runID
-            )
-            try Task.checkCancellation()
-            guard !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
-            let digest = try StoryAgentRun.digest(project)
-            let draftDigest = try StoryAgentRun.digest(saved.draft)
-            guard try StoryAgentRun.matchesPersistedDigest(saved.baseDigest, project: project)
-                    || (saved.checkpoint.status == .completed && digest == draftDigest) else {
-                throw StoryAgentError.projectChanged
-            }
-            self?.activeAgentRunID = saved.id
+        run("恢复剧情规划记录") { [weak self, storyPlanning] owner, token in
+            guard let self,
+                  let request = self.storyPlanningExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .resume(projectID: project.id, runID: runID)
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyPlanningExecutionState.finish(request) }
+            self.activeAgentRunID = runID
             do {
-                let outcome = try await Self.executeAgent(
-                    saved,
-                    resume: true,
-                    resumePolicy: policy,
-                    owner: owner,
-                    store: store,
-                    services: services,
-                    check: { [weak self] in
+                let outcome = try await storyPlanning.execute(
+                    ownerUserID: owner,
+                    command: .resume(project: project, runID: runID),
+                    continuationCheck: { [weak self] in
                         guard let self else { throw CancellationError() }
-                        try await self.check(token)
+                        try await self.checkStoryPlanning(request, session: token)
                     },
                     shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
-                    publish: { [weak self] snapshot in
-                        await self?.publishAgentRun(snapshot, token: token)
-                    },
-                    stream: { [weak self] event in
-                        await self?.receiveModelStream(event, token: token)
+                    onEvent: { [weak self] event in
+                        await self?.receiveStoryPlanningEvent(
+                            event,
+                            request: request,
+                            token: token
+                        )
                     }
                 )
-                self?.applyAgentExecutionOutcome(outcome, token: token)
+                self.applyAgentExecutionOutcome(
+                    outcome,
+                    request: request,
+                    token: token
+                )
             } catch {
-                self?.clearActiveAgentRun(saved.id, token: token)
+                self.clearActiveAgentRun(runID, token: token)
                 throw error
             }
         }
     }
 
     func abandonAgent(_ runID: UUID) {
-        guard let project else { return }
-        let store = store
-        run("放弃中断的剧情规划草稿") { [weak self, store] owner, token in
-            var saved = try await store.loadRun(
-                owner: owner,
-                projectID: project.id,
-                runID: runID
+        guard let projectID = selectedProjectID, let storyPlanning else { return }
+        run("放弃中断的剧情规划草稿") { [weak self, storyPlanning] owner, token in
+            guard let self,
+                  let request = self.storyPlanningExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .abandon(projectID: projectID, runID: runID)
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyPlanningExecutionState.finish(request) }
+            let outcome = try await storyPlanning.execute(
+                ownerUserID: owner,
+                command: .abandon(projectID: projectID, runID: runID),
+                continuationCheck: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.checkStoryPlanning(request, session: token)
+                },
+                shouldPause: { false },
+                onEvent: { [weak self] event in
+                    await self?.receiveStoryPlanningEvent(
+                        event,
+                        request: request,
+                        token: token
+                    )
+                }
             )
-            try Task.checkCancellation()
-            guard !saved.applied, saved.abandonedAt == nil else { throw StoryAgentError.invalidRun }
-            saved.abandonedAt = Date()
-            saved.checkpoint.stopReason = "用户已放弃这份中断草稿；正式项目未被修改。"
-            saved.events.append(.init(kind: "abandoned", detail: "用户放弃中断草稿，正式项目保持不变",
-                                      modelCalls: saved.checkpoint.modelCalls))
-            saved.updatedAt = Date()
-            try await store.saveRun(saved, owner: owner)
-            try Task.checkCancellation()
-            self?.publishAgentRun(saved, token: token)
+            self.applyAgentExecutionOutcome(
+                outcome,
+                request: request,
+                token: token
+            )
         }
     }
 
-    nonisolated private static func executeAgent(
-        _ initial: StoryAgentRun,
-        resume: Bool,
-        resumePolicy: AgentRunPolicy,
-        owner: String,
-        store: StoryProjectStore,
-        services: any AgentServiceProviding,
-        check: @escaping @Sendable () async throws -> Void,
-        shouldPause: @escaping @Sendable () async -> Bool,
-        publish: @escaping @Sendable (StoryAgentRun) async -> Void,
-        stream: @escaping @Sendable (AgentModelStreamEvent) async -> Void
-    ) async throws -> StoryAgentExecutionOutcome {
-        try await check()
-        var saved = initial
-        var context: AgentMemoryContextProvider?
-        if saved.checkpoint.status != .completed {
-            let scope = try AgentMemoryScope(tenantID: owner, profile: "story", projectID: saved.projectID,
-                                            runID: saved.id, runtimeScope: saved.checkpoint.scope)
-            let memory = try await services.makeAgentMemory(scope: scope)
-            try await check()
-            let provider = AgentMemoryContextProvider(scope: scope, service: memory)
-            saved.checkpoint = try provider.bind(saved.checkpoint)
-            context = provider
-        }
-        try await store.saveRun(saved, owner: owner)
-        await publish(saved)
-        let coordinator = StoryAgentSession(run: saved, store: store, publish: publish)
-        do {
-            if resume { saved = try await coordinator.prepareForResume(policy: resumePolicy) }
-            if saved.checkpoint.status != .completed {
-                let model = try await services.makeAgentModel(configID: saved.draft.models.textModelID, policy: saved.policy)
-                try await check()
-                let result = try await AgentRuntime().run(checkpoint: saved.checkpoint, scope: saved.checkpoint.scope, policy: saved.policy,
-                    model: model, tools: StoryAgentTools.definitions(stage: saved.stage), execute: { call in try await coordinator.execute(call) },
-                    completionCheck: { await coordinator.validatedCompletion() },
-                    contextProvider: context, shouldPause: shouldPause,
-                    onModelStreamEvent: stream,
-                    record: { checkpoint, event in
-                        try await coordinator.record(checkpoint, event: event)
-                    })
-                saved = try await coordinator.finish(result)
-            }
-            try await check()
-            if saved.checkpoint.status == .completed {
-                let (applied, project) = try await store.applyRun(saved, owner: owner)
-                try await check()
-                return .init(run: applied, project: project, stopReason: nil)
-            }
-            return .init(run: saved, project: nil, stopReason: saved.checkpoint.stopReason)
-        } catch {
-            try await coordinator.abort(error.localizedDescription)
-            throw error
-        }
-    }
-
-    private func applyAgentExecutionOutcome(_ outcome: StoryAgentExecutionOutcome, token: UUID) {
-        guard session == token else { return }
+    private func applyAgentExecutionOutcome(
+        _ outcome: StoryPlanningExecutionOutcome,
+        request: StoryPlanningExecutionToken,
+        token: UUID
+    ) {
+        guard storyPlanningExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token
+        ) else { return }
         if let project = outcome.project {
             if let index = projects.firstIndex(where: { $0.id == project.id }) {
                 projects[index] = project
@@ -401,9 +357,47 @@ extension StoryStudioViewModel {
         activeAgentRunID = nil
     }
 
+    func clearActiveAgentRun(token: UUID) {
+        guard session == token else { return }
+        activeAgentRunID = nil
+    }
+
     func shouldPauseAgent(_ token: UUID) -> Bool { session != token || pauseRequested }
 
-    func receiveModelStream(_ event: AgentModelStreamEvent, token: UUID) {
+    func checkStoryPlanning(
+        _ request: StoryPlanningExecutionToken,
+        session token: UUID
+    ) throws {
+        try check(token)
+        guard storyPlanningExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token
+        ) else { throw CancellationError() }
+    }
+
+    func receiveStoryPlanningEvent(
+        _ event: StoryPlanningExecutionEvent,
+        request: StoryPlanningExecutionToken,
+        token: UUID
+    ) {
+        guard storyPlanningExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token
+        ) else { return }
+        switch event {
+        case let .run(snapshot):
+            if isBusy, activeProjectID == snapshot.projectID, activeAgentRunID == nil {
+                activeAgentRunID = snapshot.id
+            }
+            publishAgentRun(snapshot, token: token)
+        case let .modelStream(stream):
+            receiveModelStream(stream, token: token)
+        }
+    }
+
+    func receiveModelStream(_ event: StoryPlanningModelStreamEvent, token: UUID) {
         guard session == token else { return }
         switch event {
         case .activity:
@@ -415,7 +409,7 @@ extension StoryStudioViewModel {
             streamingModelText += delta
             if streamingModelText.count > 12_000 { streamingModelText.removeFirst(streamingModelText.count - 12_000) }
             operation = "文本模型正在流式输出…"
-        case let .toolCallDelta(_, _, name, _):
+        case let .toolCallDelta(name):
             if let name, !name.isEmpty { streamingToolName = (streamingToolName ?? "") + name }
             operation = "正在组装工具调用：\(streamingToolName ?? "参数")"
         case .completed:
