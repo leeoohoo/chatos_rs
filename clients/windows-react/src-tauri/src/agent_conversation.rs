@@ -411,6 +411,33 @@ struct PendingTeamDelivery {
     binding: TeamExecutionBinding,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingAgentCommunicationDelivery {
+    delivery_id: String,
+    message_id: String,
+    content: String,
+    trigger_kind: String,
+    room_name: String,
+    binding: AgentExecutionBinding,
+}
+
+#[derive(Clone)]
+struct ActiveAgentCommunicationRunBinding {
+    delivery_id: String,
+    conversation_id: String,
+    turn_id: String,
+    run_id: String,
+}
+
+struct AgentCommunicationRunReconciliation {
+    delivery_id: String,
+    turn_id: String,
+    run_id: String,
+    status: LocalConversationTurnStatus,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreparedAgentConversation {
@@ -910,6 +937,305 @@ impl AgentConversationStore {
             default_plugin_ids: parse_identifier_array(&plugin_ids_json)?,
             default_skill_ids: parse_identifier_array(&skill_ids_json)?,
         })
+    }
+
+    fn next_agent_communication_delivery(
+        &self,
+        owner_user_id: &str,
+        room_id: &str,
+    ) -> Result<Option<PendingAgentCommunicationDelivery>, String> {
+        validate_identifier(room_id)?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let pending = connection
+            .query_row(
+                r#"
+                SELECT delivery.id, delivery.message_id, message.content,
+                       delivery.trigger_kind, room.name,
+                       room.id, profile.id, profile.name, profile.role_prompt,
+                       profile.model_config_id, profile.thinking_level,
+                       profile.profession_key, profile.default_plugin_ids_json,
+                       profile.default_skill_ids_json
+                FROM project_agent_deliveries delivery
+                JOIN project_agent_messages message
+                  ON message.owner_user_id = delivery.owner_user_id
+                 AND message.id = delivery.message_id
+                 AND message.room_id = delivery.room_id
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = delivery.owner_user_id
+                 AND room.id = delivery.room_id
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = delivery.owner_user_id
+                 AND member.room_id = delivery.room_id
+                 AND member.agent_id = delivery.target_agent_id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id
+                 AND profile.id = member.agent_id
+                WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                  AND delivery.status = 'pending' AND delivery.trigger_kind != 'todo'
+                  AND room.status = 'active'
+                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND member.status = 'active' AND profile.status = 'active'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM project_agent_deliveries active
+                    WHERE active.owner_user_id = delivery.owner_user_id
+                      AND active.target_agent_id = delivery.target_agent_id
+                      AND active.status = 'running' AND active.id != delivery.id
+                      AND active.trigger_kind != 'todo'
+                  )
+                ORDER BY delivery.created_at_unix_ms, delivery.id
+                LIMIT 1
+                "#,
+                params![owner_user_id, room_id],
+                |row| {
+                    Ok(PendingAgentCommunicationDelivery {
+                        delivery_id: row.get(0)?,
+                        message_id: row.get(1)?,
+                        content: row.get(2)?,
+                        trigger_kind: row.get(3)?,
+                        room_name: row.get(4)?,
+                        binding: AgentExecutionBinding {
+                            room_id: row.get(5)?,
+                            agent_id: row.get(6)?,
+                            name: row.get(7)?,
+                            role_prompt: row.get(8)?,
+                            model_config_id: row.get(9)?,
+                            thinking_level: row.get(10)?,
+                            profession_key: row.get(11)?,
+                            default_plugin_ids: parse_identifier_array(&row.get::<_, String>(12)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            default_skill_ids: parse_identifier_array(&row.get::<_, String>(13)?)
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                        },
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| team_store_error())?;
+        let Some(pending) = pending else {
+            return Ok(None);
+        };
+        for value in [
+            pending.delivery_id.as_str(),
+            pending.message_id.as_str(),
+            pending.binding.room_id.as_str(),
+            pending.binding.agent_id.as_str(),
+        ] {
+            validate_identifier(value).map_err(|_| team_store_error())?;
+        }
+        if !matches!(
+            pending.trigger_kind.as_str(),
+            "default_agent" | "agent_mention"
+        ) {
+            return Err(team_store_error());
+        }
+        validate_agent_execution_binding(&pending.binding)?;
+        validate_text(&pending.room_name, 160, false).map_err(|_| team_store_error())?;
+        validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
+        Ok(Some(pending))
+    }
+
+    fn claim_agent_communication_delivery(
+        &self,
+        owner_user_id: &str,
+        pending: &PendingAgentCommunicationDelivery,
+        turn_id: &str,
+        run_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<(), String> {
+        validate_identifier(turn_id)?;
+        validate_identifier(run_id)?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let changed = transaction
+            .execute(
+                r#"
+                UPDATE project_agent_deliveries
+                SET status = 'running', attempt = attempt + 1,
+                    claimed_at_unix_ms = ?1, last_error = NULL
+                WHERE owner_user_id = ?2 AND id = ?3 AND room_id = ?4
+                  AND target_agent_id = ?5 AND status = 'pending'
+                  AND trigger_kind != 'todo'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM project_agent_deliveries active
+                    WHERE active.owner_user_id = ?2 AND active.target_agent_id = ?5
+                      AND active.status = 'running' AND active.id != ?3
+                      AND active.trigger_kind != 'todo'
+                  )
+                "#,
+                params![
+                    now_unix_ms,
+                    owner_user_id,
+                    pending.delivery_id,
+                    pending.binding.room_id,
+                    pending.binding.agent_id,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err("Agent Delivery 已被其他执行器领取，请刷新后重试。".into());
+        }
+        transaction
+            .execute(
+                "INSERT INTO windows_agent_delivery_runs (owner_user_id, delivery_id, turn_id, \
+                 run_id, status, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?5)",
+                params![
+                    owner_user_id,
+                    pending.delivery_id,
+                    turn_id,
+                    run_id,
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())
+    }
+
+    fn active_agent_communication_run_bindings(
+        &self,
+        owner_user_id: &str,
+        room_id: &str,
+    ) -> Result<Vec<ActiveAgentCommunicationRunBinding>, String> {
+        validate_identifier(room_id)?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT delivery.id, delivery.target_agent_id, run.turn_id, run.run_id
+                FROM project_agent_deliveries delivery
+                JOIN windows_agent_delivery_runs run
+                  ON run.owner_user_id = delivery.owner_user_id
+                 AND run.delivery_id = delivery.id
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = delivery.owner_user_id
+                 AND room.id = delivery.room_id
+                WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                  AND room.status = 'active'
+                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND (delivery.status = 'running' OR run.status IN ('ready', 'running'))
+                ORDER BY run.updated_at_unix_ms DESC, delivery.id
+                LIMIT 500
+                "#,
+            )
+            .map_err(|_| team_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id, room_id], |row| {
+                let agent_id = row.get::<_, String>(1)?;
+                Ok(ActiveAgentCommunicationRunBinding {
+                    delivery_id: row.get(0)?,
+                    conversation_id: agent_communication_conversation_id(room_id, &agent_id),
+                    turn_id: row.get(2)?,
+                    run_id: row.get(3)?,
+                })
+            })
+            .map_err(|_| team_store_error())?;
+        let bindings = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_store_error())?;
+        for binding in &bindings {
+            for value in [
+                &binding.delivery_id,
+                &binding.conversation_id,
+                &binding.turn_id,
+                &binding.run_id,
+            ] {
+                validate_identifier(value).map_err(|_| team_store_error())?;
+            }
+        }
+        Ok(bindings)
+    }
+
+    fn reconcile_agent_communication_runs(
+        &self,
+        owner_user_id: &str,
+        room_id: &str,
+        updates: &[AgentCommunicationRunReconciliation],
+    ) -> Result<(), String> {
+        validate_identifier(room_id)?;
+        if updates.len() > 500 {
+            return Err(team_store_error());
+        }
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        for update in updates {
+            for value in [&update.delivery_id, &update.turn_id, &update.run_id] {
+                validate_identifier(value).map_err(|_| team_store_error())?;
+            }
+            if update.created_at_unix_ms < 0
+                || update.updated_at_unix_ms < update.created_at_unix_ms
+            {
+                return Err(team_store_error());
+            }
+            let delivery_status = match update.status {
+                LocalConversationTurnStatus::Running => "running",
+                LocalConversationTurnStatus::Succeeded => "completed",
+                LocalConversationTurnStatus::Failed => "failed",
+                LocalConversationTurnStatus::Cancelled => "cancelled",
+            };
+            let completed_at = if update.status == LocalConversationTurnStatus::Running {
+                None
+            } else {
+                Some(update.updated_at_unix_ms)
+            };
+            let changed = transaction
+                .execute(
+                    r#"
+                    UPDATE project_agent_deliveries
+                    SET status = ?1,
+                        claimed_at_unix_ms = COALESCE(claimed_at_unix_ms, ?2),
+                        completed_at_unix_ms = ?3
+                    WHERE owner_user_id = ?4 AND room_id = ?5 AND id = ?6
+                      AND status IN ('pending', 'running')
+                      AND EXISTS (
+                        SELECT 1 FROM windows_agent_delivery_runs run
+                        WHERE run.owner_user_id = project_agent_deliveries.owner_user_id
+                          AND run.delivery_id = project_agent_deliveries.id
+                          AND run.turn_id = ?7 AND run.run_id = ?8
+                      )
+                    "#,
+                    params![
+                        delivery_status,
+                        update.created_at_unix_ms,
+                        completed_at,
+                        owner_user_id,
+                        room_id,
+                        update.delivery_id,
+                        update.turn_id,
+                        update.run_id,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            if changed > 1 {
+                return Err(team_store_error());
+            }
+            let run_changed = transaction
+                .execute(
+                    "UPDATE windows_agent_delivery_runs SET status = ?1, \
+                     updated_at_unix_ms = ?2 WHERE owner_user_id = ?3 AND delivery_id = ?4 \
+                     AND turn_id = ?5 AND run_id = ?6",
+                    params![
+                        update.status.as_str(),
+                        update.updated_at_unix_ms,
+                        owner_user_id,
+                        update.delivery_id,
+                        update.turn_id,
+                        update.run_id,
+                    ],
+                )
+                .map_err(|_| team_store_error())?;
+            if run_changed != 1 {
+                return Err(team_store_error());
+            }
+        }
+        transaction.commit().map_err(|_| team_store_error())
     }
 
     fn activity_room_ids(
@@ -3383,6 +3709,96 @@ pub(crate) async fn load_agent_team_runs(
     Ok(snapshot)
 }
 
+pub(crate) async fn reconcile_agent_communication_runs(
+    owner_user_id: String,
+    room_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    manager: State<'_, HostManager>,
+) -> Result<(), String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&room_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let binding_store = conversations.inner().clone();
+    let binding_owner = owner_user_id.clone();
+    let binding_room = room_id.clone();
+    let bindings = tauri::async_runtime::spawn_blocking(move || {
+        binding_store.active_agent_communication_run_bindings(&binding_owner, &binding_room)
+    })
+    .await
+    .map_err(|_| "Agent 通讯运行绑定读取任务异常退出。".to_owned())??;
+    let mut reconciliations = Vec::with_capacity(bindings.len());
+    let mut orphaned_deliveries = Vec::new();
+    for binding in bindings {
+        let result = manager
+            .execute_detailed(HostCommand::GetConversationContext(
+                GetConversationCommand {
+                    owner_user_id: owner_user_id.clone(),
+                    conversation_id: binding.conversation_id.clone(),
+                },
+            ))
+            .await;
+        let detail = match result {
+            Ok(HostResult::Conversation { conversation }) => conversation,
+            Ok(_) => return Err("Local Agent Host 返回了错误的 Agent 通讯运行响应。".into()),
+            Err(error) if error.code.as_deref() == Some("not_found") => {
+                orphaned_deliveries.push(binding.delivery_id);
+                continue;
+            }
+            Err(error) => return Err(error.message),
+        };
+        validate_host_conversation(&detail, &owner_user_id, &binding.conversation_id)?;
+        let Some(turn) = detail
+            .turns
+            .iter()
+            .find(|turn| turn.turn_id == binding.turn_id && turn.run_id == binding.run_id)
+        else {
+            orphaned_deliveries.push(binding.delivery_id);
+            continue;
+        };
+        reconciliations.push(AgentCommunicationRunReconciliation {
+            delivery_id: binding.delivery_id,
+            turn_id: turn.turn_id.clone(),
+            run_id: turn.run_id.clone(),
+            status: turn.status,
+            created_at_unix_ms: turn.created_at_unix_ms,
+            updated_at_unix_ms: turn.updated_at_unix_ms,
+        });
+    }
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    if !reconciliations.is_empty() {
+        let reconcile_store = conversations.inner().clone();
+        let reconcile_owner = owner_user_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            reconcile_store.reconcile_agent_communication_runs(
+                &reconcile_owner,
+                &room_id,
+                &reconciliations,
+            )
+        })
+        .await
+        .map_err(|_| "Agent 通讯运行对账任务异常退出。".to_owned())??;
+    }
+    for delivery_id in orphaned_deliveries {
+        let failure_store = conversations.inner().clone();
+        let failure_owner = owner_user_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            failure_store.fail_project_team_delivery(
+                &failure_owner,
+                &delivery_id,
+                "Agent 通讯 Delivery 的 Host Turn 不存在，恢复时已终止该运行。",
+            )
+        })
+        .await
+        .map_err(|_| "Agent 通讯孤立 Delivery 清理任务异常退出。".to_owned())??;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn list_agent_team_assets(
     owner_user_id: String,
@@ -3861,6 +4277,148 @@ pub(crate) async fn dispatch_next_agent_team_delivery(
         turn_id,
         run_id,
     }))
+}
+
+pub(crate) async fn dispatch_next_agent_communication_delivery(
+    owner_user_id: String,
+    room_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    skills: State<'_, AgentSkillStore>,
+    manager: State<'_, HostManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
+) -> Result<bool, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&room_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let pending_owner = owner_user_id.clone();
+    let pending_room = room_id.clone();
+    let Some(pending) = tauri::async_runtime::spawn_blocking(move || {
+        store.next_agent_communication_delivery(&pending_owner, &pending_room)
+    })
+    .await
+    .map_err(|_| "Agent 通讯 Delivery 读取任务异常退出。".to_owned())??
+    else {
+        return Ok(false);
+    };
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let skill_store = skills.inner().clone();
+    let skill_owner = owner_user_id.clone();
+    let profession_key = pending.binding.profession_key.clone();
+    let profession = tauri::async_runtime::spawn_blocking(move || {
+        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key)
+    })
+    .await
+    .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;
+    let conversation_id =
+        agent_communication_conversation_id(&pending.binding.room_id, &pending.binding.agent_id);
+    let title = format!("{} · {}", pending.room_name, pending.binding.name);
+    ensure_agent_host_conversation(&manager, &owner_user_id, &conversation_id, &title).await?;
+    let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
+    let model =
+        selected_agent_model(&manager, &owner_user_id, &pending.binding.model_config_id).await?;
+    let settings = ensure_agent_runtime_settings(
+        &manager,
+        &owner_user_id,
+        &conversation_id,
+        &model,
+        pending.binding.thinking_level.as_deref(),
+    )
+    .await?;
+    let capability_revision =
+        latest_capability_revision(&manager, &owner_user_id, MAIN_CHAT_PROFILE).await?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let turn_id = identifier("turn");
+    let run_id = identifier("run");
+    let host_message_id = identifier("message");
+    let command = StartConversationTurnCommand {
+        owner_user_id: owner_user_id.clone(),
+        conversation_id,
+        expected_conversation_version: detail.conversation.version,
+        turn_id: turn_id.clone(),
+        message_id: host_message_id.clone(),
+        run_id: run_id.clone(),
+        message: pending.content.clone(),
+        message_metadata: agent_communication_execution_metadata(&pending, &profession),
+        attachments: vec![],
+        model_config_ref: settings.selected_model_config_ref,
+        model_config_revision: settings.selected_model_config_revision,
+        capability_policy_revision: capability_revision,
+        max_iterations: MAX_ITERATIONS,
+    };
+    command
+        .validate()
+        .map_err(|_| "Agent 通讯消息或执行快照超过安全限制。".to_owned())?;
+    let claim_store = conversations.inner().clone();
+    let claim_owner = owner_user_id.clone();
+    let claim_pending = pending.clone();
+    let claim_turn = turn_id.clone();
+    let claim_run = run_id.clone();
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    tauri::async_runtime::spawn_blocking(move || {
+        claim_store.claim_agent_communication_delivery(
+            &claim_owner,
+            &claim_pending,
+            &claim_turn,
+            &claim_run,
+            now,
+        )
+    })
+    .await
+    .map_err(|_| "Agent 通讯 Delivery 领取任务异常退出。".to_owned())??;
+    let started = manager
+        .execute(HostCommand::StartConversationTurn(command))
+        .await;
+    let result = match started {
+        Ok(HostResult::ConversationTurnStarted { result }) => result,
+        Ok(_) => {
+            fail_dispatched_team_delivery(
+                conversations.inner().clone(),
+                owner_user_id.clone(),
+                pending.delivery_id.clone(),
+                "Local Agent Host 返回了错误的 Agent 通讯 Delivery 响应。".into(),
+            )
+            .await;
+            return Err("Local Agent Host 返回了错误的 Agent 通讯 Delivery 响应。".into());
+        }
+        Err(failure) => {
+            fail_dispatched_team_delivery(
+                conversations.inner().clone(),
+                owner_user_id.clone(),
+                pending.delivery_id.clone(),
+                failure.clone(),
+            )
+            .await;
+            return Err(failure);
+        }
+    };
+    if result.turn.turn_id != turn_id
+        || result.turn.run_id != run_id
+        || result.turn.user_message_id != host_message_id
+        || result.message.message_id != host_message_id
+        || result.run.run_id != run_id
+    {
+        let failure = "Local Agent Host 返回了不匹配的 Agent 通讯 Delivery。".to_owned();
+        fail_dispatched_team_delivery(
+            conversations.inner().clone(),
+            owner_user_id.clone(),
+            pending.delivery_id.clone(),
+            failure.clone(),
+        )
+        .await;
+        return Err(failure);
+    }
+    attachment_worker.wake();
+    terminal_worker.wake();
+    Ok(true)
 }
 
 async fn fail_dispatched_team_delivery(
@@ -4393,6 +4951,32 @@ fn team_agent_execution_metadata(
     Ok(metadata)
 }
 
+fn agent_communication_execution_metadata(
+    pending: &PendingAgentCommunicationDelivery,
+    profession: &AgentProfessionRuntimeSnapshot,
+) -> serde_json::Value {
+    json!({
+        "source": "native_agent_communication",
+        "agent_execution_context": {
+            "schema_version": 3,
+            "conversation_kind": "agent_agent_direct",
+            "room_id": pending.binding.room_id,
+            "agent_id": pending.binding.agent_id,
+            "agent_name": pending.binding.name,
+            "role_prompt": pending.binding.role_prompt,
+            "profession_key": profession.key,
+            "profession_label": profession.label,
+            "profession_skill_ref": profession.skill_ref,
+            "profession_skill_sha256": profession.instructions_sha256,
+            "profession_skill_markdown": profession.markdown,
+            "default_plugin_ids": pending.binding.default_plugin_ids,
+            "default_skill_ids": pending.binding.default_skill_ids,
+            "delivery_id": pending.delivery_id,
+            "trigger_kind": pending.trigger_kind,
+        }
+    })
+}
+
 fn delivery_state(turn: &LocalConversationTurnRecord) -> (&'static str, Option<i64>) {
     match turn.status {
         LocalConversationTurnStatus::Running => ("running", None),
@@ -4809,6 +5393,16 @@ fn validate_team_asset(asset: &AgentTeamAsset) -> Result<(), String> {
 
 fn validate_team_execution_binding(binding: &TeamExecutionBinding) -> Result<(), String> {
     let agent = &binding.agent;
+    validate_agent_execution_binding(agent)?;
+    validate_identifier(&binding.project_id).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_name, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_goal, 8_000, true).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_role, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_responsibility, 8_000, true).map_err(|_| team_store_error())
+}
+
+fn validate_agent_execution_binding(binding: &AgentExecutionBinding) -> Result<(), String> {
+    let agent = binding;
     validate_identifier(&agent.room_id).map_err(|_| team_store_error())?;
     validate_agent_identifier(&agent.agent_id).map_err(|_| team_store_error())?;
     validate_text(&agent.name, 120, false).map_err(|_| team_store_error())?;
@@ -4823,11 +5417,11 @@ fn validate_team_execution_binding(binding: &TeamExecutionBinding) -> Result<(),
     }) {
         return Err(team_store_error());
     }
-    validate_identifier(&binding.project_id).map_err(|_| team_store_error())?;
-    validate_text(&binding.team_name, 160, false).map_err(|_| team_store_error())?;
-    validate_text(&binding.team_goal, 8_000, true).map_err(|_| team_store_error())?;
-    validate_text(&binding.team_role, 160, false).map_err(|_| team_store_error())?;
-    validate_text(&binding.team_responsibility, 8_000, true).map_err(|_| team_store_error())
+    Ok(())
+}
+
+fn agent_communication_conversation_id(room_id: &str, agent_id: &str) -> String {
+    format!("agent-communication-{room_id}-{agent_id}")
 }
 
 fn require_active_project(
@@ -6487,6 +7081,7 @@ mod tests {
                 "请处理接口验证。",
                 None,
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 11,
             )
@@ -6502,6 +7097,7 @@ mod tests {
                 "请处理接口验证。",
                 None,
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 12,
             )
@@ -6515,6 +7111,7 @@ mod tests {
                 "复用调用 ID 的不同消息。",
                 None,
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 13,
             )
@@ -6525,6 +7122,7 @@ mod tests {
                 "run-chat",
                 "invocation-chat-stale-ref",
                 "错误引用。",
+                None,
                 None,
                 None,
                 &["agent_ref_stale".into()],
@@ -6597,6 +7195,7 @@ mod tests {
                 "这条回复只持久化，不再继续唤醒。",
                 Some(&trigger_reference),
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 15,
             )
@@ -6619,6 +7218,211 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stopped_delivery_count, 0);
+    }
+
+    #[test]
+    fn agent_direct_messages_create_two_member_rooms_and_routable_deliveries() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "sender", "active");
+        insert_agent(&store, "alice", "target", "active");
+        let team = store
+            .create_project_team("alice", "project-1", "通讯团队", "启动私聊")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &team.id, "sender")
+            .unwrap();
+        let trigger = store
+            .queue_project_team_message("alice", &team.id, "请联系目标 Agent", &["sender".into()])
+            .unwrap();
+        let delivery = store
+            .next_project_team_delivery("alice", &team.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.message_id, trigger.message_id);
+        store
+            .claim_project_team_delivery("alice", &delivery, "turn-sender", "run-sender", 10)
+            .unwrap();
+        let (_, workspace) = store
+            .agent_workspace_snapshot("alice", "run-sender")
+            .unwrap();
+        let target_reference = workspace["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["is_current_agent"] == false)
+            .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let sender_reference = workspace["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["is_current_agent"] == true)
+            .unwrap()["agent_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let (_, sent) = store
+            .send_team_chat_message(
+                "alice",
+                "run-sender",
+                "invocation-direct-1",
+                "这是一条真实私聊。",
+                None,
+                Some(&target_reference),
+                None,
+                &[],
+                11,
+            )
+            .unwrap();
+        assert_eq!(sent["spawned_delivery_count"], 1);
+        let (_, replayed) = store
+            .send_team_chat_message(
+                "alice",
+                "run-sender",
+                "invocation-direct-1",
+                "这是一条真实私聊。",
+                None,
+                Some(&target_reference),
+                None,
+                &[],
+                12,
+            )
+            .unwrap();
+        assert_eq!(replayed, sent);
+        assert!(store
+            .send_team_chat_message(
+                "alice",
+                "run-sender",
+                "invocation-direct-forged",
+                "不得发送。",
+                None,
+                Some("agent_ref_forged"),
+                None,
+                &[],
+                12,
+            )
+            .is_err());
+        assert!(store
+            .send_team_chat_message(
+                "alice",
+                "run-sender",
+                "invocation-direct-self",
+                "不得发送给自己。",
+                None,
+                Some(&sender_reference),
+                None,
+                &[],
+                12,
+            )
+            .is_err());
+        let connection = Connection::open(store.database()).unwrap();
+        let (direct_room_id, conversation_kind, direct_key): (String, String, String) = connection
+            .query_row(
+                "SELECT id, conversation_kind, direct_key FROM project_agent_rooms \
+                 WHERE owner_user_id = 'alice' AND conversation_kind = 'agent_agent_direct'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(conversation_kind, "agent_agent_direct");
+        assert_eq!(direct_key, "agent:sender|agent:target");
+        let member_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM project_agent_room_members \
+                 WHERE owner_user_id = 'alice' AND room_id = ?1 AND status = 'active'",
+                params![direct_room_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(member_count, 2);
+        drop(connection);
+        assert_eq!(
+            store
+                .communication_rooms_requiring_scheduler("alice")
+                .unwrap(),
+            vec![direct_room_id.clone()]
+        );
+
+        let pending = store
+            .next_agent_communication_delivery("alice", &direct_room_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.binding.agent_id, "target");
+        assert_eq!(pending.trigger_kind, "default_agent");
+        store
+            .claim_agent_communication_delivery("alice", &pending, "turn-target", "run-target", 12)
+            .unwrap();
+        let (binding, unread) = store
+            .read_all_unread_team_chat("alice", "run-target", "read-direct", 20, 13)
+            .unwrap();
+        assert_eq!(binding.conversation_kind, "agent_agent_direct");
+        assert_eq!(unread["message_count"], 1);
+        assert_eq!(unread["conversations"][0]["kind"], "agent_agent_direct");
+        let (_, direct_members) = store
+            .team_chat_member_snapshot("alice", "run-target")
+            .unwrap();
+        assert_eq!(direct_members.as_array().unwrap().len(), 2);
+        assert_eq!(
+            store
+                .active_agent_communication_run_bindings("alice", &direct_room_id)
+                .unwrap()[0]
+                .conversation_id,
+            agent_communication_conversation_id(&direct_room_id, "target")
+        );
+        let (_, reply) = store
+            .send_team_chat_message(
+                "alice",
+                "run-target",
+                "invocation-direct-reply",
+                "已收到并回复。",
+                None,
+                None,
+                None,
+                &[],
+                14,
+            )
+            .unwrap();
+        assert_eq!(reply["spawned_delivery_count"], 1);
+        store
+            .reconcile_agent_communication_runs(
+                "alice",
+                &direct_room_id,
+                &[AgentCommunicationRunReconciliation {
+                    delivery_id: pending.delivery_id,
+                    turn_id: "turn-target".into(),
+                    run_id: "run-target".into(),
+                    status: LocalConversationTurnStatus::Succeeded,
+                    created_at_unix_ms: 12,
+                    updated_at_unix_ms: 15,
+                }],
+            )
+            .unwrap();
+        store
+            .reconcile_project_team_runs(
+                "alice",
+                &team.id,
+                &[team_todo::TeamRunReconciliation {
+                    delivery_id: delivery.delivery_id,
+                    turn_id: "turn-sender".into(),
+                    run_id: "run-sender".into(),
+                    status: LocalConversationTurnStatus::Succeeded,
+                    created_at_unix_ms: 10,
+                    updated_at_unix_ms: 15,
+                    project_write_evidence_verified: false,
+                }],
+            )
+            .unwrap();
+        let reply_pending = store
+            .next_agent_communication_delivery("alice", &direct_room_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply_pending.binding.agent_id, "sender");
+        assert!(store
+            .communication_scheduler_has_work("alice", &direct_room_id)
+            .unwrap());
     }
 
     #[test]
@@ -6712,6 +7516,7 @@ mod tests {
                 "第二团队已收到。",
                 Some(&other_reference),
                 None,
+                None,
                 std::slice::from_ref(&target_reference),
                 12,
             )
@@ -6725,6 +7530,7 @@ mod tests {
                 "不得写入。",
                 Some("message_ref_forged"),
                 None,
+                None,
                 &[],
                 13,
             )
@@ -6735,6 +7541,7 @@ mod tests {
                 "run-unread",
                 "invocation-proactive-team",
                 "主动同步第二团队。",
+                None,
                 None,
                 Some(&second_team_reference),
                 std::slice::from_ref(&target_reference),
@@ -6748,6 +7555,7 @@ mod tests {
                 "run-unread",
                 "invocation-forged-team",
                 "不得写入。",
+                None,
                 None,
                 Some("team_ref_forged"),
                 &[],

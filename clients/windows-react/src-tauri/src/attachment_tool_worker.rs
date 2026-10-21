@@ -27,7 +27,8 @@ use tokio::{
 
 use crate::{
     agent_conversation::{
-        dispatch_next_agent_team_delivery, load_agent_team_runs,
+        dispatch_next_agent_communication_delivery, dispatch_next_agent_team_delivery,
+        load_agent_team_runs, reconcile_agent_communication_runs,
         team_todo::{AgentTodoExecutionContract, TodoPlanningCreateInput, TodoPlanningUpdateInput},
         AgentAssetToolBinding, AgentAssetToolRecord, AgentCommunicationToolBinding,
         AgentConversationStore,
@@ -150,6 +151,18 @@ async fn recover_team_todo_drains(app: &AppHandle, owner_user_id: &str) {
             .unwrap_or_default();
     for team_id in teams {
         schedule_team_todo_drain(app.clone(), owner_user_id.to_owned(), team_id);
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let rooms = tauri::async_runtime::spawn_blocking(move || {
+        store.communication_rooms_requiring_scheduler(&owner)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default();
+    for room_id in rooms {
+        schedule_agent_communication_drain(app.clone(), owner_user_id.to_owned(), room_id);
     }
 }
 
@@ -317,8 +330,18 @@ async fn execute_team_chat_write_tool(
         .ok_or_else(|| "The team communication arguments are invalid.".to_owned())?;
     let content = required_bounded_string(arguments, "content", 2_000)?;
     let reply_reference = optional_bounded_string(arguments, "reply_to_message_ref", 600)?;
+    let target_agent_reference = optional_bounded_string(arguments, "target_agent_ref", 600)?;
     let team_reference = optional_bounded_string(arguments, "team_ref", 600)?;
-    if reply_reference.is_some() && team_reference.is_some() {
+    if [
+        reply_reference.is_some(),
+        target_agent_reference.is_some(),
+        team_reference.is_some(),
+    ]
+    .into_iter()
+    .filter(|selected| *selected)
+    .count()
+        > 1
+    {
         return Err("The team communication target is ambiguous.".into());
     }
     let mention_references =
@@ -347,6 +370,7 @@ async fn execute_team_chat_write_tool(
             &request_key,
             &content,
             reply_reference.as_deref(),
+            target_agent_reference.as_deref(),
             team_reference.as_deref(),
             &mention_references,
             now_unix_ms(),
@@ -393,6 +417,61 @@ pub(crate) fn schedule_team_todo_drain(app: AppHandle, owner_user_id: String, te
             let team = team_id.clone();
             let has_work = tauri::async_runtime::spawn_blocking(move || {
                 store.team_todo_scheduler_has_work(&owner, &team)
+            })
+            .await
+            .ok()
+            .and_then(Result::ok);
+            if has_work == Some(false) {
+                break;
+            }
+            if reconciled && dispatched.is_ok() && has_work.is_some() {
+                consecutive_failures = 0;
+            } else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= 10 {
+                    break;
+                }
+            }
+            sleep(Duration::from_secs(2)).await;
+        }
+        active.lock().await.remove(&key);
+    });
+}
+
+fn schedule_agent_communication_drain(app: AppHandle, owner_user_id: String, room_id: String) {
+    tauri::async_runtime::spawn(async move {
+        let key = format!("communication\0{owner_user_id}\0{room_id}");
+        let active = ACTIVE_TEAM_TODO_DRAINS.get_or_init(|| Mutex::new(HashSet::new()));
+        if !active.lock().await.insert(key.clone()) {
+            return;
+        }
+        let mut consecutive_failures = 0_u8;
+        loop {
+            let reconciled = reconcile_agent_communication_runs(
+                owner_user_id.clone(),
+                room_id.clone(),
+                app.state::<AuthenticationManager>(),
+                app.state::<AgentConversationStore>(),
+                app.state::<HostManager>(),
+            )
+            .await
+            .is_ok();
+            let dispatched = dispatch_next_agent_communication_delivery(
+                owner_user_id.clone(),
+                room_id.clone(),
+                app.state::<AuthenticationManager>(),
+                app.state::<AgentConversationStore>(),
+                app.state::<AgentSkillStore>(),
+                app.state::<HostManager>(),
+                app.state::<AttachmentToolWorker>(),
+                app.state::<TerminalToolWorker>(),
+            )
+            .await;
+            let store = app.state::<AgentConversationStore>().inner().clone();
+            let owner = owner_user_id.clone();
+            let room = room_id.clone();
+            let has_work = tauri::async_runtime::spawn_blocking(move || {
+                store.communication_scheduler_has_work(&owner, &room)
             })
             .await
             .ok()
@@ -1170,20 +1249,28 @@ fn validate_communication_run_context(
     input: &Value,
     binding: &AgentCommunicationToolBinding,
 ) -> Result<(), String> {
-    if binding.conversation_kind != "project_team" {
-        return Err("The Agent communication conversation kind is unsupported.".into());
-    }
     let identity = input
         .get("agent_execution_context")
         .and_then(Value::as_object)
         .ok_or_else(|| "The Agent communication Run context is invalid.".to_owned())?;
+    let schema_matches = match binding.conversation_kind.as_str() {
+        "project_team" => {
+            identity.get("schema_version").and_then(Value::as_u64) == Some(2)
+                && identity.get("is_project_manager").and_then(Value::as_bool)
+                    == Some(binding.is_project_manager)
+        }
+        "agent_agent_direct" => {
+            identity.get("schema_version").and_then(Value::as_u64) == Some(3)
+                && identity.get("conversation_kind").and_then(Value::as_str)
+                    == Some("agent_agent_direct")
+        }
+        _ => false,
+    };
     if profile_key != "main_chat"
         || input.get("team_executor_context").is_some()
-        || identity.get("schema_version").and_then(Value::as_u64) != Some(2)
+        || !schema_matches
         || identity.get("room_id").and_then(Value::as_str) != Some(&binding.room_id)
         || identity.get("agent_id").and_then(Value::as_str) != Some(&binding.agent_id)
-        || identity.get("is_project_manager").and_then(Value::as_bool)
-            != Some(binding.is_project_manager)
     {
         return Err("The Agent communication Run context is invalid.".into());
     }
@@ -1624,7 +1711,7 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "agent_workspace_snapshot",
-            "description": "读取当前账户的活动 Agent 与项目团队，并返回只对当前 Run 有效的 agent_ref、team_ref 和 project_ref。主动向另一个项目团队发送消息时，把 team_ref 交给 chat_send_message；真实 ID 不会暴露。",
+            "description": "读取当前账户的活动 Agent 与项目团队，并返回只对当前 Run 有效的 agent_ref、team_ref 和 project_ref。主动私聊另一个 Agent 时把 agent_ref 作为 target_agent_ref，主动向另一个项目团队发送消息时把 team_ref 交给 chat_send_message；真实 ID 不会暴露。",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -1635,7 +1722,7 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "chat_list_members",
-            "description": "列出当前项目团队的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
+            "description": "列出当前项目团队或 Agent 私聊的活动成员，并返回仅对当前 Run 有效的 agent_ref。真实 Agent ID 不会暴露。",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -1646,7 +1733,7 @@ pub fn team_chat_read_tool_schemas() -> Vec<Value> {
         json!({
             "type": "function",
             "name": "chat_read_all_unread",
-            "description": "读取当前 Agent 在全部项目团队中的未读消息，并在同一事务推进已返回会话的游标。回复时只把本工具返回的 message_ref 传给 chat_send_message；当前 Windows 调度尚不把 Agent 私聊纳入此工具。",
+            "description": "读取当前 Agent 在全部项目团队和 Agent 私聊中的未读消息，并在同一事务推进已返回会话的游标。回复时只把本工具返回的 message_ref 传给 chat_send_message。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1663,12 +1750,13 @@ pub fn team_chat_write_tool_schemas() -> Vec<Value> {
     vec![json!({
         "type": "function",
         "name": "chat_send_message",
-        "description": "向当前项目团队发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，或使用 agent_workspace_snapshot 返回的 team_ref 主动发送到另一个项目团队。reply_to_message_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标团队的 agent_ref。",
+        "description": "向当前会话发送消息，使用 chat_read_all_unread 返回的 message_ref 回复指定消息，使用 agent_workspace_snapshot 返回的 target_agent_ref 主动私聊并唤醒另一个 Agent，或用 team_ref 主动发送到另一个项目团队。reply_to_message_ref、target_agent_ref 和 team_ref 最多提供一个；需要 @ 其他成员时，只能使用当前 Run 返回且属于目标会话的 agent_ref。",
         "parameters": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "minLength": 1, "maxLength": 2000},
                 "reply_to_message_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                "target_agent_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                 "team_ref": {"type": "string", "minLength": 1, "maxLength": 600},
                 "mention_agent_refs": {
                     "type": "array",
@@ -1893,6 +1981,7 @@ mod tests {
         let encoded = schemas[0].to_string();
         assert!(encoded.contains("mention_agent_refs"));
         assert!(encoded.contains("reply_to_message_ref"));
+        assert!(encoded.contains("target_agent_ref"));
         assert!(encoded.contains("team_ref"));
         assert!(!encoded.contains("agent_id"));
         assert!(!encoded.contains("team_id"));
@@ -2008,6 +2097,17 @@ mod tests {
             ..binding
         };
         assert!(validate_communication_run_context("main_chat", &input, &direct_binding).is_err());
+        let direct_input = json!({
+            "agent_execution_context": {
+                "schema_version": 3,
+                "conversation_kind": "agent_agent_direct",
+                "room_id": "team-1",
+                "agent_id": "agent-1"
+            }
+        });
+        assert!(
+            validate_communication_run_context("main_chat", &direct_input, &direct_binding).is_ok()
+        );
     }
 
     #[test]

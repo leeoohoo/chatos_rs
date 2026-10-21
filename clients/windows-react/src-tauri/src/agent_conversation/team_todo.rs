@@ -419,28 +419,31 @@ impl AgentConversationStore {
                  AND profile.id = member.agent_id
                 WHERE member.owner_user_id = ?1 AND member.room_id = ?2
                   AND member.status = 'active' AND profile.status = 'active'
-                  AND room.status = 'active' AND room.conversation_kind = 'project_team'
+                  AND room.status = 'active' AND room.conversation_kind = ?3
                 ORDER BY member.joined_at_unix_ms, member.agent_id
                 "#,
             )
             .map_err(|_| team_todo_store_error())?;
         let members = statement
-            .query_map(params![owner_user_id, binding.room_id], |row| {
-                let agent_id = row.get::<_, String>(0)?;
-                Ok(json!({
-                    "agent_ref": todo_planning_reference(
-                        owner_user_id,
-                        run_id,
-                        "agent",
-                        &agent_id,
-                    ),
-                    "name": row.get::<_, String>(1)?,
-                    "role": row.get::<_, String>(2)?,
-                    "responsibility": row.get::<_, String>(3)?,
-                    "is_project_manager": row.get::<_, i64>(4)? == 1,
-                    "is_current_agent": agent_id == binding.agent_id,
-                }))
-            })
+            .query_map(
+                params![owner_user_id, binding.room_id, binding.conversation_kind],
+                |row| {
+                    let agent_id = row.get::<_, String>(0)?;
+                    Ok(json!({
+                        "agent_ref": todo_planning_reference(
+                            owner_user_id,
+                            run_id,
+                            "agent",
+                            &agent_id,
+                        ),
+                        "name": row.get::<_, String>(1)?,
+                        "role": row.get::<_, String>(2)?,
+                        "responsibility": row.get::<_, String>(3)?,
+                        "is_project_manager": row.get::<_, i64>(4)? == 1,
+                        "is_current_agent": agent_id == binding.agent_id,
+                    }))
+                },
+            )
             .map_err(|_| team_todo_store_error())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| team_todo_store_error())?;
@@ -506,7 +509,7 @@ impl AgentConversationStore {
                       ON cursor.owner_user_id = message.owner_user_id
                      AND cursor.room_id = message.room_id AND cursor.agent_id = ?1
                     WHERE message.owner_user_id = ?2 AND room.status = 'active'
-                      AND room.conversation_kind = 'project_team'
+                      AND room.conversation_kind IN ('project_team', 'agent_agent_direct')
                       AND member.status = 'active'
                       AND NOT (
                         message.sender_kind = 'system'
@@ -668,6 +671,7 @@ impl AgentConversationStore {
         request_key: &str,
         content: &str,
         reply_reference: Option<&str>,
+        target_agent_reference: Option<&str>,
         team_reference: Option<&str>,
         mention_references: &[String],
         now_unix_ms: i64,
@@ -678,11 +682,26 @@ impl AgentConversationStore {
         if let Some(reference) = reply_reference {
             validate_text(reference, 600, false).map_err(|_| invalid_team_todo_input())?;
         }
+        if let Some(reference) = target_agent_reference {
+            validate_text(reference, 600, false).map_err(|_| invalid_team_todo_input())?;
+        }
         if let Some(reference) = team_reference {
             validate_text(reference, 600, false).map_err(|_| invalid_team_todo_input())?;
         }
-        if reply_reference.is_some() && team_reference.is_some() {
-            return Err("reply_to_message_ref and team_ref cannot both be provided.".into());
+        if [
+            reply_reference.is_some(),
+            target_agent_reference.is_some(),
+            team_reference.is_some(),
+        ]
+        .into_iter()
+        .filter(|selected| *selected)
+        .count()
+            > 1
+        {
+            return Err(
+                "reply_to_message_ref, target_agent_ref and team_ref are mutually exclusive."
+                    .into(),
+            );
         }
         validate_reference_list(mention_references, 64)?;
         if now_unix_ms < 0 {
@@ -729,6 +748,24 @@ impl AgentConversationStore {
                     Some(root_message_id),
                     message_hop_count,
                 )
+            } else if let Some(reference) = target_agent_reference {
+                let target_agent_id =
+                    resolve_agent_reference(&transaction, owner_user_id, run_id, reference)?;
+                if target_agent_id == binding.agent_id {
+                    return Err("The target Agent reference points to the current Agent.".into());
+                }
+                (
+                    open_agent_direct(
+                        &transaction,
+                        owner_user_id,
+                        &binding.agent_id,
+                        &target_agent_id,
+                        now_unix_ms,
+                    )?,
+                    None,
+                    None,
+                    trigger_context.3,
+                )
             } else if let Some(reference) = team_reference {
                 (
                     resolve_team_reference(
@@ -760,6 +797,24 @@ impl AgentConversationStore {
         .into_iter()
         .filter(|agent_id| agent_id != &binding.agent_id)
         .collect::<Vec<_>>();
+        let target_conversation_kind: String = transaction
+            .query_row(
+                "SELECT conversation_kind FROM project_agent_rooms WHERE owner_user_id = ?1 \
+                 AND id = ?2 AND status = 'active'",
+                params![owner_user_id, target_room_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let delivery_agent_ids = if target_conversation_kind == "agent_agent_direct" {
+            active_room_member_ids(&transaction, owner_user_id, &target_room_id)?
+                .into_iter()
+                .filter(|agent_id| agent_id != &binding.agent_id)
+                .collect::<Vec<_>>()
+        } else if target_conversation_kind == "project_team" {
+            mention_agent_ids.clone()
+        } else {
+            return Err("The target conversation does not support Agent messaging.".into());
+        };
         let existing_message_id = transaction
             .query_row(
                 r#"
@@ -820,7 +875,7 @@ impl AgentConversationStore {
             let spawned_delivery_count: i64 = transaction
                 .query_row(
                     "SELECT count(*) FROM project_agent_deliveries WHERE owner_user_id = ?1 \
-                     AND message_id = ?2 AND trigger_kind = 'agent_mention'",
+                     AND message_id = ?2",
                     params![owner_user_id, message_id],
                     |row| row.get(0),
                 )
@@ -831,7 +886,7 @@ impl AgentConversationStore {
                     owner_user_id,
                     &existing_root_message_id,
                     existing_hop_count,
-                    existing_mentions.len(),
+                    delivery_agent_ids.len(),
                 )?
             } else {
                 None
@@ -863,7 +918,7 @@ impl AgentConversationStore {
             owner_user_id,
             &root_message_id,
             message_hop_count,
-            mention_agent_ids.len(),
+            delivery_agent_ids.len(),
         )?;
         transaction
             .execute(
@@ -897,8 +952,15 @@ impl AgentConversationStore {
                     params![owner_user_id, message_id, target_agent_id, position as i64],
                 )
                 .map_err(|_| team_todo_store_error())?;
-            if routing_stop_reason.is_none() {
+        }
+        if routing_stop_reason.is_none() {
+            for target_agent_id in &delivery_agent_ids {
                 let delivery_id = identifier("delivery");
+                let trigger_kind = if mention_agent_ids.contains(target_agent_id) {
+                    "agent_mention"
+                } else {
+                    "default_agent"
+                };
                 transaction
                     .execute(
                         r#"
@@ -907,8 +969,8 @@ impl AgentConversationStore {
                         target_agent_id, trigger_kind, status, attempt, hop_count,
                         deduplication_key, response_message_id, last_error,
                         claimed_at_unix_ms, completed_at_unix_ms, created_at_unix_ms
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'agent_mention', 'pending', 0, ?7,
-                              ?8, NULL, NULL, NULL, NULL, ?9)
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', 0, ?8,
+                              ?9, NULL, NULL, NULL, NULL, ?10)
                     "#,
                         params![
                             owner_user_id,
@@ -917,6 +979,7 @@ impl AgentConversationStore {
                             message_id,
                             root_message_id,
                             target_agent_id,
+                            trigger_kind,
                             message_hop_count,
                             format!("{message_id}:{target_agent_id}"),
                             now_unix_ms,
@@ -942,11 +1005,77 @@ impl AgentConversationStore {
                 "spawned_delivery_count": if routing_stop_reason.is_some() {
                     0
                 } else {
-                    mention_agent_ids.len()
+                    delivery_agent_ids.len()
                 },
                 "routing_stop_reason": routing_stop_reason,
             }),
         ))
+    }
+
+    pub(crate) fn communication_rooms_requiring_scheduler(
+        &self,
+        owner_user_id: &str,
+    ) -> Result<Vec<String>, String> {
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                SELECT DISTINCT room.id
+                FROM project_agent_rooms room
+                JOIN project_agent_deliveries delivery
+                  ON delivery.owner_user_id = room.owner_user_id
+                 AND delivery.room_id = room.id
+                LEFT JOIN windows_agent_delivery_runs run
+                  ON run.owner_user_id = delivery.owner_user_id
+                 AND run.delivery_id = delivery.id
+                WHERE room.owner_user_id = ?1 AND room.status = 'active'
+                  AND room.conversation_kind = 'agent_agent_direct'
+                  AND (delivery.status IN ('pending', 'running')
+                       OR run.status IN ('ready', 'running'))
+                ORDER BY room.id
+                LIMIT 500
+                "#,
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let rows = statement
+            .query_map(params![owner_user_id], |row| row.get::<_, String>(0))
+            .map_err(|_| team_todo_store_error())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_todo_store_error())
+    }
+
+    pub(crate) fn communication_scheduler_has_work(
+        &self,
+        owner_user_id: &str,
+        room_id: &str,
+    ) -> Result<bool, String> {
+        validate_identifier(room_id).map_err(|_| invalid_team_todo_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        connection
+            .query_row(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM project_agent_deliveries delivery
+                    JOIN project_agent_rooms room
+                      ON room.owner_user_id = delivery.owner_user_id
+                     AND room.id = delivery.room_id
+                    LEFT JOIN windows_agent_delivery_runs run
+                      ON run.owner_user_id = delivery.owner_user_id
+                     AND run.delivery_id = delivery.id
+                    WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                      AND room.status = 'active'
+                      AND room.conversation_kind = 'agent_agent_direct'
+                      AND (delivery.status IN ('pending', 'running')
+                           OR run.status IN ('ready', 'running'))
+                )
+                "#,
+                params![owner_user_id, room_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| team_todo_store_error())
     }
 
     pub(crate) fn teams_requiring_todo_scheduler(
@@ -3476,7 +3605,7 @@ fn resolve_team_message_reference(
              AND profile.id = member.agent_id
             WHERE reference.owner_user_id = ?1 AND reference.run_id = ?2
               AND reference.message_ref = ?3 AND room.status = 'active'
-              AND room.conversation_kind = 'project_team'
+              AND room.conversation_kind IN ('project_team', 'agent_agent_direct')
               AND member.status = 'active' AND profile.status = 'active'
             "#,
             params![owner_user_id, run_id, reference, current_agent_id],
@@ -3524,6 +3653,166 @@ fn resolve_team_reference(
         }
     }
     Err("The team reference is unavailable for this Run.".into())
+}
+
+fn resolve_agent_reference(
+    connection: &Connection,
+    owner_user_id: &str,
+    run_id: &str,
+    reference: &str,
+) -> Result<String, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id FROM local_agent_profiles WHERE owner_user_id = ?1 \
+             AND status = 'active' ORDER BY id",
+        )
+        .map_err(|_| team_todo_store_error())?;
+    let rows = statement
+        .query_map(params![owner_user_id], |row| row.get::<_, String>(0))
+        .map_err(|_| team_todo_store_error())?;
+    for row in rows {
+        let agent_id = row.map_err(|_| team_todo_store_error())?;
+        if todo_planning_reference(owner_user_id, run_id, "agent", &agent_id) == reference {
+            return Ok(agent_id);
+        }
+    }
+    Err("The target Agent reference is unavailable for this Run.".into())
+}
+
+fn active_room_member_ids(
+    connection: &Connection,
+    owner_user_id: &str,
+    room_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT member.agent_id
+            FROM project_agent_room_members member
+            JOIN local_agent_profiles profile
+              ON profile.owner_user_id = member.owner_user_id
+             AND profile.id = member.agent_id
+            WHERE member.owner_user_id = ?1 AND member.room_id = ?2
+              AND member.status = 'active' AND profile.status = 'active'
+            ORDER BY member.joined_at_unix_ms, member.agent_id
+            "#,
+        )
+        .map_err(|_| team_todo_store_error())?;
+    let members = statement
+        .query_map(params![owner_user_id, room_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(|_| team_todo_store_error())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| team_todo_store_error())?;
+    Ok(members)
+}
+
+fn open_agent_direct(
+    connection: &Connection,
+    owner_user_id: &str,
+    initiating_agent_id: &str,
+    target_agent_id: &str,
+    now_unix_ms: i64,
+) -> Result<String, String> {
+    if initiating_agent_id == target_agent_id || now_unix_ms < 0 {
+        return Err(invalid_team_todo_input());
+    }
+    let mut pair = [initiating_agent_id, target_agent_id];
+    pair.sort_unstable();
+    let direct_key = format!("agent:{}|agent:{}", pair[0], pair[1]);
+    validate_identifier(&direct_key).map_err(|_| invalid_team_todo_input())?;
+    let existing = connection
+        .query_row(
+            "SELECT id FROM project_agent_rooms WHERE owner_user_id = ?1 AND direct_key = ?2 \
+             AND status = 'active' AND conversation_kind = 'agent_agent_direct'",
+            params![owner_user_id, direct_key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| team_todo_store_error())?;
+    if let Some(room_id) = existing {
+        let members = active_room_member_ids(connection, owner_user_id, &room_id)?;
+        if members.len() == 2
+            && members
+                .iter()
+                .any(|agent_id| agent_id == initiating_agent_id)
+            && members.iter().any(|agent_id| agent_id == target_agent_id)
+        {
+            return Ok(room_id);
+        }
+        return Err("The Agent direct conversation membership is invalid.".into());
+    }
+    let profiles = {
+        let mut statement = connection
+            .prepare(
+                "SELECT id, name, description FROM local_agent_profiles \
+                 WHERE owner_user_id = ?1 AND id IN (?2, ?3) AND status = 'active' ORDER BY id",
+            )
+            .map_err(|_| team_todo_store_error())?;
+        let profiles = statement
+            .query_map(
+                params![owner_user_id, initiating_agent_id, target_agent_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .map_err(|_| team_todo_store_error())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| team_todo_store_error())?;
+        profiles
+    };
+    if profiles.len() != 2 {
+        return Err("The target Agent is unavailable.".into());
+    }
+    let room_id = identifier("agent-direct");
+    let name = format!("{} · {}", profiles[0].1, profiles[1].1);
+    validate_text(&name, 160, false).map_err(|_| team_todo_store_error())?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO project_agent_rooms (
+                owner_user_id, id, project_id, name, goal, default_agent_id, status,
+                created_at_unix_ms, updated_at_unix_ms, conversation_kind, direct_key,
+                project_manager_agent_id
+            ) VALUES (?1, ?2, ?3, ?4, '', NULL, 'active', ?5, ?5,
+                      'agent_agent_direct', ?6, NULL)
+            "#,
+            params![
+                owner_user_id,
+                room_id,
+                format!("direct:{room_id}"),
+                name,
+                now_unix_ms,
+                direct_key,
+            ],
+        )
+        .map_err(|_| team_todo_store_error())?;
+    for (agent_id, agent_name, description) in profiles {
+        connection
+            .execute(
+                r#"
+                INSERT INTO project_agent_room_members (
+                    owner_user_id, room_id, agent_id, role, responsibility,
+                    plugin_allowlist_json, status, joined_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, '[]', 'active', ?6)
+                "#,
+                params![
+                    owner_user_id,
+                    room_id,
+                    agent_id,
+                    agent_name,
+                    description,
+                    now_unix_ms,
+                ],
+            )
+            .map_err(|_| team_todo_store_error())?;
+    }
+    Ok(room_id)
 }
 
 fn validate_reference_list(values: &[String], maximum: usize) -> Result<(), String> {
