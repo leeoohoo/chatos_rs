@@ -10,6 +10,12 @@ import {
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { AgentManagementView } from "./AgentManagementView";
 
+vi.mock("../../conversation-history/ui/ConversationHistoryView", () => ({
+  ConversationHistoryView: ({ agentBound }: { agentBound?: boolean }) => (
+    <div data-testid="agent-conversation-history" data-agent-bound={String(agentBound)} />
+  ),
+}));
+
 describe("AgentManagementView", () => {
   beforeEach(() => useAgentManagementStore.getState().reset());
   beforeEach(() => useAgentSkillManagementStore.getState().reset());
@@ -159,6 +165,44 @@ describe("AgentManagementView", () => {
     renderView(stubPort({ listProfiles: vi.fn(async () => []) }));
     expect(await screen.findByText("还没有 Agent")).toBeVisible();
     expect(screen.getByText(/创建一个 Agent/)).toBeVisible();
+  });
+
+  it("opens the native prepared conversation when all Agent chat dependencies are available", async () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    const prepareConversation = vi.fn(async () => ({
+      roomId,
+      agentId: "agent-1",
+      conversationId: `agent-direct-${roomId}`,
+      title: "界面设计师",
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    }));
+    const port = stubPort({
+      prepareConversation,
+      sendConversationDraft: vi.fn(),
+    });
+    render(
+      <AgentManagementView
+        askUserPort={{} as never}
+        attachmentPort={{} as never}
+        historyPort={{} as never}
+        ownerUserId="owner-1"
+        port={port}
+        realtimePort={{} as never}
+        runInspectorPort={{} as never}
+        runtimeSettingsPort={{} as never}
+      />,
+    );
+    await screen.findByText("界面设计师");
+
+    const directButton = screen.getByRole("button", { name: "私聊" });
+    expect(directButton).toBeEnabled();
+    fireEvent.click(directButton);
+
+    await waitFor(() => expect(prepareConversation).toHaveBeenCalledWith("owner-1", "agent-1"));
+    expect(await screen.findByLabelText("界面设计师 Agent 私聊")).toBeVisible();
+    expect(screen.getByTestId("agent-conversation-history")).toHaveAttribute("data-agent-bound", "true");
+    expect(screen.getByRole("button", { name: "返回 Agent 管理" })).toBeEnabled();
   });
 
   it("edits the macOS-compatible bilingual Skill catalog", async () => {

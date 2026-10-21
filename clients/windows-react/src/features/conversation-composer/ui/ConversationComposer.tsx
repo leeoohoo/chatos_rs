@@ -14,6 +14,7 @@ import {
   AVAILABLE_COMPOSER_CAPABILITIES,
   filterCapabilityCandidates,
   trailingCapabilityQuery,
+  type ComposerCapabilityCandidate,
 } from "../domain/conversationComposer";
 
 export function ConversationComposer({
@@ -23,6 +24,8 @@ export function ConversationComposer({
   port,
   attachmentPort,
   runtimeSettingsPort,
+  availableCapabilities = AVAILABLE_COMPOSER_CAPABILITIES,
+  showRuntimeControls = true,
   onAccepted,
 }: {
   ownerUserId: string;
@@ -31,6 +34,8 @@ export function ConversationComposer({
   port: ConversationComposerPort;
   attachmentPort: ConversationAttachmentPort;
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
+  availableCapabilities?: readonly ComposerCapabilityCandidate[];
+  showRuntimeControls?: boolean;
   onAccepted(): Promise<void>;
 }) {
   const draft = useConversationComposerStore((state) => state.draft);
@@ -87,9 +92,11 @@ export function ConversationComposer({
     null,
   );
   const canSend = !isSending && (draft.trim().length > 0 || attachments.length > 0);
-  const capabilityQuery = suggestionsSuppressed ? null : trailingCapabilityQuery(draft);
+  const capabilityQuery = availableCapabilities.length === 0 || suggestionsSuppressed
+    ? null
+    : trailingCapabilityQuery(draft);
   const visibleCapabilities = capabilityQuery
-    ? filterCapabilityCandidates(AVAILABLE_COMPOSER_CAPABILITIES, capabilityQuery).slice(0, 8)
+    ? filterCapabilityCandidates(availableCapabilities, capabilityQuery).slice(0, 8)
     : [];
 
   useEffect(() => {
@@ -153,7 +160,7 @@ export function ConversationComposer({
         event.preventDefault();
         moveCapabilityHighlight(
           event.key === "ArrowDown" ? "down" : "up",
-          AVAILABLE_COMPOSER_CAPABILITIES,
+          availableCapabilities,
         );
         return;
       }
@@ -179,11 +186,13 @@ export function ConversationComposer({
         : "conversation-composer"}
       aria-label="消息输入"
     >
-      <ConversationRuntimeControls
-        ownerUserId={ownerUserId}
-        conversationId={conversationId}
-        port={runtimeSettingsPort}
-      />
+      {showRuntimeControls && (
+        <ConversationRuntimeControls
+          ownerUserId={ownerUserId}
+          conversationId={conversationId}
+          port={runtimeSettingsPort}
+        />
+      )}
       {selectedCapability ? (
         <div
           aria-label={`已选择能力：${selectedCapability.displayName}`}

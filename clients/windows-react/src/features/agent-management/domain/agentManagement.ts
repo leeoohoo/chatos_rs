@@ -201,6 +201,32 @@ export type AgentProfileEditorCatalog = z.infer<typeof agentProfileEditorCatalog
 export type AgentProfileEditorData = z.infer<typeof agentProfileEditorDataSchema>;
 export type AgentAvatarDraft = z.infer<typeof agentAvatarDraftSchema>;
 
+export const preparedAgentConversationSchema = z.object({
+  roomId: z.string().uuid(),
+  agentId: z.string().trim().min(1).max(512),
+  conversationId: z.string().regex(/^agent-direct-[0-9a-f-]{36}$/u),
+  title: z.string().trim().min(1).max(120),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+}).strict().superRefine((conversation, context) => {
+  if (conversation.updatedAtUnixMs < conversation.createdAtUnixMs) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 私聊更新时间不能早于创建时间。",
+      path: ["updatedAtUnixMs"],
+    });
+  }
+  if (conversation.conversationId !== `agent-direct-${conversation.roomId}`) {
+    context.addIssue({
+      code: "custom",
+      message: "Agent 私聊身份不一致。",
+      path: ["conversationId"],
+    });
+  }
+});
+
+export type PreparedAgentConversation = z.infer<typeof preparedAgentConversationSchema>;
+
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",
   product_manager: "产品经理",

@@ -125,6 +125,38 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", kind: "profession", key: "skill-0",
     });
   });
+
+  it("uses the dedicated native Agent conversation commands and parameters", async () => {
+    const roomId = "11111111-1111-4111-8111-111111111111";
+    vi.mocked(invoke).mockResolvedValueOnce({
+      roomId,
+      agentId: "agent-1",
+      conversationId: `agent-direct-${roomId}`,
+      title: "界面设计师",
+      createdAtUnixMs: 10,
+      updatedAtUnixMs: 20,
+    });
+    const adapter = new TauriAgentManagementAdapter();
+    await adapter.prepareConversation("owner-1", "agent-1");
+    expect(invoke).toHaveBeenLastCalledWith("prepare_agent_conversation", {
+      ownerUserId: "owner-1",
+      agentId: "agent-1",
+    });
+
+    const input = {
+      ownerUserId: "owner-1",
+      roomId,
+      guidanceTurnId: null,
+      submission: { content: "继续", attachmentIds: ["attachment-1"] },
+    };
+    vi.mocked(invoke).mockResolvedValueOnce({
+      deliveryKind: "newTurn",
+      turnId: "turn-1",
+      userMessageId: "message-1",
+    });
+    await adapter.sendConversationDraft(input);
+    expect(invoke).toHaveBeenLastCalledWith("send_agent_conversation_draft", { input });
+  });
 });
 
 function skillProjection(kind: "profession" | "projectType", key: string) {

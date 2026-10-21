@@ -46,9 +46,10 @@ const AgentManagementWorkspace = lazy(async () => {
     import("../features/agent-management/ui/AgentManagementView"),
   ]);
   const port = new adapterModule.TauriAgentManagementAdapter();
+  type Props = Omit<ComponentProps<typeof viewModule.AgentManagementView>, "port">;
   return {
-    default: ({ ownerUserId }: { ownerUserId: string }) => (
-      <viewModule.AgentManagementView ownerUserId={ownerUserId} port={port} />
+    default: (props: Props) => (
+      <viewModule.AgentManagementView {...props} port={port} />
     ),
   };
 });
@@ -448,7 +449,15 @@ export function AppShell({
             ownerUserId={session.user.id}
           />
         ) : selection.kind === "agentManagement" ? (
-          <AgentManagementWorkspace ownerUserId={session.user.id} />
+          <AgentManagementWorkspace
+            askUserPort={askUser}
+            attachmentPort={conversationAttachments}
+            historyPort={conversationHistory}
+            ownerUserId={session.user.id}
+            realtimePort={conversationRealtime}
+            runInspectorPort={runInspector}
+            runtimeSettingsPort={conversationRuntimeSettings}
+          />
         ) : selection.kind === "mediaStudio" ? (
           <MediaStudioWorkspace ownerUserId={session.user.id} />
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (

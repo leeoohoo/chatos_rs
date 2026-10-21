@@ -5,7 +5,9 @@ import type {
   AgentProfileSummary,
   AgentAvatarDraft,
   AgentAvatarHistoryAsset,
+  PreparedAgentConversation,
 } from "../domain/agentManagement";
+import type { ConversationSendAck } from "../../conversation-composer/domain/conversationComposer";
 import type {
   AgentSkillDefinition,
   AgentSkillKind,
@@ -24,4 +26,11 @@ export interface AgentManagementPort {
   loadSkillCatalog?(ownerUserId: string): Promise<AgentSkillDefinition[]>;
   saveSkillOverride?(ownerUserId: string, input: AgentSkillMutationInput): Promise<AgentSkillDefinition>;
   resetSkillOverride?(ownerUserId: string, kind: AgentSkillKind, key: string): Promise<AgentSkillDefinition>;
+  prepareConversation?(ownerUserId: string, agentId: string): Promise<PreparedAgentConversation>;
+  sendConversationDraft?(input: {
+    ownerUserId: string;
+    roomId: string;
+    guidanceTurnId: string | null;
+    submission: { content: string; attachmentIds: string[] };
+  }): Promise<ConversationSendAck>;
 }

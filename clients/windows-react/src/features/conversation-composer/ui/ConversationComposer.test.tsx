@@ -126,9 +126,23 @@ describe("ConversationComposer capability selection", () => {
       },
     })));
   });
+
+  it("hides runtime controls and disables slash capability suggestions for a bound Agent", () => {
+    renderComposer({}, { availableCapabilities: [], showRuntimeControls: false });
+    const input = screen.getByLabelText("消息");
+
+    fireEvent.change(input, { target: { value: "/" } });
+
+    expect(screen.queryByLabelText("模型")).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "能力建议" })).not.toBeInTheDocument();
+    expect(screen.queryByText("没有匹配的能力")).not.toBeInTheDocument();
+  });
 });
 
-function renderComposer(overrides: Partial<ConversationComposerPort> = {}) {
+function renderComposer(
+  overrides: Partial<ConversationComposerPort> = {},
+  options: { availableCapabilities?: []; showRuntimeControls?: boolean } = {},
+) {
   const port: ConversationComposerPort = {
     sendDraft: vi.fn().mockResolvedValue({
       deliveryKind: "newTurn",
@@ -146,6 +160,8 @@ function renderComposer(overrides: Partial<ConversationComposerPort> = {}) {
       ownerUserId="owner-1"
       port={port}
       runtimeSettingsPort={runtimeSettingsPort}
+      availableCapabilities={options.availableCapabilities}
+      showRuntimeControls={options.showRuntimeControls}
     />,
   );
 }

@@ -5,8 +5,10 @@ import {
   agentProfileListSchema,
   agentProfileSummarySchema,
   agentAvatarDraftSchema,
+  preparedAgentConversationSchema,
   type AgentProfileMutationInput,
 } from "../domain/agentManagement";
+import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { mediaStudioHistoryPageSchema } from "../../media-studio/domain/mediaStudio";
 import {
@@ -85,5 +87,19 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     return agentSkillDefinitionSchema.parse(
       await invoke("reset_agent_skill_override", { ownerUserId, kind, key }),
     );
+  }
+
+  async prepareConversation(ownerUserId: string, agentId: string) {
+    return preparedAgentConversationSchema.parse(
+      await invoke("prepare_agent_conversation", { ownerUserId, agentId }),
+    );
+  }
+
+  async sendConversationDraft(input: Parameters<NonNullable<AgentManagementPort["sendConversationDraft"]>>[0]) {
+    return z.object({
+      deliveryKind: z.enum(["guidance", "newTurn"]),
+      turnId: z.string().min(1),
+      userMessageId: z.string().min(1),
+    }).strict().parse(await invoke("send_agent_conversation_draft", { input }));
   }
 }

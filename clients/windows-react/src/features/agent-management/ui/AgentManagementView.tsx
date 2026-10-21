@@ -1,4 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import type { AskUserPort } from "../../ask-user/ports/AskUserPort";
+import type { ConversationAttachmentPort } from "../../conversation-attachments/ports/ConversationAttachmentPort";
+import type { ConversationComposerPort } from "../../conversation-composer/ports/ConversationComposerPort";
+import type { ConversationHistoryPort } from "../../conversation-history/ports/ConversationHistoryPort";
+import { ConversationHistoryView } from "../../conversation-history/ui/ConversationHistoryView";
+import type { ConversationRealtimePort } from "../../conversation-realtime/ports/ConversationRealtimePort";
+import type { ConversationRuntimeSettingsPort } from "../../conversation-runtime-settings/ports/ConversationRuntimeSettingsPort";
+import type { RunInspectorPort } from "../../run-inspector/ports/RunInspectorPort";
 import { useAgentManagementStore } from "../application/agentManagementStore";
 import {
   agentProfessionLabels,
@@ -9,6 +17,7 @@ import {
   type AgentProfileSummary,
   type AgentAvatarDraft,
   type AgentAvatarHistoryAsset,
+  type PreparedAgentConversation,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import { AgentSkillManagementSheet } from "./AgentSkillManagementSheet";
@@ -17,9 +26,21 @@ import "./agentManagement.css";
 export function AgentManagementView({
   ownerUserId,
   port,
+  historyPort,
+  attachmentPort,
+  realtimePort,
+  runtimeSettingsPort,
+  runInspectorPort,
+  askUserPort,
 }: {
   ownerUserId: string;
   port: AgentManagementPort;
+  historyPort?: ConversationHistoryPort;
+  attachmentPort?: ConversationAttachmentPort;
+  realtimePort?: ConversationRealtimePort;
+  runtimeSettingsPort?: ConversationRuntimeSettingsPort;
+  runInspectorPort?: RunInspectorPort;
+  askUserPort?: AskUserPort;
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
   const editorCatalog = useAgentManagementStore((state) => state.editorCatalog);
@@ -37,12 +58,25 @@ export function AgentManagementView({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [preparingId, setPreparingId] = useState<string | null>(null);
+  const [preparingDirectId, setPreparingDirectId] = useState<string | null>(null);
+  const [directConversation, setDirectConversation] = useState<PreparedAgentConversation | null>(null);
+  const [directError, setDirectError] = useState<string | null>(null);
   const [showsSkillManagement, setShowsSkillManagement] = useState(false);
   const [editor, setEditor] = useState<{
     catalog: AgentProfileEditorCatalog;
     data: AgentProfileEditorData | null;
   } | null>(null);
   const pageCount = Math.max(1, Math.ceil(profiles.length / pageSize));
+  const canOpenDirect = Boolean(
+    port.prepareConversation
+    && port.sendConversationDraft
+    && historyPort
+    && attachmentPort
+    && realtimePort
+    && runtimeSettingsPort
+    && runInspectorPort
+    && askUserPort,
+  );
   const visibleProfiles = useMemo(
     () => profiles.slice(page * pageSize, page * pageSize + pageSize),
     [page, pageSize, profiles],
@@ -51,6 +85,9 @@ export function AgentManagementView({
   useEffect(() => {
     setEditor(null);
     setPreparingId(null);
+    setPreparingDirectId(null);
+    setDirectConversation(null);
+    setDirectError(null);
     void activate(port, ownerUserId).then(() => loadEditorCatalog(port, false));
     return reset;
   }, [activate, loadEditorCatalog, ownerUserId, port, reset]);
@@ -69,6 +106,84 @@ export function AgentManagementView({
     setPreparingId(null);
     if (catalog && (!profile || data)) setEditor({ catalog, data });
   };
+
+  const openDirect = async (profile: AgentProfileSummary) => {
+    if (preparingDirectId || !port.prepareConversation || !canOpenDirect) return;
+    setPreparingDirectId(profile.id);
+    setDirectError(null);
+    try {
+      const prepared = await port.prepareConversation(ownerUserId, profile.id);
+      if (prepared.agentId !== profile.id) throw new Error("Agent 私聊身份不一致，请刷新后重试。");
+      setDirectConversation(prepared);
+    } catch (failure) {
+      setDirectError(failure instanceof Error ? failure.message : "Agent 私聊暂时无法打开。");
+    } finally {
+      setPreparingDirectId(null);
+    }
+  };
+
+  const directComposerPort = useMemo<ConversationComposerPort>(() => ({
+    sendDraft: async (input) => {
+      const active = directConversation;
+      if (!active
+        || input.ownerUserId !== ownerUserId
+        || input.conversationId !== active.conversationId
+        || input.submission.explicitCapabilitySelection != null
+        || !port.sendConversationDraft) {
+        throw new Error("Agent 私聊发送上下文无效，请重新打开会话。");
+      }
+      return port.sendConversationDraft({
+        ownerUserId,
+        roomId: active.roomId,
+        guidanceTurnId: input.guidanceTurnId,
+        submission: {
+          content: input.submission.content,
+          attachmentIds: input.submission.attachmentIds,
+        },
+      });
+    },
+  }), [directConversation, ownerUserId, port]);
+
+  if (directConversation
+    && historyPort
+    && attachmentPort
+    && realtimePort
+    && runtimeSettingsPort
+    && runInspectorPort
+    && askUserPort) {
+    return (
+      <div className="agent-management agent-direct" aria-label={`${directConversation.title} Agent 私聊`}>
+        <section className="agent-management__panel agent-direct__panel">
+          <header className="agent-management__toolbar agent-direct__toolbar">
+            <div className="agent-direct__heading">
+              <button
+                aria-label="返回 Agent 管理"
+                className="agent-direct__back"
+                onClick={() => setDirectConversation(null)}
+                type="button"
+              >‹</button>
+              <div>
+                <h2>{directConversation.title}</h2>
+                <p>Agent 私聊 · 模型、身份、权限与 Skill 由本机原生层锁定</p>
+              </div>
+            </div>
+          </header>
+          <ConversationHistoryView
+            agentBound
+            askUserPort={askUserPort}
+            attachmentPort={attachmentPort}
+            composerPort={directComposerPort}
+            conversationId={directConversation.conversationId}
+            ownerUserId={ownerUserId}
+            port={historyPort}
+            realtimePort={realtimePort}
+            runInspectorPort={runInspectorPort}
+            runtimeSettingsPort={runtimeSettingsPort}
+          />
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="agent-management" aria-label="Agent 管理">
@@ -107,6 +222,13 @@ export function AgentManagementView({
           </div>
         )}
 
+        {directError && (
+          <div className="agent-management__error" role="alert">
+            <span>{directError}</span>
+            <button onClick={() => setDirectError(null)} type="button">关闭</button>
+          </div>
+        )}
+
         {isLoading && profiles.length === 0 ? (
           <div className="agent-management__state"><span className="mini-spinner" />正在读取 Agent…</div>
         ) : profiles.length === 0 ? (
@@ -134,6 +256,9 @@ export function AgentManagementView({
                       ?? `${profile.modelConfigId}（不可用）`
                     : profile.modelConfigId}
                   onEdit={() => void openEditor(profile)}
+                  onDirect={() => void openDirect(profile)}
+                  preparingDirect={preparingDirectId === profile.id}
+                  directAvailable={canOpenDirect}
                 />
               ))}
             </div>
@@ -177,12 +302,18 @@ function AgentCard({
   profile,
   modelLabel,
   preparing,
+  preparingDirect,
+  directAvailable,
   onEdit,
+  onDirect,
 }: {
   profile: AgentProfileSummary;
   modelLabel: string;
   preparing: boolean;
+  preparingDirect: boolean;
+  directAvailable: boolean;
   onEdit(): void;
+  onDirect(): void;
 }) {
   return (
     <article className="agent-card">
@@ -199,7 +330,14 @@ function AgentCard({
       </header>
       {profile.description && <p className="agent-card__description">{profile.description}</p>}
       <div className="agent-card__actions">
-        <button disabled title="私聊将在 Agent Conversation 准入后开放" type="button">私聊</button>
+        <button
+          disabled={preparingDirect || !directAvailable}
+          onClick={onDirect}
+          title={directAvailable ? undefined : "Agent 原生会话服务尚未就绪"}
+          type="button"
+        >
+          {preparingDirect ? "准备中…" : "私聊"}
+        </button>
         <button disabled={preparing} onClick={onEdit} type="button">{preparing ? "准备中…" : "编辑"}</button>
       </div>
       <dl>

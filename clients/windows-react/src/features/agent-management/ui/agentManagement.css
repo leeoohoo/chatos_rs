@@ -37,6 +37,14 @@
 .agent-card dd { overflow: hidden; margin: 0; font-weight: 570; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .agent-card > footer { display: flex; flex-wrap: wrap; gap: 6px; }
 .agent-card > footer span { border-radius: 999px; padding: 3px 7px; color: var(--secondary); background: rgba(120,120,128,.09); font-size: 9px; font-weight: 620; }
+.agent-direct__panel { width: min(1180px,100%); min-height: 0; }
+.agent-direct__toolbar { min-height: 64px; }
+.agent-direct__heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.agent-direct__back { display: grid; width: 30px; min-height: 30px; flex: none; place-items: center; border: 0; border-radius: 50%; padding: 0 1px 2px 0; color: var(--accent); background: rgba(10,132,255,.10); font: 25px/1 -apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif; cursor: pointer; }
+.agent-direct__heading > div { min-width: 0; }
+.agent-direct__heading h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-direct__panel > .conversation-screen { min-height: 0; flex: 1; background: rgba(246,246,248,.48); }
+.agent-direct__panel .conversation-history { background: transparent; }
 .agent-pagination { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--separator); padding: 8px 18px; color: var(--secondary); font: 10px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .agent-pagination > div { display: flex; align-items: center; gap: 7px; }
 .agent-pagination select, .agent-pagination button { min-height: 27px; border: 1px solid rgba(60,60,67,.12); border-radius: 7px; color: inherit; background: rgba(255,255,255,.76); font: inherit; }

@@ -38,6 +38,7 @@ export function ConversationHistoryView({
   runtimeSettingsPort,
   runInspectorPort,
   askUserPort,
+  agentBound = false,
 }: {
   ownerUserId: string;
   conversationId: string;
@@ -48,6 +49,7 @@ export function ConversationHistoryView({
   runtimeSettingsPort: ConversationRuntimeSettingsPort;
   runInspectorPort: RunInspectorPort;
   askUserPort: AskUserPort;
+  agentBound?: boolean;
 }) {
   const phase = useConversationHistoryStore((state) => state.phase);
   const load = useConversationHistoryStore((state) => state.load);
@@ -184,6 +186,8 @@ export function ConversationHistoryView({
         port={composerPort}
         attachmentPort={attachmentPort}
         runtimeSettingsPort={runtimeSettingsPort}
+        availableCapabilities={agentBound ? [] : undefined}
+        showRuntimeControls={!agentBound}
         onAccepted={reconcile}
       />
       <RunInspectorSheet port={runInspectorPort} />
