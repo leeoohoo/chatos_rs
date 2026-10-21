@@ -32,7 +32,9 @@ mod tool_approval;
 mod workspace_index;
 
 use access_control::load_access_control;
-use agent_management::{list_agent_profiles, AgentProfileStore};
+use agent_management::{
+    list_agent_profiles, load_agent_profile_editor_catalog, save_agent_profile, AgentProfileStore,
+};
 use ask_user::{cancel_ask_user_prompt, load_ask_user_prompts, submit_ask_user_prompt};
 use attachment_tool_worker::AttachmentToolWorker;
 use authentication::{
@@ -243,6 +245,8 @@ pub fn run() {
             logout,
             list_local_projects,
             list_agent_profiles,
+            load_agent_profile_editor_catalog,
+            save_agent_profile,
             list_project_types,
             pick_project_directory,
             discard_project_directory_selection,

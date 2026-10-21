@@ -1,12 +1,15 @@
-use rusqlite::{params, Connection, OpenFlags};
-use serde::Serialize;
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 use tauri::State;
 
-use crate::{authentication::AuthenticationManager, host_lifecycle::validate_owner};
+use crate::{
+    authentication::{AuthenticationManager, GatewayModelConfig},
+    host_lifecycle::validate_owner,
+};
 
 const DATABASE_FILENAME: &str = "AgentGroupChat.sqlite3";
 const MAXIMUM_AVATAR_BYTES: i64 = 512 * 1_024;
@@ -14,6 +17,11 @@ const STAFF_HIRE: &str = "agent.staff.hire";
 const STAFF_TERMINATE: &str = "agent.staff.terminate";
 const LOCAL_PROJECT_LIST: &str = "local.project.list";
 const LEGACY_PROJECT_STEWARD: &str = "builtin.project-steward";
+const SKILL_CATALOG: &str =
+    include_str!("../../../macos/Sources/ChatOSCore/AgentSkills/Catalog/ChatOSSkillCatalog.json");
+const MODEL_REASONING_CAPABILITIES: &str = include_str!(
+    "../../../macos/Sources/ChatOSModelCapabilities/Resources/ModelReasoningCapabilities.json"
+);
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -43,6 +51,14 @@ CREATE TABLE IF NOT EXISTS local_agent_profiles (
 );
 "#;
 
+const PROFILE_COLUMNS: &str = r#"
+id, name, description, role_prompt, model_config_id, thinking_level,
+profession_key, default_plugin_ids_json, default_skill_ids_json,
+heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt,
+last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms,
+length(avatar_data), created_at_unix_ms, updated_at_unix_ms
+"#;
+
 #[derive(Clone)]
 pub(crate) struct AgentProfileStore {
     database: PathBuf,
@@ -66,6 +82,71 @@ pub(crate) struct AgentProfileSummary {
     has_avatar: bool,
     created_at_unix_ms: i64,
     updated_at_unix_ms: i64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProfileEditorCatalog {
+    models: Vec<AgentModelOption>,
+    professions: Vec<AgentProfessionOption>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentModelOption {
+    id: String,
+    display_name: String,
+    model_name: String,
+    provider: String,
+    default_thinking_level: Option<String>,
+    supports_reasoning: bool,
+    thinking_levels: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelReasoningCapability {
+    model: String,
+    levels: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ModelReasoningCatalog {
+    models: Vec<ModelReasoningCapability>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProfessionOption {
+    key: String,
+    label: String,
+    description: String,
+    #[serde(rename(deserialize = "category_key", serialize = "categoryKey"))]
+    category_key: String,
+    #[serde(rename(deserialize = "category_label", serialize = "categoryLabel"))]
+    category_label: String,
+}
+
+#[derive(Deserialize)]
+struct SkillCatalogPayload {
+    professions: Vec<AgentProfessionOption>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AgentProfileMutationInput {
+    agent_id: Option<String>,
+    expected_updated_at_unix_ms: Option<i64>,
+    name: String,
+    description: String,
+    role_prompt: String,
+    model_config_id: String,
+    thinking_level: Option<String>,
+    profession_key: String,
+    can_manage_staff: bool,
+    can_access_local_projects: bool,
+    heartbeat_enabled: bool,
+    heartbeat_interval_seconds: i64,
+    heartbeat_prompt: String,
 }
 
 impl AgentProfileStore {
@@ -107,6 +188,151 @@ impl AgentProfileStore {
         Ok(profiles)
     }
 
+    fn save(
+        &self,
+        owner_user_id: &str,
+        input: AgentProfileMutationInput,
+    ) -> Result<AgentProfileSummary, String> {
+        validate_mutation_input(&input)?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| store_error())?;
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        let profile_id;
+        if let Some(agent_id) = input.agent_id.as_deref() {
+            validate_identifier(agent_id).map_err(|_| invalid_input())?;
+            let expected = input
+                .expected_updated_at_unix_ms
+                .filter(|value| *value >= 0)
+                .ok_or_else(invalid_input)?;
+            let existing: Option<(String, bool, i64, Option<i64>)> = transaction
+                .query_row(
+                    "SELECT default_skill_ids_json, heartbeat_enabled, heartbeat_interval_seconds, next_heartbeat_at_unix_ms FROM local_agent_profiles WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active' AND updated_at_unix_ms = ?3",
+                    params![owner_user_id, agent_id, expected],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(|_| store_error())?;
+            let Some((skill_json, previous_enabled, previous_interval, previous_next)) = existing
+            else {
+                return Err("Agent 状态已经变化，请刷新后重试。".into());
+            };
+            let skills = normalized_permissions(
+                parse_identifiers(skill_json).map_err(|_| store_error())?,
+                input.can_manage_staff,
+                input.can_access_local_projects,
+            );
+            let next_heartbeat = next_heartbeat_at(
+                input.heartbeat_enabled,
+                input.heartbeat_interval_seconds,
+                previous_enabled,
+                previous_interval,
+                previous_next,
+                now,
+            );
+            let changed = transaction
+                .execute(
+                    r#"
+                UPDATE local_agent_profiles
+                SET name = ?1, description = ?2, role_prompt = ?3, model_config_id = ?4,
+                    thinking_level = ?5, profession_key = ?6, default_plugin_ids_json = '[]',
+                    default_skill_ids_json = ?7, heartbeat_enabled = ?8,
+                    heartbeat_interval_seconds = ?9, heartbeat_prompt = ?10,
+                    next_heartbeat_at_unix_ms = ?11, updated_at_unix_ms = ?12
+                WHERE owner_user_id = ?13 AND id = ?14 AND status = 'active'
+                  AND updated_at_unix_ms = ?15
+                "#,
+                    params![
+                        input.name.trim(),
+                        input.description.trim(),
+                        input.role_prompt.trim(),
+                        input.model_config_id.trim(),
+                        normalized_optional(input.thinking_level.as_deref()),
+                        input.profession_key,
+                        serde_json::to_string(&skills).map_err(|_| store_error())?,
+                        input.heartbeat_enabled,
+                        input.heartbeat_interval_seconds,
+                        input.heartbeat_prompt.trim(),
+                        next_heartbeat,
+                        now,
+                        owner_user_id,
+                        agent_id,
+                        expected,
+                    ],
+                )
+                .map_err(|_| store_error())?;
+            if changed != 1 {
+                return Err("Agent 状态已经变化，请刷新后重试。".into());
+            }
+            profile_id = agent_id.to_owned();
+        } else {
+            if input.expected_updated_at_unix_ms.is_some() {
+                return Err(invalid_input());
+            }
+            profile_id = uuid::Uuid::new_v4().to_string().to_lowercase();
+            let skills = normalized_permissions(
+                Vec::new(),
+                input.can_manage_staff,
+                input.can_access_local_projects,
+            );
+            let next_heartbeat = next_heartbeat_at(
+                input.heartbeat_enabled,
+                input.heartbeat_interval_seconds,
+                false,
+                input.heartbeat_interval_seconds,
+                None,
+                now,
+            );
+            transaction
+                .execute(
+                    r#"
+                INSERT INTO local_agent_profiles (
+                    owner_user_id, id, name, description, role_prompt, model_config_id,
+                    thinking_level, profession_key, default_plugin_ids_json, default_skill_ids_json,
+                    heartbeat_enabled, heartbeat_interval_seconds, heartbeat_prompt,
+                    last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, avatar_data,
+                    status, created_at_unix_ms, updated_at_unix_ms
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?10, ?11, ?12,
+                          NULL, ?13, NULL, 'active', ?14, ?14)
+                "#,
+                    params![
+                        owner_user_id,
+                        profile_id,
+                        input.name.trim(),
+                        input.description.trim(),
+                        input.role_prompt.trim(),
+                        input.model_config_id.trim(),
+                        normalized_optional(input.thinking_level.as_deref()),
+                        input.profession_key,
+                        serde_json::to_string(&skills).map_err(|_| store_error())?,
+                        input.heartbeat_enabled,
+                        input.heartbeat_interval_seconds,
+                        input.heartbeat_prompt.trim(),
+                        next_heartbeat,
+                        now,
+                    ],
+                )
+                .map_err(|_| store_error())?;
+        }
+        transaction.commit().map_err(|_| store_error())?;
+        self.load_active(owner_user_id, &profile_id)
+    }
+
+    fn load_active(
+        &self,
+        owner_user_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentProfileSummary, String> {
+        let connection = open_database(&self.database, true)?;
+        connection.query_row(
+            &format!("SELECT {PROFILE_COLUMNS} FROM local_agent_profiles WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active'"),
+            params![owner_user_id, agent_id],
+            map_profile,
+        ).map_err(|_| store_error())
+    }
+
     #[cfg(test)]
     fn database(&self) -> &Path {
         &self.database
@@ -132,6 +358,94 @@ pub(crate) async fn list_agent_profiles(
         .require_session_generation(&owner_user_id, generation)
         .await?;
     Ok(profiles)
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_profile_editor_catalog(
+    owner_user_id: String,
+    authentication: State<'_, AuthenticationManager>,
+) -> Result<AgentProfileEditorCatalog, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let mut models: Vec<_> = authentication
+        .model_catalog_for_owner(&owner_user_id)
+        .await
+        .map_err(|error| error.message)?
+        .into_iter()
+        .filter(|model| model.enabled && model.has_api_key)
+        .map(|model| {
+            let mut option = model_option_from_gateway(&model);
+            if option.supports_reasoning
+                && !option.thinking_levels.iter().any(|level| level == "auto")
+            {
+                option.thinking_levels.insert(0, "auto".into());
+            }
+            option
+        })
+        .collect();
+    models.sort_by(|left, right| {
+        left.display_name
+            .to_lowercase()
+            .cmp(&right.display_name.to_lowercase())
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let payload: SkillCatalogPayload =
+        serde_json::from_str(SKILL_CATALOG).map_err(|_| "Agent 职业目录不可用。".to_owned())?;
+    if payload.professions.len() != PROFESSION_KEYS.len() {
+        return Err("Agent 职业目录不可用。".into());
+    }
+    Ok(AgentProfileEditorCatalog {
+        models,
+        professions: payload.professions,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn save_agent_profile(
+    owner_user_id: String,
+    input: AgentProfileMutationInput,
+    authentication: State<'_, AuthenticationManager>,
+    store: State<'_, AgentProfileStore>,
+) -> Result<AgentProfileSummary, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let models = authentication
+        .model_catalog_for_owner(&owner_user_id)
+        .await
+        .map_err(|error| error.message)?;
+    let selected = models
+        .iter()
+        .find(|model| {
+            model.id == input.model_config_id.trim() && model.enabled && model.has_api_key
+        })
+        .ok_or_else(|| "所选 Agent 模型不可用，请刷新后重试。".to_owned())?;
+    let option = model_option_from_gateway(selected);
+    let thinking = normalized_optional(input.thinking_level.as_deref());
+    if thinking.as_deref().is_some_and(|level| {
+        level != "auto"
+            && (!option.supports_reasoning || !option.thinking_levels.contains(&level.to_owned()))
+    }) {
+        return Err("Agent 思考等级无效，请重新选择。".into());
+    }
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let store = store.inner().clone();
+    let owner = owner_user_id.clone();
+    let saved = tauri::async_runtime::spawn_blocking(move || store.save(&owner, input))
+        .await
+        .map_err(|_| "Agent 保存任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(saved)
 }
 
 fn map_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentProfileSummary> {
@@ -254,6 +568,136 @@ fn validate_text(value: &str, maximum: usize, optional: bool) -> rusqlite::Resul
         return Err(invalid_row());
     }
     Ok(())
+}
+
+fn validate_mutation_input(input: &AgentProfileMutationInput) -> Result<(), String> {
+    validate_text(input.name.trim(), 120, false).map_err(|_| invalid_input())?;
+    validate_text(input.description.trim(), 2_000, true).map_err(|_| invalid_input())?;
+    validate_text(input.role_prompt.trim(), 32_000, false).map_err(|_| invalid_input())?;
+    validate_identifier(input.model_config_id.trim()).map_err(|_| invalid_input())?;
+    if let Some(thinking) = normalized_optional(input.thinking_level.as_deref()) {
+        if !matches!(
+            thinking.as_str(),
+            "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+        ) {
+            return Err(invalid_input());
+        }
+    }
+    if !PROFESSION_KEYS.contains(&input.profession_key.as_str())
+        || !(60..=86_400).contains(&input.heartbeat_interval_seconds)
+    {
+        return Err(invalid_input());
+    }
+    validate_text(input.heartbeat_prompt.trim(), 8_000, true).map_err(|_| invalid_input())?;
+    Ok(())
+}
+
+fn model_option_from_gateway(model: &GatewayModelConfig) -> AgentModelOption {
+    let thinking_levels = if model.supports_reasoning {
+        agent_thinking_levels(&model.provider, &model.model)
+    } else {
+        Vec::new()
+    };
+    let default_thinking_level = model
+        .task_thinking_level
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| thinking_levels.iter().any(|candidate| candidate == *value))
+        .map(str::to_owned);
+    AgentModelOption {
+        id: model.id.clone(),
+        display_name: if model.name.trim().is_empty() {
+            model.model.clone()
+        } else {
+            model.name.trim().to_owned()
+        },
+        model_name: model.model.clone(),
+        provider: model.provider.clone(),
+        default_thinking_level,
+        supports_reasoning: model.supports_reasoning,
+        thinking_levels,
+    }
+}
+
+fn agent_thinking_levels(provider: &str, model: &str) -> Vec<String> {
+    static CATALOG: std::sync::OnceLock<ModelReasoningCatalog> = std::sync::OnceLock::new();
+    let catalog = CATALOG.get_or_init(|| {
+        serde_json::from_str(MODEL_REASONING_CAPABILITIES)
+            .expect("shared model reasoning capabilities must be valid")
+    });
+    let normalized_model = model.trim().to_ascii_lowercase();
+    if let Some(capability) = catalog.models.iter().find(|capability| {
+        normalized_model == capability.model
+            || normalized_model
+                .strip_prefix(&format!("{}-", capability.model))
+                .is_some_and(|suffix| {
+                    suffix.len() == 10
+                        && suffix
+                            .chars()
+                            .all(|value| value.is_ascii_digit() || value == '-')
+                })
+    }) {
+        return std::iter::once("auto".to_owned())
+            .chain(capability.levels.iter().cloned())
+            .collect();
+    }
+    let provider = provider.trim().to_ascii_lowercase().replace('-', "_");
+    let values: &[&str] = match provider.as_str() {
+        "deepseek" => &["auto", "none", "high", "max"],
+        "kimi" | "kimik2" | "moonshot" => &["auto", "none"],
+        "glm" | "zhipu" | "zai" => &["auto", "none", "low", "medium", "high", "xhigh"],
+        _ => &["auto", "none", "minimal", "low", "medium", "high", "xhigh"],
+    };
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn normalized_permissions(
+    permissions: Vec<String>,
+    can_manage_staff: bool,
+    can_access_local_projects: bool,
+) -> Vec<String> {
+    let mut values: std::collections::BTreeSet<_> = permissions.into_iter().collect();
+    values.remove(LEGACY_PROJECT_STEWARD);
+    values.remove(STAFF_HIRE);
+    values.remove(STAFF_TERMINATE);
+    values.remove(LOCAL_PROJECT_LIST);
+    if can_manage_staff {
+        values.insert(STAFF_HIRE.into());
+        values.insert(STAFF_TERMINATE.into());
+    }
+    if can_access_local_projects {
+        values.insert(LOCAL_PROJECT_LIST.into());
+    }
+    values.into_iter().collect()
+}
+
+fn next_heartbeat_at(
+    enabled: bool,
+    interval_seconds: i64,
+    previous_enabled: bool,
+    previous_interval_seconds: i64,
+    previous_next: Option<i64>,
+    now: i64,
+) -> Option<i64> {
+    enabled.then(|| {
+        if !previous_enabled || interval_seconds != previous_interval_seconds {
+            now.saturating_add(interval_seconds.saturating_mul(1_000))
+        } else {
+            previous_next
+                .unwrap_or_else(|| now.saturating_add(interval_seconds.saturating_mul(1_000)))
+        }
+    })
+}
+
+fn invalid_input() -> String {
+    "Agent 资料无效，请检查后重试。".into()
 }
 
 fn open_database(path: &Path, read_only: bool) -> Result<Connection, String> {
@@ -413,5 +857,79 @@ mod tests {
         ).unwrap();
 
         assert_eq!(store.list_active("alice").unwrap_err(), store_error());
+    }
+
+    #[test]
+    fn creates_and_updates_profiles_with_macos_permission_and_heartbeat_rules() {
+        let (_directory, store) = store();
+        let created = store.save("alice", mutation()).unwrap();
+        assert!(created.can_manage_staff);
+        assert!(created.can_access_local_projects);
+        assert!(created.next_heartbeat_at_unix_ms.is_some());
+
+        let connection = Connection::open(store.database()).unwrap();
+        connection.execute(
+            "UPDATE local_agent_profiles SET default_skill_ids_json = '[\"custom.skill\",\"builtin.project-steward\"]' WHERE owner_user_id = 'alice' AND id = ?1",
+            params![created.id],
+        ).unwrap();
+        let mut update = mutation();
+        update.agent_id = Some(created.id.clone());
+        update.expected_updated_at_unix_ms = Some(created.updated_at_unix_ms);
+        update.can_manage_staff = false;
+        update.can_access_local_projects = true;
+        update.heartbeat_interval_seconds = 300;
+        let saved = store.save("alice", update).unwrap();
+        assert!(!saved.can_manage_staff);
+        assert!(saved.can_access_local_projects);
+
+        let skills: String = connection.query_row(
+            "SELECT default_skill_ids_json FROM local_agent_profiles WHERE owner_user_id = 'alice' AND id = ?1",
+            params![created.id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(skills, r#"["custom.skill","local.project.list"]"#);
+        assert_ne!(
+            saved.next_heartbeat_at_unix_ms,
+            created.next_heartbeat_at_unix_ms
+        );
+    }
+
+    #[test]
+    fn rejects_stale_profile_updates() {
+        let (_directory, store) = store();
+        let created = store.save("alice", mutation()).unwrap();
+        let mut update = mutation();
+        update.agent_id = Some(created.id);
+        update.expected_updated_at_unix_ms = Some(created.updated_at_unix_ms.saturating_sub(1));
+        assert_eq!(
+            store.save("alice", update).unwrap_err(),
+            "Agent 状态已经变化，请刷新后重试。"
+        );
+    }
+
+    #[test]
+    fn bundled_profession_catalog_matches_the_macos_contract() {
+        let payload: SkillCatalogPayload = serde_json::from_str(SKILL_CATALOG).unwrap();
+        assert_eq!(payload.professions.len(), 33);
+        assert_eq!(payload.professions.first().unwrap().key, "project_manager");
+        assert_eq!(payload.professions.last().unwrap().key, "general_member");
+    }
+
+    fn mutation() -> AgentProfileMutationInput {
+        AgentProfileMutationInput {
+            agent_id: None,
+            expected_updated_at_unix_ms: None,
+            name: "Agent".into(),
+            description: "说明".into(),
+            role_prompt: "负责完成分配的工作".into(),
+            model_config_id: "model-1".into(),
+            thinking_level: Some("high".into()),
+            profession_key: "general_member".into(),
+            can_manage_staff: true,
+            can_access_local_projects: true,
+            heartbeat_enabled: true,
+            heartbeat_interval_seconds: 900,
+            heartbeat_prompt: "检查未读消息".into(),
+        }
     }
 }
