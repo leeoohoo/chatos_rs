@@ -130,7 +130,7 @@ export const useAgentTeamTodoStore = create<AgentTeamTodoState>((set, get) => ({
   async cancel(port, todo) {
     const current = get();
     if (!current.ownerUserId || !current.teamId || current.mutationTodoId || !port.cancelTeamTodo
-      || todo.teamId !== current.teamId || !["pending", "blocked"].includes(todo.status)) return false;
+      || todo.teamId !== current.teamId || !["pending", "in_progress", "blocked"].includes(todo.status)) return false;
     const ownerUserId = current.ownerUserId;
     const teamId = current.teamId;
     const sequence = current.sequence;
@@ -142,8 +142,9 @@ export const useAgentTeamTodoStore = create<AgentTeamTodoState>((set, get) => ({
       const state = get();
       if (state.ownerUserId !== ownerUserId || state.teamId !== teamId || state.sequence !== sequence
         || state.mutationTodoId !== todo.id) return false;
-      if (cancelled.id !== todo.id || cancelled.teamId !== teamId || cancelled.status !== "cancelled") {
-        throw new Error("团队任务取消结果不一致，请刷新后重试。");
+      if (cancelled.id !== todo.id || cancelled.teamId !== teamId
+        || !["cancelled", "completed", "blocked"].includes(cancelled.status)) {
+        throw new Error("团队任务停止结果不一致，请刷新后重试。");
       }
       set((latest) => ({
         todos: sortTodos([...latest.todos.filter((candidate) => candidate.id !== todo.id), cancelled]),

@@ -898,15 +898,15 @@ function AgentTeamTodosView({
                             <button disabled={index === items.length - 1 || mutationTodoId != null} onClick={() => void move(port, todo.id, 1)} type="button">下移</button>
                           </>
                         )}
-                        {(todo.status === "pending" || todo.status === "blocked") && (
+                        {(todo.status === "pending" || todo.status === "in_progress" || todo.status === "blocked") && (
                           <button
                             className="is-danger"
                             disabled={mutationTodoId != null}
                             onClick={() => void cancel(port, todo)}
                             type="button"
-                          >取消</button>
+                          >{todo.status === "in_progress" ? "停止" : "取消"}</button>
                         )}
-                        {todo.status === "in_progress" && <span>在“运行”中查看最新过程</span>}
+                        {todo.status === "in_progress" && <span>停止会先终止 Host Run，再更新任务状态</span>}
                         <time>{formatTeamMessageTime(todo.updatedAtUnixMs)}</time>
                       </footer>
                     </article>

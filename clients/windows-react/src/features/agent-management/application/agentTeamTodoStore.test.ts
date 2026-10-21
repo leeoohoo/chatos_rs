@@ -41,6 +41,22 @@ describe("agent team todo store", () => {
     await stale;
     expect(useAgentTeamTodoStore.getState().todos[0]?.teamId).toBe(otherId);
   });
+
+  it("stops an in-progress todo and accepts the Host-authoritative terminal state", async () => {
+    const running = { ...todo(TEAM_ID), status: "in_progress" as const };
+    const port = stubPort({
+      listTeamTodos: vi.fn(async () => [running]),
+      cancelTeamTodo: vi.fn(async () => ({
+        ...running, status: "blocked" as const,
+        blockedReason: "Host 在停止请求生效前执行失败。", updatedAtUnixMs: 21,
+      })),
+    });
+    await useAgentTeamTodoStore.getState().activate(port, "owner-1", TEAM_ID);
+
+    expect(await useAgentTeamTodoStore.getState().cancel(port, running)).toBe(true);
+    expect(port.cancelTeamTodo).toHaveBeenCalledWith("owner-1", TEAM_ID, "todo-1", 20);
+    expect(useAgentTeamTodoStore.getState().todos[0]?.status).toBe("blocked");
+  });
 });
 
 const TEAM_ID = "11111111-1111-4111-8111-111111111111";

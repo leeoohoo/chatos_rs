@@ -3,9 +3,15 @@ mod process;
 pub(crate) mod transport;
 
 use crate::{
-    attachment_tool_worker::AttachmentToolWorker, authentication::AuthenticationManager,
-    connector_state, control_plane, local_terminal::LocalTerminalRegistry,
-    plugin_application::PluginApplicationManager, terminal_tool_worker::TerminalToolWorker,
+    agent_conversation::{
+        team_todo::recover_agent_team_run_control_journal, AgentConversationStore,
+    },
+    attachment_tool_worker::AttachmentToolWorker,
+    authentication::AuthenticationManager,
+    connector_state, control_plane,
+    local_terminal::LocalTerminalRegistry,
+    plugin_application::PluginApplicationManager,
+    terminal_tool_worker::TerminalToolWorker,
     tool_approval::session::ApprovalSessionAllowlist,
 };
 use chatos_local_agent_protocol::{HostCommand, HostResult, LOCAL_AGENT_PROTOCOL_VERSION};
@@ -243,6 +249,7 @@ pub async fn host_lifecycle_snapshot(
 pub async fn start_local_agent_host(
     app: AppHandle,
     manager: State<'_, HostManager>,
+    conversations: State<'_, AgentConversationStore>,
     attachment_worker: State<'_, AttachmentToolWorker>,
     terminal_worker: State<'_, TerminalToolWorker>,
     local_terminals: State<'_, LocalTerminalRegistry>,
@@ -422,11 +429,37 @@ pub async fn start_local_agent_host(
     terminal_worker
         .configure(app.clone(), worker_owner_user_id)
         .await;
+    drop(process);
+    let recovery_owner = host_owner_for_recovery(&manager).await;
+    if let Some(recovery_owner) = recovery_owner {
+        let recovery = recover_agent_team_run_control_journal(
+            manager.inner(),
+            conversations.inner(),
+            &recovery_owner,
+        )
+        .await;
+        manager
+            .diagnostics
+            .record(
+                "team_run_control_recovery",
+                if recovery.is_ok() {
+                    "completed"
+                } else {
+                    "pending"
+                },
+            )
+            .await;
+    }
     manager
         .diagnostics
         .record("host_start_handshake", "ready")
         .await;
     Ok(HostLifecycleSnapshot::ready())
+}
+
+async fn host_owner_for_recovery(manager: &HostManager) -> Option<String> {
+    let process = manager.process.lock().await;
+    process.as_ref().map(|host| host.owner_user_id.clone())
 }
 
 #[tauri::command]
