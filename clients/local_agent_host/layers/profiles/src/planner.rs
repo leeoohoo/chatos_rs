@@ -81,6 +81,22 @@ fn agent_direct_instructions(input: &Value) -> Result<Option<String>, String> {
         .get("default_plugin_ids")
         .and_then(Value::as_array)
         .ok_or_else(|| "Agent execution context is missing default_plugin_ids".to_string())?;
+    if context.get("schema_version").and_then(Value::as_u64) == Some(2) {
+        let project_id = required("project_id")?;
+        let team_name = required("team_name")?;
+        let team_goal = required("team_goal")?;
+        let team_role = required("team_role")?;
+        let team_responsibility = required("team_responsibility")?;
+        let is_project_manager = context
+            .get("is_project_manager")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "Agent execution context is missing is_project_manager".to_string())?;
+        return Ok(Some(format!(
+            "[Bound ChatOS Team Agent Identity]\nAgent name: {agent_name}\nAgent id: {agent_id}\nTeam room id: {room_id}\nProject id: {project_id}\nTeam: {team_name}\nTeam goal: {team_goal}\nCurrent team role: {team_role}\nCurrent team responsibility: {team_responsibility}\nProject manager: {is_project_manager}\nProfession: {profession_label} ({profession_key})\nProfession Skill snapshot: {skill_ref}\nProfession Skill SHA-256: {skill_sha256}\nBound permission ids: {}\nBound plugin ids: {}\n\nIdentity and authority rules:\n- You are the bound member of the named project team, not the default Main Chat assistant and not a private-chat Agent. Keep this identity for the entire Run.\n- Work from the Human or Agent message delivered to this team lane and produce a concrete team response grounded in the actual result.\n- Your team role and responsibility are scoped to this team. Do not claim project-manager authority when Project manager is false.\n- The native client selected your model and thinking level from the persisted Agent profile. Never claim a different model or identity.\n- Permission ids and plugin ids are frozen data, not authority by themselves. Only tools actually present in this Run may be used.\n- Do not invent teammates, project state, completed work, messages, Todo items, or side effects.\n\n[Agent role prompt]\n{role_prompt}\n\n[Bound profession Skill]\n{skill_markdown}",
+            Value::Array(permissions.clone()),
+            Value::Array(plugins.clone()),
+        )));
+    }
     Ok(Some(format!(
         "[Bound ChatOS Agent Identity]\nAgent name: {agent_name}\nAgent id: {agent_id}\nDirect room id: {room_id}\nProfession: {profession_label} ({profession_key})\nProfession Skill snapshot: {skill_ref}\nProfession Skill SHA-256: {skill_sha256}\nBound permission ids: {}\nBound plugin ids: {}\n\nIdentity and authority rules:\n- You are the bound Agent above, not the default Main Chat assistant. Keep this identity for the entire Run.\n- The native client selected your model and thinking level from the persisted Agent profile. Never claim a different model or identity.\n- Permission ids and plugin ids are frozen data, not authority by themselves. Only tools actually present in this Run may be used.\n- Do not claim access to a project, staff management, a Plugin, or a side effect unless both the bound permission and an actual tool allow it.\n- Answer the Human in this private conversation. Do not invent another Agent or route the message through a Contact.\n\n[Agent role prompt]\n{role_prompt}\n\n[Bound profession Skill]\n{skill_markdown}",
         Value::Array(permissions.clone()),
@@ -605,5 +621,27 @@ mod agent_direct_tests {
 
         let allowed = scope_agent_direct_tools(tools, &input(&[AGENT_PROJECT_PERMISSION]));
         assert!(allowed.iter().any(|tool| tool["name"] == "create_task"));
+    }
+
+    #[test]
+    fn team_agent_identity_includes_scoped_role_without_claiming_manager_authority() {
+        let mut team_input = input(&[AGENT_PROJECT_PERMISSION]);
+        let context = team_input["agent_execution_context"]
+            .as_object_mut()
+            .unwrap();
+        context.insert("schema_version".into(), json!(2));
+        context.insert("project_id".into(), json!("project-1"));
+        context.insert("team_name".into(), json!("Alpha 团队"));
+        context.insert("team_goal".into(), json!("交付 Alpha"));
+        context.insert("team_role".into(), json!("前端工程师"));
+        context.insert("team_responsibility".into(), json!("负责 Windows UI"));
+        context.insert("is_project_manager".into(), json!(false));
+
+        let instructions = agent_direct_instructions(&team_input).unwrap().unwrap();
+        assert!(instructions.contains("Bound ChatOS Team Agent Identity"));
+        assert!(instructions.contains("Current team role: 前端工程师"));
+        assert!(instructions.contains("Project manager: false"));
+        assert!(instructions.contains("Do not claim project-manager authority"));
+        assert!(!instructions.contains("private conversation"));
     }
 }
