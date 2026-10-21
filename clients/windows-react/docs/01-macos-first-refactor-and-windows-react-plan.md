@@ -704,4 +704,9 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 - [已完成] `todo_execution_options` 只向模型返回当前 Run 有效的 `plugin_ref`、名称和说明；真实 installation、Plugin、component、Release、digest、版本与路径不会进入模型选项。
 - [已完成] `todo_add.plugin_hints` 只能解析本轮可信目录签发的引用；伪造、跨 Run、过期与重复 component 失败关闭。Todo 创建时冻结 installation、component revision、Release digest 与 manifest version，executor Delivery 不再拒绝非空 Plugin 计划。
 - [已完成] Local Agent Host 严格校验冻结计划并只据此生成 `plugin_hints` 与 `plugin_release_snapshots`；消息或模型不能在执行期追加 Plugin 权限。
-- [待完成] Windows capability broker 与 stdio MCP runtime：`capability_search`、`capability_describe`、`capability_invoke`、审批复验、Secret 解析策略、进程树回收及副作用调用 journal。完成前不得宣称 Todo 已能实际调用 Plugin 工具。
+- [已完成] Windows capability broker 与 stdio MCP runtime：Task profile 发布 `capability_search`、`capability_describe`、`capability_invoke`；worker 只从当前 Todo executor Run 的冻结计划解析 run-scoped opaque option，并在每次使用前重新复验 Host 安装记录、Release、digest、component revision、manifest version、stdio server 与启动参数。
+- [已完成] `capability_search` 只发现冻结候选，`capability_describe` 首次读取真实 MCP `tools/list` 并返回完整 schema，`capability_invoke` 必须使用本轮已 describe 的工具；search/describe 是 read-only，invoke 保持 side-effecting 且只能单次人工批准，审批投影不暴露 Plugin option 或嵌套 arguments。
+- [已完成] stdio 进程采用清空后重建的环境、30 秒协议超时、4 MiB 单响应、100 页/512 工具/256 KiB schema 上限、allowed-tools 复验及 initialize/initialized/list/call 顺序；EOF、超时、非法 JSON 和协议漂移都会使 session 失效，Windows Job Object/Unix process group 在 reset、Host 生命周期结束与异常退出时回收。
+- [已完成] Windows 尚无 Plugin credential resolver，因此带 `environment_secret_refs` 的安装在目录阶段即隐藏、执行阶段再次失败关闭，不会伪装可用。副作用调用使用 owner + Run + invocation + 参数签名的私有 append-only journal；调用前持久化 intent，确定结果可幂等重放，running/uncertain 绝不自动重试，目录/文件权限和 symlink/覆盖攻击失败关闭。
+- [已验证] Windows React Rust 本阶段 380 项通过、2 项真实 sidecar 环境测试忽略；唯一失败是其他并行改动尚未同步的 approval exact-request 固定哈希。Clippy、Rustfmt、TypeScript、91 个前端测试文件 387 项测试与 production build 通过。
+- [待完成] macOS Plugin Skill parity：`agent_skill_activate` 与 `agent_skill_read_resource` 尚未进入 Windows broker；在其 manifest/resource 边界、Run 授权和注入语义完成前，不宣称 Plugin Skill 已迁移完成。

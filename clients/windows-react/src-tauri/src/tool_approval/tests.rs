@@ -71,6 +71,36 @@ fn publishes_session_decision_only_for_supported_terminal_changes() {
 }
 
 #[test]
+fn presents_plugin_invocation_as_a_single_high_risk_decision_without_arguments() {
+    let projected = project_pending(vec![invocation(
+        "plugin",
+        "capability_invoke",
+        json!({
+            "plugin_option": "plugin-secret-token",
+            "tool_option": "tool-secret-token",
+            "arguments": {
+                "document": "must-not-cross-the-approval-boundary",
+                "api_key": "also-hidden"
+            }
+        }),
+    )]);
+
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].risk, "high");
+    assert_eq!(
+        projected[0].available_decisions,
+        [ToolApprovalDecision::Decline, ToolApprovalDecision::Accept]
+    );
+    assert!(projected[0].command.contains("selected Plugin tool"));
+    assert!(!projected[0].command.contains("staged project edits"));
+    let encoded = serde_json::to_string(&projected).unwrap();
+    assert!(!encoded.contains("must-not-cross"));
+    assert!(!encoded.contains("also-hidden"));
+    assert!(!encoded.contains("plugin-secret-token"));
+    assert!(!encoded.contains("tool-secret-token"));
+}
+
+#[test]
 fn mirrors_macos_terminal_risk_markers() {
     let projected = project_pending(vec![invocation(
         "approval-1",

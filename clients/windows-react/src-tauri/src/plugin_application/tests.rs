@@ -197,6 +197,20 @@ fn catalog_client(record: &LocalPluginInstallationRecord) -> ScriptedMetadataCli
     ])
 }
 
+fn frozen_agent_option(record: &LocalPluginInstallationRecord) -> TrustedAgentPluginOption {
+    TrustedAgentPluginOption {
+        installation_id: record.spec.installation_id.clone(),
+        plugin_id: record.spec.plugin_id.clone(),
+        component_key: record.spec.server_id.clone(),
+        component_revision: record.spec.component_revision.clone(),
+        release_id: record.spec.release_id.clone(),
+        release_digest: record.spec.release_digest.clone(),
+        manifest_version: "1.0.0".into(),
+        display_name: "Plugin Agent Tools".into(),
+        description: "Trusted tools for the current project.".into(),
+    }
+}
+
 #[tokio::test]
 async fn catalog_projects_only_valid_owner_scoped_metadata_without_local_paths() {
     let fixture = CatalogFixture::new();
@@ -225,7 +239,8 @@ async fn catalog_projects_only_valid_owner_scoped_metadata_without_local_paths()
 #[tokio::test]
 async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
     let fixture = CatalogFixture::new();
-    let record = fixture.record();
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
     let client = catalog_client(&record);
     let manager = PluginApplicationManager::new(fixture.app_data.clone());
 
@@ -252,7 +267,8 @@ async fn agent_catalog_freezes_only_manifest_backed_stdio_components() {
 #[tokio::test]
 async fn agent_catalog_rejects_missing_or_non_stdio_manifest_components() {
     let fixture = CatalogFixture::new();
-    let record = fixture.record();
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
     let manager = PluginApplicationManager::new(fixture.app_data.clone());
     let mut manifest = CatalogFixture::valid_manifest();
     manifest["mcpServers"]["server-1"]["type"] = json!("http");
@@ -264,6 +280,113 @@ async fn agent_catalog_rejects_missing_or_non_stdio_manifest_components() {
         .unwrap();
 
     assert!(plugins.is_empty());
+}
+
+#[tokio::test]
+async fn agent_catalog_hides_unresolvable_secret_or_argument_bindings() {
+    let fixture = CatalogFixture::new();
+    let mut secret_record = fixture.record();
+    secret_record.spec.args = vec!["mcp".into()];
+    secret_record
+        .spec
+        .environment_secret_refs
+        .insert("API_TOKEN".into(), "credential-1".into());
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+    assert!(manager
+        .list_agent_plugins(&catalog_client(&secret_record), "owner-1")
+        .await
+        .unwrap()
+        .is_empty());
+
+    let mut drifted_record = fixture.record();
+    drifted_record.spec.args = vec!["different-mode".into()];
+    assert!(manager
+        .list_agent_plugins(&catalog_client(&drifted_record), "owner-1")
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn agent_runtime_resolves_only_the_exact_frozen_installation() {
+    let fixture = CatalogFixture::new();
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    let expected = frozen_agent_option(&record);
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    let resolved = manager
+        .resolve_agent_plugin(&client, "owner-1", &expected)
+        .await
+        .unwrap();
+
+    assert_eq!(resolved.identity, expected);
+    assert_eq!(resolved.executable, fixture.executable);
+    assert_eq!(resolved.args, ["mcp"]);
+    assert!(resolved.environment.is_empty());
+    assert_eq!(client.remaining(), 0);
+}
+
+#[tokio::test]
+async fn agent_runtime_rejects_component_release_or_manifest_drift() {
+    for drift in ["component", "release", "manifest"] {
+        let fixture = CatalogFixture::new();
+        let mut record = fixture.record();
+        record.spec.args = vec!["mcp".into()];
+        let expected = frozen_agent_option(&record);
+        match drift {
+            "component" => record.spec.component_revision = "revision-2".into(),
+            "release" => record.spec.release_id = "release-2".into(),
+            "manifest" => {
+                let mut manifest = CatalogFixture::valid_manifest();
+                manifest["version"] = json!("2.0.0");
+                fixture.write_manifest(manifest);
+            }
+            _ => unreachable!(),
+        }
+        let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+        let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+        assert!(manager
+            .resolve_agent_plugin(&client, "owner-1", &expected)
+            .await
+            .is_err());
+    }
+}
+
+#[tokio::test]
+async fn agent_runtime_fails_closed_without_a_windows_secret_resolver() {
+    let fixture = CatalogFixture::new();
+    let mut record = fixture.record();
+    record.spec.args = vec!["mcp".into()];
+    let expected = frozen_agent_option(&record);
+    record
+        .spec
+        .environment_secret_refs
+        .insert("API_TOKEN".into(), "credential-1".into());
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    assert!(manager
+        .resolve_agent_plugin(&client, "owner-1", &expected)
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn agent_runtime_rejects_arguments_that_drift_from_the_manifest() {
+    let fixture = CatalogFixture::new();
+    let mut record = fixture.record();
+    record.spec.args = vec!["different-mode".into()];
+    let expected = frozen_agent_option(&record);
+    let client = ScriptedMetadataClient::new(vec![Ok(record_result(record))]);
+    let manager = PluginApplicationManager::new(fixture.app_data.clone());
+
+    assert!(manager
+        .resolve_agent_plugin(&client, "owner-1", &expected)
+        .await
+        .is_err());
 }
 
 #[tokio::test]

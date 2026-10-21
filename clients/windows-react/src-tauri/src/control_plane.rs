@@ -4,6 +4,7 @@ use crate::authentication::{
 };
 use crate::host_lifecycle::transport::{request, ManagedHost};
 use crate::{
+    agent_plugin_runtime::capability_broker_tool_schemas,
     attachment_tool_worker::{
         attachment_read_tool_schema, team_asset_tool_schemas, team_chat_read_tool_schemas,
         team_chat_write_tool_schemas, todo_execution_tool_schemas, todo_planning_read_tool_schemas,
@@ -29,7 +30,7 @@ const MAIN_CHAT_PROFILE: &str = "main_chat";
 const TASK_EXECUTION_PROFILE: &str = "task_execution";
 const TASK_POLICY_PROFILE: &str = "task_policy_internal";
 const EXECUTION_AGENT_KEY: &str = "local_agent_execution_agent";
-const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-plugin-plan-v20";
+const WINDOWS_CAPABILITY_SCHEMA: &str = "windows-host-agent-plugin-runtime-v21";
 const MAX_TASK_ITERATIONS: u32 = 600;
 
 const MAIN_CHAT_INSTRUCTIONS: &str = include_str!(
@@ -230,6 +231,7 @@ fn valid_task_execution_snapshot(
     expected_tools.extend(project_write_tool_schemas());
     expected_tools.extend(terminal_tool_schemas());
     expected_tools.extend(todo_execution_tool_schemas());
+    expected_tools.extend(capability_broker_tool_schemas());
     snapshot.owner_user_id == owner_user_id
         && snapshot.profile_key == TASK_EXECUTION_PROFILE
         && snapshot.tools == expected_tools
@@ -645,6 +647,7 @@ async fn publish_capabilities(
                 tools.extend(project_write_tool_schemas());
                 tools.extend(terminal_tool_schemas());
                 tools.extend(todo_execution_tool_schemas());
+                tools.extend(capability_broker_tool_schemas());
                 tools
             },
         },
@@ -798,6 +801,7 @@ mod tests {
         tools.extend(project_write_tool_schemas());
         tools.extend(terminal_tool_schemas());
         tools.extend(todo_execution_tool_schemas());
+        tools.extend(capability_broker_tool_schemas());
         let execution = LocalCapabilityPolicySnapshot {
             owner_user_id: owner.into(),
             profile_key: TASK_EXECUTION_PROFILE.into(),

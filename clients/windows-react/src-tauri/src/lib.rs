@@ -1,6 +1,7 @@
 mod access_control;
 mod agent_conversation;
 mod agent_management;
+mod agent_plugin_runtime;
 mod agent_skill_management;
 mod ask_user;
 mod attachment_tool_worker;

@@ -36,10 +36,12 @@ use crate::{
         AgentAssetToolBinding, AgentAssetToolRecord, AgentCommunicationToolBinding,
         AgentConversationStore,
     },
+    agent_plugin_runtime::{AgentPluginRunContext, CAPABILITY_BROKER_TOOL_NAMES},
     agent_skill_management::AgentSkillStore,
     authentication::AuthenticationManager,
     conversation_attachments::AttachmentManager,
     host_lifecycle::HostManager,
+    platform_execution_context::resolve_platform_execution_context,
     plugin_application::{PluginApplicationManager, TrustedAgentPluginOption},
     terminal_tool_worker::TerminalToolWorker,
 };
@@ -206,6 +208,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 std::iter::once(ATTACHMENT_READ_TOOL_NAME)
                     .chain(TEAM_ASSET_TOOL_NAMES)
                     .chain(TODO_EXECUTION_TOOL_NAMES)
+                    .chain(CAPABILITY_BROKER_TOOL_NAMES)
                     .chain(TODO_PLANNING_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_READ_TOOL_NAMES)
                     .chain(TEAM_CHAT_WRITE_TOOL_NAMES)
@@ -226,6 +229,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         None => {
             let executed = if claim.invocation.tool_name == ATTACHMENT_READ_TOOL_NAME {
                 execute_attachment_read(app, owner_user_id, &claim).await
+            } else if CAPABILITY_BROKER_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_capability_broker_tool(app, owner_user_id, &claim).await
             } else if TODO_EXECUTION_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_todo_execution_tool(app, owner_user_id, &claim).await
             } else if TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
@@ -290,6 +295,66 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         recover_team_todo_drains(app, owner_user_id).await;
     }
     Ok(true)
+}
+
+async fn execute_capability_broker_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The Plugin capability arguments are invalid.".to_owned())?;
+    let host = app.state::<HostManager>();
+    let result = host
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The Plugin capability Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id
+        || run.run_id != claim.invocation.run_id
+        || run.profile_key != "task_execution"
+    {
+        return Err("The Plugin capability Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let (binding, _) = tauri::async_runtime::spawn_blocking(move || {
+        store.load_agent_asset_tool_records(&owner, &run_id)
+    })
+    .await
+    .map_err(|_| "The Plugin capability binding task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &binding)?;
+    if binding.todo_id.is_none() {
+        return Err("Plugin capabilities are available only in a Todo executor Run.".into());
+    }
+    let platform =
+        resolve_platform_execution_context(app, host.inner(), owner_user_id, &run.run_id).await?;
+    let plugin_manager = app.state::<PluginApplicationManager>();
+    plugin_manager
+        .agent_runtime
+        .execute(
+            plugin_manager.inner(),
+            host.inner(),
+            AgentPluginRunContext {
+                owner_user_id: owner_user_id.to_owned(),
+                run_id: run.run_id,
+                execution_root: platform.execution_root,
+                workspace_scope_id: platform.workspace_scope_id,
+                input: run.input,
+            },
+            &claim.invocation.invocation_id,
+            &claim.invocation.tool_name,
+            arguments,
+        )
+        .await
 }
 
 async fn execute_team_chat_read_tool(

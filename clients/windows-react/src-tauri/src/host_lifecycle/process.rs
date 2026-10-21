@@ -2,7 +2,7 @@ use super::transport::ManagedHost;
 use std::{collections::BTreeMap, path::Path, process::Stdio};
 use tokio::process::Command;
 
-const READ_ONLY_TOOL_NAMES: [&str; 19] = [
+const READ_ONLY_TOOL_NAMES: [&str; 21] = [
     "local_attachment_read",
     "read_file_raw",
     "read_file_range",
@@ -15,6 +15,8 @@ const READ_ONLY_TOOL_NAMES: [&str; 19] = [
     "todo_dependency_options",
     "todo_list",
     "todo_read_progress",
+    "capability_search",
+    "capability_describe",
     "agent_workspace_snapshot",
     "chat_list_members",
     "chat_read_all_unread",
@@ -253,8 +255,16 @@ mod tests {
         assert!(!arguments.iter().any(|argument| {
             matches!(
                 argument.as_str(),
-                "commit_edit_session" | "execute_command" | "process_write" | "process_kill"
+                "commit_edit_session"
+                    | "execute_command"
+                    | "process_write"
+                    | "process_kill"
+                    | "capability_invoke"
             )
         }));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"capability_search"));
+        assert!(READ_ONLY_TOOL_NAMES.contains(&"capability_describe"));
+        assert!(!READ_ONLY_TOOL_NAMES.contains(&"capability_invoke"));
+        assert!(!APPROVAL_EXEMPT_TOOL_NAMES.contains(&"capability_invoke"));
     }
 }

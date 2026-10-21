@@ -94,6 +94,13 @@ fn presentation(tool_name: &str, arguments: Option<&Map<String, Value>>) -> Appr
             risk: "medium".into(),
             reason: Some("本地任务请求终止运行中的命令。".into()),
         },
+        "capability_invoke" => ApprovalPresentation {
+            command: "capability_invoke · selected Plugin tool".into(),
+            purpose: Some("调用当前 Todo 可信计划中已查看定义的本机 Plugin 工具".into()),
+            cwd: ".".into(),
+            risk: "high".into(),
+            reason: Some("Plugin 工具可能读写项目或产生外部副作用，本次调用需要人工确认。".into()),
+        },
         "remote_connection_controller_run_command" => ApprovalPresentation {
             command: first_string(arguments, &["command"])
                 .map(|value| format!("remote SSH command · {}", bounded(value, 500)))

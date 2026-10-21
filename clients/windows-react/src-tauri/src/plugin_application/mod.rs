@@ -14,6 +14,7 @@ use std::{
 use tauri::State;
 
 mod runtime;
+use crate::agent_plugin_runtime::AgentPluginRuntime;
 use runtime::{
     PluginApplicationBridgeRequest, PluginApplicationLaunchRequest, PluginApplicationRuntime,
     PresentedPluginApplicationBridgeResponse, PresentedPluginApplicationLaunch,
@@ -41,22 +42,98 @@ impl PluginInstallationMetadataClient for crate::host_lifecycle::HostManager {
 pub(crate) struct PluginApplicationManager {
     plugin_root: PathBuf,
     runtime: PluginApplicationRuntime,
+    pub(crate) agent_runtime: AgentPluginRuntime,
 }
 
 impl PluginApplicationManager {
     pub(crate) fn new(app_data_directory: PathBuf) -> Self {
+        let plugin_root = app_data_directory.join("NativeConnector").join("Plugins");
         Self {
-            plugin_root: app_data_directory.join("NativeConnector").join("Plugins"),
+            plugin_root: plugin_root.clone(),
             runtime: PluginApplicationRuntime::new(
                 app_data_directory
                     .join("NativeConnector")
                     .join("PluginRuntime"),
+            ),
+            agent_runtime: AgentPluginRuntime::new(
+                plugin_root,
+                app_data_directory
+                    .join("NativeConnector")
+                    .join("PluginRuntime")
+                    .join("InvocationJournal"),
             ),
         }
     }
 
     pub(crate) async fn reset(&self) {
         self.runtime.reset().await;
+        self.agent_runtime.reset().await;
+    }
+
+    pub(crate) async fn resolve_agent_plugin(
+        &self,
+        client: &dyn PluginInstallationMetadataClient,
+        owner_user_id: &str,
+        expected: &TrustedAgentPluginOption,
+    ) -> Result<ResolvedAgentPluginExecution, String> {
+        crate::host_lifecycle::validate_owner(owner_user_id)?;
+        let record = get_installation(client, owner_user_id, &expected.installation_id).await?;
+        record.spec.validate().map_err(|_| plugin_unavailable())?;
+        if record.spec.owner_user_id != owner_user_id
+            || !record.spec.enabled
+            || !record.spec.environment_secret_refs.is_empty()
+            || record.spec.plugin_id != expected.plugin_id
+            || record.spec.server_id != expected.component_key
+            || record.spec.component_revision != expected.component_revision
+            || record.spec.release_id != expected.release_id
+            || record.spec.release_digest != expected.release_digest
+        {
+            return Err(plugin_unavailable());
+        }
+        let plugin_root = confined_plugin_root(&self.plugin_root)?;
+        let (installation_root, manifest) = load_manifest(&plugin_root, &record)?;
+        let projected = project_agent_plugin(&record, &manifest)?;
+        if projected.installation_id != expected.installation_id
+            || projected.plugin_id != expected.plugin_id
+            || projected.component_key != expected.component_key
+            || projected.component_revision != expected.component_revision
+            || projected.release_id != expected.release_id
+            || projected.release_digest != expected.release_digest
+            || projected.manifest_version != expected.manifest_version
+            || projected.display_name != expected.display_name
+        {
+            return Err(plugin_unavailable());
+        }
+        let server = manifest
+            .mcp_servers
+            .get(&expected.component_key)
+            .ok_or_else(plugin_unavailable)?;
+        if record.spec.args != server.args {
+            return Err(plugin_unavailable());
+        }
+        let working_directory = match record.spec.working_directory.as_deref() {
+            Some(path) => {
+                let path = PathBuf::from(path)
+                    .canonicalize()
+                    .map_err(|_| plugin_unavailable())?;
+                if !path.is_dir()
+                    || !path.starts_with(&installation_root)
+                    || !path.starts_with(&plugin_root)
+                {
+                    return Err(plugin_unavailable());
+                }
+                Some(path)
+            }
+            None => None,
+        };
+        Ok(ResolvedAgentPluginExecution {
+            identity: projected,
+            executable: PathBuf::from(&record.spec.executable_path),
+            args: record.spec.args,
+            working_directory,
+            environment: server.env.clone(),
+            allowed_tools: record.spec.allowed_tools,
+        })
     }
 
     pub(crate) async fn list_agent_plugins(
@@ -93,12 +170,21 @@ impl PluginApplicationManager {
             if validate_record(&record, &summary, owner_user_id).is_err() {
                 continue;
             }
+            if !record.spec.environment_secret_refs.is_empty() {
+                continue;
+            }
             let Ok((_, manifest)) = load_manifest(&plugin_root, &record) else {
                 continue;
             };
             let Ok(option) = project_agent_plugin(&record, &manifest) else {
                 continue;
             };
+            let Some(server) = manifest.mcp_servers.get(&option.component_key) else {
+                continue;
+            };
+            if record.spec.args != server.args {
+                continue;
+            }
             options.insert(option.selection_id(), option);
         }
         let mut options = options.into_values().collect::<Vec<_>>();
@@ -246,6 +332,16 @@ pub(crate) struct TrustedAgentPluginOption {
     pub(crate) manifest_version: String,
     pub(crate) display_name: String,
     pub(crate) description: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAgentPluginExecution {
+    pub(crate) identity: TrustedAgentPluginOption,
+    pub(crate) executable: PathBuf,
+    pub(crate) args: Vec<String>,
+    pub(crate) working_directory: Option<PathBuf>,
+    pub(crate) environment: BTreeMap<String, String>,
+    pub(crate) allowed_tools: Option<Vec<String>>,
 }
 
 impl TrustedAgentPluginOption {
