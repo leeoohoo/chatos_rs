@@ -183,6 +183,25 @@ struct AgentExecutionBinding {
     default_skill_ids: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TeamExecutionBinding {
+    agent: AgentExecutionBinding,
+    project_id: String,
+    team_name: String,
+    team_goal: String,
+    team_role: String,
+    team_responsibility: String,
+    is_project_manager: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingTeamDelivery {
+    delivery_id: String,
+    message_id: String,
+    content: String,
+    binding: TeamExecutionBinding,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreparedAgentConversation {
@@ -343,6 +362,16 @@ pub(crate) struct QueueAgentTeamMessageResult {
     team_id: String,
     created_at_unix_ms: i64,
     deliveries: Vec<QueuedAgentTeamDelivery>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DispatchedAgentTeamDelivery {
+    delivery_id: String,
+    team_id: String,
+    agent_id: String,
+    turn_id: String,
+    run_id: String,
 }
 
 impl AgentConversationStore {
@@ -1185,6 +1214,179 @@ impl AgentConversationStore {
         })
     }
 
+    fn next_project_team_delivery(
+        &self,
+        owner_user_id: &str,
+        team_id: &str,
+    ) -> Result<Option<PendingTeamDelivery>, String> {
+        validate_identifier(team_id).map_err(|_| invalid_team_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        let pending = connection
+            .query_row(
+                r#"
+                SELECT delivery.id, delivery.message_id, message.content,
+                       room.id, profile.id, profile.name, profile.role_prompt,
+                       profile.model_config_id, profile.thinking_level,
+                       profile.profession_key, profile.default_plugin_ids_json,
+                       profile.default_skill_ids_json, room.project_id, room.name, room.goal,
+                       member.role, member.responsibility,
+                       CASE WHEN room.project_manager_agent_id = profile.id THEN 1 ELSE 0 END
+                FROM project_agent_deliveries delivery
+                JOIN project_agent_messages message
+                  ON message.owner_user_id = delivery.owner_user_id
+                 AND message.id = delivery.message_id
+                JOIN project_agent_rooms room
+                  ON room.owner_user_id = delivery.owner_user_id
+                 AND room.id = delivery.room_id
+                JOIN project_agent_room_members member
+                  ON member.owner_user_id = delivery.owner_user_id
+                 AND member.room_id = delivery.room_id
+                 AND member.agent_id = delivery.target_agent_id
+                JOIN local_agent_profiles profile
+                  ON profile.owner_user_id = member.owner_user_id
+                 AND profile.id = member.agent_id
+                WHERE delivery.owner_user_id = ?1 AND delivery.room_id = ?2
+                  AND delivery.status = 'pending' AND room.status = 'active'
+                  AND room.conversation_kind = 'project_team'
+                  AND member.status = 'active' AND profile.status = 'active'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM project_agent_deliveries active
+                    WHERE active.owner_user_id = delivery.owner_user_id
+                      AND active.target_agent_id = delivery.target_agent_id
+                      AND active.status = 'running' AND active.trigger_kind != 'todo'
+                  )
+                ORDER BY delivery.created_at_unix_ms, delivery.id
+                LIMIT 1
+                "#,
+                params![owner_user_id, team_id],
+                |row| {
+                    Ok(PendingTeamDelivery {
+                        delivery_id: row.get(0)?,
+                        message_id: row.get(1)?,
+                        content: row.get(2)?,
+                        binding: TeamExecutionBinding {
+                            agent: AgentExecutionBinding {
+                                room_id: row.get(3)?,
+                                agent_id: row.get(4)?,
+                                name: row.get(5)?,
+                                role_prompt: row.get(6)?,
+                                model_config_id: row.get(7)?,
+                                thinking_level: row.get(8)?,
+                                profession_key: row.get(9)?,
+                                default_plugin_ids: parse_identifier_array(
+                                    &row.get::<_, String>(10)?,
+                                )
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                                default_skill_ids: parse_identifier_array(
+                                    &row.get::<_, String>(11)?,
+                                )
+                                .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                            },
+                            project_id: row.get(12)?,
+                            team_name: row.get(13)?,
+                            team_goal: row.get(14)?,
+                            team_role: row.get(15)?,
+                            team_responsibility: row.get(16)?,
+                            is_project_manager: row.get::<_, i64>(17)? == 1,
+                        },
+                    })
+                },
+            )
+            .optional()
+            .map_err(|_| team_store_error())?;
+        let Some(pending) = pending else {
+            return Ok(None);
+        };
+        validate_identifier(&pending.delivery_id).map_err(|_| team_store_error())?;
+        validate_identifier(&pending.message_id).map_err(|_| team_store_error())?;
+        validate_team_execution_binding(&pending.binding)?;
+        validate_text(&pending.content, 1_000_000, false).map_err(|_| team_store_error())?;
+        Ok(Some(pending))
+    }
+
+    fn claim_project_team_delivery(
+        &self,
+        owner_user_id: &str,
+        pending: &PendingTeamDelivery,
+        turn_id: &str,
+        run_id: &str,
+        now_unix_ms: i64,
+    ) -> Result<(), String> {
+        validate_identifier(turn_id)?;
+        validate_identifier(run_id)?;
+        reject_link_or_non_file(&self.database)?;
+        let mut connection = open_database(&self.database, false)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| team_store_error())?;
+        let changed = transaction
+            .execute(
+                "UPDATE project_agent_deliveries SET status = 'running', attempt = attempt + 1, \
+                 claimed_at_unix_ms = ?1, last_error = NULL WHERE owner_user_id = ?2 AND id = ?3 \
+                 AND room_id = ?4 AND target_agent_id = ?5 AND status = 'pending' \
+                 AND NOT EXISTS (SELECT 1 FROM project_agent_deliveries active \
+                   WHERE active.owner_user_id = ?2 AND active.target_agent_id = ?5 \
+                     AND active.status = 'running' AND active.id != ?3 \
+                     AND active.trigger_kind != 'todo')",
+                params![
+                    now_unix_ms,
+                    owner_user_id,
+                    pending.delivery_id,
+                    pending.binding.agent.room_id,
+                    pending.binding.agent.agent_id,
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        if changed != 1 {
+            return Err("Agent Delivery 已被其他执行器领取，请刷新后重试。".into());
+        }
+        transaction
+            .execute(
+                "INSERT INTO windows_agent_delivery_runs (owner_user_id, delivery_id, turn_id, \
+                 run_id, status, created_at_unix_ms, updated_at_unix_ms) \
+                 VALUES (?1, ?2, ?3, ?4, 'ready', ?5, ?5)",
+                params![
+                    owner_user_id,
+                    pending.delivery_id,
+                    turn_id,
+                    run_id,
+                    now_unix_ms
+                ],
+            )
+            .map_err(|_| team_store_error())?;
+        transaction.commit().map_err(|_| team_store_error())
+    }
+
+    fn fail_project_team_delivery(
+        &self,
+        owner_user_id: &str,
+        delivery_id: &str,
+        failure: &str,
+    ) -> Result<(), String> {
+        validate_identifier(delivery_id)?;
+        let message: String = failure.chars().take(2_000).collect();
+        let now = chrono::Utc::now().timestamp_millis().max(0);
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, false)?;
+        connection
+            .execute(
+                "UPDATE project_agent_deliveries SET status = 'failed', last_error = ?1, \
+                 completed_at_unix_ms = ?2 WHERE owner_user_id = ?3 AND id = ?4 \
+                   AND status = 'running'",
+                params![message, now, owner_user_id, delivery_id],
+            )
+            .map_err(|_| team_store_error())?;
+        connection
+            .execute(
+                "UPDATE windows_agent_delivery_runs SET status = 'failed', updated_at_unix_ms = ?1 \
+                 WHERE owner_user_id = ?2 AND delivery_id = ?3 AND status IN ('ready', 'running')",
+                params![now, owner_user_id, delivery_id],
+            )
+            .map_err(|_| team_store_error())?;
+        Ok(())
+    }
+
     fn record_direct_delivery(
         &self,
         owner_user_id: &str,
@@ -1929,6 +2131,180 @@ pub(crate) async fn queue_agent_team_message(
 }
 
 #[tauri::command]
+pub(crate) async fn dispatch_next_agent_team_delivery(
+    owner_user_id: String,
+    team_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    conversations: State<'_, AgentConversationStore>,
+    skills: State<'_, AgentSkillStore>,
+    manager: State<'_, HostManager>,
+    attachment_worker: State<'_, AttachmentToolWorker>,
+    terminal_worker: State<'_, TerminalToolWorker>,
+) -> Result<Option<DispatchedAgentTeamDelivery>, String> {
+    validate_owner(&owner_user_id)?;
+    validate_identifier(&team_id).map_err(|_| invalid_team_input())?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = conversations.inner().clone();
+    let pending_owner = owner_user_id.clone();
+    let pending_team = team_id.clone();
+    let Some(pending) = tauri::async_runtime::spawn_blocking(move || {
+        store.next_project_team_delivery(&pending_owner, &pending_team)
+    })
+    .await
+    .map_err(|_| "Agent Delivery 读取任务异常退出。".to_owned())??
+    else {
+        return Ok(None);
+    };
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let skill_store = skills.inner().clone();
+    let skill_owner = owner_user_id.clone();
+    let profession_key = pending.binding.agent.profession_key.clone();
+    let profession = tauri::async_runtime::spawn_blocking(move || {
+        skill_store.profession_runtime_snapshot(&skill_owner, &profession_key)
+    })
+    .await
+    .map_err(|_| "Agent Skill 快照任务异常退出。".to_owned())??;
+    let conversation_id = format!(
+        "agent-team-{}-{}",
+        pending.binding.agent.room_id, pending.binding.agent.agent_id
+    );
+    ensure_agent_host_conversation(
+        &manager,
+        &owner_user_id,
+        &conversation_id,
+        &format!(
+            "{} · {}",
+            pending.binding.team_name, pending.binding.agent.name
+        ),
+    )
+    .await?;
+    let detail = agent_conversation_context(&manager, &owner_user_id, &conversation_id).await?;
+    let model = selected_agent_model(
+        &manager,
+        &owner_user_id,
+        &pending.binding.agent.model_config_id,
+    )
+    .await?;
+    let settings = ensure_agent_runtime_settings(
+        &manager,
+        &owner_user_id,
+        &conversation_id,
+        &model,
+        pending.binding.agent.thinking_level.as_deref(),
+    )
+    .await?;
+    let capability_revision = latest_main_chat_capability(&manager, &owner_user_id).await?;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    let turn_id = identifier("turn");
+    let run_id = identifier("run");
+    let host_message_id = identifier("message");
+    let command = StartConversationTurnCommand {
+        owner_user_id: owner_user_id.clone(),
+        conversation_id,
+        expected_conversation_version: detail.conversation.version,
+        turn_id: turn_id.clone(),
+        message_id: host_message_id.clone(),
+        run_id: run_id.clone(),
+        message: pending.content.clone(),
+        message_metadata: team_agent_execution_metadata(&pending.binding, &profession),
+        attachments: vec![],
+        model_config_ref: settings.selected_model_config_ref,
+        model_config_revision: settings.selected_model_config_revision,
+        capability_policy_revision: capability_revision,
+        max_iterations: MAX_ITERATIONS,
+    };
+    command
+        .validate()
+        .map_err(|_| "Agent 团队消息或执行快照超过安全限制。".to_owned())?;
+    let claim_store = conversations.inner().clone();
+    let claim_owner = owner_user_id.clone();
+    let claim_pending = pending.clone();
+    let claim_turn = turn_id.clone();
+    let claim_run = run_id.clone();
+    let now = chrono::Utc::now().timestamp_millis().max(0);
+    tauri::async_runtime::spawn_blocking(move || {
+        claim_store.claim_project_team_delivery(
+            &claim_owner,
+            &claim_pending,
+            &claim_turn,
+            &claim_run,
+            now,
+        )
+    })
+    .await
+    .map_err(|_| "Agent Delivery 领取任务异常退出。".to_owned())??;
+    let started = manager
+        .execute(HostCommand::StartConversationTurn(command))
+        .await;
+    let result = match started {
+        Ok(HostResult::ConversationTurnStarted { result }) => result,
+        Ok(_) => {
+            fail_dispatched_team_delivery(
+                conversations.inner().clone(),
+                owner_user_id.clone(),
+                pending.delivery_id.clone(),
+                "Local Agent Host 返回了错误的团队 Delivery 响应。".into(),
+            )
+            .await;
+            return Err("Local Agent Host 返回了错误的团队 Delivery 响应。".into());
+        }
+        Err(failure) => {
+            fail_dispatched_team_delivery(
+                conversations.inner().clone(),
+                owner_user_id.clone(),
+                pending.delivery_id.clone(),
+                failure.clone(),
+            )
+            .await;
+            return Err(failure);
+        }
+    };
+    if result.turn.turn_id != turn_id
+        || result.turn.run_id != run_id
+        || result.turn.user_message_id != host_message_id
+        || result.message.message_id != host_message_id
+        || result.run.run_id != run_id
+    {
+        let failure = "Local Agent Host 返回了不匹配的团队 Delivery。".to_owned();
+        fail_dispatched_team_delivery(
+            conversations.inner().clone(),
+            owner_user_id.clone(),
+            pending.delivery_id.clone(),
+            failure.clone(),
+        )
+        .await;
+        return Err(failure);
+    }
+    attachment_worker.wake();
+    terminal_worker.wake();
+    Ok(Some(DispatchedAgentTeamDelivery {
+        delivery_id: pending.delivery_id,
+        team_id: pending.binding.agent.room_id,
+        agent_id: pending.binding.agent.agent_id,
+        turn_id,
+        run_id,
+    }))
+}
+
+async fn fail_dispatched_team_delivery(
+    store: AgentConversationStore,
+    owner_user_id: String,
+    delivery_id: String,
+    failure: String,
+) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        store.fail_project_team_delivery(&owner_user_id, &delivery_id, &failure)
+    })
+    .await;
+}
+
+#[tauri::command]
 pub(crate) async fn send_agent_conversation_draft(
     input: SendAgentConversationDraftInput,
     authentication: State<'_, AuthenticationManager>,
@@ -2114,6 +2490,49 @@ async fn agent_conversation_context(
     Ok(conversation)
 }
 
+async fn ensure_agent_host_conversation(
+    manager: &HostManager,
+    owner_user_id: &str,
+    conversation_id: &str,
+    title: &str,
+) -> Result<(), String> {
+    let existing = manager
+        .execute_detailed(HostCommand::GetConversation(GetConversationCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+        }))
+        .await;
+    match existing {
+        Ok(HostResult::Conversation { conversation }) => {
+            validate_host_conversation(&conversation, owner_user_id, conversation_id)?;
+            Ok(())
+        }
+        Ok(_) => Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
+        Err(error) if error.code.as_deref() == Some("not_found") => {
+            let created = manager
+                .execute(HostCommand::CreateConversation(CreateConversationCommand {
+                    conversation_id: conversation_id.to_owned(),
+                    owner_user_id: owner_user_id.to_owned(),
+                    title: title.to_owned(),
+                    resource: None,
+                }))
+                .await;
+            match created {
+                Ok(HostResult::Conversation { conversation }) => {
+                    validate_host_conversation(&conversation, owner_user_id, conversation_id)
+                }
+                Ok(_) => Err("Local Agent Host 返回了错误的 Agent 会话响应。".into()),
+                Err(_) => {
+                    let retry =
+                        agent_conversation_context(manager, owner_user_id, conversation_id).await?;
+                    validate_host_conversation(&retry, owner_user_id, conversation_id)
+                }
+            }
+        }
+        Err(error) => Err(error.message),
+    }
+}
+
 async fn send_agent_guidance(
     manager: &HostManager,
     owner_user_id: &str,
@@ -2269,6 +2688,35 @@ fn agent_execution_metadata(
             "profession_skill_markdown": profession.markdown,
             "default_plugin_ids": binding.default_plugin_ids,
             "default_skill_ids": binding.default_skill_ids,
+        }
+    })
+}
+
+fn team_agent_execution_metadata(
+    binding: &TeamExecutionBinding,
+    profession: &AgentProfessionRuntimeSnapshot,
+) -> serde_json::Value {
+    json!({
+        "source": "native_agent_team",
+        "agent_execution_context": {
+            "schema_version": 2,
+            "room_id": binding.agent.room_id,
+            "agent_id": binding.agent.agent_id,
+            "agent_name": binding.agent.name,
+            "role_prompt": binding.agent.role_prompt,
+            "profession_key": profession.key,
+            "profession_label": profession.label,
+            "profession_skill_ref": profession.skill_ref,
+            "profession_skill_sha256": profession.instructions_sha256,
+            "profession_skill_markdown": profession.markdown,
+            "default_plugin_ids": binding.agent.default_plugin_ids,
+            "default_skill_ids": binding.agent.default_skill_ids,
+            "project_id": binding.project_id,
+            "team_name": binding.team_name,
+            "team_goal": binding.team_goal,
+            "team_role": binding.team_role,
+            "team_responsibility": binding.team_responsibility,
+            "is_project_manager": binding.is_project_manager,
         }
     })
 }
@@ -2451,6 +2899,29 @@ fn validate_team_member(member: &AgentTeamMemberSummary) -> Result<(), String> {
         return Err(team_store_error());
     }
     Ok(())
+}
+
+fn validate_team_execution_binding(binding: &TeamExecutionBinding) -> Result<(), String> {
+    let agent = &binding.agent;
+    validate_identifier(&agent.room_id).map_err(|_| team_store_error())?;
+    validate_agent_identifier(&agent.agent_id).map_err(|_| team_store_error())?;
+    validate_text(&agent.name, 120, false).map_err(|_| team_store_error())?;
+    validate_text(&agent.role_prompt, 32_000, false).map_err(|_| team_store_error())?;
+    validate_identifier(&agent.model_config_id).map_err(|_| team_store_error())?;
+    validate_identifier(&agent.profession_key).map_err(|_| team_store_error())?;
+    if agent.thinking_level.as_deref().is_some_and(|level| {
+        !matches!(
+            level,
+            "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+        )
+    }) {
+        return Err(team_store_error());
+    }
+    validate_identifier(&binding.project_id).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_name, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_goal, 8_000, true).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_role, 160, false).map_err(|_| team_store_error())?;
+    validate_text(&binding.team_responsibility, 8_000, true).map_err(|_| team_store_error())
 }
 
 fn require_active_project(
@@ -2789,6 +3260,70 @@ mod tests {
         assert!(store
             .queue_project_team_message("bob", &created.id, "越权消息", &["agent-1".into()],)
             .is_err());
+    }
+
+    #[test]
+    fn project_team_delivery_claims_the_exact_scoped_agent_binding() {
+        let (_directory, store) = store();
+        insert_agent(&store, "alice", "agent-1", "active");
+        let created = store
+            .create_project_team("alice", "project-1", "Alpha 团队", "交付 Alpha")
+            .unwrap();
+        store
+            .invite_agent_to_project_team("alice", &created.id, "agent-1")
+            .unwrap();
+        store
+            .update_project_team_member(
+                "alice",
+                &created.id,
+                "agent-1",
+                "前端工程师",
+                "负责 Windows UI",
+            )
+            .unwrap();
+        let queued = store
+            .queue_project_team_message("alice", &created.id, "实现团队页面", &[])
+            .unwrap();
+        let pending = store
+            .next_project_team_delivery("alice", &created.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.delivery_id, queued.deliveries[0].delivery_id);
+        assert_eq!(pending.binding.project_id, "project-1");
+        assert_eq!(pending.binding.team_name, "Alpha 团队");
+        assert_eq!(pending.binding.team_role, "前端工程师");
+        assert_eq!(pending.binding.team_responsibility, "负责 Windows UI");
+        assert!(!pending.binding.is_project_manager);
+
+        store
+            .claim_project_team_delivery("alice", &pending, "turn-1", "run-1", 100)
+            .unwrap();
+        assert!(store
+            .next_project_team_delivery("alice", &created.id)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .claim_project_team_delivery("alice", &pending, "turn-2", "run-2", 101)
+            .is_err());
+        store
+            .fail_project_team_delivery("alice", &pending.delivery_id, "host unavailable")
+            .unwrap();
+        let connection = Connection::open(store.database()).unwrap();
+        let state: (String, String, String) = connection
+            .query_row(
+                "SELECT delivery.status, run.status, delivery.last_error \
+                 FROM project_agent_deliveries delivery JOIN windows_agent_delivery_runs run \
+                   ON run.owner_user_id = delivery.owner_user_id \
+                  AND run.delivery_id = delivery.id \
+                 WHERE delivery.owner_user_id = 'alice' AND delivery.id = ?1",
+                params![pending.delivery_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            state,
+            ("failed".into(), "failed".into(), "host unavailable".into())
+        );
     }
 
     #[test]
