@@ -23,7 +23,7 @@ struct StoryWorkbenchView: View {
     @State var agentRunToAbandon: UUID?
     @State var planningConfirmation: StoryPlanningConfirmation?
     @State var showsMediaBatch = false
-    @State var mediaBatchKind: StoryMediaBatch.Kind = .pipeline
+    @State var mediaBatchKind: StoryMediaBatchKind = .pipeline
     @State var videoToRegenerate: StorySegment?
     @State var playlistPreview: StoryStudioViewModel.CreationHistoryGroup?
     @State var section: Section = .source

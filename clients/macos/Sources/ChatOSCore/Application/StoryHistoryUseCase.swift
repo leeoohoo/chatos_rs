@@ -32,17 +32,20 @@ public struct StoryMediaBatchStepSnapshot: Identifiable, Equatable, Sendable {
     public var kind: StoryMediaBatchKind
     public var targetID: String
     public var completed: Bool
+    public var progressStatus: String?
 
     public init(
         id: String,
         kind: StoryMediaBatchKind,
         targetID: String,
-        completed: Bool
+        completed: Bool,
+        progressStatus: String? = nil
     ) {
         self.id = id
         self.kind = kind
         self.targetID = targetID
         self.completed = completed
+        self.progressStatus = progressStatus
     }
 }
 

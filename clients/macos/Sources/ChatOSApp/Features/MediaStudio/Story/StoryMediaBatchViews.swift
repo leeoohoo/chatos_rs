@@ -144,20 +144,20 @@ struct StoryMediaBatchStartView: View {
     @ObservedObject var viewModel: StoryStudioViewModel
     let project: StoryProject
     let models: [MediaGenerationModel]
-    @State private var kind: StoryMediaBatch.Kind = .pipeline
+    @State private var kind: StoryMediaBatchKind = .pipeline
     @State private var selected: Set<String> = []
     @State private var acceptsAutomaticVersions = false
     @State private var additionalIdeas = ""
     init(viewModel: StoryStudioViewModel, project: StoryProject, models: [MediaGenerationModel],
-         initialKind: StoryMediaBatch.Kind = .pipeline) {
+         initialKind: StoryMediaBatchKind = .pipeline) {
         self.viewModel = viewModel; self.project = project; self.models = models
         _kind = State(initialValue: initialKind)
     }
     private var currentProject: StoryProject {
         viewModel.projects.first(where: { $0.id == project.id }) ?? project
     }
-    private var candidates: [String] { StoryMediaBatch.candidates(currentProject, kind: kind) }
-    private var preview: StoryMediaBatch? {
+    private var candidates: [String] { viewModel.mediaBatchCandidates(kind: kind) }
+    private var preview: StoryMediaBatchPreparation? {
         try? viewModel.previewMediaBatch(kind: kind, targets: candidates.filter(selected.contains),
                                          models: models, userIdeas: additionalIdeas)
     }
@@ -191,11 +191,11 @@ struct StoryMediaBatchStartView: View {
             Text(appModel.localized("选择要制作的内容和目标。你可以只完成一个环节，也可以一次制作所选分段。", english: "Choose what to create and which items to include. Complete one stage or produce the selected segments in one go."))
                 .font(.callout).foregroundStyle(.secondary)
             Picker(appModel.localized("执行范围", english: "Production Stage"), selection: $kind) {
-                Text(appModel.localized("一键全流程", english: "Full Pipeline")).tag(StoryMediaBatch.Kind.pipeline)
-                Text(appModel.localized("素材图片", english: "Asset Images")).tag(StoryMediaBatch.Kind.assets)
-                Text(appModel.localized("分段首帧", english: "First Frames")).tag(StoryMediaBatch.Kind.frames)
-                Text(appModel.localized("分段尾帧", english: "Last Frames")).tag(StoryMediaBatch.Kind.lastFrames)
-                Text(appModel.localized("分段视频", english: "Videos")).tag(StoryMediaBatch.Kind.videos)
+                Text(appModel.localized("一键全流程", english: "Full Pipeline")).tag(StoryMediaBatchKind.pipeline)
+                Text(appModel.localized("素材图片", english: "Asset Images")).tag(StoryMediaBatchKind.assets)
+                Text(appModel.localized("分段首帧", english: "First Frames")).tag(StoryMediaBatchKind.frames)
+                Text(appModel.localized("分段尾帧", english: "Last Frames")).tag(StoryMediaBatchKind.lastFrames)
+                Text(appModel.localized("分段视频", english: "Videos")).tag(StoryMediaBatchKind.videos)
             }.pickerStyle(.segmented)
             StoryAdditionalIdeasField(
                 text: $additionalIdeas,
@@ -273,7 +273,14 @@ struct StoryMediaBatchStartView: View {
                 Button(videoOmitsTailFrame
                        ? appModel.localized("仅使用首帧，确认执行", english: "Confirm with First Frames Only")
                        : appModel.localized("确认并执行", english: "Confirm and Run")) {
-                    if let preview { viewModel.startMediaBatch(preview); dismiss() }
+                    if let preview {
+                        viewModel.startMediaBatch(
+                            preview,
+                            models: models,
+                            userIdeas: additionalIdeas
+                        )
+                        dismiss()
+                    }
                 }.buttonStyle(.borderedProminent).disabled(preview == nil || viewModel.isBusy || (kind == .pipeline && !acceptsAutomaticVersions))
             }
         }.padding(24).frame(width: 720)

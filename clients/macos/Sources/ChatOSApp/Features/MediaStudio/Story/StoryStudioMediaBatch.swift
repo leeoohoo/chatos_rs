@@ -1,157 +1,176 @@
-import AppKit
-import ChatOSAgentRuntime
 import ChatOSCore
 import Foundation
 
 @MainActor
 extension StoryStudioViewModel {
-    func previewMediaBatch(kind: StoryMediaBatch.Kind, targets: [String], models: [MediaGenerationModel],
-                           userIdeas: String = "") throws -> StoryMediaBatch {
-        guard let project, let owner else { throw StoryError.invalidProject }
-        return try .init(project: project, owner: owner, kind: kind, targets: targets,
-                         models: models, userIdeas: userIdeas)
+    func mediaBatchCandidates(kind: StoryMediaBatchKind) -> [String] {
+        guard let project else { return [] }
+        return storyMediaBatch.eligibleTargetIDs(project: project, kind: kind)
     }
-    func startMediaBatch(_ batch: StoryMediaBatch) {
-        guard let project, batch.draft.id == project.id else { return }
-        if batch.kind == .videos {
-            selectedSegments = Set(batch.steps.map(\.targetID))
-            generateBatch(availableModels: batch.models, userIdeas: batch.userIdeas ?? "")
+    func previewMediaBatch(
+        kind: StoryMediaBatchKind,
+        targets: [String],
+        models: [MediaGenerationModel],
+        userIdeas: String = ""
+    ) throws -> StoryMediaBatchPreparation {
+        guard let project, let owner else { throw StoryError.invalidProject }
+        return try storyMediaBatch.prepare(
+            ownerUserID: owner,
+            project: project,
+            kind: kind,
+            targetIDs: targets,
+            availableModels: models,
+            userIdeas: userIdeas
+        )
+    }
+    func startMediaBatch(
+        _ preparation: StoryMediaBatchPreparation,
+        models: [MediaGenerationModel],
+        userIdeas: String = ""
+    ) {
+        guard let project, preparation.projectID == project.id else { return }
+        if preparation.executionMode == .directVideos {
+            selectedSegments = Set(preparation.requestedTargetIDs)
+            generateBatch(availableModels: models, userIdeas: userIdeas)
             return
         }
-        let store = store
-        let media = media
-        run("准备批量制作") { [weak self, store, media] owner, token in
-            guard owner == batch.owner,
-                  try StoryAgentRun.matchesPersistedDigest(batch.expectedProjectDigest, project: project) else {
-                throw StoryAgentError.projectChanged
-            }
-            let existing = try await store.inspectMediaBatches(owner: owner, projectID: project.id)
-            guard existing.unreadable == 0, !existing.hasUnfinished else { throw StoryBatchError.activeBatch }
-            let result = try await Self.executeMediaBatch(
-                batch,
-                store: store,
-                media: media,
-                check: { [weak self] in
+        let storyMediaBatch = storyMediaBatch
+        run("准备批量制作") { [weak self, storyMediaBatch] owner, token in
+            guard let self,
+                  let request = self.storyMediaBatchExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .start(
+                        projectID: project.id,
+                        batchID: preparation.batchID
+                    )
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyMediaBatchExecutionState.finish(request) }
+            let result = try await storyMediaBatch.execute(
+                ownerUserID: owner,
+                command: .start(
+                    project: project,
+                    preparation: preparation,
+                    availableModels: models,
+                    userIdeas: userIdeas
+                ),
+                continuationCheck: { [weak self] in
                     guard let self else { throw CancellationError() }
-                    try await self.check(token)
+                    try await self.checkMediaBatch(request, session: token)
                 },
                 shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
-                publish: { [weak self] snapshot in
-                    await self?.publishMediaBatch(snapshot, token: token)
+                onEvent: { [weak self] event in
+                    await self?.receiveMediaBatchEvent(event, request: request, token: token)
                 }
             )
-            if let error = result.error { self?.errorMessage = error }
+            self.applyMediaBatchOutcome(result, request: request, token: token)
         }
     }
     func resumeMediaBatch(_ id: UUID) {
         guard let project else { return }
-        let store = store
-        let media = media
-        run("恢复原制作批次") { [weak self, store, media] owner, token in
-            let batch = try await store.loadMediaBatch(
-                owner: owner,
-                projectID: project.id,
-                batchID: id
-            )
-            guard !batch.finished else { throw StoryAgentError.invalidRun }
-            let result = try await Self.executeMediaBatch(
-                batch,
-                store: store,
-                media: media,
-                check: { [weak self] in
+        let storyMediaBatch = storyMediaBatch
+        run("恢复原制作批次") { [weak self, storyMediaBatch] owner, token in
+            guard let self,
+                  let request = self.storyMediaBatchExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .resume(projectID: project.id, batchID: id)
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyMediaBatchExecutionState.finish(request) }
+            let result = try await storyMediaBatch.execute(
+                ownerUserID: owner,
+                command: .resume(projectID: project.id, batchID: id),
+                continuationCheck: { [weak self] in
                     guard let self else { throw CancellationError() }
-                    try await self.check(token)
+                    try await self.checkMediaBatch(request, session: token)
                 },
                 shouldPause: { [weak self] in await self?.shouldPauseAgent(token) ?? true },
-                publish: { [weak self] snapshot in
-                    await self?.publishMediaBatch(snapshot, token: token)
+                onEvent: { [weak self] event in
+                    await self?.receiveMediaBatchEvent(event, request: request, token: token)
                 }
             )
-            if let error = result.error { self?.errorMessage = error }
+            self.applyMediaBatchOutcome(result, request: request, token: token)
         }
     }
     /// Explicit UI confirmation only. Unresolved video intents are retained for the existing
     /// verified-job recovery UI; only this batch's image locks can be released.
     func abandonMediaBatch(_ id: UUID) {
         guard let project else { return }
-        let store = store
-        run("结束已核对的制作批次") { [weak self, store] owner, token in
-            var batch = try await store.loadMediaBatch(
-                owner: owner,
-                projectID: project.id,
-                batchID: id
+        let storyMediaBatch = storyMediaBatch
+        run("结束已核对的制作批次") { [weak self, storyMediaBatch] owner, token in
+            guard let self,
+                  let request = self.storyMediaBatchExecutionState.begin(
+                    ownerUserID: owner,
+                    accountSessionID: token,
+                    kind: .abandon(projectID: project.id, batchID: id)
+                  ) else { throw CancellationError() }
+            defer { _ = self.storyMediaBatchExecutionState.finish(request) }
+            let result = try await storyMediaBatch.execute(
+                ownerUserID: owner,
+                command: .abandon(project: project, batchID: id),
+                continuationCheck: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.checkMediaBatch(request, session: token)
+                },
+                shouldPause: { false },
+                onEvent: { [weak self] event in
+                    await self?.receiveMediaBatchEvent(event, request: request, token: token)
+                }
             )
-            guard !batch.finished else { throw StoryAgentError.invalidRun }
-            try Task.checkCancellation()
-            batch.draft = project; batch.expectedProjectDigest = try StoryAgentRun.digest(project)
-            let intents = Set(batch.jobs.values.map(\.intentID))
-            for var resource in batch.draft.resources where resource.imageGenerationAttemptID.map(intents.contains) == true {
-                resource.media.generationAttemptID = nil
-                try batch.draft.replaceResource(resource)
-            }
-            for i in batch.draft.segments.indices {
-                if batch.draft.segments[i].imageGenerationAttemptID.map(intents.contains) == true {
-                    batch.draft.segments[i].imageGenerationAttemptID = nil
-                }
-                if batch.draft.segments[i].lastFrameGenerationAttemptID.map(intents.contains) == true {
-                    batch.draft.segments[i].lastFrameGenerationAttemptID = nil
-                }
-            }
-            batch.status = .abandoned; batch.updatedAt = Date()
-            batch.events.append(.init(detail: "用户核对后结束本批，保留已有结果及视频任务"))
-            try await store.commitMediaBatch(batch)
-            try Task.checkCancellation()
-            self?.publishMediaBatch(batch, token: token)
+            self.applyMediaBatchOutcome(result, request: request, token: token)
         }
     }
-    nonisolated static func executeMediaBatch(
-        _ batch: StoryMediaBatch,
-        store: StoryProjectStore,
-        media: any MediaGenerationServicing,
-        check: @escaping @Sendable () async throws -> Void,
-        shouldPause: @escaping @Sendable () async -> Bool,
-        publish: @escaping @Sendable (StoryMediaBatch) async -> Void
-    ) async throws -> StoryMediaBatch {
-        try await check()
-        let service: any MediaGenerationServicing
-        if let bindable = media as? any SessionBoundMediaGenerationServicing {
-            service = try await bindable.boundToCurrentSession()
-        } else {
-            service = media
-        }
-        try await check()
-        let coordinator = StoryMediaBatchSession(
-            batch: batch,
-            store: store,
-            media: service,
-            check: check,
-            shouldPause: shouldPause,
-            publish: publish
-        )
-        let result = try await coordinator.run()
-        try await check()
-        return result
-    }
-    func boundMedia(_ token: UUID) async throws -> any MediaGenerationServicing {
+    private func checkMediaBatch(
+        _ request: StoryMediaBatchExecutionToken,
+        session token: UUID
+    ) throws {
         try check(token)
-        let service: any MediaGenerationServicing
-        if let bindable = media as? any SessionBoundMediaGenerationServicing {
-            service = try await bindable.boundToCurrentSession()
-        } else { service = media }
-        try check(token)
-        return service
+        guard storyMediaBatchExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token,
+            projectID: activeProjectID
+        ) else { throw CancellationError() }
     }
-    func publishMediaBatch(_ batch: StoryMediaBatch, token: UUID, updateProject: Bool = true) {
-        guard session == token, owner == batch.owner else { return }
-        publishMediaBatch(batch.historySnapshot, token: token)
-        if updateProject, let index = projects.firstIndex(where: { $0.id == batch.draft.id }) { projects[index] = batch.draft }
-        if isBusy, activeProjectID == batch.draft.id {
-            operation = "\(batch.completedCount) / \(batch.steps.count) · \(batch.events.last?.detail ?? "准备制作")"
-            if let step = batch.steps.first(where: { batch.jobs[$0.id] != nil && batch.jobs[$0.id]?.completed != true }), step.kind == .videos {
-                activeSegmentID = step.targetID; selectedSegmentID = step.targetID
-                progress = .init(status: batch.draft.segments.first { $0.id == step.targetID }?.attempt?.status ?? "submitting", jobID: batch.jobs[step.id]?.jobID)
+    private func receiveMediaBatchEvent(
+        _ event: StoryMediaBatchExecutionEvent,
+        request: StoryMediaBatchExecutionToken,
+        token: UUID
+    ) {
+        guard storyMediaBatchExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token,
+            projectID: activeProjectID
+        ) else { return }
+        publishProject(event.project, token: token)
+        publishMediaBatch(event.batch, token: token)
+        if isBusy, activeProjectID == event.project.id {
+            operation = "\(event.batch.completedCount) / \(event.batch.steps.count) · "
+                + (event.batch.events.last?.detail ?? "准备制作")
+            if let step = event.batch.steps.first(where: {
+                !$0.completed && $0.kind == .videos && $0.progressStatus != nil
+            }) {
+                activeSegmentID = step.targetID
+                selectedSegmentID = step.targetID
+                progress = .init(status: step.progressStatus ?? "submitting")
             }
         }
+    }
+    private func applyMediaBatchOutcome(
+        _ outcome: StoryMediaBatchExecutionOutcome,
+        request: StoryMediaBatchExecutionToken,
+        token: UUID
+    ) {
+        guard storyMediaBatchExecutionState.accepts(
+            request,
+            ownerUserID: owner,
+            accountSessionID: token,
+            projectID: activeProjectID
+        ) else { return }
+        publishProject(outcome.project, token: token)
+        publishMediaBatch(outcome.batch, token: token)
+        if let error = outcome.batch.error { errorMessage = error }
     }
     func publishMediaBatch(_ batch: StoryMediaBatchSnapshot, token: UUID) {
         guard session == token, owner == batch.ownerUserID else { return }

@@ -205,6 +205,77 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertFalse(vm.isLoadingAgentRuns)
     }
 
+    func testLateMediaBatchOutcomeCannotPublishIntoTheCurrentAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "StoryStudioBatchLifecycleTests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let store = StoryProjectStore(root: root)
+        addTeardownBlock {
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
+            }
+        }
+        let batchExecutor = DeferredStoryMediaBatchExecutor()
+        let service = StoryTestService()
+        let vm = StoryStudioViewModel(
+            media: service,
+            planner: service,
+            store: store,
+            storyMediaBatch: batchExecutor
+        )
+        vm.activate(userID: "alice")
+        for _ in 0..<100 where vm.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        var project = makeProject()
+        project.props = [
+            .init(id: "hero", name: "Hero", description: "Hero portrait"),
+        ]
+        let created = await vm.create(project, availableModels: models)
+        XCTAssertTrue(created)
+        let preparation = try vm.previewMediaBatch(
+            kind: .assets,
+            targets: ["hero"],
+            models: models
+        )
+        vm.startMediaBatch(preparation, models: models)
+        for _ in 0..<100 where await !batchExecutor.hasRequest(ownerUserID: "alice") {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        vm.activate(userID: "bob")
+        for _ in 0..<100 where vm.isLoading { try await Task.sleep(for: .milliseconds(5)) }
+        let snapshot = StoryMediaBatchSnapshot(
+            id: preparation.batchID,
+            ownerUserID: "alice",
+            projectID: project.id,
+            kind: .assets,
+            status: .completed,
+            steps: preparation.steps.map {
+                .init(
+                    id: $0.id,
+                    kind: $0.kind,
+                    targetID: $0.targetID,
+                    completed: true
+                )
+            },
+            events: [],
+            consentAt: .now,
+            error: nil,
+            updatedAt: .now
+        )
+        await batchExecutor.complete(
+            ownerUserID: "alice",
+            outcome: .init(batch: snapshot, project: project)
+        )
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(vm.owner, "bob")
+        XCTAssertTrue(vm.projects.isEmpty)
+        XCTAssertTrue(vm.mediaBatches.isEmpty)
+        XCTAssertFalse(vm.isBusy)
+        XCTAssertNil(vm.errorMessage)
+    }
+
     func testProjectsLoadInBoundedPagesWithoutDroppingOlderProjects() async throws {
         let (_, store, _) = try await fixture()
         var ids: Set<UUID> = []
@@ -937,5 +1008,58 @@ private actor DeferredStoryHistory: StoryHistoryLoading {
 
     func completeBatches(ownerUserID: String, page: StoryMediaBatchHistoryPage) {
         batchContinuations.removeValue(forKey: ownerUserID)?.resume(returning: page)
+    }
+}
+
+private actor DeferredStoryMediaBatchExecutor: StoryMediaBatchExecuting {
+    private var requests: Set<String> = []
+    private var continuations: [String: CheckedContinuation<StoryMediaBatchExecutionOutcome, Error>] = [:]
+
+    nonisolated func prepareStoryMediaBatch(
+        ownerUserID: String,
+        project: StoryProject,
+        kind: StoryMediaBatchKind,
+        targetIDs: [String],
+        availableModels: [MediaGenerationModel],
+        userIdeas: String
+    ) throws -> StoryMediaBatchPreparation {
+        StoryMediaBatchPreparation(
+            batchID: UUID(),
+            ownerUserID: ownerUserID,
+            projectID: project.id,
+            projectFingerprint: try StoryProjectFingerprint.current(project),
+            kind: kind,
+            requestedTargetIDs: targetIDs,
+            steps: targetIDs.map {
+                .init(
+                    id: "\(kind.rawValue):\($0)",
+                    kind: kind,
+                    targetID: $0,
+                    completed: false
+                )
+            },
+            executionMode: kind == .videos ? .directVideos : .persistentBatch
+        )
+    }
+
+    func executeStoryMediaBatch(
+        ownerUserID: String,
+        command: StoryMediaBatchCommand,
+        continuationCheck: @escaping @Sendable () async throws -> Void,
+        shouldPause: @escaping @Sendable () async -> Bool,
+        onEvent: @escaping @Sendable (StoryMediaBatchExecutionEvent) async -> Void
+    ) async throws -> StoryMediaBatchExecutionOutcome {
+        requests.insert(ownerUserID)
+        return try await withCheckedThrowingContinuation { continuation in
+            continuations[ownerUserID] = continuation
+        }
+    }
+
+    func hasRequest(ownerUserID: String) -> Bool {
+        requests.contains(ownerUserID)
+    }
+
+    func complete(ownerUserID: String, outcome: StoryMediaBatchExecutionOutcome) {
+        continuations.removeValue(forKey: ownerUserID)?.resume(returning: outcome)
     }
 }

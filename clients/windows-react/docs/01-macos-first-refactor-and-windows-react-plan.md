@@ -512,6 +512,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事历史与制作批次投影边界）：Core 新增 `StoryHistoryLoading`、`StoryHistoryUseCase`、强类型 history cursor、planning/media page、initial recovery result 和 initial/planning/media 三条独立 typed load lane。macOS `StoryHistoryAdapter` 独占 Store 文件游标、Agent completed-draft 启动恢复以及旧视频批次完成态 reconcile；首页严格保持“先恢复规划、再读取批次”的既有顺序，较早规划分页保持只读。`StoryMediaBatchSnapshot` 只向 UI 发布 kind/status/步骤完成态/事件/时间与错误，不包含完整模型目录、provider job identity、generation intent、持久化摘要、凭据或本机媒体文件名；ViewModel 不再读取 `StoryProjectStore.PageCursor`、`loadRuns`、`loadMediaBatches` 或完整批次记录。owner/project/session/request identity 会拒绝跨账号、跨项目及同 lane 替换后的迟到结果。Core 4 项、Story Studio 57 项与 Story Agent 21 项通过。下一片继续把制作批次 preview/start/resume/abandon/execution 从 ViewModel/Store 调用中提取为 Application Port；剧情模式继续禁止。
 
+状态补充（2026-10-21，macOS AI 故事制作批次执行边界）：Core 新增 `StoryMediaBatchExecuting` Port、`StoryMediaBatchUseCase`、安全 preparation/command/event/outcome，以及绑定 owner/account session/request/project/batch 的 typed execution lifecycle。候选规则和 2,000 字补充想法上限由 Core 统一；preview 冻结 batch identity 与 project fingerprint，项目变化后不能启动旧 preparation。macOS `StoryMediaBatchExecutionAdapter` 独占完整模型目录、Store 批次记录、provider job/intent、Session、恢复和放弃持久化，ViewModel/UI 只消费不含 Secret、路径、文件名和 job identity 的安全投影。既有“仅视频”操作仍明确走顺序视频队列，避免改变逐段连续性、恢复和计费语义，下一片单独提取该队列。Core 5 项、Story Studio 59 项与 Story Agent 21 项通过；剧情模式继续等待顺序视频、素材/帧/视频生成、编辑保存及 Windows 平台门禁。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

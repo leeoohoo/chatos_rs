@@ -122,7 +122,10 @@ extension StoryMediaBatch {
                     id: step.id,
                     kind: snapshotKind,
                     targetID: step.targetID,
-                    completed: jobs[step.id]?.completed == true
+                    completed: jobs[step.id]?.completed == true,
+                    progressStatus: step.kind == .videos
+                        ? draft.segments.first(where: { $0.id == step.targetID })?.attempt?.status
+                        : nil
                 )
             },
             events: events.map {

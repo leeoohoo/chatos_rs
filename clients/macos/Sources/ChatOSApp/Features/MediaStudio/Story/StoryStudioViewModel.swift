@@ -107,6 +107,7 @@ final class StoryStudioViewModel: ObservableObject {
     let projectMutation: StoryProjectMutationUseCase
     let storyPlanning: StoryPlanningUseCase?
     let storyHistory: StoryHistoryUseCase
+    let storyMediaBatch: StoryMediaBatchUseCase
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     var owner: String?
@@ -121,6 +122,7 @@ final class StoryStudioViewModel: ObservableObject {
     var projectMutationState = StoryProjectMutationState()
     var storyPlanningExecutionState = StoryPlanningExecutionState()
     var storyHistoryLoadState = StoryHistoryLoadState()
+    var storyMediaBatchExecutionState = StoryMediaBatchExecutionState()
     var agentRunCursor: StoryHistoryCursor?
     var mediaBatchCursor: StoryHistoryCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
@@ -137,6 +139,7 @@ final class StoryStudioViewModel: ObservableObject {
          agentServices: (any AgentServiceProviding)? = nil,
          storyPlanning: (any StoryPlanningExecuting)? = nil,
          storyHistory: (any StoryHistoryLoading)? = nil,
+         storyMediaBatch: (any StoryMediaBatchExecuting)? = nil,
          agentSettings: AgentSettingsStore = .init()) {
         self.media = media; self.planner = planner; self.store = store
         self.projectCatalog = StoryProjectCatalogUseCase(catalog: projectCatalog ?? store)
@@ -145,6 +148,12 @@ final class StoryStudioViewModel: ObservableObject {
         )
         self.storyHistory = StoryHistoryUseCase(
             history: storyHistory ?? StoryHistoryAdapter(store: store)
+        )
+        self.storyMediaBatch = StoryMediaBatchUseCase(
+            executor: storyMediaBatch ?? StoryMediaBatchExecutionAdapter(
+                store: store,
+                media: media
+            )
         )
         let resolvedAgentServices = agentServices ?? (planner as? any AgentServiceProviding)
         if let storyPlanning {
@@ -449,6 +458,7 @@ final class StoryStudioViewModel: ObservableObject {
         projectMutationState.reset()
         storyPlanningExecutionState.reset()
         storyHistoryLoadState.reset()
+        storyMediaBatchExecutionState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]

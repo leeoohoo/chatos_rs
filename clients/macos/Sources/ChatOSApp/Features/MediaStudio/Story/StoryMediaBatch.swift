@@ -37,8 +37,8 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
     var finished: Bool { status == .completed || status == .abandoned }
     var completedCount: Int { jobs.values.filter(\.completed).count }
 
-    init(project: StoryProject, owner: String, kind: Kind, targets: [String], models: [MediaGenerationModel],
-         userIdeas: String = "") throws {
+    init(id: UUID = UUID(), project: StoryProject, owner: String, kind: Kind, targets: [String],
+         models: [MediaGenerationModel], userIdeas: String = "") throws {
         try project.validate()
         guard !targets.isEmpty, Set(targets).count == targets.count else { throw StoryAgentError.forbiddenTarget }
         var steps: [Step] = []
@@ -119,19 +119,10 @@ struct StoryMediaBatch: Codable, Equatable, Identifiable, Sendable {
                 }
             }
         }
-        self.id = UUID(); self.owner = owner; self.kind = kind; self.steps = steps; self.models = models
+        self.id = id; self.owner = owner; self.kind = kind; self.steps = steps; self.models = models
         self.consentAt = Date(); self.draft = project; self.expectedProjectDigest = try StoryAgentRun.digest(project)
         let normalizedIdeas = StoryGenerationContext.normalizedUserIdeas(userIdeas)
         self.userIdeas = normalizedIdeas.isEmpty ? nil : normalizedIdeas
-    }
-    static func candidates(_ project: StoryProject, kind: Kind) -> [String] {
-        switch kind {
-        case .assets: project.resources.filter { $0.images.isEmpty && $0.imageGenerationAttemptID == nil }.map(\.id)
-        case .frames: project.segments.filter { s in s.detail != nil && s.attempt == nil && s.video == nil && s.firstFrames.images.isEmpty && s.imageGenerationAttemptID == nil && s.resourceIDs.allSatisfy { project.resource(id: $0)?.confirmedImage != nil } }.map(\.id)
-        case .lastFrames: project.segments.filter { s in s.detail != nil && s.attempt == nil && s.video == nil && s.lastFrames.images.isEmpty && s.lastFrameGenerationAttemptID == nil && s.resourceIDs.allSatisfy { project.resource(id: $0)?.confirmedImage != nil } }.map(\.id)
-        case .videos: project.segments.filter(\.isReady).map(\.id)
-        case .pipeline: project.segments.filter { $0.detail != nil && $0.attempt == nil && $0.video == nil && $0.imageGenerationAttemptID == nil && $0.lastFrameGenerationAttemptID == nil }.map(\.id)
-        }
     }
     func validate(owner: String, projectID: UUID) throws {
         guard self.owner == owner, draft.id == projectID, !steps.isEmpty, steps.count <= 500,

@@ -108,6 +108,58 @@ extension StoryStudioTests {
         }
     }
 
+    func testMediaBatchExecutionAdapterOwnsPreparationAndAbandonPersistence() async throws {
+        let (_, store, service) = try await fixture()
+        var project = makeProject()
+        project.props = [
+            .init(id: "hero", name: "Hero", description: "Hero portrait"),
+        ]
+        try await store.save(project, owner: "alice")
+        let adapter = StoryMediaBatchExecutionAdapter(store: store, media: service)
+        let preparation = try adapter.prepareStoryMediaBatch(
+            ownerUserID: "alice",
+            project: project,
+            kind: .assets,
+            targetIDs: ["hero"],
+            availableModels: models,
+            userIdeas: ""
+        )
+        XCTAssertEqual(preparation.executionMode, .persistentBatch)
+        XCTAssertEqual(preparation.steps.map(\.id), ["assets:hero"])
+
+        var persisted = try StoryMediaBatch(
+            id: preparation.batchID,
+            project: project,
+            owner: "alice",
+            kind: .assets,
+            targets: ["hero"],
+            models: models
+        )
+        let intent = StoryMediaBatch.Job()
+        persisted.jobs["assets:hero"] = intent
+        persisted.draft.props[0].media.generationAttemptID = intent.intentID
+        try await store.commitMediaBatch(persisted)
+        let storedProjects = try await store.load(owner: "alice").projects
+        let current = try XCTUnwrap(storedProjects.first(where: { $0.id == project.id }))
+
+        let outcome = try await adapter.executeStoryMediaBatch(
+            ownerUserID: "alice",
+            command: .abandon(project: current, batchID: preparation.batchID),
+            continuationCheck: {},
+            shouldPause: { false },
+            onEvent: { _ in }
+        )
+        XCTAssertEqual(outcome.batch.status, .abandoned)
+        XCTAssertEqual(outcome.project.resources[0].imageGenerationAttemptID, nil)
+        let reloaded = try await store.loadMediaBatch(
+            owner: "alice",
+            projectID: project.id,
+            batchID: preparation.batchID
+        )
+        XCTAssertEqual(reloaded.status, .abandoned)
+        XCTAssertNil(reloaded.draft.resources[0].imageGenerationAttemptID)
+    }
+
     func testVariableDurationTransitionUsesExplicitKindAndZeroLengthSourceRange() throws {
         var project = makeProject()
         project.source = "前半后半"
