@@ -99,6 +99,7 @@ const storyVideoAttemptSchema = z.object({
   seconds: z.number().int().min(2).max(15),
   status: safeText(128).min(1),
   createdAtUnixMs: unixMilliseconds,
+  resumable: z.boolean(),
 }).strict();
 
 const storyVideoSchema = z.object({

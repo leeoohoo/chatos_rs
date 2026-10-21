@@ -292,6 +292,18 @@ export class TauriStoryStudioAdapter implements StoryStudioPort {
     return storyProjectSchema.parse(await invoke("archive_story_completed_video", { input }));
   }
 
+  async allowVideoRetry(request: Parameters<StoryStudioPort["allowVideoRetry"]>[0]) {
+    const input = {
+      ...scope(request),
+      change: {
+        projectId: uuidSchema.parse(request.projectId),
+        baseFingerprint: fingerprintSchema.parse(request.baseFingerprint),
+        segmentId: identifierSchema.parse(request.segmentId),
+      },
+    };
+    return storyProjectSchema.parse(await invoke("allow_story_video_retry", { input }));
+  }
+
   async discardPresentation(request: StoryPresentationScope) {
     await invoke("discard_story_studio_presentation", { input: scope(request) });
   }

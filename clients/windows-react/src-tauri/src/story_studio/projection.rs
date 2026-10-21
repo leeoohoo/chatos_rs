@@ -358,6 +358,7 @@ struct StoryVideoAttemptSnapshot {
     seconds: u8,
     status: String,
     created_at_unix_ms: u64,
+    resumable: bool,
 }
 
 impl From<&StoryVideoAttempt> for StoryVideoAttemptSnapshot {
@@ -371,6 +372,7 @@ impl From<&StoryVideoAttempt> for StoryVideoAttemptSnapshot {
             seconds: value.seconds,
             status: value.status.clone(),
             created_at_unix_ms: value.created_at_unix_ms,
+            resumable: value.job_id.is_some(),
         }
     }
 }

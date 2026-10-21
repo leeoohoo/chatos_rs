@@ -202,6 +202,7 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryIm
   });
   const [userIdeas, setUserIdeas] = useState("");
   const [size, setSize] = useState<"768P" | "2K">("768P");
+  const [showVideoRetry, setShowVideoRetry] = useState(false);
   return (
     <article className="story-segment-inspector">
       <header><div><span>{segment.kind === "transition" ? "转场片段" : "剧情片段"}</span><h3>{segment.title}</h3><p>{segment.synopsis}</p></div><strong>{segment.seconds}s</strong></header>
@@ -230,8 +231,9 @@ function SegmentInspector({ port, projectId, segmentId, onPickHistory, onRetryIm
         <select aria-label="分段时长" disabled={segment.attempt != null || segment.video != null || state.busy} onChange={(event) => void state.updateSegmentDuration(port, segment.id, Number(event.target.value))} value={segment.seconds}>{Array.from(new Set([...(project.models.supportedVideoDurations ?? Array.from({ length: 14 }, (_, index) => index + 2)), segment.seconds])).sort((left, right) => left - right).map((seconds) => <option key={seconds} value={seconds}>{seconds} 秒</option>)}</select>
         <select aria-label="视频引导方式" disabled={segment.attempt != null || segment.video != null || state.busy} onChange={(event) => void state.updateVideoGuidance(port, segment.id, event.target.value as "first_frame" | "first_and_last_frames" | "previous_video" | "source_video")} value={segment.videoGuidanceMode}><option value="first_frame">首帧</option><option disabled={last == null} value="first_and_last_frames">首尾帧</option><option disabled={!previousVideoAvailable} value="previous_video">续写上一段</option><option disabled={segment.archivedVideos.length === 0} value="source_video">修改原视频</option></select>
         <select onChange={(event) => setSize(event.target.value as "768P" | "2K")} value={size}><option>768P</option><option>2K</option></select>
-        {segment.attempt && !segment.video ? <button className="story-primary-button" disabled={Boolean(progress)} onClick={() => void state.resumeVideo(port, segment.id)} type="button">{progress ? progressLabel(progress.status, progress.percent) : "恢复任务"}</button> : <button className="story-primary-button" disabled={!isStorySegmentReady(segment) || Boolean(progress)} onClick={() => void state.startVideo(port, segment.id, size, userIdeas)} type="button">{progress ? progressLabel(progress.status, progress.percent) : segment.video ? "已完成" : "生成视频"}</button>}
+        {segment.attempt && !segment.video ? segment.attempt.resumable ? <button className="story-primary-button" disabled={Boolean(progress)} onClick={() => void state.resumeVideo(port, segment.id)} type="button">{progress ? progressLabel(progress.status, progress.percent) : "查询原任务 / 恢复下载"}</button> : <button className="story-video-review-button" disabled={state.busy} onClick={() => setShowVideoRetry(true)} type="button">核对后允许重试…</button> : <button className="story-primary-button" disabled={!isStorySegmentReady(segment) || Boolean(progress)} onClick={() => void state.startVideo(port, segment.id, size, userIdeas)} type="button">{progress ? progressLabel(progress.status, progress.percent) : segment.video ? "已完成" : "生成视频"}</button>}
       </footer>
+      {showVideoRetry && <StoryVideoRetrySheet onClose={() => setShowVideoRetry(false)} port={port} segmentId={segment.id} />}
     </article>
   );
 }
@@ -287,6 +289,15 @@ function StoryImageRetrySheet({ port, target, onClose }: { port: StoryStudioPort
     if (!useStoryStudioStore.getState().error) onClose();
   };
   return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>确认已核对图片任务？</h2><p>这是防止重复提交和重复计费的安全步骤。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">只有确认服务商没有生成可用结果后才应解锁。下一次点击生成会重新提交，并可能再次计费。</p></div><footer><button onClick={onClose} type="button">取消</button><button className="story-retry-confirm" disabled={state.activeMediaTarget != null} onClick={() => void confirm()} type="button">确认未生成，允许重试</button></footer></section></div>;
+}
+
+function StoryVideoRetrySheet({ port, segmentId, onClose }: { port: StoryStudioPort; segmentId: string; onClose(): void }) {
+  const state = useStoryStudioStore();
+  const confirm = async () => {
+    await state.allowVideoRetry(port, segmentId);
+    if (!useStoryStudioStore.getState().error) onClose();
+  };
+  return <div className="story-sheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section aria-modal="true" className="story-sheet" role="dialog"><header><div><span>!</span><div><h2>确认已核对原视频任务？</h2><p>本操作不会立即向服务商重新提交。</p></div></div><button aria-label="关闭" onClick={onClose} type="button">×</button></header><div className="story-sheet__body"><p className="story-retry-warning">只有确认原任务失败或未创建时才应重试。后续再次生成可能扣费，旧任务记录会保留。</p></div><footer><button onClick={onClose} type="button">取消</button><button className="story-retry-confirm" disabled={state.busy} onClick={() => void confirm()} type="button">已核对，允许重新生成</button></footer></section></div>;
 }
 
 function PlanningRecoveryBanner({ port, run }: {

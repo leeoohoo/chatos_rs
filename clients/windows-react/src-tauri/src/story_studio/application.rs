@@ -225,6 +225,14 @@ pub(crate) struct StoryCompletedVideoArchiveInput {
     pub use_source_video: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoRetryInput {
+    pub project_id: String,
+    pub base_fingerprint: String,
+    pub segment_id: String,
+}
+
 pub(super) fn make_story_project(
     input: StoryProjectCreationInput,
     owner_user_id: &str,
@@ -1156,6 +1164,34 @@ pub(super) fn archive_completed_story_video(
         StoryVideoGuidanceMode::FirstFrame
     };
     project.reconcile_inherited_first_frames();
+    project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
+    project.validate()
+}
+
+pub(super) fn allow_story_video_retry(
+    project: &mut StoryProject,
+    input: StoryVideoRetryInput,
+    now_unix_ms: u64,
+) -> Result<(), String> {
+    require_story_fingerprint(project, &input.project_id, &input.base_fingerprint)?;
+    let segment = project
+        .segments
+        .iter_mut()
+        .find(|segment| segment.id == input.segment_id)
+        .filter(|segment| segment.video.is_none())
+        .ok_or_else(|| "当前分段不能解锁视频重试。".to_owned())?;
+    let attempt = segment
+        .attempt
+        .take()
+        .ok_or_else(|| "当前分段没有需要核对的视频任务。".to_owned())?;
+    if !segment
+        .previous_attempts
+        .iter()
+        .any(|previous| previous.id == attempt.id)
+    {
+        segment.previous_attempts.push(attempt);
+    }
+    segment.error = None;
     project.updated_at_unix_ms = now_unix_ms.max(project.updated_at_unix_ms);
     project.validate()
 }

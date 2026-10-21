@@ -228,6 +228,24 @@ describe("StoryStudioView", () => {
       target: { kind: "frame", segmentId: "segment-a", frameRole: "last" },
     }));
   });
+
+  it("archives a verified ambiguous video attempt through a narrow intent", async () => {
+    const canonical = { ...project(), source: "雨夜里，陌生人敲响了门。" };
+    const storyPort = port({
+      loadProjects: vi.fn(async () => ({ items: [canonical], nextCursor: null, unreadableCount: 0 })),
+      allowVideoRetry: vi.fn(async () => canonical),
+    });
+    render(<StoryStudioView mediaPort={mediaPort()} ownerUserId="alice" port={storyPort} />);
+    await screen.findByRole("heading", { name: "雨夜来客" });
+
+    await act(async () => useStoryStudioStore.getState().allowVideoRetry(storyPort, "segment-a"));
+
+    expect(storyPort.allowVideoRetry).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: canonical.id,
+      baseFingerprint: canonical.baseFingerprint,
+      segmentId: "segment-a",
+    }));
+  });
 });
 
 function usePresentationId(storyPort: StoryStudioPort) {
@@ -245,6 +263,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     importHistoryImage: vi.fn(async () => project()),
     updateSegmentDuration: vi.fn(async () => project()),
     allowImageRetry: vi.fn(async () => project()),
+    allowVideoRetry: vi.fn(async () => project()),
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     createProject: vi.fn(async () => project()),

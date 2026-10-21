@@ -10,6 +10,7 @@ use super::{
         StoryResourcePromptInput, StorySegmentDurationInput, StorySegmentEditInput,
         StorySegmentStructureInput, StorySegmentStructureMutation, StorySegmentStructureOperation,
         StoryVideoGenerationPollInput, StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        StoryVideoRetryInput,
     },
     execution::StoryPlanningExecutionRegistry,
     media::{story_studio_protocol, StoryStudioManager},
@@ -1828,6 +1829,41 @@ fn video_failure_only_clears_attempt_when_submission_is_definitely_absent() {
         .segments[0]
         .attempt
         .is_none());
+}
+
+#[test]
+fn verified_video_retry_archives_the_attempt_without_deleting_history() {
+    let mut canonical = project();
+    let attempt = StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "private prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: None,
+        status: "unknown".into(),
+        created_at_unix_ms: 1,
+    };
+    canonical.segments[0].attempt = Some(attempt.clone());
+    canonical.segments[0].error = Some("unknown submission".into());
+    let project_id = canonical.id.clone();
+    let fingerprint = project_fingerprint(&canonical).unwrap();
+
+    super::application::allow_story_video_retry(
+        &mut canonical,
+        StoryVideoRetryInput {
+            project_id,
+            base_fingerprint: fingerprint,
+            segment_id: "s1".into(),
+        },
+        2,
+    )
+    .unwrap();
+
+    assert!(canonical.segments[0].attempt.is_none());
+    assert!(canonical.segments[0].error.is_none());
+    assert_eq!(canonical.segments[0].previous_attempts, vec![attempt]);
 }
 
 #[test]

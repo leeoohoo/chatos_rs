@@ -131,5 +131,10 @@ export interface StoryStudioPort {
     segmentId: string;
     useSourceVideo: boolean;
   }): Promise<StoryProject>;
+  allowVideoRetry(request: StoryPresentationScope & {
+    projectId: string;
+    baseFingerprint: string;
+    segmentId: string;
+  }): Promise<StoryProject>;
   discardPresentation(request: StoryPresentationScope): Promise<void>;
 }

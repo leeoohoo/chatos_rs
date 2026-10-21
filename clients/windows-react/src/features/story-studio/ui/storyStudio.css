@@ -116,6 +116,7 @@
 .story-video-redo button { border:0; border-radius:7px; padding:5px 8px; color:var(--accent); background:rgba(10,132,255,.09); font-size:8px; font-weight:620; cursor:pointer; white-space:nowrap; }
 .story-segment-inspector footer { display:grid; grid-template-columns:minmax(0,1fr) 68px 90px 62px auto; gap:7px; margin-top:12px; }
 .story-segment-inspector footer textarea { min-height:34px; resize:vertical; }
+.story-video-review-button { border:0; border-radius:9px; padding:7px 10px; color:#8b4a00; background:rgba(255,159,10,.1); font-size:9px; font-weight:630; cursor:pointer; }
 .story-sheet-backdrop { position:fixed; z-index:20; inset:0; display:grid; place-items:center; padding:30px; background:rgba(20,20,24,.22); backdrop-filter:blur(12px); }
 .story-sheet { width:min(470px,100%); overflow:hidden; border:1px solid rgba(255,255,255,.7); border-radius:16px; background:rgba(250,250,252,.97); box-shadow:0 25px 75px rgba(0,0,0,.22); }
 .story-sheet > header { display:flex; align-items:flex-start; justify-content:space-between; border-bottom:1px solid var(--separator); padding:16px; }

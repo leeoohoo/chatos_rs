@@ -68,6 +68,7 @@ interface StoryStudioState {
   resumeVideo(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
   updateVideoGuidance(storyPort: StoryStudioPort, segmentId: string, mode: "first_frame" | "first_and_last_frames" | "previous_video" | "source_video"): Promise<void>;
   archiveCompletedVideo(storyPort: StoryStudioPort, segmentId: string, useSourceVideo: boolean): Promise<void>;
+  allowVideoRetry(storyPort: StoryStudioPort, segmentId: string): Promise<void>;
   clearError(): void;
 }
 
@@ -628,6 +629,26 @@ export const useStoryStudioStore = create<StoryStudioState>((set, get) => ({
     } catch (error) {
       if (!sameScope(get(), scope)) return;
       set({ busy: false, error: errorMessage(error, "完成视频归档失败。") });
+    }
+  },
+
+  async allowVideoRetry(storyPort, segmentId) {
+    const scope = activeScope(get());
+    const project = selectedProject(get());
+    if (!scope || !project?.baseFingerprint || get().busy) return;
+    set({ busy: true, error: null });
+    try {
+      const saved = await storyPort.allowVideoRetry({
+        ...scope,
+        projectId: project.id,
+        baseFingerprint: project.baseFingerprint,
+        segmentId,
+      });
+      if (!sameScope(get(), scope)) return;
+      set((state) => ({ projects: replaceProject(state.projects, saved), busy: false }));
+    } catch (error) {
+      if (!sameScope(get(), scope)) return;
+      set({ busy: false, error: errorMessage(error, "视频任务无法解锁重试。") });
     }
   },
 

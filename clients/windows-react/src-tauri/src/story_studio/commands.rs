@@ -17,7 +17,7 @@ use super::{
         StoryLatestResourceImagesInput, StoryProjectCreationInput, StoryProjectSettingsInput,
         StoryProjectSourceInput, StoryResourcePromptInput, StorySegmentDurationInput,
         StorySegmentEditInput, StorySegmentStructureInput, StoryVideoGenerationPollInput,
-        StoryVideoGenerationStartInput, StoryVideoGuidanceInput,
+        StoryVideoGenerationStartInput, StoryVideoGuidanceInput, StoryVideoRetryInput,
     },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
@@ -203,6 +203,14 @@ pub(crate) struct StoryCompletedVideoArchiveCommandInput {
     owner_user_id: String,
     presentation_id: String,
     change: StoryCompletedVideoArchiveInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryVideoRetryCommandInput {
+    owner_user_id: String,
+    presentation_id: String,
+    change: StoryVideoRetryInput,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1183,6 +1191,33 @@ pub(crate) async fn archive_story_completed_video(
     .map_err(|_| "完成视频归档任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     saved
+}
+
+#[tauri::command]
+pub(crate) async fn allow_story_video_retry(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryVideoRetryCommandInput,
+) -> Result<StoryProjectSnapshot, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let work = manager.inner().clone();
+    let owner = input.owner_user_id;
+    let saved_owner = owner.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        work.allow_story_video_retry(
+            &saved_owner,
+            generation,
+            &input.presentation_id,
+            input.change,
+        )
+    })
+    .await
+    .map_err(|_| "剧情视频重试解锁任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    result
 }
 
 fn emit_story_video_event(
