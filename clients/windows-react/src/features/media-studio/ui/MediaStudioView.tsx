@@ -17,16 +17,19 @@ import type {
   MediaStudioHistoryItem,
 } from "../domain/mediaStudio";
 import type { MediaStudioPort } from "../ports/MediaStudioPort";
+import type { StoryStudioPort } from "../../story-studio/ports/StoryStudioPort";
+import { StoryStudioView } from "../../story-studio/ui/StoryStudioView";
 import "./mediaStudio.css";
 
 interface MediaStudioViewProps {
   ownerUserId: string;
   port: MediaStudioPort;
+  storyPort?: StoryStudioPort;
 }
 
-type StudioSection = "image" | "video" | "history";
+type StudioSection = "image" | "video" | "story" | "history";
 
-export function MediaStudioView({ ownerUserId, port }: MediaStudioViewProps) {
+export function MediaStudioView({ ownerUserId, port, storyPort }: MediaStudioViewProps) {
   const store = useMediaStudioStore();
   const [section, setSection] = useState<StudioSection>("image");
   const [historyPicker, setHistoryPicker] = useState<"image" | "video" | null>(null);
@@ -39,7 +42,7 @@ export function MediaStudioView({ ownerUserId, port }: MediaStudioViewProps) {
 
   return (
     <section className="media-studio" aria-label="AI 创作">
-      <StudioHeader section={section} onSelect={setSection} />
+      <StudioHeader section={section} storyAvailable={storyPort != null} onSelect={setSection} />
       {section === "image" ? (
         <ImageWorkspace
           onChooseHistory={() => setHistoryPicker("image")}
@@ -48,6 +51,8 @@ export function MediaStudioView({ ownerUserId, port }: MediaStudioViewProps) {
         />
       ) : section === "video" ? (
         <VideoWorkspace onChooseHistory={() => setHistoryPicker("video")} port={port} />
+      ) : section === "story" ? (
+        storyPort ? <StoryStudioView mediaPort={port} ownerUserId={ownerUserId} port={storyPort} /> : null
       ) : (
         <HistoryWorkspace
           onPreview={(url, alt) => setPreview({ url, alt })}
@@ -82,9 +87,11 @@ export function MediaStudioView({ ownerUserId, port }: MediaStudioViewProps) {
 
 function StudioHeader({
   section,
+  storyAvailable,
   onSelect,
 }: {
   section: StudioSection;
+  storyAvailable: boolean;
   onSelect(section: StudioSection): void;
 }) {
   return (
@@ -108,7 +115,14 @@ function StudioHeader({
         >
           <span aria-hidden="true">▶</span>视频
         </button>
-        <button disabled title="剧情模式将在完成 macOS 准入后开放" type="button">
+        <button
+          aria-pressed={section === "story"}
+          className={section === "story" ? "is-active" : ""}
+          disabled={!storyAvailable}
+          onClick={() => onSelect("story")}
+          title={storyAvailable ? undefined : "剧情模式不可用"}
+          type="button"
+        >
           <span aria-hidden="true">▤</span>剧情模式
         </button>
         <button

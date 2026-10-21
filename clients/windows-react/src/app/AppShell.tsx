@@ -22,6 +22,7 @@ import type { HostLifecyclePort } from "../features/host-lifecycle/ports/HostLif
 import type { LocalTerminalPort } from "../features/local-terminal/ports/LocalTerminalPort";
 import type { MediaStudioPort } from "../features/media-studio/ports/MediaStudioPort";
 import { MediaStudioView } from "../features/media-studio/ui/MediaStudioView";
+import type { StoryStudioPort } from "../features/story-studio/ports/StoryStudioPort";
 import { usePluginApplicationStore } from "../features/plugin-applications/application/pluginApplicationStore";
 import type { PluginApplicationPort } from "../features/plugin-applications/ports/PluginApplicationPort";
 import {
@@ -58,6 +59,7 @@ interface AppShellProps {
   hostLifecycle: HostLifecyclePort;
   localTerminal: LocalTerminalPort;
   mediaStudio: MediaStudioPort;
+  storyStudio: StoryStudioPort;
   pluginApplication: PluginApplicationPort;
   workspaceIndex: WorkspaceIndexPort;
   projectConversation: ProjectConversationPort;
@@ -86,6 +88,7 @@ export function AppShell({
   hostLifecycle,
   localTerminal,
   mediaStudio,
+  storyStudio,
   pluginApplication,
   workspaceIndex,
   projectConversation,
@@ -317,7 +320,7 @@ export function AppShell({
             />
           </Suspense>
         ) : selection.kind === "mediaStudio" ? (
-          <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} />
+          <MediaStudioView ownerUserId={session.user.id} port={mediaStudio} storyPort={storyStudio} />
         ) : selection.kind === "applications" || (selection.kind === "application" && !selectedPluginApplication) ? (
           <PluginApplicationsView
             hostReady={snapshot.ready}
