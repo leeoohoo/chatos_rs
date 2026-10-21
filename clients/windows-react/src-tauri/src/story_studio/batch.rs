@@ -9,10 +9,14 @@ use crate::authentication::GatewayModelConfig;
 use super::{
     domain::{StoryImageCollection, StoryProject, StorySegment, StoryVideoGuidanceMode},
     planning::project_fingerprint,
+    store::StoryProjectCursor,
 };
 
+pub(super) const STORY_MEDIA_BATCH_VERSION: u32 = 1;
+pub(super) const MAXIMUM_MEDIA_BATCH_BYTES: usize = 32 * 1_024 * 1_024;
 const MAXIMUM_BATCH_STEPS: usize = 500;
 const MAXIMUM_USER_IDEAS_CHARACTERS: usize = 2_000;
+const MAXIMUM_BATCH_EVENTS: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +105,258 @@ pub(crate) struct StoryMediaBatchPreviewInput {
     /// `None` means "select every eligible target". An explicit empty selection is rejected.
     pub target_ids: Option<Vec<String>>,
     pub user_ideas: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum StoryMediaBatchStatus {
+    Ready,
+    Running,
+    Paused,
+    NeedsReview,
+    Completed,
+    Abandoned,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StoryMediaBatchStoredStep {
+    pub id: String,
+    pub kind: StoryMediaBatchKind,
+    pub target_id: String,
+    pub completed: bool,
+    pub progress_status: Option<String>,
+    /// Native-only idempotency key. Never projected over IPC.
+    pub generation_intent_id: Option<String>,
+    /// Native-only provider identity. Never projected over IPC.
+    pub provider_job_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StoryMediaBatchEvent {
+    pub id: String,
+    pub date_unix_ms: u64,
+    pub detail: String,
+}
+
+/// Durable native production queue. Provider ids and the canonical draft stay behind Rust.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct StoryMediaBatchRecord {
+    pub version: u32,
+    pub id: String,
+    pub owner_hash: String,
+    pub project_id: String,
+    /// Fingerprint expected in the canonical manifest before the draft is committed.
+    pub expected_project_fingerprint: String,
+    pub kind: StoryMediaBatchKind,
+    pub requested_target_ids: Vec<String>,
+    pub steps: Vec<StoryMediaBatchStoredStep>,
+    pub status: StoryMediaBatchStatus,
+    pub events: Vec<StoryMediaBatchEvent>,
+    pub consent_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+    pub error: Option<String>,
+    pub user_ideas: Option<String>,
+    pub draft: StoryProject,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryMediaBatchStoredStepSnapshot {
+    pub id: String,
+    pub kind: StoryMediaBatchKind,
+    pub target_id: String,
+    pub completed: bool,
+    pub progress_status: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryMediaBatchEventSnapshot {
+    pub id: String,
+    pub date_unix_ms: u64,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryMediaBatchSnapshot {
+    pub id: String,
+    pub owner_user_id: String,
+    pub project_id: String,
+    pub kind: StoryMediaBatchKind,
+    pub status: StoryMediaBatchStatus,
+    pub steps: Vec<StoryMediaBatchStoredStepSnapshot>,
+    pub events: Vec<StoryMediaBatchEventSnapshot>,
+    pub consent_at_unix_ms: u64,
+    pub updated_at_unix_ms: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoryMediaBatchHistoryPage {
+    pub batches: Vec<StoryMediaBatchSnapshot>,
+    pub next_cursor: Option<StoryProjectCursor>,
+    pub unreadable_count: usize,
+}
+
+impl StoryMediaBatchRecord {
+    pub(super) fn from_preparation(
+        owner_hash: String,
+        project: StoryProject,
+        preparation: &StoryMediaBatchPreparation,
+        user_ideas: String,
+        now_unix_ms: u64,
+    ) -> Result<Self, String> {
+        if preparation.execution_mode != StoryMediaBatchExecutionMode::PersistentBatch
+            || preparation.kind == StoryMediaBatchKind::Videos
+            || preparation.project_id != project.id
+            || preparation.project_fingerprint != project_fingerprint(&project)?
+        {
+            return Err("批量制作预览已过期，请重新预览。".into());
+        }
+        validate_user_ideas(&user_ideas)?;
+        let normalized_ideas = user_ideas.trim().to_owned();
+        let record = Self {
+            version: STORY_MEDIA_BATCH_VERSION,
+            id: preparation.preview_id.clone(),
+            owner_hash,
+            project_id: project.id.clone(),
+            expected_project_fingerprint: preparation.project_fingerprint.clone(),
+            kind: preparation.kind,
+            requested_target_ids: preparation.requested_target_ids.clone(),
+            steps: preparation
+                .steps
+                .iter()
+                .map(|step| StoryMediaBatchStoredStep {
+                    id: step.id.clone(),
+                    kind: step.kind,
+                    target_id: step.target_id.clone(),
+                    completed: false,
+                    progress_status: None,
+                    generation_intent_id: None,
+                    provider_job_id: None,
+                })
+                .collect(),
+            status: StoryMediaBatchStatus::Ready,
+            events: vec![StoryMediaBatchEvent {
+                id: Uuid::new_v4().to_string(),
+                date_unix_ms: now_unix_ms,
+                detail: "用户已确认批量制作计划".into(),
+            }],
+            consent_at_unix_ms: now_unix_ms,
+            updated_at_unix_ms: now_unix_ms,
+            error: None,
+            user_ideas: (!normalized_ideas.is_empty()).then_some(normalized_ideas),
+            draft: project,
+        };
+        record.validate(&record.owner_hash, &record.project_id)?;
+        Ok(record)
+    }
+
+    pub(super) fn validate(
+        &self,
+        expected_owner_hash: &str,
+        expected_project_id: &str,
+    ) -> Result<(), String> {
+        let step_ids = self.steps.iter().map(|step| step.id.as_str());
+        if self.version != STORY_MEDIA_BATCH_VERSION
+            || Uuid::parse_str(&self.id).is_err()
+            || !valid_hash(&self.owner_hash)
+            || self.owner_hash != expected_owner_hash
+            || Uuid::parse_str(&self.project_id).is_err()
+            || self.project_id != expected_project_id
+            || !valid_hash(&self.expected_project_fingerprint)
+            || self.kind == StoryMediaBatchKind::Videos
+            || self.requested_target_ids.is_empty()
+            || self.requested_target_ids.len() > MAXIMUM_BATCH_STEPS
+            || !all_unique(self.requested_target_ids.iter().map(String::as_str))
+            || self.steps.is_empty()
+            || self.steps.len() > MAXIMUM_BATCH_STEPS
+            || !all_unique(step_ids)
+            || self.events.len() > MAXIMUM_BATCH_EVENTS
+            || self.draft.id != self.project_id
+            || self.consent_at_unix_ms == 0
+            || self.updated_at_unix_ms < self.consent_at_unix_ms
+            || self
+                .user_ideas
+                .as_ref()
+                .is_some_and(|value| validate_user_ideas(value).is_err())
+            || self
+                .error
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty() || value.chars().count() > 2_000)
+        {
+            return Err("批量制作记录无效。".into());
+        }
+        for step in &self.steps {
+            let expected_id = batch_step(step.kind, &step.target_id).id;
+            if step.kind == StoryMediaBatchKind::Pipeline
+                || step.id != expected_id
+                || step.target_id.is_empty()
+                || step.target_id.len() > 1_024
+                || step
+                    .progress_status
+                    .as_ref()
+                    .is_some_and(|value| value.trim().is_empty() || value.chars().count() > 128)
+                || step
+                    .generation_intent_id
+                    .as_ref()
+                    .is_some_and(|value| Uuid::parse_str(value).is_err())
+                || step
+                    .provider_job_id
+                    .as_ref()
+                    .is_some_and(|value| value.trim().is_empty() || value.len() > 1_024)
+            {
+                return Err("批量制作记录无效。".into());
+            }
+        }
+        if self.events.iter().any(|event| {
+            Uuid::parse_str(&event.id).is_err()
+                || event.date_unix_ms == 0
+                || event.detail.trim().is_empty()
+                || event.detail.chars().count() > 1_000
+        }) {
+            return Err("批量制作记录无效。".into());
+        }
+        self.draft.validate()
+    }
+
+    pub(super) fn snapshot(&self, owner_user_id: &str) -> StoryMediaBatchSnapshot {
+        StoryMediaBatchSnapshot {
+            id: self.id.clone(),
+            owner_user_id: owner_user_id.to_owned(),
+            project_id: self.project_id.clone(),
+            kind: self.kind,
+            status: self.status,
+            steps: self
+                .steps
+                .iter()
+                .map(|step| StoryMediaBatchStoredStepSnapshot {
+                    id: step.id.clone(),
+                    kind: step.kind,
+                    target_id: step.target_id.clone(),
+                    completed: step.completed,
+                    progress_status: step.progress_status.clone(),
+                })
+                .collect(),
+            events: self
+                .events
+                .iter()
+                .map(|event| StoryMediaBatchEventSnapshot {
+                    id: event.id.clone(),
+                    date_unix_ms: event.date_unix_ms,
+                    detail: event.detail.clone(),
+                })
+                .collect(),
+            consent_at_unix_ms: self.consent_at_unix_ms,
+            updated_at_unix_ms: self.updated_at_unix_ms,
+            error: self.error.clone(),
+        }
+    }
 }
 
 pub(crate) fn prepare_media_batch(
@@ -424,6 +680,13 @@ fn all_unique<'a>(values: impl Iterator<Item = &'a str>) -> bool {
     values.into_iter().all(|value| seen.insert(value))
 }
 
+fn valid_hash(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +694,9 @@ mod tests {
         StoryImage, StoryModelSelection, StoryProp, StorySegmentDetail, StorySegmentKind,
         StoryShot, StorySourceRange, STORY_SCHEMA_VERSION,
     };
+    use crate::story_studio::store::StoryProjectStore;
+    use sha2::{Digest, Sha256};
+    use tempfile::tempdir;
 
     #[test]
     fn pipeline_preserves_native_asset_frame_tail_video_order() {
@@ -539,6 +805,57 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("时长"));
+    }
+
+    #[test]
+    fn durable_batch_history_is_owner_scoped_and_hides_native_job_identity() {
+        let directory = tempdir().unwrap();
+        let store = StoryProjectStore::for_tests(directory.path().to_path_buf()).unwrap();
+        let mut project = project();
+        project.segments[0].detail = Some(detail());
+        store.save("alice", &project).unwrap();
+        let preparation = prepare_media_batch(
+            &project,
+            "alice",
+            &models(),
+            StoryMediaBatchPreviewInput {
+                project_id: project.id.clone(),
+                base_fingerprint: project_fingerprint(&project).unwrap(),
+                kind: StoryMediaBatchKind::Pipeline,
+                target_ids: None,
+                user_ideas: String::new(),
+            },
+        )
+        .unwrap();
+        let owner_hash = format!("{:x}", Sha256::digest(b"alice"));
+        let mut batch = StoryMediaBatchRecord::from_preparation(
+            owner_hash,
+            project.clone(),
+            &preparation,
+            "保持克制".into(),
+            10,
+        )
+        .unwrap();
+        batch.steps[0].generation_intent_id = Some(Uuid::new_v4().to_string());
+        batch.steps[0].provider_job_id = Some("provider-job-must-stay-native".into());
+        store.save_media_batch("alice", &batch).unwrap();
+
+        let loaded = store
+            .load_media_batch("alice", &project.id, &batch.id)
+            .unwrap();
+        assert_eq!(loaded, batch);
+        assert!(store
+            .load_media_batch("bob", &project.id, &batch.id)
+            .is_err());
+        let page = store
+            .load_media_batch_history("alice", &project.id, None, 20)
+            .unwrap();
+        assert_eq!(page.batches.len(), 1);
+        let safe_json = serde_json::to_string(&page.batches[0]).unwrap();
+        assert!(!safe_json.contains("provider-job-must-stay-native"));
+        assert!(!safe_json.contains("generationIntentId"));
+        assert!(!safe_json.contains("expectedProjectFingerprint"));
+        assert!(!safe_json.contains("draft"));
     }
 
     fn confirm_image(collection: &mut StoryImageCollection, filename: &str) {

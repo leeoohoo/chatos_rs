@@ -16,12 +16,12 @@ pub(crate) use commands::{
     archive_story_completed_video, clear_story_last_frame, confirm_latest_story_frames,
     confirm_latest_story_resource_images, confirm_story_image, create_story_project,
     discard_story_studio_presentation, generate_story_asset_image, generate_story_frame_image,
-    import_local_story_image, import_story_history_image, load_story_planning_history,
-    load_story_project, load_story_projects, poll_story_video_generation,
-    preview_story_media_batch, resume_story_planning, start_story_planning,
-    start_story_video_generation, update_story_project_settings, update_story_project_source,
-    update_story_resource_prompt, update_story_segment, update_story_segment_duration,
-    update_story_segment_structure, update_story_video_guidance,
+    import_local_story_image, import_story_history_image, load_story_media_batch_history,
+    load_story_planning_history, load_story_project, load_story_projects,
+    poll_story_video_generation, preview_story_media_batch, resume_story_planning,
+    start_story_planning, start_story_video_generation, update_story_project_settings,
+    update_story_project_source, update_story_resource_prompt, update_story_segment,
+    update_story_segment_duration, update_story_segment_structure, update_story_video_guidance,
 };
 pub(crate) use media::{story_studio_protocol, StoryStudioManager};
 

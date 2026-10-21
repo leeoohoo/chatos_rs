@@ -305,6 +305,7 @@ function port(overrides: Partial<StoryStudioPort> = {}): StoryStudioPort {
     loadProjects: vi.fn(async () => ({ items: [], nextCursor: null, unreadableCount: 0 })),
     loadProject: vi.fn(async () => project()),
     previewMediaBatch: vi.fn(async () => { throw new Error("unused batch preview"); }),
+    loadMediaBatchHistory: vi.fn(async () => ({ batches: [], nextCursor: null, unreadableCount: 0 })),
     createProject: vi.fn(async () => project()),
     updateSource: vi.fn(async () => project()),
     startPlanning: vi.fn(async () => project()),

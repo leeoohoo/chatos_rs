@@ -11,6 +11,7 @@ use std::{
 use uuid::Uuid;
 
 use super::{
+    batch::{StoryMediaBatchHistoryPage, StoryMediaBatchRecord, MAXIMUM_MEDIA_BATCH_BYTES},
     domain::{valid_storage_filename, StoryProject},
     planning::{project_fingerprint, StoryPlanningRun, StoryPlanningStatus},
     projection::StoryProjectSnapshot,
@@ -574,6 +575,164 @@ impl StoryProjectStore {
         })
     }
 
+    pub(super) fn save_media_batch(
+        &self,
+        owner_user_id: &str,
+        batch: &StoryMediaBatchRecord,
+    ) -> Result<(), String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(&batch.project_id)?;
+        let batch_id = canonical_project_id(&batch.id)?;
+        batch.validate(&expected_owner_hash, &project_id)?;
+        let bytes = serde_json::to_vec(batch).map_err(|_| media_batch_store_error())?;
+        if bytes.is_empty() || bytes.len() > MAXIMUM_MEDIA_BATCH_BYTES {
+            return Err(media_batch_store_error());
+        }
+        let _guard = self.mutation_lock.lock().map_err(|_| store_error())?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(media_batch_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        commit_private_json(
+            &project_directory,
+            &format!("media-batch-{batch_id}.json.tmp"),
+            &format!("media-batch-{batch_id}.json"),
+            &bytes,
+        )
+    }
+
+    pub(super) fn load_media_batch(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        batch_id: &str,
+    ) -> Result<StoryMediaBatchRecord, String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(project_id)?;
+        let batch_id = canonical_project_id(batch_id)?;
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(media_batch_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let path = project_directory.join(format!("media-batch-{batch_id}.json"));
+        let bytes = read_private_file(&path, MAXIMUM_MEDIA_BATCH_BYTES)?;
+        let batch: StoryMediaBatchRecord =
+            serde_json::from_slice(&bytes).map_err(|_| media_batch_store_error())?;
+        if batch.id != batch_id {
+            return Err(media_batch_store_error());
+        }
+        batch.validate(&expected_owner_hash, &project_id)?;
+        Ok(batch)
+    }
+
+    pub(super) fn load_media_batch_history(
+        &self,
+        owner_user_id: &str,
+        project_id: &str,
+        after: Option<StoryProjectCursor>,
+        requested_limit: usize,
+    ) -> Result<StoryMediaBatchHistoryPage, String> {
+        let owner = validate_owner(owner_user_id)?;
+        let expected_owner_hash = owner_hash(owner);
+        let project_id = canonical_project_id(project_id)?;
+        if let Some(cursor) = &after {
+            validate_cursor(cursor)?;
+        }
+        let limit = if requested_limit == 0 {
+            DEFAULT_HISTORY_PAGE_SIZE
+        } else {
+            requested_limit.clamp(1, MAXIMUM_PROJECT_PAGE_SIZE)
+        };
+        let projects = self
+            .existing_projects_directory(owner)?
+            .ok_or_else(media_batch_store_error)?;
+        let project_directory = projects.join(&project_id);
+        validate_private_directory(&project_directory)?;
+        let mut candidates = Vec::with_capacity(limit.saturating_add(1));
+        for entry in fs::read_dir(&project_directory).map_err(|_| media_batch_store_error())? {
+            let Ok(entry) = entry else { continue };
+            let filename = entry.file_name().to_string_lossy().into_owned();
+            let Some(batch_id) = filename
+                .strip_prefix("media-batch-")
+                .and_then(|value| value.strip_suffix(".json"))
+            else {
+                continue;
+            };
+            if canonical_project_id(batch_id).is_err() {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(metadata) = fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !is_private_file_metadata(&metadata) {
+                continue;
+            }
+            let cursor = StoryProjectCursor {
+                modified_at_unix_ms: system_time_milliseconds(metadata.modified().ok()),
+                record_id: batch_id.to_owned(),
+            };
+            if after
+                .as_ref()
+                .is_some_and(|after| !cursor_is_after(&cursor, after))
+            {
+                continue;
+            }
+            candidates.push((path, cursor));
+        }
+        candidates.sort_by(|left, right| {
+            right
+                .1
+                .modified_at_unix_ms
+                .cmp(&left.1.modified_at_unix_ms)
+                .then_with(|| right.1.record_id.cmp(&left.1.record_id))
+        });
+        candidates.truncate(limit.saturating_add(1));
+        let has_more = candidates.len() > limit;
+        let next_cursor = has_more
+            .then(|| {
+                candidates
+                    .get(limit.saturating_sub(1))
+                    .map(|item| item.1.clone())
+            })
+            .flatten();
+        let mut batches = Vec::with_capacity(limit);
+        let mut unreadable_count = 0usize;
+        for (path, cursor) in candidates.iter().take(limit) {
+            let loaded = read_private_file(path, MAXIMUM_MEDIA_BATCH_BYTES)
+                .and_then(|bytes| {
+                    serde_json::from_slice::<StoryMediaBatchRecord>(&bytes)
+                        .map_err(|_| media_batch_store_error())
+                })
+                .and_then(|batch| {
+                    if batch.id != cursor.record_id {
+                        return Err(media_batch_store_error());
+                    }
+                    batch.validate(&expected_owner_hash, &project_id)?;
+                    Ok(batch)
+                });
+            match loaded {
+                Ok(batch) => batches.push(batch.snapshot(owner)),
+                Err(_) => unreadable_count = unreadable_count.saturating_add(1),
+            }
+        }
+        batches.sort_by(|left, right| {
+            right
+                .updated_at_unix_ms
+                .cmp(&left.updated_at_unix_ms)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        Ok(StoryMediaBatchHistoryPage {
+            batches,
+            next_cursor,
+            unreadable_count,
+        })
+    }
+
     pub(super) fn apply_planning_run(
         &self,
         owner_user_id: &str,
@@ -744,6 +903,10 @@ fn load_project_manifest(
 
 fn commit_project_manifest(directory: &Path, bytes: &[u8]) -> Result<(), String> {
     commit_private_json(directory, "project.json.tmp", "project.json", bytes)
+}
+
+fn media_batch_store_error() -> String {
+    "批量制作记录暂时无法读取或保存。".into()
 }
 
 fn commit_private_json(

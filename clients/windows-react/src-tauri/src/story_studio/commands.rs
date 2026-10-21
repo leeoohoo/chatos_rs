@@ -19,7 +19,10 @@ use super::{
         StorySegmentEditInput, StorySegmentStructureInput, StoryVideoGenerationPollInput,
         StoryVideoGenerationStartInput, StoryVideoGuidanceInput, StoryVideoRetryInput,
     },
-    batch::{preview_media_batch, StoryMediaBatchPreviewInput, StoryMediaBatchPreviewResult},
+    batch::{
+        preview_media_batch, StoryMediaBatchHistoryPage, StoryMediaBatchPreviewInput,
+        StoryMediaBatchPreviewResult,
+    },
     media::StoryStudioManager,
     planning::{StoryPlanningRunSnapshot, StoryPlanningStage},
     projection::StoryProjectSnapshot,
@@ -33,6 +36,16 @@ pub(crate) struct StoryMediaBatchPreviewCommandInput {
     owner_user_id: String,
     presentation_id: String,
     preview: StoryMediaBatchPreviewInput,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct StoryMediaBatchHistoryInput {
+    owner_user_id: String,
+    presentation_id: String,
+    project_id: String,
+    after: Option<StoryProjectCursor>,
+    limit: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -406,6 +419,42 @@ pub(crate) async fn preview_story_media_batch(
     .map_err(|_| "批量制作预览任务异常退出。".to_owned())?;
     require_current_generation(&authentication, &manager, &owner, generation).await?;
     prepared
+}
+
+#[tauri::command]
+pub(crate) async fn load_story_media_batch_history(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, StoryStudioManager>,
+    input: StoryMediaBatchHistoryInput,
+) -> Result<StoryMediaBatchHistoryPage, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    validate_planning_presentation(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &input.presentation_id,
+        &input.project_id,
+    )
+    .await?;
+    let store = manager.store();
+    let owner = input.owner_user_id;
+    let load_owner = owner.clone();
+    let project_id = input.project_id;
+    let page = tauri::async_runtime::spawn_blocking(move || {
+        store.load_media_batch_history(
+            &load_owner,
+            &project_id,
+            input.after,
+            input.limit.unwrap_or(20),
+        )
+    })
+    .await
+    .map_err(|_| "批量制作历史读取任务异常退出。".to_owned())?;
+    require_current_generation(&authentication, &manager, &owner, generation).await?;
+    page
 }
 
 #[tauri::command]

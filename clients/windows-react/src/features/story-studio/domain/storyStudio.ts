@@ -243,6 +243,35 @@ export const storyMediaBatchPreviewResultSchema = z.object({
   }
 });
 
+export const storyMediaBatchSnapshotSchema = z.object({
+  id: uuid,
+  ownerUserId: safeText(1_024).min(1),
+  projectId: uuid,
+  kind: storyMediaBatchKindSchema.exclude(["videos"]),
+  status: z.enum(["ready", "running", "paused", "needsReview", "completed", "abandoned"]),
+  steps: z.array(z.object({
+    id: identifier,
+    kind: storyMediaBatchKindSchema.exclude(["pipeline"]),
+    targetId: identifier,
+    completed: z.boolean(),
+    progressStatus: safeText(128).min(1).nullable(),
+  }).strict()).min(1).max(500),
+  events: z.array(z.object({
+    id: uuid,
+    dateUnixMs: unixMilliseconds.positive(),
+    detail: safeText(1_000).min(1),
+  }).strict()).max(20_000),
+  consentAtUnixMs: unixMilliseconds.positive(),
+  updatedAtUnixMs: unixMilliseconds.positive(),
+  error: safeText(2_000).min(1).nullable(),
+}).strict();
+
+export const storyMediaBatchHistoryPageSchema = z.object({
+  batches: z.array(storyMediaBatchSnapshotSchema).max(200),
+  nextCursor: storyProjectCursorSchema.nullable(),
+  unreadableCount: z.number().int().nonnegative().safe(),
+}).strict();
+
 export const storyPlanningRunSchema = z.object({
   id: uuid,
   ownerUserId: safeText(1_024).min(1),
@@ -293,6 +322,8 @@ export type StoryVideoGenerationOutcome = z.infer<typeof storyVideoGenerationOut
 export type StoryMediaBatchKind = z.infer<typeof storyMediaBatchKindSchema>;
 export type StoryMediaBatchPreparation = z.infer<typeof storyMediaBatchPreparationSchema>;
 export type StoryMediaBatchPreviewResult = z.infer<typeof storyMediaBatchPreviewResultSchema>;
+export type StoryMediaBatchSnapshot = z.infer<typeof storyMediaBatchSnapshotSchema>;
+export type StoryMediaBatchHistoryPage = z.infer<typeof storyMediaBatchHistoryPageSchema>;
 export type StoryPlanningRun = z.infer<typeof storyPlanningRunSchema>;
 export type StoryPlanningHistoryPage = z.infer<typeof storyPlanningHistoryPageSchema>;
 export type StoryPlanningEvent = z.infer<typeof storyPlanningEventSchema>;

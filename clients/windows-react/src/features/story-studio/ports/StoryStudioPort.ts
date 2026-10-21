@@ -7,6 +7,7 @@ import type {
   StoryPlanningRun,
   StoryMediaBatchKind,
   StoryMediaBatchPreviewResult,
+  StoryMediaBatchHistoryPage,
   StoryVideoGenerationOutcome,
 } from "../domain/storyStudio";
 
@@ -36,6 +37,11 @@ export interface StoryStudioPort {
     targetIds?: string[] | null;
     userIdeas: string;
   }): Promise<StoryMediaBatchPreviewResult>;
+  loadMediaBatchHistory(request: StoryPresentationScope & {
+    projectId: string;
+    after?: StoryProjectCursor | null;
+    limit?: number | null;
+  }): Promise<StoryMediaBatchHistoryPage>;
   createProject(request: StoryPresentationScope & {
     title: string;
     description: string;
