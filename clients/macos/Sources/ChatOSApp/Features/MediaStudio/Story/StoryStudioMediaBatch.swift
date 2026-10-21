@@ -31,7 +31,11 @@ extension StoryStudioViewModel {
         guard let project, preparation.projectID == project.id else { return }
         if preparation.executionMode == .directVideos {
             selectedSegments = Set(preparation.requestedTargetIDs)
-            generateBatch(availableModels: models, userIdeas: userIdeas)
+            startDirectVideoQueue(
+                preparation: preparation,
+                availableModels: models,
+                userIdeas: userIdeas
+            )
             return
         }
         let storyMediaBatch = storyMediaBatch

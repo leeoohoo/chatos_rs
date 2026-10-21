@@ -108,6 +108,7 @@ final class StoryStudioViewModel: ObservableObject {
     let storyPlanning: StoryPlanningUseCase?
     let storyHistory: StoryHistoryUseCase
     let storyMediaBatch: StoryMediaBatchUseCase
+    let storyDirectVideoQueue = StoryDirectVideoQueueUseCase()
     let media: any MediaGenerationServicing
     let planner: (any StoryPlanningServicing)?
     var owner: String?
@@ -123,6 +124,7 @@ final class StoryStudioViewModel: ObservableObject {
     var storyPlanningExecutionState = StoryPlanningExecutionState()
     var storyHistoryLoadState = StoryHistoryLoadState()
     var storyMediaBatchExecutionState = StoryMediaBatchExecutionState()
+    var storyDirectVideoQueueState = StoryDirectVideoQueueState()
     var agentRunCursor: StoryHistoryCursor?
     var mediaBatchCursor: StoryHistoryCursor?
     var assetGenerationTasks: [AssetGenerationKey: Task<Void, Never>] = [:]
@@ -459,6 +461,7 @@ final class StoryStudioViewModel: ObservableObject {
         storyPlanningExecutionState.reset()
         storyHistoryLoadState.reset()
         storyMediaBatchExecutionState.reset()
+        storyDirectVideoQueueState.reset()
         task?.cancel(); loadTask?.cancel(); task = nil; loadTask = nil
         for generationTask in assetGenerationTasks.values { generationTask.cancel() }
         assetGenerationTasks = [:]; activeAssetGenerations = []; assetGenerationErrors = [:]

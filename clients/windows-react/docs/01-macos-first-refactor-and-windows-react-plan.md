@@ -514,6 +514,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，macOS AI 故事制作批次执行边界）：Core 新增 `StoryMediaBatchExecuting` Port、`StoryMediaBatchUseCase`、安全 preparation/command/event/outcome，以及绑定 owner/account session/request/project/batch 的 typed execution lifecycle。候选规则和 2,000 字补充想法上限由 Core 统一；preview 冻结 batch identity 与 project fingerprint，项目变化后不能启动旧 preparation。macOS `StoryMediaBatchExecutionAdapter` 独占完整模型目录、Store 批次记录、provider job/intent、Session、恢复和放弃持久化，ViewModel/UI 只消费不含 Secret、路径、文件名和 job identity 的安全投影。既有“仅视频”操作仍明确走顺序视频队列，避免改变逐段连续性、恢复和计费语义，下一片单独提取该队列。Core 5 项、Story Studio 59 项与 Story Agent 21 项通过；剧情模式继续等待顺序视频、素材/帧/视频生成、编辑保存及 Windows 平台门禁。
 
+状态补充（2026-10-21，macOS AI 故事仅视频顺序队列）：Core 新增 `StoryDirectVideoQueueUseCase`、冻结 queue plan/step 和 owner/account session/project/queue/request lifecycle。用例统一验证已确认 preview、project fingerprint、故事顺序、模型启用/API Key、时长、参考视频可用性和 2,000 字补充想法上限；执行时只在当前段 Task 结束后读取最新 canonical project 并启动下一段，因此继续保留“上一段实际尾帧可进入下一段请求”的既有语义。账号切换、登出、页面实例释放或项目替换会在下一次可计费提交前失败关闭；离开当前项目页面不会错误终止已确认队列。ViewModel 不再解释队列顺序和 preflight 规则，只把冻结步骤交给仍待后续提取的单段视频执行入口。Core 5 项与 Story Studio 60 项通过。下一片开始素材图片生成 Port，随后推进首尾帧及单段视频生成/恢复 Port；剧情模式继续禁用。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

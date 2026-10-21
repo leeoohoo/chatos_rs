@@ -9,73 +9,130 @@ extension StoryStudioViewModel {
         guard !isBusy, !isLoading, videoBatchTask == nil, let owner, let project else { return }
         let ids = project.segments.filter { selectedSegments.contains($0.id) && $0.isReady }.map(\.id)
         guard !ids.isEmpty else { return }
-        guard let model = availableModels.first(where: { $0.id == project.models.videoModelID }) else {
-            errorMessage = StoryError.missingModel.localizedDescription
+        do {
+            let preparation = try storyMediaBatch.prepare(
+                ownerUserID: owner,
+                project: project,
+                kind: .videos,
+                targetIDs: ids,
+                availableModels: availableModels,
+                userIdeas: userIdeas
+            )
+            startDirectVideoQueue(
+                preparation: preparation,
+                availableModels: availableModels,
+                userIdeas: userIdeas
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func startDirectVideoQueue(
+        preparation: StoryMediaBatchPreparation,
+        availableModels: [MediaGenerationModel],
+        userIdeas: String
+    ) {
+        guard !isBusy, !isLoading, videoBatchTask == nil,
+              let owner, let project else { return }
+        let plan: StoryDirectVideoQueuePlan
+        do {
+            plan = try storyDirectVideoQueue.prepare(
+                ownerUserID: owner,
+                project: project,
+                preparation: preparation,
+                availableModels: availableModels,
+                userIdeas: userIdeas
+            )
+        } catch {
+            errorMessage = error.localizedDescription
             return
         }
-        let profile = VideoGenerationProfile(modelName: model.modelName)
-        let unsupported = project.segments.filter {
-            ids.contains($0.id) && !profile.durations.contains($0.seconds)
-        }
-        guard unsupported.isEmpty, let size = profile.sizes.first else {
-            let durations = profile.durations.map(String.init).joined(separator: "、")
-            errorMessage = "当前视频模型不支持所选分段时长。模型支持：\(durations) 秒；不支持："
-                + unsupported.map { "\($0.title)（\($0.seconds)秒）" }.joined(separator: "、")
-            return
-        }
-        let referenceVideoSegments = project.segments.filter {
-            ids.contains($0.id)
-                && ($0.videoGuidanceMode == .previousVideo || $0.videoGuidanceMode == .sourceVideo)
-        }
-        let unavailablePreviousVideo = project.segments.enumerated().compactMap { index, segment -> String? in
-            guard referenceVideoSegments.contains(where: { $0.id == segment.id }),
-                  segment.videoGuidanceMode == .previousVideo else { return nil }
-            return index > 0 && project.segments[index - 1].video != nil ? nil : segment.title
-        }
-        let unavailableSourceVideo = referenceVideoSegments.filter {
-            $0.videoGuidanceMode == .sourceVideo && $0.archivedVideos.last == nil
-        }
-        guard referenceVideoSegments.isEmpty || model.supportsVideoReference else {
-            errorMessage = "当前视频模型不支持视频参考输入。"
-            return
-        }
-        guard unavailablePreviousVideo.isEmpty else {
-            errorMessage = "请先完成上一段视频，再为以下分段选择“上一段视频”："
-                + unavailablePreviousVideo.joined(separator: "、")
-            return
-        }
-        guard unavailableSourceVideo.isEmpty else {
-            errorMessage = "找不到要重做的原视频："
-                + unavailableSourceVideo.map(\.title).joined(separator: "、")
-            return
-        }
+        guard let request = storyDirectVideoQueueState.begin(
+            ownerUserID: owner,
+            accountSessionID: session,
+            projectID: plan.projectID,
+            queueID: plan.queueID
+        ) else { return }
         errorMessage = nil
         let token = session
-        // Adjacent videos must be submitted in story order: the preceding completed clip's
-        // decoded final frame becomes the next request's first frame.
-        videoBatchTask = Task { [weak self] in
-            for id in ids {
-                let key = VideoGenerationKey(projectID: project.id, segmentID: id)
-                guard !Task.isCancelled else { return }
-                let generation: Task<Void, Never>? = {
-                    guard let self, self.session == token,
-                          let latest = self.projects.first(where: { $0.id == project.id }) else {
-                        return nil
+        let queue = storyDirectVideoQueue
+        // Core owns target ordering and advances only after the current generation Task ends.
+        // This preserves actual-tail continuity without making the whole workspace busy.
+        videoBatchTask = Task { [weak self, queue] in
+            let result: Result<Void, Error>
+            do {
+                try await queue.execute(
+                    plan,
+                    currentProject: { [weak self] in
+                        guard let self,
+                              self.storyDirectVideoQueueState.accepts(
+                                request,
+                                ownerUserID: self.owner,
+                                accountSessionID: token,
+                                projectID: plan.projectID
+                              ) else { return nil }
+                        return self.projects.first(where: { $0.id == plan.projectID })
+                    },
+                    continuationCheck: { [weak self] in
+                        try Task.checkCancellation()
+                        guard let self,
+                              self.storyDirectVideoQueueState.accepts(
+                                request,
+                                ownerUserID: self.owner,
+                                accountSessionID: token,
+                                projectID: plan.projectID
+                              ) else { throw CancellationError() }
+                    },
+                    executeStep: { [weak self] latest, step in
+                        let generation: Task<Void, Never>? = {
+                            guard let self,
+                                  self.storyDirectVideoQueueState.accepts(
+                                    request,
+                                    ownerUserID: self.owner,
+                                    accountSessionID: token,
+                                    projectID: step.projectID
+                                  ) else { return nil }
+                            let key = VideoGenerationKey(
+                                projectID: step.projectID,
+                                segmentID: step.segmentID
+                            )
+                            self.startVideoGeneration(
+                                project: latest,
+                                segmentID: step.segmentID,
+                                model: step.model,
+                                size: step.size,
+                                owner: owner,
+                                token: token,
+                                userIdeas: step.userIdeas
+                            )
+                            return self.videoGenerationTasks[key]
+                        }()
+                        guard let generation else {
+                            throw StoryDirectVideoQueueError.targetUnavailable
+                        }
+                        await generation.value
                     }
-                    self.startVideoGeneration(
-                        project: latest, segmentID: id, model: model, size: size,
-                        owner: owner, token: token, userIdeas: userIdeas
-                    )
-                    return self.videoGenerationTasks[key]
-                }()
-                guard let generation else {
-                    if let self, self.session == token { self.videoBatchTask = nil }
-                    return
-                }
-                await generation.value
+                )
+                result = .success(())
+            } catch {
+                result = .failure(error)
             }
-            guard let self, self.session == token else { return }
+            guard let self else { return }
+            let accepted = self.storyDirectVideoQueueState.accepts(
+                request,
+                ownerUserID: self.owner,
+                accountSessionID: token,
+                projectID: plan.projectID
+            )
+            _ = self.storyDirectVideoQueueState.finish(request)
+            guard accepted else { return }
             self.videoBatchTask = nil
+            if case .failure(let error) = result,
+               !(error is CancellationError),
+               !Task.isCancelled {
+                self.errorMessage = error.localizedDescription
+            }
         }
     }
 

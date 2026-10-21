@@ -380,7 +380,7 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(vm.project?.segments.allSatisfy { $0.detail == nil } == true)
     }
 
-    func testParallelFailureSavesEveryTaskAndResumeDoesNotResubmit() async throws {
+    func testSequentialQueueContinuesAfterFailureAndResumeDoesNotResubmit() async throws {
         let (vm, store, service) = try await fixture()
         await service.setVideoFailure(true)
         let draft = try await readyProject(store)
@@ -389,7 +389,7 @@ final class StoryStudioTests: XCTestCase {
         vm.generateBatch(availableModels: models); try await idle(vm)
         XCTAssertEqual(vm.project?.segments[0].attempt?.jobID, "remote-job")
         XCTAssertEqual(vm.project?.segments[1].attempt?.jobID, "remote-job",
-                       "One failed segment must not stop another parallel submission")
+                       "One failed segment must not stop the next sequential submission")
         let persisted = try await store.load(owner: "alice")
         XCTAssertEqual(persisted.projects[0].segments[0].attempt?.jobID, "remote-job")
         XCTAssertEqual(persisted.projects[0].segments[1].attempt?.jobID, "remote-job")
@@ -426,6 +426,28 @@ final class StoryStudioTests: XCTestCase {
         XCTAssertTrue(vm.project?.segments.allSatisfy { $0.video != nil } == true)
         let persisted = try await store.load(owner: "alice")
         XCTAssertTrue(persisted.projects[0].segments.allSatisfy { $0.video != nil })
+    }
+
+    func testDirectVideoQueueContinuesAfterLeavingTheProjectPage() async throws {
+        let (vm, store, service) = try await fixture()
+        await service.setDelay(true)
+        let draft = try await readyProject(store)
+        _ = await vm.create(draft, availableModels: models)
+        vm.selectedSegments = ["s1", "s2"]
+        vm.generateBatch(availableModels: models)
+        for _ in 0..<100 where !vm.isGeneratingVideo("s1", projectID: draft.id) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(vm.isGeneratingVideo("s1", projectID: draft.id))
+
+        vm.backToList()
+        XCTAssertNil(vm.selectedProjectID)
+        try await idle(vm)
+
+        let persisted = try await store.load(owner: "alice")
+        XCTAssertTrue(persisted.projects[0].segments.allSatisfy { $0.video != nil })
+        let events = await service.events()
+        XCTAssertEqual(events.filter { $0 == "video" }.count, 2)
     }
 
     func testPendingVideoGenerationDoesNotRetainStoryStudioViewModel() async throws {
