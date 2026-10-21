@@ -1,7 +1,7 @@
 mod executor;
 mod schema;
 
-pub(crate) use schema::terminal_tool_schemas;
+pub(crate) use schema::{project_read_tool_schemas, terminal_tool_schemas};
 
 use chatos_local_agent_protocol::{
     ClaimNextToolCommand, CommitToolCommand, GetEventCursorCommand, HostCommand, HostResult,
@@ -21,7 +21,13 @@ use tokio::{
 
 use crate::{host_lifecycle::HostManager, terminal_runtime::TerminalProcessStore};
 
-pub(crate) const TERMINAL_TOOL_NAMES: [&str; 6] = [
+pub(crate) const PLATFORM_TOOL_NAMES: [&str; 12] = [
+    "read_file_raw",
+    "read_file_range",
+    "list_dir",
+    "search_text",
+    "read_file",
+    "search_files",
     "execute_command",
     "process_poll",
     "process_log",
@@ -247,7 +253,7 @@ async fn claim_next(
             worker_id: WORKER_ID.into(),
             lease_duration_ms: LEASE_DURATION_MS,
             include_tool_names: Some(
-                TERMINAL_TOOL_NAMES
+                PLATFORM_TOOL_NAMES
                     .iter()
                     .map(|name| (*name).into())
                     .collect(),

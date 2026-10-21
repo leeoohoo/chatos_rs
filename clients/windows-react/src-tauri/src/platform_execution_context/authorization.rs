@@ -39,6 +39,10 @@ impl TaskToolAuthorization {
     pub(crate) fn allows_terminal(&self) -> bool {
         self.requires_execution && self.enabled_builtin_kinds.contains("TerminalController")
     }
+
+    pub(crate) fn allows_project_read(&self) -> bool {
+        self.enabled_builtin_kinds.contains("CodeMaintainerRead")
+    }
 }
 
 fn validate_owned_paths(value: Option<&Value>) -> Result<(), String> {

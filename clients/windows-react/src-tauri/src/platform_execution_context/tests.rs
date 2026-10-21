@@ -18,6 +18,21 @@ fn authorization_requires_the_macos_terminal_selection_shape() {
     });
     let authorization = TaskToolAuthorization::resolve(input.as_object().unwrap()).unwrap();
     assert!(authorization.allows_terminal());
+    assert!(!authorization.allows_project_read());
+
+    let read = json!({
+        "owned_paths": [],
+        "tool_options": {
+            "requires_execution": true,
+            "enabled_builtin_kinds": ["CodeMaintainerRead"],
+            "plugin_hints": [],
+            "plugin_release_snapshots": [],
+            "external_mcp_config_ids": []
+        }
+    });
+    assert!(TaskToolAuthorization::resolve(read.as_object().unwrap())
+        .unwrap()
+        .allows_project_read());
 
     let mut disabled = input.clone();
     disabled["tool_options"]["requires_execution"] = json!(false);

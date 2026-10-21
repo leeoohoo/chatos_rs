@@ -73,6 +73,71 @@ pub(crate) fn terminal_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub(crate) fn project_read_tool_schemas() -> Vec<Value> {
+    vec![
+        function(
+            "read_file_raw",
+            "读取当前项目中的 UTF-8 文本文件。",
+            json!({
+                "path": {"type": "string"},
+                "with_line_numbers": {"type": "boolean", "default": true}
+            }),
+            &["path"],
+        ),
+        function(
+            "read_file_range",
+            "按 1-based 行号读取当前项目中的文本片段。",
+            json!({
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "with_line_numbers": {"type": "boolean", "default": false}
+            }),
+            &["path", "start_line", "end_line"],
+        ),
+        function(
+            "list_dir",
+            "列出当前项目中的目录内容。path 省略、为空或为 . 时表示项目根目录。",
+            json!({
+                "path": {"type": "string"},
+                "max_entries": {"type": "integer", "minimum": 1, "maximum": 1_000}
+            }),
+            &[],
+        ),
+        function(
+            "search_text",
+            "在当前项目中递归搜索固定文本。",
+            json!({
+                "pattern": {"type": "string", "minLength": 1},
+                "path": {"type": "string"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 500}
+            }),
+            &["pattern"],
+        ),
+        function(
+            "read_file",
+            "read_file_raw/read_file_range 的兼容别名。",
+            json!({
+                "path": {"type": "string"},
+                "start_line": {"type": "integer", "minimum": 1},
+                "end_line": {"type": "integer", "minimum": 1},
+                "with_line_numbers": {"type": "boolean", "default": true}
+            }),
+            &["path"],
+        ),
+        function(
+            "search_files",
+            "search_text 的兼容别名，query 会映射为固定文本 pattern。",
+            json!({
+                "query": {"type": "string", "minLength": 1},
+                "path": {"type": "string"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 500}
+            }),
+            &["query"],
+        ),
+    ]
+}
+
 fn process_read_properties(default_limit: u64) -> Value {
     json!({
         "terminal_id": {"type": "string"},
@@ -152,6 +217,30 @@ mod tests {
         assert_eq!(
             wait.pointer("/parameters/properties/timeout_ms/maximum"),
             Some(&json!(7_200_000))
+        );
+    }
+
+    #[test]
+    fn project_read_catalog_matches_the_macos_compatibility_surface() {
+        let names = project_read_tool_schemas()
+            .into_iter()
+            .filter_map(|schema| {
+                schema
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "list_dir".to_owned(),
+                "read_file".to_owned(),
+                "read_file_range".to_owned(),
+                "read_file_raw".to_owned(),
+                "search_files".to_owned(),
+                "search_text".to_owned(),
+            ])
         );
     }
 
