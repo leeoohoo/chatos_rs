@@ -3,6 +3,9 @@ import { useAgentManagementStore } from "../application/agentManagementStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
+  type AgentProfileEditorCatalog,
+  type AgentProfileEditorData,
+  type AgentProfileMutationInput,
   type AgentProfileSummary,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -17,12 +20,23 @@ export function AgentManagementView({
 }) {
   const profiles = useAgentManagementStore((state) => state.profiles);
   const isLoading = useAgentManagementStore((state) => state.isLoading);
+  const isCatalogLoading = useAgentManagementStore((state) => state.isCatalogLoading);
+  const isEditorLoading = useAgentManagementStore((state) => state.isEditorLoading);
+  const isSaving = useAgentManagementStore((state) => state.isSaving);
   const error = useAgentManagementStore((state) => state.error);
   const activate = useAgentManagementStore((state) => state.activate);
   const refresh = useAgentManagementStore((state) => state.refresh);
+  const loadEditorCatalog = useAgentManagementStore((state) => state.loadEditorCatalog);
+  const loadProfileEditor = useAgentManagementStore((state) => state.loadProfileEditor);
+  const saveProfile = useAgentManagementStore((state) => state.saveProfile);
   const reset = useAgentManagementStore((state) => state.reset);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
+  const [preparingId, setPreparingId] = useState<string | null>(null);
+  const [editor, setEditor] = useState<{
+    catalog: AgentProfileEditorCatalog;
+    data: AgentProfileEditorData | null;
+  } | null>(null);
   const pageCount = Math.max(1, Math.ceil(profiles.length / pageSize));
   const visibleProfiles = useMemo(
     () => profiles.slice(page * pageSize, page * pageSize + pageSize),
@@ -30,6 +44,8 @@ export function AgentManagementView({
   );
 
   useEffect(() => {
+    setEditor(null);
+    setPreparingId(null);
     void activate(port, ownerUserId);
     return reset;
   }, [activate, ownerUserId, port, reset]);
@@ -37,6 +53,17 @@ export function AgentManagementView({
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount - 1));
   }, [pageCount]);
+
+  const openEditor = async (profile: AgentProfileSummary | null) => {
+    const identity = profile?.id ?? "new-agent";
+    setPreparingId(identity);
+    const [catalog, data] = await Promise.all([
+      loadEditorCatalog(port),
+      profile ? loadProfileEditor(port, profile.id) : Promise.resolve(null),
+    ]);
+    setPreparingId(null);
+    if (catalog && (!profile || data)) setEditor({ catalog, data });
+  };
 
   return (
     <div className="agent-management" aria-label="Agent 管理">
@@ -47,9 +74,14 @@ export function AgentManagementView({
             <p>管理 Agent、模型和权限。</p>
           </div>
           <div className="agent-management__actions">
-            <span>资料只读</span>
+            <span>{isSaving ? "正在保存" : "本机资料"}</span>
             <button disabled title="Skill 管理将在对应原生能力完成后开放" type="button">Skill 管理</button>
-            <button className="primary-button" disabled title="创建 Agent 将在写入与模型目录门禁完成后开放" type="button">＋ 创建 Agent</button>
+            <button
+              className="primary-button"
+              disabled={isCatalogLoading || isEditorLoading || preparingId === "new-agent"}
+              onClick={() => void openEditor(null)}
+              type="button"
+            >{preparingId === "new-agent" ? "准备中…" : "＋ 创建 Agent"}</button>
             <button
               aria-label="刷新 Agent"
               disabled={isLoading}
@@ -59,7 +91,7 @@ export function AgentManagementView({
           </div>
         </header>
 
-        {error && (
+        {error && !editor && (
           <div className="agent-management__error" role="alert">
             <span>{error}</span>
             <button onClick={() => void refresh(port)} type="button">重试</button>
@@ -72,12 +104,19 @@ export function AgentManagementView({
           <div className="agent-management__empty">
             <span aria-hidden="true">◎</span>
             <h2>还没有 Agent</h2>
-            <p>Windows 已建立与 macOS 相同的账号隔离 Profile Store；创建能力将在下一阶段开放。</p>
+            <p>创建一个 Agent，并为它选择模型、职业、职责和本机权限。</p>
           </div>
         ) : (
           <>
             <div className="agent-management__grid">
-              {visibleProfiles.map((profile) => <AgentCard key={profile.id} profile={profile} />)}
+              {visibleProfiles.map((profile) => (
+                <AgentCard
+                  key={profile.id}
+                  preparing={preparingId === profile.id}
+                  profile={profile}
+                  onEdit={() => void openEditor(profile)}
+                />
+              ))}
             </div>
             <Pagination
               page={page}
@@ -90,11 +129,31 @@ export function AgentManagementView({
           </>
         )}
       </section>
+      {editor && (
+        <AgentProfileEditor
+          catalog={editor.catalog}
+          data={editor.data}
+          error={error}
+          saving={isSaving}
+          onCancel={() => setEditor(null)}
+          onSave={async (input) => {
+            if (await saveProfile(port, input)) setEditor(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function AgentCard({ profile }: { profile: AgentProfileSummary }) {
+function AgentCard({
+  profile,
+  preparing,
+  onEdit,
+}: {
+  profile: AgentProfileSummary;
+  preparing: boolean;
+  onEdit(): void;
+}) {
   return (
     <article className="agent-card">
       <header>
@@ -109,7 +168,7 @@ function AgentCard({ profile }: { profile: AgentProfileSummary }) {
       {profile.description && <p className="agent-card__description">{profile.description}</p>}
       <div className="agent-card__actions">
         <button disabled title="私聊将在 Agent Conversation 准入后开放" type="button">私聊</button>
-        <button disabled title="编辑将在 Profile mutation 准入后开放" type="button">编辑</button>
+        <button disabled={preparing} onClick={onEdit} type="button">{preparing ? "准备中…" : "编辑"}</button>
       </div>
       <dl>
         <Row label="模型" value={profile.modelConfigId} />
@@ -129,6 +188,95 @@ function AgentCard({ profile }: { profile: AgentProfileSummary }) {
 
 function Row({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd title={value}>{value}</dd></div>;
+}
+
+function AgentProfileEditor({
+  catalog,
+  data,
+  error,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  catalog: AgentProfileEditorCatalog;
+  data: AgentProfileEditorData | null;
+  error: string | null;
+  saving: boolean;
+  onCancel(): void;
+  onSave(input: AgentProfileMutationInput): Promise<void>;
+}) {
+  const existing = data?.profile ?? null;
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [rolePrompt, setRolePrompt] = useState(data?.rolePrompt ?? catalog.defaultRolePrompt);
+  const [modelConfigId, setModelConfigId] = useState(existing?.modelConfigId ?? catalog.models[0]?.id ?? "");
+  const [thinkingLevel, setThinkingLevel] = useState(existing?.thinkingLevel ?? "");
+  const [professionKey, setProfessionKey] = useState(existing?.professionKey ?? "general_member");
+  const [canManageStaff, setCanManageStaff] = useState(existing?.canManageStaff ?? false);
+  const [canAccessLocalProjects, setCanAccessLocalProjects] = useState(existing?.canAccessLocalProjects ?? false);
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(existing?.heartbeatEnabled ?? false);
+  const [heartbeatIntervalSeconds, setHeartbeatIntervalSeconds] = useState(existing?.heartbeatIntervalSeconds ?? 900);
+  const [heartbeatPrompt, setHeartbeatPrompt] = useState(data?.heartbeatPrompt ?? "");
+  const selectedModel = catalog.models.find((model) => model.id === modelConfigId);
+  const selectedProfession = catalog.professions.find((profession) => profession.key === professionKey);
+  const valid = name.trim().length > 0
+    && rolePrompt.trim().length > 0
+    && selectedModel != null
+    && (!thinkingLevel || selectedModel.thinkingLevels.some((level) => level === thinkingLevel));
+
+  return (
+    <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onCancel(); }}>
+      <form
+        aria-label={existing ? "编辑 Agent" : "创建 Agent"}
+        aria-modal="true"
+        className="agent-editor"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!valid || saving) return;
+          void onSave({
+            agentId: existing?.id ?? null,
+            expectedUpdatedAtUnixMs: existing?.updatedAtUnixMs ?? null,
+            name: name.trim(),
+            description: description.trim(),
+            rolePrompt: rolePrompt.trim(),
+            modelConfigId,
+            thinkingLevel: thinkingLevel ? thinkingLevel as AgentProfileMutationInput["thinkingLevel"] : null,
+            professionKey,
+            canManageStaff,
+            canAccessLocalProjects,
+            heartbeatEnabled,
+            heartbeatIntervalSeconds,
+            heartbeatPrompt: heartbeatPrompt.trim(),
+          });
+        }}
+        role="dialog"
+      >
+        <header><h2>{existing ? "编辑 Agent" : "创建 Agent"}</h2><button aria-label="关闭" disabled={saving} onClick={onCancel} type="button">×</button></header>
+        <div className="agent-editor__body">
+          {error && <div className="agent-editor__error" role="alert">{error}</div>}
+          <p className="agent-editor__avatar-note">头像编辑将在安全图片导入门禁完成后开放；已有头像会原样保留。</p>
+          <label>名称<input maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="Agent 名称" value={name} /></label>
+          <label>说明<textarea maxLength={2_000} onChange={(event) => setDescription(event.target.value)} placeholder="Agent 负责什么" rows={3} value={description} /></label>
+          <label>模型<select onChange={(event) => { setModelConfigId(event.target.value); setThinkingLevel(""); }} value={modelConfigId}>{catalog.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label>
+          <label>思考等级<select disabled={!selectedModel?.supportsReasoning} onChange={(event) => setThinkingLevel(event.target.value)} value={thinkingLevel}><option value="">跟随模型默认{selectedModel?.defaultThinkingLevel ? `（${selectedModel.defaultThinkingLevel}）` : ""}</option>{selectedModel?.thinkingLevels.map((level) => <option key={level} value={level}>{level}</option>)}</select></label>
+          <label>职业<select onChange={(event) => setProfessionKey(event.target.value as typeof professionKey)} value={professionKey}>{catalog.professions.map((profession) => <option key={profession.key} value={profession.key}>{profession.categoryLabel} · {profession.label}</option>)}</select><small>{selectedProfession?.description}</small></label>
+          <label>角色 Prompt<textarea maxLength={32_000} onChange={(event) => setRolePrompt(event.target.value)} rows={7} value={rolePrompt} /></label>
+          <Toggle checked={canManageStaff} label="允许招募和解雇成员" note="Agent 可提交人员变更提案；所有变更仍需 Human 确认。" onChange={setCanManageStaff} />
+          <Toggle checked={canAccessLocalProjects} label="允许查看项目并创建团队" note="只发布项目名称和临时选择，不向 Agent 暴露真实路径。" onChange={setCanAccessLocalProjects} />
+          <Toggle checked={heartbeatEnabled} label="主动巡检" note="按周期检查团队和私聊；无事时不会发送消息。" onChange={setHeartbeatEnabled} />
+          {heartbeatEnabled && <>
+            <label>巡检周期<select onChange={(event) => setHeartbeatIntervalSeconds(Number(event.target.value))} value={heartbeatIntervalSeconds}>{[[60,"每分钟"],[300,"每 5 分钟"],[900,"每 15 分钟"],[1800,"每 30 分钟"],[3600,"每小时"]].map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+            <label>巡检要求<textarea maxLength={8_000} onChange={(event) => setHeartbeatPrompt(event.target.value)} placeholder="例如：检查阻塞和需要主动推进的工作" rows={3} value={heartbeatPrompt} /></label>
+          </>}
+        </div>
+        <footer><button disabled={saving} onClick={onCancel} type="button">取消</button><button className="primary-button" disabled={!valid || saving} type="submit">{saving ? "正在保存…" : existing ? "保存" : "创建"}</button></footer>
+      </form>
+    </div>
+  );
+}
+
+function Toggle({ checked, label, note, onChange }: { checked: boolean; label: string; note: string; onChange(value: boolean): void }) {
+  return <label className="agent-editor__toggle"><input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox" /><span><strong>{label}</strong><small>{note}</small></span></label>;
 }
 
 function Pagination({

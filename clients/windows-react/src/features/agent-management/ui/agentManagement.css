@@ -42,4 +42,27 @@
 .agent-pagination select { padding: 4px 7px; }
 .agent-pagination button { width: 28px; padding: 0; color: var(--accent); font-size: 17px; cursor: pointer; }
 .agent-pagination button:disabled { color: var(--tertiary); cursor: default; }
+.agent-editor-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(20,20,24,.24); backdrop-filter: blur(10px) saturate(1.08); }
+.agent-editor { display: flex; width: min(620px,100%); max-height: min(820px,calc(100vh - 48px)); flex-direction: column; overflow: hidden; border: 1px solid rgba(255,255,255,.62); border-radius: 18px; color: var(--primary); background: rgba(248,248,250,.94); box-shadow: 0 24px 80px rgba(0,0,0,.22),0 2px 10px rgba(0,0,0,.08); backdrop-filter: blur(28px) saturate(1.35); }
+.agent-editor > header, .agent-editor > footer { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; background: rgba(255,255,255,.48); }
+.agent-editor > header { border-bottom: 1px solid var(--separator); }
+.agent-editor > footer { justify-content: flex-end; border-top: 1px solid var(--separator); }
+.agent-editor > header h2 { margin: 0; font-size: 14px; font-weight: 680; letter-spacing: -.02em; }
+.agent-editor button { min-height: 29px; border: 0; border-radius: 8px; padding: 5px 12px; color: var(--accent); background: rgba(120,120,128,.10); font-size: 10.5px; font-weight: 630; cursor: pointer; }
+.agent-editor > header button { width: 27px; min-height: 27px; border-radius: 50%; padding: 0; color: var(--secondary); font-size: 18px; line-height: 1; }
+.agent-editor button:disabled { cursor: default; opacity: .45; }
+.agent-editor .primary-button { color: white; background: var(--accent); }
+.agent-editor__body { display: grid; gap: 13px; overflow: auto; padding: 16px; }
+.agent-editor__body > label { display: grid; gap: 5px; color: var(--secondary); font-size: 10px; font-weight: 620; }
+.agent-editor__body input:not([type="checkbox"]), .agent-editor__body textarea, .agent-editor__body select { width: 100%; box-sizing: border-box; border: 1px solid rgba(60,60,67,.16); border-radius: 9px; padding: 8px 10px; color: var(--primary); outline: none; background: rgba(255,255,255,.82); font: 11px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif; }
+.agent-editor__body textarea { min-height: 70px; resize: vertical; }
+.agent-editor__body input:focus, .agent-editor__body textarea:focus, .agent-editor__body select:focus { border-color: rgba(10,132,255,.58); box-shadow: 0 0 0 3px rgba(10,132,255,.12); }
+.agent-editor__body label small { color: var(--tertiary); font-size: 9.5px; font-weight: 450; line-height: 1.45; }
+.agent-editor__error { border-radius: 9px; padding: 9px 10px; color: #9b5100; background: rgba(255,159,10,.12); font-size: 10px; line-height: 1.45; }
+.agent-editor__avatar-note { margin: 0; border-radius: 9px; padding: 8px 10px; color: var(--secondary); background: rgba(120,120,128,.08); font-size: 9.5px; line-height: 1.45; }
+.agent-editor__toggle { display: grid !important; grid-template-columns: auto 1fr; align-items: start; gap: 9px !important; border-radius: 10px; padding: 9px 10px; background: rgba(120,120,128,.07); cursor: pointer; }
+.agent-editor__toggle input { margin: 2px 0 0; accent-color: var(--accent); }
+.agent-editor__toggle span { display: grid; gap: 2px; }
+.agent-editor__toggle strong { color: var(--primary); font-size: 10.5px; font-weight: 630; }
 @media (max-width: 900px) { .agent-management__toolbar { align-items: flex-start; flex-direction: column; } .agent-management__actions { width: 100%; flex-wrap: wrap; } }
+@media (max-width: 640px) { .agent-editor-backdrop { align-items: end; padding: 0; } .agent-editor { max-height: 92vh; border-radius: 18px 18px 0 0; } }

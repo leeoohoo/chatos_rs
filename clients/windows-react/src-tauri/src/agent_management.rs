@@ -22,6 +22,8 @@ const SKILL_CATALOG: &str =
 const MODEL_REASONING_CAPABILITIES: &str = include_str!(
     "../../../macos/Sources/ChatOSModelCapabilities/Resources/ModelReasoningCapabilities.json"
 );
+const DEFAULT_AGENT_ROLE_PROMPT: &str =
+    include_str!("../../../macos/Sources/ChatOSCore/Resources/AgentPrompt.Agent.DefaultRole.md");
 
 const SCHEMA: &str = r#"
 PRAGMA journal_mode = WAL;
@@ -89,6 +91,15 @@ pub(crate) struct AgentProfileSummary {
 pub(crate) struct AgentProfileEditorCatalog {
     models: Vec<AgentModelOption>,
     professions: Vec<AgentProfessionOption>,
+    default_role_prompt: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentProfileEditorData {
+    profile: AgentProfileSummary,
+    role_prompt: String,
+    heartbeat_prompt: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -333,6 +344,33 @@ impl AgentProfileStore {
         ).map_err(|_| store_error())
     }
 
+    fn load_editor(
+        &self,
+        owner_user_id: &str,
+        agent_id: &str,
+    ) -> Result<AgentProfileEditorData, String> {
+        validate_identifier(agent_id).map_err(|_| invalid_input())?;
+        reject_link_or_non_file(&self.database)?;
+        let connection = open_database(&self.database, true)?;
+        connection
+            .query_row(
+                &format!("SELECT {PROFILE_COLUMNS} FROM local_agent_profiles WHERE owner_user_id = ?1 AND id = ?2 AND status = 'active'"),
+                params![owner_user_id, agent_id],
+                |row| {
+                    let role_prompt: String = row.get(3)?;
+                    let heartbeat_prompt: String = row.get(11)?;
+                    validate_text(&role_prompt, 32_000, false)?;
+                    validate_text(&heartbeat_prompt, 8_000, true)?;
+                    Ok(AgentProfileEditorData {
+                        profile: map_profile(row)?,
+                        role_prompt,
+                        heartbeat_prompt,
+                    })
+                },
+            )
+            .map_err(|_| store_error())
+    }
+
     #[cfg(test)]
     fn database(&self) -> &Path {
         &self.database
@@ -402,7 +440,30 @@ pub(crate) async fn load_agent_profile_editor_catalog(
     Ok(AgentProfileEditorCatalog {
         models,
         professions: payload.professions,
+        default_role_prompt: DEFAULT_AGENT_ROLE_PROMPT.trim().to_owned(),
     })
+}
+
+#[tauri::command]
+pub(crate) async fn load_agent_profile_editor(
+    owner_user_id: String,
+    agent_id: String,
+    authentication: State<'_, AuthenticationManager>,
+    store: State<'_, AgentProfileStore>,
+) -> Result<AgentProfileEditorData, String> {
+    validate_owner(&owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&owner_user_id)
+        .await?;
+    let store = store.inner().clone();
+    let owner = owner_user_id.clone();
+    let editor = tauri::async_runtime::spawn_blocking(move || store.load_editor(&owner, &agent_id))
+        .await
+        .map_err(|_| "Agent 编辑资料读取任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
+    Ok(editor)
 }
 
 #[tauri::command]
@@ -844,6 +905,20 @@ mod tests {
         assert!(value.get("defaultSkillIds").is_none());
         assert!(value.get("avatarData").is_none());
         assert_eq!(value["hasAvatar"], true);
+    }
+
+    #[test]
+    fn editor_projection_returns_private_prompts_only_for_the_requested_owner_profile() {
+        let (_directory, store) = store();
+        let connection = Connection::open(store.database()).unwrap();
+        insert(&connection, "alice", "agent", "Agent", "active");
+        insert(&connection, "bob", "agent", "Foreign", "active");
+
+        let editor = store.load_editor("alice", "agent").unwrap();
+        assert_eq!(editor.profile.name, "Agent");
+        assert_eq!(editor.role_prompt, "内部角色提示");
+        assert_eq!(editor.heartbeat_prompt, "检查未读消息");
+        assert!(store.load_editor("alice", "missing").is_err());
     }
 
     #[test]

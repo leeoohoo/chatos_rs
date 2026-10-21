@@ -90,6 +90,55 @@ export const agentProfileListSchema = z.array(agentProfileSummarySchema).max(10_
 
 export type AgentProfileSummary = z.infer<typeof agentProfileSummarySchema>;
 
+export const agentModelOptionSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  displayName: z.string().trim().min(1).max(500),
+  modelName: z.string().trim().min(1).max(500),
+  provider: z.string().trim().min(1).max(200),
+  defaultThinkingLevel: agentThinkingLevelSchema.nullable(),
+  supportsReasoning: z.boolean(),
+  thinkingLevels: z.array(agentThinkingLevelSchema).max(8),
+}).strict();
+
+export const agentProfessionOptionSchema = z.object({
+  key: agentProfessionKeySchema,
+  label: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(2_000),
+  categoryKey: z.string().trim().min(1).max(200),
+  categoryLabel: z.string().trim().min(1).max(200),
+}).strict();
+
+export const agentProfileEditorCatalogSchema = z.object({
+  models: z.array(agentModelOptionSchema).max(1_000),
+  professions: z.array(agentProfessionOptionSchema).length(33),
+  defaultRolePrompt: z.string().trim().min(1).max(32_000),
+}).strict();
+
+export const agentProfileEditorDataSchema = z.object({
+  profile: agentProfileSummarySchema,
+  rolePrompt: z.string().trim().min(1).max(32_000),
+  heartbeatPrompt: z.string().trim().max(8_000),
+}).strict();
+
+export interface AgentProfileMutationInput {
+  agentId: string | null;
+  expectedUpdatedAtUnixMs: number | null;
+  name: string;
+  description: string;
+  rolePrompt: string;
+  modelConfigId: string;
+  thinkingLevel: z.infer<typeof agentThinkingLevelSchema> | null;
+  professionKey: z.infer<typeof agentProfessionKeySchema>;
+  canManageStaff: boolean;
+  canAccessLocalProjects: boolean;
+  heartbeatEnabled: boolean;
+  heartbeatIntervalSeconds: number;
+  heartbeatPrompt: string;
+}
+
+export type AgentProfileEditorCatalog = z.infer<typeof agentProfileEditorCatalogSchema>;
+export type AgentProfileEditorData = z.infer<typeof agentProfileEditorDataSchema>;
+
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",
   product_manager: "产品经理",
