@@ -5998,6 +5998,34 @@ mod tests {
             .unwrap();
         assert!(manager_binding.todo_id.is_none());
         assert_eq!(manager_assets[0].revision, 2);
+        let (planning_binding, planning_snapshot) = store
+            .todo_planning_tool_snapshot("alice", "run-manager", true)
+            .unwrap();
+        assert_eq!(planning_binding, manager_binding);
+        assert_eq!(planning_snapshot["team"]["name"], "Alpha 团队");
+        assert_eq!(planning_snapshot["todos"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            planning_snapshot["builtin_capabilities"],
+            serde_json::json!(["project_read", "project_write", "terminal"])
+        );
+        let todo_reference = planning_snapshot["todos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|todo| todo["title"] == "实现任务执行")
+            .unwrap()["todo_ref"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(!planning_snapshot.to_string().contains(&first.id));
+        let (_, progress) = store
+            .todo_planning_progress("alice", "run-manager", &todo_reference, 100)
+            .unwrap();
+        assert_eq!(progress["title"], "实现任务执行");
+        assert_eq!(progress["progress"], serde_json::json!([]));
+        assert!(store
+            .todo_planning_progress("alice", "run-manager", "todo_ref_stale", 100)
+            .is_err());
 
         let connection = Connection::open(store.database()).unwrap();
         let running_lanes: i64 = connection

@@ -45,6 +45,12 @@ const TODO_EXECUTION_TOOL_NAMES: [&str; 4] = [
     "todo_complete",
     "todo_block",
 ];
+const TODO_PLANNING_READ_TOOL_NAMES: [&str; 4] = [
+    "todo_execution_options",
+    "todo_dependency_options",
+    "todo_list",
+    "todo_read_progress",
+];
 const WORKER_ID: &str = "windows-attachment-tool-worker";
 const LEASE_DURATION_MILLISECONDS: u64 = 30_000;
 const MAXIMUM_CONTENT_READ_BYTES: usize = 2 * 1_024;
@@ -127,6 +133,7 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 std::iter::once(ATTACHMENT_READ_TOOL_NAME)
                     .chain(TEAM_ASSET_TOOL_NAMES)
                     .chain(TODO_EXECUTION_TOOL_NAMES)
+                    .chain(TODO_PLANNING_READ_TOOL_NAMES)
                     .map(str::to_owned)
                     .collect(),
             ),
@@ -145,6 +152,8 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
                 execute_attachment_read(app, owner_user_id, &claim).await
             } else if TODO_EXECUTION_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
                 execute_todo_execution_tool(app, owner_user_id, &claim).await
+            } else if TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+                execute_todo_planning_read_tool(app, owner_user_id, &claim).await
             } else {
                 execute_team_asset_tool(app, owner_user_id, &claim).await
             };
@@ -170,6 +179,126 @@ async fn claim_and_execute(app: &AppHandle, owner_user_id: &str) -> Result<bool,
         Ok(true)
     } else {
         Err("Local Agent Host returned an unexpected tool commit result".into())
+    }
+}
+
+async fn execute_todo_planning_read_tool(
+    app: &AppHandle,
+    owner_user_id: &str,
+    claim: &LocalAgentToolClaim,
+) -> Result<LocalAgentToolOutcome, String> {
+    if !TODO_PLANNING_READ_TOOL_NAMES.contains(&claim.invocation.tool_name.as_str()) {
+        return Err("The requested Todo planning tool is unavailable.".into());
+    }
+    let arguments = claim
+        .invocation
+        .arguments
+        .as_object()
+        .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())?;
+    let result = app
+        .state::<HostManager>()
+        .execute(HostCommand::GetRun(GetRunCommand {
+            owner_user_id: owner_user_id.to_owned(),
+            run_id: claim.invocation.run_id.clone(),
+        }))
+        .await?;
+    let HostResult::Run { run } = result else {
+        return Err("The Todo planning Run context is invalid.".into());
+    };
+    if run.owner_user_id != owner_user_id || run.run_id != claim.invocation.run_id {
+        return Err("The Todo planning Run context is invalid.".into());
+    }
+    let store = app.state::<AgentConversationStore>().inner().clone();
+    let owner = owner_user_id.to_owned();
+    let run_id = run.run_id.clone();
+    let validation_store = store.clone();
+    let validation_owner = owner.clone();
+    let validation_run = run_id.clone();
+    let (expected_binding, _) = tauri::async_runtime::spawn_blocking(move || {
+        validation_store.load_agent_asset_tool_records(&validation_owner, &validation_run)
+    })
+    .await
+    .map_err(|_| "The Todo planning binding task exited unexpectedly.".to_owned())??;
+    validate_asset_run_context(&run.profile_key, &run.input, &expected_binding)?;
+    if expected_binding.todo_id.is_some() {
+        return Err("Todo planning tools are unavailable in an executor Run.".into());
+    }
+    let output = if claim.invocation.tool_name == "todo_read_progress" {
+        let todo_reference = required_bounded_string(arguments, "todo_ref", 600)?;
+        let limit = arguments
+            .get("limit")
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|value| (1..=500).contains(value))
+                    .map(|value| value as usize)
+                    .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())
+            })
+            .transpose()?
+            .unwrap_or(100);
+        let (binding, output) = tauri::async_runtime::spawn_blocking(move || {
+            store.todo_planning_progress(&owner, &run_id, &todo_reference, limit)
+        })
+        .await
+        .map_err(|_| "The Todo progress lookup task exited unexpectedly.".to_owned())??;
+        if binding != expected_binding {
+            return Err("The Todo planning binding changed during the operation.".into());
+        }
+        output
+    } else {
+        let include_terminal = arguments
+            .get("include_terminal")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| "The Todo planning arguments are invalid.".to_owned())
+            })
+            .transpose()?
+            .unwrap_or(claim.invocation.tool_name != "todo_list");
+        let (binding, snapshot) = tauri::async_runtime::spawn_blocking(move || {
+            store.todo_planning_tool_snapshot(&owner, &run_id, include_terminal)
+        })
+        .await
+        .map_err(|_| "The Todo planning lookup task exited unexpectedly.".to_owned())??;
+        if binding != expected_binding {
+            return Err("The Todo planning binding changed during the operation.".into());
+        }
+        match claim.invocation.tool_name.as_str() {
+            "todo_execution_options" => {
+                require_todo_planning_manager(&binding)?;
+                json!({
+                    "teams": [snapshot["team"].clone()],
+                    "builtin_capabilities": snapshot["builtin_capabilities"].clone(),
+                    "plugins": snapshot["plugins"].clone(),
+                })
+            }
+            "todo_dependency_options" => {
+                require_todo_planning_manager(&binding)?;
+                let team_reference = required_bounded_string(arguments, "team_ref", 600)?;
+                if snapshot["team"]["team_ref"].as_str() != Some(team_reference.as_str()) {
+                    return Err("The team reference is unavailable for this Run.".into());
+                }
+                let todos = snapshot["todos"]
+                    .as_array()
+                    .ok_or_else(|| "The Todo planning snapshot is invalid.".to_owned())?
+                    .iter()
+                    .filter(|todo| todo["status"].as_str() != Some("cancelled"))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                json!({"todos": todos})
+            }
+            "todo_list" => json!({"todos": snapshot["todos"].clone()}),
+            _ => return Err("The requested Todo planning tool is unavailable.".into()),
+        }
+    };
+    Ok(LocalAgentToolOutcome::Succeeded { output })
+}
+
+fn require_todo_planning_manager(binding: &AgentAssetToolBinding) -> Result<(), String> {
+    if binding.todo_id.is_none() && binding.is_project_manager {
+        Ok(())
+    } else {
+        Err("Only the active project manager Agent may plan team Todos.".into())
     }
 }
 
@@ -942,6 +1071,62 @@ pub fn team_asset_tool_schemas() -> Vec<Value> {
     ]
 }
 
+pub fn todo_planning_read_tool_schemas() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "function",
+            "name": "todo_execution_options",
+            "description": "仅供项目经理读取当前管理团队、可分配成员、基础能力和本机 Plugin 临时选项。真实团队、项目、Agent 和 Plugin ID 不会返回。",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_dependency_options",
+            "description": "仅供项目经理读取当前团队可作为前置任务的 Todo 临时引用。只能建立同团队依赖。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "team_ref": {"type": "string", "minLength": 1, "maxLength": 600}
+                },
+                "required": ["team_ref"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_list",
+            "description": "读取当前 Agent 所属项目团队的共享任务板，并标明负责人、依赖、执行能力和是否分配给自己。默认不返回已完成或已取消任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "include_terminal": {"type": "boolean", "default": false}
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "type": "function",
+            "name": "todo_read_progress",
+            "description": "通讯线程读取一个 Todo 执行线程持续写入的阶段、动作、结果或阻塞记录。使用 todo_list 返回的临时 todo_ref。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todo_ref": {"type": "string", "minLength": 1, "maxLength": 600},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 100}
+                },
+                "required": ["todo_ref"],
+                "additionalProperties": false
+            }
+        }),
+    ]
+}
+
 pub fn todo_execution_tool_schemas() -> Vec<Value> {
     vec![
         json!({
@@ -1040,6 +1225,30 @@ mod tests {
                 "todo_progress_append".to_owned(),
             ])
         );
+    }
+
+    #[test]
+    fn todo_planning_read_catalog_uses_only_run_scoped_references() {
+        let schemas = todo_planning_read_tool_schemas();
+        let names = schemas
+            .iter()
+            .map(|schema| schema["name"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from([
+                "todo_dependency_options",
+                "todo_execution_options",
+                "todo_list",
+                "todo_read_progress",
+            ])
+        );
+        assert!(schemas.iter().all(|schema| {
+            let encoded = schema.to_string();
+            !encoded.contains("todo_id")
+                && !encoded.contains("team_id")
+                && !encoded.contains("agent_id")
+        }));
     }
 
     #[test]
