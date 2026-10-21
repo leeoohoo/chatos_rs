@@ -62,8 +62,37 @@ describe("AgentManagementView", () => {
       rolePrompt: "默认角色 Prompt", modelConfigId: "model-1", professionKey: "business_analyst",
       canAccessLocalProjects: true, heartbeatEnabled: false, heartbeatIntervalSeconds: 900,
       heartbeatPrompt: "",
+      avatar: { kind: "preserve" },
     })));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "创建 Agent" })).not.toBeInTheDocument());
+  });
+
+  it("stages a native avatar reference without exposing bytes or paths", async () => {
+    const port = stubPort({
+      pickAvatar: vi.fn(async () => ({
+        id: `reference_${"a".repeat(32)}`,
+        name: "avatar.png",
+        mimeType: "image/png" as const,
+        byteSize: 1_024,
+        previewUrl: "chatos-media://localhost/session/reference/presentation/token",
+      })),
+    });
+    renderView(port);
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    await screen.findByRole("dialog", { name: "编辑 Agent" });
+    fireEvent.click(screen.getByRole("button", { name: "从本机选择" }));
+    expect(await screen.findByRole("img", { name: "Agent 头像预览" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(port.saveProfile).toHaveBeenCalledWith("owner-1", expect.objectContaining({
+      avatar: expect.objectContaining({
+        kind: "staged",
+        referenceId: `reference_${"a".repeat(32)}`,
+      }),
+    })));
+    const payload = vi.mocked(port.saveProfile).mock.calls[0]?.[1];
+    expect(JSON.stringify(payload)).not.toContain("avatar.png");
+    expect(JSON.stringify(payload)).not.toContain("chatos-media");
   });
 
   it("keeps the editor open when conflict protection rejects save", async () => {
@@ -113,6 +142,9 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
       canManageStaff: input.canManageStaff, canAccessLocalProjects: input.canAccessLocalProjects,
       updatedAtUnixMs: 30,
     })),
+    pickAvatar: vi.fn(async () => null),
+    discardAvatarReferences: vi.fn(async () => undefined),
+    discardAvatarPresentation: vi.fn(async () => undefined),
     ...overrides,
   };
 }

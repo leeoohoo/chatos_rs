@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentProfileListSchema, heartbeatIntervalLabel } from "./agentManagement";
+import { agentAvatarDraftSchema, agentProfileListSchema, heartbeatIntervalLabel } from "./agentManagement";
 
 describe("agent management domain", () => {
   it("accepts the exact safe native projection", () => {
@@ -19,6 +19,19 @@ describe("agent management domain", () => {
 
   it("rejects duplicate profile identities", () => {
     expect(() => agentProfileListSchema.parse([fixture(), fixture()])).toThrow();
+  });
+
+  it("only accepts opaque native avatar previews", () => {
+    const draft = {
+      id: `reference_${"a".repeat(32)}`,
+      name: "avatar.png",
+      mimeType: "image/png" as const,
+      byteSize: 1_024,
+      previewUrl: "chatos-media://localhost/session/reference/presentation/token",
+    };
+    expect(agentAvatarDraftSchema.parse(draft)).toEqual(draft);
+    expect(() => agentAvatarDraftSchema.parse({ ...draft, previewUrl: "file:///Users/me/avatar.png" })).toThrow();
+    expect(() => agentAvatarDraftSchema.parse({ ...draft, previewUrl: "data:image/png;base64,AAAA" })).toThrow();
   });
 });
 

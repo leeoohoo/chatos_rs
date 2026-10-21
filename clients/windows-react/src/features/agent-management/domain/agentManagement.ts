@@ -120,6 +120,32 @@ export const agentProfileEditorDataSchema = z.object({
   heartbeatPrompt: z.string().trim().max(8_000),
 }).strict();
 
+export const agentAvatarDraftSchema = z.object({
+  id: z.string().regex(/^reference_[0-9a-f]{32}$/u),
+  name: z.string().trim().min(1).max(1_024),
+  mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+  byteSize: z.number().int().positive().max(20 * 1_024 * 1_024),
+  previewUrl: z.string().max(2_048).refine((value) => {
+    try {
+      const url = new URL(value);
+      const native = url.protocol === "chatos-media:" && url.hostname === "localhost";
+      const windows = url.protocol === "http:" && url.hostname === "chatos-media.localhost" && url.port === "";
+      return (native || windows)
+        && url.username === ""
+        && url.password === ""
+        && url.search === ""
+        && url.hash === "";
+    } catch {
+      return false;
+    }
+  }).nullable(),
+}).strict();
+
+export type AgentAvatarAction =
+  | { kind: "preserve" }
+  | { kind: "remove" }
+  | { kind: "staged"; presentationId: string; referenceId: string };
+
 export interface AgentProfileMutationInput {
   agentId: string | null;
   expectedUpdatedAtUnixMs: number | null;
@@ -134,10 +160,12 @@ export interface AgentProfileMutationInput {
   heartbeatEnabled: boolean;
   heartbeatIntervalSeconds: number;
   heartbeatPrompt: string;
+  avatar: AgentAvatarAction;
 }
 
 export type AgentProfileEditorCatalog = z.infer<typeof agentProfileEditorCatalogSchema>;
 export type AgentProfileEditorData = z.infer<typeof agentProfileEditorDataSchema>;
+export type AgentAvatarDraft = z.infer<typeof agentAvatarDraftSchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

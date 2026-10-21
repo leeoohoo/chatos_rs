@@ -4,6 +4,7 @@ import {
   agentProfileEditorDataSchema,
   agentProfileListSchema,
   agentProfileSummarySchema,
+  agentAvatarDraftSchema,
   type AgentProfileMutationInput,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -31,5 +32,21 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
     return agentProfileSummarySchema.parse(
       await invoke("save_agent_profile", { ownerUserId, input }),
     );
+  }
+
+  async pickAvatar(ownerUserId: string, presentationId: string) {
+    return agentAvatarDraftSchema.nullable().parse(
+      await invoke("pick_agent_avatar", { input: { ownerUserId, presentationId } }),
+    );
+  }
+
+  async discardAvatarReferences(ownerUserId: string, presentationId: string, referenceIds: string[]) {
+    await invoke("discard_media_studio_reference_images", {
+      input: { ownerUserId, presentationId, referenceIds },
+    });
+  }
+
+  async discardAvatarPresentation(ownerUserId: string, presentationId: string) {
+    await invoke("discard_media_studio_presentation", { input: { ownerUserId, presentationId } });
   }
 }

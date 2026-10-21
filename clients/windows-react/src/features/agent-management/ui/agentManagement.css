@@ -59,7 +59,11 @@
 .agent-editor__body input:focus, .agent-editor__body textarea:focus, .agent-editor__body select:focus { border-color: rgba(10,132,255,.58); box-shadow: 0 0 0 3px rgba(10,132,255,.12); }
 .agent-editor__body label small { color: var(--tertiary); font-size: 9.5px; font-weight: 450; line-height: 1.45; }
 .agent-editor__error { border-radius: 9px; padding: 9px 10px; color: #9b5100; background: rgba(255,159,10,.12); font-size: 10px; line-height: 1.45; }
-.agent-editor__avatar-note { margin: 0; border-radius: 9px; padding: 8px 10px; color: var(--secondary); background: rgba(120,120,128,.08); font-size: 9.5px; line-height: 1.45; }
+.agent-avatar-editor { display: flex; align-items: center; gap: 13px; border-radius: 11px; padding: 10px; background: rgba(120,120,128,.07); }
+.agent-avatar-editor > img, .agent-avatar-editor > span { display: grid; width: 60px; height: 60px; flex: none; place-items: center; border-radius: 30px; color: white; object-fit: cover; background: linear-gradient(145deg,#71b8ff,#0a84ff); box-shadow: 0 5px 14px rgba(10,132,255,.18); font-size: 21px; font-weight: 700; }
+.agent-avatar-editor > div { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 7px; }
+.agent-avatar-editor > div button + button { color: var(--secondary); background: transparent; }
+.agent-avatar-editor small { width: 100%; color: var(--tertiary); font-size: 9.5px; line-height: 1.4; }
 .agent-editor__toggle { display: grid !important; grid-template-columns: auto 1fr; align-items: start; gap: 9px !important; border-radius: 10px; padding: 9px 10px; background: rgba(120,120,128,.07); cursor: pointer; }
 .agent-editor__toggle input { margin: 2px 0 0; accent-color: var(--accent); }
 .agent-editor__toggle span { display: grid; gap: 2px; }

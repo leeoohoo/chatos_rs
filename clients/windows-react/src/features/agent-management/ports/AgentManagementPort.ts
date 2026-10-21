@@ -3,6 +3,7 @@ import type {
   AgentProfileEditorData,
   AgentProfileMutationInput,
   AgentProfileSummary,
+  AgentAvatarDraft,
 } from "../domain/agentManagement";
 
 export interface AgentManagementPort {
@@ -10,4 +11,7 @@ export interface AgentManagementPort {
   loadEditorCatalog(ownerUserId: string): Promise<AgentProfileEditorCatalog>;
   loadProfileEditor(ownerUserId: string, agentId: string): Promise<AgentProfileEditorData>;
   saveProfile(ownerUserId: string, input: AgentProfileMutationInput): Promise<AgentProfileSummary>;
+  pickAvatar(ownerUserId: string, presentationId: string): Promise<AgentAvatarDraft | null>;
+  discardAvatarReferences(ownerUserId: string, presentationId: string, referenceIds: string[]): Promise<void>;
+  discardAvatarPresentation(ownerUserId: string, presentationId: string): Promise<void>;
 }

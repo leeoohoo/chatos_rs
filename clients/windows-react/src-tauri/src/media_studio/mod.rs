@@ -26,7 +26,9 @@ use provider::{
     make_provider_request, parse_provider_response, provider_error_detail, resolve_image_model,
     ImageGenerationRequest,
 };
-use reference::{MediaImageReferenceImportResult, MediaImageReferenceVault};
+use reference::{
+    MediaImageReferenceDraft, MediaImageReferenceImportResult, MediaImageReferenceVault,
+};
 use video_history::{
     MediaStudioVideoHistoryStore, VideoHistoryCursor, VideoHistoryItem, VideoHistoryPage,
 };
@@ -215,6 +217,40 @@ impl MediaStudioManager {
             )
             .map(|(_, bytes)| bytes)
             .map_err(|_| "所选生成图片不存在或不属于当前账号。".to_owned())
+    }
+
+    /// Resolves one presentation-scoped image without exposing its temporary file or bytes to
+    /// React. Agent Management normalizes the returned bytes before storing an avatar.
+    pub(crate) fn read_agent_avatar_reference(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+        reference_id: &str,
+    ) -> Result<Vec<u8>, String> {
+        let mut values = self.references.resolve(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+            &[reference_id.to_owned()],
+        )?;
+        values
+            .pop()
+            .map(|value| value.bytes)
+            .ok_or_else(|| "所选头像已经失效，请重新选择。".to_owned())
+    }
+
+    pub(crate) fn discard_agent_avatar_presentation(
+        &self,
+        owner_user_id: &str,
+        authentication_generation: u64,
+        presentation_id: &str,
+    ) -> Result<(), String> {
+        self.references.close_presentation(
+            owner_user_id,
+            authentication_generation,
+            presentation_id,
+        )
     }
 
     /// Narrow provider port used by Story Studio. Model credentials, wire payloads, provider
@@ -909,6 +945,77 @@ pub(crate) async fn pick_media_studio_reference_images(
         &mut result,
     );
     Ok(result)
+}
+
+#[tauri::command]
+pub(crate) async fn pick_agent_avatar(
+    authentication: State<'_, AuthenticationManager>,
+    manager: State<'_, MediaStudioManager>,
+    input: MediaStudioReferenceSelectionInput,
+) -> Result<Option<MediaImageReferenceDraft>, String> {
+    validate_owner(&input.owner_user_id)?;
+    let generation = authentication
+        .session_generation_for_owner(&input.owner_user_id)
+        .await?;
+    let preview_session_token = manager.activate_session(&input.owner_user_id, generation)?;
+    let (epoch, presentation_id) =
+        manager
+            .references
+            .begin_scope(&input.owner_user_id, generation, &input.presentation_id)?;
+    let Some(handle) = rfd::AsyncFileDialog::new()
+        .set_title("选择 Agent 头像")
+        .add_filter("图片", &["png", "jpg", "jpeg", "webp"])
+        .pick_file()
+        .await
+    else {
+        return Ok(None);
+    };
+    authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await?;
+    let references = manager.references.clone();
+    let owner_user_id = input.owner_user_id.clone();
+    let staged_presentation_id = presentation_id.clone();
+    let path = handle.path().to_path_buf();
+    let mut result = tauri::async_runtime::spawn_blocking(move || {
+        references.stage_paths(
+            &owner_user_id,
+            generation,
+            &staged_presentation_id,
+            epoch,
+            vec![path],
+        )
+    })
+    .await
+    .map_err(|_| "头像读取任务异常退出。".to_owned())?;
+    if let Err(error) = authentication
+        .require_session_generation(&input.owner_user_id, generation)
+        .await
+    {
+        let _ = manager.references.close_presentation(
+            &input.owner_user_id,
+            generation,
+            &presentation_id,
+        );
+        return Err(error);
+    }
+    if let Some(error) = result.errors.first() {
+        return Err(error.clone());
+    }
+    present_reference_previews(
+        &manager,
+        &input.owner_user_id,
+        generation,
+        &presentation_id,
+        &preview_session_token,
+        &mut result,
+    );
+    result
+        .references
+        .into_iter()
+        .next()
+        .map(Some)
+        .ok_or_else(|| "这张图片已经选中。".to_owned())
 }
 
 #[tauri::command]

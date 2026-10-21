@@ -2,6 +2,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBeha
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
 };
 use tauri::State;
@@ -9,6 +10,7 @@ use tauri::State;
 use crate::{
     authentication::{AuthenticationManager, GatewayModelConfig},
     host_lifecycle::validate_owner,
+    media_studio::MediaStudioManager,
 };
 
 const DATABASE_FILENAME: &str = "AgentGroupChat.sqlite3";
@@ -143,6 +145,23 @@ struct SkillCatalogPayload {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum AgentAvatarMutationInput {
+    Preserve,
+    Remove,
+    Staged {
+        presentation_id: String,
+        reference_id: String,
+    },
+}
+
+enum ResolvedAgentAvatar {
+    Preserve,
+    Remove,
+    Replace(Vec<u8>),
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct AgentProfileMutationInput {
     agent_id: Option<String>,
@@ -158,6 +177,7 @@ pub(crate) struct AgentProfileMutationInput {
     heartbeat_enabled: bool,
     heartbeat_interval_seconds: i64,
     heartbeat_prompt: String,
+    avatar: AgentAvatarMutationInput,
 }
 
 impl AgentProfileStore {
@@ -203,6 +223,7 @@ impl AgentProfileStore {
         &self,
         owner_user_id: &str,
         input: AgentProfileMutationInput,
+        avatar: ResolvedAgentAvatar,
     ) -> Result<AgentProfileSummary, String> {
         validate_mutation_input(&input)?;
         reject_link_or_non_file(&self.database)?;
@@ -243,6 +264,7 @@ impl AgentProfileStore {
                 previous_next,
                 now,
             );
+            let (avatar_changed, avatar_data) = resolved_avatar_parameters(avatar);
             let changed = transaction
                 .execute(
                     r#"
@@ -251,9 +273,11 @@ impl AgentProfileStore {
                     thinking_level = ?5, profession_key = ?6, default_plugin_ids_json = '[]',
                     default_skill_ids_json = ?7, heartbeat_enabled = ?8,
                     heartbeat_interval_seconds = ?9, heartbeat_prompt = ?10,
-                    next_heartbeat_at_unix_ms = ?11, updated_at_unix_ms = ?12
-                WHERE owner_user_id = ?13 AND id = ?14 AND status = 'active'
-                  AND updated_at_unix_ms = ?15
+                    next_heartbeat_at_unix_ms = ?11,
+                    avatar_data = CASE WHEN ?12 = 0 THEN avatar_data ELSE ?13 END,
+                    updated_at_unix_ms = ?14
+                WHERE owner_user_id = ?15 AND id = ?16 AND status = 'active'
+                  AND updated_at_unix_ms = ?17
                 "#,
                     params![
                         input.name.trim(),
@@ -267,6 +291,8 @@ impl AgentProfileStore {
                         input.heartbeat_interval_seconds,
                         input.heartbeat_prompt.trim(),
                         next_heartbeat,
+                        avatar_changed,
+                        avatar_data,
                         now,
                         owner_user_id,
                         agent_id,
@@ -296,6 +322,7 @@ impl AgentProfileStore {
                 None,
                 now,
             );
+            let (_, avatar_data) = resolved_avatar_parameters(avatar);
             transaction
                 .execute(
                     r#"
@@ -306,7 +333,7 @@ impl AgentProfileStore {
                     last_heartbeat_at_unix_ms, next_heartbeat_at_unix_ms, avatar_data,
                     status, created_at_unix_ms, updated_at_unix_ms
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '[]', ?9, ?10, ?11, ?12,
-                          NULL, ?13, NULL, 'active', ?14, ?14)
+                          NULL, ?13, ?14, 'active', ?15, ?15)
                 "#,
                     params![
                         owner_user_id,
@@ -322,6 +349,7 @@ impl AgentProfileStore {
                         input.heartbeat_interval_seconds,
                         input.heartbeat_prompt.trim(),
                         next_heartbeat,
+                        avatar_data,
                         now,
                     ],
                 )
@@ -472,6 +500,7 @@ pub(crate) async fn save_agent_profile(
     input: AgentProfileMutationInput,
     authentication: State<'_, AuthenticationManager>,
     store: State<'_, AgentProfileStore>,
+    media_studio: State<'_, MediaStudioManager>,
 ) -> Result<AgentProfileSummary, String> {
     validate_owner(&owner_user_id)?;
     let generation = authentication
@@ -498,14 +527,38 @@ pub(crate) async fn save_agent_profile(
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
+    let avatar_cleanup = match &input.avatar {
+        AgentAvatarMutationInput::Staged {
+            presentation_id, ..
+        } => Some(presentation_id.clone()),
+        _ => None,
+    };
+    let media = media_studio.inner().clone();
+    let avatar_owner = owner_user_id.clone();
+    let avatar_input = input.avatar.clone();
+    let avatar = tauri::async_runtime::spawn_blocking(move || {
+        resolve_avatar_mutation(&media, &avatar_owner, generation, &avatar_input)
+    })
+    .await
+    .map_err(|_| "头像处理任务异常退出。".to_owned())??;
+    authentication
+        .require_session_generation(&owner_user_id, generation)
+        .await?;
     let store = store.inner().clone();
     let owner = owner_user_id.clone();
-    let saved = tauri::async_runtime::spawn_blocking(move || store.save(&owner, input))
+    let saved = tauri::async_runtime::spawn_blocking(move || store.save(&owner, input, avatar))
         .await
         .map_err(|_| "Agent 保存任务异常退出。".to_owned())??;
     authentication
         .require_session_generation(&owner_user_id, generation)
         .await?;
+    if let Some(presentation_id) = avatar_cleanup {
+        let _ = media_studio.discard_agent_avatar_presentation(
+            &owner_user_id,
+            generation,
+            &presentation_id,
+        );
+    }
     Ok(saved)
 }
 
@@ -584,6 +637,74 @@ fn map_profile(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentProfileSummary>
         created_at_unix_ms,
         updated_at_unix_ms,
     })
+}
+
+fn resolve_avatar_mutation(
+    media_studio: &MediaStudioManager,
+    owner_user_id: &str,
+    authentication_generation: u64,
+    input: &AgentAvatarMutationInput,
+) -> Result<ResolvedAgentAvatar, String> {
+    match input {
+        AgentAvatarMutationInput::Preserve => Ok(ResolvedAgentAvatar::Preserve),
+        AgentAvatarMutationInput::Remove => Ok(ResolvedAgentAvatar::Remove),
+        AgentAvatarMutationInput::Staged {
+            presentation_id,
+            reference_id,
+        } => {
+            let bytes = media_studio.read_agent_avatar_reference(
+                owner_user_id,
+                authentication_generation,
+                presentation_id,
+                reference_id,
+            )?;
+            normalize_avatar(bytes).map(ResolvedAgentAvatar::Replace)
+        }
+    }
+}
+
+fn normalize_avatar(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    let format = image::guess_format(&bytes).map_err(|_| invalid_avatar())?;
+    if !matches!(
+        format,
+        image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+    ) {
+        return Err(invalid_avatar());
+    }
+    let decoded =
+        image::load_from_memory_with_format(&bytes, format).map_err(|_| invalid_avatar())?;
+    let side = decoded.width().min(decoded.height());
+    if side == 0 {
+        return Err(invalid_avatar());
+    }
+    let cropped = decoded.crop_imm(
+        (decoded.width() - side) / 2,
+        (decoded.height() - side) / 2,
+        side,
+        side,
+    );
+    let normalized = cropped.resize_exact(256, 256, image::imageops::FilterType::Lanczos3);
+    let mut output = Cursor::new(Vec::new());
+    normalized
+        .write_to(&mut output, image::ImageFormat::Png)
+        .map_err(|_| invalid_avatar())?;
+    let output = output.into_inner();
+    if output.is_empty() || output.len() > MAXIMUM_AVATAR_BYTES as usize {
+        return Err(invalid_avatar());
+    }
+    Ok(output)
+}
+
+fn resolved_avatar_parameters(avatar: ResolvedAgentAvatar) -> (i64, Option<Vec<u8>>) {
+    match avatar {
+        ResolvedAgentAvatar::Preserve => (0, None),
+        ResolvedAgentAvatar::Remove => (1, None),
+        ResolvedAgentAvatar::Replace(bytes) => (1, Some(bytes)),
+    }
+}
+
+fn invalid_avatar() -> String {
+    "头像不是有效图片或处理后超过 512 KB。".into()
 }
 
 fn parse_identifiers(json: String) -> rusqlite::Result<Vec<String>> {
@@ -937,7 +1058,9 @@ mod tests {
     #[test]
     fn creates_and_updates_profiles_with_macos_permission_and_heartbeat_rules() {
         let (_directory, store) = store();
-        let created = store.save("alice", mutation()).unwrap();
+        let created = store
+            .save("alice", mutation(), ResolvedAgentAvatar::Preserve)
+            .unwrap();
         assert!(created.can_manage_staff);
         assert!(created.can_access_local_projects);
         assert!(created.next_heartbeat_at_unix_ms.is_some());
@@ -953,7 +1076,9 @@ mod tests {
         update.can_manage_staff = false;
         update.can_access_local_projects = true;
         update.heartbeat_interval_seconds = 300;
-        let saved = store.save("alice", update).unwrap();
+        let saved = store
+            .save("alice", update, ResolvedAgentAvatar::Preserve)
+            .unwrap();
         assert!(!saved.can_manage_staff);
         assert!(saved.can_access_local_projects);
 
@@ -972,12 +1097,16 @@ mod tests {
     #[test]
     fn rejects_stale_profile_updates() {
         let (_directory, store) = store();
-        let created = store.save("alice", mutation()).unwrap();
+        let created = store
+            .save("alice", mutation(), ResolvedAgentAvatar::Preserve)
+            .unwrap();
         let mut update = mutation();
         update.agent_id = Some(created.id);
         update.expected_updated_at_unix_ms = Some(created.updated_at_unix_ms.saturating_sub(1));
         assert_eq!(
-            store.save("alice", update).unwrap_err(),
+            store
+                .save("alice", update, ResolvedAgentAvatar::Preserve)
+                .unwrap_err(),
             "Agent 状态已经变化，请刷新后重试。"
         );
     }
@@ -988,6 +1117,52 @@ mod tests {
         assert_eq!(payload.professions.len(), 33);
         assert_eq!(payload.professions.first().unwrap().key, "project_manager");
         assert_eq!(payload.professions.last().unwrap().key, "general_member");
+    }
+
+    #[test]
+    fn avatar_replacement_is_normalized_and_removal_is_explicit() {
+        let (_directory, store) = store();
+        let source = image::RgbImage::from_pixel(400, 200, image::Rgb([20, 40, 60]));
+        let mut encoded = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .unwrap();
+        let avatar = normalize_avatar(encoded.into_inner()).unwrap();
+        let created = store
+            .save(
+                "alice",
+                mutation(),
+                ResolvedAgentAvatar::Replace(avatar.clone()),
+            )
+            .unwrap();
+        assert!(created.has_avatar);
+
+        let connection = Connection::open(store.database()).unwrap();
+        let stored: Vec<u8> = connection
+            .query_row(
+                "SELECT avatar_data FROM local_agent_profiles WHERE owner_user_id = 'alice' AND id = ?1",
+                params![created.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, avatar);
+        assert_eq!(image::load_from_memory(&stored).unwrap().width(), 256);
+
+        let mut preserve = mutation();
+        preserve.agent_id = Some(created.id.clone());
+        preserve.expected_updated_at_unix_ms = Some(created.updated_at_unix_ms);
+        let preserved = store
+            .save("alice", preserve, ResolvedAgentAvatar::Preserve)
+            .unwrap();
+        assert!(preserved.has_avatar);
+
+        let mut update = mutation();
+        update.agent_id = Some(created.id);
+        update.expected_updated_at_unix_ms = Some(preserved.updated_at_unix_ms);
+        let removed = store
+            .save("alice", update, ResolvedAgentAvatar::Remove)
+            .unwrap();
+        assert!(!removed.has_avatar);
     }
 
     fn mutation() -> AgentProfileMutationInput {
@@ -1005,6 +1180,7 @@ mod tests {
             heartbeat_enabled: true,
             heartbeat_interval_seconds: 900,
             heartbeat_prompt: "检查未读消息".into(),
+            avatar: AgentAvatarMutationInput::Preserve,
         }
     }
 }

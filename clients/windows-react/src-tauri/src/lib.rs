@@ -70,9 +70,10 @@ use media_studio::{
     cancel_media_studio_video_generation, discard_media_studio_presentation,
     discard_media_studio_reference_images, discard_media_studio_video_reference_audio,
     generate_media_studio_image, list_media_studio_models, load_media_studio_image_history,
-    load_media_studio_video_history, media_studio_protocol, pick_media_studio_reference_images,
-    pick_media_studio_video_reference_audio, poll_media_studio_video_generation,
-    stage_media_studio_history_references, start_media_studio_video_generation, MediaStudioManager,
+    load_media_studio_video_history, media_studio_protocol, pick_agent_avatar,
+    pick_media_studio_reference_images, pick_media_studio_video_reference_audio,
+    poll_media_studio_video_generation, stage_media_studio_history_references,
+    start_media_studio_video_generation, MediaStudioManager,
 };
 use plugin_application::{
     discard_plugin_application_presentation, handle_plugin_application_bridge_request,
@@ -354,6 +355,7 @@ pub fn run() {
             list_media_studio_models,
             load_media_studio_image_history,
             load_media_studio_video_history,
+            pick_agent_avatar,
             pick_media_studio_reference_images,
             pick_media_studio_video_reference_audio,
             stage_media_studio_history_references,

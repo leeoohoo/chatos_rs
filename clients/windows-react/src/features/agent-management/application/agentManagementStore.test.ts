@@ -106,6 +106,9 @@ function stubPort(overrides: Partial<AgentManagementPort> = {}): AgentManagement
     loadEditorCatalog: vi.fn(async () => catalog()),
     loadProfileEditor: vi.fn(async () => editorData()),
     saveProfile: vi.fn(async () => profile()),
+    pickAvatar: vi.fn(async () => null),
+    discardAvatarReferences: vi.fn(async () => undefined),
+    discardAvatarPresentation: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -153,6 +156,7 @@ function mutation(): AgentProfileMutationInput {
     rolePrompt: "完成分析任务", modelConfigId: "model-1", thinkingLevel: "high",
     professionKey: "business_analyst", canManageStaff: false, canAccessLocalProjects: true,
     heartbeatEnabled: false, heartbeatIntervalSeconds: 900, heartbeatPrompt: "",
+    avatar: { kind: "preserve" },
   };
 }
 

@@ -7,6 +7,7 @@ import {
   type AgentProfileEditorData,
   type AgentProfileMutationInput,
   type AgentProfileSummary,
+  type AgentAvatarDraft,
 } from "../domain/agentManagement";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
 import "./agentManagement.css";
@@ -134,6 +135,8 @@ export function AgentManagementView({
           catalog={editor.catalog}
           data={editor.data}
           error={error}
+          ownerUserId={ownerUserId}
+          port={port}
           saving={isSaving}
           onCancel={() => setEditor(null)}
           onSave={async (input) => {
@@ -194,6 +197,8 @@ function AgentProfileEditor({
   catalog,
   data,
   error,
+  ownerUserId,
+  port,
   saving,
   onCancel,
   onSave,
@@ -201,6 +206,8 @@ function AgentProfileEditor({
   catalog: AgentProfileEditorCatalog;
   data: AgentProfileEditorData | null;
   error: string | null;
+  ownerUserId: string;
+  port: AgentManagementPort;
   saving: boolean;
   onCancel(): void;
   onSave(input: AgentProfileMutationInput): Promise<void>;
@@ -217,12 +224,49 @@ function AgentProfileEditor({
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(existing?.heartbeatEnabled ?? false);
   const [heartbeatIntervalSeconds, setHeartbeatIntervalSeconds] = useState(existing?.heartbeatIntervalSeconds ?? 900);
   const [heartbeatPrompt, setHeartbeatPrompt] = useState(data?.heartbeatPrompt ?? "");
+  const [avatarPresentationId] = useState(() => crypto.randomUUID().toLowerCase());
+  const [avatarDraft, setAvatarDraft] = useState<AgentAvatarDraft | null>(null);
+  const [avatarRemoved, setAvatarRemoved] = useState(false);
+  const [isPickingAvatar, setIsPickingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const selectedModel = catalog.models.find((model) => model.id === modelConfigId);
   const selectedProfession = catalog.professions.find((profession) => profession.key === professionKey);
   const valid = name.trim().length > 0
     && rolePrompt.trim().length > 0
     && selectedModel != null
     && (!thinkingLevel || selectedModel.thinkingLevels.some((level) => level === thinkingLevel));
+
+  useEffect(() => () => {
+    void port.discardAvatarPresentation(ownerUserId, avatarPresentationId).catch(() => undefined);
+  }, [avatarPresentationId, ownerUserId, port]);
+
+  const pickAvatar = async () => {
+    if (isPickingAvatar || saving) return;
+    setIsPickingAvatar(true);
+    setAvatarError(null);
+    try {
+      const draft = await port.pickAvatar(ownerUserId, avatarPresentationId);
+      if (!draft) return;
+      if (avatarDraft) {
+        await port.discardAvatarReferences(ownerUserId, avatarPresentationId, [avatarDraft.id]);
+      }
+      setAvatarDraft(draft);
+      setAvatarRemoved(false);
+    } catch (avatarFailure) {
+      setAvatarError(avatarFailure instanceof Error ? avatarFailure.message : "头像暂时无法读取。");
+    } finally {
+      setIsPickingAvatar(false);
+    }
+  };
+
+  const useDefaultAvatar = () => {
+    if (avatarDraft) {
+      void port.discardAvatarReferences(ownerUserId, avatarPresentationId, [avatarDraft.id]);
+    }
+    setAvatarDraft(null);
+    setAvatarRemoved(true);
+    setAvatarError(null);
+  };
 
   return (
     <div className="agent-editor-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onCancel(); }}>
@@ -247,14 +291,34 @@ function AgentProfileEditor({
             heartbeatEnabled,
             heartbeatIntervalSeconds,
             heartbeatPrompt: heartbeatPrompt.trim(),
+            avatar: avatarDraft
+              ? { kind: "staged", presentationId: avatarPresentationId, referenceId: avatarDraft.id }
+              : avatarRemoved ? { kind: "remove" } : { kind: "preserve" },
           });
         }}
         role="dialog"
       >
         <header><h2>{existing ? "编辑 Agent" : "创建 Agent"}</h2><button aria-label="关闭" disabled={saving} onClick={onCancel} type="button">×</button></header>
         <div className="agent-editor__body">
-          {error && <div className="agent-editor__error" role="alert">{error}</div>}
-          <p className="agent-editor__avatar-note">头像编辑将在安全图片导入门禁完成后开放；已有头像会原样保留。</p>
+          {(error || avatarError) && <div className="agent-editor__error" role="alert">{error ?? avatarError}</div>}
+          <div className="agent-avatar-editor">
+            {avatarDraft?.previewUrl ? (
+              <img alt="Agent 头像预览" src={avatarDraft.previewUrl} />
+            ) : (
+              <span aria-label={avatarRemoved || !existing?.hasAvatar ? "默认头像" : "当前头像"}>
+                {name.trim().slice(0, 1).toUpperCase() || "A"}
+              </span>
+            )}
+            <div>
+              <button disabled={isPickingAvatar || saving} onClick={() => void pickAvatar()} type="button">
+                {isPickingAvatar ? "正在读取…" : "从本机选择"}
+              </button>
+              {(avatarDraft || (existing?.hasAvatar && !avatarRemoved)) && (
+                <button disabled={saving} onClick={useDefaultAvatar} type="button">使用默认头像</button>
+              )}
+              <small>图片由原生层裁成 256 × 256 PNG；路径和图片字节不会进入 React。</small>
+            </div>
+          </div>
           <label>名称<input maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="Agent 名称" value={name} /></label>
           <label>说明<textarea maxLength={2_000} onChange={(event) => setDescription(event.target.value)} placeholder="Agent 负责什么" rows={3} value={description} /></label>
           <label>模型<select onChange={(event) => { setModelConfigId(event.target.value); setThinkingLevel(""); }} value={modelConfigId}>{catalog.models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label>
