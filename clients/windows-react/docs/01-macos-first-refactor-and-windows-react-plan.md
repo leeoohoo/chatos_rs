@@ -540,6 +540,8 @@ Conversation History 失败后的 2/5/10/20 秒有界重试已收口到 `Convers
 
 状态补充（2026-10-21，Windows AI 故事原生 Domain 第一段）：Rust 新建私有 `story_studio` Domain，按 macOS schema v2 建立模型选择、人物/场景/道具、分段/关系、首尾帧、attempt/video 与 provider identity 的原生持久化模型；所有反序列化拒绝未知字段，媒体文件名拒绝目录、反斜杠、隐藏名和 traversal。resource/frame attachment、自动/手动确认、用户首帧标记、依赖帧失效和未决视频提交门禁已先按 macOS Core 语义落地，6 项定向测试及 `cargo clippy --lib -- -D warnings` 通过。该模块仍为私有 dormant Domain，没有注册 Tauri command，也没有创建 React 页面；下一片接入 owner-scoped 原子 Store、目录分页与不含文件名/job 的安全快照。
 
+状态补充（2026-10-21，Windows AI 故事原生 Store 第二段）：新增 owner-scoped `StoryProjectStore`，固定使用 `<AppData>/StoryStudio/Accounts/<SHA-256 owner>/Projects/<project UUID>/project.json`，逐级拒绝 symlink/Windows reparse，目录与临时文件使用私有权限。schema v2 manifest 以 8 MiB 为上限，写入 `project.json.tmp` 后执行 file sync、原子替换与目录 sync；读取严格解码并再次执行 Domain 校验，损坏记录只累计 `unreadableCount`，不替换或删除。目录分页保持 macOS 默认 40、上限 200、manifest 修改时间 + project ID 游标及 newest-first 语义。独立 `StoryProjectSnapshot` 只可序列化、不可从 React 反序列化；图片/视频仅预留空的 `contentToken`/`previewUrl`，不发布文件名、本机路径、provider result/asset/job identity 或媒体字节。Story Rust 定向测试增至 10 项，`cargo clippy --lib -- -D warnings` 通过；仍未注册 Tauri command，也没有 React 剧情入口。下一片建立 owner/authentication generation/presentation-scoped Story 媒体 token vault 与受控预览，再进入 mutation/provider commands。
+
 工作：创建 Tauri/React 工程，接通 Host、账号、导航和一个完整 Conversation 垂直切片。
 
 退出条件：安装后的 Windows 应用可启动、登录、恢复会话、发送消息、查看执行过程并安全退出；没有开发机路径依赖。

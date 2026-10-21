@@ -1,4 +1,8 @@
 use super::domain::*;
+use super::{projection::StoryProjectSnapshot, store::StoryProjectStore};
+use sha2::{Digest, Sha256};
+use std::fs;
+use tempfile::tempdir;
 use uuid::Uuid;
 
 #[test]
@@ -134,6 +138,143 @@ fn persisted_project_deserialization_rejects_unknown_fields() {
         .insert("absolutePath".into(), serde_json::json!("C:\\secret"));
 
     assert!(serde_json::from_value::<StoryProject>(value).is_err());
+}
+
+#[test]
+fn native_store_is_owner_scoped_atomic_and_round_trips_schema_v2() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut saved = project();
+
+    store.save(" alice ", &saved).expect("first save");
+    saved.title = "Updated Story".into();
+    saved.updated_at_unix_ms = 2;
+    store.save("alice", &saved).expect("atomic replacement");
+
+    let page = store.load_page("alice", None, 0).expect("owner page");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.unreadable_count, 0);
+    assert_eq!(page.next_cursor, None);
+    assert!(store.load_page("bob", None, 40).unwrap().items.is_empty());
+
+    let snapshot = store
+        .load_project("alice", &saved.id)
+        .expect("stored project");
+    let value = serde_json::to_value(snapshot).unwrap();
+    assert_eq!(value["title"], "Updated Story");
+
+    let projects = projects_directory(app_data.path(), "alice");
+    assert!(projects.join(&saved.id).join("project.json").is_file());
+    assert!(!projects.join(&saved.id).join("project.json.tmp").exists());
+}
+
+#[test]
+fn catalog_page_is_stable_newest_first_and_counts_unreadable_manifests() {
+    let app_data = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    let mut older = project();
+    older.id = "00000000-0000-4000-8000-000000000001".into();
+    older.title = "Older".into();
+    older.updated_at_unix_ms = 10;
+    store.save("alice", &older).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let mut newer = project();
+    newer.id = "00000000-0000-4000-8000-000000000002".into();
+    newer.title = "Newer".into();
+    newer.updated_at_unix_ms = 20;
+    store.save("alice", &newer).unwrap();
+
+    let first = store.load_page("alice", None, 1).unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert!(first.next_cursor.is_some());
+    let first_json = serde_json::to_value(&first.items[0]).unwrap();
+    assert_eq!(first_json["id"], newer.id);
+    let second = store
+        .load_page("alice", first.next_cursor.clone(), 1)
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    let second_json = serde_json::to_value(&second.items[0]).unwrap();
+    assert_eq!(second_json["id"], older.id);
+
+    let broken_id = "00000000-0000-4000-8000-000000000003";
+    let broken = projects_directory(app_data.path(), "alice").join(broken_id);
+    fs::create_dir(&broken).unwrap();
+    fs::write(broken.join("project.json"), b"not-json").unwrap();
+    let all = store.load_page("alice", None, 200).unwrap();
+    assert_eq!(all.items.len(), 2);
+    assert_eq!(all.unreadable_count, 1);
+}
+
+#[test]
+fn safe_projection_never_serializes_native_or_provider_media_identity() {
+    let mut value = project();
+    let mut image = StoryImage::test_image("private-image.png");
+    image.provider_result_id = Some("provider-result-secret".into());
+    image.provider_asset_id = Some("provider-asset-secret".into());
+    image.derived_from_video_job_id = Some("provider-tail-job-secret".into());
+    value.props[0].media.images.push(image);
+    value.segments[0].attempt = Some(StoryVideoAttempt {
+        id: Uuid::new_v4().to_string(),
+        model_config_id: "video".into(),
+        prompt: "prompt".into(),
+        size: "768P".into(),
+        ratio: "16:9".into(),
+        seconds: 15,
+        job_id: Some("provider-job-secret".into()),
+        status: "processing".into(),
+        created_at_unix_ms: 1,
+    });
+    value.segments[0].video = Some(StoryVideo {
+        filename: "private-video.mp4".into(),
+        job_id: "completed-provider-job-secret".into(),
+        model_name: "video-model".into(),
+    });
+
+    let json = serde_json::to_string(&StoryProjectSnapshot::from_project(&value)).unwrap();
+    for forbidden in [
+        "filename",
+        "providerResultID",
+        "providerAssetID",
+        "jobID",
+        "base64",
+        "private-image.png",
+        "private-video.mp4",
+        "provider-result-secret",
+        "provider-asset-secret",
+        "provider-job-secret",
+        "completed-provider-job-secret",
+    ] {
+        assert!(!json.contains(forbidden), "leaked {forbidden}: {json}");
+    }
+    assert!(json.contains("\"contentToken\":null"));
+    assert!(json.contains("\"previewUrl\":null"));
+}
+
+#[cfg(unix)]
+#[test]
+fn native_store_rejects_symlinked_account_hierarchy() {
+    use std::os::unix::fs::symlink;
+
+    let app_data = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let store = StoryProjectStore::for_tests(app_data.path().to_path_buf()).unwrap();
+    symlink(
+        outside.path(),
+        app_data.path().join("StoryStudio").join("Accounts"),
+    )
+    .unwrap();
+
+    assert!(store.save("alice", &project()).is_err());
+    assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+}
+
+fn projects_directory(app_data: &std::path::Path, owner: &str) -> std::path::PathBuf {
+    let owner_hash = format!("{:x}", Sha256::digest(owner.as_bytes()));
+    app_data
+        .join("StoryStudio")
+        .join("Accounts")
+        .join(owner_hash)
+        .join("Projects")
 }
 
 fn project() -> StoryProject {
