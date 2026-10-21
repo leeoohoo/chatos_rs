@@ -17,12 +17,15 @@ import {
   agentTeamAssetListSchema,
   agentTeamAssetRevisionListSchema,
   agentTeamAssetSchema,
+  projectRequirementSurveyListSchema,
+  projectRequirementSurveySchema,
   agentTeamSummarySchema,
   preparedAgentConversationSchema,
   type AgentProfileMutationInput,
   type CreateAgentTeamInput,
   type UpdateAgentTeamMemberInput,
   type SaveAgentTeamAssetInput,
+  type ProjectRequirementSurveyAnswers,
 } from "../domain/agentManagement";
 import { z } from "zod";
 import type { AgentManagementPort } from "../ports/AgentManagementPort";
@@ -243,6 +246,26 @@ export class TauriAgentManagementAdapter implements AgentManagementPort {
   async listTeamAssetRevisions(ownerUserId: string, teamId: string, assetId: string) {
     return agentTeamAssetRevisionListSchema.parse(
       await invoke("list_agent_team_asset_revisions", { ownerUserId, teamId, assetId }),
+    );
+  }
+
+  async listProjectRequirementSurveys(ownerUserId: string, projectId: string) {
+    return projectRequirementSurveyListSchema.parse(
+      await invoke("list_project_requirement_surveys", { ownerUserId, projectId }),
+    );
+  }
+
+  async resolveProjectRequirementSurvey(
+    ownerUserId: string,
+    projectId: string,
+    surveyId: string,
+    expectedVersion: number,
+    answers: ProjectRequirementSurveyAnswers,
+  ) {
+    return projectRequirementSurveySchema.parse(
+      await invoke("resolve_project_requirement_survey", {
+        input: { ownerUserId, projectId, surveyId, expectedVersion, answers },
+      }),
     );
   }
 

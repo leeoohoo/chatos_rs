@@ -25,6 +25,7 @@ mod project_git;
 mod project_removal;
 mod project_run;
 mod remote_connection;
+mod requirement_survey;
 mod run_inspector;
 mod story_studio;
 mod system_permissions;
@@ -129,6 +130,7 @@ use remote_connection::{
     test_saved_remote_connection, update_remote_connection, upload_remote_file,
     RemoteConnectionManager,
 };
+use requirement_survey::{list_project_requirement_surveys, resolve_project_requirement_survey};
 use run_inspector::{
     cancel_task_inspector, load_message_task_graph, load_run_inspector, load_task_inspector,
     restart_task_inspector, retry_task_inspector,
@@ -349,6 +351,8 @@ pub fn run() {
             load_ask_user_prompts,
             submit_ask_user_prompt,
             cancel_ask_user_prompt,
+            list_project_requirement_surveys,
+            resolve_project_requirement_survey,
             list_tool_approvals,
             decide_tool_approval,
             load_tool_approval_settings,

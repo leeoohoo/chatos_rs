@@ -544,6 +544,55 @@ describe("AgentManagementView", () => {
     expect(await within(workspace).findByText("Alpha 项目概览")).toBeVisible();
   });
 
+  it("loads and submits Host-backed project requirement surveys", async () => {
+    const team = {
+      id: "11111111-1111-4111-8111-111111111111", projectId: "project-1",
+      name: "Alpha Agent 团队", goal: "交付 Alpha", defaultAgentId: "agent-1",
+      projectManagerAgentId: null, memberCount: 1, createdAtUnixMs: 10, updatedAtUnixMs: 20,
+    };
+    const detail = {
+      team,
+      members: [{ agentId: "agent-1", role: "界面设计师", responsibility: "负责产品界面", joinedAtUnixMs: 20 }],
+    };
+    const survey = {
+      surveyId: "survey-1", projectId: team.projectId, sourceConversationId: "conversation-1",
+      sourceRunId: "run-1", sourceTaskId: null, title: "项目目标", description: "请补充交付目标",
+      questions: [{ questionId: "goal", prompt: "需要交付什么？", responseKind: "text" as const, required: true, options: [] }],
+      answers: null, status: "open" as const, version: 1, createdAtUnixMs: 30,
+      updatedAtUnixMs: 30, resolvedAtUnixMs: null,
+    };
+    const resolveProjectRequirementSurvey = vi.fn(async (_owner, _project, _survey, version, answers) => ({
+      ...survey, answers, status: "resolved" as const, version: version + 1,
+      updatedAtUnixMs: 40, resolvedAtUnixMs: 40,
+    }));
+    const port = stubPort({
+      listTeams: vi.fn(async () => [team]), loadTeam: vi.fn(async () => detail),
+      listProjectRequirementSurveys: vi.fn(async () => [survey]),
+      resolveProjectRequirementSurvey,
+    });
+    render(
+      <AgentManagementView
+        ownerUserId="owner-1"
+        port={port}
+        projects={[{ id: "project-1", title: "Alpha" }]}
+      />,
+    );
+    await screen.findByText("界面设计师");
+    fireEvent.click(screen.getByRole("button", { name: "团队" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看成员" }));
+    fireEvent.click(await screen.findByRole("button", { name: "需求调研" }));
+    const workspace = await screen.findByRole("region", { name: "Agent 团队需求调研" });
+    fireEvent.click(await within(workspace).findByRole("button", { name: /项目目标/ }));
+    const sheet = await screen.findByRole("dialog", { name: "需求调研详情" });
+    fireEvent.change(within(sheet).getByLabelText("需要交付什么？"), { target: { value: "交付 Alpha" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "提交并继续" }));
+    await waitFor(() => expect(resolveProjectRequirementSurvey).toHaveBeenCalledWith(
+      "owner-1", "project-1", "survey-1", 1, { goal: "交付 Alpha" },
+    ));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "需求调研详情" })).not.toBeInTheDocument());
+    expect(within(workspace).getByText("已提交")).toBeVisible();
+  });
+
   it("selects an Agent and loads its existing private-chat activity without opening a conversation", async () => {
     const loadProfileActivity = vi.fn(async () => ({
       agentId: "agent-1",

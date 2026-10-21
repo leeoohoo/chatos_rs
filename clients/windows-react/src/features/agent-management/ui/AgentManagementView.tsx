@@ -13,6 +13,7 @@ import { type AgentTeamMemberMutation, useAgentTeamStore } from "../application/
 import { useAgentTeamConversationStore } from "../application/agentTeamConversationStore";
 import { useAgentTeamRunStore } from "../application/agentTeamRunStore";
 import { useAgentTeamAssetStore } from "../application/agentTeamAssetStore";
+import { useProjectRequirementSurveyStore } from "../application/projectRequirementSurveyStore";
 import {
   agentProfessionLabels,
   heartbeatIntervalLabel,
@@ -28,6 +29,8 @@ import {
   type AgentTeamDetail,
   type AgentTeamAsset,
   type AgentTeamAssetCategory,
+  type ProjectRequirementSurvey,
+  type ProjectRequirementSurveyAnswers,
   type CreateAgentTeamInput,
   type PreparedAgentConversation,
 } from "../domain/agentManagement";
@@ -501,7 +504,7 @@ function AgentTeamCatalog({
   onRetry(): void;
   onSelect(teamId: string): void;
 }) {
-  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "assets" | "runs">("members");
+  const [workspaceSection, setWorkspaceSection] = useState<"overview" | "members" | "conversation" | "research" | "assets" | "runs">("members");
   useEffect(() => setWorkspaceSection("members"), [selectedTeamId]);
   const projectNames = useMemo(
     () => new Map(projects.map((project) => [project.id, project.title])),
@@ -562,7 +565,8 @@ function AgentTeamCatalog({
             <section
               aria-label={{
                 overview: "Agent 团队总览", members: "Agent 团队成员",
-                conversation: "Agent 团队聊天", assets: "Agent 团队共享资产", runs: "Agent 团队运行",
+                conversation: "Agent 团队聊天", research: "Agent 团队需求调研",
+                assets: "Agent 团队共享资产", runs: "Agent 团队运行",
               }[workspaceSection]}
               className={workspaceSection === "members"
                 ? "agent-team-members"
@@ -573,13 +577,14 @@ function AgentTeamCatalog({
                   <h3>{detail?.team.id === selectedTeamId
                     ? `${detail.team.name} · ${{
                       overview: "总览", members: "团队成员", conversation: "团队聊天",
-                      assets: "共享资产", runs: "运行",
+                      research: "需求调研", assets: "共享资产", runs: "运行",
                     }[workspaceSection]}`
                     : "正在读取团队空间"}</h3>
                   <p>{{
                     overview: "查看团队成员、消息与真实执行状态。",
                     members: "同一个 Agent 可以加入多个团队；角色和职责按当前团队隔离。",
                     conversation: "消息、路由与执行状态均来自本机原生事实。",
+                    research: "填写主聊天或任务为当前项目发起的真实 Host 调研单。",
                     assets: "维护带版本历史的项目背景、进度、技术栈与架构决策。",
                     runs: "按更新时间查看通讯与任务执行 Run。",
                   }[workspaceSection]}</p>
@@ -590,6 +595,7 @@ function AgentTeamCatalog({
                     <button aria-pressed={workspaceSection === "overview"} onClick={() => setWorkspaceSection("overview")} type="button">总览</button>
                     <button aria-pressed={workspaceSection === "members"} onClick={() => setWorkspaceSection("members")} type="button">成员</button>
                     <button aria-pressed={workspaceSection === "conversation"} onClick={() => setWorkspaceSection("conversation")} type="button">聊天</button>
+                    <button aria-pressed={workspaceSection === "research"} onClick={() => setWorkspaceSection("research")} type="button">需求调研</button>
                     <button aria-pressed={workspaceSection === "assets"} onClick={() => setWorkspaceSection("assets")} type="button">共享资产</button>
                     <button aria-pressed={workspaceSection === "runs"} onClick={() => setWorkspaceSection("runs")} type="button">运行</button>
                   </div>
@@ -618,6 +624,8 @@ function AgentTeamCatalog({
                 />
               ) : workspaceSection === "assets" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamAssetsView detail={detail} ownerUserId={ownerUserId} port={port} />
+              ) : workspaceSection === "research" && detail?.team.id === selectedTeamId ? (
+                <ProjectRequirementSurveysView detail={detail} ownerUserId={ownerUserId} port={port} />
               ) : workspaceSection === "runs" && detail?.team.id === selectedTeamId ? (
                 <AgentTeamRunsView
                   detail={detail}
@@ -673,7 +681,7 @@ function AgentTeamOverviewView({
   ownerUserId: string;
   port: AgentManagementPort;
   profiles: AgentProfileSummary[];
-  onOpen(section: "members" | "conversation" | "assets" | "runs"): void;
+  onOpen(section: "members" | "conversation" | "research" | "assets" | "runs"): void;
 }) {
   const snapshot = useAgentTeamRunStore((state) => state.snapshot);
   const isLoading = useAgentTeamRunStore((state) => state.isLoading);
@@ -756,6 +764,160 @@ const teamAssetCategoryLabels: Record<AgentTeamAssetCategory, string> = {
   decision: "决策",
   reference: "参考资料",
 };
+
+function ProjectRequirementSurveysView({
+  detail,
+  ownerUserId,
+  port,
+}: {
+  detail: AgentTeamDetail;
+  ownerUserId: string;
+  port: AgentManagementPort;
+}) {
+  const surveys = useProjectRequirementSurveyStore((state) => state.surveys);
+  const isLoading = useProjectRequirementSurveyStore((state) => state.isLoading);
+  const submittingSurveyId = useProjectRequirementSurveyStore((state) => state.submittingSurveyId);
+  const error = useProjectRequirementSurveyStore((state) => state.error);
+  const activate = useProjectRequirementSurveyStore((state) => state.activate);
+  const refresh = useProjectRequirementSurveyStore((state) => state.refresh);
+  const submit = useProjectRequirementSurveyStore((state) => state.submit);
+  const reset = useProjectRequirementSurveyStore((state) => state.reset);
+  const [selectedSurveyId, setSelectedSurveyId] = useState<string | null>(null);
+  const selectedSurvey = surveys.find((survey) => survey.surveyId === selectedSurveyId) ?? null;
+  const supportsSurveys = Boolean(
+    port.listProjectRequirementSurveys && port.resolveProjectRequirementSurvey,
+  );
+
+  useEffect(() => {
+    setSelectedSurveyId(null);
+    if (supportsSurveys) void activate(port, ownerUserId, detail.team.projectId);
+    else reset();
+    return reset;
+  }, [activate, detail.team.projectId, ownerUserId, port, reset, supportsSurveys]);
+
+  useEffect(() => {
+    if (!supportsSurveys) return undefined;
+    const timer = window.setInterval(() => void refresh(port), 30_000);
+    return () => window.clearInterval(timer);
+  }, [port, refresh, supportsSurveys]);
+
+  if (!supportsSurveys) {
+    return (
+      <div className="agent-team-surveys__state is-error" role="alert">
+        <strong>当前版本尚未连接需求调研</strong><span>请更新本机客户端后重试。</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="agent-team-surveys">
+      <div className="agent-team-surveys__toolbar">
+        <div><strong>需求调研</strong><span>调研由 Local Agent Host 保存；提交后会恢复原 Run。</span></div>
+        <button aria-label="刷新需求调研" disabled={isLoading} onClick={() => void refresh(port)} type="button">↻</button>
+      </div>
+      {error && (
+        <div className="agent-team-conversation__error" role="alert">
+          <span>{error}</span><button onClick={() => void refresh(port)} type="button">刷新</button>
+        </div>
+      )}
+      <div className="agent-team-surveys__list">
+        {isLoading && surveys.length === 0 ? (
+          <div className="agent-team-surveys__state"><span className="mini-spinner" />正在读取需求调研…</div>
+        ) : surveys.length === 0 ? (
+          <div className="agent-team-surveys__state"><strong>暂无需求调研</strong><span>主聊天或任务发起的项目调研会显示在这里。</span></div>
+        ) : surveys.map((survey) => (
+          <button key={survey.surveyId} onClick={() => setSelectedSurveyId(survey.surveyId)} type="button">
+            <span aria-hidden="true">{survey.status === "open" ? "✎" : "✓"}</span>
+            <div><strong>{survey.title}</strong>{survey.description && <p>{survey.description}</p>}<small>{survey.questions.length} 个问题 · {survey.sourceTaskId ? "任务调研" : "主聊天调研"} · {formatTeamMessageTime(survey.createdAtUnixMs)}</small></div>
+            <em className={`is-${survey.status}`}>{survey.status === "open" ? "待填写" : "已提交"}</em>
+            <b aria-hidden="true">›</b>
+          </button>
+        ))}
+      </div>
+      {selectedSurvey && (
+        <ProjectRequirementSurveySheet
+          isSubmitting={submittingSurveyId === selectedSurvey.surveyId}
+          key={`${selectedSurvey.surveyId}:${selectedSurvey.version}`}
+          survey={selectedSurvey}
+          onClose={() => setSelectedSurveyId(null)}
+          onSubmit={async (answers) => {
+            if (await submit(port, selectedSurvey, answers)) setSelectedSurveyId(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProjectRequirementSurveySheet({
+  survey,
+  isSubmitting,
+  onClose,
+  onSubmit,
+}: {
+  survey: ProjectRequirementSurvey;
+  isSubmitting: boolean;
+  onClose(): void;
+  onSubmit(answers: ProjectRequirementSurveyAnswers): Promise<void>;
+}) {
+  const [answers, setAnswers] = useState<ProjectRequirementSurveyAnswers>(survey.answers ?? {});
+  const canSubmit = survey.status === "open" && survey.questions.every((question) => {
+    const answer = answers[question.questionId];
+    if (answer == null) return !question.required;
+    if (question.responseKind === "text") return typeof answer === "string" && answer.trim().length > 0;
+    if (question.responseKind === "boolean") return typeof answer === "boolean";
+    if (question.responseKind === "single_choice") return typeof answer === "string" && question.options.includes(answer);
+    return Array.isArray(answer) && answer.length > 0 && answer.every((value) => question.options.includes(value));
+  });
+  return (
+    <div className="agent-editor-backdrop" role="presentation" onMouseDown={onClose}>
+      <section aria-label="需求调研详情" aria-modal="true" className="agent-team-survey-sheet" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <header>
+          <div><span>{survey.sourceTaskId ? "任务需求调研" : "主聊天需求调研"}</span><h2>{survey.title}</h2>{survey.description && <p>{survey.description}</p>}</div>
+          <button aria-label="关闭需求调研" onClick={onClose} type="button">×</button>
+        </header>
+        <div className="agent-team-survey-sheet__body">
+          {survey.questions.map((question, index) => (
+            <fieldset disabled={survey.status === "resolved" || isSubmitting} key={question.questionId}>
+              <legend>{index + 1}. {question.prompt}{question.required && <em> *</em>}</legend>
+              {question.responseKind === "text" ? (
+                <textarea
+                  aria-label={question.prompt}
+                  maxLength={16_000}
+                  onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
+                  value={typeof answers[question.questionId] === "string" ? answers[question.questionId] as string : ""}
+                />
+              ) : question.responseKind === "boolean" ? (
+                <div className="agent-team-survey-sheet__choices">
+                  {[true, false].map((value) => <label key={String(value)}><input checked={answers[question.questionId] === value} name={question.questionId} onChange={() => setAnswers((current) => ({ ...current, [question.questionId]: value }))} type="radio" />{value ? "是" : "否"}</label>)}
+                </div>
+              ) : (
+                <div className="agent-team-survey-sheet__choices">
+                  {question.options.map((option) => {
+                    const multiple = question.responseKind === "multiple_choice";
+                    const selected = multiple
+                      ? Array.isArray(answers[question.questionId]) && (answers[question.questionId] as string[]).includes(option)
+                      : answers[question.questionId] === option;
+                    return <label key={option}><input checked={selected} name={question.questionId} onChange={() => setAnswers((current) => {
+                      if (!multiple) return { ...current, [question.questionId]: option };
+                      const values = Array.isArray(current[question.questionId]) ? current[question.questionId] as string[] : [];
+                      return { ...current, [question.questionId]: selected ? values.filter((value) => value !== option) : [...values, option] };
+                    })} type={multiple ? "checkbox" : "radio"} />{option}</label>;
+                  })}
+                </div>
+              )}
+            </fieldset>
+          ))}
+          {survey.status === "resolved" && <div className="agent-team-survey-sheet__resolved">✓ 你的回答已提交，原 Run 已恢复。</div>}
+        </div>
+        <footer>
+          <button onClick={onClose} type="button">{survey.status === "resolved" ? "完成" : "取消"}</button>
+          {survey.status === "open" && <button className="primary-button" disabled={!canSubmit || isSubmitting} onClick={() => void onSubmit(answers)} type="button">{isSubmitting ? "提交中…" : "提交并继续"}</button>}
+        </footer>
+      </section>
+    </div>
+  );
+}
 
 function AgentTeamAssetsView({
   detail,

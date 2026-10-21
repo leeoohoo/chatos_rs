@@ -324,6 +324,31 @@ describe("TauriAgentManagementAdapter avatar boundary", () => {
       ownerUserId: "owner-1", teamId: team.id, assetId: "asset-1",
     });
 
+    const survey = {
+      surveyId: "survey-1", projectId: "project-1", sourceConversationId: "conversation-1",
+      sourceRunId: "run-1", sourceTaskId: null, title: "项目目标", description: null,
+      questions: [{ questionId: "goal", prompt: "交付什么？", responseKind: "text", required: true, options: [] }],
+      answers: null, status: "open", version: 1, createdAtUnixMs: 50, updatedAtUnixMs: 50,
+      resolvedAtUnixMs: null,
+    };
+    vi.mocked(invoke).mockResolvedValueOnce([survey]);
+    await adapter.listProjectRequirementSurveys("owner-1", "project-1");
+    expect(invoke).toHaveBeenLastCalledWith("list_project_requirement_surveys", {
+      ownerUserId: "owner-1", projectId: "project-1",
+    });
+
+    vi.mocked(invoke).mockResolvedValueOnce({
+      ...survey, answers: { goal: "Alpha" }, status: "resolved", version: 2,
+      updatedAtUnixMs: 60, resolvedAtUnixMs: 60,
+    });
+    await adapter.resolveProjectRequirementSurvey(
+      "owner-1", "project-1", "survey-1", 1, { goal: "Alpha" },
+    );
+    expect(invoke).toHaveBeenLastCalledWith("resolve_project_requirement_survey", { input: {
+      ownerUserId: "owner-1", projectId: "project-1", surveyId: "survey-1",
+      expectedVersion: 1, answers: { goal: "Alpha" },
+    } });
+
     const input = {
       ownerUserId: "owner-1",
       roomId,

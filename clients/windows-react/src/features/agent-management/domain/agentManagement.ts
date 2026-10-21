@@ -663,6 +663,55 @@ export const agentTeamAssetRevisionListSchema = z.array(agentTeamAssetRevisionSc
     });
   });
 
+export const projectRequirementSurveyAnswerSchema = z.union([
+  z.string().max(16_000),
+  z.boolean(),
+  z.array(z.string().max(4_000)).max(50),
+]);
+
+export const projectRequirementSurveySchema = z.object({
+  surveyId: z.string().trim().min(1).max(512),
+  projectId: z.string().trim().min(1).max(1_024),
+  sourceConversationId: z.string().trim().min(1).max(512),
+  sourceRunId: z.string().trim().min(1).max(512),
+  sourceTaskId: z.string().trim().min(1).max(512).nullable(),
+  title: z.string().trim().min(1).max(1_000),
+  description: z.string().max(16_000).nullable(),
+  questions: z.array(z.object({
+    questionId: z.string().trim().min(1).max(512),
+    prompt: z.string().trim().min(1).max(4_000),
+    responseKind: z.enum(["text", "single_choice", "multiple_choice", "boolean"]),
+    required: z.boolean(),
+    options: z.array(z.string().trim().min(1).max(4_000)).max(50),
+  }).strict()).min(1).max(50),
+  answers: z.record(z.string(), projectRequirementSurveyAnswerSchema).nullable(),
+  status: z.enum(["open", "resolved"]),
+  version: z.number().int().positive(),
+  createdAtUnixMs: z.number().int().nonnegative(),
+  updatedAtUnixMs: z.number().int().nonnegative(),
+  resolvedAtUnixMs: z.number().int().nonnegative().nullable(),
+}).strict().superRefine((survey, context) => {
+  if (survey.updatedAtUnixMs < survey.createdAtUnixMs) {
+    context.addIssue({ code: "custom", message: "需求调研更新时间不能早于创建时间。", path: ["updatedAtUnixMs"] });
+  }
+  if ((survey.status === "resolved") !== (survey.resolvedAtUnixMs != null)) {
+    context.addIssue({ code: "custom", message: "需求调研状态与完成时间不一致。", path: ["resolvedAtUnixMs"] });
+  }
+  const questionIds = new Set<string>();
+  survey.questions.forEach((question, index) => {
+    if (questionIds.has(question.questionId)) {
+      context.addIssue({ code: "custom", message: "需求调研问题不能重复。", path: ["questions", index, "questionId"] });
+    }
+    questionIds.add(question.questionId);
+    const expectsOptions = question.responseKind === "single_choice" || question.responseKind === "multiple_choice";
+    if (expectsOptions !== (question.options.length > 0)) {
+      context.addIssue({ code: "custom", message: "需求调研选项与回答类型不一致。", path: ["questions", index, "options"] });
+    }
+  });
+});
+
+export const projectRequirementSurveyListSchema = z.array(projectRequirementSurveySchema).max(200);
+
 export interface CreateAgentTeamInput {
   projectId: string;
   name: string;
@@ -682,6 +731,11 @@ export interface SaveAgentTeamAssetInput {
   expectedRevision: number | null;
 }
 
+export type ProjectRequirementSurveyAnswers = Record<
+  string,
+  z.infer<typeof projectRequirementSurveyAnswerSchema>
+>;
+
 export type AgentTeamSummary = z.infer<typeof agentTeamSummarySchema>;
 export type AgentTeamDetail = z.infer<typeof agentTeamDetailSchema>;
 export type AgentTeamConversationSnapshot = z.infer<typeof agentTeamConversationSnapshotSchema>;
@@ -692,6 +746,7 @@ export type AgentTeamRunHistorySnapshot = z.infer<typeof agentTeamRunHistorySnap
 export type AgentTeamAssetCategory = z.infer<typeof agentTeamAssetCategorySchema>;
 export type AgentTeamAsset = z.infer<typeof agentTeamAssetSchema>;
 export type AgentTeamAssetRevision = z.infer<typeof agentTeamAssetRevisionSchema>;
+export type ProjectRequirementSurvey = z.infer<typeof projectRequirementSurveySchema>;
 
 export const agentProfessionLabels: Record<z.infer<typeof agentProfessionKeySchema>, string> = {
   project_manager: "项目经理",

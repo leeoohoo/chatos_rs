@@ -17,6 +17,8 @@ import type {
   AgentTeamAsset,
   AgentTeamAssetRevision,
   SaveAgentTeamAssetInput,
+  ProjectRequirementSurvey,
+  ProjectRequirementSurveyAnswers,
   CreateAgentTeamInput,
   UpdateAgentTeamMemberInput,
   PreparedAgentConversation,
@@ -96,6 +98,17 @@ export interface AgentManagementPort {
     teamId: string,
     assetId: string,
   ): Promise<AgentTeamAssetRevision[]>;
+  listProjectRequirementSurveys?(
+    ownerUserId: string,
+    projectId: string,
+  ): Promise<ProjectRequirementSurvey[]>;
+  resolveProjectRequirementSurvey?(
+    ownerUserId: string,
+    projectId: string,
+    surveyId: string,
+    expectedVersion: number,
+    answers: ProjectRequirementSurveyAnswers,
+  ): Promise<ProjectRequirementSurvey>;
   sendConversationDraft?(input: {
     ownerUserId: string;
     roomId: string;
